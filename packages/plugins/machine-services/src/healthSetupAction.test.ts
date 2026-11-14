@@ -31,23 +31,24 @@ it('saves Inbox by default through the agent setup Action and retains an explici
     } finally { await kit.dispose(); }
 });
 
-it('accepts the full Domain checks and chosen cadence through the same agent setup Action', async () => {
+it.each([true, false])('saves Environment configuration through the same agent setup Action, including checks: %s', async hasChecks => {
     const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin });
     const subject = { kind: 'environment', environmentId: 'production' } as const;
     const domain = { domainId: 'public-domain', targetLinkId: 'serving-target' };
-    const checks = [
+    const checks = hasChecks ? [
         { checkId: 'public-http', kind: { pluginId: plugin.manifest.id, localId: 'http' }, config: {},
             binding: { kind: 'domain', ...domain, condition: 'domain_probe_failed' }, periodMs: 300_000, consecutiveFailuresBeforeAlerting: 3 },
         { checkId: 'public-certificate', kind: { pluginId: plugin.manifest.id, localId: 'certificate' }, config: {},
             binding: { kind: 'domain', ...domain, condition: 'certificate_renewal_failed' }, periodMs: 300_000, consecutiveFailuresBeforeAlerting: 3 },
-    ];
+    ] : [];
+    const alerts = { channels: [{ channelId: 'saved-slack', destination: { connectionId: 'production' } }], phases: ['open', 'recovered'] };
     try {
         // The SDK host service boundary receives the same full saved configuration as the person-authored form.
         const unused = async (): Promise<never> => { throw new Error('Unexpected health service operation'); };
         const services = { healthChecks: { setup: prepareSetup,
             listKinds: unused, readSource: unused, manageHeartbeat: unused, read: unused,
         } } satisfies PluginTestServicesFixture;
-        expect(await kit.invokeAction('health/setup', { v: 1, subject, checks }, { surface: 'agent', services }))
-            .toMatchObject({ sourceConfig: { v: 1, subject, checks, investigation: { mode: 'inbox' } } });
+        expect(await kit.invokeAction('health/setup', { v: 1, subject, checks, alerts }, { surface: 'agent', services }))
+            .toMatchObject({ sourceConfig: { v: 1, subject, checks, alerts, investigation: { mode: 'inbox' } } });
     } finally { await kit.dispose(); }
 });

@@ -372,7 +372,7 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
                 description: t(`${K}.investigation.action.description`,
                     'Choose an existing investigate Action from PRs & Issues. Its saved Machine, workspace and Agent choices are used.') }) : null,
         refusedSave ? h(Text, { tone: 'danger', value: t(`${K}.saveRefused`, 'This check can’t be added right now. Your entries are kept here.') }) : null,
-        existing.length > 0 ? h(Button, { title: t(`${K}.saveChanges`, 'Save changes'), variant: 'secondary',
+        existing.length > 0 || props.subject.kind === 'environment' ? h(Button, { title: t(`${K}.saveChanges`, 'Save changes'), variant: 'secondary',
             disabled: alerts === undefined || !savedCandidate.success || saving, busy: saving, testID: 'health-setup-save',
             onPress: async () => {
                 if (!savedCandidate.success) return;

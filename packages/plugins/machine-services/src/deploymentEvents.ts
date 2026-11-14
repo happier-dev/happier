@@ -1,3 +1,4 @@
+import { withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { arePluginMachineMaterializationRefsEqual, computeCanonicalDomainSeparatedDigest, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1, DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1, readDeploymentAccountChangeV1,
@@ -53,7 +54,7 @@ const setupAction = (event: EventId) => ({
             const read = await context.services.actions.execute('deployments.observation.get', {
                 serverId: scope.serverId, environmentId: scope.environmentId, targetLinkId: scope.targetLinkId,
             }, { signal: context.signal });
-            if (!('ok' in read) || !read.ok) throw new PluginError({ code: 'ok' in read ? read.error : 'deployment_unavailable' });
+            if (!('ok' in read) || !read.ok) throw withActionFailureDiagnostic(new PluginError({ code: 'ok' in read ? read.error : 'deployment_unavailable' }), { phase: 'deployment.events.read', causeKind: 'native_failure', error: read });
             if (read.environment.id !== scope.environmentId || read.environment.runtimeTargetLinkId !== scope.targetLinkId
                 || read.targetLink.id !== scope.targetLinkId || read.targetLink.role !== 'runtime' || read.targetLink.source.kind !== 'plugin') {
                 throw new PluginError({ code: 'deployment_target_unavailable' });
@@ -63,9 +64,9 @@ const setupAction = (event: EventId) => ({
             const read = await context.services.actions.execute('deployments.environments.get', {
                 serverId: scope.serverId, environmentId: scope.environmentId,
             }, { signal: context.signal });
-            if (!('ok' in read) || !read.ok || read.environment.id !== scope.environmentId) throw new PluginError({
+            if (!('ok' in read) || !read.ok || read.environment.id !== scope.environmentId) throw withActionFailureDiagnostic(new PluginError({
                 code: 'ok' in read && !read.ok ? read.error : 'deployment_unavailable', message: 'The selected Environment is unavailable.',
-            });
+            }), { phase: 'deployment.events.read', causeKind: 'native_failure', error: read });
         }
         const config = configSchema.parse({ ...scope, observingSince: context.invokedAtMs,
             ...(credentialPrincipal ? { credentialPrincipal } : {}) });
@@ -156,15 +157,15 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                         const template = await context.services.actions.execute('deployments.environments.get', {
                             serverId: source.serverId, environmentId: source.environmentId,
                         }, { signal: context.signal });
-                        if (!('ok' in template) || !template.ok) throw new PluginError({ code: 'ok' in template ? template.error : 'deployment_unavailable' });
+                        if (!('ok' in template) || !template.ok) throw withActionFailureDiagnostic(new PluginError({ code: 'ok' in template ? template.error : 'deployment_unavailable' }), { phase: 'deployment.events.read', causeKind: 'native_failure', error: template });
                         let cursor: string | undefined;
                         do {
                             const page = await context.services.actions.execute('deployments.environments.list', {
                                 serverId: source.serverId, projectSourceId: template.environment.projectSourceId,
                                 previewTemplateEnvironmentId: source.environmentId, includeDeleted: true, ...(cursor ? { cursor } : {}),
                             }, { signal: context.signal });
-                            if (!('ok' in page) || !page.ok) throw new PluginError({ code: 'ok' in page ? page.error : 'deployment_unavailable' });
-                            if (page.coverage === 'partial') throw new PluginError({ code: 'deployment_unavailable' });
+                            if (!('ok' in page) || !page.ok) throw withActionFailureDiagnostic(new PluginError({ code: 'ok' in page ? page.error : 'deployment_unavailable' }), { phase: 'deployment.events.read', causeKind: 'native_failure', error: page });
+                            if (page.coverage === 'partial') throw withActionFailureDiagnostic(new PluginError({ code: 'deployment_unavailable' }), { phase: 'deployment.events.environments.list', causeKind: 'incomplete' });
                             environmentIds.push(...page.items.map(item => item.id)); cursor = page.nextCursor ?? undefined;
                         } while (cursor);
                     } else environmentIds.push(source.environmentId);
@@ -175,7 +176,7 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                                 serverId: source.serverId, environmentId, ...(event === changedEvent ? { limit: 1 } : {}),
                                 ...(cursor ? { cursor } : {}),
                             }, { signal: context.signal });
-                            if (!('ok' in page) || !page.ok) throw new PluginError({ code: 'ok' in page ? page.error : 'deployment_unavailable', message: 'Deployment receipts are unavailable.' });
+                            if (!('ok' in page) || !page.ok) throw withActionFailureDiagnostic(new PluginError({ code: 'ok' in page ? page.error : 'deployment_unavailable', message: 'Deployment receipts are unavailable.' }), { phase: 'deployment.events.read', causeKind: 'native_failure', error: page });
                             retained.push(...page.items); cursor = event === changedEvent ? undefined : page.nextCursor ?? undefined;
                         } while (cursor);
                     }
@@ -204,7 +205,7 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                         const child = await context.services.actions.execute('deployments.environments.get', {
                             serverId: source.serverId, environmentId,
                         }, { signal: context.signal });
-                        if (!('ok' in child) || !child.ok) throw new PluginError({ code: 'ok' in child ? child.error : 'deployment_unavailable' });
+                        if (!('ok' in child) || !child.ok) throw withActionFailureDiagnostic(new PluginError({ code: 'ok' in child ? child.error : 'deployment_unavailable' }), { phase: 'deployment.events.read', causeKind: 'native_failure', error: child });
                         entry.templateEnvironmentId = child.environment.previewTemplateEnvironmentId ?? null;
                     }
                     if (source.previewChildren && entry.templateEnvironmentId !== source.environmentId) continue;
@@ -219,7 +220,7 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                         if (!('ok' in read) || !read.ok) {
                             if ('ok' in read && !read.ok && read.error === 'deployment_unavailable') {
                                 entry.receipt = null;
-                            } else throw new PluginError({ code: 'ok' in read ? read.error : 'deployment_unavailable', message: 'Deployment receipt is unavailable.' });
+                            } else throw withActionFailureDiagnostic(new PluginError({ code: 'ok' in read ? read.error : 'deployment_unavailable', message: 'Deployment receipt is unavailable.' }), { phase: 'deployment.events.read', causeKind: 'native_failure', error: read });
                         } else {
                             entry.receipt = 'items' in read ? read.items[0] ?? null : { ...read.deployment, failureSummary: read.failureSummary };
                         }
@@ -234,7 +235,7 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                                     const page = await context.services.actions.execute('deployments.domains.list', {
                                         serverId: source.serverId, environmentId, ...(cursor ? { cursor } : {}),
                                     }, { signal: context.signal });
-                                    if (!('ok' in page) || !page.ok) throw new PluginError({ code: 'ok' in page ? page.error : 'deployment_unavailable' });
+                                    if (!('ok' in page) || !page.ok) throw withActionFailureDiagnostic(new PluginError({ code: 'ok' in page ? page.error : 'deployment_unavailable' }), { phase: 'deployment.events.read', causeKind: 'native_failure', error: page });
                                     for (const domain of page.domains) domains.push(domain.id, String(domain.revision));
                                     cursor = page.nextCursor ?? undefined;
                                 } while (cursor);
@@ -258,13 +259,13 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                         const result = await context.services.actions.execute('deployments.receipts.observe', {
                             serverId: source.serverId, environmentId: source.environmentId, deploymentId: receipt.id,
                         }, { signal: context.signal });
-                        if (!('ok' in result) || !result.ok) throw new PluginError({ code: 'ok' in result ? result.error : 'deployment_unavailable' });
+                        if (!('ok' in result) || !result.ok) throw withActionFailureDiagnostic(new PluginError({ code: 'ok' in result ? result.error : 'deployment_unavailable' }), { phase: 'deployment.events.read', causeKind: 'native_failure', error: result });
                         if ('state' in result && !inProgressStates.has(result.state)) {
                             state.observing.delete(receipt.id);
                             const read = await context.services.actions.execute('deployments.receipts.get', {
                                 serverId: source.serverId, environmentId: source.environmentId, deploymentId: receipt.id,
                             }, { signal: context.signal });
-                            if (!('ok' in read) || !read.ok) throw new PluginError({ code: 'ok' in read ? read.error : 'deployment_unavailable' });
+                            if (!('ok' in read) || !read.ok) throw withActionFailureDiagnostic(new PluginError({ code: 'ok' in read ? read.error : 'deployment_unavailable' }), { phase: 'deployment.events.read', causeKind: 'native_failure', error: read });
                             receipts[index] = { ...read.deployment, failureSummary: read.failureSummary };
                             pending.get(receipt.id)!.receipt = receipts[index];
                         }
@@ -286,7 +287,7 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                         const result = receipt.failureSummary === undefined ? await context.services.actions.execute('deployments.receipts.get', {
                             serverId: source.serverId, environmentId: receipt.environmentId, deploymentId: receipt.id,
                         }, { signal: context.signal }) : { ok: true as const, failureSummary: receipt.failureSummary };
-                        if (!('ok' in result) || !result.ok) throw new PluginError({ code: 'ok' in result ? result.error : 'deployment_unavailable' });
+                        if (!('ok' in result) || !result.ok) throw withActionFailureDiagnostic(new PluginError({ code: 'ok' in result ? result.error : 'deployment_unavailable' }), { phase: 'deployment.events.read', causeKind: 'native_failure', error: result });
                         if (result.failureSummary === undefined) throw new PluginError({
                             code: 'deployment_content_unavailable', message: 'Deployment failure detail is unavailable.',
                         });

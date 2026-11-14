@@ -610,23 +610,34 @@ it('explains itself instead of showing a form when no watched service is bound',
 });
 
 
-it('reopens an Environment source and saves alert changes without adding or replacing its checks', async () => {
+it.each([false, true])('saves and reopens Environment notification choices with existing checks: %s', async hasCheck => {
   const environment = { kind: 'environment', environmentId: 'production' } as const;
   const check = { checkId: 'outside', kind: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'tcp' },
     binding: { kind: 'healthCheck' }, config: { host: 'app.example.test', port: 443 },
     periodMs: 60000, consecutiveFailuresBeforeAlerting: 3 };
   const alerts = { channels: [{ channelId: 'saved-slack', destination: { connectionId: 'production' } }], phases: ['open'] };
   const investigation = { mode: 'auto_start', configuredActionId: 'production-triage' };
-  const { page, settled } = await mount({ initialInput: { v: 1, subject: environment } }, {}, async () => ({
-    mode: 'preview', sourceConfig: { v: 1, subject: environment, checks: [check], alerts, investigation },
+  const { page, settled } = await mount({ initialInput: { v: 1, subject: environment } }, {
+    selectActionInput: async () => ({ kind: 'notificationDestination', channel: alerts.channels[0]! }),
+  }, async () => ({
+    mode: 'preview', sourceConfig: { v: 1, subject: environment, ...(hasCheck ? { checks: [check] } : {}),
+      alerts: hasCheck ? alerts : { channels: [], phases: ['open'] }, investigation },
     destinationSelectionContext: { serverId: 'home', machineId: 'controller' },
     testContext: { serverId: 'home', machineId: 'controller',
       sourceInstanceId: createHealthCheckSourceInstanceIdV1(environment), expectedSourceRevision: '9' },
   }));
-  await act(async () => { await page.press(await page.getByRole('button', { name: 'Turn alerts off' })); });
+  await act(async () => { await page.press(await page.getByRole('button', { name: hasCheck ? 'Turn alerts off' : 'Add destination' })); });
   const save = await page.getByRole('button', { name: 'Save changes' });
   expect(save.state?.disabled ?? false).toBe(false);
   await act(async () => { await page.press(save); });
-  expect(settled).toEqual([{ kind: 'completed', input: { v: 1, subject: environment, checks: [check],
-    alerts: { channels: [], phases: ['open'] }, investigation } }]);
+  const savedAlerts = hasCheck ? { channels: [], phases: ['open'] } : alerts;
+  expect(settled).toEqual([{ kind: 'completed', input: { v: 1, subject: environment, checks: hasCheck ? [check] : [],
+    alerts: savedAlerts, investigation } }]);
+  const saved = { v: 1, subject: environment, checks: hasCheck ? [check] : [],
+    alerts: savedAlerts, investigation };
+  await mounted?.dispose();
+  const reopened = await mount({ initialInput: saved });
+  expect((await reopened.page.getByRole('button', { name: 'Save changes' })).state?.disabled ?? false).toBe(false);
+  await expect(reopened.page.getByText(hasCheck ? 'Off' : 'saved-slack')).resolves.toBeDefined();
+  expect(reopened.settled).toEqual([]);
 });
