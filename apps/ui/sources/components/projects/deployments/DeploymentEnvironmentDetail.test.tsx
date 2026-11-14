@@ -1456,6 +1456,40 @@ describe('Project deployments page', () => {
     } finally { controller.retire(); }
   });
 
+  it.each([[true, false], [false, true]] as const)('offers Prepare with an agent once: not on the Overview while the Environments list beside it offers it (list %s)', async (listOffers, onOverview) => {
+    const { ModalProvider } = await import('@/modal');
+    const base = environmentDetailForHome();
+    const detail = environmentDetailForHome({ content: { ...base.content,
+      definition: { kind: 'repository', ref: 'main', compose: { path: 'compose.yaml', profiles: [], services: ['app'] } } } });
+    const { controller } = controllerFor({ detail });
+    const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+    try {
+      const screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+        demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null}
+        review={noReview} onOpenReceipt={() => {}} lifetime={lifetime} preparationInList={listOffers} /></ModalProvider>);
+      await waitForContent(screen, 'project-deployments.environment.menu');
+      expect(screen.findByTestId('project-deployments.prepare.open') !== null).toBe(onOverview);
+      await screen.unmount();
+    } finally { await act(async () => { controller.retire(); }); }
+  });
+
+  it('names the Project the hosting page carries in the meta line, even without a checkout, and opens it', async () => {
+    const { controller, detail } = controllerFor({});
+    const open = vi.fn();
+    try {
+      const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+        demand={shown} accountId="account-owner" serverId={scope.serverId} phone={false} deploy={null} review={noReview}
+        onOpenReceipt={() => {}} project={{ name: 'billing-api', onOpen: open }} />);
+      await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.environment.header')).not.toBeNull());
+      expect(screen.getTextContent()).toContain('billing-api');
+      // The meta fact is a link (the header owner's pressable inside the fact).
+      const link = screen.findByTestId('project-deployments.environment.project')
+        ?.findAll(node => node.props.accessibilityRole === 'link' && typeof node.props.onPress === 'function')[0];
+      await act(async () => { link?.props.onPress(); });
+      expect(open).toHaveBeenCalledTimes(1);
+    } finally { controller.retire(); }
+  });
+
   it('shows the version the runtime link serves and opens its receipt', async () => {
     const base = environmentDetailForHome();
     const current = base.targetLinks[0]!;

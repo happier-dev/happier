@@ -15,8 +15,9 @@ export function WorkspaceRouteBody() {
     const demand = useDeploymentPresentationDemand(isFocused);
     // The page's details slot: an Environment's companion (Logs) docks beside it here as on the Project page (P11).
     return <DetailsPaneSlotHost testID="project-deployments.details">
-        <ProjectSourceShellHeaderHost serverId={serverId} sourceId={projectSourceId} presented={demand.visible} />
-        <ProjectDeploymentsBody serverId={serverId} projectSourceId={projectSourceId} isFocused={isFocused} />
+        {/* The Project header stands above the page unless the Environment page stands beside the Services column. */}
+        <ProjectDeploymentsBody serverId={serverId} projectSourceId={projectSourceId} isFocused={isFocused}
+            header={<ProjectSourceShellHeaderHost serverId={serverId} sourceId={projectSourceId} presented={demand.visible} />} />
     </DetailsPaneSlotHost>;
 }
 

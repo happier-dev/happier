@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDeploymentReadControllerV1, type DeploymentReadTransportV1 } from '@happier-dev/deployments';
 import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { act, renderScreen, standardCleanup } from '@/dev/testkit';
+const { View } = await import('react-native');
 import { AccountNoticeInvestigationBoundary } from '@/hooks/inbox/AccountNoticeInvestigationProvider';
 
 vi.mock('react-native', async () => {
@@ -28,12 +29,12 @@ const { useDeploymentPresentationDemand } = await import('./useDeploymentPresent
 const { DestinationInstanceContext } = await import('@/components/appShell/workspace/destinationInstanceContext');
 
 /** The route's demand producer under a hosted destination; the shared controller and transport boundary stay real. */
-function Page(props: Readonly<{ controller: ReturnType<typeof createDeploymentReadControllerV1> }>) {
+function Page(props: Readonly<{ controller: ReturnType<typeof createDeploymentReadControllerV1>; header?: React.ReactNode }>) {
     const demand = useDeploymentPresentationDemand(false);
     const scope = props.controller.scope;
     const lifetime = React.useMemo(() => ({ scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) }), [scope]);
     return <ProjectDeploymentsView controller={props.controller} demand={demand} lifetime={lifetime as never}
-        serverId={scope.serverId} accountId={scope.accountId} sourceId="source-app" />;
+        serverId={scope.serverId} accountId={scope.accountId} sourceId="source-app" header={props.header} />;
 }
 
 describe('Environment detail in a split pane', () => {
@@ -94,7 +95,7 @@ describe('Environment detail in a split pane', () => {
             expect(screen.findByTestId('project-deployments.environment') !== null).toBe(visible);
         } finally { await screen.unmount(); controller.retire(); }
     });
-    it.each([[true, false], [false, true]] as const)('drops its own Environments list where the Services column stands beside it (column %s), keeping the Environment page', async (columnVisible, listShown) => {
+    it.each([[true, false], [false, true]] as const)('drops its own Environments list and the hosting Project header where the Services column stands beside it (column %s), keeping the Environment page', async (columnVisible, listShown) => {
         const { AppShellColumnContext } = await import('@/components/navigation/shell/appRail/appShellColumnContext');
         const detail = createDeploymentEnvironmentDetailV1();
         const receipt = createDeploymentReceiptDetailV1();
@@ -110,7 +111,7 @@ describe('Environment detail in a split pane', () => {
             <AppShellColumnContext.Provider value={{ present: true, columnVisible }}>
                 <DestinationInstanceContext.Provider value={{ tabId: 'pane-a', ref: { kind: 'route', params: { deploymentEnvironment: detail.environment.id } } as never,
                     pathname: '/deployments/source-app', focused: true, visible: true, isFocused: () => true, navigation }}>
-                    <Page controller={controller} />
+                    <Page controller={controller} header={<View testID="hosting-header" />} />
                 </DestinationInstanceContext.Provider>
             </AppShellColumnContext.Provider>
         </AccountNoticeInvestigationBoundary>);
@@ -118,6 +119,8 @@ describe('Environment detail in a split pane', () => {
             await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
             expect(screen.findByTestId('project-deployments.environment')).not.toBeNull();
             expect(screen.findByTestId(`project-deployments.rail.row.${detail.environment.id}`) !== null).toBe(listShown);
+            // One title: beside the column the Environment's own header leads; the Project is its meta link.
+            expect(screen.findByTestId('hosting-header') !== null).toBe(listShown);
         } finally { await screen.unmount(); controller.retire(); }
     });
 });

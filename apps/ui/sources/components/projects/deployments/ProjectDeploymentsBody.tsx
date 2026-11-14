@@ -82,7 +82,9 @@ const DRAFTING: Selection = Object.freeze({ environmentId: null, deploymentId: n
  */
 export const ProjectDeploymentsBody = React.memo(
   function ProjectDeploymentsBody(
-    props: Readonly<{ isFocused: boolean } & (
+    props: Readonly<{ isFocused: boolean;
+      /** The hosting page's Project header; the page leaves it out beside the Services column (one title). */
+      header?: React.ReactNode } & (
       { workspaceRef: WorkspaceRefV1 }
       | { serverId: string | null; projectSourceId: string | null }
     )>,
@@ -96,20 +98,20 @@ export const ProjectDeploymentsBody = React.memo(
     const { controller, actions } = useDeploymentProject(binding, sourceId, demand);
 
     if (!sourceId) {
-      return <ProjectDeploymentsNoSource checkout={'workspaceRef' in props ? props.workspaceRef : null} />;
+      return <>{props.header}<ProjectDeploymentsNoSource checkout={'workspaceRef' in props ? props.workspaceRef : null} /></>;
     }
     // A settled non-bound Home (a link without its Home, a signed-out or unreadable credential) says so and
     // offers its next step; only a Home still resolving, or a bound one whose reads are starting, loads.
     if (!binding && resolution.kind !== 'resolving' && resolution.kind !== 'bound') {
-      return (
+      return (<>{props.header}
         <ItemList testID="project-deployments.homeUnavailable">
           <UnboundSessionHomeScopeCard resolution={resolution} serverId={serverId ?? ''} testIDPrefix="project-deployments" />
-        </ItemList>
+        </ItemList></>
       );
     }
     if (!binding || !controller) {
-      return (
-        <PageLoadingRows testID="project-deployments.loading" header />
+      return (<>{props.header}
+        <PageLoadingRows testID="project-deployments.loading" header /></>
       );
     }
     return (
@@ -122,6 +124,7 @@ export const ProjectDeploymentsBody = React.memo(
         lifetime={binding}
         sourceId={sourceId}
         workspaceRef={'workspaceRef' in props ? props.workspaceRef : null}
+        header={props.header}
       />
     );
   },
@@ -168,6 +171,8 @@ export const ProjectDeploymentsView = React.memo(
       lifetime: ServerAccountScopeLifetime | null;
       sourceId: string;
       workspaceRef?: WorkspaceRefV1 | null;
+      /** The hosting page's Project header, drawn unless the Environment page stands beside the Services column. */
+      header?: React.ReactNode;
     }>,
   ) {
     return (
@@ -463,6 +468,11 @@ const ProjectDeploymentsPage = React.memo(
             },
           }
         : null;
+    // The Machines index's rule (AllMachinesIndex `besideList`): on the Services door the shell column already lists
+    // these Environments while it shows, so the page stands alone beside it (lab `envOv`): no nested list and no hosting
+    // Project header; the Project is the Environment's meta link. Collapsed, on a phone or inside a Project, both stay.
+    const besideList = props.workspaceRef == null && shellColumnVisible && items.length > 0;
+    const openHostProject = () => router.push(projectSourceRoute(props.sourceId));
     const detail =
       selection.defaults ? <ProjectDeploymentDefaultsSettings key={`${props.serverId}:${props.accountId}:${props.sourceId}`}
         lifetime={props.lifetime} sourceId={props.sourceId} demand={props.demand} environments={triggerEnvironments}
@@ -515,6 +525,11 @@ const ProjectDeploymentsPage = React.memo(
         <DeploymentEnvironmentDetail
           key={environmentId}
           workspaceRef={props.workspaceRef}
+          // Outside a Project page the meta line names the Project this route hosts (its Source) and opens it.
+          project={props.workspaceRef == null && sourceRead.source
+            ? { name: sourceRead.source.source.name, onOpen: openHostProject } : null}
+          // One Prepare with an agent per page (QA-DEPLOY #23, lab rdProj-proj): the Environments list's, while it stands.
+          preparationInList={!besideList && newWorkEnabled && sourceAvailable && Boolean(props.lifetime)}
           controller={props.controller}
           environmentId={environmentId}
           demand={props.demand}
@@ -549,10 +564,7 @@ const ProjectDeploymentsPage = React.memo(
         />
       ));
     const scale = Math.max(1, fontScale);
-    // The Machines index's rule (AllMachinesIndex `besideList`): on the Services door the shell column already lists
-    // these Environments while it shows, so the page stands alone beside it (lab `envOv`); collapsed, on a phone or
-    // inside a Project, this list is the only one and stays.
-    if (props.workspaceRef == null && shellColumnVisible && items.length > 0) {
+    if (besideList) {
       return (
         <View testID="project-deployments" style={{ flex: 1, minHeight: 0 }}>
           <LandOnFirstEnvironment
@@ -574,6 +586,7 @@ const ProjectDeploymentsPage = React.memo(
           minHeight: 0,
           }}
       >
+        {props.header}
         <HappierListDetailLayout
           testID="project-deployments.layout"
           listTestID="project-deployments.list-pane"

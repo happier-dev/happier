@@ -145,10 +145,6 @@ import { EnvironmentPageNavigation } from './EnvironmentNavigationViews';
 import { PageLoadingRows } from '@/components/ui/layout/PageLoadingRows';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { useMachineServicesList } from '@/components/machines/services/useMachineServicesList';
-import { useOpenProject } from '@/components/projects/useOpenProject';
-import { getStorage } from '@/sync/domains/state/storageStore';
-import { readProjectWorkspaceRefs } from '@/sync/store/domains/projectAccountRows';
-import { selectSourceCheckoutWorkspaceRefs } from '@/sync/domains/workspaces/workspaceRefs';
 import { Collection, Status, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
 import { machineServiceIcon, machineServiceRunFacts, machineServiceStateTone } from '@/components/machines/services/machineServicesPresentation';
 import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
@@ -206,6 +202,10 @@ export const DeploymentEnvironmentDetail = React.memo(
       /** The captured Home/Account the Variables draft writes under; absent while it is not current. */
       lifetime?: ServerAccountScopeLifetime | null;
       workspaceRef?: WorkspaceRefV1 | null;
+      /** Outside a Project page, the Project the hosting route carries: named in the meta line and opened from it. */
+      project?: Readonly<{ name: string; onOpen: () => void }> | null;
+      /** The Environments list on this page already offers Prepare with an agent, so the Overview doesn't repeat it. */
+      preparationInList?: boolean;
       /** The Action owner's `deployments.bindings.set`; absent where the page cannot write. */
       setBindings?: EnvironmentBindingsCommit | null;
       /** The open tab and Settings section, from the page's URL; a standalone render keeps its own. */
@@ -256,12 +256,6 @@ export const DeploymentEnvironmentDetail = React.memo(
     const detail = environment.snapshot.value;
     const definitionDocument = useStoredDefinitionDocument(props.environmentId, detail?.content.definition);
     const projectSource = useProjectSource(props.lifetime ?? null, detail?.environment.projectSourceId ?? null);
-    // Outside its Project (the Services door) the header names the Project this Environment deploys and opens it
-    // (lab `envOv`): the person's checkout of that Source on this Home, through the shared Project opener.
-    const projectSourceId = detail?.environment.projectSourceId ?? null;
-    const projectRefId = getStorage()((state) => props.workspaceRef || !projectSourceId ? null
-      : selectSourceCheckoutWorkspaceRefs(readProjectWorkspaceRefs(state), projectSourceId, props.serverId)[0]?.id ?? null);
-    const openProject = useOpenProject();
     // "Point at another service" offers this Environment's declared exports (L-C variables/refpick).
     const serviceExports = detail?.content.ownServer?.serviceExports;
     const detailEnvironmentId = detail?.environment.id ?? null;
@@ -492,16 +486,16 @@ export const DeploymentEnvironmentDetail = React.memo(
     const platformName = platform?.title ?? null;
     // Where it runs, what defines it, then where people reach it (lab d1 header): vps-2 · Compose · compose.yaml · address.
     const composeHosted = runtime ? runtime.source.kind === 'host' : definition !== null;
-    const projectName = projectSource.source?.source.name ?? null;
     const meta: PageHeaderMetaFact[] = [
       ...(platformName ? [{ key: 'platform', text: platformName }] : []),
       ...machineIds.flatMap((machineId) => {
         const name = knownMachine(machineId);
         return name ? [{ key: `machine:${machineId}`, text: name, icon: 'hard-drives' as const }] : [];
       }),
-      ...(projectRefId && projectName ? [{ key: 'project', text: projectName, testID: 'project-deployments.environment.project',
-        accessibilityLabel: t('projects.deployments.overviewStatus.openProject', { project: projectName }),
-        onPress: () => { void openProject(projectRefId, { serverId: props.serverId }); } }] : []),
+      // The Project the hosting page carries (lab `envOv` meta): named in ink, opening it.
+      ...(props.project ? [{ key: 'project', text: props.project.name, testID: 'project-deployments.environment.project',
+        accessibilityLabel: t('projects.deployments.overviewStatus.openProject', { project: props.project.name }),
+        onPress: props.project.onOpen }] : []),
       ...(composeHosted ? [{ key: 'compose', text: t('projects.deployments.compose') }] : []),
       ...(composeHosted && definition ? [{ key: 'definition', text: definition, mono: true }] : []),
       // Overview's live row says the address once it serves; elsewhere the header still names where it is reached.
@@ -1015,7 +1009,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                 <View style={styles.agentActions}>
                   <DeploymentEnvironmentAgentActions serverId={props.serverId} environmentId={detail.environment.id}
                     controllerMachineId={detail.environment.controllerMachineId}
-                    preparation={props.lifetime && detail.content.definition.kind === 'repository'
+                    preparation={!props.preparationInList && props.lifetime && detail.content.definition.kind === 'repository'
                       ? { lifetime: props.lifetime, projectSourceId: detail.environment.projectSourceId } : undefined}
                     compact={props.phone} emphasis={ready ? 'secondary' : 'primary'} />
                 </View>
