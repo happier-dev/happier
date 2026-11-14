@@ -43,7 +43,6 @@ import type {
     HostConnectedAccountAuthenticationContext, HostConnectedAccountReadContext,
 } from './hostRuntime';
 
-type MaybePromise<T> = T | Promise<T>;
 type PluginConnectedAccountReadContext =
     Parameters<PluginConnectedAccountRuntime['status']>[0];
 type ConnectedAccountCredentialReader =
@@ -70,9 +69,6 @@ export type ConnectedAccountRuntimeAuthenticationInvocation =
     ConnectedAccountAttemptProviderInvocation & Readonly<{
         /** The host retains the admitted executable; portable attempt custody is host agnostic. */
         lease?: ConnectedAccountRuntimeLease | ConnectedAccountPortableRuntimeLease;
-        isConfigurationCurrent(
-            configuration: PluginConnectedAccountRuntimeConfiguration,
-        ): MaybePromise<boolean>;
         configurationRevocationSignal?(
             configuration: PluginConnectedAccountRuntimeConfiguration,
         ): AbortSignal | undefined;
@@ -182,9 +178,6 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
             const redaction = hostRedaction(lifetime);
             const assertCurrent = async () => {
                 if (lifetime.signal.aborted) throw lifetime.signal.reason ?? new Error('Connected-account authentication was aborted');
-                if (!await input.isConfigurationCurrent(input.context.configuration)) {
-                    throw new Error('Connected-account authentication configuration is no longer current');
-                }
             };
             const context: HostConnectedAccountAuthenticationContext = Object.freeze({
                 ...input.context,
@@ -225,16 +218,11 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
             // Reload publication does not retire an already-entered auth flow.
             isOccurrenceCurrent: () => !signal.aborted,
         });
-        const assertCurrent = async (
-            _phase: ConnectedAccountCallbackCurrentnessPhase = 'afterCallback',
-        ): Promise<void> => {
+        const assertCurrent = async (): Promise<void> => {
             if (signal.aborted) {
                 throw signal.reason instanceof Error
                     ? signal.reason
                     : new Error('Connected-account authentication operation was aborted');
-            }
-            if (!await input.isConfigurationCurrent(input.context.configuration)) {
-                throw new Error('Connected-account authentication runtime is no longer current');
             }
         };
         try {

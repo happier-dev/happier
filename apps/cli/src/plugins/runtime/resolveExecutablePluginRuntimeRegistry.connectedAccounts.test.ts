@@ -385,7 +385,6 @@ describe('executable plugin runtime Connected Accounts integration', () => {
                     configuration,
                     attemptCredentials,
                 }),
-                isConfigurationCurrent: async () => true,
                 signal: new AbortController().signal,
             })).resolves.toMatchObject({
                 status: 'connected',
@@ -653,7 +652,6 @@ describe('executable plugin runtime Connected Accounts integration', () => {
                     isCurrent: async () => true,
                     invoke: async (input) => await runtime!.connectedAccountRuntimeInvoker!.invokeAuthentication({
                         ...input,
-                        isConfigurationCurrent: async () => true,
                     }),
                 }),
                 oauth: Object.freeze({

@@ -388,7 +388,6 @@ export function createPackedTestConnectedAccountsRuntime(params: Readonly<{
           configuration,
           attemptCredentials,
         }),
-        isConfigurationCurrent: () => isCurrent(),
         signal: input.signal,
       });
       if (

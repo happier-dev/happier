@@ -340,7 +340,7 @@ describe('manual Connected Account production invocation', () => {
                 expect(await attempts.execute({ operation: 'submitManual', attemptId: 'manual-1', fields: fixture.fields })).toMatchObject({
                     status: 'rejected', code: 'email_mailbox_login_failed',
                 });
-                expect(await attempts.execute({ operation: 'read', attemptId: 'manual-1' })).toMatchObject({ status: 'rejected' });
+                expect(await attempts.execute({ operation: 'read', attemptId: 'manual-1' })).toMatchObject({ status: 'awaitingManual' });
                 expect(persisted).toEqual([]);
                 expect(new Set(requests)).toEqual(new Set(['https://login.microsoftonline.com']));
                 return;
@@ -408,7 +408,8 @@ describe('manual Connected Account production invocation', () => {
             expect(await submit('manual-2', { token: 'invalid-fixture-credential' })).toMatchObject({
                 status: 'rejected', code: fixture.rejectionCode ?? `${fixture.provider}_bot_token_rejected`,
             });
-            expect(await attempts.execute({ operation: 'read', attemptId: 'manual-2' })).toMatchObject({ status: 'rejected' });
+            expect(await attempts.execute({ operation: 'read', attemptId: 'manual-2' }))
+                .toMatchObject({ status: fixture.oauth ? 'rejected' : 'awaitingManual' });
             expect(persisted).toHaveLength(1);
             rejectCredential = false;
             for (const probe of fixture.rejectionProbes ?? []) {
@@ -419,7 +420,8 @@ describe('manual Connected Account production invocation', () => {
                     .toMatchObject({ status: fixture.oauth ? 'awaitingOAuth' : 'awaitingManual', attemptId });
                 expect(await submit(attemptId), probe.label)
                     .toMatchObject({ status: 'rejected', code: probe.code });
-                expect(await attempts.execute({ operation: 'read', attemptId }), probe.label).toMatchObject({ status: 'rejected' });
+                expect(await attempts.execute({ operation: 'read', attemptId }), probe.label)
+                    .toMatchObject({ status: fixture.oauth ? 'rejected' : 'awaitingManual' });
                 expect(persisted, probe.label).toHaveLength(1);
             }
             if (fixture.provider === 'cloudflare') {

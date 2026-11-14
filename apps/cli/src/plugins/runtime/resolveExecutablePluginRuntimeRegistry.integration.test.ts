@@ -2809,11 +2809,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 set: async () => undefined,
                 delete: async () => undefined,
             });
-            const invoke = async (
-                isConfigurationCurrent: (
-                    snapshot: PluginConnectedAccountRuntimeConfiguration,
-                ) => boolean | Promise<boolean>,
-            ) => await runtimeRegistry.connectedAccountRuntimeInvoker?.invokeAuthentication({
+            const invoke = async () => await runtimeRegistry.connectedAccountRuntimeInvoker?.invokeAuthentication({
                 admission: Object.freeze({
                     service: lease.ref,
                     descriptor: lease.descriptor.authentication.modes[0]!,
@@ -2834,10 +2830,9 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                     configuration,
                     attemptCredentials,
                 }),
-                isConfigurationCurrent,
                 signal: new AbortController().signal,
             });
-            await expect(invoke(() => true)).resolves.toMatchObject({
+            await expect(invoke()).resolves.toMatchObject({
                 status: 'connected',
                 accountId: 'novel-1',
             });
@@ -2846,31 +2841,6 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 method: 'POST',
             }]);
 
-            let currentnessChecks = 0;
-            let releaseFinalCheck!: () => void;
-            const finalCheckReleased = new Promise<void>((resolve) => {
-                releaseFinalCheck = resolve;
-            });
-            let notifyFinalCheck!: () => void;
-            const finalCheckStarted = new Promise<void>((resolve) => {
-                notifyFinalCheck = resolve;
-            });
-            let configurationCurrent = true;
-            const staleInvocation = invoke(async () => {
-                currentnessChecks += 1;
-                if (currentnessChecks === 2) {
-                    notifyFinalCheck();
-                    await finalCheckReleased;
-                }
-                return configurationCurrent;
-            });
-            await finalCheckStarted;
-            configurationCurrent = false;
-            releaseFinalCheck();
-            await expect(staleInvocation).rejects.toMatchObject({
-                message: 'Connected-account authentication runtime is no longer current',
-            });
-            expect(requests).toHaveLength(1);
             const introspection = adaptTargetActivationFacts({
                 generation: runtimeRegistry.generation!,
                 candidates: runtimeRegistry.contributes.introspectionContributions ?? [],

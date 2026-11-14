@@ -369,7 +369,6 @@ describe('connected-account runtime invoker', () => {
                 occurrenceId: lease.occurrenceId, sourceCustody: lease.sourceCustody },
             operation: { kind: 'submitManual', fields: { token: 'host-secret' } },
             context: { service: ref, attempt: { kind: 'connect', attemptId: 'host-attempt' }, configuration, attemptCredentials: credentials },
-            isConfigurationCurrent: () => true,
         })).resolves.toMatchObject({ status: 'connected', accountId: 'server-a' });
         const established = {
             target: { account: { service: ref, accountId: 'server-a' }, expectedCredentialRevision: 'credential-1', expectedRuntimeConfigurationRevision: configuration.revision },
@@ -385,7 +384,6 @@ describe('connected-account runtime invoker', () => {
                 occurrenceId: lease.occurrenceId, sourceCustody: lease.sourceCustody },
             operation: { kind: 'cancel' },
             context: { service: ref, attempt: { kind: 'connect', attemptId: 'host-attempt' }, configuration, attemptCredentials: credentials },
-            isConfigurationCurrent: () => true,
         })).resolves.toBeUndefined();
         for (const context of observed) {
             expect(context).not.toHaveProperty('plugin');
@@ -547,7 +545,6 @@ describe('connected-account runtime invoker', () => {
                     delete: async () => {},
                 }),
             }),
-            isConfigurationCurrent: () => true,
         });
 
         await entered;
@@ -885,7 +882,6 @@ describe('connected-account runtime invoker', () => {
                     delete: async () => {},
                 }),
             }),
-            isConfigurationCurrent: () => true,
         })).resolves.toEqual({
             status: 'rejected',
             diagnostic: {
@@ -1124,7 +1120,6 @@ describe('connected-account runtime invoker', () => {
                 }),
             }),
             context,
-            isConfigurationCurrent: () => true,
         });
         await invoker.invokeAuthentication({
             admission,
@@ -1138,7 +1133,6 @@ describe('connected-account runtime invoker', () => {
                 }),
             }),
             context,
-            isConfigurationCurrent: () => true,
         });
 
         expect(observedRegistrations).toEqual([
@@ -1315,7 +1309,7 @@ describe('connected-account runtime invoker', () => {
                         occurrenceId: lease.occurrenceId,
                         sourceCustody: lease.sourceCustody,
                         runtimeCustody: {
-                            invoke: async (input: ConnectedAccountAttemptProviderInvocation) => invoker.invokeAuthentication({ ...input, lease, isConfigurationCurrent: configurationOwner.isCurrent }),
+                            invoke: async (input: ConnectedAccountAttemptProviderInvocation) => invoker.invokeAuthentication({ ...input, lease }),
                             release: async () => {},
                         },
                     });
@@ -1348,15 +1342,12 @@ describe('connected-account runtime invoker', () => {
         if (authentication === 'device') {
             await vi.waitFor(async () => {
                 expect(await attempts.read({ attemptId: 'attempt-1' })).toMatchObject({
-                    status: successor === 'configurationChanged' ? 'conflict' : 'awaitingDeviceAuthorization',
+                    status: 'awaitingDeviceAuthorization',
                     attemptId: 'attempt-1',
-                    ...(successor === 'configurationChanged'
-                        ? { code: 'connected_account_configuration_changed' }
-                        : { userCode: 'ABCD' }),
+                    userCode: 'ABCD',
                 });
             });
-            if (successor === 'configurationChanged') expect(complete).not.toHaveBeenCalled();
-            else expect(complete).toHaveBeenCalledOnce();
+            expect(complete).toHaveBeenCalledOnce();
             expect(settle).not.toHaveBeenCalled();
             attempts.dispose();
             return;
@@ -1520,7 +1511,6 @@ describe('connected-account runtime invoker', () => {
                     invoke: async (input) =>
                         await invoker.invokeAuthentication({
                             ...input,
-                            isConfigurationCurrent: async () => true,
                         }),
                 }),
                 oauth: Object.freeze({
@@ -1592,6 +1582,10 @@ describe('connected-account runtime invoker', () => {
                     attemptId: 'attempt-1',
                     code:
                         'connected_account_authentication_outcome_unknown',
+                    diagnostic: {
+                        code: 'connected_account_provider_operation_interrupted',
+                        severity: 'error',
+                    },
                 };
             await expect(completion).resolves.toEqual(expected);
             await expect(attempts.reconcile({
@@ -1689,7 +1683,6 @@ describe('connected-account runtime invoker', () => {
                     delete: async () => {},
                 }),
             }),
-            isConfigurationCurrent: () => true,
         } as const;
 
         await expect(createInvoker().invokeAuthentication(invocation)).resolves.toMatchObject({ status: 'connected' });

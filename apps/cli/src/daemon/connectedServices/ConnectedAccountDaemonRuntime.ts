@@ -303,7 +303,6 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                             return await invoker.invokeAuthentication({
                                 ...invocation,
                                 lease: contribution,
-                                isConfigurationCurrent: configuration.isCurrent,
                                 configurationRevocationSignal: configuration.currentnessSignal,
                             });
                         } finally {
