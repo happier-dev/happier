@@ -8901,6 +8901,8 @@ settingsSession: {
         customResumePromptPlaceholder: "中断したところから続けてください。",
       },
       providerUsageGauge: {
+          numberTitle: "リング中央の数値",
+          numberSubtitle: "リング内の数値に使う上限を選択します。利用できない場合は、残量が最も少ない上限を使います。",
         title: "プロバイダー使用量",
         footer:
           "すべてのアカウントの入力欄に表示するゲージを選択します。各プールで選択された使用制限が適用されます。お気に入りは現在のアカウントにゲージを追加します。",

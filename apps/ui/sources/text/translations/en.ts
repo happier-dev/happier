@@ -8223,6 +8223,8 @@ settingsSession: {
               customResumePromptPlaceholder: 'Continue from where you left off.',
           },
           providerUsageGauge: {
+              numberTitle: "Ring centre number",
+              numberSubtitle: "Choose the limit for the number inside the rings. If unavailable, use the most constrained limit.",
               title: 'Provider usage',
               footer: "Choose composer gauges for all accounts. Gauges respect each pool’s selected usage limits. Account favorites add extra gauges for the active account.",
               visibilityTitle: 'Show provider usage gauge',

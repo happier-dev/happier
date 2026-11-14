@@ -97,7 +97,7 @@ describe('AgentInputProviderUsageBadge', () => {
         expect(screen.findByTestId('agent-input-provider-usage-meter:reached')).toBeTruthy();
         expect(screen.findByTestId('agent-input-provider-usage-meter-bar:reached')).toBeNull();
     });
-    it('renders each selected global window with its own remaining-first ring and accessible name', async () => {
+    it('draws concentric windows with one independently selected center number and accessible names', async () => {
         const vm = computeConnectedServiceQuotaGaugeViewModel({
             snapshot: {
                 v: 1, serviceId: 'openai-codex', profileId: 'work', fetchedAt: 1_000, staleAfterMs: 60_000,
@@ -108,22 +108,28 @@ describe('AgentInputProviderUsageBadge', () => {
                         resetsAt: null, status: 'ok', details: { limitCategory: 'usage_limit' } },
                 ],
             },
-            windowMode: 'most_constrained', windowModes: ['weekly', 'daily'], nowMs: 2_000,
+            windowMode: 'most_constrained', windowModes: ['weekly', 'daily'], numberWindowMode: 'daily', nowMs: 2_000,
             formatter: fixtureFormatter,
         });
         if (!vm) throw new Error('Expected a reported quota gauge');
         const screen = await renderScreen(<AgentInputProviderUsageBadge viewModel={vm} />);
 
-        expect(screen.findByTestId('agent-input-provider-usage-value')?.props.children).toBe('18');
-        expect(screen.findByTestId('agent-input-provider-usage-value:daily')?.props.children).toBe('70');
+        expect(screen.findByTestId('agent-input-provider-usage-value')?.props.children).toBe('70');
+        expect(screen.findByTestId('agent-input-provider-usage-value:daily')).toBeNull();
         const imageLabels = screen.findAll((node) => typeof node.type === 'string' && node.props.accessibilityRole === 'image')
             .map((node) => node.props.accessibilityLabel);
-        expect(imageLabels).toEqual(['Weekly 18% left', 'Daily 70% left']);
+        expect(imageLabels).toHaveLength(1);
+        expect(imageLabels[0]).toContain('Weekly 18% left');
+        expect(imageLabels[0]).toContain('Daily 70% left');
+        const arcs = screen.findAll(node => String(node.type) === 'Circle' && typeof node.props.strokeDashoffset === 'number');
+        expect(arcs).toHaveLength(2);
+        expect(arcs[0].props.cx).toBe(arcs[1].props.cx);
+        expect(arcs[0].props.cy).toBe(arcs[1].props.cy);
+        expect(arcs[0].props.r).toBeGreaterThan(arcs[1].props.r);
         const aggregate = String(screen.findByTestId('agent-input-provider-usage-badge')?.props.accessibilityLabel);
         expect(aggregate).toContain('Weekly 18% left');
         expect(aggregate).toContain('Daily 70% left');
-        expect(screen.findByTestId('agent-input-provider-usage-meter-label')?.props.children).toBe('Weekly');
-        expect(screen.findByTestId('agent-input-provider-usage-meter-label:daily')?.props.children).toBe('Daily');
+        expect(screen.findByTestId('agent-input-provider-usage-meter-label')).toBeNull();
         act(() => { screen.findByTestId('agent-input-provider-usage-badge')?.props.onPress?.(); });
         expect(screen.findByTestId('agent-input-provider-usage-meter:daily')).toBeTruthy();
     });

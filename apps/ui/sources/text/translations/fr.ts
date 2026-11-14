@@ -8178,6 +8178,8 @@ settingsSession: {
               customResumePromptPlaceholder: 'Reprends là où tu t’es arrêté.',
           },
           providerUsageGauge: {
+              numberTitle: "Nombre au centre des anneaux",
+              numberSubtitle: "Choisissez la limite du nombre dans les anneaux. Si elle est indisponible, la limite la plus contraignante est utilisée.",
               title: 'Usage du provider',
               footer: "Choisissez les jauges du composeur pour tous les comptes. Elles respectent les limites sélectionnées dans chaque pool. Les favoris ajoutent des jauges pour le compte actif.",
               visibilityTitle: 'Afficher la jauge d’usage du provider',

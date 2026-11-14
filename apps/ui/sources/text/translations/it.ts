@@ -8983,6 +8983,8 @@ settingsSession: {
         customResumePromptPlaceholder: "Continua da dove eri rimasto.",
       },
       providerUsageGauge: {
+          numberTitle: "Numero al centro degli anelli",
+          numberSubtitle: "Scegli il limite per il numero negli anelli. Se non è disponibile, viene usato quello più restrittivo.",
         title: "Uso del provider",
         footer:
           "Scegli gli indicatori del compositore per tutti gli account. Rispettano i limiti selezionati in ogni pool. I preferiti aggiungono indicatori per l’account attivo.",

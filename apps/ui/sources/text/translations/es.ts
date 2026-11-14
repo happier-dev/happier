@@ -8652,6 +8652,8 @@ settingsSession: {
         customResumePromptPlaceholder: "Continúa desde donde lo dejaste.",
       },
       providerUsageGauge: {
+          numberTitle: "Número en el centro de los anillos",
+          numberSubtitle: "Elige el límite para el número dentro de los anillos. Si no está disponible, se usa el más restrictivo.",
         title: "Uso del proveedor",
         footer:
           "Elige los indicadores del editor para todas las cuentas. Respetan los límites de uso seleccionados en cada grupo. Los favoritos añaden indicadores para la cuenta activa.",

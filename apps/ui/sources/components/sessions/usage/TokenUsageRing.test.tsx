@@ -24,6 +24,14 @@ function renderRing(element: React.ReactElement): ReactTestRenderer {
 }
 
 describe('TokenUsageRing', () => {
+    it('keeps every concentric limit visible around a readable center at small sizes', () => {
+        const tree = renderRing(<TokenUsageRing used={70} limit={100} value="70" label="Provider usage" size={18}
+            rings={Array.from({ length: 6 }, (_, index) => ({ used: index * 20, limit: 100 }))} />);
+        const arcs = tree.root.findAll(node => String(node.type) === 'Circle' && typeof node.props.strokeDashoffset === 'number');
+        expect(arcs).toHaveLength(6);
+        expect(arcs.at(-1)?.props.r).toBeGreaterThan(4);
+    });
+
     it('renders caller-provided label and value for goal budget progress', () => {
         const tree = renderRing(
             <TokenUsageRing

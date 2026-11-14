@@ -3,6 +3,7 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { MultiSelectField } from '@/components/ui/forms/dropdown/MultiSelectField';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -18,6 +19,8 @@ export const ProviderUsageGaugeSettingsGroup = React.memo(function ProviderUsage
     const [visibility, setVisibility] = useSettingMutable('sessionProviderUsageGaugeMode');
     const [legacyWindow] = useSettingMutable('sessionProviderUsageGaugeWindowMode');
     const [windows, setWindows] = useSettingMutable('sessionProviderUsageGaugeWindowModes');
+    const [numberWindow, setNumberWindow] = useSettingMutable('sessionProviderUsageGaugeNumberWindowMode');
+    const [numberMenuOpen, setNumberMenuOpen] = React.useState(false);
     const selectedIds = resolveQuotaGaugeWindowModes(windows, legacyWindow);
     const visible = visibility !== 'hidden';
     const candidates = [
@@ -52,6 +55,26 @@ export const ProviderUsageGaugeSettingsGroup = React.memo(function ProviderUsage
             icon={<Icon name="chart-line" size={29} color={theme.colors.accent.blue} />}
             minimumSelected={1}
             exclusiveId="most_constrained"
+        />
+        <DropdownMenu
+            open={numberMenuOpen}
+            onOpenChange={setNumberMenuOpen}
+            selectedId={numberWindow}
+            items={candidates.map(candidate => ({
+                ...candidate,
+                testID: `settings-session-providerUsageGauge-number:${candidate.id}`,
+                icon: <Icon name={numberWindow === candidate.id ? 'check-square' : 'square'} size={20}
+                    color={numberWindow === candidate.id ? theme.colors.accent.blue : theme.colors.text.secondary} />,
+            }))}
+            onSelect={id => { if (isQuotaGaugeWindowMode(id)) setNumberWindow(id); }}
+            rowKind="item"
+            itemTrigger={{
+                title: t('settingsSession.providerUsageGauge.numberTitle'),
+                subtitle: t('settingsSession.providerUsageGauge.numberSubtitle'),
+                showSelectedSubtitle: false,
+                icon: <Icon name="speedometer" size={29} color={theme.colors.accent.blue} />,
+                itemProps: { testID: 'settings-session-providerUsageGauge-number-trigger' },
+            }}
         />
         <UsageGaugeLabelsSettingsItem />
     </ItemGroup>;

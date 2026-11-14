@@ -60,6 +60,33 @@ const formatter: ConnectedServiceQuotaGaugeLabelFormatter = {
 };
 
 describe('computeConnectedServiceQuotaGaugeViewModel', () => {
+    it('selects the center number independently of the drawn windows, retaining zero and a missing-window fallback', () => {
+        const input = {
+            snapshot: snapshot([
+                meter({ meterId: 'primary', label: '5-hour', remainingPct: 0, utilizationPct: 100, windowDurationMs: 18_000_000 }),
+                meter({ meterId: 'secondary', label: 'Weekly', remainingPct: 70, utilizationPct: 30, windowDurationMs: 604_800_000 }),
+            ]),
+            windowMode: 'most_constrained' as const,
+            windowModes: ['session', 'weekly'] as const,
+            nowMs: 2_000, formatter,
+        };
+        const short = computeConnectedServiceQuotaGaugeViewModel({ ...input, numberWindowMode: 'session' });
+        const weekly = computeConnectedServiceQuotaGaugeViewModel({ ...input, numberWindowMode: 'weekly' });
+        expect(short?.ringValueLabel).toBe('0');
+        expect(weekly?.ringValueLabel).toBe('70');
+        expect(weekly?.usageRings).toEqual(short?.usageRings);
+        expect(computeConnectedServiceQuotaGaugeViewModel({ ...input, numberWindowMode: 'primary' })?.ringValueLabel).toBe('0');
+        expect(computeConnectedServiceQuotaGaugeViewModel({ ...input, numberWindowMode: 'secondary' })?.ringValueLabel).toBe('70');
+        expect(computeConnectedServiceQuotaGaugeViewModel({ ...input, numberWindowMode: 'daily' })?.ringValueLabel).toBe('0');
+        expect(computeConnectedServiceQuotaGaugeViewModel({ ...input, numberWindowMode: 'most_constrained' })?.ringValueLabel).toBe('0');
+        const weeklyOnly = computeConnectedServiceQuotaGaugeViewModel({
+            ...input, windowModes: ['weekly'], numberWindowMode: 'session',
+        });
+        expect(weeklyOnly?.ringValueLabel).toBe('0');
+        expect(weeklyOnly?.usageRings.map(ring => ring.meterId)).toEqual(['secondary']);
+    });
+
+
     it('projects Antigravity quota onto the exact active model without borrowing another version', () => {
         const usage = { ...snapshot([
             meter({ meterId: 'model:gemini-2.5-flash', modelId: 'gemini-2.5-flash', utilizationPct: 80, label: 'Gemini 2.5 Flash' }),
@@ -99,7 +126,7 @@ describe('computeConnectedServiceQuotaGaugeViewModel', () => {
         };
         const vm = computeConnectedServiceQuotaGaugeViewModel(params);
         expect(vm?.usageRings.map((ring) => [ring.meterId, ring.ringValueLabel]))
-            .toEqual([['daily-fable', '60'], ['weekly-fable', '40'], ['short-fable', '80']]);
+            .toEqual([['weekly-fable', '40'], ['daily-fable', '60'], ['short-fable', '80']]);
         expect(vm?.allMeterRows.map((row) => row.meterId)).toEqual(['daily-fable', 'weekly-fable', 'short-fable', 'unknown-fable']);
         expect(computeConnectedServiceQuotaGaugeViewModel({
             ...params, quotaLimitSelection: { mode: 'selected', providerLimitIds: ['unreported'] },
