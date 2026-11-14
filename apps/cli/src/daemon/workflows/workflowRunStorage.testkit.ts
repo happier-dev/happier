@@ -500,26 +500,22 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
         return { run: summary(), intent: kind === 'pause' ? 'pause_requested' : 'resumed' };
       }
       case 'wait': {
-        // Faithful projection of the server's observation contract: terminal,
-        // paused, parent-level attention, any indexed actionable invocation,
-        // then revision change, then deadline. No polling delay is simulated.
-        for (;;) {
-          waitAttempts += 1;
-          await params.onBeforeWait?.(waitAttempts);
-          const conditions: readonly unknown[] = Array.isArray(operation.conditions) ? operation.conditions : ['terminal', 'attention', 'paused'];
-          if (conditions.includes('attention') && (state === 'interrupted' || requiresAttention())) {
-            return { observation: 'needs_attention', matchedCondition: 'attention', run: summary() };
-          }
-          if (TERMINAL_RUN_STATES.some((candidate) => candidate === state)) {
-            return { ...(conditions.includes('terminal') ? { observation: 'terminal', matchedCondition: 'terminal' }
-              : { observation: 'not_matched_terminal' }), run: summary(), ...(resultEnvelope ? { resultEnvelope } : {}) };
-          }
-          if (state === 'paused' && conditions.includes('paused')) return { observation: 'paused', matchedCondition: 'paused', run: summary() };
-          if (operation.afterRevision !== undefined && revision !== operation.afterRevision) {
-            return { observation: 'changed', matchedCondition: 'change', run: summary() };
-          }
-          if (params.onBeforeWait === undefined) return { observation: 'timeout', run: summary() };
+        // One server observation; the host owns waiting on the Account feed.
+        waitAttempts += 1;
+        await params.onBeforeWait?.(waitAttempts);
+        const conditions: readonly unknown[] = Array.isArray(operation.conditions) ? operation.conditions : ['terminal', 'attention', 'paused'];
+        if (conditions.includes('attention') && requiresAttention()) {
+          return { observation: 'needs_attention', matchedCondition: 'attention', run: summary() };
         }
+        if (TERMINAL_RUN_STATES.some((candidate) => candidate === state)) {
+          return { ...(conditions.includes('terminal') ? { observation: 'terminal', matchedCondition: 'terminal' }
+            : { observation: 'not_matched_terminal' }), run: summary(), ...(resultEnvelope ? { resultEnvelope } : {}) };
+        }
+        if (state === 'paused' && conditions.includes('paused')) return { observation: 'paused', matchedCondition: 'paused', run: summary() };
+        if (operation.afterRevision !== undefined && revision !== operation.afterRevision) {
+          return { observation: 'changed', run: summary() };
+        }
+        return { observation: operation.timeoutSeconds === 0 ? 'timeout' : 'waiting', run: summary() };
       }
       default:
         throw new Error(`workflow_run_storage_testkit_unsupported_operation:${kind}`);

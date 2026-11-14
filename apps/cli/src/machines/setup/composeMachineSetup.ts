@@ -1,16 +1,10 @@
 import { isReviewedMachineSetupCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
-import {
-  MachineSetupApplyInputV1Schema, MachineSetupCombinedPlanInputV1Schema,
-  MachineSetupCombinedPlanResultV1Schema, MachineSetupPlanResultV1Schema,
-  buildMachineSetupTargetApplyInput,
-  admitCombinedActionWorkflowHostV1,
-  resolveCombinedActionWorkflowHostV1, deriveMachineSetupCombinedRunIdV1, prepareWorkflowRunStartV1,
-  type ActionExecutorContext, type ActionExecutorDeps, type MachineSetupApplyInputV1,
-  type MachineSetupApplyTargetV1,
-  type MachineSetupCombinedPlanResultV1, type WorkflowActionExecuteArgs,
-} from '@happier-dev/protocol';
+import { MachineSetupApplyInputV1Schema, MachineSetupCombinedPlanInputV1Schema, MachineSetupCombinedPlanResultV1Schema, MachineSetupPlanResultV1Schema, buildMachineSetupTargetApplyInput, type MachineSetupApplyInputV1, type MachineSetupApplyTargetV1, type MachineSetupCombinedPlanResultV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { admitCombinedActionWorkflowHostV1, resolveCombinedActionWorkflowHostV1, prepareWorkflowRunStartV1 } from '@happier-dev/protocol/workflows/workflowStartPreparationV1';
+import { deriveMachineSetupCombinedRunIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
+import type { ActionExecutorContext, ActionExecutorDeps, WorkflowActionExecuteArgs } from '@happier-dev/protocol/actions/executor/types';
 import { selectMachineSetupRecipeItemsV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import type { MachineSetupPlanResultV1, MachineSetupPlanReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MachineSetupApplyResultV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupOperationV1';
@@ -19,7 +13,7 @@ import { ActionExecuteFailureSchema, projectActionFailureCauseV1, type ActionExe
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { WorkflowCombinedRunStartV1 } from '@happier-dev/protocol/actions/executor/workflowRunActions';
 import type { WorkflowActionLeafV1, WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
-import { WorkflowActionOutputSchemasV1 } from '@happier-dev/protocol/workflows/actionsV1';
+import { WorkflowActionOutputSchemasV1, WorkflowRunWaitSnapshotV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import { isBackupReceiverSelection } from './backupReceiverResult';
@@ -324,14 +318,14 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
       catch (error) { return uncertain({ ok: false, ...normalizeActionExecutorThrownError(error, 'workflow.run.wait') }); }
       const waitFailure = ActionExecuteFailureSchema.safeParse(observed);
       if (waitFailure.success) return uncertain(waitFailure.data);
-      const settled = WorkflowActionOutputSchemasV1['workflow.run.wait'].safeParse(observed);
+      const settled = WorkflowRunWaitSnapshotV1Schema.safeParse(observed);
       if (!settled.success) return uncertain({ ok: false,
         ...normalizeActionExecutorThrownError(settled.error, 'workflow.run.wait') });
-      if (settled.data.observation !== 'terminal' && settled.data.observation !== 'needs_attention') return uncertain();
-      if (settled.data.run.workflowCustodyState !== 'settled' && settled.data.run.state !== 'interrupted') return uncertain();
-      const succeeded = settled.data.run.state === 'succeeded';
+      const { run } = settled.data;
+      if (run.workflowCustodyState !== 'settled' && run.state !== 'interrupted') return uncertain();
+      const succeeded = run.state === 'succeeded';
       if (succeeded && !hasReceivers) return result;
-      if (settled.data.run.state === 'cancelled') return withRecovery(failure('cancelled'));
+      if (run.state === 'cancelled') return withRecovery(failure('cancelled'));
       // Retained Setup invocations own receiver evidence. Failed Runs retain
       // their typed failure and native details at the same content boundary.
       let cursor: string | undefined;
@@ -368,7 +362,7 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
         cursor = page.data.nextCursor;
       } while (cursor);
       return succeeded ? { ...result, ...(backupReceivers.length ? { backupReceivers } : {}) }
-        : withRecovery(failure('machine_setup_child_failed'));
+        : run.state === 'interrupted' ? uncertain() : withRecovery(failure('machine_setup_child_failed'));
     },
   };
 }

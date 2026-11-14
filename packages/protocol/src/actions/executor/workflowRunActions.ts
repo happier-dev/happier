@@ -3045,12 +3045,12 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         }
         if (raw.observation === 'changed') continue;
         const run = record(raw.run);
-        const pendingCombinedSettlement = combined !== undefined && raw.observation === 'needs_attention'
-          && run.state !== 'interrupted' && (run.workflowCustodyState !== 'settled'
+        const pendingCombinedSettlement = combined !== undefined && run.state !== 'interrupted' && (run.workflowCustodyState !== 'settled'
             || !(typeof run.state === 'string' && isTerminalAutomationRunStateV3(run.state)));
         // A passive observer does not settle when a condition or terminal state
         // is seen. Keep the same feed until its cancellation/authored deadline.
-        if (!args.context.onWaitSnapshot && raw.observation !== 'waiting' && !pendingCombinedSettlement) break;
+        if (!args.context.onWaitSnapshot && (combined !== undefined && run.state === 'interrupted'
+          || raw.observation !== 'waiting' && !pendingCombinedSettlement)) break;
         if (deadline !== undefined && Date.now() >= deadline) {
           stored = { observation: 'timeout', run: raw.run };
           break;
@@ -3073,6 +3073,11 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         });
       } } finally { await observation?.dispose(); }
       const raw = record(stored);
+      // Combined producers consume the same private snapshot at settlement or
+      // an interrupted recovery boundary. Public wait conditions stay unchanged.
+      if (combined) {
+        return WorkflowRunWaitSnapshotV1Schema.parse({ run: raw.run });
+      }
       const { resultEnvelope: _ignored, keyCensus: _keyCensus, ...base } = raw;
       if (typeof raw.resultEnvelope !== 'string') return WorkflowActionOutputSchemasV1[args.actionId].parse(base);
       const census = WorkflowRunRecipientCensusResponseV1Schema.parse(raw.keyCensus);

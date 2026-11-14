@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createMachineSetupEffectPlan } from '@happier-dev/cli-common/machineSetup';
 import { createActionExecutor, invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import type { ActionPrepareResult } from '@happier-dev/protocol/actions/executor/types';
 import { WorkflowDefinitionV1Schema } from '@happier-dev/protocol/workflows/workflowV1';
 import { createMachineUpdatesRolloutWorkflowV1 } from '@happier-dev/protocol/workflows/builtins/machineUpdatesV1';
 import { createInMemoryWorkflowCoordinatorStore, createTestWorkflowCoordinator } from '@/daemon/workflows/workflowCoordinator.testkit';
@@ -10,11 +11,57 @@ import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happie
 import { evaluateWorkflowCondition } from '@/daemon/workflows/input';
 import { ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { createWorkflowRunStorageTestkit } from '@/daemon/workflows/workflowRunStorage.testkit';
+import { createWorkflowAccountRunActionOwner, prepareWorkflowApprovedOperationSnapshot } from '@happier-dev/protocol/actions/executor/workflowRunActions';
+import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
+import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
+import { deriveMachineSetupCombinedRunIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
+import { ActionIdSchema, getActionSpec, computeActionInputApprovalDigestV1, type ActionExecutorContext } from '@happier-dev/protocol';
+import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
+import { createMachineUpdatesRolloutActionDeps } from './composeMachineUpdates';
+
 
 const target = (machineId: string) => ({ homeId: 'home', machineId, scope: 'security' as const,
   plan: createMachineSetupEffectPlan({ basis: { kind: 'updates', machineId, scope: 'security' }, steps: [], nativeFacts: [] }) });
 
 describe('fleet update Workflow composition', () => {
+  it('keeps an interrupted rollout without confirmed child failure uncertain through the real combined owner', async () => {
+    const input = { homeId: 'home', machineId: 'guest', batches: [[target('guest')]], failurePolicy: 'fail_stop' as const };
+    const accountId = 'person', requestId = 'rollout-request';
+    const runId = deriveMachineSetupCombinedRunIdV1({ actionId: 'machines.setup.updates.rollout', homeId: input.homeId, accountId, requestId });
+    const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      serverId: input.homeId, runtimeAccountId: accountId, actionRequestId: requestId,
+      approvedActionReplay: { artifactId: 'rollout-approval' }, presentUserApproval: { artifactId: 'rollout-approval',
+        actionId: 'machines.setup.updates.rollout', requestId, decidingAccountId: accountId,
+        inputDigest: computeActionInputApprovalDigestV1('machines.setup.updates.rollout', input) },
+      operationAcceptance: { actionId: 'machines.setup.updates.rollout', operationId: 'rollout-operation', accept: () => {} } };
+    const definition = createMachineUpdatesRolloutWorkflowV1(input);
+    const accepted = await materializeWorkflowAcceptedSnapshotV1({ definition,
+      context: { source: { kind: 'inline' }, inputs: {}, machineId: input.machineId, executionTarget: { kind: 'session' },
+        workspaceTarget: { project: { machineId: input.machineId, directory: '/setup', checkoutRootPath: '/setup' } },
+        origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } } }, admission: { kind: 'user' },
+      effects: { resolveTargetAvailability: async () => true,
+        readActionContract: async id => freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(ActionIdSchema.parse(id)))) } });
+    if (!accepted.ok) throw new Error(accepted.error.code);
+    const snapshot = await prepareWorkflowApprovedOperationSnapshot({ snapshot: accepted.snapshot,
+      parent: { actionId: 'machines.setup.updates.rollout', input },
+      steps: [{ actionId: 'machines.setup.updates.apply', input: target('guest') }], context });
+    // Only Home storage is replaced; private admission, waiting and rollout completion remain real.
+    const storage = createWorkflowRunStorageTestkit({ accountId, runId, machineId: input.machineId,
+      state: 'interrupted', origin: { kind: 'direct' }, acceptedEnvelope: serializeWorkflowStoredContentEnvelopeV1(
+        sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId },
+          acceptedSnapshot: snapshot })) });
+    const owner = createWorkflowAccountRunActionOwner({ resolveAccountId: async () => accountId, storage,
+      definitions: { get: async () => { throw new Error('inline_run'); } },
+      resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+      normalizeAbsolutePath: directory => directory, randomBytes: () => { throw new Error('plain_account'); } });
+    const deps = createMachineUpdatesRolloutActionDeps({ orchestrationDirectory: '/setup', startCombined: owner.startCombined,
+      waitForRun: owner.waitCombined });
+    expect(await storage.execute({ operation: 'wait', runId, conditions: ['terminal', 'attention'] }))
+      .toMatchObject({ observation: 'waiting', run: { state: 'interrupted', workflowCustodyState: 'pending', attentionRequired: false } });
+    expect(await deps.machineSetupUpdatesRollout!({ input, context })).toMatchObject({ ok: false,
+      errorCode: 'outcome_uncertain', details: { runId } });
+  });
   it.each([
     { observation: { status: 'satisfied', rebootNeeded: true }, expected: true },
     { observation: { status: 'satisfied', rebootNeeded: false }, expected: false },
@@ -68,7 +115,8 @@ describe('fleet update Workflow composition', () => {
         // the host boundary; neither public context nor a profile admits a leaf.
         const ordinal = input.batches.flat().findIndex(target => sameStrictJsonValue(target, childInput));
         if (actionId !== 'machines.setup.updates.apply' || ordinal < 0) throw new Error('Unreviewed native child');
-        const issued = await invokeHostReviewedChildV1({ parent: { actionId: 'machines.setup.updates.rollout', input },
+        if (!context) throw new Error('Reviewed native child requires its Action context');
+        const issued = await invokeHostReviewedChildV1<ActionPrepareResult>({ parent: { actionId: 'machines.setup.updates.rollout', input },
           child: { action: actionId, role: `update-${ordinal}`, input: projectNativeJsonValueForTransport(childInput) },
           context, admittedReview: { action: actionId, role: `update-${ordinal}`, surface: 'agent' },
           execute: async (input, context) => executor.prepare(actionId, input, context) });

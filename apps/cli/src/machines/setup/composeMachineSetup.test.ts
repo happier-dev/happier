@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   MachineSetupApplyInputV1Schema, deriveWorkflowReplacementId, computeActionInputApprovalDigestV1,
   createWorkflowAccountRunActionOwner, materializeWorkflowAcceptedSnapshotV1,
@@ -28,7 +28,7 @@ import { buildMachineSetupWorkflow, createCombinedMachineSetupActionDeps } from 
 
 // The opaque Home storage boundary is faked; Run admission, content opening,
 // invocation paging and setup composition all use their real owners.
-async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'running', errorCode: string, details?: Record<string, WorkflowJsonValue>, readRefusalCode?: string, waitError?: Error | ActionExecuteFailure, pendingNative = false, failureCause?: ActionFailureCauseV1, receiver = false) {
+async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'running' | 'interrupted', errorCode: string, details?: Record<string, WorkflowJsonValue>, readRefusalCode?: string, waitError?: Error | ActionExecuteFailure, pendingNative = false, failureCause?: ActionFailureCauseV1, receiver = false) {
   const accountId = 'actor', machineId = 'guest', rootId = 'setup-root';
   const selection = { ref: BACKUP_RECEIVER_RECIPE_REF_V1, inputs: {} };
   const receiverPlan = createMachineSetupEffectPlan({ basis: { kind: 'setup', machineId, desiredRevision: 0, selection }, steps: [], nativeFacts: [] });
@@ -71,7 +71,7 @@ async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'runn
   const store = await DurableWorkflowCoordinatorStore.load({ accountId, runId, parentAttempt: 0,
     rootRecordId: rootId, checkpoint, encryption: { witness, runCrypto: { mode: 'plain' } }, storage,
     revision: storage.run().revision });
-  const lifecycle = state === 'succeeded' ? 'completed' : state;
+  const lifecycle = state === 'succeeded' ? 'completed' : state === 'interrupted' ? 'failed' : state;
   const key = workflowInvocationKey({ runId, blockId: 'setup-0', scope: [], attempt: 0 });
   await store.ensureIntent({ key, recordId: 'setup-child', runId, blockId: 'setup-0', memberOrdinal: '0',
     parentKey: workflowInvocationKey({ runId, blockId: '$root', scope: [], attempt: 0 }),
@@ -81,7 +81,7 @@ async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'runn
     ...(details === undefined ? {} : { result: details }) });
   await store.commitFact({ key: workflowInvocationKey({ runId, blockId: '$root', scope: [], attempt: 0 }), lifecycle });
   await storage.execute({ operation: 'transition', runId, expectedRevision: storage.run().revision,
-    state, ...(!pendingNative && state !== 'running' ? { custodyState: 'settled' as const } : {}),
+    state, ...(!pendingNative && state !== 'running' && state !== 'interrupted' ? { custodyState: 'settled' as const } : {}),
     checkpointEnvelope: storage.checkpointEnvelope() });
   const reader = createWorkflowAccountRunActionOwner({ resolveAccountId: async () => accountId,
     storage: { ...storage, execute: async (operation, options) => {
@@ -96,8 +96,8 @@ async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'runn
     readHostFacts: async () => ({ machines: [{ machineId, online: true }] }), orchestrationDirectory: '/setup',
     startCombined: reader.startCombined,
     // The Action transport can refuse before the retained Run reader is reached.
-    waitForRun: () => waitError && !(waitError instanceof Error) ? Promise.resolve(waitError)
-      : reader.execute({ actionId: 'workflow.run.wait', input: { runId, conditions: ['terminal'] }, context }),
+    waitForRun: request => waitError && !(waitError instanceof Error) ? Promise.resolve(waitError)
+      : reader.waitCombined(request),
     // This host port is the external Action transport boundary; a refused read
     // supplies no retained child content for the composition owner to interpret.
     readInvocations: (_request, input) => readRefusalCode
@@ -108,6 +108,37 @@ async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'runn
 }
 
 describe('Combined Machine setup child settlement', () => {
+  it('settles an interrupted Setup from its exact retained terminal native failure without parent attention', async () => {
+    const child = { version: 1, operationId: 'native-child', revision: 5,
+      actionId: 'machines.setup.apply', state: 'failed', scope: { accountId: 'actor', machineId: 'guest' },
+      title: 'Set up machine', createdAt: 1, startedAt: 2, settledAt: 3, cancellation: 'unsupported',
+      error: { errorCode: 'terminal_spawn_failed', error: 'terminal_spawn_failed' } } as const;
+    ActionOperationSnapshotV1Schema.parse(child);
+    const fixture = await retainedSetup('interrupted', 'terminal_spawn_failed', { operation: child });
+    expect(await fixture.storage.execute({ operation: 'wait', runId: fixture.runId,
+      conditions: ['terminal', 'attention'] })).toMatchObject({ observation: 'waiting',
+      run: { state: 'interrupted', workflowCustodyState: 'pending', attentionRequired: false } });
+    expect((await fixture.store.read(fixture.key))?.result).toEqual({ operation: child });
+    const store = createActionOperationStore();
+    const spec = getActionSpec('machines.setup.apply');
+    const scope = { accountId: 'actor', machineId: 'guest' };
+    const runner = createActionOperationRunner({ store, generateOperationId: () => 'setup-operation',
+      resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation! }) });
+    const controller = new AbortController();
+    let observed: unknown;
+    const observation = runner.observe({ actionId: spec.id, scope, requestId: 'setup-request',
+      execute: async () => ActionExecuteFailureSchema.parse(await fixture.deps.machineSetupApply!({
+        input: fixture.input, context: { ...fixture.context, signal: controller.signal } })) })
+      .then(value => { observed = value; });
+    try {
+      await vi.waitFor(() => expect(observed, JSON.stringify(observed)).toMatchObject({ ok: false, errorCode: 'terminal_spawn_failed' }));
+      expect(store.get(scope, 'setup-operation')).toMatchObject({ state: 'failed',
+        error: { errorCode: 'terminal_spawn_failed' } });
+    } finally {
+      controller.abort();
+      await observation;
+    }
+  });
   it('retains settled receiver evidence through the completed native child and root setup result', async () => {
     const backupReceivers = [{ sourceIndex: 0, itemIndex: 0, machineId: 'guest', installationId: 'receiver-installation',
       status: 'ready', endpoint: { host: 'receiver.example', port: 2205 }, username: 'archive', path: '/repository',
@@ -158,10 +189,33 @@ describe('Combined Machine setup child settlement', () => {
     expect(await waitForMachineSetupOperationV1('setup-operation', request => operations.getV2(request)))
       .toMatchObject({ ok: false, errorCode, details, failureCause });
   });
-  it('does not declare cancellation terminal while the Run retains child custody', async () => {
+  it('keeps an interrupted Setup uncertain while its current native child has no terminal outcome', async () => {
+    const fixture = await retainedSetup('running', 'outcome_uncertain');
+    await fixture.store.commitFact({ key: fixture.key, lifecycle: 'outcome_uncertain', reason: 'outcome_uncertain' });
+    await fixture.store.commitFact({ key: workflowInvocationKey({ runId: fixture.runId, blockId: '$root', scope: [], attempt: 0 }),
+      lifecycle: 'outcome_uncertain' });
+    await fixture.storage.execute({ operation: 'transition', runId: fixture.runId,
+      expectedRevision: fixture.storage.run().revision, state: 'interrupted', checkpointEnvelope: fixture.storage.checkpointEnvelope() });
+    expect(fixture.storage.run()).toMatchObject({ state: 'interrupted', workflowCustodyState: 'pending', attentionRequired: true });
+    expect(await fixture.apply()).toMatchObject({ ok: false, errorCode: 'outcome_uncertain', details: { runId: fixture.runId } });
+    expect(fixture.store.read(fixture.key)).toMatchObject({ lifecycle: 'outcome_uncertain' });
+  });
+  it('retains the combined observer until a cancelled Run settles its native custody', async () => {
     const fixture = await retainedSetup('cancelled', 'cancelled', undefined, undefined, undefined, true);
-    expect(await fixture.apply()).toMatchObject({ ok: false, errorCode: 'outcome_uncertain',
-      details: { runId: fixture.runId } });
+    const controller = new AbortController();
+    const observed = fixture.deps.machineSetupApply!({ input: fixture.input,
+      context: { ...fixture.context, signal: controller.signal } });
+    try {
+      await vi.waitFor(() => expect(fixture.storage.operations()).toContain('wait'));
+      await fixture.store.commitFact({ key: fixture.key, lifecycle: 'cancelled', reason: 'cancelled' });
+      await fixture.storage.execute({ operation: 'transition', runId: fixture.runId,
+        expectedRevision: fixture.storage.run().revision, state: 'cancelled', custodyState: 'settled',
+        checkpointEnvelope: fixture.storage.checkpointEnvelope() });
+      expect(await observed).toMatchObject({ ok: false, errorCode: 'cancelled' });
+    } finally {
+      controller.abort();
+      await observed;
+    }
   });
   it('keeps a lost Workflow observation nonterminal through operation projection and restart', async () => {
     const fixture = await retainedSetup('running', 'native_effect_failed', undefined, undefined,

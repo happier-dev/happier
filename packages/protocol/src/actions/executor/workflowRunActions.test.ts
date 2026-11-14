@@ -501,7 +501,7 @@ describe('shared Account workflow run owner', () => {
     expect(opened.content.authorization.externalActionExecutionAuthorization).toEqual(original);
   });
 
-  it.each(['succeeded', 'interrupted'] as const)('retains authored producer-result operands in a reviewed Setup Run through the real combined start and %s settlement', async settlement => {
+  it.each(['succeeded', 'interrupted', 'cancelled'] as const)('retains authored producer-result operands in a reviewed Setup Run through the real combined start and %s settlement', async settlement => {
     const parent = { actionId: 'machines.setup.apply' as const, input: { homeId: 'home', machineId: 'machine-a', targets: [
       { homeId: 'home', machineId: 'machine-a', desiredRevision: 0, recipePlans: [], sources: [{ kind: 'direct' as const, setup: {} }] },
     ] } };
@@ -526,6 +526,8 @@ describe('shared Account workflow run owner', () => {
     ] };
     let acceptedEnvelope = '';
     let terminal = false;
+    let cancelledSettled = false;
+    let observedCancellation: (() => void) | undefined;
     let observedPending: (() => void) | undefined;
     let wake: (() => void) | undefined;
     const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute: async operation => {
@@ -536,12 +538,13 @@ describe('shared Account workflow run owner', () => {
       if (operation.operation === 'invocations.list') return { invocations: [] };
       if (operation.operation === 'wait') {
         if (!terminal) observedPending?.();
-        const attention = operation.conditions?.includes('attention') && (!terminal || settlement === 'interrupted');
-        const completed = terminal && settlement === 'succeeded';
+        const attention = operation.conditions?.includes('attention') && !terminal;
+        const completed = terminal && settlement !== 'interrupted';
+        if (terminal && settlement === 'cancelled' && !cancelledSettled) observedCancellation?.();
         return { observation: attention ? 'needs_attention' : completed ? 'terminal' : 'waiting',
           ...(attention ? { matchedCondition: 'attention' } : completed ? { matchedCondition: 'terminal' } : {}),
-          run: { ...runSnapshot().run, state: terminal ? settlement : 'running',
-            workflowCustodyState: terminal && settlement === 'succeeded' ? 'settled' : 'pending' } };
+          run: { ...runSnapshot().run, state: terminal ? settlement : 'running', attentionRequired: Boolean(attention),
+            workflowCustodyState: terminal && (settlement === 'succeeded' || cancelledSettled) ? 'settled' : 'pending' } };
       }
       if (operation.operation !== 'admit') throw new Error(`unexpected_storage_operation:${operation.operation}`);
       acceptedEnvelope = String(operation.acceptedEnvelope);
@@ -586,12 +589,27 @@ describe('shared Account workflow run owner', () => {
     await expect(owner.execute({ actionId: 'workflow.run.wait', input: { runId, conditions: ['terminal'] }, context: waiting.context }))
       .rejects.toMatchObject({ code: 'invalid_input' });
     const pendingObserved = new Promise<void>(resolve => { observedPending = resolve; });
-    const pending = owner.waitCombined(waiting);
-    await pendingObserved;
-    terminal = true;
-    wake?.();
-    await expect(pending).resolves.toMatchObject({ observation: settlement === 'succeeded' ? 'terminal' : 'needs_attention',
-      run: { state: settlement, workflowCustodyState: settlement === 'succeeded' ? 'settled' : 'pending' } });
+    const cancellationObserved = new Promise<void>(resolve => { observedCancellation = resolve; });
+    const controller = new AbortController();
+    let settled: unknown;
+    const pending = owner.waitCombined({ ...waiting, context: { ...waiting.context, signal: controller.signal } })
+      .then(value => { settled = value; });
+    try {
+      await pendingObserved;
+      terminal = true;
+      wake?.();
+      if (settlement === 'cancelled') {
+        await cancellationObserved;
+        cancelledSettled = true;
+        wake?.();
+      }
+      await vi.waitFor(() => expect(settled).toMatchObject({
+        run: { state: settlement, attentionRequired: false,
+          workflowCustodyState: settlement === 'interrupted' ? 'pending' : 'settled' } }));
+    } finally {
+      controller.abort();
+      await pending.catch(() => undefined);
+    }
     await expect(owner.waitCombined({ ...waiting, parent: { ...parent, input: { ...parent.input, machineId: 'different-machine' } } }))
       .rejects.toMatchObject({ code: 'run_access_denied' });
     await expect(owner.waitCombined({ ...waiting, start: { ...waiting.start, runId: '22222222-2222-4222-8222-222222222222' } }))

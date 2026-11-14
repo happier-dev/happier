@@ -7,7 +7,7 @@ import { MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1 } from '@happier-dev/protoco
 import { createMachineUpdatesRolloutWorkflowV1 } from '@happier-dev/protocol/workflows/builtins/machineUpdatesV1';
 import { deriveMachineSetupCombinedRunIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
 import { prepareWorkflowRunStartV1 } from '@happier-dev/protocol/workflows/workflowStartPreparationV1';
-import { WorkflowActionOutputSchemasV1 } from '@happier-dev/protocol/workflows/actionsV1';
+import { WorkflowActionOutputSchemasV1, WorkflowRunWaitSnapshotV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 
 const failure = (errorCode: string, runId?: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode,
   ...(runId ? { details: { runId } } : {}) });
@@ -45,9 +45,8 @@ export function createMachineUpdatesRolloutActionDeps(host: Readonly<{
     try { observed = await host.waitForRun(request); }
     catch (error) { return { ...failure('outcome_uncertain', runId),
       failureCause: normalizeActionExecutorThrownError(error, 'workflow.run.wait').failureCause }; }
-    const settled = WorkflowActionOutputSchemasV1['workflow.run.wait'].safeParse(observed);
-    if (!settled.success || settled.data.observation !== 'terminal' && settled.data.observation !== 'needs_attention'
-      || settled.data.run.workflowCustodyState !== 'settled' && settled.data.run.state !== 'interrupted')
+    const settled = WorkflowRunWaitSnapshotV1Schema.safeParse(observed);
+    if (!settled.success || settled.data.run.workflowCustodyState !== 'settled' || settled.data.run.state === 'interrupted')
       return failure(context.signal?.aborted ? 'stop_unconfirmed' : 'outcome_uncertain', runId);
     return settled.data.run.state === 'succeeded' ? receipt
       : failure(settled.data.run.state === 'cancelled' ? 'cancelled' : 'machine_setup_child_failed', runId);
