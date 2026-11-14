@@ -1,5 +1,21 @@
 # Compatibility and version skew
 
+## Machine managed-service summary (unreleased 0.3)
+
+Machine daemon state optionally publishes `managedServices: { running, failing }`
+from the same retained row owner as `machines.services.list`. Running counts native
+rows whose phase is `running`, or healthy/unhealthy non-native processes. Failing
+counts the row owner's down/degraded health verdict except expected downtime,
+or unhealthy processes when no health verdict exists. Unknown rows contribute
+neither count. Dev-server `localServices` remains a separate inventory.
+The summary reads admitted inventory without initiating discovery or recovery;
+existing lifecycle row changes push updates, and reconnect republishes the current summary.
+Missing summaries mean not reported. Strict publication accepts only nonnegative
+integer counts; stored readers discard a malformed optional summary while keeping
+other Machine facts. Matching 0.3 Protocol, daemon and UI reload together. This adds
+no poller, inventory store, migration, permission decision or compatibility shim.
+
+
 ## Retained resume refusal causes (unreleased 0.3)
 
 Pending discard requests accept optional `errorDetail` only as the closed,

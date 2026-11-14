@@ -1,3 +1,4 @@
+import type { MachineManagedServicesSummaryV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import type { EnvironmentServiceRecoveryRow } from '@/plugins/runtime/invocation/services/environmentServiceRecovery';
 import type { MachineServiceUsageV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsHistoryV1';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
@@ -46,10 +47,11 @@ function sameWatch(left: MachineServiceWatchV1, right: MachineServiceWatchV1): b
  * Persisted intent is the only local state source; native observations remain on their handles. */
 export function createMachineServicesRuntime(input: Readonly<{
     target: Readonly<{ serverId: string; machineId: string }>;
+    onSummary?(summary: MachineManagedServicesSummaryV1): void;
     readMetadata(): MachineMetadataFieldReadV1;
     captureMetadataPort(): MachineMetadataFieldPortV1;
     restoreEnvironmentServices?(owner: ResolvedExecutablePluginRuntimeRegistry['projectManagedServices'], signal: AbortSignal): Promise<void | readonly EnvironmentServiceRecoveryRow[]>;
-}>): Readonly<{ execute(request: Invocation): Promise<MachineServiceActionOutput | ActionExecuteFailure>; sampleUsage(): Promise<readonly MachineServiceUsageV1[]>; canReadHistory(serviceId: string, request: MachineServiceDisclosureRequest): Promise<boolean>; reconcile(): Promise<void>; ensureEnvironmentServices(): Promise<void>; dispose(): Promise<void> }> {
+}>): Readonly<{ execute(request: Invocation): Promise<MachineServiceActionOutput | ActionExecuteFailure>; sampleUsage(): Promise<readonly MachineServiceUsageV1[]>; getSummary(): MachineManagedServicesSummaryV1 | undefined; canReadHistory(serviceId: string, request: MachineServiceDisclosureRequest): Promise<boolean>; reconcile(): Promise<void>; ensureEnvironmentServices(): Promise<void>; dispose(): Promise<void> }> {
     let disposed = false;
     const rows = createMachineServiceRowProjection(revision);
     const lifetime = new AbortController();
@@ -62,6 +64,40 @@ export function createMachineServicesRuntime(input: Readonly<{
     let reconciliation: Promise<void> | undefined;
     const intentListeners = new Set<(intent: Intent | null, initial: boolean) => void>();
     const adoptedHandles = new Map<string, MachineManagedServiceHandle>();
+    let summaryOwner: ResolvedExecutablePluginRuntimeRegistry['projectManagedServices'] | undefined;
+    let summarySubscription: { dispose(): void } | undefined;
+    let summary: MachineManagedServicesSummaryV1 | undefined;
+    function observeSummary(owner: ResolvedExecutablePluginRuntimeRegistry['projectManagedServices']) {
+        if (!input.onSummary || summaryOwner === owner) return;
+        summarySubscription?.dispose();
+        summaryOwner = owner;
+        const handles = () => [...owner.listMachineServices(), ...owner.listProjectServices()].filter(handle => {
+            const address = handle.kind === 'workspace' ? handle.workspace : handle;
+            return address.machineId === target.machineId
+                && (address.serverId === target.serverId || handle.homeServerIdentityId === target.serverId)
+                && handle.isCurrent() && !handle.retirementSignal.aborted;
+        });
+        const publish = () => {
+            if (disposed) return;
+            let running = 0;
+            let failing = 0;
+            for (const handle of handles()) {
+                const row = owner.machineServiceRows.read(handle);
+                // Running describes the process, failing describes its existing health verdict.
+                if (row.native ? row.native.phase === 'running' : row.state === 'healthy' || row.state === 'unhealthy') running++;
+                if (row.health ? !row.health.expectedDown && (row.health.status === 'down' || row.health.status === 'degraded')
+                    : row.state === 'unhealthy') failing++;
+            }
+            if (summary?.running === running && summary.failing === failing) return;
+            summary = { running, failing };
+            input.onSummary?.(summary);
+        };
+        summarySubscription = owner.machineServiceRows.subscribe(target.machineId, handles(), change => {
+            if (change.serverId === target.serverId || change.homeServerIdentityId === target.serverId) publish();
+        });
+        publish();
+    }
+
     const readIntent = () => {
         const metadata = input.readMetadata();
         if (metadata.status !== 'ready') {
@@ -168,6 +204,7 @@ export function createMachineServicesRuntime(input: Readonly<{
             if (changed) for (const listener of intentListeners) listener(intent, reconciled === undefined);
             reconciled = intent;
             registry = lease.registry;
+            observeSummary(owner);
         } finally { await lease.release(); }
     }
     async function reconcile(serviceId?: string): Promise<void> {
@@ -528,9 +565,10 @@ export function createMachineServicesRuntime(input: Readonly<{
         const projection = await projectServices(request, serviceId);
         return projection.rows.some(row => row.serviceId === serviceId);
     }
-    return { execute, reconcile, ensureEnvironmentServices, sampleUsage, canReadHistory, async dispose() {
+    return { execute, reconcile, ensureEnvironmentServices, sampleUsage, getSummary: () => summary, canReadHistory, async dispose() {
         if (disposed) return;
         disposed = true;
+        summarySubscription?.dispose();
         lifetime.abort('Machine service observations detached');
         const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
         if (!lease) return;

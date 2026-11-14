@@ -3055,6 +3055,11 @@ export class ApiMachineClient {
         return this.machineServicesBinding ??= createApiMachineServicesBinding({ profileId: this.machineRuntimeServerId,
             machineId: this.machine.id, readMetadata: () => this.getMachineMetadataSnapshot(),
             captureMetadataPort: () => this.captureMachineMetadataFieldPort(),
+            onConnectionStateChange: listener => this.onConnectionStateChange(listener),
+            publishSummary: managedServices => {
+                void this.updateDaemonState(state => ({ ...(state ?? { status: 'running' as const }), managedServices }))
+                    .catch(() => logger.warn('[API MACHINE] Machine service summary publication failed'));
+            },
             restoreEnvironmentServices: async (owner, signal) => {
                 const installationId = this.machineRuntimeInstallationId;
                 const serverId = await resolveServerProfileHomeIdentityId(this.machineRuntimeServerId);

@@ -1,3 +1,4 @@
+import { parseMachinePublishedDaemonStateV1, StoredMachinePublishedDaemonStateV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { describe, expect, it, vi } from 'vitest';
 import axios, { AxiosHeaders } from 'axios';
 import { createHash } from 'node:crypto';
@@ -41,6 +42,53 @@ import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol';
 import { ManagedServiceNativeLogResultV1Schema, type ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol';
 import { DaemonPluginUiResourceReadResponseSchema, DAEMON_PLUGIN_UI_RESOURCE_WATCH_MIN_WAIT_MS } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+
+describe('Machine managed-service summary publication', () => {
+    it('publishes nine running native services with one failure, recovery, retirement and no foreign Machine rows', async () => {
+        const fixture = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController, runtimeOptions: { pluginIds: [] } });
+        const owner = fixture.registry.projectManagedServices;
+        const target = { serverId: 'home', machineId: 'machine' };
+        const summaries: unknown[] = [];
+        const runtime = createMachineServicesRuntime({ target,
+            readMetadata: () => ({ status: 'ready', metadataVersion: 1, metadata: { serviceWatchesV1: { v: 1, watches: [] } } }),
+            captureMetadataPort: () => { throw new Error('No metadata mutation expected'); },
+            onSummary: summary => {
+                const published = parseMachinePublishedDaemonStateV1({ status: 'running', managedServices: summary });
+                summaries.push(StoredMachinePublishedDaemonStateV1Schema.parse(published).managedServices);
+            },
+        });
+        const handles: Awaited<ReturnType<typeof owner.superviseMachine>>[] = [];
+        try {
+            await runtime.reconcile();
+            expect(summaries.at(-1)).toEqual({ running: 0, failing: 0 });
+            let ready = false;
+            for (let index = 0; index < 10; index++) {
+                handles.push(await owner.superviseMachine({ ...target,
+                    machineId: index === 9 ? 'foreign' : target.machineId,
+                    watch: { v: 1, watchId: `watch-${index}`, name: `Service ${index}`,
+                        adapter: { pluginId: 'example.native', localId: 'systemd' }, nativeResourceId: `service-${index}`,
+                        lifecyclePurpose: 'deployment' },
+                    isCurrent: () => true, releaseObservation: async () => {},
+                    lifecycle: { async inspect() { return { phase: 'running', readiness: index === 0 && !ready ? 'not_ready' : 'ready', endpoint: null }; },
+                        async stop() { return { status: 'stopped' }; } },
+                }));
+            }
+            expect(summaries.at(-1)).toEqual({ running: 9, failing: 1 });
+            const before = summaries.length;
+            await handles[9]!.inspectCurrentOccurrence();
+            expect(summaries).toHaveLength(before);
+            ready = true;
+            await handles[0]!.inspectCurrentOccurrence();
+            expect(summaries.at(-1)).toEqual({ running: 9, failing: 0 });
+            await handles[0]!.dispose();
+            expect(summaries.at(-1)).toEqual({ running: 8, failing: 0 });
+            await runtime.dispose();
+            const disposed = summaries.length;
+            await handles[1]!.dispose();
+            expect(summaries).toHaveLength(disposed);
+        } finally { await runtime.dispose(); await Promise.all(handles.map(handle => handle.dispose())); await fixture.dispose(); }
+    });
+});
 
 describe('Machine service watch front door', () => {
     it('leaves Compose adoption to the reviewed deployment owner before native observation admission', async () => {

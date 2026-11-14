@@ -88,6 +88,13 @@ export const MachinePublishedWorkspaceSyncV1Schema = WorkspaceSyncRuntimeEventV1
 
 const PeerFlowSchema = lazyZodSchema(() => z.strictObject({ active: z.boolean() }));
 
+/** Counts of the Machine's observed managed-service rows, independent of dev-server inventory. */
+export const MachineManagedServicesSummaryV1Schema = z.strictObject({
+  running: z.number().check(z.int(), z.nonnegative()),
+  failing: z.number().check(z.int(), z.nonnegative()),
+});
+export type MachineManagedServicesSummaryV1 = z.infer<typeof MachineManagedServicesSummaryV1Schema>;
+
 export const MachinePublishedDaemonStateV1Schema = lazyZodSchema(() => z.strictObject({
   status: z.string(),
   setup: z.optional(MachineSetupObservationV1Schema),
@@ -129,6 +136,7 @@ export const MachinePublishedDaemonStateV1Schema = lazyZodSchema(() => z.strictO
   })),
   workspaceSync: z.optional(MachinePublishedWorkspaceSyncV1Schema),
   localServices: z.optional(LocalServiceMachineSummaryV1Schema),
+  managedServices: z.optional(MachineManagedServicesSummaryV1Schema),
   resources: z.optional(MachinePublishedResourceSummaryV1Schema),
   managedActivity: z.optional(ActivityDecisionV1Schema),
   machineRoles: z.optional(MachinePublishedMachineRolesV1Schema),
@@ -145,6 +153,7 @@ export const StoredMachinePublishedDaemonStateV1Schema = lazyZodSchema(() => z.e
   agentIsolation: z.catch(z.optional(createStoredReadSchema(MachineAgentIsolationStatusV1Schema)), undefined),
   // Optional service presentation failures cannot erase unrelated daemon facts.
   localServices: z.catch(z.optional(createStoredReadSchema(LocalServiceMachineSummaryV1Schema)), undefined),
+  managedServices: z.catch(z.optional(createStoredReadSchema(MachineManagedServicesSummaryV1Schema)), undefined),
   machineRoles: z.catch(z.optional(createStoredReadSchema(MachinePublishedMachineRolesV1Schema)), undefined),
 }));
 

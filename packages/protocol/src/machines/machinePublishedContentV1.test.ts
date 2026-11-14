@@ -267,6 +267,15 @@ describe('whole Machine publication', () => {
     expect(() => parseMachinePublishedMetadataV1({ ...metadata, privatePath: '/secret' })).toThrow();
   });
 
+  it('round-trips the managed-service summary while retaining old and malformed stored records', () => {
+    const facts = { status: 'running', runtimeId: 'daemon-occurrence' };
+    const current = { ...facts, managedServices: { running: 9, failing: 1 } };
+    expect(StoredMachinePublishedDaemonStateV1Schema.parse(parseMachinePublishedDaemonStateV1(current))).toEqual(current);
+    expect(StoredMachinePublishedDaemonStateV1Schema.parse(facts)).toEqual(facts);
+    expect(StoredMachinePublishedDaemonStateV1Schema.parse({ ...facts, managedServices: { running: -1, failing: 0 } })).toEqual(facts);
+    expect(() => parseMachinePublishedDaemonStateV1({ ...facts, managedServices: { running: -1, failing: 0 } })).toThrow();
+  });
+
   it('keeps unrelated retained daemon facts when the optional service summary is unrecognized or malformed', () => {
     const facts = { status: 'running', runtimeId: 'daemon-occurrence', contributionRegistryProjectionRevision: 7,
       workspaceSync: { v: 1, readiness } };

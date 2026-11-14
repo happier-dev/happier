@@ -1,3 +1,4 @@
+import type { ApiMachineClient } from '../apiMachine';
 import type { MachineMetadataFieldPortV1, MachineMetadataFieldReadV1 } from '@happier-dev/protocol';
 import { createMachineServicesRuntime } from '@/daemon/local/services/launch/machineServices';
 import { machineServiceAdmissionFailure } from '@/daemon/local/services/launch/machineServiceFailure';
@@ -10,6 +11,8 @@ import { logger } from '@/ui/logger';
 /** One ApiMachine façade lifetime; observation custody and pending dedupe remain
  * in the incumbent semanticEntries owner, not in this lifecycle binding. */
 export function createApiMachineServicesBinding(input: Readonly<{
+    publishSummary?: Parameters<typeof createMachineServicesRuntime>[0]['onSummary'];
+    onConnectionStateChange?: ApiMachineClient['onConnectionStateChange'];
     profileId: string;
     machineId: string;
     readMetadata(): MachineMetadataFieldReadV1;
@@ -18,6 +21,7 @@ export function createApiMachineServicesBinding(input: Readonly<{
 }>) {
     let disposed = false;
     let started = false;
+    let releaseConnection: (() => void) | undefined;
     let unsubscribe: (() => void) | null = null;
     let initialization: Promise<ReturnType<typeof createMachineServicesRuntime> | null> | null = null;
     async function acquire() {
@@ -27,6 +31,7 @@ export function createApiMachineServicesBinding(input: Readonly<{
                 const serverId = await resolveServerProfileHomeIdentityId(input.profileId);
                 return serverId ? createMachineServicesRuntime({ target: { serverId, machineId: input.machineId },
                     readMetadata: input.readMetadata, captureMetadataPort: input.captureMetadataPort,
+                    onSummary: input.publishSummary,
                     restoreEnvironmentServices: input.restoreEnvironmentServices }) : null;
             })();
             initialization = pending;
@@ -51,6 +56,13 @@ export function createApiMachineServicesBinding(input: Readonly<{
         if (disposed || started) return;
         started = true;
         unsubscribe = pluginReloadController.subscribe(wake);
+        releaseConnection = input.onConnectionStateChange?.(state => {
+            if (state.phase !== 'online') return;
+            void acquire().then(runtime => {
+                const summary = runtime?.getSummary();
+                if (!disposed && summary) input.publishSummary?.(summary);
+            }).catch(() => logger.warn('[API MACHINE] Machine service summary publication failed'));
+        });
         wake();
     }
     return {
@@ -78,6 +90,7 @@ export function createApiMachineServicesBinding(input: Readonly<{
         async dispose() {
             if (disposed) return;
             disposed = true;
+            releaseConnection?.();
             unsubscribe?.();
             unsubscribe = null;
             await (await initialization)?.dispose();
