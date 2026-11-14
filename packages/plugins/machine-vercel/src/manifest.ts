@@ -94,30 +94,35 @@ export const PLUGIN = definePlugin({
         { path: 'snapshotExpirationMs', title: label('snapshotExpiration'), widget: 'integer', required: true, defaultValue: 0, description: label('retentionDescription') },
       ] },
       async run(input, context): Promise<MachineProvisionerOptionsResultV1> {
-        const client = await runtime(context);
-        const [check, limits] = await Promise.all([client.checkProject(), client.limits()]);
-        context.signal.throwIfAborted();
         const dimensions = { size: [], image: [], location: [], network: [], duration: [] };
-        if (!check.available) return { dimensions, code: 'provider_unavailable',
-          ...(check.nativeCause ? { nativeCause: check.nativeCause } : {}) };
-        if (limits.kind !== 'available') return { dimensions, code: 'provider_unavailable',
-          ...(limits.nativeCause ? { nativeCause: limits.nativeCause } : {}) };
-        const parsed = VercelLaunchSchema.safeParse({ ...input, timeoutMs: input.timeoutMs ?? limits.timeoutMs });
-        if (!parsed.success) return { dimensions };
-        const launch = parsed.data;
-        const image = { id: launch.image, title: launch.image };
-        const size = { id: String(launch.vcpus), title: String(launch.vcpus) + ' vCPU', cpuCores: launch.vcpus, memoryBytes: launch.vcpus * 2048 * 1024 * 1024 };
-        const location = { id: launch.region, title: launch.region };
-        const duration = { id: String(launch.timeoutMs), title: String(launch.timeoutMs / 1000) + ' s', afterMs: launch.timeoutMs };
-        // This is the reviewed native form draft, not a Cartesian catalog. The
-        // public selection projector owns selection completeness and launch.
-        return { base: { launch, guestPlatform: 'linux', available: launch.vcpus <= limits.vcpus && launch.timeoutMs <= limits.timeoutMs },
-          dimensions: { ...dimensions,
-            image: [{ id: image.id, title: image.title, guestPlatform: 'linux', assignments: [], nativeFacts: { image } }],
-            size: [{ id: size.id, title: size.title, assignments: [], nativeFacts: { size } }],
-            location: [{ id: location.id, title: location.title, assignments: [], nativeFacts: { location } }],
-            duration: [{ id: duration.id, title: duration.title, assignments: [], nativeFacts: { duration } }],
-          } };
+        try {
+          const client = await runtime(context);
+          const [check, limits] = await Promise.all([client.checkProject(), client.limits()]);
+          context.signal.throwIfAborted();
+          if (!check.available) return { dimensions, code: 'provider_unavailable',
+            ...(check.nativeCause ? { nativeCause: check.nativeCause } : {}) };
+          if (limits.kind !== 'available') return { dimensions, code: 'provider_unavailable',
+            ...(limits.nativeCause ? { nativeCause: limits.nativeCause } : {}) };
+          const parsed = VercelLaunchSchema.safeParse({ ...input, timeoutMs: input.timeoutMs ?? limits.timeoutMs });
+          if (!parsed.success) return { dimensions };
+          const launch = parsed.data;
+          const image = { id: launch.image, title: launch.image };
+          const size = { id: String(launch.vcpus), title: String(launch.vcpus) + ' vCPU', cpuCores: launch.vcpus, memoryBytes: launch.vcpus * 2048 * 1024 * 1024 };
+          const location = { id: launch.region, title: launch.region };
+          const duration = { id: String(launch.timeoutMs), title: String(launch.timeoutMs / 1000) + ' s', afterMs: launch.timeoutMs };
+          // This is the reviewed native form draft, not a Cartesian catalog. The
+          // public selection projector owns selection completeness and launch.
+          return { base: { launch, guestPlatform: 'linux', available: launch.vcpus <= limits.vcpus && launch.timeoutMs <= limits.timeoutMs },
+            dimensions: { ...dimensions,
+              image: [{ id: image.id, title: image.title, guestPlatform: 'linux', assignments: [], nativeFacts: { image } }],
+              size: [{ id: size.id, title: size.title, assignments: [], nativeFacts: { size } }],
+              location: [{ id: location.id, title: location.title, assignments: [], nativeFacts: { location } }],
+              duration: [{ id: duration.id, title: duration.title, assignments: [], nativeFacts: { duration } }],
+            } };
+        } catch (error) {
+          context.signal.throwIfAborted();
+          return projectMachineProvisionerActionFailure(error, () => ({ dimensions, code: 'provider_unavailable' as const }));
+        }
       } },
     acquire: { ...defaults, title: label('confirmTitle'), confirmation, dangerLevel: 'writesRemote',
       inputSchema: ROLE_SCHEMAS.acquireInput, resultSchema: RECONCILIATION.result,

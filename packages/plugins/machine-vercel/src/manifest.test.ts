@@ -303,6 +303,14 @@ describe('public Vercel provisioner composition', () => {
     try { expect(await available.kit.invokeAction('options', {}, { surface: 'plugin' })).toEqual({ dimensions }); }
     finally { await available.kit.dispose(); }
   });
+  it('reports unavailable options when the selected Account scope cannot be materialized', async () => {
+    const { kit, calls } = await vendor(undefined, { accountFailure: true });
+    try {
+      expect(await kit.invokeAction('options', launch, { surface: 'plugin' }))
+        .toEqual({ dimensions, code: 'provider_unavailable' });
+      expect(calls).toEqual([]);
+    } finally { await kit.dispose(); }
+  });
   it('admits strict descriptor/roles and rejects unsupported Suspend and unknown launch fields', () => {
     expect(parsePluginManifest(PLUGIN_MANIFEST).ok).toBe(true);
     expect(MACHINE_PROVISIONER.retention.supportedIntents).toEqual(['start','stop','resume','delete']);
