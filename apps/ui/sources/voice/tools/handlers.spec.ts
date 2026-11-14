@@ -2950,7 +2950,7 @@ describe('voice tool handlers', () => {
         expect(refused, JSON.stringify(refused)).toMatchObject({ v: 1, execution: {
           ok: false, errorCode: 'session_stop_failed', error: 'session_stop_failed',
         } });
-        if (!refused.execution.ok) expect(refused.execution.details).toEqual(result.details);
+        if (!refused.execution.ok) expect('details' in refused.execution ? refused.execution.details : undefined).toEqual(result.details);
         expect(daemonRpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.STOP_SESSION)).toHaveLength(2);
       }
     },

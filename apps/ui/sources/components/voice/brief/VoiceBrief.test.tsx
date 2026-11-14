@@ -39,6 +39,7 @@ import { createBundledVoiceRecipientContract } from '@/voice/credentials/voiceRe
 import { saveAndUseAccountVoiceCredential, applyAccountVoiceCredentialSourceSelection } from '@/voice/credentials/accountVoiceCredential';
 import { createSessionOwnerMetadataV1, createPlainSessionOwnerMetadataEnvelopeV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { SessionMessagesPageV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
+import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { OPENAI_REALTIME_DEFAULT_SETTINGS } from '../../../../../../packages/plugins/openai/src/protocol/voice/settings';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
 import { buildVoiceTranscriptHistorySessionMetadata, VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG } from '@/voice/persistence/voiceTranscriptHistorySession';
@@ -89,10 +90,10 @@ vi.mock('socket.io-client', async (importOriginal) => (
 ).createSocketIoClientBoundary(importOriginal));
 installDisconnectedServerSocketBoundary();
 
-const navigation = vi.hoisted(() => ({ push: vi.fn() }));
+const navigation = vi.hoisted(() => ({ push: vi.fn(), pathname: '/' }));
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({ pathname: () => '/', router: { push: navigation.push } }).module;
+    return createExpoRouterMock({ pathname: () => navigation.pathname, router: { push: navigation.push } }).module;
 });
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -139,13 +140,14 @@ function transport() {
         get spoken() { return messages('user'); },
         get context() { return messages('system'); },
         get interrupted() { return peers.flatMap((peer, index) => peer.channel.sent.flatMap(value => JSON.parse(value).type === 'response.cancel' ? [starts[index]!.controlSessionId] : [])); },
-        async waitForSpoken() {
+        async waitForSpoken(count = 1) {
             const peer = await usablePeer();
             await peer.channel.controlSent(value => {
                 const event = JSON.parse(value) as { type?: string; item?: { role?: string } };
-                return event.type === 'conversation.item.create' && event.item?.role === 'user';
+                return event.type === 'conversation.item.create' && event.item?.role === 'user'
+                    && messages('user').length >= count;
             });
-            expect(messages('user')).toHaveLength(1);
+            expect(messages('user')).toHaveLength(count);
         },
         async waitForInterrupted() {
             const peer = await usablePeer();
@@ -215,6 +217,7 @@ async function pressBriefControl(testID: string) {
     await screen?.pressByTestIdAsync(testID);
 }
 async function prepareBriefAccount(onlinePersonalQuery = false) {
+    navigation.pathname = '/';
     resetSessionListPaneRetentionForTests();
     activityQueryRows = [];
     resetVoiceSessionStoreForTests();
@@ -309,7 +312,8 @@ async function prepareBriefAccount(onlinePersonalQuery = false) {
     voiceConversationRuntimeMachine.reset();
     setVoiceSessionSnapshot({ adapterId: null, sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
 }
-beforeEach(({ task }) => prepareBriefAccount(task.name === SCALE_BRIEF_TEST || task.name === SIDEBAR_BRIEF_TEST));
+beforeEach(({ task }) => prepareBriefAccount(task.name === SCALE_BRIEF_TEST || task.name === SIDEBAR_BRIEF_TEST
+    || task.name.startsWith('delivers the Home needs-you facts from Settings')));
 afterEach(async () => {
     await screen?.unmount(); screen = null;
     restorePopoverGlobals?.(); restorePopoverGlobals = null;
@@ -385,14 +389,37 @@ function expectApprovalGuidance(message: string | undefined, canApproveRequests 
     expect(message).toContain(expected.slice(1, -1));
 }
 
-/** An owner by-ID record always carries its access; the current-projection boundary requires it. */
-function withEffectiveAccess<T extends Readonly<{ effectiveAccess?: unknown }>>(record: T): T & { effectiveAccess: NonNullable<T['effectiveAccess']> } {
-    const effectiveAccess = record.effectiveAccess;
-    if (effectiveAccess === undefined || effectiveAccess === null) throw new Error('Expected the Session record access');
-    return { ...record, effectiveAccess };
-}
 
 describe('mounted Voice Brief request', () => {
+    it('delivers the Home needs-you facts from Settings without a mounted Sessions sidebar', async () => {
+        const serverId = account!.home.id;
+        const session = createSessionFixture({ id: 'settings-brief-request', serverId,
+            metadata: { path: '/project', host: 'test', summary: { text: 'Review deployment', updatedAt: 1 } },
+            active: true, activeAt: Date.now(), pendingBlockedCount: 1, latestTurnStatus: 'completed' });
+        activityQueryRows = [createCompactSessionListRowFixture({
+            ...createPlainSessionByIdResponseFixture(session).session, viewer: createSessionOwnerViewerFixture(session),
+        })];
+        storage.getState().applySessions([{ ...session, viewer: createSessionOwnerViewerFixture(session) }]);
+        const speech = await installTransport();
+        await selectService();
+        navigation.pathname = '/settings/voice';
+        screen = await renderScreen(renderHome());
+        await act(async () => { expect(executeVoiceBriefOperation('request').ok).toBe(true); });
+        await speech.waitForStart();
+        await act(async () => speech.connect());
+        await speech.waitForSpoken();
+        const context = speech.context.at(-1)?.match(/INBOX BRIEF\n\n(\{[^\n]+\})/);
+        expect(context).not.toBeNull();
+        const settingsBrief = JSON.parse(context![1]!);
+        expect(settingsBrief.counts.needs_you).toBe(1);
+        navigation.pathname = '/';
+        await screen.unmount();
+        screen = await renderScreen(renderHome());
+        await act(async () => { expect(executeVoiceBriefOperation('request').ok).toBe(true); });
+        await speech.waitForSpoken(2);
+        const homeContext = speech.context.at(-1)?.match(/INBOX BRIEF\n\n(\{[^\n]+\})/);
+        expect(JSON.parse(homeContext![1]!).counts.needs_you).toBe(settingsBrief.counts.needs_you);
+    });
     it(SIDEBAR_BRIEF_TEST, async () => {
         const serverId = account!.home.id;
         const now = Date.now();
@@ -458,7 +485,7 @@ describe('mounted Voice Brief request', () => {
             });
             return { ...session, viewer: createSessionOwnerViewerFixture(session) };
         });
-        const records = sessions.map(session => withEffectiveAccess({
+        const records = sessions.map(session => SessionCurrentProjectionRecordV1Schema.parse({
             ...createPlainSessionByIdResponseFixture(session).session, viewer: session.viewer,
         }));
         for (const record of records) sessionHttp.replaceSession(record.id, record);
@@ -514,12 +541,16 @@ describe('mounted Voice Brief request', () => {
         const previousStackLimit = Error.stackTraceLimit;
         Error.stackTraceLimit = 80;
         const overviewReads = new Set<string>();
+        const metadataRowsRead = new Set<string>();
         let overviewMetadataPathReads = 0;
         let metadataPathReads = 0;
         // Observe reads of real input records; Activity, storage, Inbox and Brief remain real.
         const observeMetadata = (id: string, metadata: NonNullable<ReturnType<typeof readSessionOwnerMetadataView>>) => new Proxy(metadata, {
             get(target, key, receiver) {
-                if (key === 'path') metadataPathReads += 1;
+                if (key === 'path') {
+                    metadataPathReads += 1;
+                    metadataRowsRead.add(id);
+                }
                 if (key === 'path' && /buildActivityOverviewFromSource\.tsx?:/.test(new Error().stack ?? '')) {
                     overviewReads.add(id);
                     overviewMetadataPathReads += 1;
@@ -585,6 +616,7 @@ describe('mounted Voice Brief request', () => {
             overviewReads.clear();
             overviewMetadataPathReads = 0;
             metadataPathReads = 0;
+            metadataRowsRead.clear();
             commits.reset();
             sessionPublications = 0;
             rowPublications = 0;
@@ -613,6 +645,7 @@ describe('mounted Voice Brief request', () => {
                 replacedCandidates: latestInbox!.sessionCandidates.filter(candidate => candidate.sessionId.startsWith('brief-scale-')
                     && previousCandidates.get(candidate.sessionId) !== candidate).length,
                 metadataPathReads,
+                metadataRowsRead: metadataRowsRead.size,
                 sourceCensus: Object.keys(latestInbox!.source.sessionsById).filter(id => id.startsWith('brief-scale-')).length,
                 candidates: latestInbox!.sessionCandidates.filter(candidate => candidate.sessionId.startsWith('brief-scale-')).length,
                 inboxNeedsYou: latestInbox!.sessionPresentation.sessionsNeedingAttention
@@ -675,7 +708,7 @@ describe('mounted Voice Brief request', () => {
                         req_1: { tool: 'Bash', kind: 'permission' as const, arguments: {}, createdAt: Date.now() },
                     }, completedRequests: {} } };
                 const next = { ...changed, viewer: createSessionOwnerViewerFixture(changed) };
-                const record = withEffectiveAccess({ ...createPlainSessionByIdResponseFixture(next).session, viewer: next.viewer });
+                const record = SessionCurrentProjectionRecordV1Schema.parse({ ...createPlainSessionByIdResponseFixture(next).session, viewer: next.viewer });
                 sessionHttp.replaceSession(next.id, record);
                 activityQueryRows = activityQueryRows.map(row => row.id === next.id ? createCompactSessionListRowFixture(record) : row);
                 expect((await hydrate(next.id)).ok).toBe(true);
@@ -688,14 +721,17 @@ describe('mounted Voice Brief request', () => {
             // Its classification work and candidate replacement follow the changed address.
             expect(progress).toMatchObject({ sourceCensus: sessionCount, candidates: sessionCount, needsYou: 0 });
             expect(progress.overviewRowsRead).toBeLessThanOrEqual(1);
+            expect(progress.metadataRowsRead).toBeLessThanOrEqual(1);
             expect(progress.replacedCandidates).toBeLessThanOrEqual(1);
             expect(progress.targetCandidateSeq).toBe(progress.targetSessionSeq);
             expect(message).toMatchObject({ sourceCensus: sessionCount, candidates: sessionCount, needsYou: 0 });
             expect(message.overviewRowsRead).toBeLessThanOrEqual(1);
+            expect(message.metadataRowsRead).toBeLessThanOrEqual(1);
             expect(message.replacedCandidates).toBeLessThanOrEqual(1);
             expect(message.targetCandidateSeq).toBe(message.targetSessionSeq);
             expect(attention).toMatchObject({ sourceCensus: sessionCount, candidates: sessionCount, needsYou: 1 });
             expect(attention.overviewRowsRead).toBeLessThanOrEqual(1);
+            expect(attention.metadataRowsRead).toBeLessThanOrEqual(1);
             expect(attention.replacedCandidates).toBeLessThanOrEqual(1);
 
             // A separate measurement: one public Home press through real admission,

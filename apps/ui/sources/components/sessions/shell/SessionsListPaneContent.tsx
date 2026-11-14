@@ -17,9 +17,8 @@ import {
 } from './useSessionListAttentionInteraction';
 import { SessionsListEmptyState } from '@/components/sessions/shell/SessionsListEmptyState';
 import { useSessionGettingStartedGuidanceBaseModel } from '@/components/sessions/guidance/useSessionGettingStartedGuidanceBaseModel';
-import { useVisibleSessionListPaneState, type VisibleSessionListPaneState } from '@/hooks/session/useVisibleSessionListPaneState';
-import { useSessionListLayoutChoice } from '@/hooks/session/sessionListLayoutIntent';
-import { buildSessionListCollapseContextKey } from '@/sync/domains/session/listing/sessionListCollapseState';
+import type { VisibleSessionListPaneState } from '@/hooks/session/useVisibleSessionListPaneState';
+import { useSessionListPaneProjection } from './useSessionListPaneProjection';
 import { resolveSessionsListEmptyStateKind } from './resolveSessionsListEmptyStateKind';
 import { SessionListSkeletonRows } from './SessionListSkeletonRows';
 import { PhoneTabNavRowLine, usePhoneTabNavRow } from '@/components/navigation/shell/phoneTabNavRow';
@@ -122,20 +121,12 @@ function ActiveSessionsListPaneStateSubscriber(props: SessionsListPaneContentPro
 }>) {
     const attentionInteraction = React.useContext(SessionListAttentionInteractionContext);
     const attentionInteractionHeld = useSessionListAttentionInteractionHeld(attentionInteraction);
-    const layout = useSessionListLayoutChoice();
-    const sessionListPaneState = useVisibleSessionListPaneState(props.storageKind, {
-        collapseContextKey: buildSessionListCollapseContextKey(props.filterController, layout),
+    const sessionListPaneState = useSessionListPaneProjection(props.storageKind, props.filterController, {
         pathname: props.pathname,
         retainedPathname: props.retainedPathname,
         retainedVisibleSessionListIndex: props.retainedVisibleSessionListIndex,
         sessionListSurfaceDataActive: true,
         attentionInteractionHeld: props.surfaceOwnership.interactive && attentionInteractionHeld,
-        queryHomes: props.filterController.pagingHomes,
-        emptyQuerySelectionComplete: props.filterController.emptyQuerySelectionComplete,
-        workFilter: props.filterController.displayFilters,
-        spaceMembership: props.filterController.spaceMembership,
-        includeNeedsYouEverywhere: props.filterController.includeNeedsYouEverywhere,
-        filterControlsRequired: props.filterController.filterControlsRequired,
     });
 
     const onPaneState = props.onPaneState;

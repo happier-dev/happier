@@ -35,6 +35,58 @@ describe('visible Session list index cost per row write at a thousand Sessions',
         vi.useRealTimers();
     });
 
+    it('does no row projection while inactive and presents current rows when demand returns', async () => {
+        const previousStackLimit = Error.stackTraceLimit;
+        Error.stackTraceLimit = 80;
+        try {
+            const serverId = getActiveServerSnapshot().serverId;
+            storage.getState().applySettingsLocal({ sessionListLayoutV1: 'recent_activity' });
+            storage.getState().applySessions(Array.from({ length: SESSIONS }, (_, index) => createSessionFixture({
+                id: `inactive-${index}`, serverId, seq: 1, lastViewedSessionSeq: 1,
+                createdAt: NOW_MS - 10_000, updatedAt: NOW_MS - 10_000 + index,
+                meaningfulActivityAt: NOW_MS - 10_000 + index,
+                metadata: { path: `/repos/inactive-${index}`, host: 'test' },
+            })));
+            storage.getState().applyServerScopedSessionListRows(serverId,
+                Object.values(storage.getState().sessionListRowsByServerId[serverId] ?? {}), { source: 'ordinary', mode: 'replace' });
+            let pathReads = 0;
+            const state = storage.getState();
+            storage.setState({ sessionListRowsByServerId: { ...state.sessionListRowsByServerId, [serverId]: Object.fromEntries(
+                Object.entries(state.sessionListRowsByServerId[serverId]!).map(([id, row]) => [id, { ...row,
+                    metadata: row.metadata ? new Proxy(row.metadata, { get(target, key, receiver) {
+                        if (key === 'path' && /useVisibleSessionListViewState\.ts:/.test(new Error().stack ?? '')) pathReads += 1;
+                        return Reflect.get(target, key, receiver);
+                    } }) : row.metadata,
+                }]),
+            ) } });
+            let active = false;
+            const hook = await renderHook(() => useVisibleSessionListViewState('all', { sessionListSurfaceDataActive: active }));
+            await flushHookEffects();
+            expect(pathReads).toBe(0);
+            active = true;
+            await hook.rerender();
+            await flushHookEffects();
+            const first = hook.getCurrent().visibleSessionListIndex;
+            expect(sessionIds(first)).toHaveLength(SESSIONS);
+            expect(pathReads).toBeGreaterThan(0);
+            active = false;
+            await hook.rerender();
+            await flushHookEffects();
+            pathReads = 0;
+            await act(async () => storage.getState().applySessions([{ ...storage.getState().sessions['inactive-0']!,
+                seq: 2, updatedAt: NOW_MS, meaningfulActivityAt: NOW_MS }]));
+            await flushHookEffects();
+            expect(pathReads).toBe(0);
+            expect(hook.getCurrent().visibleSessionListIndex).toBe(first);
+            active = true;
+            await hook.rerender();
+            await flushHookEffects();
+            expect(sessionIds(hook.getCurrent().visibleSessionListIndex)[0]).toMatch(/:inactive-0$/);
+        } finally {
+            Error.stackTraceLimit = previousStackLimit;
+        }
+    });
+
     it('re-derives only the written row and re-reads no listed row for an unlisted change', { timeout: 120_000 }, async () => {
         const previousStackLimit = Error.stackTraceLimit;
         Error.stackTraceLimit = 80;

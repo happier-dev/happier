@@ -92,6 +92,9 @@ vi.mock('@/sync/domains/session/listing/useSessionListQuerySourceState', () => (
     },
 }));
 
+// Load the real hook graph during collection, as the sibling listing hook suites do.
+const { useVisibleSessionListSourceState } = await import('./useVisibleSessionListSourceState');
+
 describe('useVisibleSessionListSourceState', () => {
     afterEach(() => {
         standardCleanup();
@@ -143,7 +146,6 @@ describe('useVisibleSessionListSourceState', () => {
     });
 
     it('returns the canonical selection together with the resolved visible source', async () => {
-        const { useVisibleSessionListSourceState } = await import('./useVisibleSessionListSourceState');
         const hook = await renderHook(() => useVisibleSessionListSourceState());
         await flushHookEffects();
 
@@ -168,7 +170,6 @@ describe('useVisibleSessionListSourceState', () => {
             activeTarget: { kind: 'server', id: 'srv-a', serverId: 'srv-a' },
         };
 
-        const { useVisibleSessionListSourceState } = await import('./useVisibleSessionListSourceState');
         const hook = await renderHook(() => useVisibleSessionListSourceState());
         await flushHookEffects();
 
@@ -198,7 +199,6 @@ describe('useVisibleSessionListSourceState', () => {
             ],
         };
 
-        const { useVisibleSessionListSourceState } = await import('./useVisibleSessionListSourceState');
         const hook = await renderHook(() => useVisibleSessionListSourceState());
         await flushHookEffects();
 
@@ -234,7 +234,6 @@ describe('useVisibleSessionListSourceState', () => {
             refresh: vi.fn(),
         };
 
-        const { useVisibleSessionListSourceState } = await import('./useVisibleSessionListSourceState');
         const hook = await renderHook(() => useVisibleSessionListSourceState({ queryHomes }));
         await flushHookEffects();
 
@@ -259,7 +258,6 @@ describe('useVisibleSessionListSourceState', () => {
             refresh: vi.fn(),
         };
 
-        const { useVisibleSessionListSourceState } = await import('./useVisibleSessionListSourceState');
         const hook = await renderHook(() => useVisibleSessionListSourceState({ queryHomes: [] }));
         await flushHookEffects();
 

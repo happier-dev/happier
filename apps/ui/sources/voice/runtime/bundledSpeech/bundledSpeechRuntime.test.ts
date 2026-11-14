@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createVoiceSpeechOutputBoundary } from '@/dev/testkit/harness/voiceSpeechOutputBoundary';
-import { createDeferred, createMachineFixture, createSessionFixture } from '@/dev/testkit';
+import { createDeferred, createHydratedPlainMachineFixture, createSessionFixture } from '@/dev/testkit';
 import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -102,7 +102,7 @@ beforeEach(async () => {
       if (machine) return machine;
       return null;
     } });
-  storage.getState().applyMachines([createMachineFixture({ id: 'runtime-machine', activeAt: Date.now() })]);
+  storage.getState().applyMachines([createHydratedPlainMachineFixture({ id: 'runtime-machine', accountId: 'runtime-account', machine: { activeAt: Date.now() } })]);
   const currentSettings = storage.getState().settings;
   const voiceDelta = normalizeVoiceSettingsLocalDelta({ voice: { ...currentSettings.voice,
     executionMachine: { mode: 'fixed', machineId: 'runtime-machine' } } }, currentSettings);
@@ -243,7 +243,7 @@ describe('bundledSpeechRuntime', () => {
       write.mockRestore();
     }
   });
-  const prepare = (preference: SessionVoicePreferenceV1 | null) => {
+  const prepare = async (preference: SessionVoicePreferenceV1 | null) => {
     const target = createSessionFixture({ id: 'runtime-target', serverId: account.home.id, encryptionMode: 'plain',
       metadata: { path: '/runtime', host: 'runtime.test', machineId: 'runtime-machine',
         work: { voicePreference: preference } } });
@@ -260,7 +260,7 @@ describe('bundledSpeechRuntime', () => {
     } });
     voiceConversationRuntimeMachine.transitionToConnecting({ controlSessionId: 'runtime-control' });
     voiceConversationRuntimeMachine.transitionToSpeaking({ controlSessionId: 'runtime-control' });
-    const preparation = prepareLocalVoiceTtsRequest({ sessionId: 'runtime-control', text: 'hello',
+    const preparation = await prepareLocalVoiceTtsRequest({ sessionId: 'runtime-control', text: 'hello',
       settings: storage.getState().settings, tts: parseLocalVoiceTtsSettings({ provider: CATALOG_TTS_ID }),
       networkTimeoutMs: 15_000, registerPlaybackStopper: () => () => {}, onSpeaking: () => {} });
     if (!preparation) throw new Error('Real bound Session speech preparation unavailable');

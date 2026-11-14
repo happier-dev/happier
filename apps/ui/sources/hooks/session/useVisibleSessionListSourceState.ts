@@ -15,6 +15,8 @@ import {
 } from '@/sync/domains/session/listing/useSessionListQuerySourceState';
 
 export type VisibleSessionListSourceStateOptions = Readonly<{
+    /** Inactive detail consumers release both query and ordinary index demand. */
+    enabled?: boolean;
     /** Presence selects the structural query corpus; an empty array means an intentionally empty Home selection. */
     queryHomes?: readonly SessionListQueryHomeInput[];
     /** Distinguishes a proved empty qualified selection from startup before Home discovery. */
@@ -36,7 +38,7 @@ export function useVisibleSessionListSourceState(
     options: VisibleSessionListSourceStateOptions = {},
 ): VisibleSessionListSourceState {
     const selection = useSessionListSelectionState();
-    const queryActive = options.queryHomes !== undefined;
+    const queryActive = options.enabled !== false && options.queryHomes !== undefined;
     const querySource = useSessionListQuerySourceState({
         enabled: queryActive,
         homes: options.queryHomes ?? [],
@@ -45,6 +47,7 @@ export function useVisibleSessionListSourceState(
     });
     const selectedServerIds = React.useMemo(
         () => {
+            if (options.enabled === false) return [];
             if (selection.enabled) {
                 return selection.allowedServerIds;
             }
@@ -57,7 +60,7 @@ export function useVisibleSessionListSourceState(
             const activeServerId = String(selection.activeServerId ?? '').trim();
             return activeServerId ? [activeServerId] : [];
         },
-        [selection.activeServerId, selection.allowedServerIds, selection.enabled],
+        [options.enabled, selection.activeServerId, selection.allowedServerIds, selection.enabled],
     );
     useSessionListAgentTargetDemand(selectedServerIds, !queryActive && options.agentTargetDemand === true);
     const byServerId = useSessionListIndexByServerId(selectedServerIds);

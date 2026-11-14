@@ -244,8 +244,9 @@ describe('Machines advertised UI and eligible Voice execution', () => {
       const controller = { machineId: 'controller', installationId: 'installation' };
       const contribution = { pluginId: 'happier.machine.lima', localId: 'lima' };
       const launch = { provider: contribution, schemaVersion: 1, name: 'Guest', choices: {} };
+      const managedId = 'managed';
       const managed = ManagedMachineActionOutputSchemasV1['machines.managed.get'].parse({
-        id: 'managed', homeId, custodianAccountId: 'owner', controller, launch,
+        id: managedId, homeId, custodianAccountId: 'owner', controller, launch,
         resource: { contributionRef: contribution, schemaVersion: 1, value: {} },
         desired: 'stop', desiredWhen: 'now', allocation: 'bound', creationState: 'active', intentRevision: 1,
         retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
@@ -254,7 +255,7 @@ describe('Machines advertised UI and eligible Voice execution', () => {
         ? { homeId, controller, contribution, selectors: {} }
         : actionId === 'machines.managed.acquire' ? { selection: { kind: 'one-off', homeId, controller, launch,
           retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } }
-        : { homeId, managedId: managed.id, expectedRevision: 1, intent: 'stop', when: 'now' });
+        : { homeId, managedId, expectedRevision: 1, intent: 'stop', when: 'now' });
       const output = actionId === 'machines.provisioners.options'
         ? ManagedMachineActionOutputSchemasV1[actionId].parse(createMachineProvisionerOptionsFixture({ base: { launch: {} } }))
         : { kind: 'approval_request_created', actionId, artifactId: 'native-ask' };

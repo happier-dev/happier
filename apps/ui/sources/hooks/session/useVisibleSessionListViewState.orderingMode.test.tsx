@@ -166,13 +166,16 @@ function setSessionOrganizationProjection(params: Parameters<typeof organization
 
 // Shared presentation hooks import the narrow settings owner directly; both entry points read the
 // same account fixture so layout and attention cannot silently fall back to real-store defaults.
-vi.mock('@/sync/store/settingsReadHooks', async () => {
+vi.mock('@/sync/store/settingsReadHooks', async (importOriginal) => {
     const { createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
-    return { useSetting: createUseSettingMock({ fallback: readViewSetting }) };
+    return { ...await importOriginal<typeof import('@/sync/store/settingsReadHooks')>(),
+        useSetting: createUseSettingMock({ fallback: readViewSetting }) };
 });
 
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub, createStorageStoreMock, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
+    const { settingsParse } = await import('@/sync/domains/settings/settings');
+    const defaultSettings = settingsParse({});
     const store = createStorageStoreMock({ workflowRunListWindows: {}, workflowRunsById: {} });
     return createStorageModuleStub({
             storage: store,
@@ -185,6 +188,10 @@ vi.mock('@/sync/domains/state/storage', async () => {
             },
             useOpenApprovalSessionReferences: () => viewState.openApprovalSessionReferences,
             useSetting: createUseSettingMock({ fallback: readViewSetting }),
+            useSettingsSelector: <T,>(selector: (settings: typeof defaultSettings) => T): T => selector({
+                ...defaultSettings,
+                hideInactiveSessions: viewState.hideInactiveSessions,
+            }),
             useSettingMutable: ((key: string) => {
                 if (key === 'sessionListGroupOrderV1') {
                     return [viewState.groupOrder, viewState.setGroupOrder];
@@ -519,10 +526,7 @@ describe('useVisibleSessionListViewState (index pipeline)', () => {
         }));
         await flushHookEffects();
 
-        expect(hook.getCurrent()?.visibleSessionListIndex).toEqual(expect.arrayContaining([
-            expect.objectContaining({ type: 'session', sessionId: 'a' }),
-            expect.objectContaining({ type: 'session', sessionId: 'b' }),
-        ]));
+        expect(hook.getCurrent()?.visibleSessionListIndex).toBeNull();
         expect(viewState.setGroupOrder).not.toHaveBeenCalled();
     });
 

@@ -558,7 +558,7 @@ export async function publishLocalVoiceTranscriptMessage(input: Readonly<{
     localVoiceRemoteMessages.set(remoteKey, [...messages, update.body.message]);
     await publishLocalVoiceSocketUpdate(update);
     if (input.messageRole === 'agent' && input.settlesTurn !== false) {
-        const user = messages.findLast(message => message.messageRole === 'user');
+        const user = messages.slice().reverse().find(message => message.messageRole === 'user');
         // Tests may also seed retained history before submitting any input.
         if (!user) return update.body.message;
         const turnId = `turn-${user.id}`;

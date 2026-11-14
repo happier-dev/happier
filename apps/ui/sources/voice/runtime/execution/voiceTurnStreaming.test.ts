@@ -96,7 +96,8 @@ async function createStreamingFixture(options: Readonly<{ streaming?: boolean; t
         async dispatch(method, input) {
             const result = await rpc.dispatch(method, input);
             if (options.bootstrapReceipt && (method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START
-                || method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1)) {
+                || method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1)
+                && ExecutionRunEnsureOrStartRequestSchema.parse(input).start) {
                 const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
                 if (!result || typeof result !== 'object' || Array.isArray(result)) throw new Error('Missing bootstrap response');
                 return { ...result, preparedInstructionsFor: {
@@ -130,6 +131,10 @@ async function createStreamingFixture(options: Readonly<{ streaming?: boolean; t
     const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime) throw new Error('Streaming Account lifetime unavailable');
+    // The harness eagerly initializes a Run without a runtime callback. Retire
+    // it so this attempt observes a real bootstrap, rather than an Ensure-only
+    // adoption that cannot report newly delivered instructions.
+    if (options.bootstrapReceipt) await rpc.dispatch(SESSION_RPC_METHODS.EXECUTION_RUN_STOP, { runId: 'streaming-run' });
     active = await fixture.activateLocalAgent(options.target ? { serverId: lifetime.scope.serverId, sessionId: target.id } : null);
     const { voiceAgentSessions: transport } = await import('@/voice/agent/voiceAgentSessions');
     const { VOICE_AGENT_GLOBAL_SESSION_ID: controlSessionId } = await import('@/voice/agent/voiceAgentGlobalSessionId');
@@ -411,12 +416,13 @@ describe('Voice streaming through retained initialization, execution transport a
         const afterRetirement = f.rpc.requests.length;
         await expect(f.transport.sendTurn(f.controlSessionId, 'recover')).resolves.toEqual({ assistantText: 'assistant reply', actions: [] });
         const recoveryRequests = f.rpc.requests.slice(afterRetirement);
-        const ensureIndex = recoveryRequests.findIndex(request =>
-            request.method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START
-            || request.method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1);
-        expect(ensureIndex).toBeGreaterThan(recoveryRequests.findIndex(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START));
-        expect(ensureIndex).toBeLessThan(recoveryRequests.map(request => request.method).lastIndexOf(SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START));
-        expect(ExecutionRunEnsureOrStartRequestSchema.parse(recoveryRequests[ensureIndex]?.input).start?.intent).toBe('voice_agent');
+        const restartIndex = recoveryRequests.findIndex(request =>
+            (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START
+                || request.method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1)
+            && ExecutionRunEnsureOrStartRequestSchema.parse(request.input).start);
+        expect(restartIndex).toBeGreaterThan(recoveryRequests.findIndex(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START));
+        expect(restartIndex).toBeLessThan(recoveryRequests.map(request => request.method).lastIndexOf(SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START));
+        expect(ExecutionRunEnsureOrStartRequestSchema.parse(recoveryRequests[restartIndex]?.input).start?.intent).toBe('voice_agent');
         expect(f.rpc.readRetainedRun()?.runId).toBe('streaming-run');
         await f.transport.sendTurn(f.controlSessionId, 'next');
         expect(f.starts[1]?.message).toBe(f.starts[0]?.message);

@@ -183,7 +183,6 @@ type RetainedVisibleSessionListProjection = Readonly<{
     inputs: VisibleSessionListProjectionInputs;
     collapseContextKey: string | undefined;
     validUntilMs: number | null;
-    dataActive: boolean;
     hasHiddenInactiveSessions: boolean;
     filterResult: EntityListFilterResultV1;
     conditionValueCounts?: VisibleSessionListProjection['conditionValueCounts'];
@@ -569,16 +568,17 @@ export function useVisibleSessionListViewState(
     options: VisibleSessionListViewStateOptions = {},
 ): VisibleSessionListViewState {
     const previousVisibleSessionListIndexRef = React.useRef<ReadonlyArray<SessionListIndexItem> | null>(null);
+    const surfaceDataActive = options.sessionListSurfaceDataActive !== false;
     const queryHomes = React.useMemo(() => options.botsRoster === true
         ? options.queryHomes?.map(home => ({ ...home, query: { ...home.query, bot: 'bot' as const, includeInactive: true }, queryMembership: 'rowOnly' as const }))
         : options.queryHomes, [options.botsRoster, options.queryHomes]);
     const { selection, source, ordinarySourceIndex, query } = useVisibleSessionListSourceState({
+        enabled: surfaceDataActive,
         queryHomes,
         emptyQuerySelectionComplete: options.emptyQuerySelectionComplete,
-        agentTargetDemand: options.sessionListSurfaceDataActive !== false && [options.workFilter, options.spaceMembership?.filter]
+        agentTargetDemand: surfaceDataActive && [options.workFilter, options.spaceMembership?.filter]
             .some(filter => Boolean(filter?.agents && filter.agents.include.length + filter.agents.exclude.length > 0)),
     });
-    const surfaceDataActive = options.sessionListSurfaceDataActive !== false;
     const activeAccountScope = useActiveServerAccountScope();
     const workflowsAvailability = useWorkflowsAvailability();
     const workFilter = React.useMemo(() => normalizeSessionListFilterV1({
@@ -869,11 +869,25 @@ export function useVisibleSessionListViewState(
             const cachedProjection = previousIndex
                 ? retainedVisibleSessionListProjections.get(previousIndex)
                 : undefined;
+            // An inactive consumer keeps its last presentation without deriving
+            // rows. The last active inputs stay in the cache so reactivation sees
+            // every change made while this surface was inactive.
+            if (!surfaceDataActive) {
+                return {
+                    visibleSessionListIndex: previousIndex,
+                    nextRuntimeFreshnessAtMs: null,
+                    hasHiddenInactiveSessions: cachedProjection?.hasHiddenInactiveSessions ?? false,
+                    filterResult: cachedProjection?.filterResult ?? UNAVAILABLE_FILTER_RESULT,
+                    conditionValueCounts: cachedProjection?.conditionValueCounts,
+                    filterMatchedEntityIds: cachedProjection?.filterMatchedEntityIds ?? EMPTY_FILTER_ENTITY_IDS,
+                    filterAttentionSupplementEntityIds: cachedProjection?.filterAttentionSupplementEntityIds ?? EMPTY_FILTER_ENTITY_IDS,
+                    runFactsUnavailable: cachedProjection?.membership.runFactsUnavailable ?? false,
+                };
+            }
             if (
                 previousIndex
                 && cachedProjection
                 && cachedProjection.collapseContextKey === options.collapseContextKey
-                && cachedProjection.dataActive === surfaceDataActive
                 && (cachedProjection.validUntilMs === null || runtimeNowMs < cachedProjection.validUntilMs)
                 && areVisibleSessionListProjectionInputsEqual(cachedProjection.inputs, inputs, rowChanges)
             ) {
@@ -900,7 +914,6 @@ export function useVisibleSessionListViewState(
             const rowChange = previousIndex && cachedProjection && rowChanges
                 && rowChanges.previousRows === cachedProjection.inputs.sessionRowStateByServerId
                 && cachedProjection.collapseContextKey === options.collapseContextKey
-                && cachedProjection.dataActive === surfaceDataActive
                 && (cachedProjection.validUntilMs === null || runtimeNowMs < cachedProjection.validUntilMs)
                 && areVisibleSessionListProjectionInputsEqual(cachedProjection.inputs,
                     { ...inputs, sessionRowStateByServerId: cachedProjection.inputs.sessionRowStateByServerId }, null)
@@ -944,9 +957,9 @@ export function useVisibleSessionListViewState(
             const filterAttentionSupplementEntityIds = retainEntityIds(projection?.attentionSupplementEntityIds ?? EMPTY_FILTER_ENTITY_IDS,
                 cachedProjection?.filterAttentionSupplementEntityIds);
             const resolveScopeId = captureServerProfileScopeResolver();
-            let nextAtMs = surfaceDataActive && visibleSessionListIndex
+            let nextAtMs = visibleSessionListIndex
                 ? resolveNextSessionAttentionReminderWakeAtMs(sessionAttentionStandingPolicy, runtimeNowMs) : null;
-            for (const item of surfaceDataActive ? visibleSessionListIndex ?? [] : []) {
+            for (const item of visibleSessionListIndex ?? []) {
                 if (item.type !== 'session') continue;
                 const row = readSessionListRowForServerId(sessionRowStateByServerId, item.serverId, item.sessionId, resolveScopeId);
                 if (!row) continue;
@@ -962,7 +975,6 @@ export function useVisibleSessionListViewState(
                     inputs,
                     collapseContextKey: options.collapseContextKey,
                     validUntilMs: nextAtMs,
-                    dataActive: surfaceDataActive,
                     hasHiddenInactiveSessions,
                     filterResult,
                     conditionValueCounts: projection.conditionValueCounts,
@@ -979,7 +991,7 @@ export function useVisibleSessionListViewState(
         };
     }, [previousVisibleSessionListIndexForRetention, projectionInputs, runtimeNowMs, source, workflowRunWindow?.status,
         surfaceDataActive, sessionAttentionStandingPolicy, hideInactiveSessions, options.collapseContextKey]);
-    const { visibleSessionListIndex, nextRuntimeFreshnessAtMs, hasHiddenInactiveSessions, filterResult, conditionValueCounts, filterMatchedEntityIds, filterAttentionSupplementEntityIds, runFactsUnavailable } = useSessionListRowsByServerId(undefined, selectProjection);
+    const { visibleSessionListIndex, nextRuntimeFreshnessAtMs, hasHiddenInactiveSessions, filterResult, conditionValueCounts, filterMatchedEntityIds, filterAttentionSupplementEntityIds, runFactsUnavailable } = useSessionListRowsByServerId(surfaceDataActive ? undefined : [], selectProjection);
     const workflowRunUnavailableHomes = React.useMemo(() => resolveRunUnavailableHomes(runFactsUnavailable),
         [options.corpusStorage, runServerId, selection.activeServerId, selection.allowedServerIds,
             surfaceDataActive, viewerAccountIdByServerId, workFilter, workflowWindow.rows, includesWorkflowRuns,
