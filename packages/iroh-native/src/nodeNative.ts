@@ -16,7 +16,7 @@
  *   TypeScript and surfaces typed errors (`IrohNativeOperationError` with the
  *   native code preserved); raw unknown JSON is never returned to callers.
  */
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -106,17 +106,31 @@ export function resolveIrohNodeAddonArtifactName(
   return `${IROH_NODE_NATIVE_ADDON_PREFIX}.${target}.node`;
 }
 
+function readPackageJsonName(path: string): string | null {
+  try {
+    const name = (JSON.parse(readFileSync(path, 'utf8')) as { name?: unknown }).name;
+    return typeof name === 'string' ? name : null;
+  } catch {
+    return null;
+  }
+}
+
 export function resolveDefaultIrohNodePackageRoot({
   moduleUrl = import.meta.url,
   executablePath = process.execPath,
   pathExists = existsSync,
+  readPackageName = readPackageJsonName,
 }: Readonly<{
   moduleUrl?: string;
   executablePath?: string;
   pathExists?: (path: string) => boolean;
+  readPackageName?: (packageJsonPath: string) => string | null;
 }> = {}): string {
+  // This module's own package (its dist/), never a host package that bundled it into a
+  // flat chunk (the CLI's `dist/<chunk>.mjs` sits two levels under the CLI package).
   const modulePackageRoot = dirname(dirname(fileURLToPath(moduleUrl)));
-  if (pathExists(join(modulePackageRoot, 'package.json')))
+  const modulePackageJson = join(modulePackageRoot, 'package.json');
+  if (pathExists(modulePackageJson) && readPackageName(modulePackageJson) === '@happier-dev/iroh-native')
     return modulePackageRoot;
 
   // A source-bundled Node host runs this module from a shared code chunk, not
@@ -152,6 +166,35 @@ export function resolveIrohNodeAddonPath(
     'native',
     resolveIrohNodeAddonArtifactName(platform, arch),
   );
+}
+
+/**
+ * The per-Session holder executable built beside the lifecycle addon by the same
+ * native builder (`scripts/build-node-addon.mjs`) and shipped in the same
+ * package `native/` directory. `null` means the holder is not present for this
+ * target; callers then keep the direct spawn (an answered question, not an error).
+ */
+export function resolveSessionHolderArtifactName(platform: string, arch: string): string | null {
+  const target = `${platform}-${arch}`;
+  if (!(SUPPORTED_IROH_NODE_TARGETS as readonly string[]).includes(target)) return null;
+  return `happier-session-holder.${target}${platform === 'win32' ? '.exe' : ''}`;
+}
+
+export function resolveSessionHolderExecutablePath({
+  packageRoot = resolveDefaultIrohNodePackageRoot(),
+  platform = process.platform,
+  arch = process.arch,
+  pathExists = existsSync,
+}: Readonly<{
+  packageRoot?: string;
+  platform?: string;
+  arch?: string;
+  pathExists?: (path: string) => boolean;
+}> = {}): string | null {
+  const name = resolveSessionHolderArtifactName(platform, arch);
+  if (!name) return null;
+  const path = join(packageRoot, 'native', name);
+  return pathExists(path) ? path : null;
 }
 
 /**

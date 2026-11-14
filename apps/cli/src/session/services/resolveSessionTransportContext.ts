@@ -210,3 +210,31 @@ export async function resolveSessionTransportContext(params: Readonly<{
         mode,
     };
 }
+
+/**
+ * Session RPC content material, read from the Session record only if `callSessionRpc` takes the
+ * server path. The same-machine local channel needs no record read. One read serves the caller's
+ * scope (a failed read is retried by the next call, never cached).
+ */
+/** The Session record could not supply RPC content material (nothing was sent to the Session). */
+export class SessionRpcTransportUnavailableError extends Error {
+    constructor(readonly code: Extract<ResolveSessionTransportContextResult, { ok: false }>['code'] | 'session_mismatch') {
+        super('Session RPC transport is unavailable');
+    }
+}
+
+export function deferSessionRpcEncryption(params: Parameters<typeof resolveSessionTransportContext>[0] & Readonly<{
+    unavailable?: (result: Extract<ResolveSessionTransportContextResult, { ok: false }> | null) => Error;
+}>): import('@/session/transport/rpc/sessionRpc').DeferredSessionRpcEncryption {
+    const { unavailable = result => new SessionRpcTransportUnavailableError(result?.code ?? 'session_mismatch'), ...request } = params;
+    let pending: Promise<Readonly<{ mode: 'plain' } | { mode: 'e2ee'; ctx: SessionEncryptionContext }>> | null = null;
+    return {
+        mode: 'deferred',
+        resolveEncryption: () => pending ??= (async () => {
+            const transport = await resolveSessionTransportContext(request);
+            if (!transport.ok) throw unavailable(transport);
+            if (transport.sessionId !== request.idOrPrefix) throw unavailable(null);
+            return transport.mode === 'plain' ? { mode: 'plain' as const } : { mode: 'e2ee' as const, ctx: transport.ctx };
+        })().catch((error: unknown) => { pending = null; throw error; }),
+    };
+}

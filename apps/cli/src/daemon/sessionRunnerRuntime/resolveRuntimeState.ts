@@ -80,6 +80,17 @@ function resolveVersionState(input: Readonly<{
   return input.runnerIdentity.comparableId === input.currentIdentity.comparableId ? 'current' : 'stale';
 }
 
+/** The version state of a live process (runner or session host) by its command line. */
+export function resolveProcessCommandVersionState(
+  processCommand: string | undefined,
+  currentIdentity: SessionRunnerEntrypointIdentity,
+): SessionRunnerVersionState {
+  return resolveVersionState({
+    runnerIdentity: resolveSessionRunnerEntrypointIdentityFromProcessCommand(processCommand),
+    currentIdentity,
+  });
+}
+
 function foldVersionStates(
   states: readonly SessionRunnerVersionState[],
 ): SessionRunnerVersionState {
