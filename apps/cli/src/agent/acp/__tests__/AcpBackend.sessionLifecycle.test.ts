@@ -27,6 +27,13 @@ function backendWithPeer(input: Readonly<{
 }
 
 describe('AcpBackend negotiated session lifecycle', () => {
+  it('reports unsupported fork when the connection has no peer', async () => {
+    const backend = new AcpBackend({ agentName: 'test', cwd: '/workspace', command: 'noop' });
+    Reflect.set(backend, 'connection', { close: () => {}, closed: Promise.resolve() });
+    await expect(backend.forkSession({ sessionId: 'source-session' }))
+      .rejects.toThrow('test does not support ACP session/fork');
+  });
+
   it('lists through the standard peer method with cwd and cursor unchanged', async () => {
     const listSessions = vi.fn(async () => ({
       sessions: [{
@@ -100,6 +107,19 @@ describe('AcpBackend negotiated session lifecycle', () => {
     await expect((backend[method] as (value: unknown) => Promise<unknown>)(argument))
       .rejects.toThrow(/did not negotiate ACP session\/(?:list|close|delete) support during initialize/);
     expect(operation).not.toHaveBeenCalled();
+  });
+
+  it('re-enters an adopted held Session without the Agent negotiating session/load', async () => {
+    // The adopt contract answers the held Session's load from the stored handshake.
+    // Only a fresh Agent without load support is refused.
+    const outcomes = await Promise.all([false, true].map(async (adopted) => {
+      const loadSession = vi.fn(async () => ({}));
+      const backend = backendWithPeer({ peer: { loadSession } });
+      (backend as any).sessionHolderAdoption = adopted ? { adopted: Promise.resolve(true) } : null;
+      const load = (backend as any).loadSessionOnCurrentConnection('acp-held-1', 1_000) as Promise<unknown>;
+      return await load.then(() => loadSession.mock.calls.length, () => 'refused' as const);
+    }));
+    expect(outcomes).toEqual(['refused', 1]);
   });
 
   it.each(['closeSession', 'deleteSession'] as const)('rejects a blank id before %s', async (method) => {

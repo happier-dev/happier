@@ -3802,7 +3802,7 @@ describe('switchSessionConnectedServiceAuth', () => {
     expect(calls).toEqual(['restart', 'continue']);
   });
 
-  it('preserves automatic runtime failure as the application actor and reason', async () => {
+  it.each(['usage_limit', 'automatic_runtime_failure', 'pre_turn_group_policy'] as const)('preserves application actor and public switch reason %s', async (runtimeAuthApplyReason) => {
     const tracked = trackedSession();
     const emitSessionEvent = vi.fn();
 
@@ -3826,7 +3826,7 @@ describe('switchSessionConnectedServiceAuth', () => {
       registerHotApplyTargets: () => {},
       emitSessionEvent,
       reason: 'automatic_runtime_failure',
-      runtimeAuthApplyReason: 'usage_limit',
+      runtimeAuthApplyReason,
       request: {
         sessionId: 'sess_1',
         agentId: 'claude',
@@ -3849,7 +3849,7 @@ describe('switchSessionConnectedServiceAuth', () => {
       type: 'connected_service_account_switch_attempt',
       ok: false,
       action: 'hot_applied',
-      reason: 'usage_limit',
+      reason: runtimeAuthApplyReason,
     }));
   });
 

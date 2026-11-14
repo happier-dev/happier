@@ -127,14 +127,7 @@ export type ConnectedServiceRuntimeAuthApplyReason =
   | 'refresh_failed'
   | 'diagnostic';
 type ConnectedServiceSwitchAttemptAction = 'restart_requested' | 'hot_applied' | 'metadata_updated';
-type ConnectedServiceSwitchAttemptPublicReason =
-  | 'usage_limit'
-  | 'same_provider_account_exhausted'
-  | 'soft_threshold'
-  | 'auth_expired'
-  | 'account_changed'
-  | 'refresh_failed'
-  | 'manual';
+type ConnectedServiceSwitchAttemptPublicReason = Exclude<ConnectedServiceRuntimeAuthApplyReason, 'diagnostic'>;
 
 export type SessionConnectedServiceAuthSwitchErrorCode =
   | 'session_not_found'
@@ -921,19 +914,7 @@ function readExpectedGeneration(
 function normalizeSwitchAttemptEventReason(
   reason: ConnectedServiceRuntimeAuthApplyReason | undefined,
 ): ConnectedServiceSwitchAttemptPublicReason {
-  switch (reason) {
-    case 'usage_limit':
-    case 'same_provider_account_exhausted':
-    case 'soft_threshold':
-    case 'auth_expired':
-    case 'account_changed':
-    case 'refresh_failed':
-    case 'manual':
-      return reason;
-    case 'diagnostic':
-    case undefined:
-      return 'manual';
-  }
+  return reason === 'diagnostic' || reason === undefined ? 'manual' : reason;
 }
 
 function resolveAuthGroupLabel(group: QualifiedConnectedAccountGroupV4): string {

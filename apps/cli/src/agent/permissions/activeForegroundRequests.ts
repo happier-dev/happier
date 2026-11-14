@@ -22,11 +22,15 @@ export function readForegroundAgentRequestFollowEvent(request: Readonly<{
 export function readActiveForegroundAgentRequests<Request extends object>(state: Readonly<{
   requests?: Readonly<Record<string, Request>> | null; completedRequests?: Record<string, unknown> | null;
 }>, requestCoverage?: AgentStateRequestCoverageOptions): readonly (
-  readonly [requestId: string, request: Request]
+  readonly [requestId: string, request: Request & Readonly<{ createdAt: number }>]
 )[] {
-  return Object.entries(state.requests ?? {}).filter(([requestId, request]) => !('sidechainId' in request && request.sidechainId)
+  return Object.entries(state.requests ?? {}).filter((entry): entry is [string, Request & Readonly<{ createdAt: number }>] => {
+    const [requestId, request] = entry;
+    return 'createdAt' in request && typeof request.createdAt === 'number' && Number.isFinite(request.createdAt)
+    && !('sidechainId' in request && request.sidechainId)
     && !readRunScopedExecutionPermissionRequestIdentity(requestId)
     && !isAgentStateRequestCoveredByCompletedRequests({ requestId, request, completedRequests: state.completedRequests,
-      options: requestCoverage }))
+      options: requestCoverage });
+  })
     .sort(([left], [right]) => left.localeCompare(right));
 }

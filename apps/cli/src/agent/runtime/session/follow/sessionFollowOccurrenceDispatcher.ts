@@ -944,7 +944,6 @@ export function createSessionFollowOccurrenceDispatcher(input: Readonly<{
           recipientEnvelopeReadiness: transport.accountEncryptionCurrentness.recipientEnvelopeReadiness, rawSession: source,
         }) });
         if (state?.success) for (const [requestId, foregroundRequest] of readActiveForegroundAgentRequests(state.data, requestCoverage)) {
-          if (typeof foregroundRequest.createdAt !== 'number' || !Number.isFinite(foregroundRequest.createdAt)) continue;
           const event = readForegroundAgentRequestFollowEvent(foregroundRequest);
           const evidence = event ? captureSemanticSessionFollowRuleSourceEvidence({ serverId: input.serverId,
             ownerAccountId, origin: source.origin ?? null, event }) : null;

@@ -1569,7 +1569,8 @@ export class AcpBackend implements CatalogAcpBackend {
       }
       const connection = this.connection;
       if (!connection?.peer) {
-        throw Object.assign(new Error(`${this.transport.agentName} does not support ACP session/fork`, { cause: error }), {
+        const error = new Error(`${this.transport.agentName} does not support ACP session/fork`);
+        throw Object.assign(error, {
             failureCause: { ...readNativeStartupFailureDetail(error),
               ...projectSessionRuntimeFailureCause(error, 'thread_open', 'agent.launch') },
           });
