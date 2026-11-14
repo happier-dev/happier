@@ -58,18 +58,21 @@ import { createPublicAcpSession, type PublicAcpComposerDependencies } from './cr
 // Protocol fixture: FX v0.0.14 session/new (2026-10-27), with constructed
 // Gateway/custom-route and native-refusal variants, plus Kilo's declared model
 // config-option control and Oh My Pi 18.12.3 model config options. Only the OS peer is fake.
-async function fixture(dir: string, scenario: 'accept' | 'refuse' | 'current', agentId: 'fx' | 'kilo' | 'codebuddy' | 'droid' | 'ohmypi' | 'copilot' | 'opencode' = 'fx', selectedAccount = agentId !== 'fx', selectedProvider = false) {
+async function fixture(dir: string, scenario: 'accept' | 'refuse' | 'current', agentId: 'fx' | 'kilo' | 'codebuddy' | 'droid' | 'ohmypi' | 'copilot' | 'opencode' = 'fx', selectedAccount = agentId !== 'fx', selectedProvider = false, museAccount: boolean | 'apiKey' = false) {
   const plugin = { fx: FX_PLUGIN, kilo: KILO_PLUGIN, codebuddy: CODEBUDDY_PLUGIN, droid: DROID_PLUGIN, ohmypi: OH_MY_PI_PLUGIN, copilot: COPILOT_PLUGIN, opencode: OPENCODE_PLUGIN }[agentId];
   const capture = join(dir, 'requests.json');
+  const museProvider = museAccount === 'apiKey' ? 'meta' : 'muse-code';
   const script = writeAcpTestAgentScript({ dir, fileName: 'models.mjs', source: `
     import { createInterface } from 'node:readline';
     import { readFileSync, writeFileSync } from 'node:fs';
     const requests = [];
-    let nativeModel = 'native-default';
+    let nativeModel = ${JSON.stringify(museAccount ? `${museProvider}/muse-spark-1.2` : 'native-default')};
     let configuredModel;
     let configOptions = ${JSON.stringify(createFxConfigOptionsFixture())};
     if (process.env.AGENT_MODE === 'ohmypi') configOptions = [{id:'model',name:'Model',category:'model',type:'select',currentValue:nativeModel,
       options:[{value:nativeModel,name:'Native default'},{value:'happier-provider/vendor/selected-model',name:'Selected'}]}];
+    if (${Boolean(museAccount)}) configOptions = [{id:'model',name:'Model',category:'model',type:'select',currentValue:nativeModel,
+      options:${JSON.stringify(['muse-spark-1.2', 'muse-spark-1.3'].map(id => `${museProvider}/${id}`))}.map(value => ({value,name:value}))}];
     if (process.env.AGENT_MODE === 'kilo') configOptions = [{ id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: 'openai/native-default', options: ['openai/selected-initial', 'openai/selected-next', 'openai/unverified-native'].map(value => ({ value, name: value })) }];
     if (process.env.AGENT_MODE === 'codebuddy') {
       const selected = JSON.parse(process.env.ACC_PRODUCT_CONFIG_V3 || '{"models":[{"id":"openai/selected-initial"}]}').models[0].id;
@@ -111,7 +114,7 @@ async function fixture(dir: string, scenario: 'accept' | 'refuse' | 'current', a
       if (r.method === 'session/set_model') nativeModel = r.params.modelId;
       if (r.method === 'session/prompt') result = { stopReason: 'end_turn' };
       if (r.method === 'session/set_config_option') {
-        if (r.params.configId === 'model' && process.env.SCENARIO === 'refuse') {
+        if (r.params.configId === 'model' && ((process.env.SCENARIO === 'refuse' && (!${Boolean(museAccount)} || r.params.value !== ${JSON.stringify(museProvider + '/muse-spark-1.2')})) || (${Boolean(museAccount)} && !configOptions[0].options.some(option => option.value === r.params.value)))) {
           error = { code: -32602, message: 'Model was refused by the native route' };
         } else {
           if (process.env.AGENT_MODE === 'ohmypi' && r.params.configId === 'model') nativeModel = r.params.value;
@@ -181,7 +184,7 @@ async function fixture(dir: string, scenario: 'accept' | 'refuse' | 'current', a
   };
   const agent = PluginAgentContributionV2Schema.parse(plugin.manifest.contributes.agents?.find(entry => entry.id === agentId));
   const services = createUnavailablePluginServices();
-  const account = { service: agentId === 'opencode' ? { pluginId: 'happier.voice.openai', localId: 'openai' }
+  const account = { service: museAccount ? { pluginId: 'happier.agent.muse', localId: 'muse-account' } : agentId === 'opencode' ? { pluginId: 'happier.voice.openai', localId: 'openai' }
     : { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'selected' };
   // The status child is an OS boundary; native settings and host qualification stay real.
   const fxExec = agentId === 'fx' && selectedProvider ? createStablePluginExecService({
@@ -204,10 +207,10 @@ async function fixture(dir: string, scenario: 'accept' | 'refuse' | 'current', a
         queueMicrotask(() => listener({kind:'resync',authorityChanged:false})); return {dispose() {}};
       } } : {}),
       // This host port is the external credential boundary of the plugin leaf.
-      getBinding: async purpose => agentId !== 'ohmypi' && selectedAccount && purpose !== COPILOT_GITHUB_PURPOSE_ID
+      getBinding: async purpose => (museAccount ? purpose === 'muse' : agentId !== 'ohmypi' && selectedAccount && purpose !== COPILOT_GITHUB_PURPOSE_ID)
         && (agentId !== 'opencode' || purpose === OPEN_CODE_OPENAI_API_KEY_PURPOSE_ID) ? { purpose, service: account.service, account,
         target: { kind: 'account' as const, displayName: 'Selected' } } : null,
-      materialize: async () => agentId === 'opencode' ? { kind: 'environment' as const, env: { OPENAI_API_KEY: 'synthetic-selected' } }
+      materialize: async () => museAccount ? { kind: 'environment' as const, env: { [museAccount === 'apiKey' ? 'META_API_KEY' : 'MUSE_CODE_CREDENTIAL']: 'synthetic-muse-only' } } : agentId === 'opencode' ? { kind: 'environment' as const, env: { OPENAI_API_KEY: 'synthetic-selected' } }
         : ({ kind: 'httpHeaders' as const, headers: { authorization: 'Bearer synthetic-selected', 'chatgpt-account-id': 'synthetic-account' } }),
     } } } : {}),
     protocols: { acp: { open: (request, options) => {
@@ -243,7 +246,8 @@ async function fixture(dir: string, scenario: 'accept' | 'refuse' | 'current', a
             unset: providerMaterialization.env.filter(entry => entry.value === null).map(entry => entry.name),
           } } : {}),
         } : {}),
-        ...(agentId === 'ohmypi' ? { providerBinding: { connectionId:'gateway',
+        ...(museAccount ? { launchEnvironment: { values: { PI_CODING_AGENT_DIR: dir }, unset: [] } } : {}),
+        ...(agentId === 'ohmypi' && !museAccount ? { providerBinding: { connectionId:'gateway',
           upstream:{protocol:'openai-responses' as const,normalizedUrl:'http://127.0.0.1:7777/v1',credential:'apiKey' as const},
           model:{id:'vendor/selected-model',name:'Selected'},
           materialization:{v:1 as const,kind:'configFile' as const,rootPath:dir,relativePaths:['provider.mjs']} } } : {}),
@@ -661,6 +665,31 @@ describe('Oh My Pi selected Provider model through the public ACP owner', () => 
         }
         await sendCompletedPrompt(session, 'after-model-change', 'Use the acknowledged model');
         expect(f.promptModels()).toEqual(['native-default', scenario === 'accept' ? 'happier-provider/vendor/selected-model' : 'native-default']);
+      } finally { await session.dispose(); await f.dispose(); }
+    });
+  });
+});
+
+
+describe('Oh My Pi Muse Connected Account model ids', () => {
+  it.each([
+    { scenario: 'accept', route: true, provider: 'muse-code' },
+    { scenario: 'refuse', route: true, provider: 'muse-code' },
+    { scenario: 'accept', route: 'apiKey', provider: 'meta' },
+    { scenario: 'refuse', route: 'apiKey', provider: 'meta' },
+  ] as const)('maps bare selections through $provider and permits a later prompt on $scenario', async ({ scenario, route, provider }) => {
+    await withTempDir('omp-muse-model-', async dir => {
+      const f = await fixture(dir, scenario, 'ohmypi', true, false, route);
+      const session = await f.open(configuration('muse-spark-1.2', 'explicit'));
+      try {
+        const result = await session.updateConfiguration?.({
+          ...configuration('muse-spark-1.3', 'explicit'),
+          model: { value: 'muse-spark-1.3', selectionSource: 'explicit', updatedAtMs: 2 },
+        });
+        expect(result).toMatchObject(scenario === 'accept' ? { status: 'applied' } : { status: 'rejected' });
+        expect(f.publications.modelsSource.read().currentModelId).toBe(scenario === 'accept' ? 'muse-spark-1.3' : 'muse-spark-1.2');
+        await sendCompletedPrompt(session, 'after-muse-selection', 'Reply after the model selection');
+        expect(f.promptModels()).toEqual([`${provider}/${scenario === 'accept' ? 'muse-spark-1.3' : 'muse-spark-1.2'}`]);
       } finally { await session.dispose(); await f.dispose(); }
     });
   });

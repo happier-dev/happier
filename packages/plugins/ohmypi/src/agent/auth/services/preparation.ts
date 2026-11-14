@@ -18,6 +18,7 @@ type OhMyPiAccountPreparationRequest = Pick<OhMyPiOpenRequest, 'launchEnvironmen
 
 type PreparedOhMyPiConnectedAccounts<Request extends OhMyPiAccountPreparationRequest> = Readonly<{
   request: Request;
+  nativeModelProvider: string | undefined;
   isInvalidated(): boolean;
   bind(session: AgentSessionRuntime): AgentSessionRuntime;
   bindExecutionRun(run: AgentExecutionRunRuntime): AgentExecutionRunRuntime;
@@ -203,6 +204,7 @@ export async function prepareOhMyPiQualifiedAccounts<Request extends OhMyPiAccou
 
     return {
       request: preparedRequest,
+      nativeModelProvider: materializedEnvironment.find(entry => entry.declaration.unqualifiedModelIds)?.route?.nativeProvider,
       isInvalidated: () => invalidated,
       bind(session) {
         // The host owns account-change recovery at the Session turn boundary.

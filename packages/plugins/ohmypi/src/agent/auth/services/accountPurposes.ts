@@ -18,6 +18,7 @@ type OhMyPiConnectedAccountPurpose = Readonly<{
   service: Readonly<{ pluginId: string; localId: string }>;
   credentialKinds: NonNullable<ConnectedAccountPurposeDeclaration['credentialKinds']>;
   nativeRoutes: readonly OhMyPiNativeAccountRoute[];
+  unqualifiedModelIds?: true;
   additionalEnvironmentKeys?: readonly string[];
   clearEnvironmentKeys?: readonly string[];
   fileCredential?: Readonly<{ fileId: string; environmentKey: string }>;
@@ -70,6 +71,8 @@ export const OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES: readonly OhMyPiConnectedAccoun
 }, {
   purpose: 'muse',
   service: MUSE_ACCOUNT_SERVICE,
+  // The Muse account catalog uses bare ids; native ACP requires provider/id.
+  unqualifiedModelIds: true,
   // A subscription also has an inference key; preserve its native subscription route.
   nativeRoutes: [
     { nativeProvider: 'muse-code', materializationKey: MUSE_CODE_CREDENTIAL_ENV_KEY, launchEnvironmentKey: MUSE_CODE_CREDENTIAL_ENV_KEY },

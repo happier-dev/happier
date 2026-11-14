@@ -53,11 +53,16 @@ function nativeProviderModelId(modelId: string): string {
   return `${PROVIDER_ID}/${modelId}`;
 }
 
-export function ohMyPiProviderModelControls(binding: AgentSessionProviderBinding | undefined): AgentAcpModelControls {
-  if (!binding) return { catalogConfidence: 'account_unverified', projectModel: (_raw, model) => model };
-  const canonicalId = binding.model.id;
-  const nativeId = nativeProviderModelId(canonicalId);
-  const decode = (id: string) => id === nativeId ? canonicalId : id;
+export function ohMyPiProviderModelControls(binding: AgentSessionProviderBinding | undefined, nativeModelProvider?: string): AgentAcpModelControls {
+  if (!binding && !nativeModelProvider) return { catalogConfidence: 'account_unverified', projectModel: (_raw, model) => model };
+  const canonicalId = binding?.model.id;
+  const nativeId = canonicalId === undefined ? null : nativeProviderModelId(canonicalId);
+  // Account preparation selects the subscription or API-key route once.
+  const prefix = !binding && nativeModelProvider ? nativeModelProvider + '/' : null;
+  const decode = (id: string) => {
+    if (id === nativeId && canonicalId !== undefined) return canonicalId;
+    return prefix && id.startsWith(prefix) ? id.slice(prefix.length) : id;
+  };
   return {
     catalogConfidence: 'account_unverified',
     projectModel: (_raw, model) => model,
@@ -67,10 +72,10 @@ export function ohMyPiProviderModelControls(binding: AgentSessionProviderBinding
       availableModels: normalizedModelState.availableModels.map(model => ({ ...model, id: decode(model.id) })),
     }),
     resolveModelUpdate: ({ modelId }) => {
-      if (modelId !== canonicalId && modelId !== nativeId) {
+      if (binding && modelId !== canonicalId && modelId !== nativeId) {
         throw new Error('Oh My Pi model selection does not match the Session Provider binding');
       }
-      return { modelId: nativeId };
+      return { modelId: nativeId ?? (prefix && !modelId.includes('/') ? prefix + modelId : modelId) };
     },
   };
 }

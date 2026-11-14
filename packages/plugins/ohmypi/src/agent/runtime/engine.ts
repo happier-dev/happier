@@ -46,7 +46,7 @@ async function openOhMyPiExecutionRun(
           },
           args: [...OH_MY_PI_ACP_COMMAND.args, ...providerLaunch.args],
         },
-        definition: { ...OH_MY_PI_ACP_RUNTIME_DEFINITION, models: ohMyPiProviderModelControls(prepared.request.providerBinding) },
+        definition: { ...OH_MY_PI_ACP_RUNTIME_DEFINITION, models: ohMyPiProviderModelControls(prepared.request.providerBinding, prepared.nativeModelProvider) },
       },
     );
     return prepared.bindExecutionRun(run);
@@ -76,7 +76,7 @@ async function openOhMyPiSession(
         },
         args: [...OH_MY_PI_ACP_COMMAND.args, ...providerLaunch.args],
       },
-      definition: { ...OH_MY_PI_ACP_RUNTIME_DEFINITION, models: ohMyPiProviderModelControls(prepared.request.providerBinding) },
+      definition: { ...OH_MY_PI_ACP_RUNTIME_DEFINITION, models: ohMyPiProviderModelControls(prepared.request.providerBinding, prepared.nativeModelProvider) },
     });
     return prepared.bind(session);
   } catch (error) {
