@@ -167,10 +167,8 @@ describe('presentOperationsOutcomeRows', () => {
       subjectReceipt: { id: 'dep-1', environmentId: 'env', targetLinkId: 'link-1' } as never,
       healthServerId: 'srv',
       health: {
-        environmentId: 'env',
-        status: 'ready',
-        members: [],
-        aggregate: {
+        healthFeed: { environmentId: 'env', status: 'ready', members: [] },
+        healthAggregate: {
           environmentId: 'env',
           targetLinkId: 'link-1',
           status: 'down',

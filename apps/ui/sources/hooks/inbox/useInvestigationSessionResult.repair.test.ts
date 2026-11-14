@@ -284,8 +284,8 @@ it('carries a linked repair journey through proposal, command evidence, redeploy
             environmentId: receipt.environmentId, deploymentId: 'new-receipt' }));
         expect(rows[0]?.links[0]).toMatchObject({ kind: 'operation' });
         expect(projectOperationsRunOutcome({ subject, finding: result.finding, produced: result.produced, subjectReceipt: receipt,
-            healthServerId: 'home', health: { environmentId: receipt.environmentId, status: 'ready', members: [],
-                aggregate: { v: 1, environmentId: receipt.environmentId, targetLinkId: receipt.targetLinkId, protection: 'nonProduction',
+            healthServerId: 'home', health: { healthFeed: { environmentId: receipt.environmentId, status: 'ready', members: [] },
+                healthAggregate: { v: 1, environmentId: receipt.environmentId, targetLinkId: receipt.targetLinkId, protection: 'nonProduction',
                     status: 'up', n: 1, down: 0, degraded: 0, unknown: 0, members: [], affectedMachineIds: [],
                     edgeUnreachable: false, authoritativeRecovery: false } } }).recovery)
             .toMatchObject({ kind: 'observed', health: { status: 'up' } });

@@ -6,7 +6,7 @@ import type { InboxReadySessionResult } from '@/activity/presentation/buildInbox
 import type { ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ScmPullRequestSummary } from '@happier-dev/protocol/scm/pullRequests';
 import type { DeploymentReceiptHeaderV1, DeploymentEnvironmentHealthAggregateV1 } from '@happier-dev/deployment-protocol/v1';
-import type { DeploymentEnvironmentHealthFeedV1 } from '@happier-dev/deployments';
+import type { DeploymentEnvironmentHealthFeedV1, DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
 import type { QualifiedActionOperation } from '../actionOperations/qualifiedActionOperation';
 import type { DeploymentReceiptAcceptedResultV1 } from '@happier-dev/protocol/deployments/deploymentReceiptResultV1';
 
@@ -53,7 +53,7 @@ export type OperationsRunOutcomeInput = Readonly<{
     subjectReceipt?: DeploymentReceiptHeaderV1 | null;
     /** The already-mounted deployment controller's scope.serverId. */
     healthServerId?: string | null;
-    health?: DeploymentEnvironmentHealthFeedV1 | null;
+    health?: Pick<DeploymentEnvironmentReadDetailV1, 'healthFeed' | 'healthAggregate'> | null;
 }>;
 
 export type OperationsRunOutcome = Readonly<{
@@ -92,7 +92,8 @@ export function projectOperationsRunOutcome(input: OperationsRunOutcomeInput): O
 
 /** Correlate addresses only. The live health owner alone decides health/recovery. */
 function readRecovery(input: OperationsRunOutcomeInput): OperationsRunOutcome['recovery'] {
-    const feed = input.health;
+    const feed = input.health?.healthFeed;
+    const aggregate = input.health?.healthAggregate;
     if (!feed || !input.healthServerId) return { kind: 'unavailable', reason: 'health_unavailable' };
     const subject = input.subject;
     const target = subject.kind === 'service' || subject.kind === 'healthAlert' ? subject.target : null;
@@ -105,7 +106,7 @@ function readRecovery(input: OperationsRunOutcomeInput): OperationsRunOutcome['r
         : target && 'page' in target && target.page === 'machine_service' && target.service.kind === 'deployment'
             ? target.service.environmentId : null;
     if (!environmentId) return { kind: 'unavailable', reason: 'health_unavailable' };
-    if (feed.environmentId !== environmentId || feed.aggregate && feed.aggregate.environmentId !== environmentId)
+    if (feed.environmentId !== environmentId || aggregate && aggregate.environmentId !== environmentId)
         return { kind: 'unavailable', reason: 'subject_mismatch' };
     if (target && 'page' in target && target.page === 'machine_service') {
         const member = feed.members.find(member => member.machineId === target.machine.machineId);
@@ -116,7 +117,7 @@ function readRecovery(input: OperationsRunOutcomeInput): OperationsRunOutcome['r
     const targetLinkId = target && 'page' in target && target.page === 'environment' ? target.targetLinkId
         : subject.kind === 'deploymentReceipt' && input.subjectReceipt?.id === subject.deploymentId
             && input.subjectReceipt.environmentId === subject.environmentId ? input.subjectReceipt.targetLinkId : null;
-    if (!feed.aggregate || !targetLinkId) return { kind: 'unavailable', reason: 'health_unavailable' };
-    if (feed.aggregate.targetLinkId !== targetLinkId) return { kind: 'unavailable', reason: 'subject_mismatch' };
-    return { kind: 'observed', health: feed.aggregate, coverage: feed.status };
+    if (!aggregate || !targetLinkId) return { kind: 'unavailable', reason: 'health_unavailable' };
+    if (aggregate.targetLinkId !== targetLinkId) return { kind: 'unavailable', reason: 'subject_mismatch' };
+    return { kind: 'observed', health: aggregate, coverage: feed.status };
 }

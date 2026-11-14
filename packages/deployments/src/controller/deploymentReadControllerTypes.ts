@@ -45,7 +45,6 @@ export type DeploymentEnvironmentHealthFeedV1 = Readonly<{
     environmentId: string;
     status: 'loading' | 'ready' | 'partial' | 'unavailable';
     members: readonly DeploymentEnvironmentHealthMemberV1[];
-    aggregate?: DeploymentEnvironmentHealthAggregateV1;
 }>;
 
 export type DeploymentReadScopeV1 = Readonly<{
@@ -134,7 +133,7 @@ export type DeploymentReadTransportV1 = Readonly<{
     observeReceipts?(scope: DeploymentReadScopeV1, targetLinkId: string, deploymentIds: readonly string[], options: DeploymentReadOptionsV1): Promise<DeploymentReadResultV1<readonly unknown[]>>;
     /** One shared, demand-bound subscription to the existing Machine Services Resource. */
     observeEnvironmentHealth?(scope: DeploymentReadScopeV1, detail: DeploymentEnvironmentReadDetailV1,
-        publish: (feed: DeploymentEnvironmentHealthFeedV1) => void, options: DeploymentReadOptionsV1): () => void;
+        publish: (feed: DeploymentEnvironmentHealthFeedV1, aggregate?: DeploymentEnvironmentHealthAggregateV1) => void, options: DeploymentReadOptionsV1): () => void;
     /** Current saved-check facts for this visible page, independent of its Home metadata read. */
     observeDomainHealth?(scope: DeploymentReadScopeV1, environmentId: string, items: readonly DeploymentDomainReadItemV1[],
         publish: (items: readonly DeploymentDomainReadItemV1[]) => void, options: DeploymentReadOptionsV1): () => void;

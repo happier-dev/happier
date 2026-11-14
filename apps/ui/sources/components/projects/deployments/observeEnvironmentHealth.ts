@@ -152,7 +152,7 @@ export function environmentHealthObserver(lifetime: ServerAccountScopeLifetime):
             const edgeReady = currentEdge?.freshness === 'fresh' && !currentEdge.error && currentEdge.value?.ok;
             const feedStatus = !edge ? status : edgeReady ? (status === 'unavailable' && members.length === 0 ? 'ready' : status)
                 : status === 'ready' ? 'partial' : currentEdge?.error ? 'unavailable' : 'loading';
-            publish({ environmentId: detail.environment.id, status: feedStatus, members, aggregate });
+            publish({ environmentId: detail.environment.id, status: feedStatus, members }, aggregate);
         };
         const subscriptions = bindings.map(({ owner }) => owner.selection.subscribe(update, true));
         if (edge) subscriptions.push(edge.selection.subscribe(update, true));

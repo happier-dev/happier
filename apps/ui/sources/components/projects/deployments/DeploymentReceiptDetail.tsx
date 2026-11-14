@@ -184,8 +184,8 @@ export const DeploymentReceiptDetail = React.memo(
       produced: persistedInvestigation.produced,
       subjectReceipt: value?.deployment ?? null,
       healthServerId: props.serverId,
-      health: receipt.healthFeed,
-    } : null, [persistedInvestigation, investigateSubject, value?.deployment, props.serverId, receipt.healthFeed]);
+      health: receipt.environmentSnapshot.value,
+    } : null, [persistedInvestigation, investigateSubject, value?.deployment, props.serverId, receipt.environmentSnapshot.value]);
     const { onOpenReceipt, onOpenPromotionReceipt } = props;
     // A remediation can land on another Environment of this Project; both open through this page's own receipt navigation.
     const openOutcomeReceipt = React.useMemo(() => ({ serverId: props.serverId,

@@ -407,7 +407,7 @@ describe('deployment demand read controller', () => {
                 });
                 bindings.push(health);
                 const observation = health.observe(aggregate => publish({ environmentId: admitted.environment.id,
-                    status: 'partial', members: [], aggregate }));
+                    status: 'partial', members: [] }, aggregate));
                 return () => { observation.dispose(); health.dispose(); };
             },
         } });
@@ -417,7 +417,7 @@ describe('deployment demand read controller', () => {
         try {
             await Promise.all([environment.refresh(), receiptPage.refresh()]);
             const initial = environment.getSnapshot().value?.healthFeed;
-            expect(initial?.aggregate).toMatchObject({ protection: 'nonProduction', down: 0, unknown: 1, authoritativeRecovery: false });
+            expect(environment.getSnapshot().value?.healthAggregate).toMatchObject({ protection: 'nonProduction', down: 0, unknown: 1, authoritativeRecovery: false });
             expect(receiptPage.getSnapshot()).toBe(environment.getSnapshot());
             const publications = vi.fn();
             receiptPage.subscribe(publications);
@@ -426,17 +426,18 @@ describe('deployment demand read controller', () => {
             detail = { ...detail, environment: { ...detail.environment, revision: 2 } };
             await environment.refresh();
             expect(environment.getSnapshot().value?.healthFeed).toBe(initial);
+            expect(environment.getSnapshot().value?.healthAggregate).toMatchObject({ protection: 'nonProduction', unknown: 1 });
             expect(bindings).toHaveLength(1);
             detail = { ...detail, environment: { ...detail.environment, revision: 3, protection: 'production' } };
             await environment.refresh();
-            expect(receiptPage.getSnapshot().value?.healthFeed?.aggregate).toMatchObject({
+            expect(receiptPage.getSnapshot().value?.healthAggregate).toMatchObject({
                 protection: 'production', n: 1, down: 1, unknown: 1, authoritativeRecovery: false,
             });
             expect(bindings[0]!.retirementSignal.aborted).toBe(true);
             expect(bindings).toHaveLength(2);
             detail = { ...detail, environment: { ...detail.environment, revision: 4, protection: 'nonProduction' } };
             await receiptPage.refresh();
-            expect(environment.getSnapshot().value?.healthFeed?.aggregate).toMatchObject({
+            expect(environment.getSnapshot().value?.healthAggregate).toMatchObject({
                 protection: 'nonProduction', down: 0, unknown: 1, authoritativeRecovery: false,
             });
             expect(bindings[1]!.retirementSignal.aborted).toBe(true);

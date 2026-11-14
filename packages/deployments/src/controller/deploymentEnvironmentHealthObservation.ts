@@ -43,11 +43,11 @@ export function reconcileDeploymentEnvironmentHealthObservationV1(entry: Entry, 
     stopDeploymentEnvironmentHealthObservationV1(entry);
     const observation: DeploymentEnvironmentHealthObservationV1 = { basis, abort: new AbortController() };
     entry.healthObservation = observation;
-    observation.stop = transport.observeEnvironmentHealth(scope, detail, healthFeed => {
+    observation.stop = transport.observeEnvironmentHealth(scope, detail, (healthFeed, healthAggregate) => {
         if (observation.abort.signal.aborted) return;
         const snapshot = entry.projection.getSnapshot();
         if (snapshot.value) entry.projection.publish({ ...snapshot,
-            value: { ...snapshot.value as DeploymentEnvironmentReadDetailV1, healthFeed } });
+            value: { ...snapshot.value as DeploymentEnvironmentReadDetailV1, healthFeed, healthAggregate } });
     }, { signal: observation.abort.signal });
 }
 

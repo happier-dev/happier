@@ -9,10 +9,37 @@ import { createRenderCommitCounter, useRenderCommitCounter } from '@/dev/testkit
 import { useEnvironmentRollbackMenu, useDeploymentCollection, useDeploymentEnvironment, useDeploymentEnvironmentDomains, useDeploymentHistory, useDeploymentReceipt, useSessionDeploymentChip } from './useDeploymentReads';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { useSessionActionOperations } from '@/sync/domains/actionOperations/useActionOperations';
+import { projectDeploymentHealthAggregateV1, type DeploymentHealthServicesObservationV1 } from '@happier-dev/deployments';
+import { deploymentEnvironmentAttention, deploymentHealthFact } from './deploymentPresentation';
 
 const scope = { serverId: 'home', accountId: 'account-owner', projectSourceId: 'source-app' };
 const shown = { mounted: true, visible: true, focused: true };
 const hidden = { mounted: true, visible: false, focused: false };
+
+it('presents pushed down health in overview and rail without another metadata read', async () => {
+    const boundary = createBoundary();
+    const detail = createDeploymentEnvironmentDetailV1();
+    const link = detail.targetLinks[0]!.targetLink;
+    const aggregate = projectDeploymentHealthAggregateV1({ environment: detail.environment, targetLink: link,
+        observations: link.members.map((member): DeploymentHealthServicesObservationV1 => ({ environmentId: detail.environment.id, targetLinkId: link.id,
+            targetLinkRevision: link.revision, machineId: member.machineId, installationId: member.installationId,
+            role: 'runtime', source: { kind: 'native' }, observedAtMs: 100,
+            services: [{ serviceId: 'database', observation: { status: 'down', observedAtMs: 100, reason: 'stopped' } }] })) });
+    let publish: Parameters<NonNullable<DeploymentReadTransportV1['observeEnvironmentHealth']>>[2] | undefined;
+    const controller = createDeploymentReadControllerV1({ scope, transport: { ...boundary.transport,
+        observeEnvironmentHealth(_scope, _detail, emit) { publish = emit; return () => {}; } } });
+    const hook = await renderHook(() => useDeploymentEnvironment(controller, boundary.row.id, shown));
+    try {
+        const reads = boundary.reads;
+        await act(async () => { publish?.({ environmentId: detail.environment.id, status: 'ready', members: [] }, aggregate); });
+        const health = hook.getCurrent().snapshot.value?.healthAggregate;
+        expect(deploymentHealthFact(health).tone).toBe('danger');
+        expect(deploymentEnvironmentAttention({ health: health ?? null, machineOffline: false, noTarget: false,
+            controller: null, refused: false, reviewPending: false, latest: null, servingState: 'succeeded', catalogUpdate: false }))
+            .toEqual({ kind: 'unhealthy' });
+        expect(boundary.reads).toBe(reads);
+    } finally { await hook.unmount(); controller.retire(); }
+});
 
 function createBoundary() {
     let reads = 0;

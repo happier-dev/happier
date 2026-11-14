@@ -169,7 +169,7 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
             const detail = withMemberVersions(value as DeploymentEnvironmentDetailV1);
             const previous = entry.projection.getSnapshot().value as DeploymentEnvironmentReadDetailV1 | null;
             value = previous?.healthFeed && deploymentEnvironmentHealthBasisV1(previous) === deploymentEnvironmentHealthBasisV1(detail)
-                ? { ...detail, healthFeed: previous.healthFeed } : detail;
+                ? { ...detail, healthFeed: previous.healthFeed, healthAggregate: previous.healthAggregate } : detail;
         }
         entry.projection.publish({ status: 'ready', value, failure: null });
         syncHealthObservation(entry);

@@ -4,7 +4,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ExternalActionRequestEnvelopeV1Schema, projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import type { DeploymentEnvironmentHealthFeedV1 } from '@happier-dev/deployments';
+import type { DeploymentEnvironmentHealthAggregateV1 } from '@happier-dev/deployment-protocol/v1';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, type HomeDomainAnswer } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { environmentHealthObserver } from './observeEnvironmentHealth';
@@ -156,7 +156,7 @@ it('pushes the same observer current edge proof into the Environment aggregate a
             if (request.signal?.aborted) abort();
         });
     } });
-    let feed: DeploymentEnvironmentHealthFeedV1 | undefined;
+    let aggregate: DeploymentEnvironmentHealthAggregateV1 | undefined;
     const abort = new AbortController();
     const retirementCallbacks = new Set<() => void>();
     const stop = environmentHealthObserver({ scope: { serverId, accountId: 'account' },
@@ -164,23 +164,23 @@ it('pushes the same observer current edge proof into the Environment aggregate a
             retirementCallbacks.add(callback);
             return { dispose() { retirementCallbacks.delete(callback); } };
         } })(
-        { serverId, accountId: 'account' }, detail, value => { feed = value; }, { signal: abort.signal });
+        { serverId, accountId: 'account' }, detail, (_value, value) => { aggregate = value; }, { signal: abort.signal });
     try {
-        await vi.waitFor(() => expect(feed).toMatchObject({ aggregate: { members: [{ machineId: 'edge', status: 'up' }] } }));
+        await vi.waitFor(() => expect(aggregate).toMatchObject({ members: [{ machineId: 'edge', status: 'up' }] }));
         await vi.waitFor(() => expect(deliver).toBeTypeOf('function'));
         const first = deliver;
         observation = null;
         first?.();
-        await vi.waitFor(() => expect(feed).toMatchObject({ aggregate: { members: [{ machineId: 'edge', status: 'unknown' }] } }));
+        await vi.waitFor(() => expect(aggregate).toMatchObject({ members: [{ machineId: 'edge', status: 'unknown' }] }));
         await vi.waitFor(() => expect(deliver).not.toBe(first));
         const second = deliver;
         observation = proof;
         second?.();
-        await vi.waitFor(() => expect(feed).toMatchObject({ aggregate: { members: [{ machineId: 'edge', status: 'up' }] } }));
+        await vi.waitFor(() => expect(aggregate).toMatchObject({ members: [{ machineId: 'edge', status: 'up' }] }));
         await vi.waitFor(() => expect(deliver).not.toBe(second));
         observation = { ...proof, targetLinkRevision: link.revision + 1 };
         deliver?.();
-        await vi.waitFor(() => expect(feed).toMatchObject({ aggregate: { members: [{ machineId: 'edge', status: 'unknown' }] } }));
+        await vi.waitFor(() => expect(aggregate).toMatchObject({ members: [{ machineId: 'edge', status: 'unknown' }] }));
     } finally { abort.abort(); stop?.(); }
     expect(retirementCallbacks.size).toBe(0);
 });

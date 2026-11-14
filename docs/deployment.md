@@ -3699,7 +3699,10 @@ The shared Environment read controller consumes those exact selected Resources
 only while an Environment or full receipt page demands current health. Both
 page hooks expose the same `healthFeed`: per Environment, active member and
 Service, it carries producer state, nullable `observedAt`, reason and expected
-Stop evidence. Record-only consumers and Session receipt chips add no health
+Stop evidence. The controller publishes the current aggregate only as
+`detail.healthAggregate`, shared by overview, attention, health rows and receipt
+recovery; `healthFeed` carries member observations without a second aggregate.
+Record-only consumers and Session receipt chips add no health
 demand. A member installation or Environment protection change rebinds current
 health, so Production unknown/down accounting follows the admitted protection.
 Hiding the last consumer or retiring its Account closes it. Ordinary metadata refreshes
