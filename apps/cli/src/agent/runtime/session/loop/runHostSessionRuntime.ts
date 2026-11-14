@@ -1259,6 +1259,7 @@ async function runHostedSessionRuntime(
     }),
   });
   let disposeAgentSessionRealtimeVoiceRpc: (() => void) | null = null;
+  let disposeSessionFollowWake: (() => void) | null = null;
   try {
   const sessionTag = runtimeOpts.sessionCreationTag
     ? SessionCreationTagV1Schema.parse(runtimeOpts.sessionCreationTag)
@@ -1319,7 +1320,9 @@ async function runHostedSessionRuntime(
   let modelTransitionAdmissionFenced = false;
   let latestSessionContextUsage: SessionContextUsageSnapshotV1 | null = null;
   // This Session's Follow wake; hosted siblings are not woken by its own facts.
-  const sessionFollowWake = createSessionFollowWakeSignal();
+  // Its durable Session changes (incl. workflow origin delivery) address it by id.
+  const sessionFollowWake = createSessionFollowWakeSignal(() => session?.sessionId);
+  disposeSessionFollowWake = sessionFollowWake.dispose;
   let ownerActivityDelivery: 'rich_sender' | 'home_required' = 'home_required';
   const runtimeState = { thinking: false };
   let reconnectionHandle: { cancel: () => void } | null = null;
@@ -4418,6 +4421,7 @@ async function runHostedSessionRuntime(
     throw error;
   }
   } finally {
+    disposeSessionFollowWake?.();
     workerUpdatePublication?.dispose();
     startupRegistrationLifetime.abort();
     await sessionAccountRuntime?.dispose();

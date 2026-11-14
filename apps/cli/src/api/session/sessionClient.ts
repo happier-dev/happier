@@ -559,8 +559,8 @@ export type ApiSessionClientOptions = Readonly<{
     localMachineId?: string | null;
     initialRegisteredSessionStateFieldMutations?: readonly RegisteredSessionStateFieldMutationV1[];
     durableMutationDeliveryInitiallyActive?: boolean;
-    /** Exact destination Session update/reconnect hint for the shared host Follow reconciler. */
-    onSessionFollowInvalidated?: () => void;
+    /** Exact destination Session update/reconnect hint for the shared host Follow reconciler; names this Session. */
+    onSessionFollowInvalidated?: (sessionId: string) => void;
     /** Publishes Runner wake support only for the lifetime of the installed Session receiver. */
     installSessionFollowWakeReceiver?: () => () => void;
 }>;
@@ -1343,7 +1343,8 @@ export class ApiSessionClient extends EventEmitter {
             },
             reconcilePendingExecutionRunTarget: (runId) => this.notifyExecutionRunPendingTarget(runId),
             refreshDemandedAccountCatalogs: () => this.refreshDemandedAccountCatalogs(),
-            onSessionFollowInvalidated: options.onSessionFollowInvalidated,
+            onSessionFollowInvalidated: options.onSessionFollowInvalidated
+                ? () => options.onSessionFollowInvalidated!(this.sessionId) : undefined,
         });
         // The predecessor key names the profile owning this journal, even if the active Home changes later.
         const predecessorSettlementScope = {
@@ -1967,7 +1968,7 @@ export class ApiSessionClient extends EventEmitter {
                 // reader awaiting the in-flight refresh still sees typed
                 // privacy failures; the socket hint itself has no awaiter.
                 void this.syncSessionSnapshotFromServer({ reason: 'waitForMetadataUpdate' }).catch(() => undefined);
-                options.onSessionFollowInvalidated?.();
+                options.onSessionFollowInvalidated?.(this.sessionId);
             },
             deliverMaterializedUserMessageToAgentQueue: (message, providerAction, requestedAction) =>
                 this.deliverUserMessageToAgentQueue(message, providerAction, requestedAction),
@@ -2112,7 +2113,8 @@ export class ApiSessionClient extends EventEmitter {
                     this.wakePendingMaterialization();
                 }
             },
-            onSessionFollowInvalidated: options.onSessionFollowInvalidated,
+            onSessionFollowInvalidated: options.onSessionFollowInvalidated
+                ? () => options.onSessionFollowInvalidated!(this.sessionId) : undefined,
         });
         this.userSocket = userSocket;
         this.holdAccountEncryptionCurrentness(userSocket, options.transport.serverUrl);
@@ -5032,14 +5034,22 @@ export class ApiSessionClient extends EventEmitter {
      * current connection, `pending-changed` updates keep this projection current, so
      * idle observations read no snapshot. A new connection may have missed updates and
      * an unknown projection proves nothing: both read the snapshot first.
+     *
+     * Custody follows the same rule. Every Home change to a Pending row arrives as
+     * `pending-changed`, whose trigger reconciles local provider custody against the
+     * exact statuses; materialization reconciles again before it claims. On the current
+     * connection the held custody is therefore already reconciled, and only a fresh
+     * snapshot (new connection or unknown projection) re-reads the statuses here.
      */
     async readPendingQueueStateForLiveWork(): Promise<PendingQueueState> {
         if (this.snapshotSyncInFlight) await this.snapshotSyncInFlight;
         if (!this.materializationRuntime.getPendingQueueState().known || this.socket?.connected !== true
             || this.snapshotReadConnectionEpoch !== this.sessionConnectionEpoch) {
             await this.refreshSessionSnapshotFromServerRequired({ reason: 'explicit-drain' });
+            if (!await this.reconcilePendingProviderInputCustodyBeforeMaterialization()) return UNKNOWN_PENDING_QUEUE_STATE;
+        } else if (this.closed || this.hasUnsettledPendingProviderInputCustody()) {
+            return UNKNOWN_PENDING_QUEUE_STATE;
         }
-        if (!await this.reconcilePendingProviderInputCustodyBeforeMaterialization()) return UNKNOWN_PENDING_QUEUE_STATE;
         return this.getPendingQueueState();
     }
 
@@ -5325,8 +5335,13 @@ export class ApiSessionClient extends EventEmitter {
             });
         }
 
+        return !this.hasUnsettledPendingProviderInputCustody();
+    }
+
+    /** Session-owned provider input still awaiting acceptance or settlement (local facts only). */
+    private hasUnsettledPendingProviderInputCustody(): boolean {
         const retainedContextLocalIds = new Set(this.providerInputConsumer?.readRetainedContextLocalIds?.() ?? []);
-        return ![...this.materializationRuntime.pendingQueueMaterializedLocalIds]
+        return [...this.materializationRuntime.pendingQueueMaterializedLocalIds]
             .some((localId) => (
                 !this.executionRunPendingCustody.has(localId)
                 && !this.nonBlockingArchivedPendingDeliveryLocalIds.has(localId)

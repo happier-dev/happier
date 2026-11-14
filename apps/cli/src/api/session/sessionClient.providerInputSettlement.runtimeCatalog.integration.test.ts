@@ -945,6 +945,31 @@ describe('ApiSessionClient provider-input settlement', () => {
     await client.close();
   });
 
+  it('answers live-work reads on the current connection from held custody without re-reading Pending each time', async () => {
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const client = createTestApiSessionClient(ApiSessionClient, 'tok', createPlainSessionFixture({ id: 's1' }));
+    const fixture = client as unknown as {
+      materializationRuntime: { applyPendingQueueState(state: unknown): boolean };
+      snapshotReadConnectionEpoch: number | null; sessionConnectionEpoch: number;
+    };
+    // An authoritative snapshot was read on this connection; `pending-changed` keeps it current
+    // and reconciles custody when Home changes a row (the push path, not this read).
+    fixture.materializationRuntime.applyPendingQueueState({ known: true, pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 3 });
+    fixture.snapshotReadConnectionEpoch = fixture.sessionConnectionEpoch;
+    markMaterializedProviderInput(client, 'in-flight');
+    listDeliveryStatusesMock.mockResolvedValue([{ localId: 'in-flight', status: 'queued', deliveryStatus: { status: 'queued' } }]);
+    try {
+      // Provider input still in custody: live work stays unknown, as before.
+      for (let read = 0; read < 3; read++) await expect(client.readPendingQueueStateForLiveWork()).resolves.toEqual({ known: false });
+      expect(listDeliveryStatusesMock).not.toHaveBeenCalled();
+      // Once custody settles the held projection answers directly.
+      (client as unknown as { deletePendingProviderInputLocalState(localId: string): void }).deletePendingProviderInputLocalState('in-flight');
+      await expect(client.readPendingQueueStateForLiveWork()).resolves.toMatchObject({ known: true, pendingCount: 0, pendingVersion: 3 });
+      expect(listDeliveryStatusesMock).not.toHaveBeenCalled();
+    } finally { await client.close(); }
+  });
+
   it('retires only exact absent terminal custody without emitting a provider settlement', async () => {
     sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
     userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });

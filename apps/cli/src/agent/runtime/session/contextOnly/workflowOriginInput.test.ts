@@ -18,6 +18,7 @@ import {
   type WorkflowRunSummaryV1,
 } from '@happier-dev/protocol';
 import { createWorkflowOriginContextInputPort } from './workflowOriginInput';
+import { createSessionFollowWakeSignal, publishSessionFollowWakeInvalidation } from '../follow/sessionFollowWakeSignal';
 
 describe('origin workflow current-state pull', () => {
   const accountId = 'account-1';
@@ -88,6 +89,43 @@ describe('origin workflow current-state pull', () => {
     expect(await port.take(signal)).toMatchObject({ kind: 'worker_update', update: { ownerState: 'failed' } });
     expect(await quiet[0]!.recheckAdmission(signal)).toBe(false);
     expect(acknowledged).toBe(0);
+  });
+
+  it('pulls only after its own Session wakes, never per input pass or for a sibling Session', async () => {
+    let pulls = 0;
+    const wake = createSessionFollowWakeSignal(() => 'origin');
+    const sibling = createSessionFollowWakeSignal(() => 'sibling');
+    try {
+      const port = createWorkflowOriginContextInputPort({ ...dispatchBoundary, accountId, originSessionId: 'origin', machineId: 'machine',
+        resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+        storage: { execute: async operation => {
+          if (operation.operation === 'delivery.pull') { pulls++; return { runs: [] }; }
+          throw new Error('unexpected operation');
+        } }, onError: error => { throw error; }, followWake: wake });
+      const signal = new AbortController().signal;
+      const pass = async () => {
+        expect(await port.take(signal)).toBeNull();
+        expect(await port.prepareWorkerUpdates!({ signal, maxUtf8Bytes: 65536 })).toEqual([]);
+      };
+      // Startup reads once; later passes without a wake have nothing new to read.
+      for (let turn = 0; turn < 3; turn++) await pass();
+      expect(pulls).toBe(1);
+      // A sibling hosted Session's change cannot produce this origin's delivery.
+      publishSessionFollowWakeInvalidation('sibling');
+      await pass();
+      expect(pulls).toBe(1);
+      // The origin's own durable Session change (workflow delivery publishes one) reads again, once.
+      publishSessionFollowWakeInvalidation('origin');
+      await pass();
+      expect(pulls).toBe(2);
+      // Destination-unknown recovery (gap, reconnect fallback) still reaches every Session.
+      publishSessionFollowWakeInvalidation();
+      await pass();
+      expect(pulls).toBe(3);
+    } finally {
+      wake.dispose?.();
+      sibling.dispose?.();
+    }
   });
 
   it('continues origin delivery when the first pending Run acknowledgement fails', async () => {
@@ -208,8 +246,9 @@ describe('origin workflow current-state pull', () => {
     ]);
     operations.length = 0;
     expect(await port.take(signal)).toBeNull();
-    // The acknowledged result causes no repeated producer detail demand or publication.
-    expect(counts()).toEqual({ 'delivery.pull': 1, 'run-key.census': 1 });
+    // The acknowledged result causes no repeated read, producer detail demand or
+    // publication: nothing changed on the origin Session since that settled pull.
+    expect(counts()).toEqual({});
   });
 
   it('rechecks the current Run so an old attention update is never admitted after resolution', async () => {

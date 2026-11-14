@@ -141,7 +141,7 @@ export function createWorkflowOriginContextInputPort(options: WorkflowOriginInpu
       }
     }
   };
-  const updates = async (signal: AbortSignal): Promise<Readonly<{ workers: PreparedWorkerContextItem[]; steps: Array<{
+  const updates = async (signal: AbortSignal, reportError: (error: unknown) => void): Promise<Readonly<{ workers: PreparedWorkerContextItem[]; steps: Array<{
     localInputId: string; runId: string; row: OpenRow; accepted: WorkflowAcceptedSnapshotV1;
   }>; wakeWorker: PreparedWorkerContextItem | null }>> => {
     await flushAcks(signal);
@@ -213,18 +213,32 @@ export function createWorkflowOriginContextInputPort(options: WorkflowOriginInpu
           if (delivery.session.wake && !wakeWorker) wakeWorker = worker;
         } catch (error) {
           if (signal.aborted) throw error;
-          options.onError(error);
+          reportError(error);
         }
       }
       cursor = typeof page.nextCursor === 'string' ? page.nextCursor : undefined;
     } while (cursor && !signal.aborted);
     return { workers, steps, wakeWorker };
   };
+  // Every Home change that can make origin delivery available (input becoming
+  // deliverable, terminal/attention transitions) commits a durable change on the
+  // origin Session, and that change wakes this Session's `followWake` (as do
+  // reconnect catch-up and feed gaps). A pull that found nothing deliverable and
+  // hit no error is therefore current until the next wake: later input passes and
+  // prompt preparations have nothing new to read.
+  let settledAtWake: number | null = null;
   const readUpdates = async (signal: AbortSignal) => {
+    const wake = followWake.readGeneration();
+    if (settledAtWake === wake && pendingAcks.size === 0) return { workers: [], steps: [], wakeWorker: null };
+    settledAtWake = null;
+    let failed = false;
+    const onError = options.onError;
     try {
-      return await updates(signal);
+      const pulled = await updates(signal, (error) => { failed = true; onError(error); });
+      if (!failed && pulled.workers.length === 0 && pulled.steps.length === 0 && pendingAcks.size === 0) settledAtWake = wake;
+      return pulled;
     } catch (error) {
-      if (!signal.aborted) options.onError(error);
+      if (!signal.aborted) onError(error);
       return { workers: [], steps: [], wakeWorker: null };
     }
   };
