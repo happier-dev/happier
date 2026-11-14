@@ -53,8 +53,17 @@ mktemp/bootstrap exits as command failures. Failed prerequisites retain the
 existing closed native cause, with exit status and a redacted stderr tail bounded
 by the native diagnostic envelope; incomplete output retains its truncation flag.
 The managed controller preserves that cause in the operation failure. Truncated
-binary envelopes remain command failures; malformed responses retain their
-provider's `invalid_response`.
+binary envelopes that cannot be recovered remain command failures; malformed
+responses retain their provider's `invalid_response`. In 0.3 development,
+Agent37 retains each binary envelope in a private guest temporary file. If the
+native text response is truncated, it reads the complete envelope in pages of
+512 KB, matching the per-stream cap documented in
+[Agent37 exec](https://www.agent37.com/docs/agents-api/exec.md) (observed
+2026-11-14). It never re-executes the guest command to recover output. Full stderr
+therefore reaches the existing redaction owner before diagnostic tail bounding.
+The file is removed on completion, with best effort cleanup after failure or
+cancellation. E2B returns native byte streams and Maritime returns native text
+streams directly; neither uses this text-only binary envelope.
 Payload promotion reports
 `remote_command_failed` with the exit status and a redacted stderr tail using the
 existing command capture budget. Storage exhaustion keeps `remote_storage_full`.

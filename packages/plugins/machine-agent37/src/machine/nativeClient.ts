@@ -48,6 +48,29 @@ export function createAgent37NativeClient(request: typeof fetch, signal: AbortSi
     if (!path.startsWith('/') || /[\r\n\0]/u.test(path)) throw invalid();
     return path;
   }
+  async function binaryCommand(resource: Agent37Resource, shell: string) {
+    const path = await temporary(resource);
+    try {
+      // exec.md (observed 2026-11-14): each text stream is capped at 512 KB,
+      // with its middle removed on overflow. Retain the complete SDK envelope
+      // so truncation never loses the guest status or bytes needed for redaction.
+      const pageBytes = 512 * 1024;
+      const result = await command(resource, `(${shell}) > ${quote(path)}; s=$?; cat -- ${quote(path)}; exit "$s"`);
+      if (result.exit_code === 0 && result.truncated) {
+        const pages: string[] = [];
+        for (let page = 0; ; page++) {
+          const output = await checked(resource, `dd if=${quote(path)} bs=${pageBytes} skip=${page} count=1 status=none`);
+          pages.push(output);
+          // The envelope is ASCII (base64 plus JSON), so characters equal bytes.
+          if (output.length < pageBytes) break;
+        }
+        return { ...result, stdout: pages.join(''), truncated: false };
+      }
+      return result;
+    } finally {
+      try { await command(resource, 'rm -f -- ' + quote(path)); } catch { /* Best effort private output-file cleanup. */ }
+    }
+  }
   async function upload(resource: Agent37Resource, guestPath: string, bytes: Uint8Array, mode: number) {
     const path = await temporary(resource);
     try {
@@ -104,7 +127,7 @@ export function createAgent37NativeClient(request: typeof fetch, signal: AbortSi
       await upload(input.resource, path, decodeBase64(input.inputBase64), 0o600);
       shell = `trap ${quote('rm -f -- ' + quote(path))} EXIT; (${shell}) < ${quote(path)}`;
     }
-    const result = await command(input.resource, shell);
+    const result = await binaryCommand(input.resource, shell);
     // The native shell/runtime can fail before our binary envelope is emitted.
     // Its exit and text streams are still a valid command result for the host.
     if (result.exit_code !== 0) return {

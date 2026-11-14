@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { decodeBase64, encodeBase64 } from '@happier-dev/plugin-sdk/protocol';
 import { createAgent37NativeClient } from './nativeClient.js';
-import { MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1, MachineProvisionerNativeExecResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { assertMachineProvisionerGuestCommandSucceeded, MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1, MachineProvisionerNativeExecResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { ManagedMachineControllerError } from '../../../../cli-common/src/machines/managed/controllerErrors.js';
@@ -23,7 +25,8 @@ function vendor(options: { lostCreate?: boolean; startPending?: boolean; truncat
       const stdout = body.command.includes('stdoutBase64')
         ? JSON.stringify({ exitCode: 0, stdoutBase64: encodeBase64(Uint8Array.of(0, 255, 128, 10)), stderrBase64: '' })
         : body.command.includes('uname') ? 'Linux\nx86_64\n/root\n' : body.command.includes('mktemp') ? '/tmp/agent37-fixture\n' : '';
-      return Response.json({ exit_code: 0, stdout, stderr: '', truncated: options.truncated ?? false });
+      return Response.json({ exit_code: 0, stdout, stderr: '',
+        truncated: options.truncated === true && (body.command.includes('stdoutBase64') || body.command.startsWith('dd ')) });
     }
     expect(url.origin).toBe('https://api.agent37.com');
     if (url.pathname === '/v1/instances' && request.method === 'POST') {
@@ -40,6 +43,46 @@ function vendor(options: { lostCreate?: boolean; startPending?: boolean; truncat
 }
 
 describe('Agent37 native HTTP lifecycle', () => {
+  it.runIf(process.platform === 'linux').each([0, 13])('recovers the complete capped native envelope for guest exit %s', async exitCode => {
+    // Real guest shell, fake vendor HTTP only. Agent37 exec.md caps each text
+    // stream at 512 KB, replacing its middle when it overflows.
+    const cap = 512 * 1024;
+    let truncatedResponses = 0;
+    let requests = 0;
+    const request: typeof fetch = async (input, init) => {
+      requests++;
+      const body = await new Request(input, init).json() as { command: string };
+      const result = await promisify(execFile)('sh', ['-c', body.command], { maxBuffer: 8 * cap });
+      const truncate = (value: string) => value.length > cap
+        ? value.slice(0, cap / 2) + '[output truncated]' + value.slice(-cap / 2) : value;
+      const truncated = result.stdout.length > cap || result.stderr.length > cap;
+      if (truncated) truncatedResponses++;
+      return Response.json({ exit_code: 0, stdout: truncate(result.stdout), stderr: truncate(result.stderr), truncated });
+    };
+    const stdout = 'x'.repeat(cap);
+    const stderr = 'head\nAuthorization: Bearer ' + 'x'.repeat(cap)
+      + '\npromotion: Permission denied\n';
+    const result = await createAgent37NativeClient(request, new AbortController().signal, 1000).exec({ resource,
+      argv: ['sh', '-c', `head -c ${cap} /dev/zero | tr '\\000' x; { printf 'head\\nAuthorization: Bearer '; head -c ${cap} /dev/zero | tr '\\000' x; printf '\\npromotion: Permission denied\\n'; } >&2; exit ${exitCode}`],
+    });
+    expect(truncatedResponses).toBeGreaterThan(0);
+    expect(result).toMatchObject({ termination: { observed: { kind: 'exit', exitCode } }, stdoutTruncated: false, stderrTruncated: false });
+    if ('stdoutBase64' in result) {
+      expect(new TextDecoder().decode(decodeBase64(result.stdoutBase64))).toBe(stdout);
+      expect(new TextDecoder().decode(decodeBase64(result.stderrBase64))).toBe(stderr);
+      // One preparation, one execution, one cleanup; reads scale with actual
+      // envelope bytes, with a final short/empty page proving completion.
+      const envelopeBytes = JSON.stringify({ exitCode, stdoutBase64: result.stdoutBase64, stderrBase64: result.stderrBase64 }).length + 1;
+      expect(requests).toBe(3 + Math.floor(envelopeBytes / cap) + 1);
+      if (exitCode !== 0) {
+        expect(() => assertMachineProvisionerGuestCommandSucceeded({ exitCode, stderr: decodeBase64(result.stderrBase64) }, details => {
+          expect(details.nativeCause.stderr).toContain('promotion: Permission denied');
+          expect(details.nativeCause.stderr).not.toContain('xxxxxxxx');
+          return new Error('guest failed');
+        })).toThrow('guest failed');
+      }
+    }
+  });
   it.each(['stdin', 'upload', 'process-config', 'bootstrap', 'truncated-envelope'] as const)('retains safe %s failure diagnostics through the managed controller', async phase => {
     // Redaction must precede bounding: a long credential crosses the tail boundary.
     const stderr = 'discarded-head-marker' + 'x'.repeat(MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1)
@@ -47,7 +90,7 @@ describe('Agent37 native HTTP lifecycle', () => {
       + '\nmktemp: /root/private-dir: No space left on device\n';
     let requests = 0;
     const request: typeof fetch = async () => {
-      if (phase === 'upload' && requests++ === 0) return Response.json({ exit_code: 0, stdout: '/tmp/agent37-fixture\n', stderr: '', truncated: false });
+      if ((phase === 'upload' || phase === 'truncated-envelope') && requests++ === 0) return Response.json({ exit_code: 0, stdout: '/tmp/agent37-fixture\n', stderr: '', truncated: false });
       return Response.json({ exit_code: phase === 'truncated-envelope' ? 0 : 28,
         stdout: '', stderr, truncated: phase === 'truncated-envelope' });
     };
@@ -150,8 +193,12 @@ describe('Agent37 native HTTP lifecycle', () => {
   });
   it.each([126, 127])('preserves native shell failure %s without requiring a binary envelope', async exitCode => {
     // Agent37 documents runtime failures outside the wrapped command (exec.md).
-    const request: typeof fetch = async () => Response.json({ exit_code: exitCode,
-      stdout: '', stderr: 'sh: cannot execute guest command\n', truncated: false });
+    const request: typeof fetch = async (input, init) => {
+      const { command } = await new Request(input, init).json() as { command: string };
+      return Response.json(command === 'umask 077; mktemp'
+        ? { exit_code: 0, stdout: '/tmp/output-fixture\n', stderr: '', truncated: false }
+        : { exit_code: exitCode, stdout: '', stderr: 'sh: cannot execute guest command\n', truncated: false });
+    };
     const client = createAgent37NativeClient(request, new AbortController().signal, 1000);
     const result = MachineProvisionerNativeExecResultV1Schema.parse(await client.exec({ resource, argv: ['sh', '-c', 'true'] }));
     expect(result).toMatchObject({ termination: { observed: { kind: 'exit', exitCode }, requestedBy: { kind: 'none' } },
@@ -159,9 +206,12 @@ describe('Agent37 native HTTP lifecycle', () => {
       stdoutTruncated: false, stderrTruncated: false });
   });
   it('preserves a failed wrapped command rather than treating its status as an invalid response', async () => {
-    const request: typeof fetch = async () => Response.json({ exit_code: 0, stdout: JSON.stringify({
-      exitCode: 13, stdoutBase64: '', stderrBase64: encodeBase64(new TextEncoder().encode('promotion: Permission denied\n')),
-    }), stderr: '', truncated: false });
+    const request: typeof fetch = async (input, init) => {
+      const { command } = await new Request(input, init).json() as { command: string };
+      return Response.json({ exit_code: 0, stdout: command === 'umask 077; mktemp' ? '/tmp/output-fixture\n' : JSON.stringify({
+        exitCode: 13, stdoutBase64: '', stderrBase64: encodeBase64(new TextEncoder().encode('promotion: Permission denied\n')),
+      }), stderr: '', truncated: false });
+    };
     const result = await createAgent37NativeClient(request, new AbortController().signal, 1000).exec({ resource, argv: ['false'] });
     expect(result).toMatchObject({ termination: { observed: { kind: 'exit', exitCode: 13 } },
       stderrBase64: encodeBase64(new TextEncoder().encode('promotion: Permission denied\n')) });
