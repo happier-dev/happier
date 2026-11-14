@@ -176,7 +176,9 @@ function awaitMachineListHydration(input: Readonly<{
     const hydrationPending = () => {
         const state = storage.getState();
         const current = state.machines[machineId];
-        if (state.machineListStatusByServerId[serverId] !== 'loading' || !isSameMachinePublishedKey(machine, current)
+        // No first list publication is pending too; only the list reader can
+        // settle it. A cold route can arrive before the first Machine rows.
+        if ((state.machineListStatusByServerId[serverId] ?? 'loading') !== 'loading' || !isSameMachinePublishedKey(machine, current)
             || (current?.access && current.access.accessState !== 'ready')
             || (current?.availability?.kind === 'locked' && current.availability.reason !== 'encryption_material_unavailable')) return false;
         const mode = readMachineStorageModeFromLocalState(machineId);

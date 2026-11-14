@@ -347,7 +347,14 @@ describe('scoped Machine RPC on the applied active Home consumes Sync’s Machin
     }
   });
 
-  it.each(['ready', 'unavailable', 'aborted'] as const)('holds a cold scoped projection during Machine hydration, then settles %s', async outcome => {
+  it.each([
+    { outcome: 'ready', status: undefined },
+    { outcome: 'unavailable', status: undefined },
+    { outcome: 'aborted', status: undefined },
+    { outcome: 'ready', status: 'loading' },
+    { outcome: 'unavailable', status: 'loading' },
+    { outcome: 'aborted', status: 'loading' },
+  ] as const)('holds a cold scoped projection with list status $status, then settles $outcome', async ({ outcome, status }) => {
     stored.token = tokenFor(ACCOUNT);
     const encryption = await Encryption.create(new Uint8Array(32).fill(71));
     const source = await Encryption.create(new Uint8Array(32).fill(71));
@@ -361,7 +368,8 @@ describe('scoped Machine RPC on the applied active Home consumes Sync’s Machin
         dataEncryptionKey: Buffer.from(await source.encryptEncryptionKey(dataKey)).toString('base64'),
         availability: { kind: 'locked', reason: 'encryption_material_unavailable' } });
       await applySync(home, cold, { encryption });
-      getStorage().setState({ machineListStatusByServerId: { [home.profile.id]: 'loading' } });
+      // Before Sync publishes its first rows, the cold Home has no list status.
+      getStorage().setState({ machineListStatusByServerId: status ? { [home.profile.id]: status } : {} });
       let settled = false;
       const pending = home.rpc({ preferScoped: true, signal: abort.signal }).then(
         value => { settled = true; return { value }; },
