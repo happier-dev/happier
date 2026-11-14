@@ -26,6 +26,7 @@ import { useSettlingHomeServerId } from '@/components/navigation/connectionStatu
 import { createSessionListSourceFixture } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createPlainSessionCurrentProjectionRecordFixture, createSessionOwnerViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
+import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
 
 vi.mock('socket.io-client', async (importOriginal) => (
     await import('@/dev/testkit/harness/serverAccountConnectionHarness')
@@ -430,8 +431,10 @@ describe('Discussion Invite source composition', () => {
             .find(option => option.id === 'session:same-id')!;
         expect(unnamedOption.subtitle).toContain(formatRelativeTimeShort(activityAt, Date.now()));
         expect(unnamedOption.subtitle).not.toContain('review-box');
-        // Without a recorded Agent it keeps the Agent catalog's own neutral mark, not a hand-picked glyph.
-        expect((unnamedOption.icon as React.ReactElement<{ agentId?: string | null }>).props.agentId).toBeNull();
+        // Without a recorded Agent it keeps the Sessions list's own neutral mark (the catalog identity icon with no Agent).
+        const unnamedIcon = unnamedOption.icon as React.ReactElement<{ agentId?: string | null }>;
+        expect(unnamedIcon.type).toBe(SessionAgentCatalogIdentityIcon);
+        expect(unnamedIcon.props.agentId).toBe('');
     });
     it('uses captured-Home people paging and the real existing Session roster without borrowing the focused Home', async () => {
         const [homeA, homeB] = boundary.serverIds as [string, string, string];

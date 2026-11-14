@@ -11,7 +11,7 @@ import { SessionServerStartSpawnDraftV1Schema } from '@happier-dev/protocol/sess
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
 import { StatusPill } from '@/components/ui/status/StatusPill';
-import { SessionAgentMark } from '@/agents/registry/SessionAgentMark';
+import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { SelectionListOption, SelectionListSectionDescriptor } from '@/components/ui/selectionList';
@@ -145,7 +145,9 @@ export function useExecutableParticipantSections(
     if (!input.enabled) return [];
     // A session leads with its Agent's own mark (identity marks always stay); the catalog decides
     // whether one exists, and a session without a recorded Agent keeps the neutral glyph.
-    const sessionMark = (agentId: string | null | undefined) => <SessionAgentMark agentId={agentId} size={ICON_SIZE.md} />;
+    const sessionMark = (agentId: string | null | undefined, machineId: string | null | undefined) => (
+      <SessionAgentCatalogIdentityIcon agentId={agentId ?? ''} machineId={machineId ?? null} serverId={serverId} size={ICON_SIZE.md} />
+    );
     const modelMark = (
       <Icon
         name="sparkle"
@@ -168,7 +170,7 @@ export function useExecutableParticipantSections(
         label: candidate.label ?? t('session.collaboration.discussion.participants.session'),
         subtitle: readinessSubtitle(candidate.readiness, [candidate.lastActivityAt == null ? null
           : formatRelativeTimeShort(candidate.lastActivityAt, Date.now()), candidate.contextLabel].filter(Boolean).join(' · ')),
-        icon: sessionMark(candidate.agentId),
+        icon: sessionMark(candidate.agentId, candidate.machineId),
         ...(candidate.bot ? { titleAccessory: (
           <StatusPill variant="neutral" hideDot labelVariant="phrase" label={t('sessionsList.conditionBot')} />
         ) } : {}),
@@ -287,6 +289,7 @@ export function useExecutableParticipantSections(
     onChoose,
     onReadinessSessionChange,
     presence,
+    serverId,
     sessionsContext,
     theme.colors.text.secondary,
     theme.colors.text.tertiary,

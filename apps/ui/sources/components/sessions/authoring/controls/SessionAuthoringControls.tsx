@@ -718,7 +718,9 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
                 // the first of them would be.
                 if (control.kind === 'unavailable' && control.reason === 'requires_agent_target' && waitsOnAgent && !agentLineShown) {
                     agentLineShown = true;
-                    return <Text key={field} testID={`${testIDPrefix}-requires-agent`} style={styles.unavailableText}>{t('newSession.chooseAgentFirst')}</Text>;
+                    // A form row like its siblings, so the line keeps the rows' text edge.
+                    return <Item key={field} testID={`${testIDPrefix}-requires-agent`} title={t('newSession.chooseAgentFirst')}
+                        titleStyle={styles.unavailableText} mode="info" showChevron={false} />;
                 }
                 if (control.kind === 'unavailable'
                     && (control.reason === 'not_supported_on_target' || control.reason === 'agent_has_no_options'
