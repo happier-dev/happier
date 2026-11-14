@@ -85,6 +85,7 @@ let historyModel: UsageHistoryModel | null = null;
 let historyFact: ReturnType<typeof usePublishUsageWidgetPageContext>['history'] = null;
 let pageRetryRead: (() => Promise<void>) | undefined;
 let publishedRetryRead: ReturnType<typeof usePublishUsageWidgetPageContext>['retryRead'] | null = null;
+let publishedSelectLayout: ReturnType<typeof usePublishUsageWidgetPageContext>['selectLayout'] | null = null;
 const publicationContentCounter = createRenderCommitCounter();
 function PublicationContent(props: Readonly<{ selected: string }>) {
     useRenderCommitCounter(publicationContentCounter);
@@ -103,6 +104,7 @@ function Publication(props: Readonly<{ retireOnSelection?: boolean; initialLayou
         history: historyModel, ...(pageRetryRead ? { retryRead: pageRetryRead } : {}) });
     historyFact = published.history;
     publishedRetryRead = published.retryRead;
+    publishedSelectLayout = published.selectLayout;
     reader = useOptionalCurrentUiContextReader();
     React.useEffect(() => {
         if (!reader) return;
@@ -443,6 +445,10 @@ it('changes the night-hour draft through the same mounted option as its visible 
 
 it('settles an acknowledged view switch after its own publication retires and refuses an old command before effects', async () => {
     const { screen } = await mount(null, true);
+    await act(async () => {
+        expect(await publishedSelectLayout!('costs', { signal: AbortSignal.abort() })).toBe(false);
+    });
+    expect(screen.findByTestId('selected-layout')!.props.children).toBe('overview');
     const commands = reader!.readCurrentUiContext()!.commands;
     const costs = commands.find(command => command.title === 'Costs')!;
     const work = commands.find(command => command.title === 'Work')!;

@@ -1,8 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
-import { UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryBatchRequestSchema, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
-import { collectUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery } from '@happier-dev/protocol/usage/usageCost';
+import { UsageAnalyticsQueryRequestSchema, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
@@ -22,7 +21,7 @@ import { UsageWidgetBody } from './UsageWidgetBody';
 import { WidgetFrameDemandContext, WidgetFrameInstanceIdContext } from '@/components/widgets/frame/widgetFrameDemand';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { createUsageWidgetPresets } from '../usageWidgetPresets';
-import { flattenWidgetLayoutWidgetsV1, type UsageBuiltinWidgetIdV1 } from '@happier-dev/protocol/widgets';
+import { flattenWidgetLayoutWidgetsV1, WidgetLayoutItemsV1Schema, type UsageBuiltinWidgetIdV1 } from '@happier-dev/protocol/widgets';
 import { QualifiedConnectedServiceUsageSourceResolveV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { parseQualifiedConnectedAccountV4StructuredQueryValue } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec';
 import { USAGE_COACH_DETECTOR_IDS } from '@happier-dev/protocol/usage/coach/coachDetectorIds';
@@ -67,13 +66,6 @@ it('keeps real How bodies quiet while unrelated current quota answers and Coach 
       if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
       if (request.path === '/v2/usage/query') return failAccounting ? Response.json({ error: 'accounting_refused' }, { status: 403 })
         : Response.json({ ...accounting, totals: { ...accounting.totals, eventCount } });
-      if (request.path === '/v2/usage/query-batch') {
-        if (failAccounting) return Response.json({ error: 'accounting_refused' }, { status: 403 });
-        const input = UsageAnalyticsQueryBatchRequestSchema.parse(request.body);
-        return Response.json(collectUsageAnalyticsBatchDelivery(projectUsageAnalyticsBatchDelivery({ v: 1,
-          results: input.queries.map(query => ({ query, value: { ...accounting, totals: { ...accounting.totals, eventCount } } })),
-        }, input, false)));
-      }
       if (request.path === USAGE_SESSION_EVIDENCE_PATH) {
         const input = UsageSessionEvidenceRequestSchema.parse(request.body);
         return Response.json({ requests: input.requests.map(row => ({ query: row.query, sessionIds: [] })), results: [] });
@@ -125,7 +117,7 @@ it('keeps real How bodies quiet while unrelated current quota answers and Coach 
     models.set(id, result.model);
     return result;
   });
-  const presetWidgets = flattenWidgetLayoutWidgetsV1(createUsageWidgetPresets().find(row => row.id === 'how-you-work')!.items);
+  const presetWidgets = flattenWidgetLayoutWidgetsV1(WidgetLayoutItemsV1Schema.parse(createUsageWidgetPresets().find(row => row.id === 'how-you-work')!.items));
   // The same sky presentation also has admitted accounting-only measures.
   const widgets = [...presetWidgets, ...['tokens', 'cost'].map(metric => ({ ...presetWidgets[0]!, instance: {
     ...presetWidgets[0]!.instance, id: `accounting-${metric}`, bindings: { ...presetWidgets[0]!.instance.bindings,

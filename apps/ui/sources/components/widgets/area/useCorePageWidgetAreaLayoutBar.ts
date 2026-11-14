@@ -21,7 +21,7 @@ type CorePageBinding = Pick<
 >;
 
 type ListedLayout = WidgetAreaLayoutOption &
-  Readonly<{ summary: WidgetAreaLayoutSummaryV1 | null }>;
+  Readonly<{ isPreset: boolean; summary: WidgetAreaLayoutSummaryV1 | null }>;
 
 /**
  * A core page's named layouts as `WidgetAreaLayoutBar` draws them (AR-4): the page's presets and the viewer's

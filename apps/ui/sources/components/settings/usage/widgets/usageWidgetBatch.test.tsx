@@ -39,7 +39,7 @@ import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollec
 import { HappierDataMetric, HappierDataRows, RankedRows, StackedSeriesChart, UsageBreakdownsBody } from '@happier-dev/plugin-ui/presentation';
 import { useUsageAnalyticsView } from './usageBodyKit';
 import { createUsageWidgetPresets } from '@happier-dev/protocol/widgets/usageWidgetPresetsV1';
-import { flattenWidgetLayoutWidgetsV1 } from '@happier-dev/protocol/widgets';
+import { flattenWidgetLayoutWidgetsV1, WidgetLayoutItemsV1Schema } from '@happier-dev/protocol/widgets';
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSessionEvidenceResponseSchema } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { WidgetFrameDemandContext, WidgetFrameInstanceIdContext } from '@/components/widgets/frame/widgetFrameDemand';
@@ -258,7 +258,7 @@ describe('Usage page batch', () => {
       return null;
     }
     const page = (presetId: 'coach' | 'how-you-work', layoutReady = true) => {
-      const widgets = flattenWidgetLayoutWidgetsV1(presets.find(preset => preset.id === presetId)!.items);
+      const widgets = flattenWidgetLayoutWidgetsV1(WidgetLayoutItemsV1Schema.parse(presets.find(preset => preset.id === presetId)!.items));
       return <InjectedAuthProvider credentials={credentials}>
       <UsageWidgetBatchProvider clauses={clauses} enabled={layoutReady}
         inventoryQuery={layoutReady ? normalizeUsageQuery({ period: { relative: '90days' } }) : undefined}

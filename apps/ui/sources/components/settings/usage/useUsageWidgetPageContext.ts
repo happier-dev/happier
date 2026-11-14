@@ -156,7 +156,7 @@ function UsageWidgetPagePublication(props: Readonly<{ enrichment: CurrentUiConte
 export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicationInput): Readonly<{
     /** Render beside page content; descendant command publication does not redraw that content. */
     publication: React.ReactElement;
-    selectLayout(layoutId: string, signal?: AbortSignal): Promise<boolean>;
+    selectLayout(layoutId: string, callerContext?: ActionExecutorContext): Promise<boolean>;
     selectPeriod(period: UsagePeriod): Promise<boolean>;
     selectCostBasis(costBasis: UsageWidgetPageScope['costBasis'], callerContext?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation): Promise<boolean>;
     selectFilter(field: string, id: string, callerContext?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation): Promise<boolean>;
@@ -236,7 +236,7 @@ export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicati
     // Menus close before invoking their queued callback. Resolve its semantic intent
     // from the committed publication, never the retired descriptor captured at close.
     // The current-context owner retires commands when their declaration or authority changes.
-    const selectLayout = React.useCallback((id: string, signal?: AbortSignal) => signal?.aborted ? Promise.resolve(false)
+    const selectLayout = React.useCallback((id: string, callerContext?: ActionExecutorContext) => callerContext?.signal?.aborted ? Promise.resolve(false)
         : invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('layout', id))?.command), [invoke]);
     const selectPeriod = React.useCallback((id: UsagePeriod) => invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('period', id))?.command), [invoke]);
     // A foreground chooser has already admitted its command and withholds the page's
