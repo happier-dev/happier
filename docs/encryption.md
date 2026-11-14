@@ -1461,6 +1461,13 @@ new grant writes reject the historical name-addressed arm. `MachineSecretGrant`
 has no separate row id: its subject digest is the primary key, while one private
 binding reference is authored before sealing to each recipient installation.
 
+Template reviews (including catalog Create and Machine Setup) and Adopt Apply
+inputs carry authored variable bindings, so `grantRef` may be absent there.
+The binding writer assigns or preserves that address on the normal save before
+sealing; new persisted Environment content still requires a valid UUID reference.
+Matching 0.3 development Protocol, daemon and UI peers reload together for this
+authored-input correction; no stored-content migration is involved.
+
 Group names and descriptions bind ciphertext to the immutable Group id with
 `entity: 'team_group'` and their respective `field: 'name'` or `field: 'description'`.
 Both use the human author's persisted Account mode and the same current Team

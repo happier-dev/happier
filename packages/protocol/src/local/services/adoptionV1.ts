@@ -3,7 +3,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { DeploymentEnvironmentCreateBaseInputV1Schema, DeploymentEnvironmentCreateInputV1Schema } from '../../deployments/deploymentEnvironmentCreateV1.js';
 import { DeploymentTextV1Schema, hasOneDeploymentProjectV1 } from '../../deployments/storedAppInputV1.js';
 import { DeploymentRetainPreviousDeploymentsV1Schema } from '../../projects/deploymentCreationDefaultsV1.js';
-import { DeploymentDigestV1Schema, EnvironmentVariableBindingV1Schema } from '../../deployments/storedAppInputV1.js';
+import { DeploymentDigestV1Schema, EnvironmentVariableBindingInputV1Schema } from '../../deployments/storedAppInputV1.js';
 
 const id = () => z.string().check(z.trim(), z.minLength(1));
 export const MachineServiceAdoptionDestinationV1Schema = lazyZodSchema(() => z.extend(z.pick(DeploymentEnvironmentCreateBaseInputV1Schema, {
@@ -15,7 +15,7 @@ export const MachineServiceAdoptionDestinationV1Schema = lazyZodSchema(() => z.e
 }).check(z.refine(input => hasOneDeploymentProjectV1(input.projectSourceId, input.newProject),
   { message: 'Select an existing or reviewed new Project.' })));
 export const MachineServiceAdoptionVariableV1Schema = lazyZodSchema(() => z.strictObject({
-  name: EnvironmentVariableBindingV1Schema.shape.name, phase: z.literal('runtime'), required: z.boolean(), hasDefault: z.boolean(),
+  name: EnvironmentVariableBindingInputV1Schema.shape.name, phase: z.literal('runtime'), required: z.boolean(), hasDefault: z.boolean(),
 }));
 export const MachineServiceAdoptInputV1Schema = lazyZodSchema(() => {
   const base = { serverId: id(), machineId: id(), serviceId: id(), expectedGeneration: id(),
@@ -24,7 +24,7 @@ export const MachineServiceAdoptInputV1Schema = lazyZodSchema(() => {
     z.strictObject({ ...base, mode: z.literal('review') }),
     z.strictObject({ ...base, mode: z.literal('apply'), reviewedDigest: DeploymentDigestV1Schema,
       destination: MachineServiceAdoptionDestinationV1Schema,
-      bindingsConfirmed: z.literal(true), bindings: z.array(EnvironmentVariableBindingV1Schema),
+      bindingsConfirmed: z.literal(true), bindings: z.array(EnvironmentVariableBindingInputV1Schema),
     }),
   ]);
 });

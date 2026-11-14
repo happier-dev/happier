@@ -9,6 +9,7 @@ import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/se
 import { listActionSpecsForSurface } from '@happier-dev/protocol/actions/actionSpecs';
 import { resolveActionApprovalRouting } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
+import { settleActionOutput } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { createDaemonDeploymentActionDeps } from '../createDaemonDeploymentActionDeps';
 import { createPrepareEnvironmentContentForHost } from '../prepareEnvironmentContentForHost';
 import { createDeploymentTemplateInstantiationForHost } from './instantiate';
@@ -149,7 +150,31 @@ it.each([false, true])('persists independent generated credentials from a bundle
                 expect(fixture.writes).toHaveLength(0);
             }
             const preview = await fixture.inHome(() => templates.instantiate({ ...input, mode: 'preview' }, { runtimeAccountId: 'account-cli-fixture' }));
+            expect.soft(settleActionOutput('deployments.templates.instantiate', { ok: true, result: preview }))
+                .toMatchObject({ ok: true, result: { kind: 'preview' } });
             expect(preview).toMatchObject({ kind: 'preview', review: { generatedSecrets: [{ name: ordinal === 1 ? 'DB_PASSWORD' : 'DB_PASSWORD_2' }] } });
+            if ('kind' in preview && preview.kind === 'preview') {
+                // A valid authored review is not yet valid persisted binding content.
+                expect(DeploymentEnvironmentContentV1Schema.safeParse({ ...current.content, bindings: preview.review.bindings }).success).toBe(false);
+            }
+            if (ordinal === 1 && !reviewedMapping) {
+                const createInput = DeploymentEnvironmentCreateIntentInputV1Schema.parse({ serverId: 'home', projectSourceId: 'project',
+                    name: 'PostgreSQL', requestKey: 'catalog-create-preview', mode: 'preview', protection: 'nonProduction',
+                    purpose: 'standard', deployerMode: 'managers', controllerMachineId: 'target',
+                    firstTargetLink: { machines: [{ machineId: 'target', installationId: identity.installationId }] },
+                    definition: { from: 'catalogApp', templateRef: input.templateRef }, bindings: input.bindings });
+                const createPreview = await fixture.inHome(() => templates.prepareCreate(createInput, { runtimeAccountId: 'account-cli-fixture' }));
+                if ('errorCode' in createPreview) throw new Error(JSON.stringify(createPreview));
+                const diagnostics: unknown[] = [];
+                const settled = settleActionOutput('deployments.environments.create', { ok: true,
+                    result: { kind: 'preview', input: createPreview.input, review: createPreview.preview } },
+                    undefined, undefined, diagnostic => { diagnostics.push(diagnostic); });
+                expect(settled, JSON.stringify(diagnostics)).toMatchObject({ ok: true, result: { kind: 'preview', review: { template: {
+                    bindings: expect.arrayContaining([expect.objectContaining({ name: 'DB_USER' })]),
+                    generatedSecrets: [expect.objectContaining({ name: 'DB_PASSWORD' })],
+                } } } });
+                expect(fixture.writes).toHaveLength(0);
+            }
             const prepared = await fixture.inHome(() => templates.prepare(input, { runtimeAccountId: 'account-cli-fixture' }));
             expect(prepared.input).toEqual(input);
             // The reviewed bindings child commits at the same Home persistence boundary.

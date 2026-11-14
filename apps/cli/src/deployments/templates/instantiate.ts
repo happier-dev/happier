@@ -351,7 +351,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             if (!reviewedChild) return failure('credential_scope_denied');
             const { input } = plan;
             const createContent = (content: unknown, kind: string) => host.createContent(content, kind, context, plan.contentAuthority);
-            const bindings: EnvironmentVariableBindingV1[] = [...plan.prepared.bindings];
+            const bindings: EnvironmentVariableBindingInputV1[] = [...plan.prepared.bindings];
             const generatedSecretAudience = input.generatedSecretAudience
                 ?? buildCatalogAppTemplateBindings(plan.prepareInput.template).generatedSecretAudience;
             await withDeploymentTemplateGeneratedSecretsForHost(async createGeneratedSecret => {
