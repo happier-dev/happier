@@ -138,7 +138,9 @@ writeFileSync(join(output, 'index.js'), captured);
   assert.equal(readFileSync(countPath, 'utf8'), '4');
 });
 
-for (const mode of ['in-process', 'child', 'exhausted']) test(`declaration publication discards compiler output spanning a dependency writer (${mode})`, async t => {
+// Readers of the shared dist (dependent package captures copy it under their own lock) must never
+// observe it without declarations: spanned output is un-recorded and re-emitted, not unpublished.
+for (const mode of ['in-process', 'child', 'exhausted']) test(`declaration publication re-emits compiler output spanning a dependency writer without unpublishing it (${mode})`, async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-declaration-dependency-drift-' });
   const root = fixture.root;
   const pkg = fixture.path('packages/protocol');
@@ -166,6 +168,7 @@ for (const mode of ['in-process', 'child', 'exhausted']) test(`declaration publi
   const countPath = fixture.path('compiler-count');
   const cache = fixture.path('.project/tmp/typecheck-declarations/projects/packages/protocol');
   const stamp = join(cache, 'inputs.json');
+  const seenPath = fixture.path('declarations-seen-between-passes');
   const wrapper = fixture.path('compiler-boundary.mjs');
   const hook = fixture.path('compiler-boundary-hook.mjs');
   const refreshOwner = new URL('../proc/dependency_refresh.mjs', import.meta.url).href;
@@ -176,6 +179,7 @@ import { withDependencyRefresh } from ${JSON.stringify(refreshOwner)};
 const count = Number(existsSync(${JSON.stringify(countPath)}) ? readFileSync(${JSON.stringify(countPath)}, 'utf8') : 0) + 1;
 writeFileSync(${JSON.stringify(countPath)}, String(count));
 assert.equal(existsSync(${JSON.stringify(stamp)}), false, 'spanned declaration cache must be discarded before rebuilding');
+if (count > 1) writeFileSync(${JSON.stringify(seenPath)}, String(existsSync(${JSON.stringify(join(pkg, 'dist/index.d.ts'))})));
 const result = spawnSync(process.argv[2], process.argv.slice(3), { env: process.env, stdio: 'inherit' });
 if (result.status !== 0) process.exit(result.status ?? 1);
 if (count === 1 || ${JSON.stringify(mode === 'exhausted')}) await withDependencyRefresh({ installDir: ${JSON.stringify(root)}, env: process.env, force: true }, async () => {
@@ -208,7 +212,7 @@ export function restore() { childProcess.spawn = original; syncBuiltinESMExports
   const prepare = prepareWorkspaceTypecheckDeclarations(consumer, { env, withinTypecheckAdmission: mode === 'in-process', signal: t.signal });
   if (mode === 'exhausted') {
     await assert.rejects(prepare, { code: 'BUILD_INPUTS_CHANGED', trailingPassExhausted: true });
-    assert.equal(existsSync(join(pkg, 'dist/index.d.ts')), false);
+    assert.equal(existsSync(join(pkg, 'dist/index.d.ts')), true, 'readers keep the published declarations');
     assert.equal(existsSync(join(cache, 'incremental.tsbuildinfo')), false);
     assert.equal(existsSync(stamp), false);
   } else {
@@ -219,6 +223,7 @@ export function restore() { childProcess.spawn = original; syncBuiltinESMExports
     assert.match(readFileSync(join(pkg, 'dist/index.d.ts'), 'utf8'), /value: "after"/);
   }
   assert.equal(readFileSync(countPath, 'utf8'), '2', 'one spanned compilation triggers exactly one trailing pass');
+  assert.equal(readFileSync(seenPath, 'utf8'), 'true', 'a reader between the passes sees published declarations');
   assert.equal(readFileSync(join(pkg, 'dist/index.js'), 'utf8'), 'unrelated JavaScript publication');
   assert.equal(readFileSync(join(pkg, 'dist/.build-manifest.json'), 'utf8'), 'unrelated JavaScript build stamp');
 });

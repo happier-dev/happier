@@ -179,11 +179,12 @@ function declarationImplementationInputs(tsBuildInfoFile, inputRoot) {
     });
 }
 
-async function discardSpannedDeclarations(pending) {
+async function unrecordSpannedDeclarations(pending) {
   for (const { pkg } of pending) {
-    // Publication owns declarations in this package's outDir. Preserve JavaScript,
-    // build stamps and other package outputs when discarding this emitted pass.
-    for (const file of await declarationOutputFiles(pkg)) await rm(resolve(pkg.output, file), { force: true });
+    // The emitted declarations stay published. Dependent package builds copy this shared
+    // dist under their own lock only, so deleting them showed those captures a dist without
+    // declarations (TS7016). Dropping the records alone makes the trailing pass, or the next
+    // demand, re-emit; nothing accepts the spanned output as current meanwhile.
     await rm(resolve(pkg.cache, 'incremental.tsbuildinfo'), { force: true });
     await rm(resolve(pkg.cache, 'inputs.json'), { force: true });
   }
@@ -304,7 +305,7 @@ async function prepareWorkspaceTypecheckDeclarationsPass(componentDir, {
       ? await withBuildInputDependencies({ sourceDir: repoDir, env, signal }, (_env, publication) => prepare(publication))
       : await prepare();
   } catch (error) {
-    if (error instanceof BuildInputDriftError) await discardSpannedDeclarations(pending);
+    if (error instanceof BuildInputDriftError) await unrecordSpannedDeclarations(pending);
     throw error;
   }
   if (stale.length && !underLock) {
