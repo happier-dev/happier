@@ -83,7 +83,14 @@ export async function repairTeamGroupLabelEnvelopesInTx(tx: Tx, actorAccountId: 
         if (!envelopes || readRequiredResourceRecipientEnvelopeRejectionV1({ expectedRecipientAccountIds, envelopes, recipientsById })) {
             return 'invalid_team_input';
         }
-        writes.push({ groupId: item.groupId, field: item.field, next: serializePrivateLabelStoredV1(item.label) });
+        // Admission established the submitted fingerprints are current; members cannot replace existing current wraps.
+        const priorRecipientsById = new Map(parsed.stored.recipients.map(recipient => [recipient.accountId, recipient]));
+        const recipients = item.label.recipients.map(recipient => {
+            const priorRecipient = priorRecipientsById.get(recipient.accountId);
+            return priorRecipient?.envelope.recipientContentPublicKeyFingerprint === recipient.envelope.recipientContentPublicKeyFingerprint
+                ? priorRecipient : recipient;
+        });
+        writes.push({ groupId: item.groupId, field: item.field, next: serializePrivateLabelStoredV1({ ...item.label, recipients }) });
     }
     // The Team mutation lock serializes normal saves too. No content or revision is minted by repair.
     for (const write of writes) await tx.teamGroup.update({ where: { id: write.groupId }, data: { [write.field]: write.next } });

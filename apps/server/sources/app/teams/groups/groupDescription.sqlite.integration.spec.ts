@@ -54,7 +54,7 @@ describe('Team Group description privacy through HTTP and storage', () => {
                 label: group.description.label, readPolicy: { kind: 'team-resource' },
                 ...(content ? { accountKey: content.secretKey } : {}) });
         };
-        return { account, team, groupId, seal, post, openDescription, content };
+        return { account, team, groupId, seal, post, openDescription, content, signing };
     }
 
     it('delivers saved encrypted descriptions after a join without editing and refuses departed recipients', async () => {
@@ -94,8 +94,48 @@ describe('Team Group description privacy through HTTP and storage', () => {
         }) : null).toBe('Saved before join');
         const stored = await db.teamGroup.findUniqueOrThrow({ where: { id: a.groupId } });
         expect(JSON.parse(stored.description!).content).toEqual(description.content);
+        // A current member cannot poison an already valid recipient envelope with a well-formed wrong key.
+        const poisonedRecipients = [a, b].map(f => ({ accountId: f.account.id, envelope: {
+            encryptedDataKey: encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: tweetnacl.randomBytes(32),
+                recipientPublicKey: f.content!.publicKey, randomBytes: tweetnacl.randomBytes }), 'base64'),
+            recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(f.content!.publicKey),
+        } }));
+        const poisoned = await app.inject({ method: 'PATCH', url: '/v2/teams/groups/label-envelopes',
+            headers: { 'x-test-user-id': b.account.id }, payload: { teamId: a.team.id,
+                labels: [{ groupId: a.groupId, field: 'description', label: {
+                    ...description, recipients: poisonedRecipients,
+                } }] } });
+        expect(poisoned.statusCode, poisoned.body).toBe(200);
+        expect((await db.teamGroup.findUniqueOrThrow({ where: { id: a.groupId } })).description).toBe(stored.description);
+        expect(a.openDescription((await a.post('get', {})).json())).toBe('Saved before join');
         // The newly eligible member can help distribute existing keys, but cannot reauthor the label through repair.
         expect((await publish(b.account.id)).statusCode).toBe(200);
+        // A rotated recipient key still needs a new envelope; keeping every old envelope would strand that member.
+        const rotatedContent = tweetnacl.box.keyPair();
+        await db.account.update({ where: { id: b.account.id }, data: {
+            contentPublicKey: new Uint8Array(rotatedContent.publicKey),
+            contentPublicKeySig: signAccountContentKeyBindingV1({ accountSigningSecretKey: b.signing!.secretKey,
+                contentPublicKey: rotatedContent.publicKey }),
+        } });
+        const rotatedEnvelope = {
+            encryptedDataKey: encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey,
+                recipientPublicKey: rotatedContent.publicKey, randomBytes: tweetnacl.randomBytes }), 'base64'),
+            recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(rotatedContent.publicKey),
+        };
+        const rotated = await app.inject({ method: 'PATCH', url: '/v2/teams/groups/label-envelopes',
+            headers: { 'x-test-user-id': a.account.id }, payload: { teamId: a.team.id,
+                labels: [{ groupId: a.groupId, field: 'description', label: { ...description,
+                    recipients: recipients.map(row => row.accountId === b.account.id ? { ...row, envelope: rotatedEnvelope } : row),
+                } }] } });
+        expect(rotated.statusCode, rotated.body).toBe(200);
+        const rotatedRead = await app.inject({ method: 'POST', url: '/v1/teams/groups/get',
+            headers: { 'x-test-user-id': b.account.id }, payload: { v: 1, teamId: a.team.id, groupId: a.groupId } });
+        const rotatedGroup = TeamGroupV1Schema.parse(rotatedRead.json());
+        expect(rotatedGroup.description?.kind === 'available' ? openCliPrivateLabel({
+            binding: { entity: 'team_group', field: 'description', id: a.groupId }, label: rotatedGroup.description.label,
+            readPolicy: { kind: 'team-resource' }, accountKey: rotatedContent.secretKey,
+        }) : null).toBe('Saved before join');
+        expect(a.openDescription((await a.post('get', {})).json())).toBe('Saved before join');
         const changed = await app.inject({ method: 'PATCH', url: '/v2/teams/groups/label-envelopes',
             headers: { 'x-test-user-id': a.account.id }, payload: { teamId: a.team.id,
                 labels: [{ groupId: a.groupId, field: 'description', label: {
