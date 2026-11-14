@@ -1,3 +1,4 @@
+import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import * as React from 'react';
 import {
   HappierDocEditProposal,
@@ -149,7 +150,7 @@ function DocEditApprovalContinuation(props: Readonly<{
         release();
         const reason = readArtifactActionFailure(failure ?? { errorCode: code });
         // A refused or canceled request changes nothing: the card shows what it showed before it.
-        if (code === 'approval_rejected' || code === 'approval_canceled') return;
+        if (isActionApprovalDeclinedErrorCode(code)) return;
         if (props.heldKind === 'undo') {
           settlement.current.settleUndo(reason.code === VERSION_MISMATCH ? { state: 'conflict' } : { state: 'failed', failure: reason });
         } else {

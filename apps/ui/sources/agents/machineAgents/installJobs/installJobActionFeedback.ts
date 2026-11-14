@@ -1,3 +1,4 @@
+import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { Modal } from '@/modal';
@@ -13,7 +14,7 @@ export async function withAgentInstallJobFailureFeedback(
     const report = (error: unknown) => {
         if (!isCurrent()) return;
         if (error instanceof AgentInstallJobRpcError && (
-            error.code === 'approval_canceled' || error.code === 'approval_rejected'
+            isActionApprovalDeclinedErrorCode(error.code)
             || error.code === 'cancelled' || error.code === 'scope_retired'
             || error.code === 'action_account_scope_changed'
         )) return;

@@ -1,3 +1,4 @@
+import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import * as React from 'react';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import { DaemonTerminalEnsureResponseSchema, DaemonTerminalListResponseV1Schema, type DaemonTerminalEnsureRequest, type DaemonTerminalEnsureResponse } from '@happier-dev/protocol/daemon/terminal';
@@ -80,7 +81,7 @@ export function useMachineTerminalActionAdmission(input: Readonly<{ terminalKey:
             return { ok: false, errorCode: 'terminal_access_denied', error: 'terminal_access_denied' };
         }
         const fail = (code: string, failure?: Readonly<{ error: string }>): MachineTerminalAdmissionResult => {
-            const cancelled = code === 'approval_canceled' || code === 'approval_rejected';
+            const cancelled = isActionApprovalDeclinedErrorCode(code);
             // Declining a restart does not mean its existing PTY was never opened.
             if (cancelled && !restart && input.scopeId && input.memberId && accountContext.current?.accountLifetime.isCurrent()) {
                 dispatchSessionTerminalWorkspaceCommand(input.scopeId, { type: 'openCancelled', terminalId: input.memberId, cancelled: true });

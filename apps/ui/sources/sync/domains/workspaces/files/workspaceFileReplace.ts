@@ -1,3 +1,4 @@
+import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import * as React from 'react';
 import { buildWorkspaceFileRestoreOperation, computeFileReplacement } from '@happier-dev/protocol/machines/workspaceFilesReplace';
 import type {
@@ -386,11 +387,6 @@ export type WorkspaceReplaceModel = Readonly<{
 const NO_EXCLUSIONS: WorkspaceReplaceExclusions = new Map();
 const NO_FILES: readonly WorkspaceReplacePreviewFile[] = [];
 
-/** The person said no (or withdrew) at the approval this Machine write waited on: nothing ran. */
-export function isDeclinedApproval(errorCode: string): boolean {
-  return errorCode === 'approval_rejected' || errorCode === 'approval_canceled';
-}
-
 function replaceWriteActionError(errorCode: string): WorkspaceReplaceErrorCode {
   // This family's native target refusal precedes operation acceptance and all
   // filesystem effects. Other failures do not establish that nothing was written.
@@ -422,7 +418,7 @@ function previewError(
   if ('errorCode' in response)
     return response.errorCode === 'method_unavailable' || response.errorCode === 'update_required'
       ? 'update_required'
-      : isDeclinedApproval(response.errorCode) ? 'declined' : 'unavailable';
+      : isActionApprovalDeclinedErrorCode(response.errorCode) ? 'declined' : 'unavailable';
   if (
     response.code === 'invalid_pattern' ||
     response.code === 'root_not_allowed' ||
@@ -804,7 +800,7 @@ export function useWorkspaceReplace(
           return { error: null, approval };
         }
         if (settled && 'errorCode' in response) {
-          if (isDeclinedApproval(response.errorCode)) {
+          if (isActionApprovalDeclinedErrorCode(response.errorCode)) {
             setApplyFailure({ key: preview.key, code: 'declined' });
             return { error: 'declined', approval: null };
           }
@@ -915,7 +911,7 @@ export function useWorkspaceReplace(
             return { restored: 0, changed: 0, error: 'approval_required', approval: pendingApproval };
           }
           if (settled && 'errorCode' in response) {
-            if (isDeclinedApproval(response.errorCode)) {
+            if (isActionApprovalDeclinedErrorCode(response.errorCode)) {
               setApplyFailure({ key: resultState.key, code: 'declined' });
               return { restored: 0, changed: 0, error: 'declined' };
             }

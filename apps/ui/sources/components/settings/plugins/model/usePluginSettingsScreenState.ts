@@ -737,6 +737,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
             });
             if (!isAuthorityCurrent()) return false;
             if (!response.ok) {
+                if (isActionApprovalDeclinedErrorCode(response.errorCode)) return false;
                 Modal.alert(t('common.error'), response.error);
                 return false;
             }

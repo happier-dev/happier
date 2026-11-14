@@ -1,3 +1,4 @@
+import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import * as React from 'react';
 import { Platform, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -23,7 +24,6 @@ import {
   machineLanguageIntelligencePreviewAction,
 } from '@/sync/ops/machineLanguageIntelligence';
 import { machineWorkspaceFileReplaceApply } from '@/sync/ops/machineWorkspaceFileReplace';
-import { isDeclinedApproval } from '@/sync/domains/workspaces/files/workspaceFileReplace';
 import { workspaceReadFile } from '@/sync/ops/workspaceFileSystem/fileReadWrite';
 import { t } from '@/text';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
@@ -255,7 +255,7 @@ function useEditSetCommit(params: Readonly<{
       setStage({ kind: 'result', target, receipts, truncated: response.truncated, undo: 'idle' });
       return;
     }
-    if ('errorCode' in response && isDeclinedApproval(response.errorCode)) {
+    if ('errorCode' in response && isActionApprovalDeclinedErrorCode(response.errorCode)) {
       setStage({ ...stage, applying: false, declined: true });
       return;
     }
@@ -279,7 +279,7 @@ function useEditSetCommit(params: Readonly<{
       { ...target.options, continuationSignal, onApprovalPending: author.approval.requestApproval },
     ).catch(() => null);
     if (!alive.current || continuationSignal.aborted || !author.isCurrent() || currentScopeKey.current !== scopeKey) return;
-    if (response && !response.ok && 'errorCode' in response && isDeclinedApproval(response.errorCode)) {
+    if (response && !response.ok && 'errorCode' in response && isActionApprovalDeclinedErrorCode(response.errorCode)) {
       setStage({ ...stage, undo: 'idle', undoDeclined: true });
       return;
     }

@@ -1,3 +1,4 @@
+import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import * as React from 'react';
 import { AccessibilityInfo, Platform, Pressable, View } from 'react-native';
 import type { ViewToken } from 'react-native';
@@ -337,7 +338,7 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
             await resolveActionOperation(action, operations)(integration);
         } catch (error) {
             discardPendingFocusReturn(pendingKey);
-            if (error instanceof HappyError && (error.code === 'approval_rejected' || error.code === 'approval_canceled'
+            if (error instanceof HappyError && (isActionApprovalDeclinedErrorCode(error.code)
                 || error.code === 'approval_request_created' || error.code === 'cancelled')) return;
             await Modal.alertAsync(
                 t('common.error'),

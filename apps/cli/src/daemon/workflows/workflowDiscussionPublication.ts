@@ -1,3 +1,4 @@
+import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { WorkflowDiscussionOriginV1 } from '@happier-dev/protocol/workflows/workflowDestinationsV1';
 import type { DiscussionReplyReturnPublisher, DiscussionReplyReturnPublication, DiscussionSessionReplyReturnPublication } from '@/session/services/sessionMessageReply';
 import { projectSessionMessageReplyOutcome, readSessionMessageReply, settleDiscussionReplyReturnPublication } from '@/session/services/sessionMessageReply';
@@ -69,7 +70,7 @@ export function createWorkflowDiscussionResultPublisher(params: Readonly<{
       signal?.throwIfAborted();
       if (observed.ok) return;
       const failure = classifySessionMessageReplyPublicationFailureV1(observed.errorCode, 'workflow_publication');
-      if (!('kind' in publication) && (failure?.code === 'approval_rejected' || failure?.code === 'approval_canceled')) {
+      if (!('kind' in publication) && (failure && isActionApprovalDeclinedErrorCode(failure.code))) {
         // The approval Action owns the decision write. Reconcile its original
         // through the canonical reader; daemon credentials cannot repeat it.
         const original = await readSessionMessageReply({ credentials: params.credentials, sessionId: publication.requestSessionId,

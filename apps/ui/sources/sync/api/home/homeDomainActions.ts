@@ -1,3 +1,4 @@
+import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { bindHomeDomainActionHttpRequestV1, bindPublicProfilePreparedHttpRequestV1, homeDomainActionOutputSchemaV1, readHomeDomainActionErrorV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
@@ -101,7 +102,7 @@ export function homeDomainFailureFromActionFailure(
     const code = failure.errorCode ?? '';
     // Consent ended before dispatch. Preserve its exact Action disposition as
     // a refusal rather than describing it as an unknown Home/network failure.
-    if (code === 'approval_rejected' || code === 'approval_canceled') {
+    if (isActionApprovalDeclinedErrorCode(code)) {
         return Object.freeze({ kind: 'forbidden' as const, retryable: false, code });
     }
     if (code === 'approval_stale') {

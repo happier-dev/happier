@@ -1040,6 +1040,7 @@ describe('development Settings through the real UI Action wiring', () => {
         expect(nativeInstallCommitCount()).toBe(0);
         expect(actionRequests.filter(request => request.actionId === 'plugins.install')).toHaveLength(1);
         expect(hook.getCurrent().routineOperationSettlement).toBeNull();
+        expect(boundary.alert).not.toHaveBeenCalled();
     });
 
     it.each(['/plugins/example.compute', '/plugins/example.compute.mjs'])('submits, tests, packs, and unregisters %s only on the selected machine through Actions', async (sourceRootPath) => {

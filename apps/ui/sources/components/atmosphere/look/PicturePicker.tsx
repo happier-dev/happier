@@ -1,3 +1,4 @@
+import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -89,7 +90,7 @@ export function useAtmospherePictureAcquisition(pictureActions: AtmospherePictur
         ...(pictureActions ? { target: pictureActions.target } : {}),
         input: { kind: 'atmosphere_picture_add', source: { kind: 'picked' } },
       });
-      if (!result.ok && result.errorCode !== 'approval_rejected' && result.errorCode !== 'approval_canceled' && execution.isCurrent()) {
+      if (!result.ok && !isActionApprovalDeclinedErrorCode(result.errorCode) && execution.isCurrent()) {
         await Modal.alertAsync(t('common.error'), t('common.unavailable'));
       }
     } catch (error) {
@@ -106,7 +107,7 @@ export function useAtmospherePictureAcquisition(pictureActions: AtmospherePictur
       ...(pictureActions ? { target: pictureActions.target } : {}),
       input: { kind: 'atmosphere_picture_remove', localId },
     });
-    if (!result.ok && result.errorCode !== 'approval_rejected' && result.errorCode !== 'approval_canceled' && execution.isCurrent()) {
+    if (!result.ok && !isActionApprovalDeclinedErrorCode(result.errorCode) && execution.isCurrent()) {
       await Modal.alertAsync(t('common.error'), t('common.unavailable'));
     }
   }, [execution.execute, execution.isCurrent, pictureActions]);

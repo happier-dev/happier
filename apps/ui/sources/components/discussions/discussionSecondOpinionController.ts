@@ -1,3 +1,4 @@
+import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DiscussionCreateResultV1 } from '@happier-dev/protocol/discussions/actions';
 import { DiscussionSecondOpinionStartInputV1Schema, type DiscussionSecondOpinionStartInputV1, type DiscussionSecondOpinionStartResultV1 } from '@happier-dev/protocol/discussions/secondOpinionActions';
 import { prepareAnchoredDiscussionCreateV1 } from '@happier-dev/protocol/actions/executor/discussionSecondOpinion';
@@ -50,7 +51,7 @@ export function createDiscussionSecondOpinionController(options: Readonly<{
     let retainedDiscuss: Parameters<typeof client.create>[0] | null = null;
     const settleApproval = (outcome: DiscussionClientOutcome<unknown>) => {
         if (outcome.kind === 'approval_request_created') return {};
-        const rejected = outcome.kind === 'failed' && (outcome.errorCode === 'approval_rejected' || outcome.errorCode === 'approval_canceled');
+        const rejected = outcome.kind === 'failed' && (isActionApprovalDeclinedErrorCode(outcome.errorCode));
         if (rejected) { retainedAsk = null; retainedDiscuss = null; }
         return { approval: null, ...(rejected ? { submitted: false } : {}) };
     };

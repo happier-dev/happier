@@ -1,3 +1,4 @@
+import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
 import { isMachineStoppedAnsweringError, MACHINE_RPC_TIMEOUT_ERROR_CODE } from '@/sync/runtime/orchestration/serverScopedRpc/machineRpcTimeoutError';
@@ -30,7 +31,6 @@ export type TransferFailureReason =
     | 'updateRequired' | 'executionUnavailable' | 'permission' | 'tooLarge' | 'sourceUnavailable' | 'sessionUnavailable' | 'unconfirmed' | 'other';
 
 const REACHABILITY_CODES: ReadonlySet<string> = new Set([MACHINE_RPC_TIMEOUT_ERROR_CODE, 'server_unreachable', 'home_unreachable']);
-const DECLINED_CODES: ReadonlySet<string> = new Set(['approval_canceled', 'approval_rejected', 'approval_stale']);
 // Happier refused this caller's access (its credential, grant or role), so only the owner can change it.
 const ACCESS_REFUSED_CODES: ReadonlySet<string> = new Set([
     RPC_ERROR_CODES.FORBIDDEN, 'credential_scope_denied', 'forbidden', 'access_denied', 'role_policy_denied',
@@ -59,7 +59,7 @@ export function classifyTransferFailure(failure: Readonly<{ errorCode?: string |
     if (code === 'machine_carrier_unavailable') return 'carrierUnavailable';
     if (code === 'machine_carrier_transport_failed') return 'carrierInterrupted';
     if (REACHABILITY_CODES.has(code)) return 'unreachable';
-    if (DECLINED_CODES.has(code)) return 'declined';
+    if ((isActionApprovalDeclinedErrorCode(code) || code === 'approval_stale')) return 'declined';
     if (ACCESS_REFUSED_CODES.has(code)) return 'accessRefused';
     if (code === RPC_ERROR_CODES.TEAM_AUTHENTICATION_REQUIRED) return 'teamSignIn';
     if (code === RPC_ERROR_CODES.UPDATE_REQUIRED) return 'updateRequired';
