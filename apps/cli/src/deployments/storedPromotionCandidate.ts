@@ -6,9 +6,11 @@ import { requireOwnServerDeploymentBuildMachine } from './targets/ownServer/ownS
 
 /** Controller preparation and installed child review reopen the same pinned
  * source receipt and current destination before deriving replacement content. */
-export async function readStoredPromotionCandidateForHost(request: Readonly<{
+export async function readPromotionSelectionForHost(request: Readonly<{
     input: DeploymentPromoteActionInputV1; context: ActionExecutorContext;
-}>, readers: Pick<OwnServerDeploymentTargetHostInput, 'readEnvironment' | 'readReceipt' | 'readEnvironmentMetadata'>) {
+}>, readers: Pick<OwnServerDeploymentTargetHostInput, 'readEnvironment' | 'readEnvironmentMetadata'> & Readonly<{
+    readReceipt(request: Parameters<OwnServerDeploymentTargetHostInput['readReceipt']>[0]): Promise<DeploymentReceiptDetailV1>;
+}>) {
     const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
     const { input, context } = request;
     if (input.artifact !== 'image') return refuse('unsupported');
@@ -26,9 +28,22 @@ export async function readStoredPromotionCandidateForHost(request: Readonly<{
         || sourceReceipt.deployment.environmentId !== input.sourceEnvironmentId || sourceReceipt.deployment.id !== input.sourceDeploymentId
         || destination.environment.id !== input.environmentId
         || prepared && destination.environment.revision !== prepared.expectedRevision) return refuse('deployment_conflict');
-    const link = destination.targetLinks.find(item => item.targetLink.id === targetLinkId)?.targetLink;
-    if (!link || link.id !== destination.environment.runtimeTargetLinkId
+    const target = destination.targetLinks.find(item => item.targetLink.id === targetLinkId);
+    const link = target?.targetLink;
+    if (!target || !link || link.id !== destination.environment.runtimeTargetLinkId
         || prepared && link.revision !== prepared.expectedTargetLinkRevision) return refuse('deployment_conflict');
+    return { sourceReceipt, destination, link, target };
+}
+
+export async function readStoredPromotionCandidateForHost(request: Parameters<typeof readPromotionSelectionForHost>[0],
+    readers: Parameters<typeof readPromotionSelectionForHost>[1]) {
+    return prepareStoredPromotionForHost(await readPromotionSelectionForHost(request, readers));
+}
+
+/** Only the native target needs stored Compose and a builder. */
+export function prepareStoredPromotionForHost(selection: Awaited<ReturnType<typeof readPromotionSelectionForHost>>) {
+    const { destination, link } = selection;
+    const sourceReceipt = { ...selection.sourceReceipt, content: DeploymentOwnServerContentV1Schema.parse(selection.sourceReceipt.content) };
     const buildMachineId = requireOwnServerDeploymentBuildMachine(destination.environment.buildMachineId);
     const candidateEnvironmentContent = prepareStoredPromotionCandidate(sourceReceipt, destination);
     return { sourceReceipt, destination, link, candidateEnvironmentContent, buildMachineId };

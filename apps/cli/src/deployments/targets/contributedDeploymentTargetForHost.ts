@@ -65,7 +65,8 @@ function receiptFailureContent(content: DeploymentPlatformContentV1, result: Act
 function observedReceiptContent(content: DeploymentPlatformContentV1,
     observation: ReturnType<typeof DeploymentTargetRoleResultV1Schema.parse>): DeploymentPlatformContentV1 {
     const uploadProvenance = content.platform.observation.uploadProvenance ?? observation.uploadProvenance;
-    return { ...content, steps: observation.steps ?? content.steps,
+    const { failure: _previousFailure, ...retained } = content;
+    return { ...retained, steps: observation.steps ?? content.steps,
         platform: { ...content.platform, observation: { ...observation,
             ...(uploadProvenance ? { uploadProvenance } : {}) } } };
 }
@@ -200,10 +201,12 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                 || !sameStrictJsonValue(candidate.platform.repositoryAccess, scope.common.repositoryAccess)
                 || !sameStrictJsonValue(candidate.platform.preparedNative, scope.common.preparedNative)) return failure('deployment_conflict');
             await scope.admit(scope.common, 'preparation');
-            const source = await readDeploymentSourceIntentForHost({ request: { environment, context: request.context,
-                sourceIntent: candidate.sourceIntent, actionId: request.actionId, requireWorkspace: candidate.sourceMethod === 'upload' },
-                host: { ...host, credentials: scope.credentials, assertAuthority: scope.assertCurrent } });
-            await source.assertSourceCurrent();
+            if (request.actionId === 'deployments.deploy') {
+                const source = await readDeploymentSourceIntentForHost({ request: { environment, context: request.context,
+                    sourceIntent: candidate.sourceIntent, actionId: request.actionId, requireWorkspace: candidate.sourceMethod === 'upload' },
+                    host: { ...host, credentials: scope.credentials, assertAuthority: scope.assertCurrent } });
+                await source.assertSourceCurrent();
+            }
             const summary = [role === deployRole(candidate.sourceMethod) && candidate.sourceIntent.kind === 'repository'
                 && environment.content.definition.kind === 'repository'
                 ? `Deploy ${environment.content.definition.ref} at ${candidate.sourceIntent.sha.slice(0, 7)}.` : undefined,
@@ -285,7 +288,8 @@ export function createContributedDeploymentTargetForHost(host: Host) {
             if (!identity || !accepted || accepted.controller.machineId !== host.machineId
                 || accepted.controller.installationId !== identity.installationId
                 || environment.environment.controllerMachineId !== host.machineId) return failure('machine_unavailable');
-            if (receipt.deployment.state !== 'queued' && receipt.deployment.state !== 'running') {
+            if (receipt.deployment.state !== 'queued' && receipt.deployment.state !== 'running'
+                && receipt.deployment.state !== 'outcome_unknown') {
                 return { children: [], executeAdmittedAction: async () => ({ ok: true, result: {
                     ok: true, environmentId: environment.environment.id, revision: environment.environment.revision,
                     deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: receipt.deployment.state,

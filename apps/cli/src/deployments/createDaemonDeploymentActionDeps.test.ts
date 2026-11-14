@@ -1283,9 +1283,10 @@ describe('installed deployment storage and target composition', () => {
             expect(childLookups, JSON.stringify(dispatchTrace)).toEqual([{ machineId: kind === 'build' ? 'captured-builder' : 'machine-a', receiptReads: 1 }]);
         } finally { await requester.dispose(); }
     });
-    it.each(['provider Domain add', 'provider Domain verify', 'provider Domain remove', 'provider Domain retained native teardown', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
+    it.each(['promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain verify', 'provider Domain remove', 'provider Domain retained native teardown', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
     'admits the declared platform target without native history, a builder or an app-host Machine (%s)', async scenario => {
         const pluginId = 'example.platform';
+        const retainedTraffic = scenario === 'promote retained platform' || scenario === 'rollback retained platform';
         const variableScenario = scenario.startsWith('variable ');
         const runtimeLogs = scenario === 'runtime logs';
         const domainScenario = scenario.startsWith('provider Domain');
@@ -1307,7 +1308,7 @@ describe('installed deployment storage and target composition', () => {
         const sourceAdmission = { phase: 'deployment_source_admission', reason: 'requester_authority_unavailable',
             requiredFact: 'verified_root_requester', remedy: 'retry_original_request' } as const;
         const sdkBackgroundObservation = scenario === 'SDK background receipt observe';
-        const backgroundObservation = scenario === 'background receipt observe' || sdkBackgroundObservation;
+        const backgroundObservation = scenario === 'background receipt observe' || scenario === 'uncertain receipt observe' || sdkBackgroundObservation;
         const settlementPointerChanged = scenario === 'settlement pointer changed';
         if (scenario === 'upload source') {
             // Saved-profile persistence is the OS boundary, as in the native materialization fixture below.
@@ -1327,7 +1328,7 @@ describe('installed deployment storage and target composition', () => {
             repository: { kind: 'github' as const, deployment: 'https://github.com', repository: 'owner/project' } };
         // Retained older links/receipts did not carry a native preparation.
         const capturedPreparation = scenario === 'retained receipt observe' ? {} : { preparedNative, repositoryAccess };
-        const roles = ['inspect', 'link', 'deploy', 'observe', 'uploadDeploy', ...(scenario === 'build logs' ? ['logs.build' as const] : []), ...(runtimeLogs ? ['logs.runtime' as const] : []), ...(variableScenario ? ['variables.read' as const, 'variables.sync' as const] : []), ...(domainScenario ? [domainRole, ...(domainTeardown ? ['teardown' as const] : [])] : [])] as const;
+        const roles = ['inspect', 'link', 'deploy', 'observe', 'uploadDeploy', ...(retainedTraffic ? ['promote' as const, 'rollback' as const] : []), ...(scenario === 'build logs' ? ['logs.build' as const] : []), ...(runtimeLogs ? ['logs.runtime' as const] : []), ...(variableScenario ? ['variables.read' as const, 'variables.sync' as const] : []), ...(domainScenario ? [domainRole, ...(domainTeardown ? ['teardown' as const] : [])] : [])] as const;
         const credentials: StoredCredentials = { token: `h.${Buffer.from(JSON.stringify({ sub: 'owner', ...(sdkBackgroundObservation ? {
             tokenEpoch: 1, provenance: { v: 1, kind: 'account', authority: 'present_user' } } : {}) })).toString('base64url')}.s`, encryption: null };
         let sdkHomeUrl = 'https://platform.test';
@@ -1414,6 +1415,7 @@ describe('installed deployment storage and target composition', () => {
                     linkSchema: { type: 'object', properties: {}, additionalProperties: false },
                     ...(scenario === 'teardown with data target' ? { role: 'data' } : { role: 'runtime',
                         actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe', uploadDeploy: 'upload-deploy',
+                            ...(retainedTraffic ? { promote: 'promote', rollback: 'rollback' } : {}),
                             ...(scenario === 'build logs' ? { logs: { build: 'build-logs-read' } } : runtimeLogs ? { logs: { runtime: 'runtime-logs-read' } } : {}),
                             ...(variableScenario ? { variables: { read: 'variables-read', sync: 'variables-sync' } } : {}),
                             ...(domainScenario ? { domains: domainRole === 'domains.remove' ? { remove: 'domains-remove' } : domainRole === 'domains.add' ? { add: 'domains-add' } : { verify: 'domains-verify' } } : {}),
@@ -1522,7 +1524,7 @@ describe('installed deployment storage and target composition', () => {
             row.targetLink.targetKind = 'platform'; row.targetLink.machines = []; row.targetLink.members = [];
             row.targetLink.createdByAccountId = 'owner';
             // Unlike upload, a daemon-hosted observer uses the target's admitted installation.
-            if (scenario === 'compact repository missing SCM provider' || scenario === 'retained receipt observe' || backgroundObservation) Object.assign(row.targetLink,
+            if (scenario === 'compact repository missing SCM provider' || scenario === 'retained receipt observe' || backgroundObservation || retainedTraffic) Object.assign(row.targetLink,
                 { machineId: 'machine-a', installationId: 'installation-a' });
             row.content = { credentialPrincipal: { kind: 'account', accountId: 'owner',
                 purpose: { consumer: { pluginId, localId: 'link' }, purpose: 'manage' },
@@ -1954,7 +1956,7 @@ describe('installed deployment storage and target composition', () => {
                 throw new Error('Refused deployment must not reach the provider');
             });
             const receipt = createDeploymentReceiptHeaderV1({ id: 'platform-receipt', environmentId: environment.environment.id,
-                targetLinkId: row.targetLink.id, state: scenario === 'build logs' ? 'succeeded' : scenario === 'retained receipt observe' ? 'running' : 'queued', requestKey: candidate.input.requestKey,
+                targetLinkId: row.targetLink.id, state: scenario === 'uncertain receipt observe' ? 'outcome_unknown' : scenario === 'build logs' ? 'succeeded' : scenario === 'retained receipt observe' ? 'running' : 'queued', requestKey: candidate.input.requestKey,
                 actionOperationId: 'platform-operation', requestedByAccountId: 'owner',
                 startedAtMs: undefined, settledAtMs: undefined, contentArtifactId: 'reserved-platform-content',
                 acceptedExecution: { v: 1, controller: { machineId: 'machine-a', installationId: 'installation-a' } } });
@@ -1971,7 +1973,41 @@ describe('installed deployment storage and target composition', () => {
                 : roleFails ? { ...platformCandidate,
                     steps: [{ id: 'build', label: 'Provider build', state: 'failed', streamRef: 'masked-provider-stream' }] }
                 : candidate.content;
-            put(receipt.contentArtifactId, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, receiptContent);
+            put(receipt.contentArtifactId, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, scenario === 'uncertain receipt observe'
+                ? { ...receiptContent, failure: { code: 'deployment_activation_not_observed', phase: 'observe' } }
+                : receiptContent);
+            if (retainedTraffic) {
+                // #152: a protected Upload receipt contains provider provenance,
+                // not own-server Machines, images or a controller build choice.
+                receipt.state = 'succeeded';
+                environment.content.definition = { kind: 'repository', ref: 'main' };
+                put(environment.environment.contentArtifactId, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, environment.content);
+                put(receipt.contentArtifactId, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DeploymentPlatformContentV1Schema.parse({
+                    ...platformCandidate, sourceIntent: rootSourceIntent,
+                    platform: { ...platformCandidate.platform, observation: { v: 1, state: 'succeeded',
+                        providerDeploymentId: 'existing-provider-deployment', observedAtMs: 1 } },
+                }));
+                const readHttp = vi.mocked(axios.request).getMockImplementation()!;
+                vi.mocked(axios.request).mockImplementation(async request => new URL(request.url!).pathname.endsWith(`/receipts/${receipt.id}`)
+                    ? { status: 200, data: DeploymentReceiptGetResultV1Schema.parse({ ok: true, deployment: receipt }) }
+                    : readHttp(request));
+                const intent = { serverId: 'home', environmentId: environment.environment.id, requestKey: `retained-${scenario}` };
+                const prepared = await deps.prepareDeploymentAction(scenario === 'promote retained platform'
+                    ? { actionId: 'deployments.promote', input: { ...intent, sourceEnvironmentId: environment.environment.id,
+                        sourceDeploymentId: receipt.id, artifact: 'image' }, context: ownerContext }
+                    : { actionId: 'deployments.rollback', input: { ...intent, deploymentId: receipt.id }, context: ownerContext });
+                expect(prepared, JSON.stringify(prepared)).toMatchObject({ input: { ...intent,
+                    targetLinkId: row.targetLink.id }, hostReviewedChildren: { children: [
+                    { role: scenario === 'promote retained platform' ? 'promote' : 'rollback' }, { role: 'observe' },
+                ] } });
+                if (!('input' in prepared)) throw new Error('Expected a prepared provider traffic change');
+                const stored = decodePlainArtifactStoredContent(String(documents.get(prepared.input.contentArtifactId)!.body));
+                const content = DeploymentPlatformContentV1Schema.parse(JSON.parse(z.object({ body: z.string() }).parse(stored).body));
+                expect(content).toMatchObject({ sourceIntent: rootSourceIntent, sourceMethod: 'upload', machines: [], images: [] });
+                expect(content).not.toHaveProperty('buildMachineId');
+                expect(nativeReads).toBe(0);
+                return;
+            }
             const requestHttp = vi.mocked(axios.request).getMockImplementation()!;
             vi.mocked(axios.request).mockImplementation(async request => {
                 const path = new URL(request.url!).pathname;
@@ -2376,6 +2412,20 @@ describe('installed deployment storage and target composition', () => {
                     expect(receipt.state).toBe('succeeded');
                     if (!('readObservationCount' in module) || typeof module.readObservationCount !== 'function') throw new Error('Missing provider observation probe');
                     expect(module.readObservationCount()).toBe(2);
+                    return;
+                }
+                if (scenario === 'uncertain receipt observe') {
+                    const first = await executor.execute('deployments.receipts.observe', input, context);
+                    expect(first, JSON.stringify(first)).toMatchObject({ ok: true, result: { state: 'queued' } });
+                    const observed = await executor.execute('deployments.receipts.observe', input, context);
+                    expect(observed, JSON.stringify(observed)).toMatchObject({ ok: true, result: { state: 'succeeded' } });
+                    expect(receipt.state).toBe('succeeded');
+                    expect(transitionWrites).toBe(2);
+                    const stored = decodePlainArtifactStoredContent(String(documents.get(receipt.contentArtifactId)!.body));
+                    const content = DeploymentPlatformContentV1Schema.parse(JSON.parse(z.object({ body: z.string() }).parse(stored).body));
+                    expect(content).not.toHaveProperty('failure');
+                    expect(reserved).toBe(false);
+                    expect(providerSends).toBe(0);
                     return;
                 }
                 const observationContext = context;

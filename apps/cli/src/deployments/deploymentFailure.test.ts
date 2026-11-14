@@ -8,8 +8,20 @@ import { createMachineNativeEffectAdmission } from '@/daemon/local/services/laun
 import { logger } from '@/ui/logger';
 import { projectDeploymentFailure, privateServiceForwardAcquisitionError } from './deploymentFailure';
 import { MachineCarrierError } from '@/daemon/peer/iroh/machineCarrier';
+import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployment-protocol';
 
 describe('deployment failure diagnostics', () => {
+    it('surfaces value-free schema issue paths when preparation rejects receipt content', () => {
+        const parsed = DeploymentOwnServerContentV1Schema.safeParse({ machines: [],
+            platform: { providerDeploymentId: 'private-provider-deployment' } });
+        if (parsed.success) throw new Error('Expected the native receipt schema to reject platform content');
+        const failure = ActionExecuteFailureSchema.parse(projectDeploymentFailure('deployment_content_unavailable', parsed.error,
+            'deployment.prepare.receipt'));
+        expect(failure).toMatchObject({ errorCode: 'invalid_action_output',
+            details: { issues: expect.arrayContaining([expect.objectContaining({ path: ['buildMachineId'], code: 'invalid_type' })]) },
+            failureCause: { phase: 'deployment.prepare.receipt', errorClass: expect.stringMatching(/ZodError/) } });
+        expect(JSON.stringify(failure)).not.toContain('private-provider-deployment');
+    });
     it('retains an authored cause for a generic PluginError without exposing its private details', () => {
         const failureCause = projectActionFailureCauseV1({ code: 'invalid_request' }, 'deployment.build.secret_build_argument');
         const result = projectDeploymentFailure('invalid_request', new PluginError({ code: 'invalid_request',

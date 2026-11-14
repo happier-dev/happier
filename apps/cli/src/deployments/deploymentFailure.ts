@@ -69,7 +69,7 @@ function readAuthoredDeploymentFailure(errorCode: string, error: unknown, phase:
     const known = (errorCode === 'action_forbidden' ? readDeploymentAuthorizationFailure(error) : null)
         ?? readDeploymentSystemToolFailure(errorCode, error)
         ?? readDeploymentNativeResticFailure(errorCode, error)
-        ?? readDeploymentOutputValidationFailure(errorCode, error);
+        ?? readDeploymentOutputValidationFailure(errorCode, error, phase);
     if (known) return known;
     const pluginError = readPluginActionError(error);
     const author = pluginError ? readPluginActionFailureAuthorPayload(pluginError.data) : undefined;

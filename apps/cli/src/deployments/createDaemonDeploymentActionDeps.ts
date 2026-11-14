@@ -2094,7 +2094,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     if (replayingDeployment) return failure('invalid_parameters');
                     await requireDefinitionManage(originalRequest.context);
                     const prepared = await preparePromotionForHost({ input: originalInput, context: originalRequest.context }, {
-                        ...targetHostReaders,
+                        ...targetHostReaders, readReceipt: targetHostReaders.readAnyReceipt,
                         async createCandidate(environment, content) {
                             await admitPreview(environment, originalRequest.context);
                             return createCandidate(environment, content);
@@ -2102,7 +2102,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     });
                     input = prepared.input;
                     preparationPromotion = prepared.promotion;
-                    preparationEnvironment = prepared.promotion.destination;
+                    preparationEnvironment = prepared.environment;
                 }
                 else if (originalRequest.actionId === 'deployments.rollback' && 'deploymentId' in originalInput) {
                     await definitionRole(originalRequest.context);
@@ -2110,7 +2110,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     if (replayingDeployment) return failure('invalid_parameters');
                     const request = { environmentId: originalInput.environmentId, context: originalRequest.context };
                     const prepared = await prepareRollbackForHost({ input: originalInput, context: request.context }, {
-                        ...targetHostReaders, createCandidate,
+                        ...targetHostReaders, readReceipt: targetHostReaders.readAnyReceipt, createCandidate,
                     });
                     input = prepared.input;
                     preparationEnvironment = prepared.environment;

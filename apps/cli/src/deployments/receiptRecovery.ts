@@ -26,6 +26,9 @@ export async function settleInterruptedDeploymentReceiptForHost(request: Readonl
         if (operation && operation.state !== 'failed' && operation.state !== 'cancelled' && operation.state !== 'succeeded') continue;
         const state = operation?.state === 'failed' ? 'failed' : operation?.state === 'cancelled' ? 'cancelled' : 'outcome_unknown';
         const receipt = state === 'outcome_unknown' ? await host.readReceipt(header, request.context) : null;
+        // A finite controller operation can finish after handing work to a
+        // provider. Its retained provider id belongs to the existing observer.
+        if (receipt?.content.platform?.observation.providerDeploymentId) continue;
         const written = await host.writeTransition({ environmentId: request.environmentId, deploymentId: header.id,
             receiptHeader: header, expectedRevision: header.revision, state, context: request.context,
             ...(receipt && !receipt.content.failure ? { content: { ...receipt.content,

@@ -1,9 +1,10 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import { readHomeRequestBody } from './homeRequestBody.testkit';
 import { z } from 'zod';
 import tweetnacl from 'tweetnacl';
 import axios from '@/api/client/credentialAxios';
 import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DeploymentContentV1Schema } from '@happier-dev/deployment-protocol';
+import { DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DeploymentContentV1Schema, DeploymentPlatformContentV1Schema } from '@happier-dev/deployment-protocol';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
@@ -20,9 +21,10 @@ afterEach(() => vi.restoreAllMocks());
 // scoped operation custody, admission transport and signed settlement stay real.
 const cases = (['plain', 'e2ee'] as const).flatMap(mode =>
     ([['missing', false], ['missing', true], ['succeeded', false], ['failed', false], ['running', false]] as const)
-        .map(([operationState, existingFailure]) => ({ mode, operationState, existingFailure })));
+        .map(([operationState, existingFailure]) => ({ mode, operationState, existingFailure, providerHandoff: false }))
+        .concat([{ mode, operationState: 'succeeded' as const, existingFailure: false, providerHandoff: true }]));
 it.each(cases)(
-    'settles a dead running receipt before the next rollback admission ($mode / $operationState / existing reason: $existingFailure)', async ({ mode, operationState, existingFailure }) => {
+    'settles interrupted native execution while retaining provider handoff ($mode / $operationState / existing reason: $existingFailure / provider: $providerHandoff)', async ({ mode, operationState, existingFailure, providerHandoff }) => {
     const token = `h.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.s`;
     const credentials: StoredCredentials = { token, encryption: mode === 'plain' ? null
         : { type: 'legacy', secret: new Uint8Array(32).fill(23) } };
@@ -34,6 +36,15 @@ it.each(cases)(
         publicKey: Buffer.from(keys.publicKey).toString('base64url'), privateKey: Buffer.from(keys.secretKey).toString('base64url'), createdAt: 1 });
     vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue(identity);
     const receipt = createDeploymentReceiptDetailV1();
+    if (providerHandoff) receipt.content = DeploymentPlatformContentV1Schema.parse({ sourceIntent: receipt.content.sourceIntent,
+        sourceMethod: 'upload', machines: [], images: [], machineResults: [], steps: [], platform: {
+            credentialPrincipal: { kind: 'account', accountId: 'owner',
+                purpose: { consumer: { pluginId: 'example.platform', localId: 'link' }, purpose: 'manage' },
+                target: { kind: 'account', account: { service: { pluginId: 'example.platform', localId: 'service' }, accountId: 'connected' } } },
+            providerIdentity: { providerAccountId: 'team', providerResourceId: 'project', providerEnvironment: 'production' },
+            providerEnvironment: { kind: 'production' }, targetLinkRevision: 1,
+            observation: { v: 1, state: 'running', observedAtMs: 1, providerDeploymentId: 'provider-deployment' },
+        } });
     if (existingFailure) receipt.content.failure = { code: 'deployment_build_failed', phase: 'build' };
     Object.assign(receipt.deployment, { operation: 'rollback', state: 'running', revision: 2, requestedByAccountId: 'owner',
         actionOperationId: 'old-operation', acceptedExecution: { v: 1,
@@ -83,7 +94,8 @@ it.each(cases)(
         expect(path).toBe(`/v1/deployments/environments/${receipt.deployment.environmentId}/rollback`);
         if (receipt.deployment.state === 'running') return { status: 200,
             data: { ok: false, error: 'deployment_in_progress', deploymentId: receipt.deployment.id } };
-        admittedOperationId = request.data.actionOperationId;
+        const operationId = readHomeRequestBody(request.data).actionOperationId;
+        admittedOperationId = typeof operationId === 'string' ? operationId : undefined;
         // Admission produces a distinct receipt; native effects are outside this recovery test.
         return { status: 200, data: { ok: true, environmentId: receipt.deployment.environmentId, revision: 2,
             deploymentId: 'fresh-receipt', deploymentRevision: 1, state: 'failed' } };
@@ -104,12 +116,12 @@ it.each(cases)(
             // The UI enters preparation before native admission. Recovery must
             // happen here even when later review cannot proceed.
             await deps.prepareDeploymentAction({ actionId: 'deployments.rollback', input: compactInput, context: requester });
-            expect(receipt.deployment.state).toBe(operationState === 'running' ? 'running'
+            expect(receipt.deployment.state).toBe(operationState === 'running' || providerHandoff ? 'running'
                 : operationState === 'failed' ? 'failed' : 'outcome_unknown');
             const result = await deps.deploymentAction('deployments.rollback', input, requester);
             return 'errorCode' in result ? result : { ok: true as const, result };
         } });
-    if (operationState === 'running') {
+    if (operationState === 'running' || providerHandoff) {
         expect(receipt.deployment.state).toBe('running');
         expect(admittedOperationId).toBeUndefined();
         expect(writtenContent).toBeUndefined();
