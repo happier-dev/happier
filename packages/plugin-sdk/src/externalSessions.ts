@@ -274,7 +274,8 @@ export type AgentExternalSessionCandidate = Readonly<{
  */
 export type AgentExternalSessionTranscriptItem = Readonly<{
     id: string;
-    createdAtMs: number;
+    /** Source creation time, when known; a revision timestamp is not a creation time. */
+    createdAtMs?: number;
     localId?: string | null;
     sidechainId?: string | null;
     messageRole?: SessionMessageRole | null;

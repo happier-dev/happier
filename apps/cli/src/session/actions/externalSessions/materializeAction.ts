@@ -1347,7 +1347,7 @@ export function createExternalSessionMaterializeActionExecutor(
             batchId: response.batchId,
             acceptedThroughServerSeq: response.acceptedThroughServerSeq,
           }
-          : { ok: false as const, error: response.kind === 'error' ? response.errorCode : 'invalid_response' };
+          : { ok: false as const, error: response.kind === 'error' ? response.errorCode : 'internal_error' };
       },
       onReplayGroupAcknowledged: async (checkpoint) => {
         const acceptedThroughServerSeq = checkpoint.acceptedThroughServerSeq;
@@ -1412,12 +1412,9 @@ export function createExternalSessionMaterializeActionExecutor(
         }
       },
     });
-    const replayed = await replay.resume(operationId);
-    throwIfCancellationRequested(operationId);
-    if (replayed.status === 'discard_required') {
-      return await settleDiscarded();
-    }
-    if (replayed.status !== 'completed') {
+    const settleIncompleteReplay = async (replayed: Extract<
+      Awaited<ReturnType<typeof replay.resume>>, { status: 'awaiting_user_resume' }
+    >): Promise<ExternalSessionOperationActionResponseV1> => {
       if (
         replayed.reason === 'staging_missing'
         && record.checkpoint.acceptedThroughServerSeq !== undefined
@@ -1468,7 +1465,10 @@ export function createExternalSessionMaterializeActionExecutor(
             ? {
               error: {
                 code: 'historical_import_failed' as const,
-                message: 'Historical import could not publish a staged batch.',
+                ...(replayed.publicationErrorCode ? { publicationErrorCode: replayed.publicationErrorCode } : {}),
+                message: replayed.publicationErrorCode
+                  ? `Historical import batch rejected: ${replayed.publicationErrorCode}.`
+                  : 'Historical import could not publish a staged batch.',
                 retryable: true,
                 occurredAtMs: nowMs(),
               },
@@ -1477,7 +1477,11 @@ export function createExternalSessionMaterializeActionExecutor(
       }, accountScope);
       onRecord(record);
       return success(record);
-    }
+    };
+    const replayed = await replay.resume(operationId);
+    throwIfCancellationRequested(operationId);
+    if (replayed.status === 'discard_required') return await settleDiscarded();
+    if (replayed.status !== 'completed') return await settleIncompleteReplay(replayed);
 
     let acceptedThroughServerSeq = replayed.acceptedThroughServerSeq ?? 0;
     const persistAcceptedCheckpoint = async (): Promise<void> => {
@@ -1684,9 +1688,8 @@ export function createExternalSessionMaterializeActionExecutor(
       }, accountScope);
       onRecord(record);
       const catchUpReplay = await replay.resume(operationId);
-      if (catchUpReplay.status !== 'completed') {
-        throw new Error(`historical_final_catch_up:${catchUpReplay.status}`);
-      }
+      if (catchUpReplay.status === 'discard_required') return await settleDiscarded();
+      if (catchUpReplay.status !== 'completed') return await settleIncompleteReplay(catchUpReplay);
       acceptedThroughServerSeq = catchUpReplay.acceptedThroughServerSeq ?? acceptedThroughServerSeq;
       await persistAcceptedCheckpoint();
     }
@@ -1705,7 +1708,12 @@ export function createExternalSessionMaterializeActionExecutor(
       expectedAcceptedThroughServerSeq: acceptedThroughServerSeq,
     });
     if (finalized.kind !== 'finalized') {
-      throw new Error(`historical_finalize:${finalized.kind === 'error' ? finalized.errorCode : 'invalid'}`);
+      return await settleIncompleteReplay({
+        status: 'awaiting_user_resume',
+        reason: 'historical_import_failed',
+        acceptedThroughServerSeq,
+        publicationErrorCode: finalized.kind === 'error' ? finalized.errorCode : 'internal_error',
+      });
     }
     return await settleFinalized(
       acceptedThroughServerSeq,

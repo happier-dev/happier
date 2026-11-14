@@ -1,4 +1,9 @@
 import { expect, it } from 'vitest';
+import { isDeepStrictEqual } from 'node:util';
+import { createExternalSessionHistoricalImportReplay } from '@/session/external/staging/historicalImportReplay';
+import { createExternalSessionOperationPrivateStagingStore } from '@/session/external/staging/operationPrivateStaging';
+import { prepareExternalSessionHistoricalImportItem } from '@/api/session/external/import/importExternalSessionTranscript';
+import type { LoadedLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -165,4 +170,62 @@ it('advances through captured nonvisual native events without inventing transcri
     expect(next.items.filter(item => item.raw.role === 'user')).toHaveLength(1);
     await fixture.assertReadOnly();
   } finally { await fixture.dispose(); }
+});
+
+
+it.each(['plain', 'e2ee'] as const)('publishes a repeated native Tool call with changed revision recordedAt (%s)', async (encryptionMode) => {
+  const fixture = await boundary();
+  const activeServerDir = await mkdtemp(join(tmpdir(), 'muse-import-overlap-'));
+  try {
+    const rows = await fixture.recording('isolated-long-history-reader');
+    const page = readMuseRecord(rows[10]);
+    const message = readMuseRecord(page.message);
+    const result = readMuseRecord(message.result);
+    if (!Array.isArray(result.events)) throw new Error('Missing native events');
+    const event = readMuseRecord(result.events[9]);
+    const params = readMuseRecord(event.params);
+    const nativeItem = readMuseRecord(params.item);
+    const sessionId = params.sessionId;
+    if (typeof sessionId !== 'string') throw new Error('Missing native identity');
+    const projected = [];
+    for (const recordedAt of ['2026-11-09T09:00:00Z', '2026-11-09T09:00:01Z']) {
+      const window = structuredClone(rows);
+      window[10] = { ...page, message: { ...message, result: { ...result,
+        events: [{ ...event, params: { ...params, item: { ...nativeItem, recordedAt } } }], nextCursor: null } } };
+      await fixture.phase(window, [9]);
+      const read = value(await fixture.callbacks.pageTranscript({ ...fixture.invocation, source: fixture.source,
+        remoteSessionId: sessionId, cursor: 'native-before', direction: 'older', maxItems: 100 }));
+      const call = read.items.find(item => readMuseRecord(readMuseRecord(item.raw.content).data).type === 'tool-call');
+      if (!call) throw new Error('Missing Tool call');
+      projected.push(call);
+    }
+    const linked = { rawSession: { id: 'import-session', encryptionMode, dataEncryptionKey: null },
+      metadata: {}, sessionPath: null, agentId: 'muse', machineId: 'machine-1', remoteSessionId: sessionId,
+      linkGeneration: 'generation-1', source: fixture.source } as LoadedLinkedExternalSession;
+    const staging = createExternalSessionOperationPrivateStagingStore({ activeServerDir,
+      limits: { perOperation: { maxItems: 100, maxBytes: 100000 }, aggregate: { maxItems: 200, maxBytes: 200000 } } });
+    const capturedSource = { sourceIdentity: 'source-1', sourceGeneration: 'generation-1', revision: 'revision-1', boundary: 'boundary-1' };
+    await staging.beginOperation({ operationId: 'overlap-import', representation: 'content', capturedSource });
+    for (const [index, item] of projected.entries()) {
+      const prepared = await prepareExternalSessionHistoricalImportItem({ item, linked,
+        credentials: { token: 'fixture', encryption: encryptionMode === 'e2ee' ? { type: 'legacy', secret: new Uint8Array(32).fill(7) } : null }, sessionId: 'import-session', workingDirectory: null, sourceReadRoots: [] });
+      await staging.appendPageGroup({ operationId: 'overlap-import', captureIndex: index, groupId: 'page-'+index,
+        items: [prepared], sourceRead: { ...capturedSource, availability: 'reachable', relationshipToCapture: 'same', eof: index === 1 } });
+    }
+    await staging.completeCapture({ operationId: 'overlap-import' });
+    const accepted = new Map<string, unknown>();
+    const replay = createExternalSessionHistoricalImportReplay({ staging, sourceGeneration: 'generation-1',
+      maxBatchItems: 100, isBatchWithinSerializedByteLimit: () => true,
+      // Genuine server transport boundary mirrors the writer's exact stable-row conflict.
+      writeHistoricalBatch: async batch => {
+        for (const item of batch.items) {
+          if (accepted.has(item.localId) && !isDeepStrictEqual(accepted.get(item.localId), item)) return { ok: false, error: 'batch_conflict' };
+          accepted.set(item.localId, item);
+        }
+        return { ok: true, batchId: batch.batchId, acceptedThroughServerSeq: accepted.size };
+      } });
+    await expect(replay.resume('overlap-import')).resolves.toMatchObject({ status: 'completed', acceptedThroughServerSeq: 1 });
+    expect(accepted.size).toBe(1);
+    await fixture.assertReadOnly();
+  } finally { await fixture.dispose(); await rm(activeServerDir, { recursive: true, force: true }); }
 });

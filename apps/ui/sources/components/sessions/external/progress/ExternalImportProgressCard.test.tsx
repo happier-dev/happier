@@ -683,3 +683,14 @@ describe('ExternalImportProgressCard', () => {
         );
     });
 });
+
+
+it('shows the safe publication refusal code in the import recovery detail', async () => {
+    const progress = createProgress({ status: 'awaiting_user_resume', retryTargetPhase: 'importing',
+        error: { code: 'historical_import_failed', retryable: true, occurredAtMs: 1_700_000_000_000,
+            publicationErrorCode: 'batch_conflict' } });
+    const screen = await renderScreen(React.createElement(ExternalImportProgressCard, {
+        progress, observationContext: 'live', originAvailability: 'online', onDismiss: vi.fn(), onResume: vi.fn(),
+    }));
+    expect(screen.findByTestId('external-session-operation-status-awaiting_user_resume')?.props.accessibilityLabel).toContain('batch_conflict');
+});

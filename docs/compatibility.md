@@ -1,5 +1,27 @@
 # Compatibility and version skew
 
+## External Session import refusal causes (unreleased 0.3)
+
+The SDK transcript Item and its host admission accept absent `createdAtMs`,
+matching the existing optional Protocol source timestamp. Present timestamps
+still pass the same validation. Muse uses this for Tool calls whose original
+creation time is unknown; plugin and host reload together under the unpublished
+0.3 direct cut. Native tool results retain their observed revision time.
+
+Repeated E2EE historical preparation now consumes the existing keyed message
+idempotency primitive with the destination Session and stable historical id.
+This preserves ciphertext for equal content across page windows; changed content
+and destinations remain separate. Previously prepared staging stays immutable;
+a fresh capture is required for an interrupted pre-fix operation with conflicting
+repeated records. No ciphertext migration or server equality weakening is added.
+
+Private operation errors and owner progress accept optional `publicationErrorCode`
+from the existing historical socket refusal vocabulary. Older records without it
+remain valid. Matching Protocol, CLI and UI development peers reload together;
+older strict 0.3 readers reject the added field. The current `../0.2` frontier has
+no `packages/protocol/src/sessions/external/operationV1.ts` counterpart. No server
+command, migration, capability or retry behavior changes.
+
 ## Retained Provider helper models (unreleased 0.3)
 
 `ProviderRuntimeBindingBasisV1` retains optional `roleModels` through the existing

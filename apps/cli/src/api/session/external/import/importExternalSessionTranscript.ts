@@ -72,6 +72,8 @@ function sanitizeHistoricalImportRaw(params: Readonly<{
 }
 
 function buildStoredMessageContent(params: Readonly<{
+  sessionId: string;
+  localId: string;
   rawSession: RawSessionRecord;
   credentials: StoredCredentials;
   raw: Record<string, unknown>;
@@ -98,6 +100,7 @@ function buildStoredMessageContent(params: Readonly<{
     c: encryptSessionMessagePayload({
       ctx,
       payload: params.raw,
+      idempotencyKey: JSON.stringify([params.sessionId, params.localId]),
     }),
   };
 }
@@ -172,6 +175,8 @@ export async function prepareExternalSessionHistoricalImportItem(params: Readonl
   let content: StrictSessionStoredMessageContentEnvelope;
   try {
     content = buildStoredMessageContent({
+      sessionId: params.sessionId,
+      localId,
       rawSession: params.linked.rawSession,
       credentials: params.credentials,
       raw,

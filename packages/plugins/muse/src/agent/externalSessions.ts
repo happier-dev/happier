@@ -130,7 +130,11 @@ function transcriptProjection() {
   projection.watch(event => {
     const id = typeof native.itemId === 'string' ? native.itemId : undefined;
     if (!id) return;
-    const common = { createdAtMs: timestamp(native.recordedAt) };
+    // recordedAt belongs to this native revision, not the Tool call's creation.
+    // Completed Items re-emit the same call on later pages. Muse supplies no
+    // original call timestamp, so leave it absent rather than change a stable row.
+    const common = event.kind === 'tool-call' || event.kind === 'tool-progress'
+      ? {} : { createdAtMs: timestamp(native.recordedAt) };
     if (event.kind === 'transcript-message-committed') {
       put(event.role === 'user'
         ? { ...common, id: `${id}:message`, localId: id, messageRole: 'user', userProjection: 'source_fact',

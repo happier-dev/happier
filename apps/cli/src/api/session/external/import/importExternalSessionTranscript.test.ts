@@ -335,7 +335,7 @@ describe('external session historical import item preparation', () => {
     }
   });
 
-  it('keeps fresh E2EE historical preparations randomized', async () => {
+  it('keeps repeated E2EE history byte-identical while separating destination and content', async () => {
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-randomized-import-'));
     try {
       const linked = {
@@ -372,7 +372,11 @@ describe('external session historical import item preparation', () => {
       if (first.content.t !== 'encrypted' || second.content.t !== 'encrypted') {
         throw new Error('expected_encrypted_historical_import_content');
       }
-      expect(second.content.c).not.toBe(first.content.c);
+      expect(second.content.c).toBe(first.content.c);
+      const changed = await prepareExternalSessionHistoricalImportItem({ ...input, item: { ...input.item, raw: { role: 'agent', content: { type: 'output', data: 'changed' } } } });
+      const otherSession = await prepareExternalSessionHistoricalImportItem({ ...input, sessionId: 'other-session', linked: { ...linked, rawSession: { ...linked.rawSession, id: 'other-session' } } });
+      expect(changed.content).not.toEqual(first.content);
+      expect(otherSession.content).not.toEqual(first.content);
     } finally {
       await rm(workingDirectory, { recursive: true, force: true });
     }

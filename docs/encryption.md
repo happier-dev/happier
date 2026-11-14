@@ -7408,6 +7408,15 @@ response.
 
 ## External Sessions secure refresh and publication
 
+In 0.3 development, historical import preparation uses the existing Session
+message encryption idempotency key, scoped to the destination Session and
+stable historical local id. Repeated source records with identical content
+therefore retain identical ciphertext across page windows. The canonical keyed
+synthetic nonce also binds the actual framed plaintext bytes; changed content
+or destination produces different ciphertext. The stable writer continues to
+reject changed content for an existing historical identity. No encryption
+algorithm, Account-mode authority or server disclosure policy changes.
+
 External Sessions keeps live Agent-source content opaque to the server. Its canonical live-refresh path is:
 
 1. the daemon emits `external-session-transcript-invalidated`, a content-free event bound to the current machine, session, link, qualified Agent/source identity, contribution generation, and a non-reversible cursor identity;

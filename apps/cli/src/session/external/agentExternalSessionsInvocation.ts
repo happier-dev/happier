@@ -485,14 +485,15 @@ function parseTranscriptItemId(value: unknown): string | null {
 function parseTranscriptItem(value: unknown, readUserText?: (text: string) => string, allowTranscriptMedia = false): AgentExternalSessionTranscriptItem | null {
     const record = readStrictRecord(
         value,
-        ['id', 'createdAtMs', 'raw'],
-        ['localId', 'sidechainId', 'messageRole', 'userProjection', 'toolResultMedia'],
+        ['id', 'raw'],
+        ['createdAtMs', 'localId', 'sidechainId', 'messageRole', 'userProjection', 'toolResultMedia'],
     );
     if (!record) return null;
     const id = parseTranscriptItemId(record.id);
     const parsedCreatedAtMs = ExternalSessionTranscriptSourceTimestampV1Schema
         .safeParse(record.createdAtMs);
-    const createdAtMs = parsedCreatedAtMs.success ? parsedCreatedAtMs.data : null;
+    const createdAtMs = record.createdAtMs === undefined ? undefined
+        : parsedCreatedAtMs.success ? parsedCreatedAtMs.data : null;
     const localId = record.localId === undefined || record.localId === null
         ? record.localId
         : parseTranscriptItemId(record.localId);
@@ -537,7 +538,7 @@ function parseTranscriptItem(value: unknown, readUserText?: (text: string) => st
     const displayUserText = raw.role === 'user' && readUserText ? readUserText(raw.content.text) : undefined;
     return Object.freeze({
         id,
-        createdAtMs,
+        ...(createdAtMs === undefined ? {} : { createdAtMs }),
         raw,
         ...(raw.role !== 'user' || displayUserText === undefined || displayUserText === raw.content.text ? {} : { displayUserText }),
         ...(localId === undefined ? {} : { localId }),

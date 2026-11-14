@@ -16,6 +16,7 @@ import {
   SessionMetadataPublisherPreconditionV1Schema,
 } from '../metadata/sessionMetadataSchemasV1.js';
 import {
+  ExternalSessionOperationSocketResponseErrorCodeV1Schema,
   ExternalSessionMaterializationPublicationV1Schema,
   ExternalSessionPriorStableStorageV1Schema,
 } from './operationV1.js';
@@ -200,24 +201,8 @@ export type ExternalSessionOperationSocketBatchLimitsV1 = z.infer<
   typeof ExternalSessionOperationSocketBatchLimitsV1Schema
 >;
 
-export const ExternalSessionOperationSocketResponseErrorCodeV1Schema = lazyZodSchema(() => z.enum([
-  'upgrade_required',
-  'wrong_machine_socket',
-  'wrong_session',
-  'wrong_operation',
-  'wrong_operation_claim',
-  'stale_revision',
-  'invalid_state',
-  'socket_capacity_insufficient',
-  'too_many_items',
-  'serialized_bytes_exceeded',
-  'batch_conflict',
-  'storage_mode_conflict',
-  'internal_error',
-]));
-export type ExternalSessionOperationSocketResponseErrorCodeV1 = z.infer<
-  typeof ExternalSessionOperationSocketResponseErrorCodeV1Schema
->;
+export { ExternalSessionOperationSocketResponseErrorCodeV1Schema } from './operationV1.js';
+export type { ExternalSessionOperationSocketResponseErrorCodeV1 } from './operationV1.js';
 
 const ExternalSessionOperationSocketResponseBaseV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),

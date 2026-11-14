@@ -1876,7 +1876,7 @@ describe('external session materialize action', () => {
     expect(releaseSourceCapture).toHaveBeenCalledWith(request(), undefined);
   });
 
-  it('retains the admitted Account partition when committing a final catch-up extension', async () => {
+  it.each(['none', 'batch', 'finalize'] as const)('retains the Account partition and refusal cause for final catch-up (%s)', async (refusal) => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-materialize-catch-up-account-'));
     roots.push(activeServerDir);
     const tokenFor = (sub: string) => `e30.${Buffer.from(JSON.stringify({ sub })).toString('base64url')}.`;
@@ -1923,12 +1923,14 @@ describe('external session materialize action', () => {
           limits: { maxItems: 1, maxSerializedBytes: 524_288 },
         };
         if (command.kind === 'batch') {
+          if (refusal === 'batch' && imported.length > 0) return { v: 1, kind: 'error', errorCode: 'batch_conflict', message: 'private boundary detail' };
           imported.push(...command.items.map(entry => entry.localId));
           return {
             v: 1, kind: 'batch_accepted', claim: command.claim, revision: command.expectedRevision,
             batchId: command.batchId, acceptedThroughServerSeq: imported.length,
           };
         }
+        if (command.kind === 'finalize' && refusal === 'finalize') return { v: 1, kind: 'error', errorCode: 'invalid_state', message: 'private boundary detail' };
         if (command.kind === 'finalize') return {
           v: 1, kind: 'finalized', claim: command.claim, revision: command.expectedRevision,
           acceptedThroughServerSeq: command.expectedAcceptedThroughServerSeq,
@@ -1940,6 +1942,10 @@ describe('external session materialize action', () => {
 
     const result = await executor.start({ request: request() }, { accountAdmission: { credentials, accountScope } });
 
+    if (refusal !== 'none') {
+      expect(result).toMatchObject({ ok: true, progress: { status: 'awaiting_user_resume', error: { code: 'historical_import_failed', publicationErrorCode: refusal === 'batch' ? 'batch_conflict' : 'invalid_state' } } });
+      return;
+    }
     expect(result).toMatchObject({ ok: true, progress: { status: 'completed', checkpoint: { importedItemCount: 2 } } });
     expect(imported).toEqual(['history:initial', 'history:extension']);
     if (!result.ok) throw new Error('Expected scoped catch-up completion');
@@ -3936,7 +3942,7 @@ describe('external session materialize action', () => {
         progress: {
           status: 'awaiting_user_resume',
           phase: 'importing',
-          error: { code: 'historical_import_failed', retryable: true },
+          error: { code: 'historical_import_failed', retryable: true, publicationErrorCode: 'internal_error' },
         },
       });
       if (!interrupted.ok) throw new Error('Expected interrupted operation claim.');

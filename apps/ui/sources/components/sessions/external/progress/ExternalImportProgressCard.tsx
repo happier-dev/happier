@@ -78,7 +78,9 @@ export const ExternalImportProgressCard = React.memo(function ExternalImportProg
     const pendingAction = pendingActionState?.scope === actionScope
         ? pendingActionState.kind
         : null;
-    const detail = presentation.detailKey ? t(presentation.detailKey) : undefined;
+    const detail = presentation.detailKey
+        ? [t(presentation.detailKey), props.progress.error?.publicationErrorCode].filter(Boolean).join(' · ')
+        : undefined;
     const importProgress = presentation.importProgress;
     const importProgressLabel = importProgress
         ? importProgress.totalItemEstimate === null
@@ -131,6 +133,7 @@ export const ExternalImportProgressCard = React.memo(function ExternalImportProg
         presentation.effectiveStatus,
         props.progress.fence.kind,
         props.progress.error?.code ?? 'none',
+        props.progress.error?.publicationErrorCode ?? 'none',
         presentation.summaryKey,
         presentation.detailKey ?? 'none',
         availableActionKinds.join(','),

@@ -404,8 +404,28 @@ export type ExternalSessionOperationErrorCodeV1 = z.infer<
   typeof ExternalSessionOperationErrorCodeV1Schema
 >;
 
+export const ExternalSessionOperationSocketResponseErrorCodeV1Schema = lazyZodSchema(() => z.enum([
+  'upgrade_required',
+  'wrong_machine_socket',
+  'wrong_session',
+  'wrong_operation',
+  'wrong_operation_claim',
+  'stale_revision',
+  'invalid_state',
+  'socket_capacity_insufficient',
+  'too_many_items',
+  'serialized_bytes_exceeded',
+  'batch_conflict',
+  'storage_mode_conflict',
+  'internal_error',
+]));
+export type ExternalSessionOperationSocketResponseErrorCodeV1 = z.infer<
+  typeof ExternalSessionOperationSocketResponseErrorCodeV1Schema
+>;
+
 export const ExternalSessionOperationErrorV1Schema = lazyZodSchema(() => z.strictObject({
   code: ExternalSessionOperationErrorCodeV1Schema,
+  publicationErrorCode: z.optional(ExternalSessionOperationSocketResponseErrorCodeV1Schema),
   message: z.string().check(z.trim(), z.minLength(1), z.maxLength(2_000)),
   retryable: z.boolean(),
   occurredAtMs: OperationTimestampSchema,
@@ -1036,6 +1056,7 @@ const ExternalSessionOperationPublicCheckpointV1Schema = lazyZodSchema(() => z.s
 
 const ExternalSessionOperationPublicErrorV1Schema = lazyZodSchema(() => z.strictObject({
   code: ExternalSessionOperationErrorCodeV1Schema,
+  publicationErrorCode: z.optional(ExternalSessionOperationSocketResponseErrorCodeV1Schema),
   retryable: z.boolean(),
   occurredAtMs: OperationTimestampSchema,
 }));
@@ -1160,6 +1181,7 @@ export function projectExternalSessionOperationProgressV1(
       ? {
           error: {
             code: operation.error.code,
+            ...(operation.error.publicationErrorCode ? { publicationErrorCode: operation.error.publicationErrorCode } : {}),
             retryable:
               operation.error.code === 'reconciliation_required'
                 && operation.request.plan === 'takeover'

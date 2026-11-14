@@ -454,7 +454,7 @@ describe('historical import replay', () => {
             const firstLocalId = (input.items[0] as { localId: string }).localId;
             if (firstLocalId === 'history:new-1' && refuseNewestOnce) {
                 refuseNewestOnce = false;
-                return { ok: false as const, error: 'server_unavailable' };
+                return { ok: false as const, error: 'internal_error' };
             }
             return {
                 ok: true as const,
@@ -475,6 +475,7 @@ describe('historical import replay', () => {
         expect(await firstProcess.resume('operation-1')).toEqual({
             status: 'awaiting_user_resume',
             reason: 'historical_import_failed',
+            publicationErrorCode: 'internal_error',
             acceptedThroughServerSeq: 12,
         });
 
@@ -934,13 +935,14 @@ describe('historical import replay', () => {
                         batchId: batch.batchId,
                         acceptedThroughServerSeq: 1,
                     }
-                    : { ok: false as const, error: 'server_unavailable' };
+                    : { ok: false as const, error: 'internal_error' };
             },
         });
 
         await expect(replay.resume('operation-refused-media-cleanup')).resolves.toEqual({
             status: 'awaiting_user_resume',
             reason: 'historical_import_failed',
+            publicationErrorCode: 'internal_error',
             acceptedThroughServerSeq: 1,
         });
         expect(cleanups.get('history:accepted')).not.toHaveBeenCalled();
@@ -996,7 +998,7 @@ describe('historical import replay', () => {
                 );
                 writeAttempt += 1;
                 return writeAttempt === 1
-                    ? { ok: false as const, error: 'server_rejected' }
+                    ? { ok: false as const, error: 'internal_error' }
                     : {
                         ok: true as const,
                         batchId: batch.batchId,
@@ -1241,7 +1243,7 @@ describe('historical import replay', () => {
                     String(content.v.text),
                 );
                 return writeAttempt === 1
-                    ? { ok: false as const, error: 'server_unavailable' }
+                    ? { ok: false as const, error: 'internal_error' }
                     : {
                         ok: true as const,
                         batchId: batch.batchId,

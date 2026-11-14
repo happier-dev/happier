@@ -1,3 +1,4 @@
+import type { ExternalSessionOperationSocketResponseErrorCodeV1 } from '@happier-dev/protocol/sessions/external/operationV1';
 import { EXTERNAL_SESSION_REQUIRED_ITEM_DIAGNOSTIC_CAP_V1 } from '@happier-dev/protocol/sessions/external/operationV1';
 import { ExternalSessionOperationSocketBatchItemV1Schema, makeExternalSessionHistoricalImportBatchIdV1 } from '@happier-dev/protocol/sessions/external/operationActionsV1';
 import type { ExternalSessionOperationSocketBatchItemV1, ExternalSessionRequiredItemDiagnosticV1, ExternalSessionRequiredItemFailuresV1 } from '@happier-dev/protocol/sessions';
@@ -18,7 +19,7 @@ type HistoricalImportBatchWriteResult =
     }>
     | Readonly<{
         ok: false;
-        error: string;
+        error: ExternalSessionOperationSocketResponseErrorCodeV1;
     }>;
 
 export type ExternalSessionHistoricalImportReplay = Readonly<{
@@ -41,6 +42,7 @@ export type ExternalSessionHistoricalImportReplay = Readonly<{
                 | 'required_items_failed';
             acceptedThroughServerSeq: number | null;
             requiredItemFailures?: ExternalSessionRequiredItemFailuresV1;
+            publicationErrorCode?: ExternalSessionOperationSocketResponseErrorCodeV1;
         }>
         | Readonly<{
             status: 'discard_required';
@@ -640,6 +642,7 @@ export function createExternalSessionHistoricalImportReplay(input: Readonly<{
                         return Object.freeze({
                             status: 'awaiting_user_resume' as const,
                             reason: 'historical_import_failed' as const,
+                            publicationErrorCode: acknowledged.error,
                             acceptedThroughServerSeq,
                         });
                     }
