@@ -139,4 +139,21 @@ describe('bundled SCM hosting-provider identity', () => {
             },
         });
     });
+
+    it('resolves a pasted GitLab repository link with its nested namespace', async () => {
+        const registry = await createBundledRegistry({
+            manifest: GITLAB_PLUGIN_MANIFEST,
+            activate: activateGitlab,
+        });
+
+        await expect(resolveScmHostingRepositoryAddress({
+            address: 'https://gitlab.com/acme/platform/invoices.git', registry,
+        })).resolves.toMatchObject({
+            success: true, kind: 'resolved', selector: {
+                provider: { id: `${GITLAB_PLUGIN_MANIFEST.id}/gitlab`, kind: 'gitlab', baseUrl: 'https://gitlab.com' },
+                repository: { nameWithOwner: 'acme/platform/invoices', cloneUrl: 'https://gitlab.com/acme/platform/invoices.git' },
+                protocol: 'https',
+            },
+        });
+    });
 });
