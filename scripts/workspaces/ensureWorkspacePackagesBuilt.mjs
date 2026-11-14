@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { StringDecoder } from 'node:string_decoder';
 import { readBundledPluginPackageNames } from '../../apps/cli/scripts/build-owned/bundledPluginMembership.ts';
@@ -687,7 +687,7 @@ export function readWorkspacePackageInputFingerprint({
   resolveTypeScriptCliInvocationImpl = resolveTypeScriptCliInvocation,
 }) {
   const hash = createHash('sha256');
-  hash.update('happier:workspace-package-build:v2\0');
+  hash.update('happier:workspace-package-build:v3\0');
   const packageJson = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8'));
   const inputPaths = readWorkspaceBuildInputs(packageDir, {
     includeShippedFiles,
@@ -710,14 +710,24 @@ export function readWorkspacePackageInputFingerprint({
     const capturedPath = identitySourceRepoDir && join(identitySourceRepoDir, 'scripts/workspaces', name);
     return capturedPath && existsSync(capturedPath) ? capturedPath : fileURLToPath(new URL(`./${name}`, import.meta.url));
   });
+  // Identity is the checkout-relative path: emitted dists carry no checkout-absolute
+  // paths, so a relocated copy (snapshot, mirror, worktree) of the same bytes is current.
+  const frameRoot = coerceHappyMonorepoRootFromPath(identityRepoDir && identitySourceRepoDir
+    ? identityRepoDir : identitySourceRepoDir ?? packageDir);
+  const frameIdentity = path => {
+    if (!frameRoot) return path;
+    const relativePath = relative(frameRoot, path);
+    return relativePath && relativePath !== '..' && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath)
+      ? `repo:${relativePath.split(sep).join('/')}` : path;
+  };
   const identityPathFor = path => {
-    if (!identityRepoDir || !identitySourceRepoDir) return path;
+    if (!identityRepoDir || !identitySourceRepoDir) return frameIdentity(path);
     const capturedIdentity = remapPathToDirectory(path, { sourceDir: identitySourceRepoDir, destinationDir: identityRepoDir });
     // Package captures mount installed tools from their immediate source repo.
     // Keep those compiler paths in the same producer frame as captured inputs.
-    return installedDependencyRepoDir && capturedIdentity === path
+    return frameIdentity(installedDependencyRepoDir && capturedIdentity === path
       ? remapPathToDirectory(capturedIdentity, { sourceDir: installedDependencyRepoDir, destinationDir: identityRepoDir })
-      : capturedIdentity;
+      : capturedIdentity);
   };
   const paths = [...new Set([
     ...inputPaths,

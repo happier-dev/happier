@@ -974,6 +974,49 @@ test('generated first-party plugin manifests do not invalidate compilation while
   assert.ok(decisions.every(({ elapsedMs }) => Number.isFinite(elapsedMs) && elapsedMs >= 0));
 });
 
+test('a relocated copy of a built checkout reuses unchanged package outputs and rebuilds only an edited package', async (t) => {
+  // P03 gate/QA snapshots copy the checkout (with its dists) to a new root. Package identity is content in
+  // the checkout's own frame, so the copy must not recompile what its records already prove current.
+  const parent = mkdtempSync(join(tmpdir(), 'workspace-relocated-outputs-'));
+  t.after(() => rmSync(parent, { recursive: true, force: true }));
+  const root = join(parent, 'checkout');
+  mkdirSync(root);
+  writePnpmWorkspaceFixture(root, { workspaces: ['apps/*', 'packages/*', 'packages/plugins/*'] });
+  for (const name of ['cli', 'ui', 'server']) {
+    mkdirSync(join(root, 'apps', name), { recursive: true });
+    writeFileSync(join(root, 'apps', name, 'package.json'), JSON.stringify({ name: `@fixture/${name}` }));
+  }
+  for (const name of ['alpha', 'beta']) {
+    const dir = join(root, 'packages/plugins', name);
+    mkdirSync(join(dir, 'src'), { recursive: true });
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: `@happier-dev/plugins-${name}`, main: './dist/index.js', scripts: { build: 'fixture-compiler' } }));
+    writeFileSync(join(dir, 'src/index.ts'), `export const name = '${name}';\n`);
+  }
+  const compiled = [];
+  const build = (repo) => {
+    const decisions = [];
+    return ensureWorkspacePackagesBuiltByName(repo, ['@happier-dev/plugins-alpha', '@happier-dev/plugins-beta'], {
+      onPackageBuildResult: (result) => decisions.push(result),
+      quiet: true, workspaceBuildBoundary: {
+        prepareEnv: async (_dir, env) => ({ ...env }),
+        runPackageBuild: async (packageDir, { env }) => {
+          compiled.push(readFixturePackageName(packageDir));
+          writeFileSync(join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.js'), readFileSync(join(packageDir, 'src/index.ts')));
+        },
+      },
+    }).then(() => decisions.map(({ packageName, reason }) => `${packageName}:${reason}`).sort());
+  };
+  await build(root);
+  assert.equal(compiled.length, 2);
+  const copy = join(parent, 'snapshot');
+  cpSync(root, copy, { recursive: true });
+  assert.deepEqual(await build(copy), ['@happier-dev/plugins-alpha:already-built', '@happier-dev/plugins-beta:already-built']);
+  assert.equal(compiled.length, 2, 'an unchanged relocated copy compiles nothing');
+  writeFileSync(join(copy, 'packages/plugins/beta/src/index.ts'), "export const name = 'beta-2';\n");
+  assert.deepEqual(await build(copy), ['@happier-dev/plugins-alpha:already-built', '@happier-dev/plugins-beta:rebuilt']);
+  assert.deepEqual(compiled.slice(2), ['@happier-dev/plugins-beta'], 'one edited package rebuilds alone');
+});
+
 test('CLI plugin preparation preserves package-owner shared failures and optional plugin isolation', async (t) => {
   for (const failedName of ['plugin-sdk', 'plugins-failed']) await t.test(failedName, async (t) => {
     const root = mkdtempSync(join(tmpdir(), 'workspace-plugin-preparation-owner-'));
