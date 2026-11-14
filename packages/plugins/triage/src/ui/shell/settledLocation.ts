@@ -44,11 +44,15 @@ export function applyTriageSettledSubPathV1(input: Readonly<{
   let selection: TriageSurfaceStateV1['selection'] = null;
   if (located !== null) {
     if (input.candidate.selection !== null
-      && sameTriageEntryRefV1(input.candidate.selection.entryRef, located)) {
+      && sameTriageEntryRefV1(input.candidate.selection.entryRef, located)
+      && (lens.selectionSourceInstanceId === undefined || lens.selectionSourceInstanceId === input.candidate.selection.sourceInstanceId)) {
       selection = input.candidate.selection;
     } else if (input.previous.selection !== null
-      && sameTriageEntryRefV1(input.previous.selection.entryRef, located)) {
+      && sameTriageEntryRefV1(input.previous.selection.entryRef, located)
+      && (lens.selectionSourceInstanceId === undefined || lens.selectionSourceInstanceId === input.previous.selection.sourceInstanceId)) {
       selection = input.previous.selection;
+    } else if (lens.selectionSourceInstanceId !== undefined) {
+      selection = { sectionId: null, entryRef: located, sourceInstanceId: lens.selectionSourceInstanceId };
     } else {
       for (const hit of input.rowsByKey.values()) {
         if (!sameTriageEntryRefV1(hit.row.entryRef, located)
@@ -92,14 +96,14 @@ export function applyTriageSettledSubPathV1(input: Readonly<{
  *   its location once, at construction, left the reader on a detail screen the
  *   system Back button appeared to do nothing to.
  * - **A copied link opens the entry.** The reducer cannot seed a selection from
- *   a location alone, because a selection carries the qualified connection and
- *   the route deliberately never names one. Adoption waits for the window's
+ *   an identity-only location alone, because selection carries a qualified connection.
+ *   A route's `ei` preserves it; otherwise adoption waits for the window's
  *   source admission: a listed row supplies its connection, and an off-window
  *   entry uses the same configured-source selector as an explicit open. Both
  *   apply the same `rowActivated` the reader's own press produces here.
  * - **Composer View details opens the entry.** A launch names an entry the
  *   page's own location does not, so it takes precedence over the location for
- *   exactly as long as it is unadopted. Unlike a location it carries its OWN
+ *   exactly as long as it is unadopted. Like a qualified route it carries its OWN
  *   qualified connection, so it does not need the window to supply one — which
  *   is why it selects even when this page's lens does not list the entry. That
  *   ref is not a bounded-window edge case: a page left carrying a query or a
@@ -251,7 +255,7 @@ export function useTriageSettledLocation(input: Readonly<{
       return;
     }
 
-    // A launch names ONE exact connection, and it is the connection every
+    // A launch or qualified route names ONE exact connection, used by every
     // branch below selects with. The launch-input parser already refused a pair
     // whose connection could not have observed the entry rather than
     // substituting one, and a page that reopened the entry under whichever
@@ -259,7 +263,7 @@ export function useTriageSettledLocation(input: Readonly<{
     // after the fact — **View details** on the account the reader chose,
     // silently acting through another they also happen to have configured.
     const launchInstanceId = pendingLaunch === null
-      ? null
+      ? parseTriageRouteSubPathV1(subPath).selectionSourceInstanceId ?? null
       : pendingLaunch.sourceInstance.sourceInstanceId;
 
     if (selection !== null && sameTriageEntryRefV1(selection.entryRef, located)) {
@@ -306,6 +310,10 @@ export function useTriageSettledLocation(input: Readonly<{
     // visible Load more remains the only owner of continuation demand.
     if (pendingLaunch === null) {
       if (!windowSettled) return;
+      if (launchInstanceId !== null) {
+        applyLensEdit({ kind: 'rowActivated', sectionId: null, entryRef: located, sourceInstanceId: launchInstanceId }, 'selection');
+        return;
+      }
       const action = readEntryActivation(located);
       if (action?.kind === 'none') {
         // A settled admission refusal answers this route; absence from a

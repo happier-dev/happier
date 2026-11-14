@@ -21,6 +21,7 @@ import {
 import type { TriageEntryRefV1, TriageLinkedSessionProjectionV1 } from '@happier-dev/triage-protocol/v1';
 
 import { useLinkedSessionOpen } from './useLinkedSessionOpen.js';
+import { TriageLinkedSessionsContinuation } from './linkedSessions.js';
 import { readTriageSessionTitle } from './sessionTitle.js';
 import { TRIAGE_DETAIL_PAGE_KIND_V1, useTriageDetailAvailableTabs, type TriageDetailTabSelectionV1 } from './body.js';
 import { useTriageUnlinkLinkedEntry } from '../../sessions/cockpit/useUnlinkLinkedEntry.js';
@@ -31,6 +32,7 @@ const FILL_STYLE = Object.freeze({ flex: 1, minWidth: 0, minHeight: 0 });
 function TriageSessionUnlinkControl(props: Readonly<{
   sessionId: string;
   entryRef: TriageEntryRefV1;
+  sourceInstanceId?: string;
   onUnlinked: () => void | Promise<void>;
 }>): React.ReactElement {
   const text = usePluginTranslation();
@@ -47,7 +49,7 @@ function TriageSessionUnlinkControl(props: Readonly<{
         variant="plain"
         busy={phase === 'removing'}
         disabled={phase === 'removing'}
-        onPress={() => { void unlink({ sessionId: props.sessionId, entryRef: props.entryRef }); }}
+        onPress={() => { void unlink({ sessionId: props.sessionId, entryRef: props.entryRef, sourceInstanceId: props.sourceInstanceId }); }}
       />
       {phase === 'failed' ? <Status tone="warning" label={text('plugins.triage.sessionLinks.unlinkFailed', 'This link could not be removed.')} /> : null}
     </Stack>
@@ -63,7 +65,9 @@ function TriageSessionUnlinkControl(props: Readonly<{
 export function TriageSessionPanel(props: Readonly<{
   sessions: readonly TriageLinkedSessionProjectionV1[];
   entryRef: TriageEntryRefV1;
+  sourceInstanceId?: string;
   onUnlinked: () => void | Promise<void>;
+  continuation?: React.ComponentProps<typeof TriageLinkedSessionsContinuation>;
   selectedSessionId?: TriageLinkedSessionProjectionV1['sessionId'] | null;
   onSelectSession?: (sessionId: TriageLinkedSessionProjectionV1['sessionId']) => void;
   /**
@@ -123,7 +127,7 @@ export function TriageSessionPanel(props: Readonly<{
         onPress={() => { void opener.open(selected.sessionId); }}
       />
       <TriageSessionUnlinkControl key={selected.sessionId} sessionId={selected.sessionId}
-        entryRef={props.entryRef} onUnlinked={props.onUnlinked} />
+        entryRef={props.entryRef} sourceInstanceId={props.sourceInstanceId} onUnlinked={props.onUnlinked} />
     </Row>
   );
   return (
@@ -141,6 +145,7 @@ export function TriageSessionPanel(props: Readonly<{
         <Status tone="danger" labelKey="plugins.triage.surface.detail.sessionOpenFailed"
           label="This Session could not be opened." />
       )}
+      {props.continuation === undefined ? null : <TriageLinkedSessionsContinuation {...props.continuation} />}
       <Stack style={FILL_STYLE}>
         <SessionChat
           // One provider per Session: switching the selection replaces the controller.
@@ -166,6 +171,7 @@ export function TriageSessionPanel(props: Readonly<{
 export function TriageDetailWholeBody(props: Readonly<{
   sessions: readonly TriageLinkedSessionProjectionV1[];
   entryRef: TriageEntryRefV1;
+  sourceInstanceId?: string;
   onUnlinked: () => void | Promise<void>;
   tabSelection?: TriageDetailTabSelectionV1;
   pushed?: boolean;
@@ -200,6 +206,7 @@ export function TriageDetailWholeBody(props: Readonly<{
       {props.sessions.length === 0 ? null : <Tabs.Item value="session" title={tabs[1]!.title} glyph="conversations" retention="discard"
         kind="both" companion={TRIAGE_ENTRY_SESSION_COMPANION_V1}>
         <TriageSessionPanel sessions={props.sessions} entryRef={props.entryRef} onUnlinked={props.onUnlinked}
+          sourceInstanceId={props.sourceInstanceId}
           selectedSessionId={props.selectedSessionId} onSelectSession={props.onSelectSession} />
       </Tabs.Item>}
     </Tabs>

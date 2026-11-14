@@ -764,7 +764,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     const currentRoute = preflightTriageRouteLensV1(readTriageRouteLensV1(surface));
     if (currentRoute.kind === 'accepted'
       && currentRoute.subPath === settledRoute.current.subPath) {
-      // Qualification and focus are not carried in the path. Capture them when
+      // Section and focus are not carried in the path. Capture them when
       // this render is still the host-settled route so a later refusal restores
       // the whole visible state rather than only its serializable lens.
       settledRoute.current = { subPath: currentRoute.subPath, state: surface };
@@ -780,9 +780,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     setRouteWriteFailure(null);
     latestRouteIntent.current = { subPath: preflight.subPath, state: next };
     if (preflight.subPath === settledRoute.current.subPath) {
-      // A copied/deep-linked location was already settled by the host; this
-      // edit only supplies the selected connection the route intentionally
-      // does not carry, so it is authoritative without a redundant write.
+      // This location was already settled by the host. The edit only supplies
+      // local section/focus facts, so no redundant write is needed.
       settledRoute.current = { subPath: preflight.subPath, state: next };
     }
     readerChangedLens.current = true;
@@ -3120,17 +3119,9 @@ function useTriageRouteBinding(input: Readonly<{
     surface,
     queue,
   } = input;
-  const lens = readTriageRouteLensV1(surface);
-  const order = lens.order;
-  const smartPolicy = lens.smartPolicy;
-  const filters = lens.filters;
-  const query = lens.query;
-  const selectedViewId = lens.selectedViewId;
-  const selection = lens.selection;
-
   React.useEffect(() => {
     if (!readerChangedLens.current) return undefined;
-    const requested = { order, smartPolicy, filters, query, selectedViewId, selection };
+    const requested = readTriageRouteLensV1(surface);
     const requestedSubPath = buildTriageRouteSubPathV1(requested);
     // A host move can publish an entry before its connection is qualified.
     // That intermediate reducer state is not a local navigation intent: writing
@@ -3186,18 +3177,12 @@ function useTriageRouteBinding(input: Readonly<{
     return undefined;
   }, [
     dispatch,
-    filters,
     latestRouteIntent,
     onFailure,
-    order,
     queue,
-    query,
     readerChangedLens,
     rowsByKeyRef,
-    selectedViewId,
-    selection,
     settledRoute,
-    smartPolicy,
     surface,
   ]);
 }

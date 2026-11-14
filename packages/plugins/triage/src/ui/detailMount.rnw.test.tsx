@@ -2578,6 +2578,41 @@ describe('opening a row into the source detail', () => {
         })));
     });
 
+    it('keeps the opening detail connection in an independently mounted companion', async () => {
+        const entryRef = { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' };
+        const shell = await mountShell({ activeSurface: true, secondInstance: true, linkedSessionCount: 1,
+            launchInput: buildTriageEntryDetailLaunchInput({ entryRef,
+                sourceInstance: { source: SOURCE, sourceInstanceId: SECOND_INSTANCE } }) as unknown as JsonValue });
+        await vi.waitFor(() => expect(currentHarness?.readDetailInstanceIds).toContain(SECOND_INSTANCE));
+        const before = currentHarness!.readDetailInstanceIds.length;
+        const companion = await mountEntrySessionCompanion({ subPath: lastPageLocation?.subPath ?? null }, { ownScope: true });
+        await vi.waitFor(async () => {
+            await expect(companion.getByRole('group', { name: 'Session session-linked-001' })).resolves.toBeDefined();
+        });
+        expect(currentHarness!.readDetailInstanceIds.slice(before)).toEqual([SECOND_INSTANCE]);
+    });
+
+    it('continues linked Sessions in the companion and selects one beyond the first page', async () => {
+        const shell = await mountShell({ activeSurface: true, linkedSessionCount: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1 + 1 });
+        await openTheRow(shell);
+        const companion = await mountEntrySessionCompanion({ subPath: lastPageLocation?.subPath ?? null }, { ownScope: true, paneHeader: true });
+        await vi.waitFor(async () => {
+            await expect(companion.getByRole('button', { name: 'Load more' })).resolves.toBeDefined();
+        });
+        currentHarness!.failNextLinkedSessionPage();
+        await act(async () => { await companion.press(await companion.getByRole('button', { name: 'Load more' })); });
+        await expect(companion.getByText('More linked Sessions could not be loaded.')).resolves.toBeDefined();
+        await act(async () => { await companion.press(await companion.getByRole('button', { name: 'Retry' })); });
+        await vi.waitFor(async () => expect((await companion.getAllByRole('button'))
+            .some(button => button.name?.startsWith('Linked session:'))).toBe(true));
+        const picker = (await companion.getAllByRole('button')).find(button => button.name?.startsWith('Linked session:'));
+        if (picker === undefined) throw new Error('Missing linked Session picker');
+        await act(async () => { await companion.press(picker); });
+        await act(async () => { await companion.press(await companion.getByRole('menuitemradio', { name: 'Linked Session 201' })); });
+        await expect(companion.getByRole('button', { name: 'Linked session: Linked Session 201' })).resolves.toBeDefined();
+        await expect(companion.queryByRole('button', { name: 'Load more' })).resolves.toBeUndefined();
+    });
+
     it('shows the opening page’s selected entry’s linked Session in the companion', async () => {
         const shell = await mountShell({ activeSurface: true, linkedSessionCount: 1 });
         await openTheRow(shell);
@@ -2819,6 +2854,7 @@ describe('opening a row into the source detail', () => {
         await act(async () => {
             await shell.updatePageLocation(buildTriageRouteSubPathV1({
                 ...TRIAGE_ROUTE_DEFAULT_LENS_V1,
+                selectionSourceInstanceId: INSTANCE,
                 selection: {
                     source: SOURCE,
                     kindId: 'pull-request',
@@ -3806,6 +3842,7 @@ describe('opening a row into the source detail', () => {
         expect(settled.subPath).toBe(buildTriageRouteSubPathV1({
             ...TRIAGE_ROUTE_DEFAULT_LENS_V1,
             selection: entryB,
+            selectionSourceInstanceId: INSTANCE,
         }));
 
         // The launch is consumed once. A mount that re-read it on every render
@@ -3844,7 +3881,7 @@ describe('opening a row into the source detail', () => {
         await act(async () => { await shell.updatePageLocation(''); });
         await expect(shell.getByText(LONG_REF_ROW_TITLE)).resolves.toBeDefined();
         await expect(shell.queryByText('Replace the duplicated normalizer')).resolves.toBeUndefined();
-        expect(lastPageLocation?.subPath).toBe(buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1, selection: entryB }));
+        expect(lastPageLocation?.subPath).toBe(buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1, selection: entryB, selectionSourceInstanceId: INSTANCE }));
     });
 
     it('never substitutes the window connection for a launched connection whose full observation is absent', async () => {
@@ -4034,7 +4071,7 @@ describe('opening a row into the source detail', () => {
         const settled = lastPageLocation;
         if (settled === null) throw new Error('the launch selection wrote no page location');
         expect(settled.subPath).toBe(buildTriageRouteSubPathV1({
-            ...TRIAGE_ROUTE_DEFAULT_LENS_V1, query, selection: entryB,
+            ...TRIAGE_ROUTE_DEFAULT_LENS_V1, query, selection: entryB, selectionSourceInstanceId: INSTANCE,
         }));
 
         // Closing returns to the list the page's lens really does produce: the

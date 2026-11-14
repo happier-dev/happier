@@ -1,5 +1,5 @@
 import type { TriageListSortV1 } from '@happier-dev/triage-protocol/v1';
-import { TriageListSortV1Schema } from '@happier-dev/triage-protocol/v1';
+import { TriageListSortV1Schema, TriageSourceInstanceIdV1Schema } from '@happier-dev/triage-protocol/v1';
 import { normalizePluginUiSubPathV1, type PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/manifest';
 import { buildTriageEntryRouteSegmentV1, readTriageEntryRouteSegmentV1, type TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
@@ -90,6 +90,8 @@ export type TriageRouteLensV1 = Readonly<{
    */
   selectedViewId: string | null;
   selection: TriageEntryRefV1 | null;
+  /** Exact detail connection, also consumed by the opening page's Session companion. */
+  selectionSourceInstanceId?: string;
 }>;
 
 export const TRIAGE_ROUTE_DEFAULT_LENS_V1: TriageRouteLensV1 = Object.freeze({
@@ -182,12 +184,18 @@ export function parseTriageRouteSubPathV1(subPath: string | undefined): TriageRo
   let query = TRIAGE_ROUTE_DEFAULT_LENS_V1.query;
   let selectedViewId = TRIAGE_ROUTE_DEFAULT_LENS_V1.selectedViewId;
   let selection: TriageEntryRefV1 | null = null;
+  let selectionSourceInstanceId: string | undefined;
   let tasks: SurfaceFilterSelectionV1['tasks'];
   const facets: FacetDraft = { sources: [], types: [], scopes: [], states: [], attention: [] };
 
   for (const segment of (subPath ?? '').split('/')) {
     if (segment.length === 0) continue;
     const [key, ...components] = segment.split(',');
+    if (key === 'ei' && components.length === 1) {
+      const parsed = TriageSourceInstanceIdV1Schema.safeParse(decode(components[0] ?? ''));
+      if (parsed.success) selectionSourceInstanceId = parsed.data;
+      continue;
+    }
     if (key === 'tasks' && components.length === 1) {
       const value = components[0];
       if (value === 'mine' || value === 'agents' || value === 'everyone') tasks = value;
@@ -289,6 +297,7 @@ export function parseTriageRouteSubPathV1(subPath: string | undefined): TriageRo
     query,
     selectedViewId,
     selection,
+    ...(selection === null || selectionSourceInstanceId === undefined ? {} : { selectionSourceInstanceId }),
   });
 }
 
@@ -344,6 +353,7 @@ export function buildTriageRouteSubPathV1(lens: TriageRouteLensV1): string {
   if (lens.query.length > 0) segments.push(`q,${encode(lens.query)}`);
   if (lens.selection) {
     segments.push(buildTriageEntryRouteSegmentV1(lens.selection));
+    if (lens.selectionSourceInstanceId !== undefined) segments.push(`ei,${encode(lens.selectionSourceInstanceId)}`);
   }
   return segments.join('/');
 }
@@ -362,6 +372,7 @@ export function readTriageRouteLensV1(state: Pick<TriageSurfaceStateV1,
     query: state.search.query,
     selectedViewId: state.selectedViewId,
     selection: state.selection?.entryRef ?? null,
+    ...(state.selection === null ? {} : { selectionSourceInstanceId: state.selection.sourceInstanceId }),
   });
 }
 

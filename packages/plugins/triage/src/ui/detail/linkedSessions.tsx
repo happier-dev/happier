@@ -21,7 +21,7 @@ const LinkedSessionRow = React.memo(function LinkedSessionRow(props: Readonly<{
   unavailable: boolean;
   failed: boolean;
   onSelect?: (sessionId: TriageLinkedSessionProjectionV1['sessionId']) => void;
-  open: (sessionId: TriageLinkedSessionProjectionV1['sessionId']) => Promise<void>;
+  open: (sessionId: TriageLinkedSessionProjectionV1['sessionId']) => Promise<unknown>;
 }>) {
   const text = usePluginTranslation();
   const read = useSessionState(props.sessionId);
@@ -53,6 +53,21 @@ const LinkedSessionRow = React.memo(function LinkedSessionRow(props: Readonly<{
 });
 
 const ARCHIVED_STYLE = Object.freeze({ opacity: 0.62 });
+
+/** The detail reader owns continuation and retry; both linked-Session presentations consume it. */
+export function TriageLinkedSessionsContinuation(props: Readonly<{
+  hasMore: boolean;
+  pageState?: 'idle' | 'loading' | 'failed';
+  onLoadMore?: () => void;
+}>): React.ReactElement | null {
+  return <>
+    {props.hasMore ? <Button titleKey={props.pageState === 'failed' ? 'plugins.triage.surface.loadMore.retry' : 'plugins.triage.surface.loadMore'}
+      title={props.pageState === 'failed' ? 'Retry' : 'Load more'} variant="secondary"
+      busy={props.pageState === 'loading'} disabled={props.onLoadMore === undefined} onPress={() => { props.onLoadMore?.(); }} /> : null}
+    {props.pageState === 'failed' ? <Status tone="danger" labelKey="plugins.triage.surface.detail.sessionsLoadFailed"
+      label="More linked Sessions could not be loaded." /> : null}
+  </>;
+}
 
 /** Common-header rendering for the bounded read-only linked Session projection. */
 export function TriageLinkedSessions(props: Readonly<{
@@ -97,25 +112,7 @@ export function TriageLinkedSessions(props: Readonly<{
           />
         ))}
       </Stack>
-      {props.hasMore ? (
-        <Button
-          titleKey={props.pageState === 'failed'
-            ? 'plugins.triage.surface.loadMore.retry'
-            : 'plugins.triage.surface.loadMore'}
-          title={props.pageState === 'failed' ? 'Retry' : 'Load more'}
-          variant="secondary"
-          busy={props.pageState === 'loading'}
-          disabled={props.onLoadMore === undefined}
-          onPress={() => { props.onLoadMore?.(); }}
-        />
-      ) : null}
-      {props.pageState === 'failed' ? (
-        <Status
-          tone="danger"
-          labelKey="plugins.triage.surface.detail.sessionsLoadFailed"
-          label="More linked Sessions could not be loaded."
-        />
-      ) : null}
+      <TriageLinkedSessionsContinuation hasMore={props.hasMore} pageState={props.pageState} onLoadMore={props.onLoadMore} />
     </Stack>
   );
 }

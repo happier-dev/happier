@@ -72,6 +72,16 @@ function hostApiWith(input: Readonly<{
 }
 
 describe('PRs & Issues route owner', () => {
+  it('carries the selected detail connection to the companion and restores that selection', () => {
+    const selection = { sectionId: null, entryRef: entryRef(), sourceInstanceId: '22222222-2222-4222-8222-222222222222' };
+    const state = { ...TRIAGE_SURFACE_INITIAL_STATE_V1, selection };
+    const route = readTriageRouteLensV1(state);
+    const decoded = parseTriageRouteSubPathV1(buildTriageRouteSubPathV1(route));
+    expect(decoded).toMatchObject({ selection: selection.entryRef, selectionSourceInstanceId: selection.sourceInstanceId });
+    expect(applyTriageSettledSubPathV1({ candidate: TRIAGE_SURFACE_INITIAL_STATE_V1,
+      previous: TRIAGE_SURFACE_INITIAL_STATE_V1, subPath: buildTriageRouteSubPathV1(route), rowsByKey: new Map() }).selection).toEqual(selection);
+    expect(parseTriageRouteSubPathV1(buildTriageRouteSubPathV1({ ...decoded, selection: null })).selectionSourceInstanceId).toBeUndefined();
+  });
   it('shares source and unit facets without configured-instance identities', async () => {
     const value = lens({ filters: { ...TRIAGE_LIST_NO_FILTERS_V1, sources: [
       { source: SOURCE, sourceInstanceId: '11111111-1111-4111-8111-111111111111' },

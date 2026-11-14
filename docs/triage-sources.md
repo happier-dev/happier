@@ -2556,6 +2556,14 @@ selected detail; failures retain their code and supplied provider detail. Neithe
 open path scans the remaining source inventory. The existing Load more control
 continues to own list continuation.
 
+In 0.3 development, the selected entry's route also carries its exact detail
+connection in the optional `ei` segment. The Session companion consumes that
+qualification from the host's `openedFrom.subPath`, rather than choosing another
+connection. Identity-only older routes still use configured-source admission.
+The companion uses `useTriageEntryDetail` for linked-Session continuation and the
+shared linked-Session continuation/retry presentation; paging does not query the
+list or replace the selected connection.
+
 When a later window excludes the selected entry, settled-location adoption uses
 that same exact read, retaining the selected connection. Window membership,
 including partial or page-limited coverage, does not establish source absence.

@@ -26,22 +26,27 @@ const EMPTY_LANES: readonly TriageListLaneV1[] = Object.freeze([]);
  * so the live chat sits next to the entry instead of replacing it.
  *
  * It decides nothing of its own. Which entry comes from the opening page's current location (the host's
- * `openedFrom`, read through Triage's one route codec). Its connection is admitted the way the page admits an
- * open from a location (configured instances of the entry's source); the entry itself is the one exact read the
+ * `openedFrom`, read through Triage's one route codec). The page's selected connection travels with it; older
+ * identity-only locations use configured-source admission. The entry itself is the one exact read the
  * page uses for an entry outside its window, and its linked Sessions come from the detail's one reader. It reads
  * no list: the side pane shares no window with the page and must not walk one.
  */
 function TriageEntrySessionCompanion(): React.ReactElement {
   const { openedFrom } = useSurfaceContext();
   const subPath = openedFrom?.subPath ?? null;
-  const entryRef = React.useMemo(
+  const route = React.useMemo(
     () =>
-      subPath === null ? null : parseTriageRouteSubPathV1(subPath).selection,
+      parseTriageRouteSubPathV1(subPath ?? undefined),
     [subPath],
   );
+  const entryRef = route.selection;
   const configured = useTriageConfiguredSources();
   const selection = React.useMemo(() => {
     if (entryRef === null) return null;
+    // The page already selected this exact connection; never substitute another when it disappears.
+    if (route.selectionSourceInstanceId !== undefined) {
+      return { sectionId: null, entryRef, sourceInstanceId: route.selectionSourceInstanceId };
+    }
     const active = configured.sources
       .filter((source) => sameTriageSourceIdentity(source.configured.instance.source, entryRef.source))
       .map((source) => source.sourceInstanceId);
@@ -49,7 +54,7 @@ function TriageEntrySessionCompanion(): React.ReactElement {
     return selected.kind === 'none'
       ? null
       : { sectionId: null, entryRef, sourceInstanceId: selected.sourceInstanceId };
-  }, [configured.sources, entryRef]);
+  }, [configured.sources, entryRef, route.selectionSourceInstanceId]);
   const { row, readFailed } = useTriagePostMutationRow(null, EMPTY_LANES, selection);
   const source = React.useMemo(() => {
     const selected =
@@ -142,7 +147,10 @@ function TriageEntrySessionCompanion(): React.ReactElement {
     <TriageSessionPanel
       sessions={detail.linkedSessions}
       entryRef={detail.input.observation.entryRef}
+      sourceInstanceId={detail.input.instance.instance.sourceInstanceId}
       onUnlinked={detail.refreshLinkedSessions}
+      continuation={{ hasMore: detail.linkedSessionsNextCursor !== undefined,
+        pageState: detail.linkedSessionsPageState, onLoadMore: detail.loadMoreLinkedSessions }}
       header="pane"
     />
   );
