@@ -43,6 +43,35 @@ test('syncs additions, deletions and unusual filenames without changing other st
   assert.equal(fs.existsSync(path.join(f.cwd, 'deleted')), false);
 });
 
+test('warns about unresolved committed imports using tree bytes and still commits', async (t) => {
+  const f = fixture(t);
+  fs.mkdirSync(path.join(f.cwd, 'src'));
+  fs.mkdirSync(path.join(f.cwd, 'packages/widget/src'), { recursive: true });
+  f.write('tsconfig.json', '{ /* JSONC */ "compilerOptions": { "baseUrl": ".", "paths": { "@/*": ["src/*"] } } }');
+  f.write('packages/widget/package.json', JSON.stringify({ name: '@fixture/widget', exports: { '.': { 'happier-source': './src/index.ts', default: './dist/index.js' } } }));
+  f.write('packages/widget/src/index.ts', 'export const widget = 1;');
+  f.write('src/present.ts', 'export const present = 1;');
+  f.git('add', '--', 'tsconfig.json', 'src/present.ts', 'packages/widget');
+  f.git('commit', '-qm', 'test: import basis');
+  // This uncommitted producer must never satisfy the tree-only warning check.
+  f.write('src/absent.ts', 'export const absent = 1;');
+  f.write('src/consumer.ts', `import { absent } from './absent.js';
+import { present } from '@/present';
+import { widget } from '@fixture/widget';
+export { missing } from '@fixture/widget/missing';
+const lazy = import('@/missing');
+// import 'comment-only';
+export const value = [absent, present, widget, lazy];`);
+  const warnings = [];
+  const commit = await commitFromPrivateIndex({ ...f, paths: ['src/consumer.ts'], warn: value => warnings.push(value) });
+  assert.equal(f.git('rev-parse', 'HEAD').trim(), commit);
+  assert.equal(warnings.length, 3);
+  assert.ok(warnings.some(value => value.includes('./absent.js')));
+  assert.ok(warnings.some(value => value.includes('@/missing')));
+  assert.ok(warnings.some(value => value.includes('@fixture/widget/missing')));
+  assert.ok(warnings.every(value => value.includes('src/consumer.ts')));
+});
+
 test('waits for an existing index.lock without deleting it', async (t) => {
   const f = fixture(t);
   f.write('changed', 'selected\n');
