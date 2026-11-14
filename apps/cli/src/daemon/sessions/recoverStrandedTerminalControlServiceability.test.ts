@@ -170,6 +170,55 @@ describe('recoverStrandedTerminalControlServiceability', () => {
     expect(retire).not.toHaveBeenCalled();
   });
 
+  it('settles a repeated Stop of a stopped hosted Session while its shared host keeps running', async () => {
+    await withConfiguredDaemonTestHome({ prefix: 'stop-hosted-repeat-' }, async () => {
+      // The session host outlives each hosted Session, so the retained hostPid stays live.
+      const hostPid = process.pid;
+      const input = params({ evaluateLiveness: async () => ({ paneAlive: false, observedAt: 1 }),
+        metadata: { ...createTestMetadata({ machineId: 'machine-current' }), hostPid,
+          hostProcessStartTimeMs: 1, lifecycleState: 'running', terminal: { mode: 'plain' } } });
+      const raw = await input.fetchSession();
+      raw.active = true;
+      raw.share = null;
+      vi.spyOn(axios, 'get').mockImplementation(async url => ({ status: 200,
+        data: String(url).includes('/v2/sessions/') ? { session: raw }
+          : { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } }));
+      const patch = vi.spyOn(axios, 'patch').mockImplementation(async (_url, body) => {
+        const request = SessionMetadataTuplePatchV1Schema.parse(body);
+        if (request.mode === 'owner_migration') {
+          raw.metadataLayoutVersion = 1;
+          raw.metadata = request.target.sharedMetadata.ciphertext;
+          raw.metadataVersion += 1;
+          raw.ownerMetadata = request.target.ownerMetadata;
+          raw.agentState = request.target.agentState.ciphertext;
+          raw.agentStateVersion += 1;
+        } else if (request.mode === 'owner') {
+          raw.ownerMetadata = request.ownerMetadata;
+          raw.agentState = request.agentState.ciphertext;
+          raw.agentStateVersion += 1;
+        } else throw new Error(`Unexpected retirement patch: ${request.mode}`);
+        return { status: 200, data: { success: true, metadataLayoutVersion: 1,
+          sharedMetadata: { version: raw.metadataVersion }, agentState: { version: raw.agentStateVersion } } };
+      });
+      // First Stop: the host's per-Session end report retires this hosted Session.
+      await expect(retireExactTerminalControlServiceability({ ...input, stoppedAt: 50, terminalMode: 'plain',
+        expectedRunner: { pid: hostPid, startTimeMs: 1, sessionEndObserved: Promise.resolve() } })).resolves.toBe('retired');
+      raw.active = false;
+      expect(tryDecryptSessionOwnerMetadataView({ credentials: input.credentials, accountEncryptionMode: 'plain',
+        rawSession: raw })).toMatchObject({ hostPid, lifecycleState: 'stopped' });
+      const writes = patch.mock.calls.length;
+
+      const stop = createStopSession({ trackedSessionsByKey: new Map(),
+        recoverStrandedTerminalControlServiceability: recovery => recoverStrandedTerminalControlServiceability({
+          ...input, ...recovery, fetchSession: async () => raw,
+          retireExactTerminalControlServiceability: retirement => retireExactTerminalControlServiceability({ ...input, ...retirement }),
+        }),
+      });
+      await expect(stop('session-1')).resolves.toEqual({ status: 'stopped' });
+      expect(patch).toHaveBeenCalledTimes(writes);
+    });
+  });
+
   it('does not probe a remote, malformed, or attachment-bound plain runner', async () => {
     const probe = vi.spyOn(process, 'kill');
     for (const [machineId, pid, active, expectedAttachmentId, expected] of [

@@ -85,7 +85,14 @@ export async function recoverStrandedTerminalControlServiceability(params: Reado
     } else {
       // Only the owning machine can prove this runner absent. The RPC server captures
       // publisher authority before Stop and fences the inactive transition after this proof.
-      if (!isPidProvablyAbsent(pid)) return incompleteStopSession('tracked_runner_absent');
+      if (!isPidProvablyAbsent(pid)) {
+        // A session host outlives each hosted Session, so its retained hostPid stays live.
+        // `stopped` is published only after this Session's own end (Stop retirement or
+        // clean runner exit); an inactive stopped Session has nothing left to stop.
+        return rawSession.active === false && metadata.lifecycleState === 'stopped'
+          ? { status: 'stopped' }
+          : incompleteStopSession('tracked_runner_absent');
+      }
       target = { terminalMode: 'plain', expectedRunner: { pid,
         ...(typeof metadata.hostProcessStartTimeMs === 'number' ? { startTimeMs: metadata.hostProcessStartTimeMs } : {}) } };
     }
