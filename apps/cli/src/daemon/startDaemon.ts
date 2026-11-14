@@ -302,7 +302,6 @@ import { createDaemonConnectedAccountPurposeBindingRuntime } from './connectedSe
 import { createConnectedAccountActionTeamResourceCatalogReader } from './connectedServices/purposeBindings/actionTeamResourceCatalog';
 import { createTeamCredentialBrokerActionExecutor } from '@/providers/broker/teamCredentialActionExecution';
 import { withTeamCredentialActionRuntime } from '@/providers/broker/teamCredentialActionRuntime';
-import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createTeamCredentialBrokerActionPurposeExecutor } from '@/providers/broker/teamCredentialActionClient';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import {
@@ -3917,16 +3916,15 @@ export async function startDaemon(
                           controller: pluginReloadController,
                         });
                         try { return await withTeamCredentialActionRuntime({ native: lease, action: request.action,
-                          resolveAccount: () => resolveExecutablePluginRuntimeRegistry({
+                          account: {
                             happyHomeDir: configuration.happyHomeDir, signal: request.signal,
-                            connectedAccounts: connectedAccountPurposeBindingRuntime.owner,
-                            actionFormConnectedAccounts: connectedAccountPurposeBindingRuntime,
+                            purposeBindings: connectedAccountPurposeBindingRuntime,
                             accountExecution: { credentials, serverUrl: readDaemonHomeServerHttpBaseUrl(),
                               serverId: deploymentAccountHomeServerId,
                               serverIdentityId: managedPolicyHomeId ?? deploymentAccountHomeServerId,
                               machineId: registeredMachineId, explicitMachineId: registeredMachineId,
                               isCurrent: () => !request.signal.aborted && !homeTransportCancellation.signal.aborted },
-                          }),
+                          },
                         }, read); }
                         finally { await lease.release(); }
                       },

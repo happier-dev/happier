@@ -15,6 +15,8 @@ export type AccountExecutionRuntimeInput = Readonly<{
     accountExecution: NonNullable<RegistryInput['accountExecution']>;
     externalActionHomeBinding?: RegistryInput['externalActionHomeBinding'];
     executeTeamCredentialBrokerAction?: Parameters<typeof createRequesterConnectedAccountPurposeBindingRuntime>[0]['executeTeamCredentialBrokerAction'];
+    /** A containing host's own purpose-binding owner (the Team broker custodian's daemon owner), used instead of a requester one. */
+    purposeBindings?: NonNullable<RegistryInput['actionFormConnectedAccounts']> & Readonly<{ owner: NonNullable<RegistryInput['connectedAccounts']> }>;
     happyHomeDir?: string;
     signal?: AbortSignal;
     /** A containing Machine operation holds this registry until Account execution ends. */
@@ -83,12 +85,12 @@ export async function resolveAccountExecutionRuntime(input: AccountExecutionRunt
                 executeTeamCredentialBrokerAction: input.executeTeamCredentialBrokerAction,
             });
         })() : null;
+        const purposes = input.purposeBindings ?? purposeRuntime?.purposes;
         registry = await resolveExecutablePluginRuntimeRegistry({
             ...(input.externalActionHomeBinding ? { externalActionHomeBinding: input.externalActionHomeBinding } : {}),
             ...(input.happyHomeDir ? { happyHomeDir: input.happyHomeDir } : {}),
             ...(input.signal ? { signal: input.signal } : {}),
-            ...(purposeRuntime ? { connectedAccounts: purposeRuntime.purposes.owner,
-                actionFormConnectedAccounts: purposeRuntime.purposes } : {}),
+            ...(purposes ? { connectedAccounts: purposes.owner, actionFormConnectedAccounts: purposes } : {}),
             accountExecution: authority,
             connectedAccountRuntimeRegistry: credentialRegistryAccess,
             // Nested Account Actions and Resource reads belong to this admitted

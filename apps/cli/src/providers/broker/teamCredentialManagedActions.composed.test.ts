@@ -9,7 +9,8 @@ import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionEx
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { createExternalActionAuthorizedRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
+import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/composition/executableTypes';
 import { withTeamCredentialActionRuntime } from './teamCredentialActionRuntime';
 import { createManagedMachineControllerClient } from '@/machines/managed/acquire';
 import { createDaemonMachineIrohRuntime } from '@/daemon/peer/iroh/daemonMachineIrohRuntime';
@@ -71,6 +72,14 @@ vi.mock('@/plugins/runtime/fetch/globalFetchRuntime', () => ({
     },
   } satisfies import('@/plugins/runtime/fetch/service').PluginHttpRuntimeAdapter),
 }));
+
+
+/** What an Account host selects for one Action; equal hosts run the same declaration in the same realm. */
+function readHostSelection(registry: ResolvedExecutablePluginRuntimeRegistry, action: Readonly<{ pluginId: string; localId: string }>) {
+  return { realm: registry.executionRealm,
+    manifest: registry.contributes.pluginDeclarations?.find(entry => entry.pluginId === action.pluginId)?.manifest,
+    declaration: readResolvedActionContribution(registry.contributes, action)?.admittedTarget?.declaration };
+}
 
 describe('two-Account Team provisioner managed entry point', () => {
   beforeAll(async () => {
@@ -229,6 +238,7 @@ describe('two-Account Team provisioner managed entry point', () => {
       let accountCompositions = 0;
       let brokerAdmissions = 0;
       let brokerExecute: Parameters<typeof resolveAccountExecutionRuntime>[0]['executeTeamCredentialBrokerAction'];
+      let brokerHost: ReturnType<typeof readHostSelection> | undefined;
       if (brokerRealm) {
         if (!shared.broker) throw new Error('Missing custodian Machine');
         const brokerMachine = shared.broker;
@@ -290,17 +300,18 @@ describe('two-Account Team provisioner managed entry point', () => {
             selectConnectedServicesSourceMember: unreachable, openConnectedServicesSource: unreachable, openProviderConnectionSource: unreachable }),
           actionOperations: { execute: createTeamCredentialBrokerActionExecutor({ purposeBindings: purposes,
             withRuntime: (read, request) => withTeamCredentialActionRuntime({ native: custodian.lease, action: request.action,
-              resolveAccount: async () => {
+              account: { happyHomeDir: custodianHome, signal: request.signal, purposeBindings: purposes,
+                accountExecution: { credentials: custodianCredentials, serverUrl, serverId: 'two-account-home', serverIdentityId: homeId,
+                  machineId: brokerMachine.id, explicitMachineId: brokerMachine.id, isCurrent: () => !request.signal.aborted } },
+            }, registry => {
+              if (registry !== custodian.lease.registry) {
                 accountCompositions++;
-                const registry = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir: custodianHome, signal: request.signal,
-                  connectedAccounts: purposes.owner, actionFormConnectedAccounts: purposes,
-                  accountExecution: { credentials: custodianCredentials, serverUrl, serverId: 'two-account-home', serverIdentityId: homeId,
-                    machineId: brokerMachine.id, explicitMachineId: brokerMachine.id, isCurrent: () => !request.signal.aborted } });
                 expect(registry.activatedPluginIds).not.toContain(manifest.id);
                 expect(registry.targetActionInvocations.has(manifest.id, 'options')).toBe(false);
-                return registry;
-              },
-            }, read) }),
+                brokerHost = readHostSelection(registry, request.action);
+              }
+              return read(registry);
+            }) }),
             admit: async (request, signal) => {
               brokerAdmissions++;
               const response = await fetch(`${serverUrl}${PROVIDER_BROKER_REQUEST_ADMISSION_HTTP_PATH_V1}`, {
@@ -383,6 +394,12 @@ describe('two-Account Team provisioner managed entry point', () => {
         size: expect.arrayContaining([expect.objectContaining({ id: choices.size })]),
       } });
       expect(accountCompositions).toBe(brokerRealm ? 1 : 0);
+      // The custodian's brokered host and the requester's managed receiver host
+      // come from one Account composition owner: same realm, manifest and Action declaration.
+      if (brokerRealm) {
+        expect(brokerHost).toMatchObject({ realm: 'account', manifest: { id: manifest.id }, declaration: { execution: { target: 'account' } } });
+        expect(brokerHost).toEqual(readHostSelection(account.registry, { pluginId: manifest.id, localId: role }));
+      }
       expect(provider.request).toHaveBeenCalled();
       expect(provider.failures).toEqual([]);
       expect(materialRequests).toHaveLength(brokerRealm ? 0 : 1);

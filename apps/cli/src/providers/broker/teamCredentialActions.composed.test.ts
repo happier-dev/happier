@@ -407,8 +407,13 @@ export function activate(api) {
       actionOperations: { execute: createTeamCredentialBrokerActionExecutor({ purposeBindings: custodian.purposes,
         withRuntime: async (read, request) => await runWithServerHttpBaseUrl(serverUrl, () => withTeamCredentialActionRuntime({
           native: custodian.lease, action: request.action,
-          resolveAccount: async () => { throw new Error('Daemon Actions must not compose an Account host'); },
-        }, read)) }),
+          account: { purposeBindings: custodian.purposes, signal: request.signal, accountExecution: { credentials: custodianCredentials,
+            serverUrl, machineId: shared.broker.id, isCurrent: () => !request.signal.aborted } },
+        }, registry => {
+          // Daemon Actions run in the leased native registry, never a composed Account host.
+          expect(registry).toBe(custodian.lease.registry);
+          return read(registry);
+        })) }),
         admit: async (request, signal) => {
           homeAdmissionAttempts++;
           const response = await fetch(`${serverUrl}${PROVIDER_BROKER_REQUEST_ADMISSION_HTTP_PATH_V1}`, {
