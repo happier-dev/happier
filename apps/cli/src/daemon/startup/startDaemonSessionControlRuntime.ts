@@ -437,6 +437,7 @@ import type { LocalServicePreviewRoutes } from '../local/services/preview/routes
 import { createLocalServicePublicPreviewServerRoutes } from '../local/services/public/routes';
 import { resolveHostedWebStaticAssetLifecycleSource } from '../local/services/plugins/staticAssets/source';
 import { createOnChildExited, type ChildExit, type SessionNativeCredentialLifetimeAccount } from '../sessions/onChildExited';
+import { collectEndedExecutionRunMarkers } from '../lifecycle/heartbeat';
 import { isSessionTerminalPermanentlyUnavailable } from '../sessions/sessionTerminalSettlement';
 import type { MachineSessionTerminalCaptureResponseV1 } from '@happier-dev/protocol/sessions/control/machineSessionTerminalV1';
 import type { SkillStore } from '@/prompts/skills/store/skillStore';
@@ -1450,7 +1451,8 @@ export async function startDaemonSessionControlRuntime(
     processActionLifecycle: SessionProcessActionLifecycle;
     processActionOwnerAdapters: ReturnType<typeof createProcessActionOwnerAdapters>;
     readManagedServiceCurrentLogPaths: () => Promise<readonly string[]>;
-    retryOrphanedManagedServices: () => Promise<void>;
+    /** Retires state owned by ended runners; runs on every runner exit edge and once at daemon startup. */
+    retireEndedRunnerOwnedState: () => Promise<void>;
     /** An owner ended: the next heartbeat's managed-service recovery re-reads native ownership. */
     requestManagedServiceRecovery: () => void;
     managedMachinePolicyAdapter: ReturnType<
@@ -3091,6 +3093,8 @@ export async function startDaemonSessionControlRuntime(
   // Runners this daemon reattached after a restart reach their targets again through their restored relays.
   void sparedHeldAgents.restoreRelays(params.trackedSessionsByKey.values());
   let onChildExited: (pid: number, exit: ChildExit) => Promise<void> = async () => {};
+  // Assigned once the managed-service durability owner exists; exits before that retire at startup.
+  let retireEndedRunnerOwnedState: () => Promise<void> = async () => {};
   let releaseExecutionRunAuthorityForRunnerExit: (
     input: Readonly<{
       runnerPid: number;
@@ -7546,7 +7550,7 @@ export async function startDaemonSessionControlRuntime(
             intent: { kind: 'release_borrowed_host', reason: 'provider_exit' },
           });
           if (disposition.status !== 'retired') {
-            throw new Error('borrowed_terminal_attachment_retirement_failed');
+            throw Object.assign(new Error('borrowed_terminal_attachment_retirement_failed'), { failureCause: disposition.failureCause });
           }
         }
         return;
@@ -7572,6 +7576,10 @@ export async function startDaemonSessionControlRuntime(
     }));
     await onChildExitedBase(pid, exit);
     notifySessionLiveWorkChanged();
+    // The runner exit is the edge that ends its managed services and execution runs (I5).
+    void retireEndedRunnerOwnedState().catch(error => {
+      logger.warn('[DAEMON RUN] Ended-runner state retirement failed; the next runner exit or startup retries it', { error });
+    });
     for (const { tracked, startupResolver } of hostedBeforeExit) {
       if (
         !isCurrentTrackedSession(params.trackedSessionsByKey, tracked) &&
@@ -11228,6 +11236,12 @@ export async function startDaemonSessionControlRuntime(
     rootDir: managedServiceEndpointProjectionRoot,
     observeProcessStartIdentity: observeManagedServiceProcessStartIdentity,
   });
+  retireEndedRunnerOwnedState = async () => {
+    if (isRuntimePublicationQuiescing()) return;
+    const retiredPids = await managedServiceDurabilityOwner!.retireEndedSessionRunnerOwnedProjections({ processOwnership: processOwnershipRuntime });
+    if (retiredPids.length) logger.infoFile('[DAEMON RUN] Retired retained managed services of ended owners', { retiredPids });
+    await collectEndedExecutionRunMarkers(params.trackedSessionsByKey);
+  };
   managedServiceEndpointReadOwner = createDaemonManagedServiceEndpointReadOwner(
     {
       credentials: params.credentials,
@@ -15406,7 +15420,7 @@ export async function startDaemonSessionControlRuntime(
       error,
     );
   });
-  const reattachedRuntimeTargets: ReturnType<typeof connectedServiceRuntimeRegistry.listTargets> = [];
+  const reattachedRuntimeTargets: Array<ReturnType<typeof connectedServiceRuntimeRegistry.listTargets>[number]> = [];
   const reconcileInitialRuntimeTargets = () => Promise.allSettled(
     reattachedRuntimeTargets.map(target => scheduleRuntimeTargetGenerationReconciliation(target, undefined, false, false)),
   );
@@ -15572,11 +15586,7 @@ export async function startDaemonSessionControlRuntime(
     dispatchSessionFollowOccurrence,
     processActionOwnerAdapters,
     readManagedServiceCurrentLogPaths: () => managedServiceDurabilityOwner!.getCurrentLogPaths(),
-    retryOrphanedManagedServices: async () => {
-      if (isRuntimePublicationQuiescing()) return;
-      const retiredPids = await managedServiceDurabilityOwner!.retireEndedSessionRunnerOwnedProjections({ processOwnership: processOwnershipRuntime });
-      if (retiredPids.length) logger.infoFile('[DAEMON RUN] Retired retained managed services of ended owners', { retiredPids });
-    },
+    retireEndedRunnerOwnedState: () => retireEndedRunnerOwnedState(),
     requestManagedServiceRecovery: () => managedServiceDurabilityOwner?.requestRecovery(),
     guardSources: {
       readBrowsers: () => devicesBrowserResources()?.readResourceTargets?.() ?? [],

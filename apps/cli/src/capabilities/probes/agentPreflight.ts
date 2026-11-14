@@ -1,6 +1,6 @@
 import { sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { isRecord } from '@happier-dev/plugin-sdk';
-import { SessionRuntimeFailureCauseV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { projectSessionRuntimeFailureCause, SessionRuntimeFailureCauseV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import type { CreateAgentInvocationServices } from '@/plugins/runtime/invocation/services/types';
 import type { AgentProviderCatalogObservationService } from '@/providers/probe/agentCatalogObservation';
@@ -14,6 +14,7 @@ import { ConnectedServicesProviderStateSharingSettingsV1Schema } from '@happier-
 import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { SecretReferenceOverlayV1Schema } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
 import { AgentPassiveRealtimeSetupResultV1Schema } from '@happier-dev/protocol/capabilities/agentPassiveRealtimeSetup';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ProbedCatalogOptionValueSchema } from '@happier-dev/protocol/capabilities';
 import { NonBlankOpaqueIdentifierSchema } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { z } from 'zod/mini';
@@ -74,7 +75,7 @@ export type CliProbeDependencies = Readonly<{
     agentRegistrySnapshot?: ResolvedContributionRegistry;
     resolveContributedCatalogParsers?: ResolveContributedProviderCatalogParsers;
     activatePurposeBindings?: ConnectedAccountPurposeBindingOwner['activatePurposeBindings'];
-    connectedAccountsOwner?: Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['connectedAccountsOwner'];
+    connectedAccountsOwner?: Parameters<CreateAgentInvocationServices>[0]['connectedAccountsOwner'];
     isAgentRegistryCurrent?: () => boolean;
     resolveNativeCatalogTarget?: (input: Parameters<typeof resolveNativeCatalogTarget>[0]) => Promise<NativeCatalogTargetResolution>;
 }>;
@@ -357,11 +358,12 @@ export async function invokeCliPreflightMethod(
     }
     let preparedProfile: Awaited<ReturnType<typeof prepareProfileProbeEnvironment>> = null;
     let profileProbeEnvironment: ProfileProbeEnvironment | null = null;
-    let profilePreparationFailed = false;
-    const profileFailure = () => ({
+    let profilePreparationFailure: CapabilitiesInvokeResponse | null = null;
+    const profileFailure = (error: unknown) => ({
         ok: false, error: {
             code: 'profile-preflight-failed',
             message: 'Could not prepare the selected backend profile for this probe.',
+            failureCause: projectSessionRuntimeFailureCause(error, 'client_start', 'capabilities.preflight.profile'),
         },
     } as const);
     const acquireProfileEnvironment = async (signal?: AbortSignal) => {
@@ -370,7 +372,7 @@ export async function invokeCliPreflightMethod(
             profileProbeEnvironment = preparedProfile ? await preparedProfile.materialize(signal) : null;
             return profileProbeEnvironment;
         } catch (error) {
-            profilePreparationFailed = true;
+            profilePreparationFailure = profileFailure(error);
             throw error;
         }
     };
@@ -396,8 +398,8 @@ export async function invokeCliPreflightMethod(
             || requiresMaterializedAuth) {
             await acquireProfileEnvironment();
         }
-    } catch {
-        return profileFailure();
+    } catch (error) {
+        return profileFailure(error);
     }
     const nativeLaunchPreferences = method === 'probeCatalogs'
         ? await dependencies.agentCatalogEntry?.resolveSessionRuntimePreferences?.({
@@ -451,22 +453,25 @@ export async function invokeCliPreflightMethod(
             });
         } catch (error) {
             const failure = buildConnectedServiceCredentialSpawnErrorResult({ agentId: materializationAgentId, error });
+            const failureCause = projectSessionRuntimeFailureCause(error, 'client_start', 'capabilities.preflight.credentials');
             if (failure && isConnectedServiceUxDiagnosticSpawnErrorDetail(failure.errorDetail)) {
                 const diagnostic = failure.errorDetail.uxDiagnostic;
                 return { ok: false, error: {
                     code: diagnostic.code,
                     message: diagnostic.code,
                     retryable: diagnostic.retryable,
+                    failureCause,
                 } };
             }
-            // The capability service owns code-only projection. Never forward
-            // credential-bearing messages, causes or arbitrary error metadata.
+            // The capability service owns typed exception projection. Never
+            // forward credential-bearing messages or arbitrary error metadata.
             if (error instanceof Error && 'code' in error && typeof error.code === 'string') throw error;
             return {
                 ok: false,
                 error: {
                     code: 'connected-service-preflight-failed',
                     message: 'Could not prepare the selected connected-service account for this probe.',
+                    failureCause,
                 },
             };
         }
@@ -518,6 +523,7 @@ export async function invokeCliPreflightMethod(
             return { ok: false, error: { code: cause.data.failureReason,
                 message: 'Choose an explicit model; this Connected Account has no verified Agent catalog or default.',
                 retryable: cause.data.retryable, details: { phase: cause.data.phase },
+                failureCause: cause.data,
             } };
         }
         materializedEnv = { ...preparedLaunchEnvironment.environment };
@@ -759,9 +765,9 @@ export async function invokeCliPreflightMethod(
       };
       try {
           const result = await runProbe();
-          return profilePreparationFailed ? profileFailure() : result;
+          return profilePreparationFailure ?? result;
       } catch (error) {
-          if (profilePreparationFailed) return profileFailure();
+          if (profilePreparationFailure) return profilePreparationFailure;
           throw error;
       }
     } finally {
