@@ -43,7 +43,7 @@ describe('daemon machine RPC route attachments', () => {
         { sessionId: 'session-computer', actionId: 'computer.targets.list', input: { machineId: 'machine-computer' } },
         { verifiedPeerAuthority: authority })).result;
     try {
-      cache.attachComputerRoutes(() => current);
+      cache.attachDevicesRoleRoutes({ resolveComputer: () => current });
       const first = attach();
       // No native process is launched for an unsupported display; real routes return a typed refusal.
       expect(await list(first, 'present_user')).toMatchObject({ ok: false, errorCode: 'target_unsupported' });
@@ -53,8 +53,15 @@ describe('daemon machine RPC route attachments', () => {
       current = null;
       expect(await list(replacement, 'present_user')).toEqual({ ok: false, errorCode: 'computer_unavailable', error: 'computer_unavailable' });
       // Owner publication after the transport already exists follows the same attachment path.
-      cache.attachComputerRoutes(() => routes);
+      cache.attachDevicesRoleRoutes({ resolveComputer: () => routes });
       expect(await list(replacement, 'present_user')).toMatchObject({ ok: false, errorCode: 'target_unsupported' });
+      // The devices role's families are one owned set: the native-view browser imports ride with it.
+      expect(replacement.hasHandler(RPC_METHODS.DAEMON_BROWSER_PROFILE_LOGIN_SOURCES)).toBe(true);
+      // Stopping the role withdraws the whole set from the live transport and from later replays.
+      cache.attachDevicesRoleRoutes(null);
+      expect(replacement.hasHandler(RPC_METHODS.DAEMON_COMPUTER_ACTION_EXECUTE)).toBe(false);
+      expect(replacement.hasHandler(RPC_METHODS.DAEMON_BROWSER_PROFILE_LOGIN_SOURCES)).toBe(false);
+      expect(attach().hasHandler(RPC_METHODS.DAEMON_COMPUTER_ACTION_EXECUTE)).toBe(false);
     } finally {
       for (const client of clients) client.shutdown();
       await routes.dispose();
@@ -190,10 +197,7 @@ describe('daemon machine RPC route attachments', () => {
     let apiMachineForSessions: null | {
       registerLocalServicesPreviewRoutes: ReturnType<typeof vi.fn>;
       registerLocalServicesRoutes: ReturnType<typeof vi.fn>;
-      registerBrowserContextRoutes: ReturnType<typeof vi.fn>;
-      registerBrowserDiagnosticsRoutes: ReturnType<typeof vi.fn>;
-      registerBrowserRecordingRoutes: ReturnType<typeof vi.fn>;
-      registerSimulatorPreviewRoutes: ReturnType<typeof vi.fn>;
+      replaceDevicesRoleRoutes: ReturnType<typeof vi.fn>;
     } = null;
     const cache = createDaemonMachineRpcRouteAttachmentCache({
       getApiMachineForSessions: () => apiMachineForSessions as never,
@@ -201,15 +205,12 @@ describe('daemon machine RPC route attachments', () => {
 
     cache.attachLocalServicesPreviewRoutes(localServicesPreview as never);
     cache.attachLocalServicesRoutes(localServices as never);
-    cache.attachSimulatorPreviewRoutes(simulatorPreview as never);
+    cache.attachDevicesRoleRoutes({ simulatorPreview: simulatorPreview as never });
 
     apiMachineForSessions = {
       registerLocalServicesPreviewRoutes: vi.fn(),
       registerLocalServicesRoutes: vi.fn(),
-      registerBrowserContextRoutes: vi.fn(),
-      registerBrowserDiagnosticsRoutes: vi.fn(),
-      registerBrowserRecordingRoutes: vi.fn(),
-      registerSimulatorPreviewRoutes: vi.fn(),
+      replaceDevicesRoleRoutes: vi.fn(),
     };
     cache.attachApiMachineForSessions(apiMachineForSessions as never);
 
@@ -219,7 +220,7 @@ describe('daemon machine RPC route attachments', () => {
       localServicesLauncher: localServices.localServicesLauncher,
       localServicesActions: localServices.localServicesActions,
     });
-    expect(apiMachineForSessions.registerSimulatorPreviewRoutes).toHaveBeenCalledWith(simulatorPreview);
+    expect(apiMachineForSessions.replaceDevicesRoleRoutes).toHaveBeenCalledWith({ simulatorPreview });
   });
 
   it('caches the connected-account daemon runtime and reattaches it to a replacement machine client', async () => {
@@ -285,10 +286,7 @@ describe('daemon machine RPC route attachments', () => {
     const apiMachineForSessions = {
       registerLocalServicesPreviewRoutes: vi.fn(),
       registerLocalServicesRoutes: vi.fn(),
-      registerBrowserContextRoutes: vi.fn(),
-      registerBrowserDiagnosticsRoutes: vi.fn(),
-      registerBrowserRecordingRoutes: vi.fn(),
-      registerSimulatorPreviewRoutes: vi.fn(),
+      replaceDevicesRoleRoutes: vi.fn(),
     };
     const cache = createDaemonMachineRpcRouteAttachmentCache({
       getApiMachineForSessions: () => apiMachineForSessions as never,

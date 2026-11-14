@@ -218,9 +218,8 @@ it.each([
             // Raw routes may publish before sidecar enablement. Admission reads the current owner.
             let activeMachine: ApiMachineClient | null = null;
             const attachments = createDaemonMachineRpcRouteAttachmentCache({ getApiMachineForSessions: () => activeMachine });
-            attachments.attachBrowserContextRoutes(context);
-            attachments.attachBrowserRecordingRoutes(recording.routes);
-            attachments.attachBrowserDiagnosticsRoutes(createBrowserDiagnosticsRoutes({ store: diagnosticsStore }));
+            attachments.attachDevicesRoleRoutes({ browserContext: context, browserRecording: recording.routes,
+                browserDiagnostics: createBrowserDiagnosticsRoutes({ store: diagnosticsStore }) });
             const attachMachine = () => {
                 const client = new ApiMachineClient('profile-test-token', { id: 'machine', encryptionMode: 'plain',
                     metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
@@ -233,7 +232,7 @@ it.each([
                 return manager;
             };
             let rpc = attachMachine();
-            attachments.attachBrowserControlRoutes(control);
+            attachments.attachDevicesRoleRoutes({ browserControl: control });
             const rawContext = {
                 verifiedPeerAuthority: 'present_user' as const, rpcContext: { machineAdmission: {
                     actorAccountId: role === 'owner' ? 'owner' : 'guest', custodianAccountId: 'owner',

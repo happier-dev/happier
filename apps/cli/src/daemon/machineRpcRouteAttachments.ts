@@ -1,15 +1,10 @@
 import type { ApiMachineClient } from '@/api/apiMachine';
 
-import type { BrowserDaemonControlRoutes } from './browser/control/routes';
-import type { BrowserContextRoutes } from './browser/context/routes';
-import type { BrowserDiagnosticsRoutes } from './browser/diagnostics/routes';
-import type { BrowserRecordingRoutes } from './browser/recording/routes';
-import type { ComputerRoutes } from './computer/routes';
-import type { SimulatorPreviewRoutes } from './devices/simulator/previewRoutes.types';
 import type { DaemonLocalServicesMachineRpcRoutes } from '@/rpc/handlers/daemonLocalServices';
 import type { DaemonMachineVitalsRoutes } from '@/rpc/handlers/daemonMachineVitals';
 import type { DaemonProcessesRoutes } from '@/rpc/handlers/daemonProcesses';
 import type { DaemonMachineResourcesPolicyRoutes } from '@/rpc/handlers/daemonMachineResourcesPolicy';
+import type { DaemonMachineRolesRoutes } from '@/rpc/handlers/daemonMachineRoles';
 import type { DaemonMachineAdminAccessRoutes } from '@/rpc/handlers/daemonMachineAdminAccess';
 import type { DaemonMachineReachabilityRoutes } from '@/machines/reachability/createDaemonMachineReachabilityRoutes';
 import type { AgentIsolationEffectDependencies } from './agentIsolation/agentIsolationProvisioner';
@@ -18,6 +13,7 @@ import type { DaemonStorageRoutes } from '@/rpc/handlers/storage';
 import type { LocalServicePreviewRoutes } from './local/services/preview/routes';
 import type { ConnectedAccountDaemonRuntime } from './connectedServices/ConnectedAccountDaemonRuntime';
 import type { ConnectedServicePoolSelectionRead } from '@/api/machine/rpcHandlers.connectedAccounts';
+import type { DevicesRoleMachineRoutes } from './roles/devices/types';
 
 export type DaemonMachineRpcRouteRegistrar = Pick<
   ApiMachineClient,
@@ -27,17 +23,13 @@ export type DaemonMachineRpcRouteRegistrar = Pick<
   | 'registerMachineVitalsRoutes'
   | 'registerMachineProcessesRoutes'
   | 'registerMachineResourcesPolicyRoutes'
+  | 'registerMachineRolesRoutes'
   | 'registerMachineAdminAccessRoutes'
   | 'registerMachineReachabilityRoutes'
   | 'registerMachineAgentIsolationRoutes'
   | 'registerMachineGuardRoutes'
   | 'registerStorageRoutes'
-  | 'registerComputerRoutes'
-  | 'registerBrowserControlRoutes'
-  | 'registerBrowserContextRoutes'
-  | 'registerBrowserDiagnosticsRoutes'
-  | 'registerBrowserRecordingRoutes'
-  | 'registerSimulatorPreviewRoutes'
+  | 'replaceDevicesRoleRoutes'
   | 'registerConnectedAccountDaemonRuntime'
   | 'registerConnectedAccountPurposeBindingRuntime'
   | 'registerConnectedServicePoolSelectionRead'
@@ -56,17 +48,17 @@ export type DaemonMachineRpcRouteAttachmentCache = Readonly<{
   attachMachineVitalsRoutes(routes: DaemonMachineVitalsRoutes): void;
   attachMachineProcessesRoutes(routes: DaemonProcessesRoutes): void;
   attachMachineResourcesPolicyRoutes(routes: DaemonMachineResourcesPolicyRoutes): void;
+  attachMachineRolesRoutes(routes: DaemonMachineRolesRoutes): void;
   attachMachineAdminAccessRoutes(routes: DaemonMachineAdminAccessRoutes): void;
   attachMachineReachabilityRoutes(routes: DaemonMachineReachabilityRoutes): void;
   attachMachineAgentIsolationRoutes(routes: AgentIsolationEffectDependencies): void;
   attachMachineGuardRoutes(routes: DaemonMachineGuardRoutes): void;
   attachStorageRoutes(routes: DaemonStorageRoutes): void;
-  attachComputerRoutes(resolveComputer: () => ComputerRoutes | null): void;
-  attachBrowserControlRoutes(routes: BrowserDaemonControlRoutes): void;
-  attachBrowserContextRoutes(routes: BrowserContextRoutes): void;
-  attachBrowserDiagnosticsRoutes(routes: BrowserDiagnosticsRoutes): void;
-  attachBrowserRecordingRoutes(routes: BrowserRecordingRoutes): void;
-  attachSimulatorPreviewRoutes(routes: SimulatorPreviewRoutes): void;
+  /**
+   * The active `devices` role's routes, merged into one record and registered as one owned set;
+   * `null` when the role stops (its RPC families unregister).
+   */
+  attachDevicesRoleRoutes(update: DevicesRoleMachineRoutes | null): void;
   attachConnectedAccountDaemonRuntime(runtime: ConnectedAccountDaemonRuntime): void;
   attachConnectedServicePoolSelectionRead(read: ConnectedServicePoolSelectionRead): void;
   attachConnectedAccountPurposeBindingRuntime(
@@ -85,17 +77,13 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
   let machineVitalsRoutes: DaemonMachineVitalsRoutes | null = null;
   let machineProcessesRoutes: DaemonProcessesRoutes | null = null;
   let machineResourcesPolicyRoutes: DaemonMachineResourcesPolicyRoutes | null = null;
+  let machineRolesRoutes: DaemonMachineRolesRoutes | null = null;
   let machineAdminAccessRoutes: DaemonMachineAdminAccessRoutes | null = null;
   let machineReachabilityRoutes: DaemonMachineReachabilityRoutes | null = null;
   let machineAgentIsolationRoutes: AgentIsolationEffectDependencies | null = null;
   let machineGuardRoutes: DaemonMachineGuardRoutes | null = null;
   let storageRoutes: DaemonStorageRoutes | null = null;
-  let resolveComputer: (() => ComputerRoutes | null) | null = null;
-  let browserControlRoutes: BrowserDaemonControlRoutes | null = null;
-  let browserContextRoutes: BrowserContextRoutes | null = null;
-  let browserDiagnosticsRoutes: BrowserDiagnosticsRoutes | null = null;
-  let browserRecordingRoutes: BrowserRecordingRoutes | null = null;
-  let simulatorPreviewRoutes: SimulatorPreviewRoutes | null = null;
+  let devicesRoleRoutes: DevicesRoleMachineRoutes | null = null;
   let connectedAccountDaemonRuntime: ConnectedAccountDaemonRuntime | null = null;
   let connectedServicePoolSelectionRead: ConnectedServicePoolSelectionRead | null = null;
   let connectedAccountPurposeBindingRuntime:
@@ -163,9 +151,9 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
       machineAccessLossReceiver = options;
       input.getApiMachineForSessions()?.registerMachineAccessLossReceiver(options);
     },
-    attachComputerRoutes(resolve) {
-      resolveComputer = resolve;
-      input.getApiMachineForSessions()?.registerComputerRoutes(resolve);
+    attachDevicesRoleRoutes(update) {
+      devicesRoleRoutes = update ? { ...devicesRoleRoutes, ...update } : null;
+      input.getApiMachineForSessions()?.replaceDevicesRoleRoutes(devicesRoleRoutes);
     },
     attachStorageRoutes(routes) {
       storageRoutes = routes;
@@ -174,6 +162,10 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
     attachMachineResourcesPolicyRoutes(routes) {
       machineResourcesPolicyRoutes = routes;
       input.getApiMachineForSessions()?.registerMachineResourcesPolicyRoutes(routes);
+    },
+    attachMachineRolesRoutes(routes) {
+      machineRolesRoutes = routes;
+      input.getApiMachineForSessions()?.registerMachineRolesRoutes(routes);
     },
     attachMachineReachabilityRoutes(routes) {
       machineReachabilityRoutes = routes;
@@ -211,31 +203,6 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
       if (registrationRoutes) {
         input.getApiMachineForSessions()?.registerLocalServicesRoutes(registrationRoutes);
       }
-    },
-
-    attachBrowserControlRoutes(routes) {
-      browserControlRoutes = routes;
-      input.getApiMachineForSessions()?.registerBrowserControlRoutes(routes);
-    },
-
-    attachBrowserContextRoutes(routes) {
-      browserContextRoutes = routes;
-      input.getApiMachineForSessions()?.registerBrowserContextRoutes?.(routes, () => browserControlRoutes);
-    },
-
-    attachBrowserDiagnosticsRoutes(routes) {
-      browserDiagnosticsRoutes = routes;
-      input.getApiMachineForSessions()?.registerBrowserDiagnosticsRoutes(routes, () => browserControlRoutes);
-    },
-
-    attachBrowserRecordingRoutes(routes) {
-      browserRecordingRoutes = routes;
-      input.getApiMachineForSessions()?.registerBrowserRecordingRoutes(routes, () => browserControlRoutes);
-    },
-
-    attachSimulatorPreviewRoutes(routes) {
-      simulatorPreviewRoutes = routes;
-      input.getApiMachineForSessions()?.registerSimulatorPreviewRoutes(routes);
     },
 
     attachConnectedAccountDaemonRuntime(runtime) {
@@ -292,6 +259,9 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
       if (machineResourcesPolicyRoutes) {
         apiMachineForSessions.registerMachineResourcesPolicyRoutes(machineResourcesPolicyRoutes);
       }
+      if (machineRolesRoutes) {
+        apiMachineForSessions.registerMachineRolesRoutes(machineRolesRoutes);
+      }
       if (machineReachabilityRoutes) {
         apiMachineForSessions.registerMachineReachabilityRoutes(machineReachabilityRoutes);
       }
@@ -307,23 +277,8 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
       if (storageRoutes) {
         apiMachineForSessions.registerStorageRoutes(storageRoutes);
       }
-      if (resolveComputer) {
-        apiMachineForSessions.registerComputerRoutes(resolveComputer);
-      }
-      if (browserControlRoutes) {
-        apiMachineForSessions.registerBrowserControlRoutes(browserControlRoutes);
-      }
-      if (browserContextRoutes) {
-        apiMachineForSessions.registerBrowserContextRoutes?.(browserContextRoutes, () => browserControlRoutes);
-      }
-      if (browserDiagnosticsRoutes) {
-        apiMachineForSessions.registerBrowserDiagnosticsRoutes(browserDiagnosticsRoutes, () => browserControlRoutes);
-      }
-      if (browserRecordingRoutes) {
-        apiMachineForSessions.registerBrowserRecordingRoutes(browserRecordingRoutes, () => browserControlRoutes);
-      }
-      if (simulatorPreviewRoutes) {
-        apiMachineForSessions.registerSimulatorPreviewRoutes(simulatorPreviewRoutes);
+      if (devicesRoleRoutes) {
+        apiMachineForSessions.replaceDevicesRoleRoutes(devicesRoleRoutes);
       }
     },
   };
