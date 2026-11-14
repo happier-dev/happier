@@ -1,5 +1,8 @@
 import type { DeploymentEnvironmentSettingsSectionV1, DeploymentEnvironmentTabV1 } from '@happier-dev/deployments';
 
+/** The Services page: every app, database, domain and check this Account runs (formerly All deployments). */
+export const SERVICES_ROUTE = '/projects/deployments';
+
 type DeploymentEnvironmentAddress = Readonly<{
     serverId: string; projectSourceId: string; environmentId: string; deploymentId?: string; tab?: DeploymentEnvironmentTabV1;
     /** A Settings section, opened in place on the Settings tab. */

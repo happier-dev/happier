@@ -18708,6 +18708,8 @@ settingsSession: {
               noChecksBody: "Ein Check meldet, wenn eine App oder Adresse nicht mehr antwortet. Füge einen bei den Domains einer Umgebung oder einem beobachteten Dienst hinzu.",
               noWatched: "Noch nichts beobachtet",
               noWatchedBody: "Dienste, die schon auf einer Maschine laufen, erscheinen hier, sobald du sie in ihrem Dienste-Tab beobachtest.",
+              allServices: "Alle Dienste",
+              searchPlaceholder: "Apps und Umgebungen suchen",
               lastDays: "Letzte 30 Tage",
               editCheck: "Check bearbeiten",
               uptime: ({ percent }: { percent: string }) => `${percent} erreichbar in 30 Tagen`,

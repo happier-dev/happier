@@ -7,6 +7,7 @@ import { stripGroupSegmentsFromPath } from 'expo-router/build/matchers';
 import { parseQueryParams } from 'expo-router/build/fork/getStateFromPath-forks';
 import { useOpenAppSection } from '@/components/appShell/workspace/destinationRoute';
 import { normalizeProjectPage, resolveProjectCockpitRouteFromPathname } from '@/components/workspaceCockpit/project/projectCockpitState';
+import { SERVICES_ROUTE } from '@/components/projects/deployments/deploymentNavigation';
 import { readProjectRouteWorktreeSelection, resolveProjectRouteHeaderTitle } from '@/components/projects/detail/projectRouteState';
 import { projectPageLabel } from '@/components/projects/shell/ProjectShellHeader';
 import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
@@ -117,7 +118,7 @@ export const DISCUSSIONS_DESTINATION_ID = 'discussions';
  * typed against this list, so a column id without a renderer is a type error. A placement naming any
  * other column falls back to the rail.
  */
-export const BUILTIN_APP_SHELL_COLUMN_IDS = ['sessions', 'discussions', 'projects', 'workflows', 'boards', 'plugins', 'settings', 'machines'] as const;
+export const BUILTIN_APP_SHELL_COLUMN_IDS = ['sessions', 'discussions', 'projects', 'workflows', 'boards', 'plugins', 'settings', 'machines', 'services'] as const;
 export type BuiltinAppShellColumnId = typeof BUILTIN_APP_SHELL_COLUMN_IDS[number];
 
 export function isBuiltinAppShellColumnId(value: string): value is BuiltinAppShellColumnId {
@@ -129,11 +130,11 @@ export function isBuiltinAppShellColumnId(value: string): value is BuiltinAppShe
  * settings pages, with the Settings catalog as their one owner. Workflows is not one either: its
  * column lists workflow sections from their own owners (FIN 04 §3.3), not other destinations. Nor is
  * Boards: its column lists the user's boards (INT §5.1). Nor is Machines: its column is the machine
- * list (plan machine-resources 10 §4.2).
+ * list (plan machine-resources 10 §4.2). Nor is Services: its column is the Projects with their Environments (lab pfc-redesign).
  */
-export type PlaceableAppShellColumnId = Exclude<BuiltinAppShellColumnId, 'settings' | 'workflows' | 'boards' | 'machines'>;
+export type PlaceableAppShellColumnId = Exclude<BuiltinAppShellColumnId, 'settings' | 'workflows' | 'boards' | 'machines' | 'services'>;
 
-const UNPLACEABLE_APP_SHELL_COLUMN_IDS: ReadonlySet<string> = new Set(['settings', 'workflows', 'boards', 'machines']);
+const UNPLACEABLE_APP_SHELL_COLUMN_IDS: ReadonlySet<string> = new Set(['settings', 'workflows', 'boards', 'machines', 'services']);
 
 function isPlaceableAppShellColumnId(value: string): value is PlaceableAppShellColumnId {
     return isBuiltinAppShellColumnId(value) && !UNPLACEABLE_APP_SHELL_COLUMN_IDS.has(value);
@@ -303,7 +304,7 @@ function readBuiltinDestinationRows(): readonly BuiltinDestinationRow[] {
     },
     {
         id: 'projects', titleKey: 'tabs.projects', icon: 'folder', placement: { kind: 'rail', region: 'app' }, band: 'work',
-        column: 'projects', activation: 'navigate', routePath: '/projects', signal: 'deploymentAttentionCount', currentRoutePatterns: ['/projects/[...rest]', '/deployments/[projectSourceId]'],
+        column: 'projects', activation: 'navigate', routePath: '/projects', signal: 'deploymentAttentionCount', currentRoutePatterns: ['/projects/[...rest]'],
     },
     {
         id: 'workflows', titleKey: 'workflows.title', icon: 'tree-structure',
@@ -335,11 +336,12 @@ function readBuiltinDestinationRows(): readonly BuiltinDestinationRow[] {
         available: availability => availability.bots === true,
         activationAvailable: availability => availability.botsRoster === true,
     },
-    // Services (pfc-redesign): everything the Account runs, as views; overflow/pinning policy unchanged.
+    // Services (pfc-redesign): everything the Account runs, as views, beside its column of Projects and their
+    // Environments; an Environment page keeps that column (lab `sideSvc`). Overflow/pinning policy unchanged (owner 11-12).
     {
         id: 'deployments', titleKey: 'projects.deployments.services.title', icon: 'rocket-launch',
-        placement: { kind: 'rail', region: 'app' }, band: 'library', activation: 'navigate',
-        routePath: '/projects/deployments', signal: 'deploymentAttentionCount',
+        placement: { kind: 'rail', region: 'app' }, band: 'library', column: 'services', activation: 'navigate',
+        routePath: SERVICES_ROUTE, currentRoutePatterns: ['/deployments/[projectSourceId]'], signal: 'deploymentAttentionCount',
     },
     // Library: what the person keeps.
     {

@@ -18219,6 +18219,8 @@ settingsSession: {
           noChecksBody: "检查会在应用或地址不再响应时通知你。可在环境的域名或已关注的服务中添加。",
           noWatched: "还没有关注任何服务",
           noWatchedBody: "机器上已在运行的服务，在其“服务”标签中关注后会显示在这里。",
+          allServices: "所有服务",
+          searchPlaceholder: "搜索应用和环境",
           lastDays: "最近 30 天",
           editCheck: "编辑检查",
           uptime: ({ percent }: { percent: string }) => `30 天可用率 ${percent}`,

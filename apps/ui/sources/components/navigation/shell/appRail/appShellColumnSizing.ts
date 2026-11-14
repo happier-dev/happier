@@ -20,4 +20,5 @@ export const BUILTIN_COLUMN_MINIMUM_WIDTH_PX = {
     plugins: headerDemandPx(1),
     settings: headerDemandPx(1),
     machines: headerDemandPx(2),
+    services: headerDemandPx(2),
 } satisfies Record<BuiltinAppShellColumnId, number>;

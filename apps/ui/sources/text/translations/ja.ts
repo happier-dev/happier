@@ -18514,6 +18514,8 @@ settingsSession: {
           noChecksBody: "チェックはアプリやアドレスが応答しなくなったときに知らせます。環境のドメインや監視中のサービスから追加できます。",
           noWatched: "監視しているものはまだありません",
           noWatchedBody: "マシンですでに動いているサービスは、そのサービスタブから監視するとここに表示されます。",
+          allServices: "すべてのサービス",
+          searchPlaceholder: "アプリと環境を検索",
           lastDays: "過去30日",
           editCheck: "チェックを編集",
           uptime: ({ percent }: { percent: string }) => `30日間の稼働率 ${percent}`,

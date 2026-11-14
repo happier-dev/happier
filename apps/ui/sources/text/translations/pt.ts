@@ -18706,6 +18706,8 @@ settingsSession: {
           noChecksBody: "Uma verificação avisa quando um app ou endereço para de responder. Adicione uma nos Domínios de um ambiente ou em um serviço observado.",
           noWatched: "Nada observado ainda",
           noWatchedBody: "Serviços que já rodam em uma Máquina aparecem aqui quando você os observa na aba Serviços dela.",
+          allServices: "Todos os serviços",
+          searchPlaceholder: "Buscar apps e ambientes",
           lastDays: "Últimos 30 dias",
           editCheck: "Editar verificação",
           uptime: ({ percent }: { percent: string }) => `${percent} no ar em 30 dias`,

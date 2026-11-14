@@ -44,6 +44,7 @@ const BUILTIN_COLUMNS: Readonly<Record<BuiltinAppShellColumnId, Extract<AppShell
     plugins: Object.freeze({ kind: 'builtin', id: 'plugins' }),
     settings: Object.freeze({ kind: 'builtin', id: 'settings' }),
     machines: Object.freeze({ kind: 'builtin', id: 'machines' }),
+    services: Object.freeze({ kind: 'builtin', id: 'services' }),
 };
 
 const PLUGIN_COLUMNS = new Map<string, Extract<AppShellColumn, { kind: 'plugin' }>>();

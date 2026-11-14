@@ -116,11 +116,12 @@ describe('workspace route identity round trips', () => {
         expect(ref).toMatchObject({ kind: 'store.bots' });
         expect(hrefForDestinationRef(catalog, ref!)).toBe('/plugins/bots');
     });
-    it('round trips a checkout-independent Environment in the existing Projects destination', () => {
+    it('opens an Environment in Services, beside the Services column (lab pfc-redesign: the column is kept)', () => {
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: ALL_BUILTINS });
+        expect(catalog.find(destination => destination.id === 'deployments')).toMatchObject({ column: 'services', routePath: '/projects/deployments' });
         const href = buildDeploymentEnvironmentHref({ serverId: 'home/a', projectSourceId: 'source/a', environmentId: 'env/a' });
         const target = resolveDestinationRefFromHref(catalog, href);
-        expect(target).toMatchObject({ kind: 'projects', params: { projectSourceId: 'source/a',
+        expect(target).toMatchObject({ kind: 'deployments', params: { projectSourceId: 'source/a',
             serverId: 'home/a', deploymentEnvironment: 'env/a' } });
         expect(target && hrefForDestinationRef(catalog, target)).toBe(href);
     });
@@ -796,6 +797,9 @@ describe('resolveCurrentAppDestination', () => {
         expect(at('/artifacts/edit/artifact-1')).toBe('artifacts');
         expect(at('/projects')).toBe('projects');
         expect(at('/projects/ws-1/code')).toBe('projects');
+        // Services: its page and every Environment page stand beside the Services column.
+        expect(at('/projects/deployments')).toBe('deployments');
+        expect(at('/deployments/source-1')).toBe('deployments');
         expect(at('/inbox/approvals')).toBe('inbox');
         // The Automation pages that remain open inside the one Workflows destination.
         expect(at('/automations/a-1')).toBe('workflows');

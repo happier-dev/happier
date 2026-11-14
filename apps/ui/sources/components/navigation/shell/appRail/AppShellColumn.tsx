@@ -10,6 +10,7 @@ import { BoardsColumn } from '@/components/boards/BoardsColumn';
 import { PluginsNavigationColumn } from '@/components/settings/plugins/PluginsNavigationColumn';
 import { SettingsSidebar } from '@/components/settings/shell/SettingsSidebar';
 import { MachinesColumn } from '@/components/machines/collection/MachinesColumn';
+import { ServicesColumn } from '@/components/projects/deployments/ServicesColumn';
 import { PopoverScope } from '@/components/ui/popover';
 
 import type { BuiltinAppShellColumnId } from '@/components/appShell/destinations/compactAppDestinationCatalog';
@@ -22,7 +23,7 @@ import type { AppShellColumn as AppShellColumnModel } from './appRailModel';
  * list for Sessions, the Discussions you can read for Discussions, the projects for Projects, what needs you, runs and your library for Workflows,
  * Installed/Browse and the installed plugins for Plugins, and the settings
  * navigation for Settings (a Home's console stands its own sidebar beside it, inside the page), and the
- * machine list for the Machines page's rail door. Only
+ * machine list for the Machines page's rail door, and the Projects with their Environments for Services. Only
  * the open destination's column is mounted, so a closed one keeps no subscriptions.
  */
 export const AppShellColumn = React.memo(function AppShellColumn(props: Readonly<{
@@ -61,6 +62,7 @@ const BUILTIN_COLUMNS = {
     plugins: PluginsNavigationColumn,
     settings: SettingsSidebar,
     machines: MachinesColumn,
+    services: ServicesColumn,
 } satisfies Record<BuiltinAppShellColumnId, React.ComponentType>;
 
 const stylesheet = StyleSheet.create(() => ({

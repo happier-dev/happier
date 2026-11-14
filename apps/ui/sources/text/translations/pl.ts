@@ -18425,6 +18425,8 @@ settingsSession: {
           noChecksBody: "Sprawdzenie powiadomi cię, gdy aplikacja lub adres przestanie odpowiadać. Dodaj je w Domenach środowiska lub przy obserwowanej usłudze.",
           noWatched: "Nic nie jest obserwowane",
           noWatchedBody: "Usługi działające już na Maszynie pojawią się tutaj, gdy zaczniesz je obserwować na jej karcie Usługi.",
+          allServices: "Wszystkie usługi",
+          searchPlaceholder: "Szukaj aplikacji i środowisk",
           lastDays: "Ostatnie 30 dni",
           editCheck: "Edytuj sprawdzenie",
           uptime: ({ percent }: { percent: string }) => `${percent} dostępności w 30 dni`,

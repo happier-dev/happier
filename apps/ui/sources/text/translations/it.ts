@@ -18602,6 +18602,8 @@ settingsSession: {
           noChecksBody: "Un controllo ti avvisa quando un’app o un indirizzo smette di rispondere. Aggiungine uno dai Domini di un ambiente o da un servizio osservato.",
           noWatched: "Ancora nulla di osservato",
           noWatchedBody: "I servizi già in esecuzione su una Macchina appaiono qui quando li osservi dalla sua scheda Servizi.",
+          allServices: "Tutti i servizi",
+          searchPlaceholder: "Cerca app e ambienti",
           lastDays: "Ultimi 30 giorni",
           editCheck: "Modifica controllo",
           uptime: ({ percent }: { percent: string }) => `${percent} attivo in 30 giorni`,
