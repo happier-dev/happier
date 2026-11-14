@@ -17,6 +17,8 @@ import {
     EMPTY_SCM_CAPABILITIES,
     mapProtocolSnapshotToUiSnapshot,
     mergeScmCapabilities,
+    readScmSnapshotChangedFileCount,
+    scmSnapshotEntriesAreComplete,
 } from '@/scm/core/snapshotMappers';
 import { resolveCanonicalScmProjectKey } from '@/scm/core/resolveCanonicalScmProjectKey';
 
@@ -171,8 +173,15 @@ function normalizeScmSnapshotResponseOrThrow(input: {
 }
 
 export function snapshotToScmStatus(snapshot: UiScmWorkingSnapshot): ScmStatus {
-    const modifiedCount = snapshot.entries.filter((entry) => entry.kind !== 'untracked').length;
-    const untrackedCount = snapshot.entries.filter((entry) => entry.kind === 'untracked').length;
+    // A truncated entry list undercounts; the daemon's full-set totals stay truthful.
+    const entriesAreComplete = scmSnapshotEntriesAreComplete(snapshot);
+    const changedFileCount = readScmSnapshotChangedFileCount(snapshot);
+    const untrackedCount = entriesAreComplete
+        ? snapshot.entries.filter((entry) => entry.kind === 'untracked').length
+        : snapshot.totals.untrackedFiles;
+    const modifiedCount = entriesAreComplete
+        ? snapshot.entries.filter((entry) => entry.kind !== 'untracked').length
+        : Math.max(0, changedFileCount - untrackedCount);
     const includedCount = snapshot.totals.includedFiles;
     const includedLinesAdded = snapshot.totals.includedAdded;
     const includedLinesRemoved = snapshot.totals.includedRemoved;
@@ -183,7 +192,7 @@ export function snapshotToScmStatus(snapshot: UiScmWorkingSnapshot): ScmStatus {
 
     return {
         branch: snapshot.branch.head,
-        isDirty: snapshot.entries.length > 0,
+        isDirty: changedFileCount > 0,
         modifiedCount,
         untrackedCount,
         includedCount,

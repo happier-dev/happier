@@ -2271,6 +2271,7 @@ export {
   normalizeScmRemoteUrl,
   parseScmPatchPaths,
   parseScmUpstreamRef,
+  SCM_STATUS_SNAPSHOT_MAX_ENTRY_BYTES,
   SCM_WORKTREES_ENRICHMENT_MAX_PATHS,
   ScmRepoModeSchema,
   ScmRequestBaseSchema,
