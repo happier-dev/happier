@@ -106,4 +106,23 @@ describe('Android material fallback', () => {
         if (typeof cardColor !== 'string') throw new Error('Expected an Android card background color');
         expect(Color(cardColor).alpha()).toBeLessThan(1);
     });
+
+    it('drops the card elevation under a translucent Android tint, where Android paints the shadow through the coat', async () => {
+        const card = (style: Record<string, unknown>, settings: 'everywhere' | 'solid') => renderScreen(
+            <GlassRuntimeEnvironmentProvider value={{ nativeRenderer: true, atmosphereBehind: 'wallpaper' }}>
+                <GlassMaterialSettingsProvider value={{ glassSurfaceMaterials: glassPresetMaterials(settings) }}>
+                    <GlassSurface testID="android-card" surfaceGroup="card" solidColor="#ffffff" style={style}><></></GlassSurface>
+                </GlassMaterialSettingsProvider>
+            </GlassRuntimeEnvironmentProvider>);
+        const translucent = await card({ elevation: 4, borderRadius: 16 }, 'everywhere');
+        const tinted = flattenTestStyle(translucent.findByTestId('android-card')?.props.style);
+        expect(Color(String(tinted.backgroundColor)).alpha()).toBeLessThan(1);
+        expect(tinted.elevation ?? 0).toBe(0);
+        standardCleanup();
+        // An opaque card keeps its lift.
+        const opaque = await card({ elevation: 4, borderRadius: 16 }, 'solid');
+        const solid = flattenTestStyle(opaque.findByTestId('android-card')?.props.style);
+        expect(Color(String(solid.backgroundColor)).alpha()).toBe(1);
+        expect(solid.elevation).toBe(4);
+    });
 });

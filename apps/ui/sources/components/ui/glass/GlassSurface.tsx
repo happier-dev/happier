@@ -20,6 +20,9 @@ import { parseThemeColor } from '@/theme/parseThemeColor';
 import { GLASS_BACKED_FAINT_INK_SHARE, GLASS_QUIET_INK_WEB_TOKENS, GlassBackedInkContext, glassQuietThemeInks, glassThemeInkWebStyle, resolveGlassBackedInk, resolveGlassPictureInk, useRetainedGlassBackedInk } from './glassBackedInk';
 import { GlassLivePictureBackdropContext } from './livePictureBackdrop';
 
+/** No elevation: Android would paint its shadow through a translucent coat. */
+const ANDROID_UNLIFTED = { elevation: 0 } as const;
+
 const retainSolidColor = (input: Readonly<{ color: string }>) => input.color;
 const withMaterialOpacity = (color: string, opacity: number) => parseThemeColor(color)?.alpha(opacity).rgb().string() ?? color;
 
@@ -292,7 +295,12 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
                 ? withMaterialOpacity(tintColor, material.opacity) : solidColor;
         // Only the SDK background changes tier. Input/scroll/selection state
         // must stay under the same native parent when a preset or OS choice changes.
-        return <View {...viewProps} style={[props.style, backed ? props.backedStyle : null, props.noCoat ? null : { backgroundColor }, finishLift]}>
+        // Android draws an elevation shadow through a translucent coat as a grey band across the whole surface,
+        // so a surface that keeps its tint (no blur behind it) is not lifted there; an opaque one keeps its lift.
+        const translucentAndroidCoat = Platform.OS === 'android' && !props.noCoat
+            && (backgroundColor === 'transparent' || (parseThemeColor(backgroundColor)?.alpha() ?? 1) < 1);
+        return <View {...viewProps} style={[props.style, backed ? props.backedStyle : null, props.noCoat ? null : { backgroundColor },
+            finishLift, translucentAndroidCoat ? ANDROID_UNLIFTED : null]}>
             {/* The material fills the border box, so the glass's own edge lies under the surface's border: one edge. */}
             <View pointerEvents="none" style={[
                 StyleSheet.absoluteFillObject,
