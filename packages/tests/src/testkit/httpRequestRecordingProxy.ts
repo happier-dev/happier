@@ -10,6 +10,8 @@ export type RecordedHttpProxyRequest = Readonly<{
   method: string;
   path: string;
   headers: Readonly<Record<string, string | readonly string[] | undefined>>;
+  /** Loopback source port of the caller's connection; lets a test attribute the request to its process. */
+  clientPort: number | null;
   startedAtMs: number;
   endedAtMs: number | null;
   statusCode: number | null;
@@ -49,6 +51,7 @@ type MutableRecordedHttpProxyRequest = {
   method: string;
   path: string;
   headers: Readonly<Record<string, string | readonly string[] | undefined>>;
+  clientPort: number | null;
   startedAtMs: number;
   endedAtMs: number | null;
   statusCode: number | null;
@@ -104,6 +107,11 @@ export async function startHttpRequestRecordingProxy(params: Readonly<{
   /** Expose the proxy through HTTPS while keeping its upstream target on loopback HTTP. */
   tls?: Readonly<{ key: string | Buffer; cert: string | Buffer }>;
   delayRequestMs?: (request: RecordedHttpProxyRequest) => number | Promise<number>;
+  /**
+   * Awaited once per request (HTTP and upgrade) while the caller's connection is still open, before
+   * forwarding, so a test can attribute `clientPort` to the calling process.
+   */
+  onRequestStart?: (request: RecordedHttpProxyRequest) => void | Promise<void>;
   captureRequestBody?: boolean | ((request: RecordedHttpProxyRequest) => boolean);
   /**
    * Retain the upstream response bytes each proxied request observed. Off by default so
@@ -152,6 +160,7 @@ export async function startHttpRequestRecordingProxy(params: Readonly<{
       method: req.method ?? 'GET',
       path: req.url ?? '/',
       headers: cloneHeaders(req.headers),
+      clientPort: req.socket.remotePort ?? null,
       startedAtMs: Date.now(),
       endedAtMs: null,
       statusCode: null,
@@ -313,6 +322,7 @@ export async function startHttpRequestRecordingProxy(params: Readonly<{
     const entry = begin(req, false);
     let captureRequestBody = false;
     try {
+      await params.onRequestStart?.(snapshot(entry));
       const delayMs = normalizeDelayMs(await params.delayRequestMs?.(entry));
       if (delayMs > 0) await sleep(delayMs);
       captureRequestBody = params.captureRequestBody === true
@@ -410,6 +420,8 @@ export async function startHttpRequestRecordingProxy(params: Readonly<{
 
   server.on('upgrade', (req, socket, head) => {
     const entry = begin(req, true);
+    // Upgraded connections stay open, so attribution may complete while the tunnel is established.
+    void Promise.resolve(params.onRequestStart?.(snapshot(entry))).catch(() => {});
     const targetSocket = trackSocket(connect({
       host: target.hostname,
       port: Number(target.port),

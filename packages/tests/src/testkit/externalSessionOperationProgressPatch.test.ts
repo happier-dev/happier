@@ -18,6 +18,7 @@ function recordedSessionPatch(body: unknown): RecordedHttpProxyRequest {
     headers: { 'content-type': 'application/json' },
     startedAtMs: 1,
     endedAtMs: 2,
+    clientPort: null,
     statusCode: 200,
     upgraded: false,
     error: null,
