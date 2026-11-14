@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -13,6 +13,8 @@ import {
   MarketplaceIndexEntryV1Schema,
   MarketplaceIndexSourceSnapshotV1Schema,
 } from '@happier-dev/protocol';
+
+import { writeChangedFileSync } from './writeChangedFile.mjs';
 
 const defaultWebsiteRoot = fileURLToPath(new URL('..', import.meta.url));
 const defaultPublicDir = fileURLToPath(new URL('../public', import.meta.url));
@@ -102,8 +104,7 @@ export async function generateMarketplaceCatalog({
     diagnostics: [],
   });
   const outputPath = join(publicDir, 'catalog.json');
-  await mkdir(publicDir, { recursive: true });
-  await writeFile(outputPath, `${JSON.stringify(snapshot, null, 2)}\n`, 'utf8');
+  writeChangedFileSync(outputPath, `${JSON.stringify(snapshot, null, 2)}\n`);
   return outputPath;
 }
 

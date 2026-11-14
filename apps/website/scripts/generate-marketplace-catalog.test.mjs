@@ -176,9 +176,13 @@ test('emits a deterministic strict curated snapshot bound to the canonical sourc
     assert.equal(snapshot.source.kind, 'curated');
     assert.equal(snapshot.source.id, deriveMarketplaceSourceId(CANONICAL_SOURCE_URL));
     assert.deepEqual(snapshot.entries, [], 'the source stays empty until an approved public npm release exists');
-    // Deterministic bytes: a second generation from the same source input is identical.
+    // Deterministic bytes: a second generation from the same source input is identical,
+    // and an unchanged rerun leaves the published file untouched (no mtime churn for build caches).
+    const { stat, utimes } = await import('node:fs/promises');
+    await utimes(outputPath, 1_000_000, 1_000_000);
     const secondPath = await generateMarketplaceCatalog({ publicDir });
     assert.equal(await readFile(secondPath, 'utf8'), raw);
+    assert.equal((await stat(secondPath)).mtimeMs, 1_000_000_000, 'an unchanged rerun rewrote catalog.json');
   } finally {
     await rm(publicDir, { recursive: true, force: true });
   }

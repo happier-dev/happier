@@ -44,9 +44,11 @@
  * Run after `yarn build:server` and before `yarn build:client`, which is the
  * order `yarn build` uses — the slices are inputs to the client bundle.
  */
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import { syncGeneratedDirectorySync } from './writeChangedFile.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
@@ -146,8 +148,9 @@ async function main() {
         return;
     }
 
-    rmSync(OUT_DIR, { recursive: true, force: true });
-    mkdirSync(OUT_DIR, { recursive: true });
+    // Collected, then published as real changes only: the slices are client-bundle
+    // inputs, and rewriting identical bytes would invalidate the bundler's caches.
+    const outputs = new Map();
 
     const routes = routeManifest();
     const englishSlugByPath = new Map(
@@ -162,8 +165,6 @@ async function main() {
         const full = JSON.parse(readFileSync(join(OVERLAY_DIR, `${locale}.json`), 'utf8'));
         const entries = Object.entries(full);
         const fullBytes = Buffer.byteLength(JSON.stringify(full));
-
-        mkdirSync(join(OUT_DIR, locale), { recursive: true });
 
         const localeRoutes = routes.filter((r) => r.locale === locale);
 
@@ -232,13 +233,13 @@ async function main() {
                 if (written.has(ns)) continue;
                 written.add(ns);
                 const json = JSON.stringify(byNamespace.get(ns));
-                writeFileSync(join(OUT_DIR, locale, `${ns}.json`), json);
+                outputs.set(`${locale}/${ns}.json`, json);
                 totalAfter += Buffer.byteLength(json);
             }
             totalBefore += fullBytes;
         }
 
-        writeFileSync(join(OUT_DIR, locale, '_routes.json'), JSON.stringify(manifest, null, 1));
+        outputs.set(`${locale}/_routes.json`, JSON.stringify(manifest, null, 1));
 
         const prefix = localeRoutes.length > 0 ? localeRoutes[0].path.split('/')[1] : locale;
         staleEntries.push(
@@ -247,6 +248,7 @@ async function main() {
             ),
         );
     }
+    const published = syncGeneratedDirectorySync(OUT_DIR, outputs);
 
     if (staleEntries.length > 0) {
         console.error(
@@ -261,7 +263,8 @@ async function main() {
     console.log(
         `i18n-slice-overlays: ${routes.filter((r) => locales.includes(r.locale)).length} localised ` +
             `route(s); ${kb(totalBefore)} of overlay imports became ${kb(totalAfter)} ` +
-            `(${((100 * saved) / totalBefore).toFixed(1)}% less), ${keptFull} kept whole by the gate.`,
+            `(${((100 * saved) / totalBefore).toFixed(1)}% less), ${keptFull} kept whole by the gate; ` +
+            `${published.written} slice file(s) written, ${published.removed} removed.`,
     );
 }
 

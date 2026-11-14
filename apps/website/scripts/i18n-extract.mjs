@@ -24,6 +24,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve, basename } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { writeChangedFileSync } from './writeChangedFile.mjs';
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
 const OUT_DIR = join(ROOT, 'src/i18n/generated');
@@ -201,7 +203,6 @@ if (CHECK) {
     process.exit(0);
 }
 
-mkdirSync(OUT_DIR, { recursive: true });
-writeFileSync(catalogueFile, catalogueJson, 'utf8');
-writeFileSync(metaFile, metaJson, 'utf8');
+writeChangedFileSync(catalogueFile, catalogueJson);
+writeChangedFileSync(metaFile, metaJson);
 console.log(`\nwrote src/i18n/generated/en.json (${ids.length} ids) and dnt.json (${dntCount})`);

@@ -33,6 +33,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import sharp from 'sharp';
 import { RECIPES } from './imageRecipes.mjs';
+import { writeChangedFileSync } from './writeChangedFile.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PUBLIC = path.join(ROOT, 'public');
@@ -235,7 +236,8 @@ async function main() {
         );
     }
 
-    await writeFile(CACHE_FILE, JSON.stringify(nextCache, null, 0));
+    // Lives in public/: an unchanged run must not touch it (it would be re-copied into dist).
+    writeChangedFileSync(CACHE_FILE, JSON.stringify(nextCache, null, 0));
     const ts = renderManifest(entries);
     const prev = await readFile(TS_OUT, 'utf8').catch(() => '');
     if (prev !== ts) {

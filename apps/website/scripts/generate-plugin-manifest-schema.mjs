@@ -1,8 +1,9 @@
-import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { createPluginManifestJsonSchemaV2 } from '@happier-dev/protocol';
+
+import { writeChangedFileSync } from './writeChangedFile.mjs';
 
 const defaultPublicDir = fileURLToPath(new URL('../public', import.meta.url));
 
@@ -11,7 +12,6 @@ export async function generatePluginManifestSchema({
   createSchema = createPluginManifestJsonSchemaV2,
 } = {}) {
   const outputPath = join(publicDir, 'schemas', 'plugin-manifest-v2.json');
-  await mkdir(join(publicDir, 'schemas'), { recursive: true });
   /*
    * Minified, not pretty-printed.
    *
@@ -27,11 +27,7 @@ export async function generatePluginManifestSchema({
    * packages/protocol/src/plugins/manifest/jsonSchema.test.ts JSON.parses the
    * file before comparing, so whitespace was never part of the contract.
    */
-  await writeFile(
-    outputPath,
-    `${JSON.stringify(createSchema())}\n`,
-    'utf8',
-  );
+  writeChangedFileSync(outputPath, `${JSON.stringify(createSchema())}\n`);
   return outputPath;
 }
 
