@@ -11,7 +11,7 @@ const STRONG_AUTH_ERROR_PATTERNS = [
   /\binvalid[_\s-]+authentication(?:[_\s-]+error)?\b/u,
   /\b(?:failed|failure)\s+to\s+authenticate\b/u,
   /\b(?:invalid|missing|no)\s+api[_\s-]*key\b/u,
-  /\bapi[_\s-]*key\s+(?:is\s+)?(?:invalid|missing|not\s+set|expired|rejected|required)\b/u,
+  /\bapi[_\s-]*key[_\s-]+(?:is\s+)?(?:invalid|missing|not\s+(?:set|valid)|expired|rejected|required)\b/u,
   /\bnot\s+logged\s+in\b/u,
   /\blogin\s+required\b/u,
   /\b(?:failed\s+to\s+refresh\s+token|token\s+refresh\s+failed)\b/u,

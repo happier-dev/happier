@@ -3377,12 +3377,14 @@ describe('createPublicAcpSession', () => {
           { timeoutMs: 5000, intervalMs: 10, label: 'Gemini native numeric failure' });
         const failure = events.find(event => event.kind === 'input-rejected' || event.kind === 'turn-failed' || event.kind === 'run-failed');
         if (!failure || !('diagnostic' in failure) || !failure.diagnostic) throw new Error('Expected native failed diagnostic');
-        expect(failure.diagnostic).toMatchObject({ code: requestErrorCode === -32603 ? 'acp_turn_failed' : 'acp_input_rejected_before_effect', details: { requestErrorCode } });
+        expect(failure.diagnostic).toMatchObject({ code: 'acp_turn_failed', details: { requestErrorCode } });
         expect(failure.diagnostic.details).toMatchObject({ failureCause: {
           phase: 'turn', providerErrorCode: requestErrorCode,
         } });
         expect(readFileSync(promptCountPath, 'utf8')).toBe('1');
-        expect(events.some(event => event.kind === 'input-accepted')).toBe(requestErrorCode === -32603);
+        // Provider failures end a turn; only protocol validation rejects input before effect.
+        expect(events.some(event => event.kind === 'input-accepted')).toBe(scope === 'session');
+        expect(events.some(event => event.kind === 'run-failed')).toBe(scope === 'run');
         expect(events.some(event => event.kind === 'run-complete')).toBe(false);
         expect(JSON.stringify(failure)).not.toContain('private-provider-token');
         const adapter = createGeminiConnectedServiceRuntimeAuthAdapter();

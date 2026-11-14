@@ -66,9 +66,11 @@ tool result. The development transport and plugin declarations have no tool-call
 watchdog budget; initialization, idle and prompt-completion waits retain their
 existing owners and cancellation behavior.
 
-ACP `session/prompt` JSON-RPC internal errors (`-32603`) settle a failed turn
-even when generation produced no assistant output. Protocol validation refusals
-remain input rejections. The host's existing runtime-issue classifier and failure
+ACP `session/prompt` provider errors, including JSON-RPC internal errors (`-32603`)
+and Gemini's HTTP-shaped codes (`400`, `429`), settle a failed turn even when
+generation produced no assistant output. JSON-RPC invalid-request, method-not-found
+and invalid-params refusals (`-32600`, `-32601`, `-32602`) remain input rejections.
+The host's existing runtime-issue classifier and failure
 transcript projector preserve provider messages and typed usage limits for
 Session, UI, Voice and finite Run consumers. Nonterminal provider retry activity
 does not establish turn completion.

@@ -2673,10 +2673,10 @@ export class AcpBackend implements CatalogAcpBackend {
         return { kind: 'effect_observed_without_prompt_response' };
       }
       if (error instanceof RequestError) {
-        // An internal-error response ends session/prompt; OpenCode uses it for
-        // completed provider failures without streamed output. Preserve that
-        // failed completion on the normal turn path.
-        if (error.code === -32603) {
+        // Only JSON-RPC request validation proves the prompt was not processed.
+        // Provider errors (including Gemini's HTTP-shaped 400/429 codes) end
+        // session/prompt and must settle through the normal failed-turn path.
+        if (error.code !== -32600 && error.code !== -32601 && error.code !== -32602) {
           return { kind: 'accepted_by_prompt_response' };
         }
         return { kind: 'rejected_before_effect', error: normalizedError };

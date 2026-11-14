@@ -32,9 +32,11 @@ it('preserves a more specific native phase and reason instead of replacing them'
 });
 
 
-it.each([false, true, 'recorded' as const])('carries a multiline backend refusal through ACP and transcript publication, then recovers (request dump=%s)', async requestDump => {
+it.each([false, true, 'recorded' as const, 'invalid-key' as const])('carries a multiline backend refusal through ACP and transcript publication, then recovers (request dump=%s)', async requestDump => {
   // Native privacy projection retains the public first line, never request-dump contents.
-  const expectedMessage = requestDump === 'recorded' ? 'Cannot connect to API' : 'Error handling request {';
+  const invalidKey = requestDump === 'invalid-key';
+  const requestErrorCode = invalidKey ? 400 : -32603;
+  const expectedMessage = invalidKey ? 'API_KEY_INVALID' : requestDump === 'recorded' ? 'Cannot connect to API' : 'Error handling request {';
   await withTempDir('gemini-acp-refusal-', async directory => {
     // Only the external native process and transcript persistence are substituted.
     const script = writeAcpTestAgentScript({ dir: directory, fileName: 'gemini.mjs', source: `
@@ -50,8 +52,8 @@ it.each([false, true, 'recorded' as const])('carries a multiline backend refusal
             process.stderr.write('Error handling request { id: 2, method: "session/prompt" } { message: "APIError: Unable to connect" }\\n');
             await new Promise(resolve => setTimeout(resolve, 50));
           }
-          process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: r.id, error: { code: -32603,
-            message: ${requestDump === 'recorded' ? JSON.stringify('Internal error: Cannot connect to API: Unable to connect. Is the computer able to access the url?') : JSON.stringify('Error handling request {\n  "message": "Cannot connect to API",\n  "authorization": "Bearer synthetic-private-token"\n}')},
+          process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: r.id, error: { code: ${requestErrorCode},
+            message: ${invalidKey ? JSON.stringify(JSON.stringify({ error: { message: JSON.stringify({ error: { code: 400, message: 'API key not valid. Please pass a valid API key.', status: 'INVALID_ARGUMENT', details: [{ reason: 'API_KEY_INVALID' }] } }), code: 400, status: '' } })) : requestDump === 'recorded' ? JSON.stringify('Internal error: Cannot connect to API: Unable to connect. Is the computer able to access the url?') : JSON.stringify('Error handling request {\n  "message": "Cannot connect to API",\n  "authorization": "Bearer synthetic-private-token"\n}')},
             data: ${JSON.stringify(requestDump === 'recorded' ? { service: 'session', errorName: 'APIError' } : { limitCategory: 'validation_failed', body: 'PRIVATE_BODY' })},
           } }) + '\\n');
           continue;
@@ -83,8 +85,8 @@ it.each([false, true, 'recorded' as const])('carries a multiline backend refusal
       const failure = events.find(event => event.kind === 'turn-failed');
       if (!failure || failure.kind !== 'turn-failed') throw new Error('Missing turn failure');
       const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'gemini', error: failure.diagnostic });
-      expect(issue).toMatchObject({ source: 'agent_session_error', failureCause: { phase: 'turn',
-        providerErrorCode: -32603, providerErrorMessage: expect.stringContaining(expectedMessage) } });
+      expect(issue).toMatchObject({ source: invalidKey ? 'auth_error' : 'agent_session_error', failureCause: { phase: invalidKey ? 'authentication' : 'turn',
+        ...(invalidKey ? { failureReason: 'authentication_required' } : {}), providerErrorCode: requestErrorCode, providerErrorMessage: expect.stringContaining(expectedMessage) } });
       if (requestDump === 'recorded') {
         expect(issue.failureCause?.providerErrorMessage).toContain('service=session');
         expect(issue.failureCause?.providerErrorMessage).toContain('errorName=APIError');
@@ -97,8 +99,8 @@ it.each([false, true, 'recorded' as const])('carries a multiline backend refusal
         } } });
       await project(failure);
       expect(writes).toContainEqual(expect.objectContaining({ meta: expect.objectContaining({ runtimeIssueV1:
-        expect.objectContaining({ sanitizedPreview: expect.stringContaining(expectedMessage),
-          failureCause: expect.objectContaining({ providerErrorCode: -32603,
+        expect.objectContaining({ ...(invalidKey ? { source: 'auth_error' } : { sanitizedPreview: expect.stringContaining(expectedMessage) }),
+          failureCause: expect.objectContaining({ providerErrorCode: requestErrorCode,
             providerErrorMessage: expect.stringContaining(expectedMessage) }) }) }) }));
       expect(JSON.stringify(writes)).not.toMatch(/synthetic-private-token|PRIVATE_BODY/);
       await session.send({ inputIds: ['retry'], input: { text: 'Try again' }, delivery: { kind: 'newTurn', turnId: 'retry' } });
