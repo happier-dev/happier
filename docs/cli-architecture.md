@@ -813,6 +813,13 @@ install root) either way — leaves the definition as it is and starts what is i
 desktop's quiet start of a stopped service (D6) runs the CLI the service already runs and any switch
 goes through the install dry-run's consent and the strict install.
 
+In development source, status and start/restart resolve their expected launcher through
+`resolveDaemonServiceInstallRuntimeTarget`, the installer's canonical launcher policy, without
+acquiring a JavaScript runtime. Once a managed shim is available, start/restart refresh an older
+version-pinned managed bootstrap launcher to that shim. With no stable launcher available they
+retain the already-resolved runtime target. The installed autostart mode and desktop attribution
+are preserved; the managed/user-installed CLI consent boundary above still applies.
+
 **One CLI per computer (plan R12).** That consent is asked at most once per decision: when the
 executor has asked "Let Happier manage it / Keep my own" (prompt `setup.cliChoice`, before any write;
 see [One CLI per computer](binary-runtime.md#one-cli-per-computer-plan-r12)), a recorded **manage**
