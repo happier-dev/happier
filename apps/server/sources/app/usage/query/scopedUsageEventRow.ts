@@ -25,21 +25,28 @@ export function isPublicEligibleUsageRow(row: Pick<ScopedUsageEventRow, 'metadat
     return !(attribution?.source.kind === 'native' && attribution.source.accountScope === 'workspace');
 }
 
+function readNativeSubject(value: unknown): UsageNativeAccountingSubject | null {
+    if (value == null) return null;
+    const subject = nativeSubjectReadSchema.safeParse(value);
+    return subject.success ? subject.data : null;
+}
+
 /** Keep parsed evidence on the row, including the neutral parser's normalized JSON snapshots. */
 export function readScopedUsageAccountingEvidence(
     row: Pick<ScopedUsageEventRow, "metadata" | "accountingEvidence">,
+): ScopedUsageAccountingEvidence {
+    return readScopedUsageAccountingEvidenceWithSubjectReader(row, readNativeSubject);
+}
+
+function readScopedUsageAccountingEvidenceWithSubjectReader(
+    row: Pick<ScopedUsageEventRow, "metadata" | "accountingEvidence">,
+    readSubject: typeof readNativeSubject,
 ): ScopedUsageAccountingEvidence {
     if (row.accountingEvidence) return row.accountingEvidence;
     const metadata = parseUsageEventMetadata(row.metadata);
     const subjectValue = metadata && typeof metadata === "object" && !Array.isArray(metadata)
         ? Reflect.get(metadata, "accountingSubject") : undefined;
-    const subject = subjectValue != null
-        ? nativeSubjectReadSchema.safeParse(subjectValue)
-        : undefined;
-    return {
-        accounting: readUsageAccountingMetadata(metadata),
-        subject: subject?.success ? subject.data : null,
-    };
+    return { accounting: readUsageAccountingMetadata(metadata), subject: readSubject(subjectValue) };
 }
 
 function parseUsageEventMetadata(value: unknown): unknown {
@@ -106,9 +113,9 @@ export type ScopedUsageEvidenceDbRow = Pick<ScopedUsageEventDbRow, UsageEvidence
 export type ScopedUsageEvidenceRow = Pick<ScopedUsageEventRow, UsageEvidenceField>
     & { accountingEvidence: ScopedUsageAccountingEvidence };
 
-function normalizeScopedUsageMetadata(value: unknown, admittedEvidence?: ScopedUsageAccountingEvidence) {
+function normalizeScopedUsageMetadata(value: unknown, admittedEvidence?: ScopedUsageAccountingEvidence, readSubject = readNativeSubject) {
     const metadata = parseUsageEventMetadata(value);
-    const accountingEvidence = admittedEvidence ?? readScopedUsageAccountingEvidence({ metadata });
+    const accountingEvidence = admittedEvidence ?? readScopedUsageAccountingEvidenceWithSubjectReader({ metadata }, readSubject);
     const { accounting, subject: accountingSubject } = accountingEvidence;
     // Team coverage also consumes metadata outside the accounting projection.
     const internalMetadata = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
@@ -126,6 +133,28 @@ function normalizeScopedUsageMetadata(value: unknown, admittedEvidence?: ScopedU
 export function toScopedUsageEvidenceRow<Row extends Pick<ScopedUsageEvidenceDbRow, 'metadata' | 'accountingEvidence'>>(row: Row):
     Omit<Row, 'metadata' | 'accountingEvidence'> & Pick<ScopedUsageEvidenceRow, 'metadata' | 'accountingEvidence'> {
     return { ...row, ...normalizeScopedUsageMetadata(row.metadata, row.accountingEvidence) };
+}
+
+/** One batch shares admitted native identity while retaining each event's diagnostics and attribution. */
+export function createScopedUsageEvidenceRowNormalizer() {
+    const subjects = new Map<string, UsageNativeAccountingSubject | null>();
+    const readSubject: typeof readNativeSubject = value => {
+        if (value == null) return null;
+        const key = JSON.stringify(value);
+        if (key === undefined) return readNativeSubject(value);
+        let subject = subjects.get(key);
+        if (subject === undefined) {
+            subject = readNativeSubject(value);
+            subjects.set(key, subject);
+        }
+        return subject;
+    };
+    return <Row extends Pick<ScopedUsageEvidenceDbRow, 'metadata' | 'accountingEvidence'>>(row: Row):
+        Omit<Row, 'metadata' | 'accountingEvidence'> & Pick<ScopedUsageEvidenceRow, 'metadata' | 'accountingEvidence'> => {
+        // Object inputs may change; supplied evidence has already been admitted.
+        if (typeof row.metadata !== 'string' || row.accountingEvidence) return toScopedUsageEvidenceRow(row);
+        return { ...row, ...normalizeScopedUsageMetadata(row.metadata, undefined, readSubject) };
+    };
 }
 
 function readCostBreakdown(value: string | null): Record<string, number> | undefined {

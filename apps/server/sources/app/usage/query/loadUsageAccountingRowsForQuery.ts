@@ -46,6 +46,9 @@ export async function loadUsageAccountingRowsForQuery(tx: Tx, accountId: string,
         (${hints}) #>> '{accountingSubject,nativeSessionKey}' AS native,
         regexp_replace((${hints}) #>> '{usageAccounting,nativeSessionId}', '[^a-zA-Z0-9]', '', 'g') AS producer`;
     const allHistory = queries.some(query => query.dateRange?.startMs === undefined);
+    // Window and history scans share account, end and source predicates. With
+    // non-null observedAt, the time complement excludes the same unique rows
+    // without joining and materializing the captured identities again.
     const candidates = allHistory ? prismaRuntime.empty : prismaRuntime.sql`, window_rows AS MATERIALIZED (
         SELECT ${identities}
         FROM "UsageEvent" WHERE "accountId" = ${accountId} ${end}
@@ -54,7 +57,7 @@ export async function loadUsageAccountingRowsForQuery(tx: Tx, accountId: string,
         SELECT ${identities}
         FROM "UsageEvent" WHERE "accountId" = ${accountId} ${end}
             AND "source" NOT IN (${sources})
-            AND NOT EXISTS (SELECT 1 FROM window_rows w WHERE w."id" = "UsageEvent"."id")
+            AND NOT (${windows})
     ), sessions AS (
         SELECT DISTINCT "sessionId", "agentId" FROM window_rows WHERE "sessionId" IS NOT NULL
         UNION SELECT "sessionId", ${legacyUsageReportAgentId}::text AS "agentId" FROM retained_reports

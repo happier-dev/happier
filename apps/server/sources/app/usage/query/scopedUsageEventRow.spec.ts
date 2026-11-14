@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { UsageNativeAccountingSubjectSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 
-import { isPublicEligibleUsageRow, toScopedUsageEventRow } from "./scopedUsageEventRow";
+import { createScopedUsageEvidenceRowNormalizer, isPublicEligibleUsageRow, toScopedUsageEvidenceRow, toScopedUsageEventRow } from "./scopedUsageEventRow";
 
 function row(overrides: Partial<Parameters<typeof toScopedUsageEventRow>[0]> = {}) {
     return {
@@ -45,6 +45,64 @@ function row(overrides: Partial<Parameters<typeof toScopedUsageEventRow>[0]> = {
         ...overrides,
     };
 }
+
+describe('captured Usage metadata admission', () => {
+    it('admits native subjects once per distinct captured value while preserving per-event accounting and attribution', () => {
+        // Actual Account A capture: 107,019 rows, 54,945 subject rows, 3,976 subjects.
+        const subject = (index: number) => ({ kind: 'native', machineId: 'machine',
+            agent: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            sourceRootKey: 'root', nativeSessionKey: `native-${index % 3_976}` });
+        const value = (index: number) => JSON.stringify({
+            usageAccounting: { path: 'native', status: 'available', asOfMs: index, extra: 'drop' },
+            ...(index < 54_945 ? { accountingSubject: subject(index) } : {}), measurement: index,
+        });
+        const normalize = createScopedUsageEvidenceRowNormalizer();
+        const subjects = new Set<unknown>();
+        let last;
+        for (let index = 0; index < 107_019; index++) {
+            const admitted = normalize({ id: index, metadata: value(index) });
+            if (admitted.accountingEvidence.subject) subjects.add(admitted.accountingEvidence.subject);
+            if (index === 107_018) last = admitted;
+        }
+        expect(subjects.size, 'native identity admission follows distinct subjects, not repeated events').toBe(3_976);
+        expect(last).toMatchObject({ id: 107_018, metadata: {
+            usageAccounting: { path: 'native', status: 'available', asOfMs: 107_018 }, measurement: 107_018,
+        } });
+        const first = normalize({ id: 'first', metadata: value(0) });
+        const changed = normalize({ id: 'changed', metadata: value(1) });
+        expect(changed.metadata).not.toBe(first.metadata);
+        expect(createScopedUsageEvidenceRowNormalizer()({ metadata: value(0) }).accountingEvidence.subject)
+            .not.toBe(first.accountingEvidence.subject);
+        const attribution = (accountScope: 'personal' | 'workspace') => JSON.stringify({
+            usageAccounting: { path: 'runtime' }, accountingSubject: subject(0),
+            usageAttribution: { v: 1, turnId: 'turn-1', source: { kind: 'native', connectedAccount: null, accountScope } },
+        });
+        const personal = normalize(row({ metadata: attribution('personal') }));
+        const workspace = normalize(row({ metadata: attribution('workspace') }));
+        expect(isPublicEligibleUsageRow(toScopedUsageEventRow(personal))).toBe(true);
+        expect(isPublicEligibleUsageRow(toScopedUsageEventRow(workspace))).toBe(false);
+    });
+
+    it('retains canonical malformed, object-valued and already-admitted evidence semantics', () => {
+        const normalize = createScopedUsageEvidenceRowNormalizer();
+        const subject = { kind: 'native', machineId: 'machine', agent: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            sourceRootKey: 'root', nativeSessionKey: 'native' };
+        for (const metadata of [undefined, null, '{malformed', 'null', '[]', '{"usageAccounting":{"path":123}}',
+            JSON.stringify({ usageAccounting: { path: 'native', extra: 'drop' }, accountingSubject: subject, opaque: { key: 'value' } }),
+            { usageAccounting: { path: 'runtime' }, accountingSubject: { ...subject, machineId: 123 } }]) {
+            expect(normalize({ metadata })).toEqual(toScopedUsageEvidenceRow({ metadata }));
+            expect(normalize({ metadata })).toEqual(toScopedUsageEvidenceRow({ metadata }));
+        }
+        const metadata = JSON.stringify({ usageAccounting: { path: 'native' } });
+        normalize({ metadata });
+        const admitted = { accounting: { path: 'runtime' as const }, subject: null };
+        expect(normalize({ metadata, accountingEvidence: admitted }).accountingEvidence).toBe(admitted);
+        const mutable = { usageAccounting: { path: 'runtime' as 'runtime' | 'native' } };
+        normalize({ metadata: mutable });
+        mutable.usageAccounting.path = 'native';
+        expect(normalize({ metadata: mutable }).accountingEvidence.accounting?.path).toBe('native');
+    });
+});
 
 describe('public usage eligibility', () => {
     it.each([

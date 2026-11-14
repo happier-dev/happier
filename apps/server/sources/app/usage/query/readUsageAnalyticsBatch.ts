@@ -11,7 +11,7 @@ import { setImmediate } from 'node:timers/promises';
 import type { UsageQueryTiming } from './usageQueryTiming';
 import { projectUsageCoverageEvidence } from './projectUsageCoverageEvidence';
 import { loadRetainedLegacyUsageReports, loadUsageEventEvidenceForQuery, loadUsageEventsForQuery } from './loadUsageEventsForQuery';
-import { toScopedUsageEvidenceRow, type ScopedUsageEvidenceRow } from './scopedUsageEventRow';
+import { createScopedUsageEvidenceRowNormalizer, toScopedUsageEvidenceRow, type ScopedUsageEvidenceRow } from './scopedUsageEventRow';
 import { getDbProviderFromEnv } from '@/storage/prisma';
 import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import { loadUsageAccountingRowsForQuery, type CapturedUsageAccountingRow } from './loadUsageAccountingRowsForQuery';
@@ -268,6 +268,7 @@ export async function captureUsageAnalyticsBatchInTx(tx: Tx, accountId: string, 
 async function admitUsageBatchMetadata(snapshot: Awaited<ReturnType<typeof captureUsageAnalyticsBatchInTx>>,
     queries: readonly UsageAnalyticsQueryRequest[], timing?: UsageQueryTiming, isReaderClosed?: () => boolean) {
     assertUsageReaderOpen(isReaderClosed);
+    const normalizeEvidence = createScopedUsageEvidenceRowNormalizer();
     let sliceStartedAt = performance.now();
     // Body and evidence readers borrow one normalized copy of a captured event.
     const admittedBodies = new Map<object, UsageAnalyticsSnapshot['rows'][number]
@@ -287,7 +288,7 @@ async function admitUsageBatchMetadata(snapshot: Awaited<ReturnType<typeof captu
         for (const row of rows) {
             const evidence = evidenceById?.get(row.id);
             const body = evidence ? { ...row, metadata: evidence.metadata, accountingEvidence: evidence.accountingEvidence }
-                : toScopedUsageEvidenceRow(row);
+                : normalizeEvidence(row);
             admitted.push(body);
             admittedBodies.set(row, body);
             if (performance.now() - sliceStartedAt >= usageQuerySliceMs) {
@@ -308,7 +309,7 @@ async function admitUsageBatchMetadata(snapshot: Awaited<ReturnType<typeof captu
         if (!admitted) {
             admitted = { evidenceRows: [], normalizedEvidenceById: new Map() };
             for (const row of captured.rawEvidenceRows) {
-                const evidence = captured.normalizedEvidenceById?.get(row.id) ?? admittedBodies.get(row) ?? toScopedUsageEvidenceRow(row);
+                const evidence = captured.normalizedEvidenceById?.get(row.id) ?? admittedBodies.get(row) ?? normalizeEvidence(row);
                 admitted.evidenceRows.push(evidence);
                 admitted.normalizedEvidenceById.set(evidence.id, evidence);
                 if (performance.now() - sliceStartedAt >= usageQuerySliceMs) {
