@@ -3,6 +3,11 @@ import { useIsAppDestinationRootPath } from '@/components/appShell/destinations/
 import { Stack, usePathname } from '@/components/appShell/workspace/destinationRoute';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import {
+  formatHappierPageCount,
+  HappierPageCountLine,
+  type HappierPageCountLineTextRender,
+} from '@happier-dev/plugin-ui/presentation';
 
 import {
   usePublishPageCreateAction,
@@ -39,15 +44,6 @@ export type MainScreenSearch = Readonly<{
   /** A field that hands its query on (Discover opens the Search page with it) rather than filtering in place. */
   onSubmitEditing?: () => void;
 }>;
-
-/**
- * The page's count line from its owner's reported counts ("12 Machines · 3 online"): each part already says its
- * number in words; an absent or empty part drops out, and no part means no line. Pages never count for it.
- */
-export function formatMainScreenCount(parts: readonly (string | null | undefined | false)[]): string | null {
-  const shown = parts.filter((part): part is string => typeof part === 'string' && part.trim().length > 0);
-  return shown.length > 0 ? shown.join(' · ') : null;
-}
 
 export type MainScreenHeaderProps = Readonly<{
   testID?: string;
@@ -96,8 +92,8 @@ export const MainScreenHeader = React.memo(function MainScreenHeader(
   const search = props.search ?? null;
   const searchState = useMainScreenSearch(search);
   const columnMaxWidth = useLayoutMaxWidth();
-  const countLine = props.count ? formatMainScreenCount(props.count) : null;
-  const countReserved = countLine === null && props.countPending === true;
+  // The count line's one owner (shared with a plugin page header's `count`) formats, draws and reserves it.
+  const hasCount = props.countPending === true || (props.count !== undefined && formatHappierPageCount(props.count) !== null);
   const createControl =
     props.createTrigger !== undefined
       ? props.createTrigger
@@ -148,7 +144,7 @@ export const MainScreenHeader = React.memo(function MainScreenHeader(
           }
         />
       </NavigationLargeTitleProvider>
-      {props.band != null || (search && searchState.open) || props.status != null || countLine !== null || countReserved ? (
+      {props.band != null || (search && searchState.open) || props.status != null || hasCount ? (
         // The sheets' measure (capped and centred like `ItemGroup`), so the rows stand on the cards' edge at any width.
         <View style={styles.underBand}>
           <View style={[styles.under, { maxWidth: columnMaxWidth, paddingHorizontal: resolveItemGroupContentHorizontalInsetPx() }]}>
@@ -180,12 +176,9 @@ export const MainScreenHeader = React.memo(function MainScreenHeader(
             />
           ) : null}
           {props.status}
-          {countLine !== null ? (
-            <Text testID={props.testID === undefined ? undefined : `${props.testID}:count`} variant="meta"
-              numberOfLines={1} style={styles.count}>{countLine}</Text>
-          ) : countReserved ? (
-            <Text variant="meta" numberOfLines={1} style={styles.count} accessibilityElementsHidden
-              importantForAccessibility="no-hide-descendants">{' '}</Text>
+          {hasCount ? (
+            <HappierPageCountLine parts={props.count ?? NO_COUNT} {...(props.countPending === true ? { pending: true } : {})}
+              {...(props.testID === undefined ? {} : { testID: `${props.testID}:count` })} renderText={renderCountText} />
           ) : null}
           </View>
         </View>
@@ -232,6 +225,11 @@ export function useMainScreenSearch(search: MainScreenSearch | null): Readonly<{
 }
 
 const MAIN_SCREEN_BAR = Object.freeze({ headerShown: false });
+const NO_COUNT: readonly string[] = Object.freeze([]);
+// Core's own text owner draws the shared count line's words (its type scale and font scaling).
+const renderCountText: HappierPageCountLineTextRender = (input) => (
+  <Text testID={input.testID} variant="meta" numberOfLines={1} style={styles.count}>{input.text}</Text>
+);
 
 const styles = StyleSheet.create((theme) => ({
   head: {

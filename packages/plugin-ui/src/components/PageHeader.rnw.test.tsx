@@ -8,8 +8,39 @@ import { PageHeader } from './PageHeader.js';
 import type { HappierLayoutChangeEvent } from '../presentation/portableTypes.js';
 import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
 import { HAPPIER_PAGE_TEXT } from '../presentation/layout/pageText.js';
+import { HappierPageCountLine } from '../presentation/layout/PageCountLine.js';
 
 describe('public PageHeader composition', () => {
+  it("draws the page's count line from the plugin's own counts, exactly as a core main screen draws it", () => {
+    const context = createSurfaceContext();
+    const view = mountThroughReactNativeWeb(<PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+      <PageHeader testID="apps" title="Apps" description="What runs here." count={['12 apps', null, '', '3 failing']} />
+      <HappierPageCountLine testID="core" parts={['12 apps', '3 failing']} />
+    </PluginUiProvider>);
+    try {
+      const line = view.container.querySelector<HTMLElement>('[data-testid="apps:count"]');
+      const core = view.container.querySelector<HTMLElement>('[data-testid="core"]')!;
+      expect(line?.textContent).toBe('12 apps · 3 failing');
+      // One owner: the plugin's line is the core line, face for face.
+      for (const property of ['font-size', 'line-height', 'font-weight', 'font-family', 'color', 'font-variant-numeric'] as const) {
+        expect(getComputedStyle(line!).getPropertyValue(property)).toBe(getComputedStyle(core).getPropertyValue(property));
+      }
+    } finally { view.unmount(); }
+  });
+
+  it('keeps the count line out until a count is reported, and holds its place while counts are read', () => {
+    const context = createSurfaceContext();
+    const view = mountThroughReactNativeWeb(<PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+      <PageHeader testID="none" title="Apps" description="What runs here." count={[null, '']} />
+      <PageHeader testID="pending" title="Apps" description="What runs here." count={[]} countPending />
+    </PluginUiProvider>);
+    try {
+      expect(view.container.querySelector('[data-testid="none:count"]')).toBeNull();
+      const pending = view.container.querySelector('[data-testid="pending"]')!;
+      expect(pending.querySelector('[aria-hidden="true"]')?.textContent).toBe(' ');
+    } finally { view.unmount(); }
+  });
+
   it.each([[undefined, false], ['hang', true]] as const)('with actionsLayout %s the mark hangs from the title line: %s', (actionsLayout, hanging) => {
     const context = createSurfaceContext();
     const view = mountThroughReactNativeWeb(<PluginUiProvider hostApi={createHostApiStub(context)} context={context}>

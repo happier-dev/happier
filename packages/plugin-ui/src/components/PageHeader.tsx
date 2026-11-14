@@ -45,6 +45,14 @@ export type PageHeaderProps = Readonly<{
   compactPresentation?: 'centered';
   /** The distinguishing facts of the thing the page is about, on one quiet line. */
   meta?: readonly PageHeaderMetaFact[];
+  /**
+   * The page's count line, last in the header: the counts your owner reports, each part saying its number in
+   * words (`['12 apps', failing > 0 ? `${failing} failing` : null]`). Absent or empty parts drop out; no part, no
+   * line. Never count rows on the page for it.
+   */
+  count?: readonly (string | null | undefined | false)[];
+  /** The counts are still being read: the line keeps its place, empty, so nothing moves when they arrive. */
+  countPending?: boolean;
   /** At most one primary page action plus context controls. */
   actions?: ReactNode;
   /**
@@ -121,6 +129,8 @@ export function PageHeader(props: PageHeaderProps): ReactElement {
       detailsPlacement={props.detailsPlacement}
       compactPresentation={props.compactPresentation}
       meta={meta}
+      {...(props.count === undefined ? {} : { count: props.count })}
+      {...(props.countPending === true ? { countPending: true } : {})}
       actions={hoisted ? null : actions}
       actionsLayout={props.actionsLayout}
       metaIdCopy={metaIdCopy}

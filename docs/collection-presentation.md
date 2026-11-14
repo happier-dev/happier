@@ -545,6 +545,18 @@ the old observation. These home projections do not create a fleet probe,
 attention store, public orbit API or second status policy. Complete loaded page
 and responsive interaction acceptance remains separate from this source contract.
 
+### Page count line (0.3 development)
+
+A page's count line ("12 Machines · 3 online") has one owner:
+`HappierPageCountLine` and `formatHappierPageCount` in
+[`PageCountLine.tsx`](../packages/plugin-ui/src/presentation/layout/PageCountLine.tsx).
+It formats the owner's reported parts, draws one quiet meta line in tabular
+figures, and reserves an empty, hidden line while counts are pending. Core
+`MainScreenHeader` draws it last in its under-band. `HappierPageHeader`'s
+`count`/`countPending` draw it last in the header, and the public plugin
+`PageHeader` forwards them. Pages pass counts their owners report and never
+count rendered rows.
+
 ### Machines page doors (0.3 development)
 
 The Machines page has two doors over the same components. Settings → Machines (`/settings/machines/**`) is a `SettingsCollectionLayout` with the machine list (`MachineCollectionRail`) as its rail, beside the Settings column. The rail door (`/machines/**`) is the shell destination `machines` in [`compactAppDestinationCatalog.ts`](../apps/ui/sources/components/appShell/destinations/compactAppDestinationCatalog.ts): its built-in `machines` column ([`MachinesColumn`](../apps/ui/sources/components/machines/collection/MachinesColumn.tsx)) hosts the same list where the Settings column would stand, so "Hide column" and column sizing stay with the shell owner. The destination is marked `railControl: 'footer'` because the rail's footer Machines icon (its popover) already draws it: the rail, its customizer and the phone launcher skip it, while it remains a visible destination for location (the Machines rail item is selected on `/machines/**`) and for the command palette's "Machines" command.

@@ -10,6 +10,7 @@ import { HAPPIER_PAGE_METRICS, resolveHappierPageBackMeasuringLine, resolveHappi
 import { HappierPageHeaderFlushTopContext, HappierShellTitleRowContext, resolveHappierTitleRowInsetPx } from './shellTitleRow.js';
 import { HAPPIER_PAGE_TEXT, resolveHappierPageTextStyle, type HappierPageTextRole } from './pageText.js';
 import { useHappierColumnEdgeRemainder } from './columnEdge.js';
+import { formatHappierPageCount, HappierPageCountLine } from './PageCountLine.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import { happierFocusRingStyle } from '../interaction/focusVisible.js';
 
@@ -98,6 +99,13 @@ export type HappierPageHeaderProps = Readonly<{
    * lines so a one-to-two-line readout does not move the document beneath it.
    */
   status?: ReactNode;
+  /**
+   * The page's count line from its owner's reported counts ("12 apps · 3 failing"), last in the header: each
+   * part already says its number in words; absent or empty parts drop out, and no part means no line.
+   */
+  count?: readonly (string | null | undefined | false)[];
+  /** The counts are still being read: the line keeps its place, empty, so nothing moves when they arrive. */
+  countPending?: boolean;
   /** The surrounding navigation's back control, when there is one. */
   renderBack?: HappierPageHeaderBackRender | null;
   /**
@@ -293,7 +301,8 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
     setLeadingHeightPx(current => current === height ? current : height);
   }, []);
 
-  if (!showTitle && !props.description && !props.actions && !props.status && !props.details && !props.meta) return null;
+  const hasCount = props.countPending === true || (props.count !== undefined && formatHappierPageCount(props.count) !== null);
+  if (!showTitle && !props.description && !props.actions && !props.status && !props.details && !props.meta && !hasCount) return null;
 
   const columnMaxWidthPx = props.columnMaxWidthPx ?? Number.POSITIVE_INFINITY;
   const centered = props.compactPresentation === 'centered' && paneWidthPx !== null && paneWidthPx < HAPPIER_PAGE_METRICS.rowStackBelowWidthPx;
@@ -537,6 +546,12 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
             This empty row reserves exactly their measured height without mounting a second control. */}
         {actionsBelowIdentity ? <View testID={props.testID ? `${props.testID}-actions-reserve` : undefined} pointerEvents="none" style={{ height: actionsHeightPx, marginTop: 12 }} /> : null}
         {props.details && props.detailsPlacement === 'column' ? <View style={{ marginTop: HAPPIER_PAGE_METRICS.pageHeaderLineGapPx }}>{props.details}</View> : null}
+        {hasCount ? (
+          <View style={{ marginTop: HAPPIER_PAGE_METRICS.pageHeaderLineGapPx }}>
+            <HappierPageCountLine parts={props.count ?? []} {...(props.countPending === true ? { pending: true } : {})}
+              {...(props.testID === undefined ? {} : { testID: `${props.testID}:count` })} />
+          </View>
+        ) : null}
       </View>
     </View>
   );

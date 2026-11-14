@@ -2523,6 +2523,13 @@ A `meta` fact with `mono: true` is an address, path or id: one mono line that gi
 up its middle rather than wrapping, names the whole value to assistive technology,
 and copies it on tap through the host clipboard, saying "Copied" in its place.
 
+`count` is the page's count line, the last line of the header. Happier's own main
+screens draw the same line ("12 Machines · 3 online"). Pass the counts your owner
+reports, each part already saying its number in words. Absent or empty parts drop
+out, and with no parts there is no line. Never count rendered rows for it. While
+the counts are still loading, set `countPending` so the line keeps its place and
+nothing moves when they arrive.
+
 `NavigationList.Group` takes `detail` and `detailEnd` for a quiet fact after the
 title. `detailEnd` is the part that tells same-named groups apart (a machine's short
 id, "Offline"): it stays whole while a narrow label shortens `detail` first.
@@ -2530,6 +2537,9 @@ id, "Offline"): it stays whole while a narrow label shortens `detail` first.
 ```tsx
 <PageHeader title={machine.name} leading={<BrandMark />} actionsLayout="hang"
   meta={[{ key: 'path', text: machine.home, mono: true }]} actions={<Menu />} />
+<PageHeader title={t('Apps')} description={t('What runs on your Machines.')}
+  count={[t('{n} apps', { n: apps.total }), apps.failing > 0 ? t('{n} failing', { n: apps.failing }) : null]}
+  countPending={apps.total === undefined} />
 <NavigationList.Group title={repo.name} detail={machine.name} detailEnd={`${machine.shortId} · ${t('Offline')}`} />
 ```
 
