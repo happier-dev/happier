@@ -1,5 +1,6 @@
 import {
   createContext,
+  memo,
   useCallback,
   useContext,
   useEffect,
@@ -583,7 +584,7 @@ export type CollectionProps<Item> = HappierCollectionRailSizingProps & Readonly<
 }>;
 
 type CollectionCell<Item> =
-  | Readonly<{ kind: 'item'; key: string; item: Item }>
+  | Readonly<{ kind: 'item'; key: string; item: Item; beforeBand: boolean }>
   | Readonly<{ kind: 'peek'; key: string; itemKey: string; item: Item }>
   /** An empty group's one quiet line (`HappierCollectionGroup.emptyStatement`): a row-sized note, never a focus stop. */
   | Readonly<{ kind: 'statement'; key: string; text: string; item?: undefined }>
@@ -694,7 +695,7 @@ type CollectionStage<Item> = Readonly<{
    * The two model facts a row reads. Never the model itself: it is a new object on every Collection render
    * (focus, the open item), and every mounted row reads the stage, so carrying it re-rendered them all.
    */
-  expanded: ReadonlySet<HappierCollectionKey>;
+  useExpanded: HappierCollectionModel<Item>['useExpanded'];
   toggleExpanded: (key: HappierCollectionKey) => void;
   /** The tree, while the table presentation nests (`model.tree`); rows lead with its slot in every geometry. */
   tree: CollectionTreeStage | null;
@@ -722,8 +723,6 @@ type CollectionStage<Item> = Readonly<{
   expandable: boolean;
   /** On a page section's sheet: the rows that draw the sheet's hairline below them (every row but a group's last). */
   dividedKeys: ReadonlySet<string> | null;
-  /** Ruled rows that end their group with another group's band under them: the band parts them, no hairline. */
-  beforeBandKeys: ReadonlySet<string>;
   onPeekHeight: (key: string, height: number) => void;
   onPeekSettled: (key: string, expanded: boolean) => void;
 }>;
@@ -1333,6 +1332,8 @@ const sharedLineFactsStyle: HappierPortableStyle = { flexGrow: 1, flexShrink: 1,
 // The reason chip keeps its words whole; the facts beside it truncate first. A long sentence is held to most of the line.
 const sharedLineEndStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', flexShrink: 0, flexBasis: 'auto', minWidth: 0, maxWidth: '70%' };
 const whereWithControlsStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0, flexShrink: 1 };
+/** A page row grows with its content: controls that don't fit beside the line move beneath it instead of erasing it. */
+const wrappingControlsLineStyle: HappierPortableStyle = { flexWrap: 'wrap', rowGap: 6 };
 const factsNodeFrameStyle: HappierPortableStyle = { flexShrink: 1, minWidth: 0 };
 
 /**
@@ -1557,7 +1558,8 @@ function ListCells<Item>(props: Readonly<{
             <>
               {/* The facts and the line's end share the line by their natural widths: a long reason ("Not available with
                   your other choices · Low memory…") shortens beside the facts instead of erasing them (UI-ACCEPT-1107). */}
-              <View pointerEvents={layer?.content} style={[sharedLineFactsStyle, lineStyle]}>{facts(where)}</View>
+              <View pointerEvents={layer?.content} style={[sharedLineFactsStyle, lineStyle,
+                page && controls !== null && controls !== false ? wrappingControlsLineStyle : null]}>{facts(where)}</View>
               {lineEnd === undefined || lineEnd === null || lineEnd === false ? null : (
                 <View pointerEvents={layer?.leaf} style={sharedLineEndStyle}><SlotContent value={lineEnd} textStyle={secondLine} /></View>
               )}
@@ -1605,7 +1607,7 @@ function useMotionDriver() {
   return useOptionalPluginUiPresentationHost()?.collectionMotion ?? HAPPIER_COLLECTION_INSTANT_MOTION;
 }
 
-function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string }>): ReactElement {
+function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string; beforeBand: boolean }>): ReactElement {
   const host = useOptionalPluginUiPresentationHost();
   const stage = useStage<Item>();
   const translate = usePluginTranslation();
@@ -1621,7 +1623,7 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string }>): 
   const suppliedLabel = anatomy.accessibilityLabel(item);
   const accessibilityLabel = description && !suppliedLabel.includes(description)
     ? `${suppliedLabel}, ${description}` : suppliedLabel;
-  const expanded = stage.expanded.has(itemKey);
+  const expanded = stage.useExpanded(itemKey);
   const toggle = stage.toggleExpanded;
   // A row with nothing to peek (its `peek` returns null) keeps the chevron's place, so its figures stay in their columns.
   const peekSlot = stage.expandable && anatomy.peek !== undefined;
@@ -1779,7 +1781,7 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string }>): 
     <HappierCollectionTableRowContext.Provider value={stage.catalogDirectory && geometry === 'list' ? CATALOG_SIDE_ROW
       : stage.wrapTitles && !stage.restingRuled ? RESTING_LIST_ROW
       : catalog && geometry === 'list' && !stage.wrapTitles ? CATALOG_SIDE_ROW
-      : stage.beforeBandKeys.has(itemKey) ? RULED_ROW_BEFORE_BAND : RULED_ROW}>
+      : props.beforeBand ? RULED_ROW_BEFORE_BAND : RULED_ROW}>
       <HappierCollectionTreeRowContext.Provider value={treeFacts}>
         {renderCollectionItemDestination(host, anatomy, item, rowItem)}
       </HappierCollectionTreeRowContext.Provider>
@@ -1840,7 +1842,7 @@ function CollectionPeek<Item>(props: Readonly<{ item: Item; itemKey: string }>):
   const host = useOptionalPluginUiPresentationHost();
   const { reducedMotion } = useHappierUiAccessibility();
   const [open, setOpen] = useState(false);
-  const expanded = stage.expanded.has(props.itemKey);
+  const expanded = stage.useExpanded(props.itemKey);
   // The cell mounts collapsed and opens on its first commit, so the reveal animates; it collapses in place
   // before the Collection releases the cell.
   useEffect(() => { setOpen(expanded); }, [expanded]);
@@ -1905,14 +1907,16 @@ const peekStyle: HappierPortableStyle = {
   paddingBottom: 14,
 };
 
-function CollectionCellView<Item>(props: Readonly<{ cell: CollectionCell<Item> }>): ReactElement {
+// Peek insertion changes the List's row positions. Retained cells keep their content identity;
+// position-only updates must not execute their anatomy or row Actions again.
+const CollectionCellView = memo(function CollectionCellView(props: Readonly<{ cell: CollectionCell<unknown> }>): ReactElement {
   const cell = props.cell;
   return cell.kind === 'item'
-    ? <CollectionRow item={cell.item} itemKey={cell.key} />
+    ? <CollectionRow item={cell.item} itemKey={cell.key} beforeBand={cell.beforeBand} />
     : cell.kind === 'statement' ? <CollectionGroupStatement text={cell.text} />
       : cell.kind === 'after' ? <View style={afterRowsStyle}>{cell.content}</View>
       : <CollectionPeek item={cell.item} itemKey={cell.itemKey} />;
-}
+});
 
 /** An empty group's quiet line, on a row's geometry: the good-news mark in the glyph column, the words where titles start. */
 function CollectionGroupStatement(props: Readonly<{ text: string }>): ReactElement {
@@ -2255,16 +2259,23 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
       // The caller owns item identity. Preserve it through this wrapper so the
       // List's existing PureComponent row sees only its own data changes.
       const retained = previous?.kind === cell.kind && previous.item === cell.item
+        && (cell.kind !== 'item' || (previous.kind === 'item' && previous.beforeBand === cell.beforeBand))
         && (cell.kind !== 'statement' || (previous.kind === 'statement' && previous.text === cell.text)) ? previous : cell;
       nextCells.set(cell.key, retained);
       return retained;
     };
     const nextSections = drawnSections.map((section, index): ListSectionData<CollectionCell<Item>> => {
       const data: CollectionCell<Item>[] = [];
+      const nextGroup = drawnSections[index + 1]?.group;
+      const followedByBand = grouped && nextGroup != null && nextGroup.title !== '';
+      const last = section.items[section.items.length - 1];
       for (const item of section.items) {
         const key = model.keyOf(item);
-        data.push(retainCell({ kind: 'item', key, item }));
-        if ((expandable || ghostPeeks) && (expanded.has(key) || closingPeeks.has(key))) {
+        const hasPeek = (expandable || ghostPeeks) && (expanded.has(key) || closingPeeks.has(key));
+        // The band follows the row only after its closing Peek has left the cells.
+        // Carry this fact on that row instead of broadcasting membership through the stage.
+        data.push(retainCell({ kind: 'item', key, item, beforeBand: followedByBand && item === last && !hasPeek }));
+        if (hasPeek) {
           data.push(retainCell({ kind: 'peek', key: peekCellKey(key), itemKey: key, item }));
         }
       }
@@ -2293,7 +2304,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
       nextSections[nextSections.length - 1] = { ...last, data: [...last.data, { kind: 'after', key: AFTER_ROWS_CELL_KEY, content: props.afterRows }] };
     }
     return nextSections;
-  }, [props.afterRows, catalogList, closingPeeks, collapsedGroups, drawnSections, expandable, expanded, ghostPeeks, model.keyOf, model.sections, pageSections, pageTable, tree]);
+  }, [props.afterRows, catalogList, closingPeeks, collapsedGroups, drawnSections, expandable, expanded, ghostPeeks, grouped, model.keyOf, model.sections, pageSections, pageTable, tree]);
   // A page section's last row ends its sheet; on one table's sheet only the very last row does (a band follows the rest).
   const previousDividedKeys = useRef<ReadonlySet<string> | null>(null);
   const dividedKeys = useMemo(() => {
@@ -2312,24 +2323,6 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     previousDividedKeys.current = next;
     return next;
   }, [catalogDirectory, drawnSections, model.keyOf, pageSections, pageTable]);
-  // A group's last row with a band under it (the next group's title): the band parts them. Membership only, so a
-  // selection or item change does not wake every row.
-  const previousBeforeBandKeys = useRef<ReadonlySet<string>>(new Set());
-  const beforeBandKeys = useMemo(() => {
-    const keys: string[] = [];
-    if (grouped) {
-      sections.forEach((section, index) => {
-        const last = section.data[section.data.length - 1];
-        const next = sections[index + 1];
-        if (last?.kind === 'item' && next !== undefined && next.title !== '') keys.push(last.key);
-      });
-    }
-    const previous = previousBeforeBandKeys.current;
-    if (previous.size === keys.length && keys.every(key => previous.has(key))) return previous;
-    const nextKeys = new Set(keys);
-    previousBeforeBandKeys.current = nextKeys;
-    return nextKeys;
-  }, [grouped, sections]);
   // An ungrouped page list (a phone, a narrow page) keeps the table's header recomposed on its sheet: what the rows
   // are on the left, the order they are in on the right (lab `rp` Hp "Started by Happier · Memory ↓").
   const sort = props.sort;
@@ -2423,7 +2416,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     metrics,
     anatomy,
     rowRole,
-    expanded,
+    useExpanded: model.useExpanded,
     toggleExpanded: model.actions.toggleExpanded,
     tree: treeStage,
     wrapTitles,
@@ -2438,10 +2431,9 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     useRowItem: props.useRowItem,
     expandable,
     dividedKeys,
-    beforeBandKeys,
     onPeekHeight,
     onPeekSettled,
-  }), [anatomy, rowRole, columns, composition, dividedKeys, beforeBandKeys, expandable, expanded, metrics, model.actions.toggleExpanded, treeStage, wrapTitles, narrowRows, listColumns, ruledInsetPx, restingRuled, pageSections, catalogDirectory, onPeekHeight, onPeekSettled, progress, props.useRowActions, props.useRowItem, rowGeometry, transition]);
+  }), [anatomy, rowRole, columns, composition, dividedKeys, expandable, model.useExpanded, metrics, model.actions.toggleExpanded, treeStage, wrapTitles, narrowRows, listColumns, ruledInsetPx, restingRuled, pageSections, catalogDirectory, onPeekHeight, onPeekSettled, progress, props.useRowActions, props.useRowItem, rowGeometry, transition]);
 
   // ---- the List engine's Collection facts ----
   const authorMultiple: NonNullable<CollectionProps<Item>['selection']>['multiple'] = props.selection?.multiple

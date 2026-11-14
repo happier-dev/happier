@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { I18nManager, Platform } from 'react-native';
 
 import { useOptionalHappierUiLocalization } from '../../environment/context.js';
+import { createCollectionExpansion } from './expansion.js';
 import {
   HAPPIER_COLLECTION_WINDOW_COMPLETE,
   deriveHappierCollectionTree,
@@ -123,6 +124,8 @@ export type HappierCollectionModel<Item> = Readonly<{
   selectionStore: HappierListMultiSelectionStore | null;
   /** Rows peeking in place. */
   expanded: ReadonlySet<HappierCollectionKey>;
+  /** Key-local Peek subscription, sharing the expanded set above. */
+  useExpanded: (key: HappierCollectionKey) => boolean;
   /** Each row's place in its group's tree; `null` unless the input nests (`parentKey`). */
   tree: HappierCollectionTree | null;
   /** The nested parents the reader opened (a narrowing filter also holds some open: `tree` node `held`). */
@@ -211,7 +214,8 @@ export function useHappierCollection<Item>(input: HappierCollectionModelInput<It
     }
     return current;
   }, []);
-  const [expanded, setExpanded] = useState<ReadonlySet<HappierCollectionKey>>(EMPTY_EXPANDED);
+  const [expansion] = useState(createCollectionExpansion);
+  const expanded = useSyncExternalStore(expansion.subscribe, expansion.getSnapshot, expansion.getSnapshot);
   const [openBranches, setOpenBranches] = useState<ReadonlySet<HappierCollectionKey>>(
     () => (input.initialOpenBranches === undefined ? EMPTY_EXPANDED : new Set(input.initialOpenBranches)),
   );
@@ -257,13 +261,7 @@ export function useHappierCollection<Item>(input: HappierCollectionModelInput<It
   const consumeFocusRequest = useCallback((request: Readonly<{ key: string }>) => {
     setFocusRequest(current => current === request ? null : current);
   }, []);
-  const toggleExpanded = useCallback((key: HappierCollectionKey) => {
-    setExpanded((current) => {
-      const next = new Set(current);
-      if (!next.delete(key)) next.add(key);
-      return next;
-    });
-  }, []);
+  const toggleExpanded = expansion.toggle;
   const open = useCallback((key: HappierCollectionKey) => onOpenChangeRef.current(key), []);
   const close = useCallback(() => onOpenChangeRef.current(null), []);
   const handleKey = useCallback((key: string) => {
@@ -351,6 +349,7 @@ export function useHappierCollection<Item>(input: HappierCollectionModelInput<It
     selection: selectionStore === null ? null : selectionSnapshot,
     selectionStore,
     expanded,
+    useExpanded: expansion.useExpanded,
     tree,
     openBranches,
     openKey,

@@ -15,6 +15,10 @@ acknowledgement; callers retain catalog acquisition, held facts and admitted Act
 
 A Collection presents keyed items through one headless model, shared list/table/board/grid anatomy and responsive detail composition. The caller owns the data, route, actions and view preference. The presentation layer owns how those facts fit together.
 
+Peek expansion has one mount-lifetime owner in the headless model. The Collection
+reads its expanded set to place Peek cells; rows and Peek content use the model's
+key-local `useExpanded` subscription so toggling one Peek does not render sibling rows.
+
 This page describes **0.3 development source**. It promotes implemented owners, not the historical Collection plan's rollout or unverified fidelity claims.
 
 `CollectionConditionTokens` has one neutral presentation owner,
@@ -518,7 +522,11 @@ the main column, `resolveDestinationListYields` in `paneBreakpoints.ts`) and the
 the hidden list's page stays presented while its detail is docked, so its page navigation still names the
 companion (`MultiPaneHost` `mainOwnsDetails`).
 The app's `useCollectionRailWidth` stores widths in device-local `collectionRailWidthsV1`, keyed
-by the collection's stable resize key. Plugin-authored layouts can supply `resizeKey`; the optional
+by the collection's stable resize key. In 0.3 development, both gestures and agents use the existing
+Settings Actions at `appearance.collectionRailWidths`: `settings.get` returns the width map;
+`settings.set` accepts `{resizeKey, widthPx}` with a numeric width or `null` to reset that rail.
+The keyed intent preserves other rails and shares Settings admission and policy. Rendered geometry
+keeps the existing layout constraints. Plugin-authored layouts can supply `resizeKey`; the optional
 presentation-host `panelSizing` binding namespaces it with the plugin id and uses the same record.
 Without that binding the component retains the width only for its mounted lifetime. See
 [App shell panes](app-shell-panes.md) for the shared geometry and visibility owners.

@@ -3073,6 +3073,34 @@ describe('list row lines (title meta, description, status takes the facts line)'
 });
 
 describe('render scope', () => {
+  it.each([['peek-0', 'peek-1'], ['peek-249', 'peek-499']])('renders only the toggled row when table Peeks open and close (%s, %s)', (first, second) => {
+    // The existing heavy Workflow Library fixture holds 500 rows.
+    const items = Array.from({ length: 500 }, (_, index): Entry => ({
+      ...entries[0]!, id: `peek-${index}`, title: `Workflow ${index}`,
+      group: index < 250 ? 'needs' : 'rest',
+    }));
+    const renders = new Map<string, number>();
+    const useRowActions = (item: Entry): CollectionRowActions => {
+      renders.set(item.id, (renders.get(item.id) ?? 0) + 1);
+      return {};
+    };
+    const view = mount({ items, useRowActions, reducedMotion: true });
+    try {
+      view.measure(1440);
+      const sibling = view.query('row:peek-1');
+      for (const [key, expanded] of [[first, true], [second, true], [first, false], [second, false]] as const) {
+        renders.clear();
+        act(() => { view.query(`row:${key}:peek`)!.click(); });
+        expect(view.query(`row:${key}:peek`)?.getAttribute('aria-expanded')).toBe(String(expanded));
+        expect(view.query(`peek-content:${key}`) !== null).toBe(expanded);
+        expect(renders.get(key)).toBeGreaterThan(0);
+        expect(renders.get(key)).toBeLessThanOrEqual(2);
+        expect([...renders.keys()].filter(id => id !== key)).toEqual([]);
+        expect(view.query('row:peek-1')).toBe(sibling);
+      }
+    } finally { view.unmount(); }
+  // Rendering 500 real RNW rows and four interactions exceeded Vitest's 5s default.
+  }, 30_000);
   it.each([false, true])('publishes the selected header below the container (host pane: %s)', async (inPane) => {
     let title = 'Open entry';
     const listeners = new Set<() => void>();
@@ -3223,6 +3251,23 @@ describe('render scope', () => {
       expect(view.query('meta:a')).not.toBeNull();
       expect(bylineLayouts.at(-1)).toBe(false);
       expect(view.query('row:a')?.textContent).toContain('payments-api · 18m');
+    } finally { view.unmount(); }
+  });
+  it('leads a shared sheet with an untitled group under no sub-heading of its own', () => {
+    const view = mount({
+      presentation: 'list', scroll: 'page',
+      // The untitled group's rows lead the sheet; the titled group keeps its sub-heading.
+      grouping: { ...groups, axis: [{ key: 'needs', title: '' }, { key: 'rest', title: 'Everything else' }]
+        .map((group) => ({ ...group, section: { key: 'all', title: '' } })) },
+    });
+    try {
+      view.measure(1200);
+      // The sheet both groups share: the nearest ancestor of a row of each.
+      let sheet = view.query('row:a')!.parentElement!;
+      while (!sheet.contains(view.query('row:c'))) sheet = sheet.parentElement!;
+      const subHeadings = [...sheet.querySelectorAll('[role="group"][aria-label]')].map((group) => group.getAttribute('aria-label'));
+      expect(subHeadings).toContain('Everything else');
+      expect(subHeadings).not.toContain('');
     } finally { view.unmount(); }
   });
   it.each([false, true])('publishes real divider membership changes even when the membership size is unchanged (totals: %s)', async totals => {
