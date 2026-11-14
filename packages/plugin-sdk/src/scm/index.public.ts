@@ -1,4 +1,5 @@
 export type { GitFileLineage } from './comparisonOutput.js';
+export { gitlabRepositoryEventSourceInstanceId } from './projections.js';
 export type { ScmFileViewedFile, ScmFileViewedSnapshot, ScmFileViewedSource, ScmFileViewedRequest } from './fileViewedSource.js';
 export { UNKNOWN_SCM_FILE_VIEWED, IDLE_SCM_FILE_VIEWED } from './fileViewedSource.js';
 export type { ScmFileViewedStateV1, ScmFileViewedReadResultV1, ScmFileViewedSetResultV1 } from './projections.js';

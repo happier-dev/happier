@@ -88,6 +88,7 @@ export {
     parseCompactDurationMs,
     parseProviderTimestampMs,
     parseRetryAfterHeader,
+    parseRetryAfterValue,
     type ProviderResetTiming,
 } from './cloud/quotaTiming.js';
 export { parseProviderResetAt, type ProviderResetTextEvidenceParser } from './cloud/quotaReset.js';

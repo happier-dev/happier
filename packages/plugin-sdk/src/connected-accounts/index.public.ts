@@ -129,6 +129,7 @@ export {
     parseProviderResetAt,
     parseProviderTimestampMs,
     parseRetryAfterHeader,
+    parseRetryAfterValue,
 } from '../connectedAccounts.js';
 export type { ProviderResetTiming, ProviderResetTextEvidenceParser } from '../connectedAccounts.js';
 export type { QuotaFetchErrorCode } from '../connectedAccounts.js';

@@ -61,27 +61,37 @@ export function parseCompactDurationMs(value: unknown): number | null {
   return matched ? normalizeNonNegativeSafeMilliseconds(totalMs) : null;
 }
 
-export function parseProviderTimestampMs(value: unknown): number | null {
-  if (value instanceof Date) {
-    const ms = value.getTime();
-    return normalizeNonNegativeSafeMilliseconds(ms);
-  }
-  const numeric = parseNonNegativeNumber(value);
-  if (numeric !== null) {
-    const parsed = parseTimestampMs(numeric);
-    return parsed === null ? null : normalizeNonNegativeSafeMilliseconds(parsed);
-  }
+function parseDateMs(value: unknown): number | null {
   const text = normalizeString(value);
-  if (!text) return null;
-  const parsed = Date.parse(text);
-  return normalizeNonNegativeSafeMilliseconds(parsed);
+  const parsed = value instanceof Date ? value.getTime() : text === null ? Number.NaN : Date.parse(text);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function parseProviderTimestampMs(value: unknown): number | null {
+  const numeric = parseNonNegativeNumber(value);
+  const parsed = numeric === null ? parseDateMs(value) : parseTimestampMs(numeric);
+  return parsed === null ? null : normalizeNonNegativeSafeMilliseconds(parsed);
+}
+
+/**
+ * Interprets Retry-After's numeric seconds and date evidence without choosing a
+ * provider's accepted syntax, precedence, clock, rounding or safe-epoch policy.
+ * Both interpretations remain available because a provider may reject a numeric
+ * spelling while accepting that same text through its existing date grammar.
+ */
+export function parseRetryAfterValue(value: unknown): Readonly<{
+  seconds: number | null;
+  dateMs: number | null;
+}> {
+  return { seconds: parseNonNegativeNumber(value), dateMs: parseDateMs(value) };
 }
 
 export function parseRetryAfterHeader(
   value: unknown,
   options: Readonly<{ nowMs: number }>,
 ): ProviderResetTiming {
-  const numericSeconds = parseNonNegativeNumber(value);
+  const evidence = parseRetryAfterValue(value);
+  const numericSeconds = evidence.seconds;
   if (numericSeconds !== null) {
     const retryAfterMs = normalizeNonNegativeSafeMilliseconds(numericSeconds * 1_000);
     return retryAfterMs === null
@@ -95,7 +105,7 @@ export function parseRetryAfterHeader(
       ? { retryAfterMs: null, resetAtMs: null }
       : { retryAfterMs: durationMs, resetAtMs };
   }
-  const dateMs = parseProviderTimestampMs(value);
+  const dateMs = evidence.dateMs === null ? null : normalizeNonNegativeSafeMilliseconds(evidence.dateMs);
   const nowMs = normalizeNonNegativeSafeMilliseconds(options.nowMs);
   if (dateMs !== null && nowMs !== null && dateMs >= nowMs) {
     const retryAfterMs = normalizeNonNegativeSafeMilliseconds(dateMs - nowMs);

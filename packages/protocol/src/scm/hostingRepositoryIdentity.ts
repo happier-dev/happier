@@ -5,6 +5,12 @@ import {
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
+import { encodeBase64 } from '../crypto/base64.js';
+
+/** Repository event namespace; baseUrl is the forge owner's canonical deployment URL. */
+export function gitlabRepositoryEventSourceInstanceId(baseUrl: string, repositoryId: string): string {
+  return `gitlab:${encodeBase64(new TextEncoder().encode(baseUrl), 'base64url')}:${repositoryId}`;
+}
 
 export const ScmHostingRepositoryIdentityV1Schema = lazyZodSchema(() => z.strictObject({
   kind: ScmHostingProviderKindSchema,

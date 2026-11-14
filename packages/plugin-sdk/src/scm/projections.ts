@@ -2,7 +2,7 @@ import { buildWorktreeRelativePath as canonicalBuildWorktreeRelativePath, hasFor
 import { createScmCapabilities as canonicalCreateScmCapabilities } from '@happier-dev/protocol/scm/capabilities';
 import { evaluateScmRemoteMutationPolicy as canonicalEvaluateScmRemoteMutationPolicy, isScmPatchBoundToPath as canonicalIsScmPatchBoundToPath, normalizeScmOperationOutcome as canonicalNormalizeScmOperationOutcome, SCM_COMMIT_MESSAGE_MAX_LENGTH as canonicalScmCommitMessageMaxLength, SCM_COMMIT_PATCH_MAX_COUNT as canonicalScmCommitPatchMaxCount, SCM_COMMIT_PATCH_MAX_LENGTH as canonicalScmCommitPatchMaxLength, ScmOperationOutcomeSchema as canonicalScmOperationOutcomeSchema } from '@happier-dev/protocol/scm';
 import { normalizeScmBranchSourceRef as canonicalNormalizeScmBranchSourceRef, normalizeScmRemoteName as canonicalNormalizeScmRemoteName, normalizeScmRemoteRequest as canonicalNormalizeScmRemoteRequest, normalizeScmRemoteUrl as canonicalNormalizeScmRemoteUrl } from '@happier-dev/protocol/scm/remoteNormalization';
-import { normalizeScmHostingRepositoryIdentity as canonicalNormalizeScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity as canonicalSameScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
+import { normalizeScmHostingRepositoryIdentity as canonicalNormalizeScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity as canonicalSameScmHostingRepositoryIdentity, gitlabRepositoryEventSourceInstanceId as canonicalGitlabRepositoryEventSourceInstanceId } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import { resolveScmScopedChangedPaths as canonicalResolveScmScopedChangedPaths } from '@happier-dev/protocol/scm/pathScope';
 import { SCM_OPERATION_ERROR_CODES as canonicalScmOperationErrorCodes } from '@happier-dev/protocol/scm/operationError';
 import { ScmRepositoryProvisioningFailureResponseSchema as canonicalProvisioningFailure } from '@happier-dev/protocol/scm';
@@ -91,6 +91,8 @@ import type {
  */
 import type { ProtocolScmHostingProviderKind, ScmHostingRepositoryIdentityV1 } from '../protocol/hostingRepositoryIdentity.js';
 export type { ProtocolScmHostingProviderKind, ScmHostingRepositoryIdentityV1 } from '../protocol/hostingRepositoryIdentity.js';
+/** Canonical event namespace for an already normalized GitLab deployment. */
+export const gitlabRepositoryEventSourceInstanceId: (baseUrl: string, repositoryId: string) => string = canonicalGitlabRepositoryEventSourceInstanceId;
 type _ScmHostingKindProjectionMustMatchCanonical = AssertScmSourceProjection<
     [ProtocolScmHostingProviderKind] extends [ScmHostingProviderKind]
         ? [ScmHostingProviderKind] extends [ProtocolScmHostingProviderKind] ? true : false
