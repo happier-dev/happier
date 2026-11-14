@@ -1244,10 +1244,18 @@ describe('Environment → Data → Database page (P9)', () => {
         detail: formatAsOfTime(Date.parse('2026-11-07T10:01:00Z')) })).not.toHaveLength(0);
       expect(view.effects.filter(effect => effect.actionId === 'deployments.backups.history')).toHaveLength(2);
       expect(view.effects.filter(effect => effect.actionId === 'deployments.backups.run')).toHaveLength(1);
-      // The facts row under the header leads with the same Last backup; a size the read hasn't reported says "—".
+      const { t } = await import('@/text');
+      // The facts row under the header leads with the same Last backup (unverified: no detail), then the one-server
+      // availability said once here and not again under Connection; a size the read hasn't reported says "—".
       const strip = view.screen.findAllByProps({ testID: `${page}.facts.strip` })[0];
-      expect((strip?.props.facts as readonly { key: string; value: string }[]).map(fact => [fact.key, fact.value])).toEqual([
-        ['lastBackup', formatAsOfTime(Date.parse('2026-11-07T10:01:00Z'))], ['size', '—']]);
+      expect((strip?.props.facts as readonly { key: string; value: string; detail?: string }[])
+        .map(fact => [fact.key, fact.value, fact.detail ?? null])).toEqual([
+        ['lastBackup', formatAsOfTime(Date.parse('2026-11-07T10:01:00Z')), null],
+        // Kept restore points are the destination's own count for this database's dump source, never counted from History.
+        ['restorePoints', '2', null],
+        ['availability', t('projects.deployments.databaseAvailabilityOneServer'), t('projects.deployments.databaseAvailabilityNotHighlyAvailable')],
+        ['size', '—', null]]);
+      expect(view.screen.findAllByProps({ testID: `${page}.connection.availability` })).toHaveLength(0);
     } finally { await view.dispose(); }
   });
 
@@ -1272,6 +1280,10 @@ describe('Environment → Data → Database page (P9)', () => {
             completedAt: Date.parse('2026-11-05T03:04:00Z'),
             configRevision: 1,
             snapshotIds: ['f'.repeat(64)],
+          },
+          lastVerification: {
+            operationId: 'verify-2', completedAt: Date.parse('2026-11-05T03:10:00Z'), configRevision: 1,
+            backupOperationId: 'nightly-2', snapshotId: 'f'.repeat(64), level: 'manifestReadBack', result: 'verified',
           },
           history: {
             entries: [
@@ -1307,6 +1319,11 @@ describe('Environment → Data → Database page (P9)', () => {
       ).not.toBeNull();
       expect(view.screen.findByTestId(`${page}.status`)).not.toBeNull();
       expect(view.screen.getTextContent()).toContain('postgres:5432');
+      // A readback that checked this very backup is said under Last backup in the facts row.
+      const { t } = await import('@/text');
+      const strip = view.screen.findAllByProps({ testID: `${page}.facts.strip` })[0];
+      expect((strip?.props.facts as readonly { key: string; detail?: string }[]).find(fact => fact.key === 'lastBackup')?.detail)
+        .toBe(t('projects.deployments.databaseBackupVerified'));
       // One history read per opening, sized to this target; the page never polls.
       expect(view.effects.filter((effect) => effect.actionId === 'deployments.backups.history')).toHaveLength(1);
       const history = view.effects.find((effect) => effect.actionId === 'deployments.backups.history')!.input;

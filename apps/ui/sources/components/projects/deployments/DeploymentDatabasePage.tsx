@@ -196,7 +196,12 @@ export function DeploymentDatabasePage(
           configRevision: backupConfiguration.configRevision,
         }
       : null;
-  const backup = useDeploymentBackupFacts(actions, factsInput, presented);
+  // The kept restore points the destination reports for this database's own dump sources (the facts row's count).
+  const restorePointSourceIds = database?.kind === 'selfHosted' && backupConfiguration
+    ? backupConfiguration.sources.filter((source) => source.kind === 'dump' && source.service === database.data.service)
+      .map((source) => source.sourceId)
+    : null;
+  const backup = useDeploymentBackupFacts(actions, factsInput, presented, restorePointSourceIds);
   const backupNow = useDeploymentChangePress(props.review, backup.reload);
   const machineIds = React.useMemo(
     () => (target ? [target.machineId] : []),
@@ -430,11 +435,21 @@ export function DeploymentDatabasePage(
     ? sizes.snapshot.value?.items.find((item) => item.environment.id === detail.environment.id)
       ?.databaseSizes?.find((entry) => entry.service === database.data.service) ?? null
     : null;
+  // A readback that checked this very backup is said beside it (lab dDb "verified"); an older check is not.
+  const verification = ready?.history?.lastVerification;
+  const lastVerified = !!lastGood && verification?.backupOperationId === lastGood.operationId && verification.result === 'verified';
   const headerFacts: FactStripFact[] = database.kind === 'selfHosted' ? [
     { key: 'lastBackup', label: t('projects.deployments.databaseLastBackup'),
       value: facts?.status === 'loading' ? t('common.loading')
         : lastGood ? formatAsOfTime(lastGood.completedAt) : t('projects.deployments.databaseNoBackupYet'),
+      ...(lastVerified ? { detail: t('projects.deployments.databaseBackupVerified') } : {}),
       ...(missed || (!lastGood && facts?.status !== 'loading') ? { tone: 'attention' as const } : {}) },
+    ...(ready?.restorePoints ? [{ key: 'restorePoints', label: t('projects.deployments.databaseRestorePoints'),
+      value: ready.restorePoints.status === 'ready' ? String(ready.restorePoints.count) : '—' }] : []),
+    // A self-hosted database is one service on one server (lab database/selfhosted, J5); said once, here.
+    { key: 'availability', label: t('projects.deployments.databaseAvailability'),
+      value: t('projects.deployments.databaseAvailabilityOneServer'),
+      detail: t('projects.deployments.databaseAvailabilityNotHighlyAvailable') },
     { key: 'size', label: t('projects.deployments.services.sizeLabel'),
       value: measured ? describeDatabaseSize(measured.size) : '—' },
   ] : [];
@@ -499,8 +514,9 @@ export function DeploymentDatabasePage(
               title={t('projects.deployments.databaseConnectTitle')} onPress={openConnect} /> } : {})}
           />
           {headerFacts.length > 0 ? (
-            <ItemGroup header="none" surface="none" testID={`${id}.facts`}>
-              <FactStrip facts={headerFacts} testID={`${id}.facts.strip`} />
+            // The headline facts as one ruled sheet of cells (lab dDb), two to a row on a phone.
+            <ItemGroup header="none" testID={`${id}.facts`}>
+              <FactStrip facts={headerFacts} layout="columns" divided narrow={props.phone} testID={`${id}.facts.strip`} />
             </ItemGroup>
           ) : null}
           <ItemGroup header="none">
@@ -1062,13 +1078,6 @@ function ConnectionSection(
         detail={
           published ? undefined : t('projects.deployments.databaseNotPublished')
         }
-      />
-      {/* A self-hosted database is one service on one server (lab database/selfhosted, J5): say so where it runs. */}
-      <Item
-        testID={`${props.testID}.availability`}
-        title={t('projects.deployments.databaseAvailability')}
-        mode="info"
-        subtitle={t('projects.deployments.databaseAvailabilityDetail')}
       />
       {props.scope
         ? secrets.map((secret) => {
