@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { decodeExecutionRunProfileResult } from '@happier-dev/protocol/execution/runs/resultContract';
 
 import type { ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
 import { failureSignal } from '@/agent/executionRuns/controllers/failureSignal';
@@ -12,7 +13,7 @@ import { normalizeRawMessage } from '@happier-dev/session-core/raw';
 import { createReducer, projectSidechainMessages, reducer } from '@happier-dev/session-core/reducer';
 import type { CommittedTranscriptMessageOptions } from '@/api/session/transcriptPort';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
-import { projectWalkthroughStopExchanges } from '../../../../../../../ui/sources/components/sessions/files/walkthrough/walkthroughStopExchanges';
+import { projectWalkthroughStopExchanges } from '../../../../../../../ui/sources/components/sessions/files/walkthrough/walkthroughStopExchangesModel';
 
 // One runtime, one lifetime: the signal must stay stable across calls so
 // subscribers do not accumulate against a fresh controller each read.
@@ -244,6 +245,48 @@ describe('createExecutionRunControllerMessageHandler', () => {
     handler(nextTurn);
     expect(ctrl.buffer).toBe('Next turn');
     ctrl.streamWriter.discard();
+  });
+
+  it.each(['request_response', 'streaming'] as const)('decodes only the final JSON message after commentary (%s)', async ioMode => {
+    const ctrl = createController();
+    const contract = { kind: 'json', schema: { type: 'object' } } as const;
+    ctrl.turnResultContract = contract;
+    const rows = new Map<string, string>();
+    let ordinal = 0;
+    if (ioMode === 'streaming') ctrl.streamWriter = createStreamedTranscriptWriter({
+      provider: 'codex', makeLocalId: () => `result-${++ordinal}`,
+      session: { async enqueueAgentMessageCommitted(_provider, body, options) {
+        if (body.type === 'message') rows.set(options.localId, body.message);
+        return { persisted: true, delivered: false };
+      } },
+    });
+    const handler = createExecutionRunControllerMessageHandler({
+      ctrl, runId: 'run_1', sidechainId: 'sidechain_1', ioMode,
+      computeSidechainStreamText: text => text, sendAcp: async () => {}, parentProvider: 'codex',
+      runs: new Map([['run_1', createRunningRun()]]), backendSupportsResume: true,
+      writeActivityMarker: async () => {}, getNowMs: () => 123,
+    });
+    const commentary = 'I will inspect the changes and report.';
+    const final = '{"summary":"Reviewed","deliverables":[]}';
+    handler({ type: 'model-output', messageId: 'commentary', fullText: commentary });
+    handler({ type: 'model-output', messageId: 'final', textDelta: '{"summary":' });
+    handler({ type: 'model-output', messageId: 'final', fullText: final });
+    expect(decodeExecutionRunProfileResult(ctrl.buffer, {
+      kind: 'json', schema: { type: 'object', required: ['summary', 'deliverables'], properties: {
+        summary: { type: 'string' }, deliverables: { type: 'array', items: { type: 'string' } },
+      }, additionalProperties: false },
+    })).toEqual({ ok: true, value: { summary: 'Reviewed', deliverables: [] } });
+    await ctrl.streamWriter?.flushAll({ reason: 'turn-end' });
+    if (ioMode === 'streaming') expect([...rows.values()]).toEqual([commentary, final]);
+    ctrl.turnEpoch += 1;
+    ctrl.turnResultContract = { kind: 'text' };
+    ctrl.buffer = '';
+    handler({ type: 'model-output', messageId: 'commentary', fullText: 'Earlier artifact. ' });
+    handler({ type: 'model-output', messageId: 'final', fullText: 'Final answer.' });
+    expect(decodeExecutionRunProfileResult(ctrl.buffer, { kind: 'text' })).toEqual({
+      ok: true, value: 'Earlier artifact. Final answer.',
+    });
+    ctrl.streamWriter?.discard();
   });
 
   it('binds native durable facts to the exact sidechain and accepted anchor, then refuses retired custody', async () => {

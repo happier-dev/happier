@@ -62,6 +62,8 @@ export type ExecutionRunBackendController = {
   /** Runtime-private address used to deliver input and lifecycle controls. */
   runtimeId: string | null;
   buffer: string;
+  /** Admitted result contract for the current native turn. */
+  turnResultContract?: import('@happier-dev/protocol/execution/runs/resultContract').ExecutionRunProfileResultContract;
   sidechainStreamBuffer: string;
   sidechainStreamKey: string;
   streamWriter: StreamedTranscriptWriter | null;

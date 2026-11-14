@@ -130,6 +130,7 @@ export async function executeBoundedBackendRun(args: Readonly<{
       backendCtrl.turnEpoch += 1;
       backendCtrl.turnInFlight = true;
       backendCtrl.buffer = '';
+      backendCtrl.turnResultContract = exactInput?.resultContract ?? params.resultContract;
       backendCtrl.sidechainStreamBuffer = '';
       backendCtrl.sidechainStreamKey = '';
       const result = await backendCtrl.backend.deliverInput(

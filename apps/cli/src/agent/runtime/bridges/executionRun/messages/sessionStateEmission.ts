@@ -190,6 +190,7 @@ export function createExecutionRunControllerMessageHandler(args: Readonly<{
   let currentMessageId: string | null = null;
   let hasAnonymousDraft = false;
   let completedAssistantPrefix = '';
+  let currentAssistantText = '';
   let completedStreamPrefix = '';
 
   function createFailClosedPermissionRequestError(
@@ -456,17 +457,20 @@ export function createExecutionRunControllerMessageHandler(args: Readonly<{
       currentMessageId = null;
       hasAnonymousDraft = false;
       completedAssistantPrefix = '';
+      currentAssistantText = '';
       completedStreamPrefix = '';
     }
     // Some native codecs learn the stable message id only at commit. That
     // commit replaces the current anonymous draft; it does not start a row.
     const startsMessage = Boolean(msg.messageId && msg.messageId !== currentMessageId && !hasAnonymousDraft)
       || (!msg.messageId && typeof msg.fullText !== 'string' && currentMessageId !== null);
-    const prefix = startsMessage ? args.ctrl.buffer : completedAssistantPrefix;
+    const prefix = startsMessage ? completedAssistantPrefix + currentAssistantText : completedAssistantPrefix;
     const nextFullText = typeof msg.fullText === 'string'
-      ? (msg.messageId ? prefix + msg.fullText : msg.fullText)
-      : args.ctrl.buffer + (msg.textDelta ?? '');
-    if (exceedsExecutionResultOutputLimit(nextFullText)) {
+      ? msg.fullText
+      : (startsMessage ? '' : currentAssistantText) + (msg.textDelta ?? '');
+    const transcriptText = typeof msg.fullText === 'string' && !msg.messageId
+      ? nextFullText : prefix + nextFullText;
+    if (exceedsExecutionResultOutputLimit(transcriptText)) {
       terminalizeExecutionResultOutputLimit();
       return;
     }
@@ -487,7 +491,11 @@ export function createExecutionRunControllerMessageHandler(args: Readonly<{
       currentMessageId = null;
       hasAnonymousDraft = true;
     }
-    args.ctrl.buffer = nextFullText;
+    currentAssistantText = nextFullText;
+    // Plain-text results retain all artifacts. A structured contract applies
+    // only to the final assistant message, while the transcript keeps both.
+    const contract = args.ctrl.turnResultContract;
+    args.ctrl.buffer = contract && contract.kind !== 'text' ? nextFullText : transcriptText;
 
     // Streaming: emit best-effort sidechain transcript updates.
     const streamWriter = args.ctrl.streamWriter;
@@ -499,7 +507,7 @@ export function createExecutionRunControllerMessageHandler(args: Readonly<{
         completedStreamPrefix = '';
       }
 
-      const nextStreamText = args.computeSidechainStreamText(args.ctrl.buffer);
+      const nextStreamText = args.computeSidechainStreamText(transcriptText);
       if (typeof nextStreamText === 'string') {
         const prevStreamText = args.ctrl.sidechainStreamBuffer;
 

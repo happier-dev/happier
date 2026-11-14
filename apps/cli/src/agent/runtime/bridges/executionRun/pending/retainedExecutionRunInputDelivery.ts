@@ -107,6 +107,7 @@ export function createRetainedExecutionRunInputDelivery(
         controller.turnCount += 1;
         controller.turnInFlight = true;
         controller.buffer = '';
+        controller.turnResultContract = undefined;
         controller.sidechainStreamBuffer = '';
         controller.sidechainStreamKey = '';
     };

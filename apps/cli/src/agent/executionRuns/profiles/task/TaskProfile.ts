@@ -37,10 +37,12 @@ export const TaskProfile: ExecutionRunIntentProfile = {
   supportsDetached: true,
   prepareStartParams: ({ request }) => {
     const input = readTaskIntentInput(request.intentInput);
+    const schema = input.resultSchema ? normalizePluginJsonSchema(input.resultSchema) : undefined;
     return {
+      ...(schema ? { resultContract: { kind: 'json' as const, schema } } : {}),
       intentInput: {
         ...(input.input !== undefined ? { input: input.input } : {}),
-        ...(input.resultSchema ? { resultSchema: normalizePluginJsonSchema(input.resultSchema) } : {}),
+        ...(schema ? { resultSchema: schema } : {}),
       },
     };
   },

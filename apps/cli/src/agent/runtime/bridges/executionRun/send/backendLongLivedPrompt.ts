@@ -300,6 +300,7 @@ export async function sendBackendLongLivedRun(args: Readonly<{
   ctrl2.turnEpoch = thisEpoch;
   ctrl2.turnInFlight = true;
   ctrl2.buffer = '';
+  ctrl2.turnResultContract = args.params.resultContract;
   ctrl2.sidechainStreamBuffer = '';
   ctrl2.sidechainStreamKey = '';
   if (localInputId) {
@@ -323,7 +324,8 @@ export async function sendBackendLongLivedRun(args: Readonly<{
         && pending.store === args.permissionRequestStore;
       if (pending && !isProvisionedInput) pending.releaseResponseTarget();
       const releaseResponseTarget = isProvisionedInput ? pending.releaseResponseTarget
-        : args.permissionRequestStore.registerResponseTargetHandler('execution_run_host_bridge', args.handlePermissionResponseTarget);
+        : args.permissionRequestStore.registerResponseTargetHandler('execution_run_host_bridge', args.handlePermissionResponseTarget,
+          { application: 'beforeCompletion' });
       ctrl2.currentInputPermissionRequestStore = {
         localInputId,
         turnId,
