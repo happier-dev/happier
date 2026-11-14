@@ -17,6 +17,20 @@ import {
   defineProtocolString,
 } from './protocolComposableSchema.js';
 
+it('keeps a declared deployment failure public instead of its diagnostic exception', async () => {
+  const nativeError = new TypeError('native deployment exception detail');
+  const failure = withActionFailureDiagnostic(withActionFailureCauseDiagnostic({ ok: false, errorCode: 'deployment_unavailable',
+    error: 'The deployment could not be prepared.' }, nativeError, 'deployment.plugin.restore.prepare'), {
+    phase: 'deployment.plugin.restore.prepare', causeKind: 'native_failure', error: nativeError,
+  });
+  const invocation = createPluginActionInvocation({ pluginId: 'test.deploy', localId: 'restore', declaration: {},
+    occurrenceSignal: new AbortController().signal, isCurrent: () => true });
+  const result = await invocation.invoke(null, { handler: () => { throw failure; } });
+  expect(result).toMatchObject({ status: 'failed', code: 'deployment_unavailable',
+    message: failure.error, data: { failureCause: { phase: 'deployment.plugin.restore.prepare', errorClass: 'TypeError' } } });
+  expect(JSON.stringify(result)).not.toContain(nativeError.message);
+});
+
 it('publishes the sanitized materialization exception from the existing diagnostic carrier', () => {
   const error = new TypeError('Configured deployment unavailable Authorization: Bearer fixture-private-token');
   withActionFailureCauseDiagnostic(error, error, 'connected_accounts.materialize');

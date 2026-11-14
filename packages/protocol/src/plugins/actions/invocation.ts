@@ -421,7 +421,7 @@ export function readPluginActionError(error: unknown): Readonly<{
     const failureCause = publicFailure?.failureCause ?? diagnostic?.failureCause;
     if (!failureCause) return null;
     return Object.freeze(carryActionFailureDiagnostic({ code: publicFailure?.errorCode ?? PLUGIN_ACTION_FAILURE_FALLBACK_CODE,
-      message: projectPluginActionFailureMessage(diagnostic?.exception?.message ?? publicFailure?.error),
+      message: projectPluginActionFailureMessage(publicFailure?.error ?? diagnostic?.exception?.message),
       retryable: false, data: { failureCause: { ...failureCause } } }, error));
   }
   const data = AgentRuntimeJsonValueV1Schema.safeParse(error.data);
