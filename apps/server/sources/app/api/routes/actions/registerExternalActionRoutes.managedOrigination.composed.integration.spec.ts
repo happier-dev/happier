@@ -914,7 +914,7 @@ describe('composed CLI managed Action origination', () => {
         } finally { await instance.close(); }
     });
 
-    it.each([['plain', 'none'], ['e2ee', 'none'], ['plain', 'member'], ['plain', 'owner'], ['plain', 'member-archived'], ['plain', 'member-equal'], ['plain', 'pool-manager'], ['plain', 'manager']] as const)(
+    it.each([['plain', 'none'], ['e2ee', 'none'], ['plain', 'member'], ['plain', 'owner'], ['plain', 'member-archived'], ['plain', 'member-equal'], ['plain', 'pool-manager'], ['plain', 'manager'], ['e2ee', 'manager']] as const)(
         'admits omitted preset policy only from the exact signed native root (%s, Session source=%s)', async (mode, sessionSource) => {
         const selected = await fixture(true);
         const requester = sessionSource === 'owner' ? selected : await fixture(true, mode);
@@ -956,7 +956,13 @@ describe('composed CLI managed Action origination', () => {
         let envelope = mode === 'plain' ? { v: 1 as const, requestId: binding.requestId, target, input }
             : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
                 binding, material, input, randomBytes: tweetnacl.randomBytes });
-        const instance = await app(async () => { throw new Error('Only the native HTTP admission is exercised'); }, () => {}, []);
+        let deliveries = 0;
+        const instance = await app(async () => {
+            deliveries++;
+            return { ok: true, result: {
+                kind: 'invalid_request', errorCode: 'present_user_required', requestId: binding.requestId,
+            } };
+        }, () => {}, []);
         try {
             const issue = (session?: Readonly<{ origin: ReturnType<typeof SessionActionRpcOriginV1Schema.parse>;
                 source: typeof selected.controller; privateKey: Uint8Array }>) => instance.inject({ method: 'POST',
@@ -983,6 +989,22 @@ describe('composed CLI managed Action origination', () => {
             expect(issued.statusCode, issued.body).toBe(200);
             const initialPresetReads = presetReads;
             let authorization = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+            if (sessionSource === 'manager' && mode === 'e2ee') {
+                // The custodian opens omitted policy. Relay must reach that boundary before a managed row exists.
+                const refused = await instance.inject({ method: 'POST', url: '/v1/actions/machines.managed.acquire',
+                    headers: { authorization: `Bearer ${selected.token}` },
+                    payload: { v: 1, machineId: target.machineId, envelope, executionAuthorization: authorization } });
+                expect(refused.statusCode, refused.body).toBe(403);
+                expect(refused.json()).toMatchObject({ error: 'credential_scope_denied' });
+                expect(deliveries).toBe(0);
+                const relayed = await instance.inject({ method: 'POST', url: '/v1/actions/machines.managed.acquire',
+                    headers: { authorization: `Bearer ${requester.token}` },
+                    payload: { v: 1, machineId: target.machineId, envelope, executionAuthorization: authorization } });
+                expect(relayed.statusCode, relayed.body).toBe(403);
+                expect(relayed.json()).toMatchObject({ error: 'present_user_required' });
+                expect(deliveries).toBe(1);
+                expect(await db.managedMachine.count({ where: { homeId, admittedActionRequestId: binding.requestId } })).toBe(0);
+            }
             if (sessionSource !== 'pool-manager') expect(authorization.binding.managedAcquireDelegation)
                 .toBe(requester.account.id !== selected.account.id && sessionSource !== 'manager' ? true : undefined);
             let sourceKeys: typeof selected.keys | undefined;

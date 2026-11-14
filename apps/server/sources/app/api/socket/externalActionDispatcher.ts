@@ -950,6 +950,8 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                 ...(request.workflowAdmission ? { workflowAdmission: request.workflowAdmission } : {}),
                 ...(request.managedCreationAdmission ? { managedCreationAdmission: request.managedCreationAdmission } : {}),
                 ...(executionAuthorization ? { executionBinding: executionAuthorization.binding } : {}),
+                ...(executionAuthorization && capturedMachineAdmission && request.actionId === 'machines.managed.acquire'
+                    ? { admittedDelivery: true as const } : {}),
                 ...(!request.executionAuthorization ? { envelope: request.envelope } : {}),
                 ...((executionAuthorization?.binding.handoffAdmission ?? request.envelope.handoffAdmission)
                     ? { handoffAdmission: executionAuthorization?.binding.handoffAdmission ?? request.envelope.handoffAdmission } : {}),
