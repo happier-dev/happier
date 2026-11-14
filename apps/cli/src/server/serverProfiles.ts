@@ -422,13 +422,18 @@ export async function getServerProfile(identifierRaw: string): Promise<ServerPro
   return withProfileUsage(profile);
 }
 
-export async function getActiveServerProfile(): Promise<ServerProfile> {
+export function getActiveServerProfile(options: Readonly<{ required: false }>): Promise<ServerProfile | null>;
+export function getActiveServerProfile(): Promise<ServerProfile>;
+export async function getActiveServerProfile(
+  options?: Readonly<{ required: false }>,
+): Promise<ServerProfile | null> {
   const settings: any = await readSettings();
   const activeId = sanitizeServerIdForFilesystem(settings?.activeServerId ?? 'cloud', 'cloud');
   const servers = settings?.servers && typeof settings.servers === 'object' ? settings.servers : {};
   assertValidStoredHomeDescriptors(servers);
   const active = coerceProfile((servers as any)[activeId]) ?? coerceProfile((servers as any).cloud);
   if (!active) {
+    if (options?.required === false) return null;
     throw new Error(`Active server profile not found: ${activeId}`);
   }
   return withProfileUsage(active);

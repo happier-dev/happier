@@ -10,7 +10,7 @@ ${chalk.bold('happier server')} - Manage Happier server profiles
 
 ${chalk.bold('Usage:')}
   happier server list
-  happier server current
+  happier server current (or status)
   happier server add [--name <name>] [--server-url <url>] [--local-server-url <url>] [--webapp-url <url>] [--use] [--no-use] [--yes] [--start-daemon] [--install-service]
   happier server use <name-or-id>
   happier server remove <name-or-id> [--force]

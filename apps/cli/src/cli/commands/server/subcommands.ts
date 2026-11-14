@@ -53,6 +53,7 @@ export async function runServerSubcommand(
     case 'list':
       await cmdList(args.slice(1));
       return true;
+    case 'status':
     case 'current':
       await cmdCurrent(args.slice(1));
       return true;
@@ -201,14 +202,14 @@ function resolveTailscaleServeStatusTimeoutMs(): number {
 }
 
 async function cmdList(args: string[]): Promise<void> {
-  const active = await getActiveServerProfile();
+  const active = await getActiveServerProfile({ required: false });
   const profiles = await listServerProfiles();
   if (wantsJson(args)) {
     await printJsonEnvelope({
       ok: true,
       kind: 'server_list',
       data: {
-        activeServerId: active.id,
+        activeServerId: active?.id ?? null,
         profiles: profiles.map(summarizeProfile),
       },
     });
@@ -221,7 +222,7 @@ async function cmdList(args: string[]): Promise<void> {
 
   for (const p of profiles.sort((a, b) => (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0))) {
     // The active profile is pointed at the way the setup chooser points at its selection.
-    const isActive = p.id === active.id;
+    const isActive = p.id === active?.id;
     const marker = isActive ? chalk.hex(ACCENT_HEX)('›') : ' ';
     console.log(`${marker} ${chalk.bold(p.name)} ${chalk.gray(`(${p.id})${isActive ? ' · active' : ''}`)}`);
     console.log(definitionList([
@@ -233,13 +234,17 @@ async function cmdList(args: string[]): Promise<void> {
 }
 
 async function cmdCurrent(args: string[]): Promise<void> {
-  const active = await getActiveServerProfile();
+  const active = await getActiveServerProfile({ required: false });
   if (wantsJson(args)) {
     await printJsonEnvelope({
       ok: true,
       kind: 'server_current',
-      data: { active: summarizeProfile(active) },
+      data: { active: active ? summarizeProfile(active) : null },
     });
+    return;
+  }
+  if (!active) {
+    console.log(neutral('No relay profile configured'));
     return;
   }
   console.log(sectionTitle('Active relay profile'));

@@ -53,7 +53,7 @@ describe('happier server --json', () => {
 
       const parsed = JSON.parse(output.logs.join('\n').trim());
       expect(parsed).toMatchObject({ v: 1, ok: true, kind: 'server_list' });
-      expect(typeof parsed.data?.activeServerId).toBe('string');
+      expect(parsed.data?.activeServerId).toBeNull();
       expect(process.exitCode).toBe(0);
       const byId = new Map((parsed.data.profiles as Array<Record<string, unknown>>).map((entry) => [entry.id, entry]));
       expect(byId.get(home.id)?.homeServerIdentityId).toBe('srv_home_new');
