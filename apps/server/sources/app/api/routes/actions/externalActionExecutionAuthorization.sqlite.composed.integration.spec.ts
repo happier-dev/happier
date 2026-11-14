@@ -3294,7 +3294,8 @@ describe("external Action execution authorization", () => {
         const issued: { method: string; path: string; effect: unknown }[] = [];
         const { app } = await createApp(fixture.team.id, false, undefined, undefined, false, routes => {
             registerSessionOrganizationRoutes(routes);
-            routes.addHook('onRequest', async request => { issued.push({ method: request.method, path: request.url,
+            // Observe logical requests after Home restores signed body-frame proofs.
+            routes.addHook('preValidation', async request => { issued.push({ method: request.method, path: request.url,
                 effect: request.headers[EXTERNAL_ACTION_EFFECT_ACTION_HEADER] }); });
         });
         const homeId = await getOrCreateServerIdentityId();
