@@ -6767,6 +6767,8 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
             work: {
                 none: "無工作",
                 working: ({ count }) => `${count} 個進行中`,
+                services: ({ count }: { count: number }) => `${count} 個服務`,
+                failing: ({ count }: { count: number }) => `${count} 個失敗`,
             },
             platformFact: ({ platform, arch }) => `${platform} · ${arch}`,
         },
@@ -8452,6 +8454,7 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
             restarts: ({ count }: { count: number }) => `需要重新啟動 ${count}`,
             restartNeeded: "需要重新啟動",
             restartNotNeeded: "不需要",
+            securityUpdates: ({ count }: { count: number }) => `${count} 個安全性更新`,
             columnSecurity: "安全性",
             columnAll: "全部",
             columnRestart: "重新啟動",

@@ -6768,6 +6768,8 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
             work: {
                 none: "无工作",
                 working: ({ count }) => `${count} 个进行中`,
+                services: ({ count }: { count: number }) => `${count} 个服务`,
+                failing: ({ count }: { count: number }) => `${count} 个失败`,
             },
             platformFact: ({ platform, arch }) => `${platform} · ${arch}`,
         },
@@ -8453,6 +8455,7 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
             restarts: ({ count }: { count: number }) => `需要重启 ${count}`,
             restartNeeded: "需要重启",
             restartNotNeeded: "不需要",
+            securityUpdates: ({ count }: { count: number }) => `${count} 个安全更新`,
             columnSecurity: "安全",
             columnAll: "全部",
             columnRestart: "重启",

@@ -11,6 +11,11 @@ export function machinesIndexHref(door: MachinesDoor): typeof MACHINES_RAIL_ROOT
     return door === 'rail' ? MACHINES_RAIL_ROOT : MACHINES_COLLECTION_ROOT;
 }
 
+/** The fleet pages beside the Machines column (pfc-redesign fUpd, fAct), inside the door that opened them. */
+export function machineFleetPageHref(door: MachinesDoor, page: 'updates' | 'activity'): string {
+    return `${machinesIndexHref(door)}/${page}`;
+}
+
 export type MachinePageTarget = Readonly<{ machineId: string; serverId?: string }>;
 
 /** Where a machine resource alert opens, from a push or the Inbox: memory and CPU to Processes sorted by that column, disk to Storage. */

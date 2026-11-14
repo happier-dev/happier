@@ -402,6 +402,8 @@ export const english = {
         work: {
             none: "No work",
             working: ({ count }: { count: number }) => `${count} working`,
+            services: ({ count }: { count: number }) => count === 1 ? "1 service" : `${count} services`,
+            failing: ({ count }: { count: number }) => `${count} failing`,
         },
         platformFact: ({ platform, arch }: { platform: string; arch: string }) => `${platform} · ${arch}`,
     },
@@ -2086,6 +2088,7 @@ export const english = {
         restarts: ({ count }: { count: number }) => count === 1 ? "1 restart needed" : `${count} restarts needed`,
         restartNeeded: "Restart needed",
         restartNotNeeded: "Not needed",
+        securityUpdates: ({ count }: { count: number }) => count === 1 ? "1 security update" : `${count} security updates`,
         columnSecurity: "Security",
         columnAll: "All",
         columnRestart: "Restart",

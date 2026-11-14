@@ -15,6 +15,7 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { Item } from '@/components/ui/lists/Item';
 import { MachineFleetUpdatesEntry } from '@/components/machines/updates/MachineFleetUpdatesEntry';
+import { machineFleetPageHref } from '@/components/machines/page/machinePageHref';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -411,7 +412,7 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
                 density: rail ? 'compact' : undefined,
                 showChevron: !rail,
                 pressableStyle: rail ? collectionListStyles.row : undefined,
-                onPress: () => openHref(router, SETTINGS_ROUTES.machineUpdates, replaceConfiguration, 'MachineCollectionList.updates'),
+                onPress: () => openHref(router, machineFleetPageHref(door, 'updates'), replaceConfiguration, 'MachineCollectionList.updates'),
             }}
         />
     );
@@ -431,7 +432,7 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
             density={rail ? 'compact' : undefined}
             showChevron={!rail}
             pressableStyle={rail ? collectionListStyles.row : undefined}
-            onPress={() => openHref(router, SETTINGS_ROUTES.machineActivity, replaceConfiguration, 'MachineCollectionList.activity')}
+            onPress={() => openHref(router, machineFleetPageHref(door, 'activity'), replaceConfiguration, 'MachineCollectionList.activity')}
         />
     );
 

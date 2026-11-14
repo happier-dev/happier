@@ -324,6 +324,22 @@ it.each(['index', 'rail'] as const)('refreshes a retained offline %s roster row 
   expect(row().props.accessibilityLabel).toContain('settingsOverview.machineOnline');
 });
 
+it('opens fleet Updates and Activity inside the Machines door from its column, so a reload stays there', async () => {
+  routeState.pathname = '/machines';
+  await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [machine('studio', 'Studio', 'studio.local')] }]);
+  const { MachinesColumn } = await import('@/components/machines/collection/MachinesColumn');
+  const { tree } = await renderScreen(<MachinesColumn />);
+  const press = async (testID: string) => {
+    const row = tree.findAll(node => node.props.testID === testID && typeof node.props.onPress === 'function')[0]!;
+    await act(async () => { await pressTestInstanceAsync(row); });
+  };
+  const opened = () => [...routerPushSpy.mock.calls, ...routerReplaceSpy.mock.calls].map(call => call[0]);
+  await press('settings.machines.updates');
+  await press('settings.machines.activity');
+  expect(opened()).toEqual(expect.arrayContaining(['/machines/updates', '/machines/activity']));
+  expect(opened().some(href => typeof href === 'string' && href.startsWith('/settings/'))).toBe(false);
+});
+
 it('gives a phone index row no title meta while the machine has nothing to say there (offline), and its work when online', async () => {
   const ReactNative = await import('react-native');
   // The window is the boundary that makes this a phone.
@@ -480,6 +496,58 @@ describe('All machines (the Settings door index)', () => {
         (node) => node.props?.testID === 'settings.machines.thisComputer',
       ),
     ).toHaveLength(0);
+  });
+
+  it('counts a Machine\'s services after its work and says how many fail, from its published summary (lab mIdx)', async () => {
+    const withServices = (id: string, name: string, managedServices?: object) => ({
+      ...machine(id, name, `${id}.local`),
+      daemonState: { status: 'running', ...(managedServices ? { managedServices } : {}) },
+    });
+    await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [
+      withServices('hetzner', 'hetzner-fsn1', { running: 9, failing: 0 }),
+      withServices('vps', 'vps-ams', { running: 2, failing: 1 }),
+      withServices('quiet', 'quiet-box'),
+    ] }]);
+    const tree = await renderPage();
+    await act(async () => {
+      const stage = tree.findAll(node => node.props?.testID === 'machines.index.collection:stage' && typeof node.props?.onLayout === 'function')[0]!;
+      stage.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 1440, height: 900 } } });
+    });
+    const text = (node: { children: unknown[] } | undefined): string => !node ? '' : node.children
+      .map(child => typeof child === 'string' ? child : text(child as { children: unknown[] })).join('');
+    const work = (id: string) => text(tree.findAll(node => typeof node.type === 'string'
+      && node.props?.testID === `machines.index.work.machine:srv_a:${id}`)[0]);
+    const { t } = await import('@/text');
+    expect(work('hetzner')).toContain(t('machineDetailPage.work.services', { count: 9 }));
+    expect(work('hetzner')).not.toContain(t('machineDetailPage.work.failing', { count: 0 }));
+    // Total observed services, then the failing ones.
+    expect(work('vps')).toContain(t('machineDetailPage.work.services', { count: 3 }));
+    expect(work('vps')).toContain(t('machineDetailPage.work.failing', { count: 1 }));
+    // Not reported: no services part at all, never "0 services".
+    expect(work('quiet')).not.toContain(t('machineDetailPage.work.services', { count: 0 }));
+  });
+
+  it('says a Machine\'s waiting security updates, or that it needs a restart, on the Work cell\'s second line (lab mIdx)', async () => {
+    const withUpdates = (id: string, name: string, updates: object) => ({
+      ...machine(id, name, `${id}.local`),
+      daemonState: { status: 'running', setup: { version: 1, desiredRevision: 0, status: 'drifted', recipes: [], updates } },
+    });
+    await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [
+      withUpdates('hetzner', 'hetzner-fsn1', { status: 'drifted', backend: 'apt', pendingSecurity: 3, pendingAll: 7, rebootNeeded: false }),
+      withUpdates('vps', 'vps-ams', { status: 'drifted', backend: 'apt', pendingSecurity: 0, pendingAll: 2, rebootNeeded: true }),
+      withUpdates('calm', 'calm-box', { status: 'satisfied', backend: 'apt', pendingSecurity: 0, pendingAll: 0 }),
+    ] }]);
+    const tree = await renderPage();
+    await act(async () => {
+      const stage = tree.findAll(node => node.props?.testID === 'machines.index.collection:stage' && typeof node.props?.onLayout === 'function')[0]!;
+      stage.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 1440, height: 900 } } });
+    });
+    const updateLine = (id: string) => tree.findAll(node => typeof node.type === 'string'
+      && node.props?.testID === `machines.index.updates.machine:srv_a:${id}`)[0]?.props.children;
+    const { t } = await import('@/text');
+    expect(updateLine('hetzner')).toBe(t('machineFleetUpdates.securityUpdates', { count: 3 }));
+    expect(updateLine('vps')).toBe(t('machineFleetUpdates.restartNeeded'));
+    expect(updateLine('calm')).toBeUndefined();
   });
 
   it('keeps one missing-value mark under each offline metric column', async () => {

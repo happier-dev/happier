@@ -27,14 +27,34 @@ export function readFleetUpdatesRow(
   entry: MachineUpdatesPageEntry | undefined,
 ): FleetUpdatesRow {
   // An offline Machine's last answer is not today's count (lab fUpd: "—", never zero).
-  const observation =
-    machine.online === true ? (entry?.observation ?? null) : null;
   return {
     ...machine,
+    ...readMachineUpdateFacts(machine.online === true ? (entry?.observation ?? null) : null),
+  };
+}
+
+export type MachineUpdateFacts = Pick<FleetUpdatesRow, 'security' | 'all' | 'restartNeeded'>;
+
+/** One online Machine's pushed update observation as counts; unknown stays null. */
+export function readMachineUpdateFacts(observation: MachineUpdatesPageEntry['observation']): MachineUpdateFacts {
+  return {
     security: observation?.pendingSecurity ?? null,
     all: observation?.pendingAll ?? null,
     restartNeeded: observation?.rebootNeeded === true,
   };
+}
+
+/**
+ * The one update fact a Machine's line says when it needs the person (lab mIdx Work cell): waiting security updates
+ * first, then a needed restart. Other waiting updates stay on the Updates page. Offline or unknown says nothing.
+ */
+export type MachineUpdateWord =
+  | Readonly<{ kind: 'security'; count: number }>
+  | Readonly<{ kind: 'restart' }>;
+
+export function readMachineUpdateWord(row: MachineUpdateFacts): MachineUpdateWord | null {
+  if ((row.security ?? 0) > 0) return { kind: 'security', count: row.security! };
+  return row.restartNeeded ? { kind: 'restart' } : null;
 }
 
 export type FleetUpdatesSummary = Readonly<{

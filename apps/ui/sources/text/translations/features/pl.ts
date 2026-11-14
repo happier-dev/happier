@@ -6796,6 +6796,8 @@ const machineDetailPageTranslations = { pl: translated({
             work: {
                 none: "Brak pracy",
                 working: ({ count }) => `${count} w toku`,
+                services: ({ count }: { count: number }) => `Usługi: ${count}`,
+                failing: ({ count }: { count: number }) => `Z błędami: ${count}`,
             },
             platformFact: ({ platform, arch }) => `${platform} · ${arch}`,
         },
@@ -8481,6 +8483,7 @@ const machineDetailPageTranslations = { pl: translated({
             restarts: ({ count }: { count: number }) => `wymagane restarty: ${count}`,
             restartNeeded: "Wymaga restartu",
             restartNotNeeded: "Niepotrzebny",
+            securityUpdates: ({ count }: { count: number }) => `Aktualizacje bezpieczeństwa: ${count}`,
             columnSecurity: "Bezpieczeństwo",
             columnAll: "Wszystkie",
             columnRestart: "Restart",

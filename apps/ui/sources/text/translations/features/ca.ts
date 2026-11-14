@@ -6778,6 +6778,8 @@ const machineDetailPageTranslations = { ca: translated({
             work: {
                 none: "Sense feina",
                 working: ({ count }) => `${count} treballant`,
+                services: ({ count }: { count: number }) => count === 1 ? "1 servei" : `${count} serveis`,
+                failing: ({ count }: { count: number }) => `${count} amb errors`,
             },
             platformFact: ({ platform, arch }) => `${platform} · ${arch}`,
         },
@@ -8463,6 +8465,7 @@ const machineDetailPageTranslations = { ca: translated({
             restarts: ({ count }: { count: number }) => count === 1 ? "1 reinici necessari" : `${count} reinicis necessaris`,
             restartNeeded: "Cal reiniciar",
             restartNotNeeded: "No cal",
+            securityUpdates: ({ count }: { count: number }) => count === 1 ? "1 actualització de seguretat" : `${count} actualitzacions de seguretat`,
             columnSecurity: "Seguretat",
             columnAll: "Totes",
             columnRestart: "Reinici",

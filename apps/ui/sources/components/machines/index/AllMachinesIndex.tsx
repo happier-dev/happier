@@ -68,6 +68,8 @@ import { formatMachineBytes, resolveMachineCoreCount } from '@/components/machin
 import { useMachineSummarySettingValue } from '@/components/machines/summary/useMachineSummarySetting';
 import type { MachineSummaryMetric, MachineSummaryStyle } from '@/components/machines/summary/machineSummaryStripModel';
 import { UPDATES_ROUTE } from '@/components/updates/updatesRoute';
+import { readMachineUpdateFacts, readMachineUpdateWord } from '@/components/machines/updates/machineFleetUpdates';
+import { useMachineField } from '@/sync/store/hooks';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { MachineResourceLiveDemand } from '@/sync/domains/machines/resources/useMachineResourceLiveDemand';
 import { useMachineResourceSummary, type MachineResourceAvailability } from '@/sync/domains/machines/resources/useMachineResourceSummary';
@@ -479,7 +481,13 @@ function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummarySt
             { key: 'work', title: t('allMachines.columnWork'), minWidth: 104, priority: 2,
                 ...(metrics.length > 0 ? { spanRest: (item: MachineIndexItem) => item.online && item.reason !== null } : {}),
                 render: (item) => metrics.length > 0 && (!item.online || item.reason !== null)
-                    ? <Text numberOfLines={2} style={stylesheet.quiet}>{item.reason ?? item.presence}</Text> : <MachineWorkCell item={item} /> },
+                    ? <Text numberOfLines={2} style={stylesheet.quiet}>{item.reason ?? item.presence}</Text> : (
+                        // The work, then the one update fact that needs the person (lab mIdx, review H2: no new column).
+                        <View style={stylesheet.workCell}>
+                            <MachineWorkCell item={item} services />
+                            <MachineIndexUpdateLine item={item} />
+                        </View>
+                    ) },
             ...(metrics.length === 0 ? [
                 { key: 'status', title: t('allMachines.columnStatus'), minWidth: 200, priority: 1, render: (item: MachineIndexItem) => <MachinePresenceCell item={item} /> },
             ] : metrics.map((metric, index) => ({
@@ -496,7 +504,7 @@ function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummarySt
             description,
             card: {
                 headerRight: (item: MachineIndexItem) => <MachineIndexUpdateAction item={item} />,
-                facts: (item: MachineIndexItem) => <MachineWorkCell item={item} offlineLabel={describeWhere(item)} />,
+                facts: (item: MachineIndexItem) => <MachineWorkCell item={item} offlineLabel={describeWhere(item)} services />,
                 ...(metrics.length > 0 ? { body: {
                     heightAtNormalText: MACHINE_CARD_METRICS_HEIGHT_PX,
                     render: (item: MachineIndexItem) => <MachineIndexCard item={item} style={style} metrics={metrics} />,
@@ -583,14 +591,39 @@ const MachineIndexMark = React.memo(function MachineIndexMark(props: Readonly<{ 
     return <Icon name={resolveMachineKindGlyph({ isThisComputer: props.item.thisComputer, platform: props.item.platform })} size={20} color={theme.colors.text.secondary} />;
 });
 
-/** "3 working" (count in ink) or a quiet "No work"; a machine that is not online says it in its presence. */
-const MachineWorkCell = React.memo(function MachineWorkCell(props: Readonly<{ item: MachineIndexItem; offlineLabel?: string | null }>) {
+/**
+ * "3 working" (count in ink) or a quiet "No work"; a machine that is not online says it in its presence. With `services`
+ * (the table and the grid, lab mIdx), the Machine's published service summary follows: "9 services", and how many fail
+ * in rose. A Machine that doesn't report one says nothing about services, never "0".
+ */
+const MachineWorkCell = React.memo(function MachineWorkCell(props: Readonly<{ item: MachineIndexItem; offlineLabel?: string | null; services?: boolean }>) {
     const { item } = props;
     const count = useMachineWorkingCount(item.kind === 'machine' ? { serverId: item.serverId, machineId: item.machineId } : { serverId: item.serverId, machineId: '' });
+    const live = props.services === true && item.kind === 'machine' && item.online;
+    const summary = useMachineField(item.kind === 'machine' ? item.machineId : '', 'daemonState', 'managedServices', { enabled: live, serverId: item.serverId });
     if (!item.online && count === 0) return props.offlineLabel ? <Text style={stylesheet.quiet}>{props.offlineLabel}</Text> : null;
+    const total = live && summary ? summary.running + summary.failing : 0;
     return (
         <Text numberOfLines={1} style={count > 0 ? stylesheet.work : stylesheet.quiet} testID={`machines.index.work.${item.key}`}>
             {count > 0 ? t('machineDetailPage.work.working', { count }) : t('machineDetailPage.work.none')}
+            {total > 0 ? ` · ${t('machineDetailPage.work.services', { count: total })}` : null}
+            {total > 0 && summary!.failing > 0 ? (
+                <Text style={stylesheet.failing}>{` · ${t('machineDetailPage.work.failing', { count: summary!.failing })}`}</Text>
+            ) : null}
+        </Text>
+    );
+});
+
+/** "3 security updates" or "Restart needed" in amber, from the Machine's pushed update facts; nothing otherwise. */
+const MachineIndexUpdateLine = React.memo(function MachineIndexUpdateLine(props: Readonly<{ item: MachineIndexItem }>) {
+    const { item } = props;
+    const live = item.kind === 'machine' && item.online;
+    const setup = useMachineField(item.kind === 'machine' ? item.machineId : '', 'daemonState', 'setup', { enabled: live, serverId: item.serverId });
+    const word = live ? readMachineUpdateWord(readMachineUpdateFacts(setup?.updates ?? null)) : null;
+    if (!word) return null;
+    return (
+        <Text numberOfLines={1} style={stylesheet.attention} testID={`machines.index.updates.${item.key}`}>
+            {word.kind === 'security' ? t('machineFleetUpdates.securityUpdates', { count: word.count }) : t('machineFleetUpdates.restartNeeded')}
         </Text>
     );
 });
@@ -670,6 +703,16 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.variant('meta'),
         color: theme.colors.text.secondary,
         flexShrink: 1,
+    },
+    workCell: {
+        minWidth: 0,
+    },
+    attention: {
+        ...Typography.variant('meta'),
+        color: theme.colors.state.warning,
+    },
+    failing: {
+        color: theme.colors.state.danger,
     },
     cardQuiet: {
         ...Typography.variant('meta'),

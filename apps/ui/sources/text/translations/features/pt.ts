@@ -6778,6 +6778,8 @@ const machineDetailPageTranslations = { pt: translated({
             work: {
                 none: "Sem trabalho",
                 working: ({ count }) => `${count} a trabalhar`,
+                services: ({ count }: { count: number }) => count === 1 ? "1 serviço" : `${count} serviços`,
+                failing: ({ count }: { count: number }) => `${count} com falha`,
             },
             platformFact: ({ platform, arch }) => `${platform} · ${arch}`,
         },
@@ -8463,6 +8465,7 @@ const machineDetailPageTranslations = { pt: translated({
             restarts: ({ count }: { count: number }) => count === 1 ? "1 reinício necessário" : `${count} reinícios necessários`,
             restartNeeded: "Reinício necessário",
             restartNotNeeded: "Não é necessário",
+            securityUpdates: ({ count }: { count: number }) => count === 1 ? "1 atualização de segurança" : `${count} atualizações de segurança`,
             columnSecurity: "Segurança",
             columnAll: "Todas",
             columnRestart: "Reinício",

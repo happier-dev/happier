@@ -6773,6 +6773,8 @@ const machineDetailPageTranslations = { ja: translated({
             work: {
                 none: "作業なし",
                 working: ({ count }) => `${count} 件作業中`,
+                services: ({ count }: { count: number }) => `サービス ${count} 件`,
+                failing: ({ count }: { count: number }) => `${count} 件が失敗`,
             },
             platformFact: ({ platform, arch }) => `${platform} · ${arch}`,
         },
@@ -8458,6 +8460,7 @@ const machineDetailPageTranslations = { ja: translated({
             restarts: ({ count }: { count: number }) => `再起動が必要 ${count}`,
             restartNeeded: "再起動が必要",
             restartNotNeeded: "不要",
+            securityUpdates: ({ count }: { count: number }) => `セキュリティアップデート ${count} 件`,
             columnSecurity: "セキュリティ",
             columnAll: "すべて",
             columnRestart: "再起動",

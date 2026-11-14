@@ -6805,6 +6805,8 @@ const machineDetailPageTranslations = { ru: translated({
             work: {
                 none: "Нет работы",
                 working: ({ count }) => `${count} в работе`,
+                services: ({ count }: { count: number }) => `Сервисов: ${count}`,
+                failing: ({ count }: { count: number }) => `Со сбоями: ${count}`,
             },
             platformFact: ({ platform, arch }) => `${platform} · ${arch}`,
         },
@@ -8490,6 +8492,7 @@ const machineDetailPageTranslations = { ru: translated({
             restarts: ({ count }: { count: number }) => `нужно перезапусков: ${count}`,
             restartNeeded: "Нужен перезапуск",
             restartNotNeeded: "Не нужен",
+            securityUpdates: ({ count }: { count: number }) => `Обновлений безопасности: ${count}`,
             columnSecurity: "Безопасность",
             columnAll: "Все",
             columnRestart: "Перезапуск",
