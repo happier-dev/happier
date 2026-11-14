@@ -11,7 +11,8 @@ import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { logger } from '@/ui/logger';
 import { DEFAULT_ACCOUNT_CHANGES_PAGE_LIMIT, fetchChanges } from '@/api/changes';
 import { readSessionFollowChangeHintV1, readSessionFollowReceiverChangeV1 } from '@happier-dev/protocol/sessions/follow/changes';
-import { readConnectedServicesAccountChangeV1, readProviderAccountUsageRefreshRecordIdV1, readSessionFollowSourceChangedV1, readSessionFollowReceiverAvailabilityChangedV1 } from '@happier-dev/protocol/changes';
+import { readConnectedServicesAccountChangeV1, readProviderAccountUsageRefreshRecordIdV1, readSessionFollowSourceChangedV1, readSessionFollowReceiverAvailabilityChangedV1,
+    type ChangeEntry } from '@happier-dev/protocol/changes';
 import { parseConnectedAccountCatalogPhysicalKeyV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import type { RunFollowOriginalV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
 import { readDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -58,8 +59,22 @@ type Observation = Readonly<{
     subscribeSessionFollowSources(listener: FollowSourceListener, receiverRecovery?: FollowReceiverRecovery): () => void;
     subscribeSessionInventory(listener: (event: RequesterSessionInventoryObservation) => void): () => void;
     subscribeEnvironmentAccess(listener: (event: RequesterEnvironmentAccessObservation) => void): () => void;
+    /**
+     * A same-process reader of this exact Account feed (the Machine catch-up) becomes its feed owner:
+     * while attached, Account wakes no longer trigger this observer's own `/v2/changes` read; the owner
+     * hands each fully consumed page to `consumeOwnedFeedPage` instead. Every other trigger (connect,
+     * new demand, currentness change, a page that does not continue this cursor) still reads itself.
+     */
+    attachFeedOwner(): () => void;
+    consumeOwnedFeedPage(page: OwnedFeedPage): void;
     dispose(): Promise<void>;
 }>;
+/** One fully consumed page of the Account feed, in cursor order (`after` → `nextCursor`). */
+export type OwnedFeedPage = Readonly<{ after: number; changes: readonly ChangeEntry[]; nextCursor: number }>;
+type FollowPageEffects = {
+    recoveringReceivers: boolean; sessionIds: Set<string> | null; environmentIds: Set<string>;
+    resetEnvironmentAccess: boolean; environmentAccessRetired: boolean; resetInventory: boolean; inventoryUnavailable: boolean;
+};
 type SharedObservation = Observation & {
     scope: Readonly<{ accountId: string; serverBaseUrl: string }>;
     references: Map<string, { count: number }>;
@@ -274,6 +289,13 @@ export function acquireRequesterAccountEncryptionCurrentness(scope: Scope): Obse
             subscriptions.add(release);
             return () => { subscriptions.delete(release); release(); };
         },
+        attachFeedOwner() {
+            if (released) throw new AccountEncryptionCurrentnessUnavailableError();
+            const detach = owned.attachFeedOwner();
+            subscriptions.add(detach);
+            return () => { subscriptions.delete(detach); detach(); };
+        },
+        consumeOwnedFeedPage: page => { if (!released) owned.consumeOwnedFeedPage(page); },
         subscribeEnvironmentAccess(listener) {
             if (released) throw new AccountEncryptionCurrentnessUnavailableError();
             const release = owned.subscribeEnvironmentAccess(listener);
@@ -332,6 +354,7 @@ function createObservation(scope: Scope): SharedObservation {
     };
     let followCursor = 0;
     let followCursorAcknowledged = false;
+    let feedOwners = 0;
     let followSyncRequested = false;
     let followRequestedCursor: number | undefined;
     let followSyncPending: Promise<void> | null = null;
@@ -389,6 +412,71 @@ function createObservation(scope: Scope): SharedObservation {
         for (const listener of settingsListeners) listener(event);
     };
     const invalidate = () => { lifetime.abort(); lifetime = new AbortController(); followCursorAcknowledged = false; currentness.invalidate(); };
+    /** One classification of a consumed Account feed page for every follow reader. */
+    const classifyFollowPage = (changes: readonly ChangeEntry[], page: FollowPageEffects) => {
+        if (changes.some(change => change.kind === 'account'
+            && readSessionFollowChangeHintV1(change.hint) !== null)) publishFollow();
+        for (const change of changes) {
+            if (environmentAccessListeners.size > 0) {
+                const deployment = readDeploymentAccountChangeV1(change);
+                if (deployment && deployment.deploymentId === undefined) page.environmentIds.add(deployment.environmentId);
+                if (readAccountIdentitiesChangeV1(change) || change.kind === 'account'
+                    && (change.entityId === PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1
+                        || change.entityId === TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1
+                        || change.entityId === HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1)) {
+                    page.resetEnvironmentAccess = true;
+                }
+            }
+            const receiver = readSessionFollowReceiverChangeV1(change);
+            if (receiver !== null) publishSource(receiver, true, undefined, undefined, page.recoveringReceivers);
+            if (change.kind === 'session') {
+                const availabilityChanged = readSessionFollowReceiverAvailabilityChangedV1(change, followCursor);
+                const sourceChanged = readSessionFollowSourceChangedV1(change, followCursor);
+                // An older server can classify a metadata write as
+                // non-source without qualifying receiver availability.
+                // Preserve that distinction for bounded own-receiver recovery.
+                if (availabilityChanged !== false || sourceChanged) {
+                    publishSource(change.entityId, undefined, availabilityChanged, sourceChanged ? undefined : false, page.recoveringReceivers);
+                }
+                page.sessionIds?.add(change.entityId);
+            }
+        }
+        page.resetInventory ||= inventoryListeners.size > 0 && changes.some(change => change.kind === 'share'
+            || change.kind === 'account' && change.entityId === 'teams');
+        const quotaRefreshRecordIds = changes.flatMap(change => {
+            const recordId = readProviderAccountUsageRefreshRecordIdV1(change);
+            return recordId ? [recordId] : [];
+        });
+        const serviceChanges = changes.flatMap(change => {
+            const scope = readConnectedServicesAccountChangeV1(change);
+            return scope ? [scope] : [];
+        });
+        const hasCatalogChange = changes.some(change => change.kind === 'account'
+            && parseConnectedAccountCatalogPhysicalKeyV1(change.entityId) !== null);
+        const hasConnectedAccountChange = hasCatalogChange || serviceChanges.length > 0;
+        const services = !hasCatalogChange && serviceChanges.length > 0 && serviceChanges.every(change => change.scope === 'service')
+            ? serviceChanges.flatMap(change => change.scope === 'service' ? [change.ref] : [])
+            : undefined;
+        if (quotaRefreshRecordIds.length || hasConnectedAccountChange) {
+            publishConnectedAccounts({
+                ...(quotaRefreshRecordIds.length ? { quotaRefreshRecordIds } : {}),
+                ...(!hasConnectedAccountChange ? { quotaRefreshOnly: true } : {}),
+                ...(services ? { services } : {}),
+            });
+        }
+    };
+    const newFollowPageEffects = (recoveringReceivers: boolean): FollowPageEffects => ({ recoveringReceivers,
+        sessionIds: inventoryListeners.size ? new Set<string>() : null, environmentIds: new Set<string>(),
+        resetEnvironmentAccess: false, environmentAccessRetired: false, resetInventory: false, inventoryUnavailable: false });
+    const publishFollowPageEffects = (page: FollowPageEffects) => {
+        if (environmentAccessListeners.size) {
+            if (page.environmentAccessRetired) publishEnvironmentAccess({ kind: 'retired' });
+            else if (page.resetEnvironmentAccess) publishEnvironmentAccess({ kind: 'reset' });
+            else if (page.environmentIds.size) publishEnvironmentAccess({ kind: 'changes', environmentIds: [...page.environmentIds] });
+        }
+        if (inventoryListeners.size) publishInventory(page.inventoryUnavailable ? { kind: 'unavailable' }
+            : { kind: 'changes', sessionIds: page.sessionIds ? [...page.sessionIds] : [], reset: page.resetInventory });
+    };
     // Classify the incumbent Account feed before invalidating private rules:
     // ordinary Session updates must not reload the rule corpus per occurrence.
     const syncFollowChanges = (requestedCursor?: number) => {
@@ -417,13 +505,7 @@ function createObservation(scope: Scope): SharedObservation {
                 }
                 followSyncRequested = false;
                 followRequestedCursor = undefined;
-                let recoveringReceivers = !followCursorAcknowledged;
-                const sessionIds = inventoryListeners.size ? new Set<string>() : null;
-                const environmentIds = new Set<string>();
-                let resetEnvironmentAccess = false;
-                let environmentAccessRetired = false;
-                let resetInventory = false;
-                let inventoryUnavailable = false;
+                const page = newFollowPageEffects(!followCursorAcknowledged);
                 let more = false;
                 do {
                     followCursorAcknowledged = false;
@@ -432,56 +514,7 @@ function createObservation(scope: Scope): SharedObservation {
                     }));
                     if (!current()) return;
                     if (result.status === 'ok') {
-                        if (result.response.changes.some(change => change.kind === 'account'
-                            && readSessionFollowChangeHintV1(change.hint) !== null)) publishFollow();
-                        for (const change of result.response.changes) {
-                            if (environmentAccessListeners.size > 0) {
-                                const deployment = readDeploymentAccountChangeV1(change);
-                                if (deployment && deployment.deploymentId === undefined) environmentIds.add(deployment.environmentId);
-                                if (readAccountIdentitiesChangeV1(change) || change.kind === 'account'
-                                    && (change.entityId === PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1
-                                        || change.entityId === TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1
-                                        || change.entityId === HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1)) {
-                                    resetEnvironmentAccess = true;
-                                }
-                            }
-                            const receiver = readSessionFollowReceiverChangeV1(change);
-                            if (receiver !== null) publishSource(receiver, true, undefined, undefined, recoveringReceivers);
-                            if (change.kind === 'session') {
-                                const availabilityChanged = readSessionFollowReceiverAvailabilityChangedV1(change, followCursor);
-                                const sourceChanged = readSessionFollowSourceChangedV1(change, followCursor);
-                                // An older server can classify a metadata write as
-                                // non-source without qualifying receiver availability.
-                                // Preserve that distinction for bounded own-receiver recovery.
-                                if (availabilityChanged !== false || sourceChanged) {
-                                    publishSource(change.entityId, undefined, availabilityChanged, sourceChanged ? undefined : false, recoveringReceivers);
-                                }
-                                sessionIds?.add(change.entityId);
-                            }
-                        }
-                        resetInventory ||= inventoryListeners.size > 0 && result.response.changes.some(change => change.kind === 'share'
-                            || change.kind === 'account' && change.entityId === 'teams');
-                        const quotaRefreshRecordIds = result.response.changes.flatMap(change => {
-                            const recordId = readProviderAccountUsageRefreshRecordIdV1(change);
-                            return recordId ? [recordId] : [];
-                        });
-                        const serviceChanges = result.response.changes.flatMap(change => {
-                            const scope = readConnectedServicesAccountChangeV1(change);
-                            return scope ? [scope] : [];
-                        });
-                        const hasCatalogChange = result.response.changes.some(change => change.kind === 'account'
-                            && parseConnectedAccountCatalogPhysicalKeyV1(change.entityId) !== null);
-                        const hasConnectedAccountChange = hasCatalogChange || serviceChanges.length > 0;
-                        const services = !hasCatalogChange && serviceChanges.length > 0 && serviceChanges.every(change => change.scope === 'service')
-                            ? serviceChanges.flatMap(change => change.scope === 'service' ? [change.ref] : [])
-                            : undefined;
-                        if (quotaRefreshRecordIds.length || hasConnectedAccountChange) {
-                            publishConnectedAccounts({
-                                ...(quotaRefreshRecordIds.length ? { quotaRefreshRecordIds } : {}),
-                                ...(!hasConnectedAccountChange ? { quotaRefreshOnly: true } : {}),
-                                ...(services ? { services } : {}),
-                            });
-                        }
+                        classifyFollowPage(result.response.changes, page);
                         followCursor = result.response.nextCursor;
                         followCursorAcknowledged = true;
                         more = result.response.changes.length === DEFAULT_ACCOUNT_CHANGES_PAGE_LIMIT;
@@ -491,26 +524,20 @@ function createObservation(scope: Scope): SharedObservation {
                         publishSource(null);
                         publishConnectedAccounts({ resetQuotaSchedule: true });
                         if (result.status === 'cursor-gone') {
-                            recoveringReceivers = true;
+                            page.recoveringReceivers = true;
                             followCursor = result.currentCursor;
-                            resetInventory = true;
-                            resetEnvironmentAccess = true;
+                            page.resetInventory = true;
+                            page.resetEnvironmentAccess = true;
                         } else {
-                            inventoryUnavailable = true;
-                            environmentAccessRetired = true;
+                            page.inventoryUnavailable = true;
+                            page.environmentAccessRetired = true;
                             logger.warn('Requester Follow Account changes unavailable.');
                         }
                         more = false;
                     }
                 } while (more && current());
-                if (recoveringReceivers && current()) await recoverFollowReceivers(token, captured.signal, current);
-                if (current() && environmentAccessListeners.size) {
-                    if (environmentAccessRetired) publishEnvironmentAccess({ kind: 'retired' });
-                    else if (resetEnvironmentAccess) publishEnvironmentAccess({ kind: 'reset' });
-                    else if (environmentIds.size) publishEnvironmentAccess({ kind: 'changes', environmentIds: [...environmentIds] });
-                }
-                if (current() && inventoryListeners.size) publishInventory(inventoryUnavailable ? { kind: 'unavailable' }
-                    : { kind: 'changes', sessionIds: sessionIds ? [...sessionIds] : [], reset: resetInventory });
+                if (page.recoveringReceivers && current()) await recoverFollowReceivers(token, captured.signal, current);
+                if (current()) publishFollowPageEffects(page);
             }
         })().finally(() => {
             if (followSyncPending === work) followSyncPending = null;
@@ -562,7 +589,8 @@ function createObservation(scope: Scope): SharedObservation {
                         // A wake routed only to kinds no follow reader classifies (for example first-boot
                         // plugin availability claims) carries nothing here; the cursor stays where it is,
                         // and the next relevant wake reads from it. Unrouted wakes stay coarse.
-                        if (parsed.success && !isAccountWakeOutsideFollowKinds(parsed.data.body)) {
+                        // An attached same-process feed owner reads this wake and hands its page over.
+                        if (feedOwners === 0 && parsed.success && !isAccountWakeOutsideFollowKinds(parsed.data.body)) {
                             syncFollowChanges(Number.isSafeInteger(parsed.data.seq) && parsed.data.seq >= 0
                                 ? parsed.data.seq : undefined);
                         }
@@ -702,6 +730,31 @@ function createObservation(scope: Scope): SharedObservation {
             // Join an in-flight catch-up, or establish this new demand's cursor baseline.
             syncFollowChanges();
             return () => { inventoryListeners.delete(listener); };
+        },
+        attachFeedOwner() {
+            feedOwners++;
+            let attached = true;
+            return () => {
+                if (!attached) return;
+                attached = false;
+                feedOwners--;
+                // Wakes are this observer's again; read anything the owner had not handed over.
+                if (feedOwners === 0) syncFollowChanges();
+            };
+        },
+        consumeOwnedFeedPage(feed) {
+            if (disposed || !connected || !hasFollowDemand()) return;
+            // Already classified through this cursor (the owner caught up from an older checkpoint).
+            if (followCursorAcknowledged && !followSyncPending && feed.nextCursor <= followCursor) return;
+            // Only an exact continuation of this cursor can be classified as-is; anything else reads itself.
+            if (followSyncPending || !followCursorAcknowledged || feed.after !== followCursor) {
+                syncFollowChanges(feed.nextCursor);
+                return;
+            }
+            const page = newFollowPageEffects(false);
+            classifyFollowPage(feed.changes, page);
+            followCursor = feed.nextCursor;
+            publishFollowPageEffects(page);
         },
         subscribeEnvironmentAccess(listener) {
             const alreadyDemanded = hasFollowDemand();

@@ -119,6 +119,7 @@ import { readRequesterAccountActionContext, type RequesterAccountActionContext }
 import { prepareAcquiredFileDownload } from '@/machines/transfer/prepareWorkspaceFileExport';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { resolveSessionRpcContent } from '@/session/transport/rpc/sessionRpc';
+import { isV2ChangesSyncEnabled } from '@/api/session/sessionChangesSyncOnConnect';
 import { createMachineSkillHostService, resolveMachineSkillInstallTarget } from '@/prompts/skills/machineInstall/machineSkillHost';
 import { createMachineSkillActionExecutor } from '@/prompts/skills/machineInstall/machineSkillActionExecutor';
 import { createExternalActionMachineRpcExecution, verifyExternalActionExecutionAuthorizationCurrent } from './externalActionExecutionAuthorization';
@@ -6284,6 +6285,9 @@ export class ApiMachineClient {
                 const observation = acquireRequesterAccountEncryptionCurrentness({ accountId, token: this.token,
                     serverBaseUrl: this.machineRuntimeServerHttpBaseUrl });
                 this.accountEncryptionCurrentness = observation;
+                // This catch-up already reads every follow-relevant kind of this Account feed per wake;
+                // the shared observation consumes its pages instead of a second read per wake.
+                if (isV2ChangesSyncEnabled(process.env.HAPPY_ENABLE_V2_CHANGES)) observation.attachFeedOwner();
                 try { await observation.read(signal); }
                 catch (error) {
                     // A missing route on older Homes retains existing HTTP readers. Transient
@@ -6494,12 +6498,7 @@ export class ApiMachineClient {
             }
         }
 
-        const enabled = (() => {
-            const raw = process.env.HAPPY_ENABLE_V2_CHANGES;
-            if (!raw) return true;
-            return ['true', '1', 'yes'].includes(raw.toLowerCase());
-        })();
-        if (!enabled) {
+        if (!isV2ChangesSyncEnabled(process.env.HAPPY_ENABLE_V2_CHANGES)) {
             if (this.isActiveTransportGeneration(transportGeneration)) {
                 this.accountChangesObserverTransportGeneration = null;
             }
@@ -7016,6 +7015,7 @@ export class ApiMachineClient {
                 }
                 signal.throwIfAborted();
                 if (this.projectionSchedulingClosed || !this.isActiveTransportGeneration(transportGeneration)) return;
+                this.accountEncryptionCurrentness?.consumeOwnedFeedPage({ after, changes, nextCursor });
                 after = nextCursor;
                 consumedPage = true;
                 automationWorkInvalidated ||= hasAutomationSourceChange || workflowRunIds.length > 0;

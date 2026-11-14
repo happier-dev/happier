@@ -59,4 +59,60 @@ describe('requester Account follow observation wakes', () => {
       await observation.dispose();
     }
   });
+
+  it('classifies the same-process feed owner pages instead of reading the feed per Session wake, and reads again without an owner', async () => {
+    let socket: ApiSessionSocketStub | undefined;
+    sockets.connect.mockImplementation(() => {
+      socket = createApiSessionSocketStub({ connected: true });
+      return { socket, transport: createSocketTransportAdapter(socket) };
+    });
+    let cursor = 0;
+    const get = vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+      if (url.includes('/v1/account/encryption/currentness')) return { status: 200, data: {
+        mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+        recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' },
+      } };
+      if (url.includes('/v2/changes')) return { status: 200, data: { changes: [], nextCursor: cursor } };
+      throw new Error(`Unexpected boundary read: ${url}`);
+    });
+    const feedReads = () => get.mock.calls.filter(([url]) => String(url).includes('/v2/changes')).length;
+    const observation = acquireRequesterAccountEncryptionCurrentness({
+      accountId: 'account-feed-owner', token: 'token-feed-owner', serverBaseUrl: 'http://home.test',
+    });
+    const sources: (string | null)[] = [];
+    const release = observation.subscribeSessionFollowSources(sessionId => { sources.push(sessionId); });
+    const detachOwner = observation.attachFeedOwner();
+    try {
+      await vi.waitFor(() => expect(socket).toBeDefined());
+      socket!.trigger('connect');
+      await vi.waitFor(() => expect(feedReads()).toBeGreaterThan(0));
+      await new Promise<void>(resolve => setTimeout(resolve, 10));
+      const baseline = feedReads();
+      sources.length = 0;
+      // Per-turn Session writes: each wakes both the Machine catch-up (the owner) and this socket.
+      for (let n = 0; n < 5; n += 1) {
+        const after = cursor;
+        cursor += 1;
+        socket!.trigger('update', { id: `wake-${n}`, seq: cursor, createdAt: 1,
+          body: { t: 'account-change', changeKinds: ['session'], entityIds: ['session-turns'] } });
+        observation.consumeOwnedFeedPage({ after, nextCursor: cursor,
+          changes: [{ cursor, kind: 'session', entityId: 'session-turns', changedAt: 1 }] });
+        await new Promise<void>(resolve => setTimeout(resolve, 5));
+      }
+      expect(feedReads() - baseline).toBe(0);
+      // The Session change still reaches the Follow source reader through the owner's page.
+      expect(sources.filter(id => id === 'session-turns')).toHaveLength(5);
+      // Without an owner, the observer reads its own wakes again.
+      detachOwner();
+      await vi.waitFor(() => expect(feedReads() - baseline).toBe(1));
+      cursor += 1;
+      socket!.trigger('update', { id: 'wake-unowned', seq: cursor, createdAt: 1,
+        body: { t: 'account-change', changeKinds: ['session'], entityIds: ['session-turns'] } });
+      await vi.waitFor(() => expect(feedReads() - baseline).toBe(2));
+    } finally {
+      detachOwner();
+      release();
+      await observation.dispose();
+    }
+  });
 });
