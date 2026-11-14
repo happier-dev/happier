@@ -774,6 +774,31 @@ describe('React Native bundle cache', () => {
         expect(cache.readInstalledArtifact(identity)).toBeNull();
     });
 
+    it('does not copy or compare the bytes again when the same verified artifact is installed again', () => {
+        const cache = createPluginReactNativeBundleCache();
+        const bytes = new Uint8Array([47, 47, 32, 98, 117, 110, 100, 108, 101]);
+        const record = singleFileRecord(persistentIdentity, 'index.js', bytes);
+        let fileByteReads = 0;
+        const files = record.files.map((file) => Object.defineProperty({ ...file }, 'bytes', {
+            enumerable: true,
+            get: () => { fileByteReads++; return file.bytes; },
+        }));
+        const install = () => cache.putInstalledArtifact({
+            identity,
+            bytes,
+            format: 'plainJs',
+            accountScope: persistentIdentity.accountScope,
+            entryRelativePath: 'index.js',
+            files,
+        });
+        expect(install()).toEqual({ ok: true, cacheKey: derivePluginReactNativeBundleCacheKey(identity) });
+        const afterFirstInstall = fileByteReads;
+        // Session open/leave re-acquire the same lease; an unchanged install is not a new write.
+        expect(install()).toEqual({ ok: true, cacheKey: derivePluginReactNativeBundleCacheKey(identity) });
+        expect(fileByteReads - afterFirstInstall).toBe(0);
+        expect(cache.readInstalledArtifact(identity)?.bytes).toEqual(bytes);
+    });
+
     it('reuses identical digest bytes when non-digest release metadata changes', () => {
         const cache = createPluginReactNativeBundleCache();
         const bytes = new Uint8Array([47, 47, 32, 98, 117, 110, 100, 108, 101]);

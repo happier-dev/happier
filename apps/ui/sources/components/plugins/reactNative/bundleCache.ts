@@ -184,6 +184,27 @@ function cloneCachedArtifactFiles(
     }));
 }
 
+function isSameInstalledArtifact(
+    installed: PluginReactNativeCachedArtifact,
+    entry: Readonly<{
+        identity: PluginReactNativeBundleCacheIdentity;
+        format: PluginReactNativeBundleArtifactFormat;
+        entryRelativePath?: string;
+        files?: readonly PluginReactNativeCachedArtifactFile[];
+    }>,
+): boolean {
+    const a = installed.identity;
+    const b = entry.identity;
+    return a.pluginId === b.pluginId
+        && a.contributionId === b.contributionId
+        && a.artifactId === b.artifactId
+        && a.artifactDigest === b.artifactDigest
+        && a.platform === b.platform
+        && installed.format === entry.format
+        && installed.entryRelativePath === entry.entryRelativePath
+        && (installed.files === undefined) === (entry.files === undefined);
+}
+
 function clonePersistentArtifactRecord(
     record: PluginReactNativePersistentArtifactRecord,
 ): PluginReactNativePersistentArtifactRecord {
@@ -631,6 +652,13 @@ export function createPluginReactNativeBundleCache(
                         diagnostics: Object.freeze(['react_native_artifact_cache_write_invalidated']),
                     });
                 }
+            }
+            const installed = entries.get(cacheKey);
+            if (installed && isSameInstalledArtifact(installed, entry)
+                && hotEntryAccountScopes.get(cacheKey) === (entry.accountScope ? accountScopeKey(entry.accountScope) : undefined)) {
+                // The digest keys the exact file graph: re-acquiring the same lease (every Session open/leave
+                // remounts its surfaces) is not a new install, so it copies and compares no bytes.
+                return Object.freeze({ ok: true, cacheKey });
             }
             programs.delete(cacheKey);
             entries.set(cacheKey, Object.freeze({
