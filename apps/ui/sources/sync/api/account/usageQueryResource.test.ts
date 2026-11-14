@@ -1386,6 +1386,10 @@ describe('usage query captured Resource adapter', () => {
       expect(entry.getSnapshot().error).toBeTruthy();
       expect(observed.some(slice => slice.howYouWork?.intervals?.agentTimeMs === 600)).toBe(true);
       expect(observed.every(slice => !slice.howYouWork?.inputs || slice.howYouWork.inputs.acceptedCount === 0)).toBe(true);
+      // The failed read has ended: its retained progress must not keep a body reading.
+      const retained = decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!;
+      expect(retained.sources.filter(source => source.status === 'pending')).toEqual([]);
+      expect(retained.pending).toBe(false);
     } finally { release(); }
   });
 

@@ -10,7 +10,7 @@ import type { ResourceContent, ResourceSubscriptionEvent } from '@happier-dev/pl
 import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 import { getUsageQueryBatchKey, getUsageQueryKey, normalizeUsageQuery, normalizeUsageQueryBatchInput, resolveUsageQueryPeriod, usageAnalyticsRequestToQuery, usageQueryToAnalyticsRequest, usageQueryNeedsContributionRows, type UsageQuery, type UsageQueryBatchInput } from '@happier-dev/protocol/inputs/usageQuery';
 import { collectUsageWorkSources } from '@happier-dev/protocol/usage/usageWorkSources';
-import { resolveUsagePageAccountingReads, resolveUsageAccountingAsOfMs, retainAccountingOnReadFailure, retainUsageQueryResultReferences, canRetainUsageReadFailure, UsageQueryBatchResultSchema, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQueryBatchResult, type UsageWorkSourceSnapshot, type UsageQuerySourceState, type UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { resolveUsagePageAccountingReads, resolveUsageAccountingAsOfMs, retainAccountingOnReadFailure, retainUsageQueryResultReferences, canRetainUsageReadFailure, isUsageQuerySourceOutstanding, UsageQueryBatchResultSchema, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQueryBatchResult, type UsageWorkSourceSnapshot, type UsageQuerySourceState, type UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { ConnectedServicePoolSelectionGetRequestV1Schema, type ConnectedServicePoolSelectionGetRequestV1, type ConnectedServicePoolSelectionGetResponseV1 } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { computePluginUiArtifactSha256DigestV1 } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
@@ -2224,6 +2224,22 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         allowance = undefined;
                         owner.projectionDocuments.clear();
                         slicesByQuery.clear();
+                    }
+                    // This read has ended. Its last progress revision stays the shown
+                    // facts, so a source it was still reading settles as failed rather
+                    // than leaving its bodies reading until some later read.
+                    if (!options?.signal?.aborted && sharedContext.accountLifetime.isCurrent()) {
+                        queuedProgress = null;
+                        await progressContent?.catch(() => undefined);
+                        const shown = entry.getSnapshot().value;
+                        const batch = shown ? decodeUsageQueryResource(shown) : undefined;
+                        if (batch?.results.some(slice => slice.pending)) {
+                            const errorCode = typeof code === 'string' ? code : 'usage_query_failed';
+                            const settled: UsageQueryBatchResult = { ...batch, results: batch.results.map(slice => !slice.pending ? slice : {
+                                ...slice, pending: false, sources: slice.sources.map(source => isUsageQuerySourceOutstanding(slice.requestedQuery, source)
+                                    ? { ...source, status: 'error' as const, errorCode } : source) }) };
+                            options?.onProgress?.(keepContent(createUsageQueryResourceContent(settled), settled));
+                        }
                     }
                     throw failure;
                 }

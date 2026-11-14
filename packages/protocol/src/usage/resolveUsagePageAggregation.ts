@@ -578,6 +578,13 @@ export function resolveUsagePageAccountingRequests(queries: readonly UsageQuery[
   return resolveUsagePageAccountingReads(queries, nowMs).map(read => read.query);
 }
 
+/** Whether one source of a query slice is still being read; the slice is pending while any one is. */
+export function isUsageQuerySourceOutstanding(query: UsageQuery, source: UsageQuerySourceState): boolean {
+  return (source.status === 'pending' || source.status === 'not_loaded')
+    && (source.source === 'work' ? query.includeWorkEvidence === true
+      : source.source === 'how_you_work' ? query.includeSessionEvidence === true : true);
+}
+
 export function canRetainUsageReadFailure(errorCode?: string): boolean {
   return !['denied', 'permission_denied', 'unauthorized', 'forbidden', 'stale_surface', 'cancelled', 'plugin_resource_context_unavailable',
     RPC_ERROR_CODES.FORBIDDEN, RPC_ERROR_CODES.TEAM_AUTHENTICATION_REQUIRED,
@@ -977,10 +984,7 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput): U
       } : {}),
       ...(mergedFacts.value === undefined ? {} : { mergedOutcomes: mergedFacts.value }),
       sources,
-      pending: [...sources, ...(comparisonQuery ? [comparisonSource] : [])].some(source =>
-        (source.status === 'pending' || source.status === 'not_loaded')
-        && (source.source === 'work' ? query.includeWorkEvidence
-          : source.source === 'how_you_work' ? query.includeSessionEvidence : true)),
+      pending: [...sources, ...(comparisonQuery ? [comparisonSource] : [])].some(source => isUsageQuerySourceOutstanding(query, source)),
     };
     return slice;
   });
