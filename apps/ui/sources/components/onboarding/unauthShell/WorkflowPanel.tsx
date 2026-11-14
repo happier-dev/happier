@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/motion/StepTransitionFrame';
 import { useModalCardDimensions } from '@/modal/components/card/useModalCardDimensions';
 import { t } from '@/text';
+import { useNativeBackLayerBackHandler } from '@/components/ui/overlays/NativeBackLayerBoundary';
 
 import { BackChevron } from './BackChevron';
 import { BrandWordmark } from './BrandWordmark';
@@ -101,6 +102,11 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
     const styles = stylesheet;
     const isMobile = props.variant === 'mobile';
     const isFullBleed = props.presentation === 'fullBleed';
+    // Android Back does what the on-screen Back does; without one the app's own Back handling continues.
+    useNativeBackLayerBackHandler(props.onBack != null, () => {
+        props.onBack?.();
+        return true;
+    });
     // Match the legacy WizardCardLayout card-width derivation so the workflow
     // pane caps at ~500px on desktop and scales down gracefully on narrow
     // viewports. The maxWidth is applied to the pane root itself (not a child),
