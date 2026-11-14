@@ -36,9 +36,10 @@ describe('detectCliSnapshotOnDaemonPath (version cache)', () => {
     }));
 
     const fixture = await createProbeTempDir('happier-cliSnapshot-versionCache');
-    const envScope = createEnvKeyScope(['PATH', 'HAPPIER_CODEX_PATH', 'HAPPIER_TEST_CLI_VERSION_COUNTER_FILE']);
+    const envScope = createEnvKeyScope(['PATH', 'HAPPIER_CODEX_PATH', 'HAPPIER_TEST_CLI_VERSION_COUNTER_FILE', 'HAPPIER_CLI_VERSION_CACHE']);
 
     try {
+      delete process.env.HAPPIER_CLI_VERSION_CACHE;
       const counterFile = join(fixture.dir, 'version-calls.txt');
       const codexPath = join(fixture.dir, 'codex.cjs');
       await writeExecutableScript(codexPath, COUNTING_CLI_SCRIPT);

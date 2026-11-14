@@ -399,7 +399,14 @@ async function resolveCliBinaryNames(name: DetectCliName): Promise<readonly stri
 const CLI_VERSION_CACHE_MAX_ENTRIES = 64;
 const cliVersionByBinaryIdentity = new Map<string, string>();
 
+// Set HAPPIER_CLI_VERSION_CACHE=0 to always spawn `--version` (diagnostics, and tests that use the
+// spawn count as their signal that a snapshot was recomputed).
+function isCliVersionCacheEnabled(): boolean {
+    return process.env.HAPPIER_CLI_VERSION_CACHE !== '0';
+}
+
 async function readCliBinaryIdentity(name: DetectCliName, resolvedPath: string): Promise<string | null> {
+    if (!isCliVersionCacheEnabled()) return null;
     try {
         const info = await stat(resolvedPath);
         return `${name}\0${resolvedPath}\0${info.size}\0${info.mtimeMs}`;
