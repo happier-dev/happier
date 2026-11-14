@@ -751,6 +751,46 @@ async function isolatedRoutingController(fixture) {
   return controller.launcher;
 }
 
+test('native remote dispatch carries its completed duration history into broker overruns', { skip: process.platform !== 'linux', timeout: 60_000 }, async t => {
+  const fixture = await runtimeAdmissionTransportFixture(t);
+  const controller = await isolatedRoutingController(fixture);
+  const worker = fixture.workers.starved;
+  await worker.pressure.release();
+  await waitForRuntime(async () => (await worker.brokerStatus()).activeCount === 0, () => 'fixture pressure slot was not released');
+  const observations = join(resolve(worker.launcher, '../../../..'), 'duration-observations.jsonl');
+  const payload = `import { appendFileSync } from 'node:fs';
+import { requestAdmissionSample } from ${JSON.stringify(pathToFileURL(worker.admissionClientPath).href)};
+const p99 = Number(process.env.HAPPIER_ADMISSION_DURATION_P99_MS || 0);
+if (p99) await new Promise(resolve => setTimeout(resolve, 2 * p99 + 1));
+appendFileSync(${JSON.stringify(observations)}, JSON.stringify(await requestAdmissionSample(${JSON.stringify(worker.admissionRoot)})) + '\\n');
+`;
+  for (const checkout of [fixture.invocation.cwd, resolve(worker.launcher, '../../../..')]) {
+    await writeFile(join(checkout, 'duration.test.mjs'), payload);
+  }
+  const invoke = () => spawnSync('/bin/sh', [controller, '--target=starved', '--', 'node', '--test', 'duration.test.mjs'], fixture.invocation);
+  const withoutHistory = invoke();
+  assert.equal(withoutHistory.status, 0, withoutHistory.stderr);
+  const initial = JSON.parse((await readFile(observations, 'utf8')).trim());
+  assert.equal(initial.activeCount, 1);
+  assert.deepEqual(initial.overruns, []);
+  assert.equal(initial.durationHistoryUnavailableCount, 1);
+  const history = (await readFile(join(fixture.stackDir, 'dev-target-command-load-native/provenance.jsonl'), 'utf8'))
+    .trim().split('\n').map(line => JSON.parse(line));
+  const completed = history.find(record => record.phase === 'completed' && record.exitCode === 0);
+  assert.ok(completed?.durationMs > 0, 'the first real launch must produce duration history');
+  const withHistory = invoke();
+  assert.equal(withHistory.status, 0, withHistory.stderr);
+  const rows = (await readFile(observations, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+  assert.equal(rows.length, 2);
+  assert.equal(rows[1].activeCount, 1);
+  assert.equal(rows[1].overruns.length, 1, 'the next real launch must retain recorded history through worker admission');
+  assert.equal(rows[1].overruns[0].durationClass, completed.commandClass);
+  assert.equal(rows[1].overruns[0].p99DurationMs, completed.durationMs);
+  assert.equal(rows[1].durationHistoryUnavailableCount, 0);
+  assert.doesNotMatch(withoutHistory.stderr + withHistory.stderr, /ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND/);
+  await waitForRuntime(async () => (await worker.brokerStatus()).activeCount === 0, () => 'completed diagnostic payload retained its slot');
+});
+
 test('AUTO publication during preparation waits on its selected worker instead of preparing the pool', { skip: process.platform !== 'linux', timeout: 60_000 }, async t => {
   const publications = new Map();
   const releases = [];
