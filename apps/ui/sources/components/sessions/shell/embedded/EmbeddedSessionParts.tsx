@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, type LayoutChangeEvent } from 'react-native';
+import { ScrollView, View, type LayoutChangeEvent } from 'react-native';
 import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 import { useUnistyles } from 'react-native-unistyles';
 import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
@@ -186,32 +186,91 @@ const STANDARD_PARTS: readonly SessionPartKind[] = ['transcript', 'composer'];
 const noop = () => {};
 
 /**
+ * The arrangement's one rule for a host with little room: the conversation never gets less height than the
+ * composer you type into. A host that cannot hold both (a linked Session under a tall detail header in a short
+ * window, 2026-11-13) used to give the composer every pixel and leave the transcript 0px tall, so a loaded
+ * Session read empty. There the arrangement keeps that minimum and scrolls as one column, conversation first;
+ * any host with enough room is filled exactly as before. Returns the arranged height, or `null` to fill the room.
+ */
+export function resolveEmbeddedSessionArrangedHeight(input: Readonly<{
+    roomHeight: number | null;
+    composerHeight: number | null;
+}>): number | null {
+    const { roomHeight, composerHeight } = input;
+    if (roomHeight === null || composerHeight === null || !(composerHeight > 0)) return null;
+    const minimum = Math.ceil(composerHeight * 2);
+    return roomHeight >= minimum ? null : minimum;
+}
+
+function readLayoutHeight(event: LayoutChangeEvent): number | null {
+    const height = event.nativeEvent.layout.height;
+    return Number.isFinite(height) && height > 0 ? Math.round(height) : null;
+}
+
+/**
  * The host's standard arrangement — transcript, then composer — used by `SessionChat` and by the
  * embed route. It is the full Session view's own layout, so keyboard handling, content width and
- * the transcript's scroll ownership are exactly the incumbent's.
+ * the transcript's scroll ownership are exactly the incumbent's; only a host too short for both
+ * scrolls the arrangement ({@link resolveEmbeddedSessionArrangedHeight}).
  */
 export function EmbeddedSessionStandardLayout(props: Readonly<{ testID?: string }>) {
     const parts = useEmbeddedSessionParts();
     const owns = useEmbeddedSessionPartClaim(STANDARD_PARTS);
     const deviceType = useDeviceType();
+    const [roomHeight, setRoomHeight] = React.useState<number | null>(null);
+    const [composerHeight, setComposerHeight] = React.useState<number | null>(null);
+    const handleRoomLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const next = readLayoutHeight(event);
+        setRoomHeight((current) => (current === next ? current : next));
+    }, []);
+    const handleComposerLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const next = readLayoutHeight(event);
+        setComposerHeight((current) => (current === next ? current : next));
+    }, []);
+    const composer = parts?.composer ?? null;
+    const input = React.useMemo(() => (
+        composer == null ? null : <View onLayout={handleComposerLayout} style={COMPOSER_MEASURE_STYLE}>{composer}</View>
+    ), [composer, handleComposerLayout]);
     if (!parts || !owns) return null;
+    const arrangedHeight = resolveEmbeddedSessionArrangedHeight({
+        roomHeight,
+        composerHeight: composer == null ? null : composerHeight,
+    });
     return (
-        <View testID={props.testID ?? 'embedded-session-standard-layout'} style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
-            <SessionViewLayout
-                content={parts.transcript}
-                input={parts.composer}
-                placeholder={parts.placeholder}
-                shouldShowCliWarning={false}
-                onDismissCliWarning={noop}
-                isLandscape={false}
-                deviceType={deviceType}
-                onBackPress={noop}
-                chatBottomSpacing={parts.chatBottomSpacing}
-            />
+        <View
+            testID={props.testID ?? 'embedded-session-standard-layout'}
+            onLayout={handleRoomLayout}
+            style={{ flex: 1, minHeight: 0, minWidth: 0 }}
+        >
+            {/* One tree whatever the room, so a resize never remounts the transcript. */}
+            <ScrollView
+                testID="embedded-session-arrangement"
+                style={ARRANGEMENT_SCROLL_STYLE}
+                contentContainerStyle={arrangedHeight === null ? ARRANGEMENT_FILL_STYLE : { height: arrangedHeight }}
+                scrollEnabled={arrangedHeight !== null}
+                showsVerticalScrollIndicator={arrangedHeight !== null}
+                alwaysBounceVertical={false}
+                keyboardShouldPersistTaps="handled"
+            >
+                <SessionViewLayout
+                    content={parts.transcript}
+                    input={input}
+                    placeholder={parts.placeholder}
+                    shouldShowCliWarning={false}
+                    onDismissCliWarning={noop}
+                    isLandscape={false}
+                    deviceType={deviceType}
+                    onBackPress={noop}
+                    chatBottomSpacing={parts.chatBottomSpacing}
+                />
+            </ScrollView>
             <EmbeddedSessionTranscriptTopEdge />
         </View>
     );
 }
+const COMPOSER_MEASURE_STYLE = Object.freeze({ minWidth: 0 });
+const ARRANGEMENT_SCROLL_STYLE = Object.freeze({ flex: 1, minHeight: 0, minWidth: 0 });
+const ARRANGEMENT_FILL_STYLE = Object.freeze({ flexGrow: 1, minHeight: 0, minWidth: 0 });
 
 /**
  * Publishes a state that stands in for a loaded Session (loading, unavailable, blocked) as the
