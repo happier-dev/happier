@@ -2268,15 +2268,15 @@ export type ActionCliCommandDeclaration = Readonly<{
  * compiler. Ordering follows the catalog so a compiled command list is stable.
  */
 export function listActionCliCommandDeclarations(): readonly ActionCliCommandDeclaration[] {
-  return Object.freeze(ACTION_SPECS.flatMap((spec) => (
-    (spec.cli?.commands ?? []).map((binding) => Object.freeze({ spec, binding }))
-  )));
+  return readActionCliCommandDeclarations();
 }
 
 /**
  * A command path has exactly one admitted Action owner. Two Actions claiming the
- * same spelling is a declaration defect, not a dispatch-time tiebreak, so it
- * fails at catalog load rather than silently letting the first one win.
+ * same spelling is a declaration defect, not a dispatch-time tiebreak, so the
+ * first read of the declarations fails rather than silently letting the first
+ * one win. It is checked there, not at module evaluation: evaluating it here
+ * built the whole catalog in every process that imports this module.
  */
 function assertActionCliCommandPathsAreUnique(
   declarations: readonly ActionCliCommandDeclaration[],
@@ -2294,7 +2294,13 @@ function assertActionCliCommandPathsAreUnique(
   }
 }
 
-assertActionCliCommandPathsAreUnique(listActionCliCommandDeclarations());
+const readActionCliCommandDeclarations = memoizeActionSpecValue(() => {
+  const declarations = Object.freeze(ACTION_SPECS.flatMap((spec) => (
+    (spec.cli?.commands ?? []).map((binding) => Object.freeze({ spec, binding }))
+  )));
+  assertActionCliCommandPathsAreUnique(declarations);
+  return declarations;
+});
 
 export function listVoiceToolActionSpecs(): readonly ActionSpec[] {
   return listActionSpecsForSurface('voice').filter((spec) => Boolean(spec.bindings?.voiceClientToolName));
