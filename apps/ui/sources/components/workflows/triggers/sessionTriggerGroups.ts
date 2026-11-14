@@ -1,5 +1,6 @@
 import type { TriggerTargetV1} from '@happier-dev/protocol/workflows/triggers/triggerTargetV1';
 import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { isWorkflowTriggerSourceGoneV1 as isWorkflowTriggerSourceGone } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { workflowTriggerDisplayNameV1 } from '@happier-dev/protocol/workflows/workflowStepLabel';
 
 import { t } from '@/text';
@@ -52,9 +53,7 @@ function groupRank(group: TriggerEventGroup): number {
  * and for access withdrawn from it, so what a surface draws for this state stays neutral and identical
  * for both. A retained 0.2 automation keeps its own locked copy.
  */
-export function isWorkflowTriggerSourceGone(set: Pick<WorkflowTriggerSetV1, 'health' | 'legacy'>): boolean {
-    return set.health === 'source_unavailable' && set.legacy === undefined;
-}
+export { isWorkflowTriggerSourceGone };
 
 /** A row is named by what it runs (07 S16 presentation item 4). */
 export function describeTriggerTarget(target: TriggerTargetV1 | undefined, resolveWorkflowTitle: (ref: string) => string | null): string {

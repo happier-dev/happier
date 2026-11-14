@@ -6,7 +6,7 @@ vi.mock('@/text', async () => {
     return createTextModuleMock();
 });
 
-const { projectWorkflowLibraryRecords, selectRetainedSourceGoneSets } = await import('./workflowLibraryCollection');
+const { projectWorkflowLibraryRecords } = await import('./workflowLibraryCollection');
 
 const schedule = (id: string, hour: number) => ({ id, revision: 1, enabled: true, createdAt: 1, updatedAt: 1, kind: 'schedule',
     triggerDefinitionEnvelope: null, nextRunAt: null,
@@ -18,19 +18,6 @@ const project = (accountTriggers: readonly WorkflowTriggerSetV1[]) => projectWor
     definitions: { library: [], sharedWithYou: [] }, accountTriggers, summaries: null, automationSummaries: null });
 
 describe('retained triggers whose Workflow is gone', () => {
-    it('keeps only Account triggers whose source lookup failed and the Library does not already list', () => {
-        const gone = set('gone', { health: 'source_unavailable' });
-        const inline = set('inline-gone', { health: 'source_unavailable' });
-        const retained = selectRetainedSourceGoneSets([
-            gone,
-            inline,
-            set('healthy', { target: { kind: 'workflow', ref: '11111111-1111-4111-8111-111111111111' } }),
-            set('session', { health: 'source_unavailable', scopeSessionId: 'session-1' }),
-            set('legacy', { health: 'source_unavailable', legacy: { editable: false, reason: 'created_in_0_2', lockedReason: 'review_required' } }),
-        ], [inline]);
-        expect(retained.map(item => item.automationId)).toEqual(['gone']);
-    });
-
     it('reads the same for a deleted and a revoked Workflow: nothing tells the two apart', () => {
         const row = (automationId: string) => {
             const [record] = project([set(automationId, { health: 'source_unavailable' })]);

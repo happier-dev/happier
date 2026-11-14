@@ -10,7 +10,7 @@ import {
 import { getAutomationDefinitionRunCauseAt } from '@/sync/domains/automations/automationRunCause';
 import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import type { WorkflowTriggerListRequestV1, WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { isWorkflowTriggerSetAttachedToSession } from '@/sync/domains/workflows/workflowTriggerSession';
 import { matchesWorkflowTriggerQuery, workflowTriggerQueryKey } from '@/sync/domains/workflows/workflowTriggerQuery';
 
@@ -88,7 +88,8 @@ function reconcileTriggerTargetMemberships(
 ) {
     let next = windows;
     for (const [queryKey, ids] of Object.entries(windows)) {
-        if (queryKey !== 'account_inline' && !queryKey.startsWith('workflow:') && !queryKey.startsWith('managed:')) continue;
+        if (queryKey !== 'account_inline' && queryKey !== 'account_source_unavailable'
+            && !queryKey.startsWith('workflow:') && !queryKey.startsWith('managed:')) continue;
         const retained = ids.filter(id => !observedIds.has(id) || matchesTriggerTargetQuery(queryKey, facts[id]));
         if (retained.length !== ids.length) next = { ...next, [queryKey]: retained };
     }
@@ -128,20 +129,22 @@ export function createWorkflowTriggerSetSelector(queryKey: string, includeEmpty 
 export const EMPTY_WORKFLOW_TRIGGER_CHANGE_SIGNAL: readonly AutomationDefinition[] = [];
 
 /** Automation sync is the invalidation signal, not a second opened-content owner. */
-export function createWorkflowTriggerChangeSelector(sessionId: string | null, workflow: string | null = null, all = false,
+export function createWorkflowTriggerChangeSelector(sessionId: string | null, workflow: string | null = null,
+    scope: Extract<WorkflowTriggerListRequestV1, { scope: string }>['scope'] = 'account_inline',
     managedTarget?: Readonly<{ homeId: string; managedId: string }>) {
     let previous: AutomationsDomain['automations'] | null = null;
     let observed = new Map<string, AutomationDefinition>();
     let signal = EMPTY_WORKFLOW_TRIGGER_CHANGE_SIGNAL;
-    const queryKey = workflowTriggerQueryKey(managedTarget ? { managedTarget } : all ? { scope: 'account_all' }
-        : sessionId !== null ? { sessionId } : workflow !== null ? { workflow } : { scope: 'account_inline' });
+    const queryKey = workflowTriggerQueryKey(managedTarget ? { managedTarget }
+        : sessionId !== null ? { sessionId } : workflow !== null ? { workflow } : { scope });
     return (state: Pick<AutomationsDomain, 'automations' | 'workflowTriggerSetsById' | 'workflowTriggerSetIdsByQuery'>) => {
         if (previous === state.automations) return signal;
         const relevant = Object.values(state.automations)
             .filter((automation) => managedTarget ? automation.managedTarget === undefined
                 || (automation.managedTarget?.homeId === managedTarget.homeId && automation.managedTarget.managedId === managedTarget.managedId)
-                : all || (sessionId === null
-                ? !automation.scopeSessionId && (workflow === null ? !automation.workflowDefinitionId : automation.workflowDefinitionId === workflow)
+                : scope === 'account_all' || (sessionId === null
+                ? !automation.scopeSessionId && (workflow === null ? scope === 'account_source_unavailable'
+                    ? Boolean(automation.workflowDefinitionId) : !automation.workflowDefinitionId : automation.workflowDefinitionId === workflow)
                 : automation.scopeSessionId === sessionId));
         const next = new Map(relevant.map(automation => [automation.id, automation]));
         const listedIds = new Set(state.workflowTriggerSetIdsByQuery[queryKey]);
@@ -502,7 +505,7 @@ export function createAutomationsDomain<S extends AutomationsDomain & Automation
                     || !triggerReceiptOrdering.admit(state.profileScope, written.automationId, written.revision)) return state;
                 const facts = mergeTriggerSets(state.workflowTriggerSetsById, [written], state.profileScope, triggerReceiptOrdering);
                 let windows = state.workflowTriggerSetIdsByQuery;
-                if (queryKey && !(windows[queryKey] ?? []).includes(written.automationId)) {
+                if (queryKey && matchesTriggerTargetQuery(queryKey, written) && !(windows[queryKey] ?? []).includes(written.automationId)) {
                     windows = { ...windows, [queryKey]: [...(windows[queryKey] ?? []), written.automationId] };
                 }
                 // A committed new set is also part of an already-open Account census. Its body

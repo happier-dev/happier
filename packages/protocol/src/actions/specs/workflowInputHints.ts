@@ -113,6 +113,7 @@ export function getWorkflowInputHints(actionId: WorkflowActionIdV1, title: strin
           { path: 'scope', title: 'Account scope', widget: 'select', options: [
             { value: 'account_inline', label: 'Inline workflows' },
             { value: 'account_all', label: 'All workflows' },
+            { value: 'account_source_unavailable', label: 'Unavailable saved workflows' },
           ] },
           { path: 'review', title: 'Review retained Workflow', widget: 'boolean' },
           { path: 'automationId', title: 'Workflow trigger set', widget: 'text',

@@ -100,7 +100,7 @@ export const WorkflowTriggerListRequestV1Schema = lazyZodSchema(() => z.union([
     environmentId: WorkflowDeploymentBackupTargetV1Schema.shape.environmentId,
   }) }),
   z.strictObject({ healthSource: z.strictObject({ sourceInstanceIds: z.array(AutomationEventSourceInstanceIdV1Schema) }) }),
-  z.strictObject({ scope: z.enum(['account_inline', 'account_all']) }),
+  z.strictObject({ scope: z.enum(['account_inline', 'account_all', 'account_source_unavailable']) }),
   z.strictObject({ automationId: asProtocolZod(AutomationIdV1Schema), review: z.literal(true) }),
   z.strictObject({ automationId: asProtocolZod(AutomationIdV1Schema), triggerId: AutomationTriggerIdSchema }),
 ]));
@@ -246,6 +246,11 @@ export type WorkflowTriggerUpdateRequestV1 = z.infer<typeof WorkflowTriggerUpdat
 export type WorkflowTriggerRemoveRequestV1 = z.infer<typeof WorkflowTriggerRemoveRequestV1Schema>;
 export type WorkflowTriggerRunNowRequestV1 = z.infer<typeof WorkflowTriggerRunNowRequestV1Schema>;
 export type WorkflowTriggerSetV1 = z.infer<typeof WorkflowTriggerSetV1Schema>;
+
+/** Unavailable saved sources retain their Account cleanup path; legacy copies keep their own review flow. */
+export function isWorkflowTriggerSourceGoneV1(set: Pick<WorkflowTriggerSetV1, 'health' | 'legacy'>): boolean {
+  return set.health === 'source_unavailable' && set.legacy === undefined;
+}
 
 const SessionId = asProtocolZod(SessionIdSchema);
 const SessionContextFields = lazyZodSchema(() => zMini.omit(AutomationStoredWorkflowDefinitionV2Schema, { workspace: true, inlineDefinition: true, deploymentTriggers: true, actionApprovals: true }));

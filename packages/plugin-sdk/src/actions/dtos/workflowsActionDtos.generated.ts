@@ -355,6 +355,7 @@ export type WorkflowsActionInputById = {
         parentRecordId?: null | string | undefined;
         parentRecordIds?: string[] | undefined;
         invocationId?: string | undefined;
+        knownContentRevisions?: Record<string, string> | undefined;
         memberOrdinal?: string | undefined;
         lifecycles?: ('admitting' | 'cancel_requested' | 'cancelled' | 'completed' | 'failed' | 'needs_attention' | 'outcome_uncertain' | 'pending' | 'running' | 'skipped' | 'superseded' | 'waiting_for_approval' | 'waiting_for_capacity' | 'waiting_for_review')[] | undefined;
         includeContent?: boolean | undefined;
@@ -1453,7 +1454,7 @@ export type WorkflowsActionInputById = {
             managedId: string;
         };
     } | {
-        scope: 'account_all' | 'account_inline';
+        scope: 'account_all' | 'account_inline' | 'account_source_unavailable';
     } | {
         workflow: string;
     };

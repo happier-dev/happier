@@ -533,6 +533,25 @@ describe("automationCrudService (integration)", () => {
             .resolves.toMatchObject({ encryptionMode: "e2ee" });
     });
 
+    it("selects only saved Account cleanup bodies when a Session retains the same source", async () => {
+        const account = await db.account.create({ data: { encryptionMode: "plain" } });
+        const other = await db.account.create({ data: { encryptionMode: "plain" } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: randomUUID(), metadata: "{}" } });
+        const source = randomUUID();
+        const savedId = randomUUID();
+        await db.automation.createMany({ data: [
+            { id: savedId, accountId: account.id, name: "Saved cleanup", workflowDefinitionId: source, templateCiphertext: "{}" },
+            { id: randomUUID(), accountId: account.id, name: "Session", scopeSessionId: session.id,
+                workflowDefinitionId: source, templateCiphertext: "{}" },
+            { id: randomUUID(), accountId: account.id, name: "Inline", templateCiphertext: "{}" },
+            { id: randomUUID(), accountId: other.id, name: "Other Account", workflowDefinitionId: source, templateCiphertext: "{}" },
+        ] });
+        const selected = await listAutomationDefinitionsPage({ accountId: account.id,
+            scope: "account_saved", workflowDefinitionIds: [source], details: true });
+        expect(selected.automations).toHaveLength(1);
+        expect(selected.automations.map(row => row.id)).toEqual([savedId]);
+    });
+
     it("persists workflow trigger references and session scope through create, patch and reconciliation", async () => {
         const account = await db.account.create({ data: { encryptionMode: "plain" } });
         const machineId = await seedExecutionMachine(account.id);

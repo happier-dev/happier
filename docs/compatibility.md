@@ -8658,6 +8658,18 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 Library cleanup uses `workflow.trigger.list` scope
+`account_source_unavailable`. The existing Automation definition list accepts
+`account_saved` scope, optionally narrowed by Workflow references, to select
+saved Account rows without Session bodies. The Account trigger owner reads
+bodyless source references first and opens retained private details only for
+unavailable sources; the Account codec, source authorization and full
+`account_all` census remain unchanged. Matching Protocol, server and UI source
+reload together under the unpublished 0.3 direct cut; earlier strict development
+readers reject the selectors. No persistence, epoch, capability or adapter is
+added. The inspected `../0.2` frontier
+`dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has neither affected protocol module.
+
 Unreleased 0.3 `automation.event.sources.list` adds optional closed `source`
 selection (`eventRef`, `sourceInstanceId`, `sourceContractVersion`). Admission
 queries only matching definitions from the existing adopted snapshot; omission

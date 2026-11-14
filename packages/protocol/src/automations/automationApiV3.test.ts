@@ -482,6 +482,11 @@ describe('Automation versioned API schemas', () => {
     expect(Api.AutomationDefinitionCreateRequestSchema.safeParse(create).success).toBe(true);
     expect(Api.AutomationDefinitionCreateRequestSchema.safeParse({ ...create, managedTarget }).success).toBe(false);
   });
+  it('narrows saved Account demand by source without admitting a Session or inline scope combination', () => {
+    expect(Api.AutomationDefinitionListRequestSchema.safeParse({ scope: 'account_saved', workflowDefinitionIds: ['builtin:keep-going'] }).success).toBe(true);
+    expect(Api.AutomationDefinitionListRequestSchema.safeParse({ scope: 'account_saved', scopeSessionId: 'session-one' }).success).toBe(false);
+    expect(Api.AutomationDefinitionListRequestSchema.safeParse({ scope: 'account_inline', workflowDefinitionIds: ['builtin:keep-going'] }).success).toBe(false);
+  });
 
   it('projects plural trigger identity while keeping private definitions detail-only', () => {
     const detail = {

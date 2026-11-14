@@ -35,16 +35,6 @@ export type WorkflowLibraryRecordRow = LibraryRecordFacts & (Readonly<{
     triggerOpenTargets: readonly AccountWorkflowOpenTarget[];
 }>);
 
-/**
- * Account triggers whose Workflow is gone (deleted, or access withdrawn; the lookup cannot tell). They hold a
- * saved Workflow reference, so `account_inline` omits them and only the whole census shows the cleanup path.
- * A Session's triggers stay in that Session.
- */
-export function selectRetainedSourceGoneSets(census: readonly WorkflowTriggerSetV1[], inline: readonly WorkflowTriggerSetV1[]): readonly WorkflowTriggerSetV1[] {
-    const listed = new Set(inline.map(set => set.automationId));
-    return census.filter(set => !set.scopeSessionId && isWorkflowTriggerSourceGone(set) && !listed.has(set.automationId));
-}
-
 /** One projection and ordering for saved definitions and standalone Account Workflows. No reads. */
 export function projectWorkflowLibraryRecords(input: Readonly<{
     definitions: Readonly<{ library: readonly WorkflowLibraryDefinition[]; sharedWithYou: readonly WorkflowLibraryDefinition[] }>;

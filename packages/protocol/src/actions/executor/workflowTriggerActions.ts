@@ -16,6 +16,7 @@ import {
 } from '../../automations/automationWorkflowRecipeV2.js';
 import { readTriggerTargetV1, type TriggerTargetV1 } from '../../workflows/triggers/triggerTargetV1.js';
 import { parseWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionRefV1.js';
+import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '../../artifacts/artifactListSelectionV1.js';
 import { resolveInheritedApprovalProfileIdV1 } from '../approvalProfiles.js';
 import { ActionRefusalDiagnosticV1Schema } from '../actionRefusalDiagnostic.js';
 import { resolveWorkflowRunVisibleTeamV1 } from '../../workflows/workflowRunVisibilityV1.js';
@@ -38,6 +39,7 @@ import {
   type WorkflowTriggerHealthSourceV1,
   WorkflowDeploymentBackupTargetV1Schema,
   summarizeWorkflowTriggerRowsV1,
+  isWorkflowTriggerSourceGoneV1,
   SessionInitialTriggerV1Schema, type SessionInitialTriggerV1, type SessionInitialTriggerDefinitionV1,
 } from '../../workflows/triggers/workflowTriggerActionsV1.js';
 import { SessionInitialTriggerAdmissionV1Schema, type SessionInitialTriggerAdmissionV1 } from '../../sessions/creation/sessionInitialTriggerAdmissionV1.js';
@@ -483,7 +485,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     } };
   };
   const projectedDefinition = async (row: AutomationDefinitionDetail, reviewed?: Readonly<{ target: TriggerTargetV1; context: WorkflowTriggerContextV1;
-    project?: WorkflowProjectTargetV1 }>, prepared?: PreparedTriggerProjection): Promise<Readonly<{ set: WorkflowTriggerSetV1; definition?: WorkflowDefinitionV1;
+    project?: WorkflowProjectTargetV1 }>, prepared?: PreparedTriggerProjection, sourceUnavailable = false): Promise<Readonly<{ set: WorkflowTriggerSetV1; definition?: WorkflowDefinitionV1;
       children?: ReadonlyMap<string, WorkflowDefinitionV1> }>> => {
     const triggers: WorkflowTriggerSetV1['triggers'] = [];
     for (const trigger of row.triggers) {
@@ -538,6 +540,8 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         return { set: { ...base, health: 'source_unavailable', legacy: { ...base.legacy, lockedReason: 'review_required' } } };
       }
       const value = reviewed ?? await opened(row, true);
+      // Source selection already resolved this reference. Still open through the Account codec before disclosure.
+      if (sourceUnavailable) refuse('source_unavailable');
       const targetProject = reviewed?.project ?? (row.assignments.length !== 1 ? undefined : project(row, value.context));
       // Retained templates are readable even when their settings cannot become a current Workflow.
       const prepared = await prepareTriggerProjection(value, row.scopeSessionId, await resolveTarget(value.target, !base.legacy));
@@ -720,6 +724,36 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         const row = await read(input.automationId);
         if (!row.templateCiphertext || !await deps.requiresLegacyReview?.(row) || !deps.convertLegacy) refuseInput('legacy_conversion_review_invalid');
         return { sets: [await projection(row, await deps.convertLegacy(row, caller))] };
+      }
+      if ('scope' in input && input.scope === 'account_source_unavailable') {
+        const summaries = await automationRows(deps.automations.list, { scope: 'account_saved' });
+        const sources = await Promise.allSettled([...new Set(summaries.flatMap(row => row.workflowDefinitionId ? [row.workflowDefinitionId] : []))].map(async ref => {
+          try {
+            await resolveTarget({ kind: 'workflow', ref });
+            return null;
+          } catch (error) {
+            const code = error !== null && typeof error === 'object' && 'code' in error ? error.code : undefined;
+            if (code !== 'source_unavailable' && code !== 'invalid_input') throw error;
+            return ref;
+          }
+        }));
+        const missing = sources.flatMap(result => {
+          if (result.status === 'rejected') throw result.reason;
+          return result.value === null ? [] : [result.value];
+        });
+        const rows: AutomationDefinitionDetail[] = [];
+        // Reuse the list owner's existing selection width while paging every matching definition.
+        for (let offset = 0; offset < missing.length; offset += ARTIFACT_LIST_PAGE_MAX_ITEMS_V1) {
+          rows.push(...await automationRows(deps.automations.listDetails, {
+            scope: 'account_saved', workflowDefinitionIds: missing.slice(offset, offset + ARTIFACT_LIST_PAGE_MAX_ITEMS_V1),
+          }));
+        }
+        const projected = await Promise.allSettled([...new Map(rows.map(row => [row.id, row])).values()]
+          .map(row => projectedDefinition(row, undefined, undefined, true)));
+        return { sets: projected.flatMap(result => {
+          if (result.status === 'rejected') throw result.reason;
+          return isWorkflowTriggerSourceGoneV1(result.value.set) ? [result.value.set] : [];
+        }) };
       }
       const managedTarget = 'managedTarget' in input ? input.managedTarget : null;
       const deploymentBackup = 'deploymentBackup' in input ? input.deploymentBackup : null;

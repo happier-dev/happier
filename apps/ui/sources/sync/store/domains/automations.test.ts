@@ -93,6 +93,40 @@ const eventDefinitionDetail = AutomationDefinitionDetailSchema.parse({
 });
 
 describe('automation store publication', () => {
+    it('removes a Library cleanup row when its saved source becomes available and rejects Session receipts', () => {
+        const query = 'account_source_unavailable';
+        const gone: WorkflowTriggerSetV1 = { automationId: 'retained', revision: 1,
+            enabled: true, health: 'source_unavailable', triggers: [] };
+        const workflow = '11111111-1111-4111-8111-111111111111';
+        const restored: WorkflowTriggerSetV1 = { ...gone, revision: 2, health: 'available',
+            target: { kind: 'workflow', ref: workflow } };
+        expect(applyWorkflowTriggerSnapshotReceipt([gone], query, restored)).toEqual([]);
+        expect(applyWorkflowTriggerSnapshotReceipt([], query, { ...gone, scopeSessionId: 'session-one' })).toBeNull();
+        expect(applyWorkflowTriggerSnapshotReceipt([], query, { ...gone,
+            legacy: { editable: false, reason: 'created_in_0_2' } })).toBeNull();
+        expect(applyWorkflowTriggerSnapshotReceipt([], query, gone)).toEqual([gone]);
+        const h = createHarness();
+        h.get().applyWorkflowTriggerSetPage({ queryKey: query, sets: [gone] });
+        h.get().upsertWorkflowTriggerSet({ queryKey: 'account_inline', set: {
+            ...gone, automationId: 'inline-unavailable',
+        } });
+        expect(h.get().workflowTriggerSetIdsByQuery[query]).toEqual([gone.automationId]);
+        h.get().upsertWorkflowTriggerSet({ queryKey: `workflow:${workflow}`, set: restored });
+        expect(h.get().workflowTriggerSetIdsByQuery[query]).toEqual([]);
+        const select = createWorkflowTriggerChangeSelector(null, null, 'account_source_unavailable');
+        const before = select(h.get());
+        h.get().upsertAutomation(createAutomationDefinitionSummary(AutomationDefinitionListItemSchema.parse({
+            ...eventDefinitionSummary, id: 'session-unrelated', scopeSessionId: 'session-one', workflowDefinitionId: workflow,
+        })));
+        h.get().upsertAutomation(createAutomationDefinitionSummary(AutomationDefinitionListItemSchema.parse({
+            ...eventDefinitionSummary, id: 'inline-unrelated', scopeSessionId: null, workflowDefinitionId: null,
+        })));
+        expect(select(h.get())).toBe(before);
+        h.get().upsertAutomation(createAutomationDefinitionSummary(AutomationDefinitionListItemSchema.parse({
+            ...eventDefinitionSummary, id: gone.automationId, scopeSessionId: null, workflowDefinitionId: workflow,
+        })));
+        expect(select(h.get())).not.toBe(before);
+    });
     it('keeps equal definition and Run refreshes quiet while retaining traversal currentness', () => {
         const store = createStore<State>()((set, get) => ({ profileScope,
             ...createWorkflowRunsDomain<State>({ set, get }), ...createAutomationsDomain<State>({ set, get }) }));
@@ -231,7 +265,7 @@ describe('shared workflow trigger observations', () => {
     it('invalidates a managed target for its Session-scoped rule and unknown rows only', () => {
         const h = createHarness();
         const target = { homeId: 'home-one', managedId: 'managed-one' };
-        const select = createWorkflowTriggerChangeSelector(null, null, false, target);
+        const select = createWorkflowTriggerChangeSelector(null, null, 'account_inline', target);
         const before = select(h.get());
         h.get().upsertAutomation(createAutomationDefinitionSummary(AutomationDefinitionListItemSchema.parse({
             ...eventDefinitionSummary, id: 'unrelated', managedTarget: null,

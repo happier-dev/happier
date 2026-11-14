@@ -4632,7 +4632,7 @@ export async function listAutomationDefinitionsPage(params: Readonly<{
     workflowDefinitionId?: string;
     workflowDefinitionIds?: readonly string[];
     scopeSessionId?: string;
-    scope?: "account_inline";
+    scope?: "account_inline" | "account_saved";
     managedTarget?: AutomationManagedTargetV1;
     includeUnindexedManagedTargets?: true;
     managedTargetUnindexed?: true;
@@ -4656,6 +4656,7 @@ export async function listAutomationDefinitionsPage(params: Readonly<{
             ...(params.scopeSessionId !== undefined ? { scopeSessionId: params.scopeSessionId } : {}),
             ...(params.scope === "account_inline" ? { workflowDefinitionId: null, scopeSessionId: null } : {}),
             AND: [
+                ...(params.scope === "account_saved" ? [{ workflowDefinitionId: { not: null }, scopeSessionId: null }] : []),
                 ...(params.managedTarget ? [{ OR: [
                     { managedTargetIndexed: true, managedTargetHomeId: params.managedTarget.homeId, managedTargetManagedId: params.managedTarget.managedId },
                     ...(params.includeUnindexedManagedTargets ? [{ managedTargetIndexed: false }] : []),

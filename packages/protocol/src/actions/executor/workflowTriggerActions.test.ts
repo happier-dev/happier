@@ -20,6 +20,7 @@ import type { ActionExecutorContext, ActionExecutorDeps } from './types.js';
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '../../approvals/approvalRequestV1.js';
 import { AutomationTriggerDetailSchema } from '../../automations/automationTriggerProjectionV1.js';
 import { AutomationPullRequestTriggerSchema } from '../../automations/automationTriggerDefinition.js';
+import { AutomationEncryptedTriggerDefinitionEnvelopeV1Schema } from '../../automations/automationTriggerDefinition.js';
 import { openAutomationTriggerDefinitionStoredEnvelopeV1, sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '../../automations/automationTriggerDefinitionStoredContent.js';
 import { AutomationEventTriggerDefinitionStoredPayloadV1Schema } from '../../automations/automationEventV1.js';
 import { markSessionListQueryResultV1 } from '../../sessions/awareness/action.js';
@@ -277,6 +278,8 @@ describe('trigger source display provenance', () => {
         displayLabel: environmentId, filter: null, maximumObservationAgeMs: null,
         observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
           machineId: 'observer', pluginId: 'happier.machine.services', materializationId: 'services' } } } });
+    expect([...f.rows.values()].flatMap(row => row.triggers).map(item => item.kind === 'pluginEvent' ? item.eventRef.localId : null))
+      .toEqual(['health-check-failed', 'health-check-failed']);
     censusReads = 0;
     const result = await host.list(WorkflowTriggerListRequestV1Schema.parse({
       healthSource: { sourceInstanceIds: ['health:production', 'health:preview'] } }));
@@ -853,6 +856,60 @@ const deploymentEventTrigger = { kind: 'pluginEvent' as const, enabled: true,
   filter: null, maximumObservationAgeMs: null };
 
 describe('Account source watcher assignment', () => {
+  it.each(['plain', 'e2ee'] as const)('enrolls %s health observations for failure and recovery and rebinds encrypted updates', async mode => {
+    const f = fixture();
+    const encryption: AvailableAutomationAccountEncryptionV1 = mode === 'plain'
+      ? { kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }
+      : { kind: 'available', witness: { mode: 'e2ee', version: 1, contentKeyFingerprint: 'current' },
+        material: createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
+          material: { type: 'legacy', secret: new Uint8Array(32).fill(7) } }) };
+    const params = { automations: f.deps.automations, resolveEncryption: async () => encryption,
+      randomBytes: (length: number) => new Uint8Array(length).fill(3), resolveWorkflow: f.deps.resolveWorkflow,
+      newId: () => crypto.randomUUID() };
+    const host = createAccountWorkflowTriggerActions(params);
+    const pluginId = 'happier.machine.services';
+    const event = { ...deploymentEventTrigger, eventRef: { pluginId, localId: 'health-check-failed' },
+      sourceInstanceId: 'health:service', displayLabel: 'Saved health checks',
+      sourceConfig: { v: 1, subject: { kind: 'machineService', machineId: 'subject', serviceId: 'service' },
+        checks: [{ checkId: 'http', kind: { pluginId, localId: 'http' }, binding: { kind: 'healthCheck' },
+          config: { endpoint: 'http://127.0.0.1:59454/', expectStatus: 200 }, periodMs: 60000, consecutiveFailuresBeforeAlerting: 1 }] },
+      observationTransport: { kind: 'checkpointedPull' as const,
+        watcherMaterializationRef: { pluginId, machineId: project.machineId, materializationId: 'services' } } };
+    const saved = await host.add({ observationOnly: { kind: 'observationOnly' }, trigger: event });
+    const stored = f.rows.get(saved.set.automationId)!;
+    const trigger = stored.triggers[0]!;
+    if (trigger.kind !== 'pluginEvent') throw new Error('Expected health observation');
+    expect(trigger.eventRef).toEqual({ pluginId, localId: 'health-status' });
+    const open = (row: AutomationDefinitionDetail) => {
+      const retained = row.triggers[0]!;
+      if (retained.kind !== 'pluginEvent') throw new Error('Expected retained health observation');
+      return openAutomationTriggerDefinitionStoredEnvelopeV1({
+        ...(isAvailableE2eeAutomationAccountEncryptionV1(encryption)
+          ? { mode: 'e2ee' as const, material: encryption.material.material } : { mode: 'plain' as const }),
+        binding: { v: 1, automationId: row.id, triggerId: retained.id, triggerRevision: retained.revision,
+          triggerKind: 'pluginEvent', eventRef: retained.eventRef, sourceSelectorId: retained.sourceSelectorId },
+        envelope: JSON.parse(retained.triggerDefinitionEnvelope),
+      });
+    };
+    const opened = open(stored);
+    expect(opened).toMatchObject({ kind: 'available', definition: { sourceConfig: event.sourceConfig } });
+    if (opened.kind !== 'available') throw new Error('Expected readable health definition');
+    const replacement = mode === 'e2ee' && isAvailableE2eeAutomationAccountEncryptionV1(encryption)
+      ? { kind: 'pluginEvent' as const, eventRef: event.eventRef, sourceSelectorId: trigger.sourceSelectorId,
+          sourceContractVersion: trigger.sourceContractVersion, observationTransport: event.observationTransport,
+          triggerDefinitionEnvelope: AutomationEncryptedTriggerDefinitionEnvelopeV1Schema.parse(sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'e2ee',
+            material: encryption.material.material, randomBytes: params.randomBytes,
+            binding: { v: 1, automationId: stored.id, triggerId: trigger.id, triggerRevision: trigger.revision + 1,
+              triggerKind: 'pluginEvent', eventRef: event.eventRef, sourceSelectorId: trigger.sourceSelectorId },
+            definition: opened.definition })) }
+      : event;
+    await host.update({ automationId: stored.id, triggerId: trigger.id, expectedRevision: saved.set.revision,
+      patch: { trigger: replacement } });
+    const updated = f.rows.get(stored.id)!;
+    expect(updated.triggers[0]).toMatchObject({ eventRef: { pluginId, localId: 'health-status' } });
+    expect(open(updated)).toMatchObject({ kind: 'available', definition: { sourceConfig: event.sourceConfig } });
+  });
+
   it.each(['plain', 'e2ee'] as const)('retains the %s preview Environment identity through trigger add, cold readback and update', async mode => {
     const f = fixture();
     const encryption: AvailableAutomationAccountEncryptionV1 = mode === 'plain'
@@ -2535,6 +2592,7 @@ describe('workflow trigger Automation composition', () => {
     const failure = Object.assign(new Error('Home unavailable'), { code: 'ECONNRESET' });
     const reader = createWorkflowTriggerActions({ ...deps, resolveWorkflow: async () => { throw failure; } });
     await expect(reader.list({ workflow })).rejects.toBe(failure);
+    await expect(reader.list(WorkflowTriggerListRequestV1Schema.parse({ scope: 'account_source_unavailable' }))).rejects.toBe(failure);
   });
   it('uses the Automation owner filters for workflow, inline and scoped reads and deletion', async () => {
     const { deps } = fixture();
@@ -2549,6 +2607,72 @@ describe('workflow trigger Automation composition', () => {
     await actions.removeForWorkflow(workflow);
     expect(inputs).toEqual([{ workflowDefinitionId: workflow }, { scope: 'account_inline' },
       { scopeSessionId: 'session-one' }, { workflowDefinitionId: workflow }]);
+  });
+  it.each(['plain', 'e2ee'] as const)('loads only unavailable saved Account trigger bodies for Library cleanup (%s)', async mode => {
+    const f = fixture();
+    const encryption: AvailableAutomationAccountEncryptionV1 = mode === 'plain'
+      ? { kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }
+      : { kind: 'available', witness: { mode: 'e2ee', version: 1, contentKeyFingerprint: 'current' },
+        material: createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
+          material: { type: 'legacy', secret: new Uint8Array(32).fill(7) } }) };
+    const queries: unknown[] = [];
+    const bodies: string[] = [];
+    let sourceReads = 0;
+    let nextId = 0;
+    const host = createAccountWorkflowTriggerActions({ automations: { ...f.deps.automations,
+      list: async input => {
+        queries.push(input);
+        const page = await f.deps.automations.list(input);
+        return { ...page, automations: page.automations.filter(row => !row.scopeSessionId && row.workflowDefinitionId != null) };
+      },
+      listDetails: async input => {
+        queries.push(input);
+        const page = await f.deps.automations.listDetails(input);
+        const selected = input.scope === 'account_saved' ? page.automations.filter(row => !row.scopeSessionId
+          && input.workflowDefinitionIds?.includes(row.workflowDefinitionId ?? '')) : page.automations;
+        bodies.push(...selected.map(row => row.id));
+        return { ...page, automations: selected };
+      } }, resolveEncryption: async () => encryption, randomBytes: length => new Uint8Array(length).fill(3),
+      resolveWorkflow: async ref => { sourceReads++; return f.deps.resolveWorkflow(ref); },
+      resolveWorkflowTeamIds: f.deps.resolveWorkflowTeamIds,
+      newId: () => `00000000-0000-4000-8000-${String(++nextId).padStart(12, '0')}` });
+    const healthy = await host.add({ workflow, project, trigger });
+    const gone = { set: { automationId: '00000000-0000-4000-8000-999999999999' } };
+    const inline = await host.add({ target: { kind: 'inline', definition }, project, trigger });
+    const goneRef = '22222222-2222-4222-8222-222222222222';
+    const goneRow = { ...f.rows.get(healthy.set.automationId)!, id: gone.set.automationId, workflowDefinitionId: goneRef };
+    f.rows.set(goneRow.id, goneRow);
+    f.rows.set('session-copy', { ...goneRow, id: 'session-copy', scopeSessionId: 'session-one' });
+    expect((await host.list({ scope: 'account_all' })).sets.map(set => set.automationId).sort())
+      .toEqual([healthy.set.automationId, gone.set.automationId, inline.set.automationId, 'session-copy'].sort());
+    expect(bodies).toHaveLength(4);
+    bodies.length = 0;
+    queries.length = 0;
+    sourceReads = 0;
+    const result = await host.list(WorkflowTriggerListRequestV1Schema.parse({ scope: 'account_source_unavailable' }));
+    expect(result.sets).toMatchObject([{ automationId: gone.set.automationId, health: 'source_unavailable' }]);
+    expect(result.sets).toHaveLength(1);
+    expect(result.sets[0]).not.toHaveProperty('context');
+    expect(bodies).toEqual([gone.set.automationId]);
+    expect(queries).toEqual([{ scope: 'account_saved' }, { scope: 'account_saved', workflowDefinitionIds: [goneRef] }]);
+    expect(sourceReads).toBe(2);
+    if (mode === 'e2ee') {
+      const recipe = goneRow.executionRecipe;
+      if (recipe?.v !== 2) throw new Error('Expected a current retained recipe');
+      f.rows.set(goneRow.id, { ...goneRow, executionRecipe: { ...recipe, workflow: { t: 'plain', v: {
+        workspace: { directory: project.directory }, executionTarget: { kind: 'session' },
+      } } } });
+      await expect(host.list(WorkflowTriggerListRequestV1Schema.parse({ scope: 'account_source_unavailable' })))
+        .rejects.toMatchObject({ code: 'content_unavailable' });
+      f.rows.set(goneRow.id, goneRow);
+    }
+    await host.remove({ automationId: gone.set.automationId });
+    expect(f.rows.has(gone.set.automationId)).toBe(false);
+    bodies.length = 0;
+    sourceReads = 0;
+    expect((await host.list({ scope: 'account_source_unavailable' })).sets).toEqual([]);
+    expect(bodies).toEqual([]);
+    expect(sourceReads).toBe(1);
   });
   it('refuses agent writes when materialized trigger policy is absent', async () => {
     const { actions, rows } = fixture();

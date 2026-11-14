@@ -449,7 +449,7 @@ export const AutomationDefinitionListRequestSchema = lazyZodSchema(() => z.stric
   /** Body-bearing list selection for the definitions in one demanded library page. */
   workflowDefinitionIds: z.optional(z.array(WorkflowDefinitionRefV1StringSchema).check(z.maxLength(ARTIFACT_LIST_PAGE_MAX_ITEMS_V1))),
   scopeSessionId: z.optional(IDENTIFIER_SCHEMA),
-  scope: z.optional(z.literal('account_inline')),
+  scope: z.optional(z.enum(['account_inline', 'account_saved'])),
   managedTarget: z.optional(AutomationManagedTargetV1Schema),
   includeUnindexedManagedTargets: z.optional(z.literal(true)),
   managedTargetUnindexed: z.optional(z.literal(true)),
@@ -468,8 +468,9 @@ export const AutomationDefinitionListRequestSchema = lazyZodSchema(() => z.stric
   if (value.workflowDefinitionId !== undefined && value.workflowDefinitionIds !== undefined) {
     context.addIssue({ code: 'custom', path: ['workflowDefinitionIds'], message: 'Choose one workflow selection' });
   }
-  if (value.scope !== undefined && (value.workflowDefinitionId !== undefined || value.workflowDefinitionIds !== undefined || value.scopeSessionId !== undefined)) {
-    context.addIssue({ code: 'custom', path: ['scope'], message: 'Account inline scope cannot be combined with a workflow or Session filter' });
+  if (value.scope !== undefined && (value.scopeSessionId !== undefined
+    || (value.scope === 'account_inline' && (value.workflowDefinitionId !== undefined || value.workflowDefinitionIds !== undefined)))) {
+    context.addIssue({ code: 'custom', path: ['scope'], message: 'Account scope cannot be combined with Session selection; inline scope cannot select saved workflows' });
   }
 })));
 export type AutomationDefinitionListRequest = z.infer<typeof AutomationDefinitionListRequestSchema>;

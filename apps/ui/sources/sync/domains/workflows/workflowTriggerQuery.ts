@@ -1,4 +1,5 @@
 import type { SessionTriggerListRequestV1, WorkflowTriggerListRequestV1, WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { isWorkflowTriggerSourceGoneV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { readManagedMachineTriggerAction } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
 
 /** The same identity owns hook demand, list publication and store membership. */
@@ -16,11 +17,12 @@ export function workflowTriggerRequestForQueryKey(queryKey: string): WorkflowTri
         const [homeId, managedId]: [string, string] = JSON.parse(queryKey.slice('managed:'.length));
         return { managedTarget: { homeId, managedId } };
     }
-    return queryKey === 'account_all' || queryKey === 'account_inline' ? { scope: queryKey } : null;
+    return queryKey === 'account_all' || queryKey === 'account_inline' || queryKey === 'account_source_unavailable' ? { scope: queryKey } : null;
 }
 
 /** Undefined means an unavailable private source supplies no new target authority. */
 export function matchesWorkflowTriggerQuery(queryKey: string, set: WorkflowTriggerSetV1 | undefined): boolean | undefined {
+    if (queryKey === 'account_source_unavailable') return set !== undefined && !set.scopeSessionId && isWorkflowTriggerSourceGoneV1(set);
     if (queryKey.startsWith('managed:')) {
         if (!set?.target) return undefined;
         const managed = readManagedMachineTriggerAction(set.target);

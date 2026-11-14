@@ -51,6 +51,30 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Automation defi
         await db.$disconnect();
     });
 
+    it('selects saved Account cleanup candidates without Session, inline or other-Account bodies', async () => {
+        const savedId = randomUUID();
+        const inlineId = randomUUID();
+        const sessionId = randomUUID();
+        const sessionAutomationId = randomUUID();
+        const source = randomUUID();
+        await db.session.create({ data: { id: sessionId, accountId, tag: randomUUID(), metadata: '{}' } });
+        await db.automation.createMany({ data: [
+            { id: savedId, accountId, name: 'Saved cleanup', workflowDefinitionId: source, templateCiphertext: '{}' },
+            { id: inlineId, accountId, name: 'Inline', templateCiphertext: '{}' },
+            { id: sessionAutomationId, accountId, name: 'Session', scopeSessionId: sessionId,
+                workflowDefinitionId: source, templateCiphertext: '{}' },
+            { id: randomUUID(), accountId: otherAccountId, name: 'Other Account', workflowDefinitionId: source, templateCiphertext: '{}' },
+        ] });
+        const request = { accountId, scope: 'account_saved', workflowDefinitionIds: [source] } as const;
+        const summaries = await listAutomationDefinitionsPage(request);
+        expect(summaries.automations).toHaveLength(1);
+        expect(summaries.automations.map(row => row.id)).toEqual([savedId]);
+        expect(summaries.automations[0]).not.toHaveProperty('executionRecipe');
+        const details = await listAutomationDefinitionsPage({ ...request, details: true });
+        expect(details.automations).toHaveLength(1);
+        expect(details.automations.map(row => row.id)).toEqual([savedId]);
+    });
+
     it('reads only the selected Team schedule alongside unrelated Account definitions', async () => {
         const team = await db.team.create({ data: { name: 'Schedule audience' } });
         const artifactId = randomUUID();

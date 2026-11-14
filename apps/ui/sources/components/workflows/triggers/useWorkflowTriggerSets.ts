@@ -41,7 +41,7 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
         : () => EMPTY_SETS, [focused, queryKey, workflow]);
     const sets = getStorage()(selector);
     const changeSelector = React.useMemo(() => !focused || queryKey === '' ? () => EMPTY_WORKFLOW_TRIGGER_CHANGE_SIGNAL
-        : createWorkflowTriggerChangeSelector(null, workflow, requestedScope === 'account_all',
+        : createWorkflowTriggerChangeSelector(null, workflow, requestedScope,
             readRequest && 'managedTarget' in readRequest ? readRequest.managedTarget : undefined),
         [focused, queryKey, workflow, requestedScope, readRequest]);
     const changeSignal = getStorage()(changeSelector);
