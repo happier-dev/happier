@@ -34,6 +34,10 @@ const styles = StyleSheet.create((theme) => ({
         flexShrink: 1,
         zIndex: 1,
     },
+    // The leading tab stands outside the scrolling track: the track yields width, never this tab's own name.
+    tabFixed: {
+        flexShrink: 0,
+    },
     iconContainer: {
         position: 'relative',
         alignItems: 'center',
@@ -179,7 +183,7 @@ export function CockpitTabBarView<TSurface extends string>(props: CockpitTabBarP
     // The phone bar is shell chrome too: the same quiet ink at rest, the primary ink for the open tab.
     const restInk = useChromeGlyphInk();
     const anchors = React.useRef(new Map<string, unknown>());
-    const renderTab = (tab: CockpitTabBarTabDefinition<TSurface>) => {
+    const renderTab = (tab: CockpitTabBarTabDefinition<TSurface>, fixedBesideTrack = false) => {
         const active = tab.id === props.activeSurface;
         const tintColor = active ? theme.colors.text.primary : restInk.color;
         const hold = props.onTabLongPress && !tab.disabled ? () => props.onTabLongPress?.(tab.id, anchors.current.get(tab.id) ?? null) : undefined;
@@ -198,7 +202,7 @@ export function CockpitTabBarView<TSurface extends string>(props: CockpitTabBarP
                     hold();
                 }  } : {})}
                 disabled={tab.disabled}
-                style={(state) => [styles.tab, {
+                style={(state) => [styles.tab, fixedBesideTrack ? styles.tabFixed : null, {
                     minWidth: metrics.tabMinWidth,
                     paddingVertical: metrics.tabPaddingVertical,
                     paddingHorizontal: metrics.tabPaddingHorizontal,
@@ -241,7 +245,7 @@ export function CockpitTabBarView<TSurface extends string>(props: CockpitTabBarP
             <Animated.View accessibilityRole="tablist" style={[styles.innerContainer, { gap: metrics.rowGap }]}>
                 {scrolls ? (
                     <>
-                        {props.tabs[0] ? renderTab(props.tabs[0]) : null}
+                        {props.tabs[0] ? renderTab(props.tabs[0], true) : null}
                         <View style={styles.trackDivider} />
                         <CockpitTabBarTrack activeId={resolveCockpitTrackRevealTarget(props.tabs.map(tab => tab.id), props.activeSurface) ?? undefined}
                             lastId={props.tabs.at(-1)?.id} tabMinWidth={metrics.tabMinWidth}>

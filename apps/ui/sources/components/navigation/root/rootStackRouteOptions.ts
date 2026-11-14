@@ -269,6 +269,8 @@ export function createRootStackRouteOptions(newSessionPresentationMode: NewSessi
         'projects/[workspaceRefId]/scripts': options.hiddenHeader,
         'projects/[workspaceRefId]/services': options.hiddenHeader,
         'projects/[workspaceRefId]/deployments': options.hiddenHeader,
+        // A standalone Environment page: its Project header names it, so the native bar carries only Back.
+        'deployments/[projectSourceId]': options.visibleBlankBack,
         'projects/[workspaceRefId]/context': options.hiddenHeader,
         'projects/[workspaceRefId]/memory': options.hiddenHeader,
         'session/recent': options.sessionRecent,

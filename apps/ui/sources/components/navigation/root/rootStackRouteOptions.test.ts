@@ -78,6 +78,11 @@ describe('root route identity ownership', () => {
         expect(options['new/pick/secret-requirement'].headerShown).not.toBe(false);
         expect(options['new/pick/secret-requirement']).toMatchObject({ headerTitle: '', headerBackTitle: 'common.back' });
     });
+    it('gives a standalone Environment page its way back without the route pattern as its title', () => {
+        // Its Project header names the page; the native bar only carries Back (it showed "deployments/[projectSourceId]").
+        expect(resolveRootStackRouteOptions(createRootStackRouteOptions('auto'), workspaceRouteFiles['deployments/[projectSourceId]']))
+            .toMatchObject({ headerShown: true, headerTitle: '', headerBackTitle: 'common.back' });
+    });
     it('hides the shell header on terminal connect', () => {
         expect(createRootStackRouteOptions('auto')['terminal/connect']).toMatchObject({ headerShown: false });
         // A `happier://terminal` link lands on the index route; its surface titles itself (the welcome

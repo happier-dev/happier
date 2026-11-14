@@ -416,6 +416,7 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                 <Stack.Screen name="projects/[workspaceRefId]/scripts" options={rootStackRouteOptions['projects/[workspaceRefId]/scripts']} />
                 <Stack.Screen name="projects/[workspaceRefId]/services" options={rootStackRouteOptions['projects/[workspaceRefId]/services']} />
                 <Stack.Screen name="projects/[workspaceRefId]/deployments" options={rootStackRouteOptions['projects/[workspaceRefId]/deployments']} />
+                <Stack.Screen name="deployments/[projectSourceId]" options={rootStackRouteOptions['deployments/[projectSourceId]']} />
                 <Stack.Screen name="projects/[workspaceRefId]/context" options={rootStackRouteOptions['projects/[workspaceRefId]/context']} />
                 <Stack.Screen name="projects/[workspaceRefId]/memory" options={rootStackRouteOptions['projects/[workspaceRefId]/memory']} />
                 {/*

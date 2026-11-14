@@ -111,13 +111,17 @@ const styles = StyleSheet.create((theme) => ({
     signIn: {
         gap: theme.space.s8,
     },
+    // Large text wraps the line (its service name, then Change) instead of clipping it at both edges.
     serviceLine: {
         flexDirection: 'row',
+        flexWrap: 'wrap',
         justifyContent: 'center',
         alignItems: 'center',
         gap: theme.space.s6,
     },
     serviceText: {
+        flexShrink: 1,
+        textAlign: 'center',
         ...Typography.default(),
         fontSize: 14,
         lineHeight: 20,
