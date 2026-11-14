@@ -24,6 +24,30 @@
       "import": "./dist/machines/managed/index.js",
       "default": "./dist/machines/managed/index.js"
     },
+    "./connectedAccounts/authenticationTypes": {
+      "happier-source": "./src/connectedAccounts/authenticationTypes.ts",
+      "types": "./dist/connectedAccounts/authenticationTypes.d.ts",
+      "import": "./dist/connectedAccounts/authenticationTypes.js",
+      "default": "./dist/connectedAccounts/authenticationTypes.js"
+    },
+    "./connectedAccounts/establishedRuntimeTypes": {
+      "happier-source": "./src/connectedAccounts/establishedRuntimeTypes.ts",
+      "types": "./dist/connectedAccounts/establishedRuntimeTypes.d.ts",
+      "import": "./dist/connectedAccounts/establishedRuntimeTypes.js",
+      "default": "./dist/connectedAccounts/establishedRuntimeTypes.js"
+    },
+    "./connectedAccounts/tokenEndpointFailure": {
+      "happier-source": "./src/connectedAccounts/tokenEndpointFailure.ts",
+      "types": "./dist/connectedAccounts/tokenEndpointFailure.d.ts",
+      "import": "./dist/connectedAccounts/tokenEndpointFailure.js",
+      "default": "./dist/connectedAccounts/tokenEndpointFailure.js"
+    },
+    "./agents/gh": {
+      "happier-source": "./src/agents/gh.ts",
+      "types": "./dist/agents/gh.d.ts",
+      "import": "./dist/agents/gh.js",
+      "default": "./dist/agents/gh.js"
+    },
     "./connectedAccounts": {
       "happier-source": "./src/connectedAccounts/index.ts",
       "types": "./dist/connectedAccounts/index.d.ts",

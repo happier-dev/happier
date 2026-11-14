@@ -1,6 +1,6 @@
 /** @moduleRealm daemon */
 /** Read local GitHub CLI credentials through the shared system/managed tool resolver. */
-export { resolveGhNativeToken } from '@happier-dev/cli-common/agents';
+export { resolveGhNativeToken } from '@happier-dev/cli-common/agents/gh';
 /** @realm any */
 export type {
     PluginSystemToolContributionV1 as SystemToolContribution,
@@ -122,4 +122,4 @@ export interface ExecService {
     readonly clients: ProtocolClientsService;
 }
 
-export type { GhCommandDeps, GhCommandParams, GhCommandResult, GhNativeTokenResult } from '@happier-dev/cli-common/agents';
+export type { GhCommandDeps, GhCommandParams, GhCommandResult, GhNativeTokenResult } from '@happier-dev/cli-common/agents/gh';

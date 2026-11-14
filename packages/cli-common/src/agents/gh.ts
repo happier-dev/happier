@@ -17,13 +17,13 @@ export type GhCommandParams = Readonly<{
   binPath: string;
   args: readonly string[];
   timeoutMs?: number;
-  env?: NodeJS.ProcessEnv;
+  env?: Record<string, string | undefined>;
   signal?: AbortSignal;
 }>;
 
 export type GhCommandDeps = Readonly<{
-  resolveSystemGhBinPath: (env?: NodeJS.ProcessEnv) => Promise<string | null>;
-  resolveManagedGhBinPath: (env?: NodeJS.ProcessEnv) => Promise<string | null>;
+  resolveSystemGhBinPath: (env?: Record<string, string | undefined>) => Promise<string | null>;
+  resolveManagedGhBinPath: (env?: Record<string, string | undefined>) => Promise<string | null>;
   runGhCommand: (params: GhCommandParams) => Promise<GhCommandResult>;
 }>;
 
@@ -32,7 +32,7 @@ export type GhNativeTokenResult =
   | Readonly<{ ok: false; reason: 'unavailable'; remediation: 'sign in with gh CLI' }>;
 
 export async function resolveGhNativeToken(
-  opts: Readonly<{ hostname?: string; env?: NodeJS.ProcessEnv; signal?: AbortSignal }> = {},
+  opts: Readonly<{ hostname?: string; env?: Record<string, string | undefined>; signal?: AbortSignal }> = {},
   depsOverrides: Partial<GhCommandDeps> = {},
 ): Promise<GhNativeTokenResult> {
   const unavailable = { ok: false, reason: 'unavailable', remediation: 'sign in with gh CLI' } as const;
@@ -64,14 +64,14 @@ export async function resolveGhNativeToken(
   }
 }
 
-export const ghInstallDir = (env?: NodeJS.ProcessEnv) => join(resolveManagedToolsRoot(env), INSTALLABLE_KEYS.GH);
+export const ghInstallDir = (env?: Record<string, string | undefined>) => join(resolveManagedToolsRoot(env), INSTALLABLE_KEYS.GH);
 
-export const ghBinPath = (env?: NodeJS.ProcessEnv) => {
+export const ghBinPath = (env?: Record<string, string | undefined>) => {
   const binaryName = process.platform === 'win32' ? 'gh.exe' : GH_BINARY_NAME;
   return join(ghInstallDir(env), 'current', 'bin', binaryName);
 };
 
-async function resolveCommandOnPath(command: string, env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
+async function resolveCommandOnPath(command: string, env: Record<string, string | undefined> = process.env): Promise<string | null> {
   const pathRaw = typeof env.PATH === 'string' ? env.PATH.trim() : '';
   if (!pathRaw) return null;
 
@@ -96,11 +96,11 @@ async function resolveCommandOnPath(command: string, env: NodeJS.ProcessEnv = pr
   return null;
 }
 
-export async function resolveSystemGhBinPath(env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
+export async function resolveSystemGhBinPath(env: Record<string, string | undefined> = process.env): Promise<string | null> {
   return resolveCommandOnPath(GH_BINARY_NAME, env);
 }
 
-export async function resolveManagedGhBinPath(env?: NodeJS.ProcessEnv): Promise<string | null> {
+export async function resolveManagedGhBinPath(env?: Record<string, string | undefined>): Promise<string | null> {
   const candidate = ghBinPath(env);
   const accessMode = process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK;
   try {
@@ -141,7 +141,7 @@ export async function runGhCommand(params: GhCommandParams): Promise<GhCommandRe
 
 export async function resolveGhSelection<T>(params: Readonly<{
   deps: GhCommandDeps;
-  env?: NodeJS.ProcessEnv;
+  env?: Record<string, string | undefined>;
   signal?: AbortSignal;
   probe: (binPath: string, source: 'system' | 'managed') => Promise<T>;
   isUsable: (result: T) => boolean;

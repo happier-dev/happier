@@ -12,7 +12,7 @@ import type { LoggerService } from './core.js';
 /** @realm any */
 export type { ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
 /** @realm any */
-export type { ConnectedAccountCompletionObservation } from '@happier-dev/cli-common/connectedAccounts';
+export type { ConnectedAccountCompletionObservation } from '@happier-dev/cli-common/connectedAccounts/authenticationTypes';
 export type {
     ConnectedAccountBindingEvent as PluginConnectedAccountBindingEvent,
     ConnectedAccountBindingSummary as PluginConnectedAccountBindingSummary,
@@ -48,7 +48,7 @@ import type {
     ConnectedAccountDevicePollResult as PluginConnectedAccountDevicePollResult,
     ConnectedAccountReconciliationResult as PluginConnectedAccountReconciliationResult,
     ConnectedAccountPendingResult as PluginConnectedAccountPendingResult
-} from '@happier-dev/cli-common/connectedAccounts';
+} from '@happier-dev/cli-common/connectedAccounts/authenticationTypes';
 /** @realm any */
 export type {
     ConnectedAccountRuntimeConfigurationTarget as PluginConnectedAccountRuntimeConfigurationTarget,
@@ -69,7 +69,7 @@ export type {
     ConnectedAccountDevicePollResult as PluginConnectedAccountDevicePollResult,
     ConnectedAccountReconciliationResult as PluginConnectedAccountReconciliationResult,
     ConnectedAccountPendingResult as PluginConnectedAccountPendingResult
-} from '@happier-dev/cli-common/connectedAccounts';
+} from '@happier-dev/cli-common/connectedAccounts/authenticationTypes';
 /**
  * Connected Account runtime work is not an Action invocation, so it never
  * receives the Action progress reporter. Its own `operation` metadata would
@@ -98,8 +98,8 @@ export type PluginConnectedAccountAuthenticationContext = Omit<PluginInvocationC
 /** @realm any */
 export type PluginConnectedAccountAuthenticationModeRuntime =
     ConnectedAccountAuthenticationModeRuntime<PluginConnectedAccountAuthenticationContext>;
-export type { ConnectedAccountHealthResult as PluginConnectedAccountHealthResult } from '@happier-dev/cli-common/connectedAccounts';
-import type { ConnectedAccountHealthResult as PluginConnectedAccountHealthResult } from '@happier-dev/cli-common/connectedAccounts';
+export type { ConnectedAccountHealthResult as PluginConnectedAccountHealthResult } from '@happier-dev/cli-common/connectedAccounts/establishedRuntimeTypes';
+import type { ConnectedAccountHealthResult as PluginConnectedAccountHealthResult } from '@happier-dev/cli-common/connectedAccounts/establishedRuntimeTypes';
 export type PluginConnectedAccountReadContext = Omit<PluginInvocationContext, 'operation'> & Readonly<{
     account: ConnectedAccountRef;
     configuration: PluginConnectedAccountRuntimeConfiguration;

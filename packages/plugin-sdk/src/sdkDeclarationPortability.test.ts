@@ -53,7 +53,7 @@ it('emits an SDK-only plugin declaration without naming transitive Protocol pack
         await writeFile(join(root, 'tsconfig.json'), JSON.stringify({
             compilerOptions: {
                 strict: true, declaration: true, emitDeclarationOnly: true,
-                skipLibCheck: true, target: 'ES2022', module: 'NodeNext',
+                skipLibCheck: false, target: 'ES2022', module: 'NodeNext',
                 moduleResolution: 'NodeNext', types: [], outDir: './dist',
             }, files: ['./index.ts'],
         }));

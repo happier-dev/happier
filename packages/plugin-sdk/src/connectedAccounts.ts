@@ -34,7 +34,7 @@ import type {
 import type { ProviderAccountSubscriptionV1 } from '@happier-dev/protocol/connect/accountSubscription';
 export type { ProviderAccountSubscriptionV1 } from '@happier-dev/protocol/connect/accountSubscription';
 export type { ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
-export type { ConnectedAccountCompletionObservation } from '@happier-dev/cli-common/connectedAccounts';
+export type { ConnectedAccountCompletionObservation } from '@happier-dev/cli-common/connectedAccounts/authenticationTypes';
 export { resolveConnectedServiceQuotaMeterLabel } from '@happier-dev/protocol/connect/connectedServiceQuotaMeterLabel';
 export type {
     PluginConnectedAccountAuthenticationModeV2,
@@ -74,12 +74,13 @@ import type { AgentAccountUsageMeter } from './agentRuntime/accountUsage.js';
 import type { Disposable } from './lifecycle.js';
 import type { PluginInvocationContext } from './invocation.js';
 import type { HttpService } from './services/io.js';
-import type { ConnectedAccountAuthenticationModeRuntime as CommonAuthenticationModeRuntime, ConnectedAccountEstablishedReadContext, ConnectedAccountEstablishedRuntime } from '@happier-dev/cli-common/connectedAccounts';
+import type { ConnectedAccountAuthenticationModeRuntime as CommonAuthenticationModeRuntime } from '@happier-dev/cli-common/connectedAccounts/authenticationTypes';
+import type { ConnectedAccountEstablishedReadContext, ConnectedAccountEstablishedRuntime } from '@happier-dev/cli-common/connectedAccounts/establishedRuntimeTypes';
 import type { PluginConnectedAccountPortableAuthenticationContext } from './services/connectedAccounts.js';
 import type { ConnectedAccountMaterialization } from './connected-accounts/materialization.js';
 export type { ConnectedAccountMaterialization } from './connected-accounts/materialization.js';
-import type { ConnectedAccountConnectionTestResult } from '@happier-dev/cli-common/connectedAccounts';
-export type { ConnectedAccountConnectionTestResult } from '@happier-dev/cli-common/connectedAccounts';
+import type { ConnectedAccountConnectionTestResult } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
+export type { ConnectedAccountConnectionTestResult } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 
 export {
     addSafeEpochMilliseconds,
