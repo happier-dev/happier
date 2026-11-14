@@ -461,6 +461,33 @@ describe('fake Claude CLI fixture', () => {
     }
   });
 
+  it('acknowledges each submitted prompt the way the real CLI does with --replay-user-messages', async () => {
+    // Real Claude Code 2.1.319 stream-json (.project/tmp/P03-SESSION-BACKLOG/l6-real-claude-*.jsonl):
+    // command_lifecycle started + the replayed user row carry the submitted uuid, and the result names it.
+    // The Claude runtime admits a send only on one of these receipts.
+    const dir = await mkdtemp(join(tmpdir(), 'happier-fake-claude-replay-'));
+    try {
+      const fixturePath = resolve(process.cwd(), 'src/fixtures/fake-claude-code-cli.cjs');
+      const uuid = '11111111-2222-4333-8444-555555555555';
+      const input = JSON.stringify({ type: 'user', uuid, session_id: '', parent_tool_use_id: null,
+        message: { role: 'user', content: 'hello' } });
+      const res = spawnSync(process.execPath, [fixturePath, '--output-format', 'stream-json', '--input-format', 'stream-json',
+        '--replay-user-messages'], {
+        cwd: dir,
+        env: { ...process.env, HAPPIER_E2E_FAKE_CLAUDE_LOG: join(dir, 'fake-claude.jsonl') },
+        input: `${input}\n`,
+        encoding: 'utf8',
+      });
+      expect(res.status).toBe(0);
+      const rows = parseJsonLines(res.stdout);
+      expect(rows.filter((row) => row?.type === 'command_lifecycle' && row.state === 'started' && row.command_uuid === uuid)).toHaveLength(1);
+      expect(rows.filter((row) => row?.type === 'user' && row.uuid === uuid && row.isReplay === true)).toHaveLength(1);
+      expect(rows.filter((row) => row?.type === 'result')).toEqual([expect.objectContaining({ user_message_uuids: [uuid], user_message_uuid: uuid })]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('publishes execution-run runtime metadata for the permission prompt scenario', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-fake-claude-runtime-'));
     try {

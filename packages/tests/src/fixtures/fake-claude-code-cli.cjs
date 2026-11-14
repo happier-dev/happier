@@ -80,6 +80,9 @@ const inputFormat = findArgValue(argv, '--input-format');
 const isStreamJson = outputFormat === 'stream-json';
 const isSdkStreamJson = isStreamJson && inputFormat === 'stream-json';
 const hasPrint = argv.includes('--print');
+// Real CLI: with --replay-user-messages each stdin user row is acknowledged (command_lifecycle
+// started + the replayed row, same uuid) and its result names it in user_message_uuids.
+const replayUserMessages = argv.includes('--replay-user-messages');
 const mode = isSdkStreamJson ? 'sdk' : 'local';
 const scenario = process.env.HAPPIER_E2E_FAKE_CLAUDE_SCENARIO || process.env.HAPPY_E2E_FAKE_CLAUDE_SCENARIO || '';
 const runtimeContinuityReleaseFile =
@@ -195,6 +198,7 @@ async function runSdkStreamUntilEof() {
   let turn = 0;
   let triageCurrentUiPhase = null;
   let stagedTriageCurrentUiCommand = null;
+  let turnUserMessageUuids = [];
 
   function emitSdk(obj) {
     process.stdout.write(`${JSON.stringify(obj)}\n`);
@@ -347,6 +351,9 @@ async function runSdkStreamUntilEof() {
       duration_api_ms: 1,
       is_error: false,
       stop_reason: null,
+      ...(turnUserMessageUuids.length
+        ? { user_message_uuids: [...turnUserMessageUuids], user_message_uuid: turnUserMessageUuids[turnUserMessageUuids.length - 1] }
+        : {}),
       uuid: randomUUID(),
       session_id: sessionId,
     };
@@ -451,6 +458,14 @@ async function runSdkStreamUntilEof() {
     if (!initialized) {
       initialized = true;
       emitSdk(createSystemInitMessage());
+    }
+
+    const submittedUuid = msg && msg.type === 'user' && typeof msg.uuid === 'string' && msg.uuid ? msg.uuid : null;
+    turnUserMessageUuids = submittedUuid ? [submittedUuid] : [];
+    if (replayUserMessages && submittedUuid) {
+      emitSdk({ type: 'command_lifecycle', command_uuid: submittedUuid, state: 'started', uuid: randomUUID(), session_id: sessionId });
+      emitSdk({ type: 'user', message: msg.message, parent_tool_use_id: null, session_id: sessionId, uuid: submittedUuid,
+        timestamp: new Date().toISOString(), isReplay: true });
     }
 
     const now = Date.now();
