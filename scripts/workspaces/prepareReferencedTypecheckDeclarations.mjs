@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -89,6 +90,58 @@ async function declarationInputKey(pkg, dependencyKeys, env, dependencyIdentity)
   const key = await readBuildInputIdentity({ sourceDir: pkg.dir, files: files.map(file => relative(pkg.dir, file)),
     options: ['native-input-declarations', config, pkg.source.parsed.options, dependencyKeys, dependencyIdentity] });
   return { key, config };
+}
+
+/** Dependency cycles of `packages` (strongly connected components), dependencies first,
+ * members sorted by name. A consumer may enter a cycle at any member, so nothing about
+ * a member's key may depend on which member the walk reached first. */
+function declarationDependencyGroups(packages) {
+  const names = new Set(packages.map(pkg => pkg.name));
+  const manifests = new Map(packages.map(pkg => [pkg.name, pkg.manifest]));
+  const dependencies = name => collectInternalWorkspaceDependencyNames(manifests.get(name), name, { workspacePackageNames: names });
+  const index = new Map();
+  const low = new Map();
+  const stack = [];
+  const groups = [];
+  const connect = name => {
+    index.set(name, index.size);
+    low.set(name, index.get(name));
+    stack.push(name);
+    for (const dependency of dependencies(name)) {
+      if (!index.has(dependency)) {
+        connect(dependency);
+        low.set(name, Math.min(low.get(name), low.get(dependency)));
+      } else if (stack.includes(dependency)) low.set(name, Math.min(low.get(name), index.get(dependency)));
+    }
+    if (low.get(name) !== index.get(name)) return;
+    const group = [];
+    let member;
+    do { member = stack.pop(); group.push(member); } while (member !== name);
+    groups.push(group.sort());
+  };
+  for (const name of [...names].sort()) if (!index.has(name)) connect(name);
+  return { groups, dependencies };
+}
+
+async function declarationInputKeys(ordered, env, dependencyIdentity) {
+  const byName = new Map(ordered.map(pkg => [pkg.name, pkg]));
+  const { groups, dependencies } = declarationDependencyGroups(ordered);
+  const keys = new Map();
+  for (const group of groups) {
+    const own = [];
+    for (const name of group) {
+      const external = dependencies(name).filter(dependency => !group.includes(dependency)).map(dependency => keys.get(dependency).key);
+      own.push([name, await declarationInputKey(byName.get(name), external, env, dependencyIdentity)]);
+    }
+    if (group.length === 1) {
+      keys.set(group[0], own[0][1]);
+      continue;
+    }
+    // Every member of a cycle depends on every other member's inputs.
+    const cycle = createHash('sha256').update(JSON.stringify(own.map(([name, { key }]) => [name, key]))).digest('hex');
+    for (const [name, { config }] of own) keys.set(name, { key: `cycle:${cycle}:${name}`, config });
+  }
+  return keys;
 }
 
 async function declarationOutputFiles(pkg) {
@@ -210,13 +263,10 @@ async function prepareWorkspaceTypecheckDeclarationsPass(componentDir, {
   const pending = [];
   const prepare = async publication => {
     const dependencyState = publication?.state ?? await readBuildInputDependencies({ sourceDir: repoDir, env });
-    const keys = new Map();
+    const keys = await declarationInputKeys(ordered, env, dependencyState.identity);
     const stale = [];
     for (const pkg of ordered) {
-      const dependencies = collectInternalWorkspaceDependencyNames(pkg.manifest, pkg.name,
-        { workspacePackageNames: keys.keys() }).map(name => keys.get(name));
-      const { key, config } = await declarationInputKey(pkg, dependencies, env, dependencyState.identity);
-      keys.set(pkg.name, key);
+      const { key, config } = keys.get(pkg.name);
       if (await declarationCacheCurrent(pkg, key)) continue;
       stale.push(pkg.name);
       if (!underLock) continue;
