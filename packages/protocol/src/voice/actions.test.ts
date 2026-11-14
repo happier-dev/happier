@@ -266,7 +266,6 @@ describe('decodeVoiceAssistantActions', () => {
           sessionId: 's1',
           backendTargetKeys: ['agent:claude'],
           instructions: 'Start the voice assistant.',
-          permissionMode: 'read_only',
           retentionPolicy: 'ephemeral',
           runClass: 'long_lived',
           ioMode: 'streaming',

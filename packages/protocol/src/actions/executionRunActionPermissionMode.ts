@@ -61,11 +61,11 @@ export function executionRunPermissionIntentV1(raw: string): AgentPermissionInte
   return parseAgentPermissionIntentV1Alias(mode) ?? 'default';
 }
 
-/** The one default when a start names no permission: delegates may edit the workspace, every other intent reads. */
+/** Voice uses ordinary approval; delegates may edit the workspace; other intents read. */
 export function defaultExecutionRunPermissionMode(
   intent: ExecutionRunIntent,
 ): ExecutionRunActionPermissionMode {
-  return intent === 'delegate' ? 'workspace_write' : 'read_only';
+  return intent === 'voice_agent' ? 'default' : intent === 'delegate' ? 'workspace_write' : 'read_only';
 }
 
 /**

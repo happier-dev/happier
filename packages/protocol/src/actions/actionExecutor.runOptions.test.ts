@@ -87,6 +87,42 @@ const START_CONTEXT = {
 } as const;
 const START_TARGET_KEY = buildBackendTargetKeyV2({ kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } });
 
+it.each([
+  { actionId: 'voice_agent.start', permissionMode: undefined, expected: 'default' },
+  { actionId: 'voice_agent.start', permissionMode: 'read_only', expected: 'read_only' },
+  { actionId: 'subagents.plan.start', permissionMode: undefined, expected: 'read_only' },
+  { actionId: 'subagents.delegate.start', permissionMode: undefined, expected: 'workspace_write' },
+] as const)('dispatches $actionId with $permissionMode as $expected', async ({ actionId, permissionMode, expected }) => {
+  const requests: ReturnType<typeof ExecutionRunStartRequestSchema.parse>[] = [];
+  const executor = createActionExecutor(createDeps({
+    // Replace the machine transport; keep Action parsing, admission and Run validation real.
+    executionRunStart: async (_sessionId, request) => {
+      requests.push(ExecutionRunStartRequestSchema.parse(request));
+      return { runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' };
+    },
+  }));
+  expect(await executor.execute(actionId, {
+    sessionId: 's1', backendTargetKeys: [START_TARGET_KEY], instructions: 'Do the work',
+    ...(permissionMode === undefined ? {} : { permissionMode }),
+  }, UI_CALLER)).toMatchObject({ ok: true, result: { results: [{ ok: true }] } });
+  expect(requests).toMatchObject([{ permissionMode: expected }]);
+});
+
+it.each([undefined, 'read_only', 'yolo'] as const)('retains the admitted caller ceiling for Voice with %s', async permissionMode => {
+  const deps = createDeps();
+  const result = await createActionExecutor(deps).execute('voice_agent.start', {
+    sessionId: 's1', backendTargetKeys: [START_TARGET_KEY], instructions: 'Do the work',
+    ...(permissionMode === undefined ? {} : { permissionMode }),
+  }, RUN_DISPATCHER_CALLER);
+  if (permissionMode === 'yolo') {
+    expect(result).toMatchObject({ ok: false, errorCode: 'permission_exceeds_ceiling' });
+    expect(deps.executionRunStart).not.toHaveBeenCalled();
+  } else {
+    expect(result).toMatchObject({ ok: true });
+    expect(vi.mocked(deps.executionRunStart).mock.calls[0]?.[1]).toMatchObject({ permissionMode: 'read_only' });
+  }
+});
+
 it.each(['review.start', 'subagents.plan.start', 'subagents.delegate.start'] as const)(
   'preserves an explicit approval profile selection through %s fan-out', async actionId => {
     const requests: unknown[] = [];

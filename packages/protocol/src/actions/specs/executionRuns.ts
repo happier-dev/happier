@@ -102,7 +102,7 @@ export const DelegateStartInputSchema = lazyZodSchema(() => (<T extends z.ZodMin
 })));
 
 export const VoiceAgentStartInputSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.unknown() }) as z.ZodMiniObject<T['shape'], z.core.$loose>)(z.extend(IntentStartCommonSchema, {
-  permissionMode: z._default(ExecutionRunActionPermissionModeSchema, 'read_only'),
+  permissionMode: z.optional(ExecutionRunActionPermissionModeSchema),
   retentionPolicy: z._default(z.enum(['ephemeral', 'resumable']), EXECUTION_RUN_INTENT_POLICY_MATRIX.voice_agent.allowedRetentionPolicies[0]),
   runClass: z._default(z.enum(['bounded', 'long_lived']), EXECUTION_RUN_INTENT_POLICY_MATRIX.voice_agent.allowedRunClasses[0]),
   ioMode: z._default(z.enum(['request_response', 'streaming']), EXECUTION_RUN_INTENT_POLICY_MATRIX.voice_agent.allowedIoModes[0]),
