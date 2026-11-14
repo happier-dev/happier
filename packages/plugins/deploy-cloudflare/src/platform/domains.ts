@@ -7,6 +7,7 @@ import { request } from './deploymentHttp.js';
 import { pagesCommon, pagesIo } from './pagesPrepare.js';
 
 type Operation = 'read' | 'add' | 'verify' | 'remove';
+type DomainAction = PluginActionDefinition<Extract<PluginActionDeclaration, { execution: { target: 'account' } }>>;
 function refuse(code: string): never {
   const error = new PluginError({ code, ...(code === 'deployment_unavailable'
     ? { failureCause: projectActionFailureCauseV1({ code }, 'deployment.cloudflare.domain') } : {}) });
@@ -97,7 +98,7 @@ async function workers(input: DeploymentTargetDomainInputV1, context: PluginAcco
   return { v: 1, hostname: input.domain.hostname, state: row.enabled ? 'active' : 'pending', dns: [] };
 }
 
-function action(product: 'pages' | 'workers', operation: Operation): PluginActionDefinition<Extract<PluginActionDeclaration, { execution: { target: 'account' } }>> {
+function action(product: 'pages' | 'workers', operation: Operation): DomainAction {
   const write = operation === 'add' || operation === 'remove';
   return { ...pagesCommon, hostAccess: [`cloudflare-${product}`, 'deploy.manage'],
     title: `${operation} Cloudflare ${product} Domain`, dangerLevel: write ? 'writesRemote' as const : 'safe' as const,
@@ -108,7 +109,7 @@ function action(product: 'pages' | 'workers', operation: Operation): PluginActio
       return product === 'pages' ? pages(input, context, operation) : workers(input, context, operation);
     } };
 }
-export const domainActions = {
+export const domainActions: Readonly<Record<`${'pages' | 'workers'}-domains-${Operation}`, DomainAction>> = {
   'pages-domains-read': action('pages', 'read'), 'pages-domains-add': action('pages', 'add'),
   'pages-domains-verify': action('pages', 'verify'), 'pages-domains-remove': action('pages', 'remove'),
   'workers-domains-read': action('workers', 'read'), 'workers-domains-add': action('workers', 'add'),
