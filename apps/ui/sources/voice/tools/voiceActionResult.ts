@@ -53,6 +53,14 @@ function getNestedActionFailure(actionId: ActionId, value: unknown): { errorCode
   };
 }
 
+/** Remove this serializer's spoken spawn context before the canonical Action wire check. */
+export function projectVoiceActionExecutionResult(actionId: ActionId, value: unknown): unknown {
+  if (!isSessionSpawnNewActionIdV1(actionId) || !isRecord(value) || value.ok !== true
+    || !isRecord(value.result) || value.result.type !== 'error') return value;
+  const { agentTarget: _agentTarget, alternativeAgent: _alternativeAgent, errorMessage: _errorMessage, ...execution } = value;
+  return execution;
+}
+
 export function serializeVoiceActionExecuteResult(
   actionId: ActionId,
   result: ActionExecuteResult,
@@ -98,6 +106,10 @@ export function serializeVoiceActionExecuteResult(
 
   const nestedFailure = getNestedActionFailure(actionId, result.result);
   if (nestedFailure) {
+    if (options?.canonicalResult) return JSON.stringify({
+      ok: false, errorCode: nestedFailure.errorCode, error: nestedFailure.errorMessage,
+      ...(nestedFailure.details === undefined ? {} : { details: nestedFailure.details }),
+    } satisfies ActionExecuteResult);
     return jsonError(nestedFailure.errorCode, nestedFailure.errorMessage, {
       actionId,
       ...(nestedFailure.details === undefined ? {} : { details: nestedFailure.details }),

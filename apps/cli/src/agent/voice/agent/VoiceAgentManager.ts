@@ -13,11 +13,13 @@ import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionR
 import { readExecutionRunErrorCode, readExecutionRunRuntimeIssue } from '@/agent/runtime/bridges/executionRun/errors';
 import type { AgentInvocationTurnAdmissionWitness } from '@/plugins/runtime/invocation/services/types';
 import { decodeVoiceAssistantActions, getVoiceActionFunctionTool } from '@happier-dev/protocol/voice/actions';
+import { listVoiceActionBlockSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { VoiceLocalConversationSchema } from '@happier-dev/protocol/voice/settings/localConversation';
 import { ExecutionRunTurnStreamEventErrorSchema } from '@happier-dev/protocol/execution/runs/streaming';
-import { canAppendVoiceAgentOutputEventsV1, createVoiceAgentOutputTurnV1, fitVoiceAgentOutputTextV1, ingestVoiceAgentOutputEventV1, VOICE_HISTORY_CONTEXT_FIT_STATUS_TEXT, VOICE_OUTPUT_INCOMPLETE_TEXT } from '@happier-dev/protocol/voice/outputEvents';
+import { createVoiceAgentOutputTurnV1, fitVoiceAgentOutputTextV1, ingestVoiceAgentOutputEventV1, VOICE_HISTORY_CONTEXT_FIT_STATUS_TEXT, VOICE_OUTPUT_INCOMPLETE_TEXT } from '@happier-dev/protocol/voice/outputEvents';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import type { BackendTargetRefV1, ProviderBoundModelRef, ExecutionRunResumeHandle, VoiceAssistantAction } from '@happier-dev/protocol';
+import type { BackendTargetRefV1, ProviderBoundModelRef, ExecutionRunResumeHandle } from '@happier-dev/protocol';
 
 import { appendVoiceAgentHistoryContext, appendVoiceAgentHistoryTurn, fitVoiceAgentHistoryPrompt } from './voiceAgentHistory';
 import {
@@ -275,20 +277,13 @@ export class VoiceAgentManager {
     return retirement;
   }
 
-  private normalizeAssistantTextForActions(
-    assistantText: string,
-    actions: readonly VoiceAssistantAction[],
-  ): string {
-    return actions.length > 0 ? '' : assistantText.trim();
-  }
-
   private createActionFunctionTools(
     readInstance: () => VoiceAgentInstance | null,
     generation: number,
   ): NonNullable<Parameters<BackendFactory>[0]['functionTools']> {
     return [{
       ...getVoiceActionFunctionTool(),
-      call: async input => {
+      call: async (input, context) => {
         const instance = readInstance();
         if (!instance || this.voiceAgents.get(instance.id) !== instance
           || instance.chatGeneration !== generation || !instance.inFlight
@@ -298,20 +293,28 @@ export class VoiceAgentManager {
         const decoded = decodeVoiceAssistantActions([input]);
         if (decoded.failure) {
           instance.chatActionFailure = decoded.failure;
-          return decoded.failure;
+          return projectNativeJsonValueForTransport(decoded.failure);
         }
-        instance.chatActions.push(...decoded.actions);
-        return { status: 'queued', message: 'The UI has not executed this Action. End this turn and wait for the Voice tool-results follow-up.' };
+        if (!context?.callId.trim()) {
+          return { ok: false, errorCode: 'tool_call_identity_required', error: 'tool_call_identity_required' };
+        }
+        instance.chatBuffer = '';
+        instance.chatActionFailure = undefined;
+        const action = decoded.actions[0]!;
+        const spec = listVoiceActionBlockSpecs().find(candidate => candidate.bindings?.voiceClientToolName === action.t)!;
+        const runtime = instance.chatBackend;
+        if (!runtime.executeAction) {
+          return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Native Action execution is unavailable.' };
+        }
+        return projectNativeJsonValueForTransport(await runtime.executeAction(spec.id, action.args, context.callId));
       },
     }];
   }
 
-  private readChatActions(instance: VoiceAgentInstance): ReturnType<typeof decodeVoiceAssistantActions> {
-    // Native admission already validated queued Actions. A rejected call can be
-    // repaired within the same model turn; an unrepaired turn keeps its refusal.
-    return instance.chatActions.length > 0
-      ? { assistantText: '', actions: instance.chatActions }
-      : decodeVoiceAssistantActions([], instance.chatBuffer, instance.chatActionFailure);
+  private readChatOutput(instance: VoiceAgentInstance): ReturnType<typeof decodeVoiceAssistantActions> {
+    // A repaired native request clears the prior validation failure; otherwise
+    // the completed turn retains its plain refusal.
+    return decodeVoiceAssistantActions([], instance.chatBuffer, instance.chatActionFailure);
   }
 
   private resolveResponseTimeoutMs(explicitTimeoutMs?: number | null): number | null {
@@ -909,7 +912,6 @@ export class VoiceAgentManager {
       const clearChatBuffer = () => {
         if (instanceForCleanup) {
           instanceForCleanup.chatBuffer = '';
-          instanceForCleanup.chatActions = [];
           instanceForCleanup.chatActionFailure = undefined;
         }
       };
@@ -970,7 +972,6 @@ export class VoiceAgentManager {
         lifecycleInFlight: null,
         chatGeneration: 0,
         chatBuffer: '',
-        chatActions: [],
         commitBuffer: '',
         clearChatBuffer,
         clearCommitBuffer,
@@ -1121,13 +1122,12 @@ export class VoiceAgentManager {
           voiceAgent.chatSessionSeeded = true;
           voiceAgent.chatInstructionsDirty = false;
           voiceAgent.welcomed = true;
-		      const extracted = this.readChatActions(voiceAgent);
-		      const assistantText = this.normalizeAssistantTextForActions(extracted.assistantText, extracted.actions);
+		      const assistantText = this.readChatOutput(voiceAgent).assistantText;
 		      appendVoiceAgentHistoryTurn(voiceAgent.history, {
 		        userText: params.userText,
 		        assistantText,
 		      });
-		      return extracted.actions.length > 0 ? { assistantText, actions: extracted.actions } : { assistantText };
+		      return { assistantText };
 		    })();
 
     try {
@@ -1177,7 +1177,7 @@ export class VoiceAgentManager {
             : undefined,
         ), this.resolveResponseTimeoutMs());
       ensureCurrent();
-      const assistantText = this.readChatActions(voiceAgent).assistantText;
+      const assistantText = this.readChatOutput(voiceAgent).assistantText;
       voiceAgent.clearChatBuffer();
       voiceAgent.chatSessionSeeded = true;
       voiceAgent.chatInstructionsDirty = false;
@@ -1295,7 +1295,7 @@ export class VoiceAgentManager {
         voiceAgent.welcomed = true;
         if (settleCancelled()) return;
 
-        const extracted = this.readChatActions(voiceAgent);
+        const extracted = this.readChatOutput(voiceAgent);
         const patchSpeech: Parameters<typeof ingestVoiceAgentStreamingDelta>[1] = (next) => {
           if (typeof next.outputSpeechBuffer === 'string') stream.outputSpeechBuffer = next.outputSpeechBuffer;
           if (typeof next.outputSpeechText === 'string') stream.outputSpeechText = next.outputSpeechText;
@@ -1305,16 +1305,14 @@ export class VoiceAgentManager {
           if (typeof next.outputSegmentIndex === 'number') stream.outputSegmentIndex = next.outputSegmentIndex;
         };
         // Native assistant messages have no final-answer flag. Admit speech only
-        // after completion has proved it is neither tool narration nor an Action
-        // request. The UI Action owner presents its real outcome separately.
-        if (extracted.actions.length === 0) {
-          if (extracted.invalidActionBlock) stream.outputSpeechBuffer = extracted.assistantText;
-          else ingestVoiceAgentStreamingDelta(stream, patchSpeech, voiceAgent.chatBuffer);
-          finalizeVoiceAgentStreamingSpeech(stream, patchSpeech);
-        }
+        // after completion. Native tool boundaries already discarded procedural
+        // narration; the remaining text can report the settled Action outcome.
+        if (extracted.invalidActionBlock) stream.outputSpeechBuffer = extracted.assistantText;
+        else ingestVoiceAgentStreamingDelta(stream, patchSpeech, voiceAgent.chatBuffer);
+        finalizeVoiceAgentStreamingSpeech(stream, patchSpeech);
 
         if (settleCancelled()) return;
-        const desiredText = extracted.actions.length > 0 ? '' : extracted.assistantText.trim();
+        const desiredText = extracted.assistantText.trim();
         const finalCandidate = { v: 1, kind: 'turn_final', turnId: stream.id, seq: stream.outputSeq, text: desiredText } as const;
         let cleanText = fitVoiceAgentOutputTextV1(stream.outputBudget, finalCandidate, '', VOICE_OUTPUT_INCOMPLETE_TEXT);
         if (cleanText.length < desiredText.length) {
@@ -1323,37 +1321,6 @@ export class VoiceAgentManager {
         if (stream.outputIncomplete) {
           // Speech already consumed is retained in the terminal transcript even
           // when a later provider fullText changes its wording.
-          if (stream.outputSpeechText && !cleanText.startsWith(stream.outputSpeechText.trimEnd())) {
-            cleanText = stream.outputSpeechText.trimEnd();
-          }
-        }
-        const admittedActions: VoiceAssistantAction[] = [];
-        const actionEvents: VoiceAgentTurnStreamState['events'] = [];
-        let plannedBudget = stream.outputBudget;
-        let plannedSeq = stream.outputSeq;
-        for (const [actionIndex, action] of extracted.actions.entries()) {
-          const output = {
-            v: 1, kind: 'side_effect', turnId: stream.id, seq: plannedSeq,
-            effectId: `${stream.id}:effect:${actionIndex}`, action,
-          } as const;
-          if (!canAppendVoiceAgentOutputEventsV1(plannedBudget, [
-            output, { ...finalCandidate, seq: plannedSeq + 1, text: `${cleanText}${VOICE_OUTPUT_INCOMPLETE_TEXT}` },
-          ]) || !canAppendVoiceAgentOutputEventsV1(plannedBudget, [
-            output, { ...finalCandidate, seq: plannedSeq + 1, text: `${stream.outputSpeechText.trimEnd()}${VOICE_OUTPUT_INCOMPLETE_TEXT}` },
-          ])) {
-            stream.outputIncomplete = true;
-            break;
-          }
-          admittedActions.push(action);
-          actionEvents.push({ t: 'voice_output', output });
-          plannedBudget = ingestVoiceAgentOutputEventV1(plannedBudget, output).state;
-          plannedSeq += 1;
-        }
-        if (admittedActions.length !== extracted.actions.length) {
-          cleanText = fitVoiceAgentOutputTextV1(plannedBudget, {
-            ...finalCandidate, seq: plannedSeq,
-            text: '',
-          }, '', VOICE_OUTPUT_INCOMPLETE_TEXT);
           if (stream.outputSpeechText && !cleanText.startsWith(stream.outputSpeechText.trimEnd())) {
             cleanText = stream.outputSpeechText.trimEnd();
           }
@@ -1369,9 +1336,6 @@ export class VoiceAgentManager {
         if (settleCancelled()) return;
         await params.onTurnFinal?.(cleanText);
         if (settleCancelled()) return;
-        stream.events.push(...actionEvents);
-        stream.outputBudget = plannedBudget;
-        stream.outputSeq = plannedSeq;
         stream.events.push({
           t: 'voice_output',
           output: { v: 1, kind: 'turn_final', turnId: stream.id, seq: stream.outputSeq, text: cleanText },

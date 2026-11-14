@@ -39,6 +39,7 @@ import type { VerifyExternalActionExecutionAuthorization } from '../../../../../
 import type { PluginTargetActivationFact } from '../../../../../cli/src/plugins/runtime/lifecycle/activation/facts';
 import { ApiClient } from '../../../../../cli/src/api/api';
 import type { ApiMachineClient } from '../../../../../cli/src/api/apiMachine';
+import { activateSessionsRoleForMachineClient } from '../../../../../cli/src/daemon/testkit/sessionsRole.testkit';
 import { commitDaemonLaunchSession } from '../../../../../cli/src/daemon/spawn/commitDaemonLaunchSession';
 import { projectSessionSpawnFailure } from '../../../../../cli/src/session/creation/projectSessionSpawnFailure';
 import { createSessionAttachFile } from '../../../../../cli/src/daemon/sessionAttachFile';
@@ -118,6 +119,7 @@ import { isOriginalAccountExecutionAction } from '../../../../../server/sources/
 import { resolveMachineAdmission } from '../../../../../server/sources/app/machines/machineAccess';
 import { accountRoutes } from '../../../../../server/sources/app/api/routes/account/accountRoutes';
 import { changesRoutes } from '../../../../../server/sources/app/api/routes/changes/changesRoutes';
+import { homeGovernanceRoutes } from '../../../../../server/sources/app/api/routes/home/homeGovernanceRoutes';
 import { registerPluginAvailabilityRoutes } from '../../../../../server/sources/app/plugins/availability/routes';
 import { sessionRoutes } from '../../../../../server/sources/app/api/routes/session/sessionRoutes';
 import { sessionPendingRoutes } from '../../../../../server/sources/app/api/routes/session/pendingRoutes';
@@ -150,8 +152,12 @@ import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAc
 import { createSessionSpawnConversationFixture } from './sessionSpawnConversation.testkit';
 import { buildNewSessionAuthoringDraftFromResolvedInputs, buildSessionSpawnNewInputV2FromAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import { createHiddenVoiceStartCanary } from '@/dev/testkit/harness/hiddenVoiceStartCanary';
+import { createNativeVoiceActionHarness } from '@/dev/testkit/harness/nativeVoiceActionHarness';
+import { createVoiceToolHandlers } from '@/voice/tools/handlers';
+import { projectVoiceActionExecutionResult } from '@/voice/tools/voiceActionResult';
+import { UiActionDispatchResultV1Schema } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { resetServerFeaturesClientForTests } from '../../../../../cli/src/features/serverFeaturesClient';
+import { observeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '../../../../../cli/src/features/serverFeaturesClient';
 import { registerDeploymentRoutes } from '../../../../../server/sources/app/api/routes/deployments/deploymentRoutes';
 
 // The two requester-custody slices omit a physical control listener. The full
@@ -305,6 +311,7 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
         registerAccountSecurityRoutes(app);
         accountRoutes(app);
         changesRoutes(app);
+        homeGovernanceRoutes(app);
         registerPluginAvailabilityRoutes(app);
         featuresRoutes(app);
         artifactsRoutes(app);
@@ -602,11 +609,13 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
         ['own-Account retained in-process Agent late Account plan withdrawal', 'owner'],
         ['own-Account Bot birth with lazy Instructions', 'owner'],
         ['own-Account Voice hidden carrier start and native resume', 'owner'],
+        ['native Voice duplicate and distinct call identities', 'owner'],
     ] as const)(
         '%s preserves initial-input admission and native reply wiring', { timeout: DEFAULT_SESSION_SPAWN_OPERATION_TIMEOUT_MS }, async ([journey, requesterKind], context) => {
         const ownAccount = requesterKind === 'owner';
         const lateTeamReconnect = journey === 'own-Account selected Claude birth late Team reconnect';
-        const observeCommitted = journey === 'own-Account selected Claude birth committed observation' || lateTeamReconnect;
+        const nativeVoiceActions = journey === 'native Voice duplicate and distinct call identities';
+        const observeCommitted = journey === 'own-Account selected Claude birth committed observation' || lateTeamReconnect || nativeVoiceActions;
         const disconnectNativeReplyEvents = journey === 'own-Account retained in-process Agent reply wiring sensitivity';
         const disconnectAgentRegistration = journey === 'own-Account retained in-process Agent registration removal sensitivity';
         const withdrawPreparedAccountPlan = journey === 'own-Account retained in-process Agent late Account plan withdrawal';
@@ -631,6 +640,7 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
             || journey === 'own-Account retained in-process Agent first reply'
             || journey === 'own-Account retained in-process Agent optional prompt unavailable'
             || disconnectNativeReplyEvents || disconnectAgentRegistration || withdrawPreparedAccountPlan || botBirth || hiddenVoice;
+        const realMachineTransport = retainedRunner || nativeVoiceActions;
         // Windows startup cancellation invokes its exact OS process adapter.
         // A virtual runner sharing this worker's PID cannot prove that custody.
         if (retainedRunner && process.platform === 'win32') context.skip();
@@ -682,7 +692,7 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
         let runnerClient: ApiSessionClient | null = null;
         let requesterRuntime: RequesterSessionRuntimeContext | null = null;
         const readRunnerClient = () => runnerClient;
-        const selectedServices = { v: 2 as const, bindingsByServiceId: fullHostRuntime ? {} : {
+        const selectedServices = { v: 2 as const, bindingsByServiceId: fullHostRuntime || nativeVoiceActions ? {} : {
             'happier.agent.claude/claude-subscription': { source: 'team_resource' as const,
                 resourceId: crypto.randomUUID(), deliveryMode: 'brokered' as const },
         } };
@@ -871,7 +881,7 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
         const deviceLocalSecretStorage = await readOrCreateDeviceLocalSecretStorage({ path: join(database.baseDir, journey, 'device-local-key.json') });
         const report = createOnHappySessionWebhook({ pidToTrackedSession: trackedSessions, pidToAwaiter: awaiters, deviceLocalSecretStorage });
         const daemonHomeDir = retainedRunner ? join(database.baseDir, 'daemon', journey) : join(database.baseDir, 'daemon');
-        if (retainedRunner) {
+        if (realMachineTransport) {
             // startDaemon installs this authenticated Machine socket before
             // composing Session control. This narrower source harness must
             // retain the same production input-admission transport.
@@ -891,7 +901,7 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
                 ...(fullHostRuntime ? { HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: fixtureEntrypoint } : {}),
                 [resolveAgentCliOverrideEnvKey(`${fixturePluginId}/${fixtureLocalId}`)]: process.execPath },
             beforeStartup: async () => {
-                if (!fullHostRuntime) return;
+                if (!fullHostRuntime && !nativeVoiceActions) return;
                 if (retainedRunner) {
                     if (!conversationFixture) throw new Error('Missing retained conversation fixture');
                     const sourceRuntime = await createAuthoredAdmittedPluginRuntimeFixture({
@@ -1211,7 +1221,7 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
         // Canonical registrar erases request generics at the Socket.IO boundary; the real registered handler validates its packet.
         const handlers = new Map<string, RpcHandler>();
         const registerHandler: RpcHandlerRegistrar['registerHandler'] = (method, handler) => { handlers.set(method, handler); };
-        if (!retainedRunner) registerExternalActionRpcHandler({ registerHandler }, {
+        if (!realMachineTransport) registerExternalActionRpcHandler({ registerHandler }, {
             ...daemonRuntime.externalActionIngressOwner,
             machineId: machine.id, resolveAccountId: async () => owner.id, resolveInstallationId: () => installation.installationId,
             verifyExecutionAuthorization: async (input: Parameters<VerifyExternalActionExecutionAuthorization>[0]) => {
@@ -1234,20 +1244,33 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
         const ownerApi = await runWithServerHttpBaseUrl(endpoint, () => ApiClient.create({ token: ownerToken, encryption: null }));
         const publishedMachine = await runWithServerHttpBaseUrl(endpoint, () => ownerApi.getMachine(machine.id));
         if (!publishedMachine) throw new Error('Machine read did not settle');
+        // Installed startup supplies this same observed snapshot to the Machine
+        // client for its Home binding and operation-protocol negotiation.
+        if (nativeVoiceActions) {
+            const snapshot = await observeServerFeaturesSnapshot({ serverUrl: endpoint });
+            if (snapshot.status !== 'ready') throw new Error('Machine Home features did not settle');
+            ownerApi.setServerFeaturesSnapshotProvider(() => snapshot);
+        }
         apiMachine = await runWithServerHttpBaseUrl(endpoint, async () => ownerApi.machineSyncClient(publishedMachine));
         onTestFinished(apiMachine.onConnectedServicesProjection(daemonRuntime.reconcileConnectedServicesProjection));
-        if (observeCommitted || retainedRunner) apiMachine.setRPCHandlers({
-            spawnSession: daemonRuntime.spawnSession, stopSession: daemonRuntime.stopSession,
-            ...(retainedRunner ? { sessionSpawnV1OutcomeRequired: true,
-                isSessionActive: daemonRuntime.isSessionAlreadyRunning } : {}),
-            requestShutdown: () => { throw new Error('Unexpected daemon shutdown request'); },
-        }, { externalActionIngressOwner: daemonRuntime.externalActionIngressOwner });
+        if (observeCommitted || retainedRunner) {
+            const registration = apiMachine.setRPCHandlers({
+                spawnSession: daemonRuntime.spawnSession, stopSession: daemonRuntime.stopSession,
+                ...(retainedRunner ? { sessionSpawnV1OutcomeRequired: true,
+                    isSessionActive: daemonRuntime.isSessionAlreadyRunning } : {}),
+                requestShutdown: () => { throw new Error('Unexpected daemon shutdown request'); },
+            }, { externalActionIngressOwner: daemonRuntime.externalActionIngressOwner });
+            if (nativeVoiceActions) {
+                const sessionsRole = await activateSessionsRoleForMachineClient(apiMachine, registration);
+                onTestFinished(() => sessionsRole.stop());
+            }
+        }
         const currentApiMachine = apiMachine;
         onTestFinished(async () => { await currentApiMachine.shutdown(); });
         // Retained source rows consume the production socket factory and RPC
         // manager. The small historical slices retain their transport fixture.
-        if (!retainedRunner) (apiMachine as unknown as { socket: typeof socket }).socket = socket;
-        if (!retainedRunner) socket.on(SOCKET_RPC_EVENTS.REQUEST, (request: SocketRpcRequestPayload, acknowledge: (reply: unknown) => void) => {
+        if (!realMachineTransport) (apiMachine as unknown as { socket: typeof socket }).socket = socket;
+        if (!realMachineTransport) socket.on(SOCKET_RPC_EVENTS.REQUEST, (request: SocketRpcRequestPayload, acknowledge: (reply: unknown) => void) => {
             daemonReceipts += 1;
             const carried = ExternalActionDaemonDispatchRequestSchema.parse(request.params);
             expect(carried.envelope.v).toBe(1);
@@ -1280,7 +1303,7 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
         const spawnEnvelopes: Array<{ path: string; requestId: string; digest: string; observeSessionCommit: boolean;
             creationKey: unknown; initialInput: unknown; waitForTerminal: unknown }> = [];
         try {
-            if (retainedRunner) {
+            if (realMachineTransport) {
                 const serverSocket = app.machineDaemonPresence;
                 if (!(serverSocket instanceof SocketIoServer)) throw new Error('Missing real Machine socket server');
                 const observeMachineConnection = (connected: SocketIoSocket) => {
@@ -1296,7 +1319,7 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
                         const carried = ExternalActionDaemonDispatchRequestSchema.parse(Reflect.get(packet, 'params'));
                         expect(carried.principal.accountId).toBe(requester.id);
                         expect(carried.envelope.v).toBe(1);
-                        if (carried.envelope.v === 1 && Reflect.get(carried, 'actionId') === 'session.spawn_new') {
+                        if (retainedRunner && carried.envelope.v === 1 && Reflect.get(carried, 'actionId') === 'session.spawn_new') {
                             expect(SessionSpawnNewInputV2Schema.parse(carried.envelope.input).agentTarget?.identity.pluginId).toBe(fixturePluginId);
                         }
                         daemonReceipts += 1;
@@ -1416,6 +1439,68 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
                     agentTarget: schemaInput.agentTarget, sessionName: schemaInput.title,
                     initialSessionFacts: schemaInput.identity, promptStack: schemaInput.promptStack }),
             }) : schemaInput;
+            if (nativeVoiceActions) {
+                const handlers = createVoiceToolHandlers({ resolveSessionId: () => null, currentServerId: learnedProfile.id });
+                const voice = await createNativeVoiceActionHarness(async (actionId, payload, callId) => {
+                    const execution: unknown = JSON.parse(await handlers.action_execute!({ actionId, input: payload },
+                        { serverId: learnedProfile.id, effectId: callId, turnOrigin: 'person' }));
+                    const parsed = UiActionDispatchResultV1Schema.safeParse({ v: 1,
+                        execution: projectVoiceActionExecutionResult(actionId, execution) });
+                    if (!parsed.success) {
+                        const result = execution && typeof execution === 'object' ? Reflect.get(execution, 'result') : null;
+                        const launch = result && typeof result === 'object' ? Reflect.get(result, 'launchError') : null;
+                        throw new Error(JSON.stringify({ error: 'Invalid native Action settlement',
+                            keys: execution && typeof execution === 'object' ? Object.keys(execution) : [],
+                            type: result && typeof result === 'object' ? Reflect.get(result, 'type') : null,
+                            code: result && typeof result === 'object' ? Reflect.get(result, 'code') : null,
+                            launchCode: launch && typeof launch === 'object' ? Reflect.get(launch, 'code') : null,
+                        }));
+                    }
+                    return parsed.data.execution;
+                });
+                onTestFinished(voice.dispose);
+                const started = await voice.manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                    chatModelId: 'native-actions', commitModelId: 'native-actions', permissionIntent: 'default',
+                    idleTtlSeconds: 60, initialContext: '' });
+                const turn = voice.manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'Start a coding Session.' });
+                void turn.catch(() => {});
+                await voice.native.waitForInputs(1);
+                const tool = voice.native.opens[0]?.functionTools?.find(candidate => candidate.name === 'happier_voice_action');
+                if (!tool) throw new Error('Native Voice Action function unavailable');
+                const { creationKey: _creationKey, ...spawnInput } = input;
+                const action = { t: 'spawnSession', args: spawnInput };
+                const invoke = (callId: string) => tool.call(action, { callId });
+                releaseObservedStartup();
+                const childId = (raw: unknown) => {
+                    const execution = UiActionDispatchResultV1Schema.parse({ v: 1, execution: raw }).execution;
+                    if (!execution.ok) throw new Error(`Native spawn failed: ${execution.errorCode}`);
+                    const result = SessionSpawnNewActionResultV1Schema.parse(execution.result);
+                    if (result.type !== 'success') throw new Error('Native spawn did not create a Session');
+                    return result.sessionId;
+                };
+                const duplicates = await Promise.all(Array.from({ length: 7 }, () => invoke('native-spawn-repeat')));
+                for (const result of duplicates) expect(result, JSON.stringify({ result, httpResults, daemonReceipts,
+                    boundaryFailures: voice.boundaryFailures })).toMatchObject({ ok: true,
+                    result: { type: 'success', sessionId: expect.any(String) } });
+                const childIds = duplicates.map(childId);
+                expect(new Set(childIds).size).toBe(1);
+                expect(await db.session.count({ where: { accountId: requester.id } })).toBe(1);
+                expect(physicalLaunches).toBe(1);
+                const distinct = [
+                    await invoke('native-spawn-second'),
+                    await invoke('native-spawn-third'),
+                ];
+                for (const result of distinct) expect(result, JSON.stringify({ result, httpResults, daemonReceipts,
+                    boundaryFailures: voice.boundaryFailures })).toMatchObject({ ok: true,
+                    result: { type: 'success', sessionId: expect.any(String) } });
+                const allIds = [...duplicates.slice(0, 1), ...distinct].map(childId);
+                expect(new Set(allIds).size).toBe(3);
+                expect(await db.session.count({ where: { accountId: requester.id } })).toBe(3);
+                expect(physicalLaunches).toBe(3);
+                voice.native.complete('Three Sessions are ready.');
+                await expect(turn).resolves.toMatchObject({ assistantText: 'Three Sessions are ready.' });
+                return;
+            }
             const initialInputText = input.initialInput?.text;
             if (typeof initialInputText !== 'string') throw new Error('Missing authored fixture input text');
             const scope = { serverId: homeId, accountId: requester.id };

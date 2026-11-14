@@ -78,6 +78,26 @@ const sessionDetailReads: string[] = [];
 const messagePages = new Map<string, ReturnType<typeof SessionMessagesPageV1Schema.parse>>();
 const messageReads: string[] = [];
 
+async function executeReverseVoiceAction(actionId: import('@happier-dev/protocol/actions/actionIds').ActionId,
+  input: unknown, actionRequestId: string) {
+  const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+  const actionAccount = await captureLazyActionAccountContext(homeA);
+  const { DaemonVoiceAgentClient } = await import('@/voice/agent/daemonVoiceAgentClient');
+  const handle: import('@/voice/agent/types').VoiceAgentHandle = {
+    accountLifetime: actionAccount.accountLifetime, transcriptEpoch: 0, metadataSessionId: null,
+    client: new DaemonVoiceAgentClient(actionAccount.accountLifetime.scope), voiceAgentId: 'refused-action-run', backend: 'daemon',
+    rpcSessionId: 'voice-refusal-carrier', agentBackendId: 'codex',
+    actionInvocation: { caller: { kind: 'host' }, surface: 'voice', authority: 'present_user' },
+  };
+  try {
+    const { createVoiceRunActionReverseHandler } = await import('@/voice/agent/voiceRunActionReverseHandler');
+    return await createVoiceRunActionReverseHandler(handle, 'voice-refusal-control')({ v: 1, actionId, input,
+      voiceRun: { runId: handle.voiceAgentId, sessionId: handle.rpcSessionId, occurrenceId: 'refusal-occurrence',
+        turnId: 'refusal-turn', actionRequestId },
+    }, { signal: new AbortController().signal });
+  } finally { actionAccount.dispose(); }
+}
+
 function expectVoicePendingInput(sessionId: string, text: string, runId: string | null = null) {
   expect(pendingEnqueue).toHaveBeenCalledWith(expect.objectContaining({ serverUrl: homeUrlA, sessionId, runId }));
   const request = pendingEnqueue.mock.calls.find(([candidate]) => candidate.sessionId === sessionId)?.[0];
@@ -1813,6 +1833,21 @@ describe('voice tool handlers', () => {
       }));
       expect(explicitFailure).toMatchObject({ agentTarget: claudeTarget, errorMessage: expect.stringContaining('claude') });
       expect(entry === 'discovered' ? explicitFailure.result : explicitFailure).toMatchObject(SessionSpawnNewResultV1Schema.parse(spawnSettlement));
+      if (entry === 'discovered') {
+        const { projectVoiceActionExecutionResult } = await import('./voiceActionResult');
+        const { UiActionDispatchResultV1Schema } = await import('@happier-dev/protocol/actions/clientDispatchV1');
+        expect(UiActionDispatchResultV1Schema.parse({ v: 1,
+          execution: projectVoiceActionExecutionResult('session.spawn_new', explicitFailure) }).execution)
+          .toEqual({ ok: true, result: spawnSettlement });
+        expect(UiActionDispatchResultV1Schema.safeParse({ v: 1,
+          execution: projectVoiceActionExecutionResult('session.spawn_new', { ...explicitFailure, unexpected: true }) }).success)
+          .toBe(false);
+        const refused = await executeReverseVoiceAction('session.spawn_new', { ...spawnInput, agentTarget: claudeTarget,
+          creationKey: 'manual:reverse-signed-out' }, 'reverse-signed-out');
+        expect(refused, JSON.stringify(refused)).toMatchObject({ v: 1, execution: {
+          ok: true, result: { type: 'error', code: 'agent_signed_out', retryable: false, agentId: 'claude' },
+        } });
+      }
       expect(explicitFailure).not.toHaveProperty('alternativeAgent');
       expect(readAgent('claude')).toMatchObject({ state: 'needsSignIn', stale: false, signIn: { native: { status: 'signedOut' } } });
       expect(readAgent('codex')).toMatchObject({ state: 'ready', stale: false });
@@ -2910,6 +2945,14 @@ describe('voice tool handlers', () => {
       // not retry Stop against a replacement runner or another authority.
       expect(daemonRpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.STOP_SESSION))
         .toHaveLength(1);
+      if (toolName === 'action_execute') {
+        const refused = await executeReverseVoiceAction('session.stop', input, 'reverse-stop');
+        expect(refused, JSON.stringify(refused)).toMatchObject({ v: 1, execution: {
+          ok: false, errorCode: 'session_stop_failed', error: 'session_stop_failed',
+        } });
+        if (!refused.execution.ok) expect(refused.execution.details).toEqual(result.details);
+        expect(daemonRpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.STOP_SESSION)).toHaveLength(2);
+      }
     },
   );
 

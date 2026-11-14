@@ -653,6 +653,37 @@ describe('createHomeActionApprovalContinuation', () => {
 });
 
 describe('createActionApprovalContinuation', () => {
+    it('joins a directly returned Voice receipt by its exact admitted request while retaining Artifact and Account binding', async () => {
+        const origin: ApprovalRequestV2['executionOriginV1'] = { v: 1, authority: 'account_automation', surface: 'voice',
+            caller: { kind: 'host' }, serverId: 'home-1', accountId: 'account-1', actionId, requestId: 'native-action-1' };
+        const onSucceeded = vi.fn();
+        const onFailed = vi.fn();
+        const create = () => createActionApprovalContinuation({ artifactId: 'approval-1', actionId,
+            scope: { serverId: 'home-1', accountId: 'account-1' }, expectedRequestId: origin.requestId, onSucceeded, onFailed });
+        const artifact = (executionOrigin = origin, artifactId = 'approval-1') => executedArtifact({
+            artifactId, executionOrigin, requestedSurface: executionOrigin.surface,
+        });
+        expect(await create().onExecuted(artifact())).toBe('consumed');
+        expect(onSucceeded).toHaveBeenCalledWith(actionResult);
+        expect(onFailed).not.toHaveBeenCalled();
+        onSucceeded.mockClear();
+        expect(await create().onExecuted(artifact(origin, 'another-approval'))).toBe('ignored');
+        expect(onSucceeded).not.toHaveBeenCalled();
+        expect(onFailed).not.toHaveBeenCalled();
+        for (const changed of [{ ...origin, requestId: 'another-request' }, { ...origin, accountId: 'another-account' },
+            { ...origin, serverId: 'another-home' }]) {
+            onFailed.mockClear();
+            expect(await create().onExecuted(artifact(changed))).toBe('consumed');
+            expect(onSucceeded).not.toHaveBeenCalled();
+            expect(onFailed).toHaveBeenCalledWith('approval_binding_mismatch');
+        }
+        onFailed.mockClear();
+        await createActionApprovalContinuation({ artifactId: 'approval-1', actionId,
+            scope: { serverId: 'home-1', accountId: 'account-1' }, expectedRequestId: origin.requestId,
+            expectedInput: {}, onSucceeded, onFailed }).onExecuted(artifact());
+        expect(onSucceeded).not.toHaveBeenCalled();
+        expect(onFailed).toHaveBeenCalledWith('approval_binding_mismatch');
+    });
     it('binds the producer private Profile review even without a separate review schema', async () => {
         const actionId = 'launch_profiles.save';
         const input = { id: 'profile-a', expectedRevision: 4, profile: {

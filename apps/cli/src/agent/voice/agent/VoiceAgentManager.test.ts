@@ -520,10 +520,10 @@ function createPromptCaptureBackend(
       const next = sequence[Math.min(idx, sequence.length - 1)];
       idx += 1;
       publish({ kind: 'message-delta', turnId: request.delivery.turnId, channel: 'assistant', text: next?.responseText ?? '' });
-      for (const input of next?.functionCalls ?? []) {
+      for (const [callIndex, input] of (next?.functionCalls ?? []).entries()) {
         const tool = functionTools[0];
         if (!tool) throw new Error('Voice native function was not delivered to the Agent SDK');
-        await tool.call(input);
+        await tool.call(input, { callId: `capture:${idx}:${callIndex}` });
       }
       publish({ kind: 'turn-complete', turnId: request.delivery.turnId });
     },
@@ -2423,7 +2423,25 @@ describe('VoiceAgentManager', () => {
     }
   });
 
-  it('keeps queued native sendSessionMessage narration silent until the UI executes its Action', async () => {
+  it('refuses native Actions without the provider call identity before execution', async () => {
+    let result: unknown;
+    const manager = new VoiceAgentManager({ createBackend: ({ functionTools }) => createDeterministicBackend('identity', {
+      functionTools,
+      async onSend(request, publish, tools) {
+        result = await tools[0]!.call({ t: 'listServers', args: {} });
+        publish({ kind: 'turn-complete', turnId: request.delivery.turnId });
+      },
+    }) });
+    try {
+      const started = await manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        chatModelId: 'chat-model', commitModelId: 'chat-model', permissionIntent: 'default',
+        idleTtlSeconds: 60, initialContext: '' });
+      await manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'List my Homes' });
+      expect(result).toMatchObject({ ok: false, errorCode: 'tool_call_identity_required' });
+    } finally { await manager.dispose(); }
+  });
+
+  it('keeps pre-call native sendSessionMessage narration silent without deferring the Action', async () => {
     const commitBackend = createDeterministicBackend('commit');
 
     const createBackend: BackendFactory = ({ modelId, functionTools }) => {
@@ -2445,7 +2463,7 @@ describe('VoiceAgentManager', () => {
 
     const result = await manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'hi' });
     expect(result.assistantText).toBe('');
-    expect(result.actions).toEqual([{ t: 'sendSessionMessage', args: { message: 'Please do X.' } }]);
+    expect(result.actions).toBeUndefined();
     await manager.dispose();
   });
 
@@ -2733,7 +2751,7 @@ describe('VoiceAgentManager', () => {
           publish({ kind: 'message-delta', turnId: request.delivery.turnId, channel: 'assistant', text: 'first response' });
           const tool = tools[0];
           if (!tool) throw new Error('Voice native function was not delivered to the Agent SDK');
-          await tool.call({ t: 'ui.voice_agent.teleport', args: { sessionId: 'prior-effect-session' } });
+          await tool.call({ t: 'ui.voice_agent.teleport', args: { sessionId: 'prior-effect-session' } }, { callId: 'prior-effect' });
           publish({ kind: 'turn-complete', turnId: request.delivery.turnId });
           return;
         }
@@ -3531,7 +3549,7 @@ describe('VoiceAgentManager', () => {
     }
   });
 
-  it('withholds queued native Action narration from semantic speech and the final Voice reply', async () => {
+  it('withholds pre-call native Action narration from semantic speech and the final Voice reply', async () => {
     const manager = new VoiceAgentManager({ createBackend: ({ functionTools }) => createPromptCaptureBackend([{
       responseText: 'I will send that to the session now.',
       functionCalls: [{ t: 'sendSessionMessage', args: { message: 'Please investigate.' } }],
@@ -3556,7 +3574,7 @@ describe('VoiceAgentManager', () => {
       }
       expect(speech).toEqual([]);
       expect(persistedText).toBe('');
-      expect(events.filter(event => event.t === 'voice_output' && event.output.kind === 'side_effect')).toHaveLength(1);
+      expect(events.filter(event => event.t === 'voice_output' && event.output.kind === 'side_effect')).toHaveLength(0);
       expect(events.at(-1)).toMatchObject({ t: 'voice_output', output: { kind: 'turn_final', text: '' } });
     } finally {
       await manager.dispose();
@@ -3588,7 +3606,7 @@ describe('VoiceAgentManager', () => {
         for (let index = 0; index < actionCount; index += 1) {
           const tool = openRequest.functionTools?.[0];
           if (!tool) throw new Error('Voice native function was not delivered to the Agent SDK');
-          await tool.call(action);
+          await tool.call(action, { callId: `wire-action:${index}` });
         }
         publish({ ...base, sequence: sequence++, kind: 'turn-complete', turnId });
         return { status: 'admitted' as const };
@@ -3605,14 +3623,12 @@ describe('VoiceAgentManager', () => {
     });
     let persistedText = '';
     const stream = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'hello', onTurnFinal: (value) => { persistedText = value; } });
-    await vi.waitFor(async () => {
-      const page = await manager.readTurnStream({ voiceAgentId: started.voiceAgentId, streamId: stream.streamId, cursor: 0, maxEvents: 1 });
-      expect(page.terminalEvent).toBeDefined();
-    });
+    await vi.waitFor(() => expect(manager.isTurnInFlight(started.voiceAgentId)).toBe(false));
     const firstPage = await manager.readTurnStream({ voiceAgentId: started.voiceAgentId, streamId: stream.streamId, cursor: 0, maxEvents: 1 });
-    expect(firstPage.done).toBe(false);
+    expect(firstPage.done).toBe(actionCount > 0);
     expect(firstPage.terminalEvent).toMatchObject({ t: 'voice_output', output: { kind: 'turn_final', text: persistedText } });
-    const events = await readVoiceAgentTurnStreamUntilDone({ manager, voiceAgentId: started.voiceAgentId, streamId: stream.streamId, maxEvents: 256 });
+    const events = firstPage.done ? firstPage.events : await readVoiceAgentTurnStreamUntilDone({ manager,
+      voiceAgentId: started.voiceAgentId, streamId: stream.streamId, maxEvents: 256 });
     let state = createVoiceAgentOutputTurnV1(stream.streamId);
     let spokenText = '';
     let finalText: string | undefined;
@@ -3635,7 +3651,7 @@ describe('VoiceAgentManager', () => {
     if (!incomplete) {
       expect(spokenText).toBe(actionCount > 0 ? '' : text);
       expect(finalText).toBe(actionCount > 0 ? '' : text.trimEnd());
-      expect(events.filter((event) => event.t === 'voice_output' && event.output.kind === 'side_effect')).toHaveLength(actionCount);
+      expect(events.filter((event) => event.t === 'voice_output' && event.output.kind === 'side_effect')).toHaveLength(0);
     }
   });
 
@@ -3703,7 +3719,7 @@ describe('VoiceAgentManager', () => {
 
     expect(events.at(-1)).toMatchObject({ t: 'voice_output', output: { kind: 'turn_final', text: '' } });
     expect(events.filter(event => event.t === 'voice_output' && event.output.kind === 'side_effect'))
-      .toMatchObject([{ output: { action: { t: 'sendSessionMessage', args: { message: 'Do X.' } } } }]);
+      .toEqual([]);
     await manager.dispose();
   });
 
@@ -3729,7 +3745,6 @@ describe('VoiceAgentManager', () => {
     });
 
     try {
-      const effectIds: string[] = [];
       for (const sessionId of ['s1', 's2']) {
         const stream = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: `open ${sessionId}` });
         const events = await readVoiceAgentTurnStreamUntilDone({ manager,
@@ -3739,10 +3754,8 @@ describe('VoiceAgentManager', () => {
         expect(events.at(-1)).toMatchObject({ t: 'voice_output', output: { kind: 'turn_final', text: '' } });
         const effects = events.flatMap(event => event.t === 'voice_output' && event.output.kind === 'side_effect'
           ? [event.output] : []);
-        expect(effects).toMatchObject([{ action: { t: 'teleportVoiceAgentToSessionRoot', args: { sessionId } } }]);
-        effectIds.push(...effects.map(effect => effect.effectId));
+        expect(effects).toEqual([]);
       }
-      expect(new Set(effectIds).size).toBe(2);
       expect(createBackend).toHaveBeenCalledTimes(1);
     } finally { await manager.dispose(); }
   });
@@ -4015,7 +4028,8 @@ describe('VoiceAgentManager', () => {
           issues: expect.arrayContaining([expect.objectContaining({ path: ['sessionId'], expected: 'string' })]),
         } });
         expect(JSON.stringify(invalid)).not.toContain('private content');
-        await expect(tools[0].call({ t: 'sendSessionMessage', args: { message: 'Repaired request' } })).resolves.toMatchObject({ status: 'queued' });
+        await expect(tools[0].call({ t: 'sendSessionMessage', args: { message: 'Repaired request' } }, { callId: 'repaired-request' }))
+          .resolves.toMatchObject({ ok: false, errorCode: 'not_authenticated' });
         publish({ kind: 'turn-complete', turnId: request.delivery.turnId });
       },
     }) });
@@ -4026,15 +4040,11 @@ describe('VoiceAgentManager', () => {
         idleTtlSeconds: 60, initialContext: 'Global Voice without a target Session',
       });
       if (!streaming) {
-        await expect(manager.sendTurn({ voiceAgentId, userText: 'Send my request' })).resolves.toMatchObject({
-          actions: [{ t: 'sendSessionMessage', args: { message: 'Repaired request' } }],
-        });
+        await expect(manager.sendTurn({ voiceAgentId, userText: 'Send my request' })).resolves.toEqual({ assistantText: '' });
       } else {
         const { streamId } = await manager.startTurnStream({ voiceAgentId, userText: 'Send my request' });
         const events = await readVoiceAgentTurnStreamUntilDone({ manager, voiceAgentId, streamId });
-        expect(events).toContainEqual(expect.objectContaining({ t: 'voice_output', output: expect.objectContaining({
-          kind: 'side_effect', action: { t: 'sendSessionMessage', args: { message: 'Repaired request' } },
-        }) }));
+        expect(events.filter(event => event.t === 'voice_output' && event.output.kind === 'side_effect')).toEqual([]);
       }
       await expect(manager.sendTurn({ voiceAgentId, userText: 'Capital of France?' })).resolves.toEqual({ assistantText: 'Paris.' });
     } finally { await manager.dispose(); }

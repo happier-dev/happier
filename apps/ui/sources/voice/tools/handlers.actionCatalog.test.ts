@@ -176,7 +176,8 @@ describe('Voice Action reference catalog', () => {
         finish(); controller.abort(); await pending.catch(() => {}); resetVoiceSessionStoreForTests();
       }
     });
-  it.each(['voice-on', 'synthetic', 'voice-off', 'coding-agent', 'admitted-on', 'admitted-off', 'mcp-on', 'mcp-off', 'mcp-synthetic'] as const)(
+  it.each(['voice-on', 'synthetic', 'voice-off', 'coding-agent', 'admitted-on', 'admitted-off', 'mcp-on', 'mcp-off', 'mcp-synthetic',
+    'mcp-rejected', 'mcp-canceled', 'mcp-ended', 'mcp-retired', 'native-approved'] as const)(
     'uses the live person Voice request and keeps other requesters inline (%s)', async source => {
       const serverId = await home.addHome({ name: 'Spoken settings', serverUrl: 'https://spoken-settings.test',
         accountId: 'alice', currentAccount: true });
@@ -203,7 +204,9 @@ describe('Voice Action reference catalog', () => {
       const admittedAccount = await captureLazyActionAccountContext(serverId);
       const lifetime = admittedAccount.accountLifetime;
       const { DaemonVoiceAgentClient } = await import('@/voice/agent/daemonVoiceAgentClient');
+      const runController = new AbortController();
       const admittedHandle: import('@/voice/agent/types').VoiceAgentHandle = {
+        signal: runController.signal,
         accountLifetime: lifetime, transcriptEpoch: 0, metadataSessionId: null,
         client: new DaemonVoiceAgentClient(lifetime.scope), voiceAgentId: 'admitted-run', backend: 'daemon',
         rpcSessionId: 'voice-carrier', agentBackendId: 'codex', toolTurnContext: { current: {
@@ -220,11 +223,23 @@ describe('Voice Action reference catalog', () => {
       const controller = new AbortController();
       const input = { anchor: 'voiceConversations.minSpeechMs', value: 1100 };
       const { createVoiceRunActionReverseHandler } = await import('@/voice/agent/voiceRunActionReverseHandler');
-      const pending = source === 'mcp-on' || source === 'mcp-off' || source === 'mcp-synthetic'
-        ? createVoiceRunActionReverseHandler(admittedHandle, 'live-person-call')({ v: 1, actionId: 'settings.set', input,
+      const nativeRequest = source.startsWith('mcp-') || source === 'native-approved';
+      const dispatch = (actionId: string, actionInput: unknown, actionRequestId: string) =>
+        createVoiceRunActionReverseHandler(admittedHandle, 'live-person-call')({ v: 1, actionId, input: actionInput,
           voiceRun: { runId: 'admitted-run', sessionId: 'voice-carrier', occurrenceId: 'run-occurrence', turnId: 'turn',
-            actionRequestId: 'live-person-request' } },
-        { signal: controller.signal }).then(value => value.execution)
+            actionRequestId } }, { signal: controller.signal }).then(value => value.execution);
+      const voice = source === 'native-approved'
+        ? await (await import('@/dev/testkit/harness/nativeVoiceActionHarness')).createNativeVoiceActionHarness(dispatch) : null;
+      const nativeStart = voice ? await voice.manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        chatModelId: 'fixture', commitModelId: 'fixture', permissionIntent: 'read-only', idleTtlSeconds: 60, initialContext: '' }) : null;
+      const nativeTurn = voice && nativeStart ? voice.manager.sendTurn({ voiceAgentId: nativeStart.voiceAgentId,
+        userText: 'Change the setting after I review it' }) : null;
+      void nativeTurn?.catch(() => {});
+      if (voice) await voice.native.waitForInputs(1);
+      const pending = voice ? voice.native.opens[0]!.functionTools![0]!.call({ t: 'settings_set', args: input },
+        { callId: 'native-reviewed-settings' })
+        : nativeRequest
+        ? dispatch('settings.set', input, 'live-person-request')
         : source === 'coding-agent'
         ? createDefaultActionExecutor().execute('settings.set', input, {
           surface: 'agent', serverId, actionRequestId: 'coding-session-request', signal: controller.signal,
@@ -248,18 +263,54 @@ describe('Voice Action reference catalog', () => {
           expect(version).toBe(1);
           const asks = home.artifacts(serverId).list();
           expect(asks).toHaveLength(1);
+          if (nativeRequest) {
+            let stop = () => {};
+            const observing = new Promise<void>(resolve => {
+              const check = () => {
+                if (!home.requests.some(request => request.method === 'GET' && request.path === `/v1/artifacts/${asks[0]!.id}`)) return;
+                stop(); resolve();
+              };
+              stop = home.subscribe(check);
+              check();
+            });
+            try {
+              expect(await Promise.race([observing.then(() => 'observing'), pending.then(() => 'settled')])).toBe('observing');
+            } finally { stop(); }
+          }
+          if (source === 'mcp-canceled' || source === 'mcp-ended' || source === 'mcp-retired') {
+            if (source === 'mcp-canceled') controller.abort();
+            else if (source === 'mcp-ended') runController.abort();
+            else await home.switchAccount(serverId, 'bob');
+            expect(await pending).toMatchObject({ ok: false });
+            expect(version).toBe(1);
+            expect(ApprovalRequestSchema.parse(JSON.parse(home.artifacts(serverId).readPlainBody(asks[0]!.id)!)))
+              .toMatchObject({ status: 'open' });
+            return;
+          }
           expect(await createDefaultActionExecutor().execute('approval.request.decide', {
-            artifactId: asks[0]!.id, decision: 'approve',
+            artifactId: asks[0]!.id, decision: source === 'mcp-rejected' ? 'reject' : 'approve',
           }, { surface: 'ui', serverId, actionCaller: { kind: 'host' } })).toMatchObject({ ok: true });
-          expect(await pending).toMatchObject({ ok: true, result: { kind: 'approval_request_created',
-            artifactId: asks[0]!.id, actionId: 'settings.set' } });
-          expect(version).toBe(2);
+          if (nativeRequest) {
+            // SPAWN-QUEUED-DUP-1113 option A: a native Action awaits its reviewed result.
+            const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+            publishHomeAccountChange(serverId, [asks[0]!.id]);
+            expect(await pending).toMatchObject(source === 'mcp-rejected'
+              ? { ok: false, errorCode: 'approval_rejected' }
+              : { ok: true, result: { anchor: input.anchor, value: input.value } });
+          } else {
+            expect(await pending).toMatchObject({ ok: true, result: { kind: 'approval_request_created',
+              artifactId: asks[0]!.id, actionId: 'settings.set' } });
+          }
+          expect(version).toBe(source === 'mcp-rejected' ? 1 : 2);
           expect(home.artifacts(serverId).list()).toHaveLength(1);
         }
+        if (voice) voice.native.complete('The reviewed setting was updated.');
+        if (nativeTurn) await expect(nativeTurn).resolves.toMatchObject({ assistantText: 'The reviewed setting was updated.' });
       } finally {
         admittedAccount.dispose();
         controller.abort();
         await pending.catch(() => undefined);
+        if (voice) await voice.dispose();
         resetVoiceSessionStoreForTests();
       }
     },

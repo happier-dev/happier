@@ -9,10 +9,15 @@ import { resolveVoiceBindingBySessionId } from '@/voice/binding/resolveVoiceBind
 import { resolveBoundTargetSessionAddress } from './voiceAgentRunState';
 import { readAdmittedVoiceSessionExecutionTarget } from '@/voice/session/voiceSessionStore';
 import { createVoiceToolHandlers } from '@/voice/tools/handlers';
+import { projectVoiceActionExecutionResult } from '@/voice/tools/voiceActionResult';
 import { resolveToolSessionId } from '@/voice/tools/resolveToolSessionId';
 import { resolveVoiceActionExecution } from '@/voice/tools/voiceActionExecution';
 import { redactVoiceActionExecutionResultForProvider } from '@/voice/context/redactVoiceToolResult';
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
+import { createActionApprovalContinuationObserver, resumeActionExecutionResult } from '@/components/approvals/actionApprovalContinuation';
+import { observeActionApprovalContinuation } from '@/components/approvals/observeActionApprovalContinuation';
+import { captureLazyActionAccountContext, withActionAccountRequestSignal } from '@/sync/ops/actions/actionAccountContext';
+import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import type { VoiceAgentHandle } from './types';
 
 /** The Machine-authenticated per-Run room owns provenance; the request carries only operands. */
@@ -45,23 +50,48 @@ export function createVoiceRunActionReverseHandler(handle: VoiceAgentHandle, con
     });
     const turnOrigin = turn?.turnOrigin;
     const spec = getActionSpec(request.actionId);
+    const cancellation = mergeAbortSignals([context.signal, handle.signal]);
+    let stopApprovalObservation: (() => void) | undefined;
+    let approvalAccount: ReturnType<typeof captureLazyActionAccountContext> | undefined;
     try {
-      const execution: unknown = JSON.parse(await tools.action_execute!({ actionId: request.actionId, input: request.input }, {
-        signal: context.signal, serverId, turnOrigin, effectId: request.voiceRun.actionRequestId,
-      }));
-      const result = UiActionDispatchResultV1Schema.safeParse({ v: 1, execution });
-      if (!result.success) return failure('invalid_action_output');
-      if (!handle.accountLifetime.isCurrent()) {
-        const receipt = projectKnownAccountAuthorityRetirementReceipt(spec, result.data.execution);
-        if (!receipt) return failure(spec.sideEffectClass === 'read' || spec.sideEffectClass === 'none'
-          ? 'action_account_scope_changed' : 'outcome_uncertain');
-        return { v: 1 as const, execution: receipt };
-      }
-      const toolName = resolveVoiceActionExecution({ actionId: request.actionId, input: request.input })?.toolName ?? '';
-      return UiActionDispatchResultV1Schema.parse({ v: 1, execution: redactVoiceActionExecutionResultForProvider(
-        toolName, result.data.execution, readVoicePrivacySettings(storage.getState().settings)) });
+      return await withActionAccountRequestSignal(handle, cancellation.signal, async signal => {
+        const execution: unknown = JSON.parse(await tools.action_execute!({ actionId: request.actionId, input: request.input }, {
+          signal, serverId, turnOrigin, effectId: request.voiceRun.actionRequestId,
+        }));
+        const result = UiActionDispatchResultV1Schema.safeParse({ v: 1,
+          execution: projectVoiceActionExecutionResult(request.actionId, execution) });
+        if (!result.success) return failure('invalid_action_output');
+        const settled = await resumeActionExecutionResult({ result: result.data.execution, actionId: request.actionId,
+          scope: handle.accountLifetime.scope, signal,
+          requestId: request.voiceRun.actionRequestId,
+          onApprovalPending: registration => {
+            const observer = createActionApprovalContinuationObserver({ onExecuted: () => {} });
+            const deliver = observer.subscribe(() => observer.deliverSettlement());
+            const observe = observeActionApprovalContinuation({ observer, scope: handle.accountLifetime.scope,
+              isCurrent: () => !signal?.aborted && handle.accountLifetime.isCurrent(),
+              fetchArtifact: async artifactId => {
+                approvalAccount ??= captureLazyActionAccountContext(serverId, signal);
+                return (await approvalAccount).fetchArtifact(artifactId, { signal });
+              } });
+            stopApprovalObservation = () => { observe(); deliver(); observer.dispose(); };
+            observer.requestApproval(registration);
+          } });
+        if (!handle.accountLifetime.isCurrent()) {
+          const receipt = projectKnownAccountAuthorityRetirementReceipt(spec, settled);
+          if (!receipt) return failure(spec.sideEffectClass === 'read' || spec.sideEffectClass === 'none'
+            ? 'action_account_scope_changed' : 'outcome_uncertain');
+          return { v: 1 as const, execution: receipt };
+        }
+        const toolName = resolveVoiceActionExecution({ actionId: request.actionId, input: request.input })?.toolName ?? '';
+        return UiActionDispatchResultV1Schema.parse({ v: 1, execution: redactVoiceActionExecutionResultForProvider(
+          toolName, settled, readVoicePrivacySettings(storage.getState().settings)) });
+      });
     } catch (error) {
       return { v: 1 as const, execution: { ok: false as const, ...normalizeActionExecutorThrownError(error) } };
+    } finally {
+      stopApprovalObservation?.();
+      if (approvalAccount) void approvalAccount.then(account => account.dispose(), () => {});
+      cancellation.dispose();
     }
   };
 }

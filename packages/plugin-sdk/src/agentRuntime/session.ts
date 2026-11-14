@@ -762,7 +762,7 @@ export type AgentSessionOpenRequest =
       name: string;
       description: string;
       inputSchema: JsonValue;
-      call(input: JsonValue): Promise<JsonValue>;
+      call(input: JsonValue, context?: Readonly<{ callId: string }>): Promise<JsonValue>;
     }>[];
     skills?: AgentSessionSkillDelivery;
     providerBinding?: AgentSessionProviderBinding;

@@ -210,7 +210,6 @@ export type VoiceAgentInstance = {
   lifecycleInFlight: Promise<void> | null;
   chatGeneration: number;
   chatBuffer: string;
-  chatActions: VoiceAssistantAction[];
   chatActionFailure?: ReturnType<typeof import('@happier-dev/protocol/voice/actions').decodeVoiceAssistantActions>['failure'];
   commitBuffer: string;
   clearChatBuffer: () => void;

@@ -102,12 +102,10 @@ export function normalizeActionApprovalRegistration(
 export async function resumeActionExecutionResult(input: Readonly<{
     result: ActionExecuteResult;
     actionId: ActionId;
-    actionInput: unknown;
     scope: ServerAccountScope;
     signal?: AbortSignal;
-    requestId?: string;
     onApprovalPending(registration: ActionApprovalContinuation): void;
-}>): Promise<ActionExecuteResult> {
+}> & ({ actionInput: unknown; requestId?: string } | { requestId: string; actionInput?: never })): Promise<ActionExecuteResult> {
     if (!input.result.ok) return input.result;
     const pending = ActionApprovalRequestCreatedResultSchema.safeParse(input.result.result);
     if (!pending.success) return input.result;
@@ -116,7 +114,8 @@ export async function resumeActionExecutionResult(input: Readonly<{
         execute: async callbacks => {
             input.onApprovalPending(createActionApprovalContinuation({
                 artifactId: pending.data.artifactId, actionId: input.actionId,
-                scope: input.scope, expectedInput: input.actionInput,
+                scope: input.scope,
+                ...(Object.prototype.hasOwnProperty.call(input, 'actionInput') ? { expectedInput: input.actionInput } : {}),
                 ...(input.requestId ? { expectedRequestId: input.requestId } : {}),
                 signal: input.signal,
                 onSucceeded: callbacks.onApprovalSucceeded, onFailed: callbacks.onApprovalFailed,
@@ -300,8 +299,12 @@ function inspectActionApprovalRequest(input: Readonly<{
     // The daemon's device-local profile id is not an app profile id. The stored
     // portable Home identity is already bound to the signed originating root.
     const originHomeId = origin.serverIdentityId ?? origin.serverId;
+    // A directly returned receipt already names the admitted request. Its exact
+    // Artifact, Action, Account and Home identify the execution independently of
+    // renderer input that admission may have normalized.
+    const requestBoundReceipt = input.expectedRequestId !== undefined && input.expectedInputCanonical === undefined;
     if (
-        (input.expectedExecutionOriginCanonical === undefined && (
+        (input.expectedExecutionOriginCanonical === undefined && !requestBoundReceipt && (
             (origin.authority !== 'present_user' && !signedAccountUiOrigin)
             || request.executionOriginV1.surface !== 'ui'
             || request.requestedSurface !== 'ui'

@@ -36,7 +36,7 @@ describe('Codex native host function tools', () => {
     });
   });
   it.each([undefined, { allowedTools: [], unlistedTools: 'deny' as const }])('advertises directly callable host functions independently of native tool restrictions (%j)', async (toolRestriction) => {
-    const calls: JsonValue[] = [];
+    const calls: Array<{ input: JsonValue; context: unknown }> = [];
     const descriptor = getVoiceActionFunctionTool();
     const namespace = toolRestriction?.unlistedTools === 'deny' ? 'happier_host' : null;
     const action = { t: getActionSpec('servers.list').bindings?.voiceClientToolName, args: {} };
@@ -52,20 +52,21 @@ describe('Codex native host function tools', () => {
       ))).toBe(true);
       const response = await fixture.requestNativeTool({ threadId: 'fresh-thread', turnId: 'turn-1',
         callId: 'call-1', namespace, tool: descriptor.name, arguments: action });
-      expect(calls).toEqual([action]);
+      expect(calls).toEqual([{ input: action, context: { callId: 'call-1' } }]);
       expect(response.result).toEqual({ contentItems: [{ type: 'inputText', text: '{"ok":true,"sessionId":"created"}' }], success: true });
       for (const invalid of [
         { threadId: 'another-thread', tool: descriptor.name, namespace },
         { threadId: 'fresh-thread', tool: 'unknown', namespace },
         { threadId: 'fresh-thread', tool: descriptor.name, namespace: 'other' },
         { threadId: 'fresh-thread', tool: descriptor.name, namespace: namespace ? null : 'happier_host' },
+        { threadId: 'fresh-thread', tool: descriptor.name, namespace, callId: '' },
       ]) {
-        const rejected = await fixture.requestNativeTool({ ...invalid, turnId: 'turn-1', callId: 'call-2', arguments: {} });
+        const rejected = await fixture.requestNativeTool({ turnId: 'turn-1', callId: 'call-2', ...invalid, arguments: {} });
         expect(rejected.result).toMatchObject({ success: false });
       }
       expect(calls).toHaveLength(1);
     }, { toolRestriction, functionTools: [{ ...descriptor,
-      async call(input) { calls.push(input); return { ok: true, sessionId: 'created' }; } }] });
+      async call(input, context) { calls.push({ input, context }); return { ok: true, sessionId: 'created' }; } }] });
   });
 
   it('refuses an unconfined direct-mode model for a native-only host function recipe', async () => {
