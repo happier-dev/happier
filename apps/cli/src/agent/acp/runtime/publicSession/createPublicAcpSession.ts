@@ -1959,16 +1959,20 @@ async function createPublicAcpConversationFromAwaitableAdapter(
     } catch (error) {
       const restartRequired = !applyOptions?.signal?.aborted && isPluginError(error) && isRecord(error.details)
         && error.details.status === 'requires_restart';
+      const failureDiagnostic = diagnostic(
+        applyOptions?.signal?.aborted
+          ? 'acp_configuration_update_aborted'
+          : isPluginError(error) && error.code === 'acp_model_not_available'
+            ? error.code : 'acp_configuration_update_failed',
+        error instanceof Error ? error.message : undefined,
+        error,
+      );
       return {
         status: applyOptions?.signal?.aborted ? 'unavailable' : 'rejected',
-        diagnostic: { ...diagnostic(
-          applyOptions?.signal?.aborted
-            ? 'acp_configuration_update_aborted'
-            : isPluginError(error) && error.code === 'acp_model_not_available'
-              ? error.code : 'acp_configuration_update_failed',
-          error instanceof Error ? error.message : undefined,
-          error,
-        ), ...(restartRequired ? { details: { status: 'requires_restart' } } : {}) },
+        diagnostic: { ...failureDiagnostic, ...(restartRequired ? { details: {
+          ...(isRecord(failureDiagnostic.details) ? failureDiagnostic.details : {}),
+          status: 'requires_restart',
+        } } : {}) },
       };
     }
     return { status: 'applied', changed: Object.freeze(changed) };
