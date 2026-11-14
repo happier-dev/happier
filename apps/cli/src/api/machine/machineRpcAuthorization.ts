@@ -1766,6 +1766,9 @@ export async function authorizeMachineRpcRequest(
         (finiteProjectMethods.includes(rpcMethod) ||
           // Workspace linking and read-back own native root mapping and copy
           // custody. Neither launches a requester command or needs raw Session authority.
+          // Requester-scoped inventory only projects Account rows and native
+          // directories; its owner never executes a requester command.
+          rpcMethod === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST ||
           rpcMethod === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE ||
           rpcMethod === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATION_OBSERVE ||
           rpcMethod === RPC_METHODS.BASH ||

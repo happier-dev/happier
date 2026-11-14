@@ -195,18 +195,15 @@ it.skipIf(process.platform !== 'linux')('lists the requester Account graph befor
 it.skipIf(process.platform !== 'linux')('offers cold member Sync roots without preparing before Add Machine admission', async () => {
   executionBoundary.member = true;
   const setup = await createRequesterWorkspaceSyncFixture({ role: 'use', cold: true, socketIo });
-  const handlers = new Map<string, RpcHandler>();
-  registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } },
-    service: setup.fixture.parent.workspaceSync });
-  const list = handlers.get(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST);
-  if (!list) throw new Error('Public Sync list handler is unavailable');
-  // Read-only Account placement is already admitted by this fixture; the
-  // public handler still runs the real requester, projection and native owners.
-  const result = WorkspaceSyncRelationshipsListRpcResultV1Schema.parse(await list({ requesterAvailability: true }, {
-      signal: new AbortController().signal, verifyMachineAdmissionCurrent: async () => setup.installed.isHomeCurrent(), callerAuthority: 'present_user', callerInputAuthorization: setup.account.authorization,
-      machineAdmission: { actorAccountId: 'member-a', custodianAccountId: 'requester', machineId: setup.installed.machineId,
-        installationId: setup.installed.installation.installationId, role: 'use', encryptionMode: 'plain' },
-    }));
+  const read = () => setup.rpc.handleRequest({
+    method: `${setup.installed.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST}`,
+    params: { requesterAvailability: true }, callerAuthority: 'present_user',
+    machineAdmission: { actorAccountId: 'member-a', custodianAccountId: 'requester', machineId: setup.installed.machineId,
+      installationId: setup.installed.installation.installationId, role: 'use', encryptionMode: 'plain' },
+  }, undefined, 'authenticated_home_socket');
+  const raw = await read();
+  expect(raw).toMatchObject({ requesterAvailability: { kind: 'available' } });
+  const result = WorkspaceSyncRelationshipsListRpcResultV1Schema.parse(raw);
   expect(result).toMatchObject({ requesterAvailability: { kind: 'available', preparation: 'member_not_prepared',
     homeDir: setup.member.home, workspaceRoot: setup.member.workspaceRoot } });
   expect(await readAgentIsolationMemberBindingForAccount({ activeServerDir: configuration.activeServerDir,
@@ -219,6 +216,26 @@ it.skipIf(process.platform !== 'linux')('offers cold member Sync roots without p
       installationId: setup.installed.installation.installationId, role: 'use', encryptionMode: 'plain' } });
   expect(await readAgentIsolationMemberBindingForAccount({ activeServerDir: configuration.activeServerDir,
       homeServerIdentityId: setup.member.homeServerIdentityId, ...setup.member.requester }, 'member-a')).toMatchObject({ uid: 2401 });
+  const warm = WorkspaceSyncRelationshipsListRpcResultV1Schema.parse(await read());
+  expect(warm.requesterAvailability).toEqual({ kind: 'available', homeDir: setup.member.home,
+    workspaceRoot: setup.member.workspaceRoot });
+  const ownerRaw = await setup.rpc.handleRequest({
+    method: `${setup.installed.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST}`,
+    params: { requesterAvailability: true }, callerAuthority: 'present_user',
+    machineAdmission: { actorAccountId: 'requester', custodianAccountId: 'requester', machineId: setup.installed.machineId,
+      installationId: setup.installed.installation.installationId, role: 'manage', encryptionMode: 'plain' },
+  }, undefined, 'authenticated_home_socket');
+  expect(ownerRaw).toMatchObject({ requesterAvailability: { kind: 'available' } });
+  const owner = WorkspaceSyncRelationshipsListRpcResultV1Schema.parse(ownerRaw);
+  expect(owner.requesterAvailability?.kind).toBe('available');
+  expect(setup.custodianRows).toEqual(setup.custodianBefore);
+  setup.installed.retire();
+  expect(await setup.rpc.handleRequest({
+    method: `${setup.installed.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST}`,
+    params: { requesterAvailability: true }, callerAuthority: 'present_user',
+    machineAdmission: { actorAccountId: 'member-a', custodianAccountId: 'requester', machineId: setup.installed.machineId,
+      installationId: setup.installed.installation.installationId, role: 'use', encryptionMode: 'plain' },
+  })).toMatchObject({ errorCode: 'RPC_FORBIDDEN', effectAttempted: false });
 });
 
 it.skipIf(process.platform !== 'linux').each(['use', 'manage'] as const)('materializes an empty accepted target for %s Sync through requester Account rows and filesystem authority', async role => {
