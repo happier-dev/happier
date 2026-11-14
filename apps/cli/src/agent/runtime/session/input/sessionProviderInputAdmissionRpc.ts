@@ -13,11 +13,16 @@ import { registerSessionGuardNoticeRpc, type SessionGuardNoticeOwner } from './s
 import { readSessionRunnerRestartAdmissionCurrent, SessionRunnerRestartAdmissionIdentitySchema,
   type SessionRunnerRestartAdmissionAttempt, type SessionRunnerRestartAdmissionIdentity } from '@/daemon/plannedRunnerRestart/sessionRunnerRestartAdmission';
 
-const RUN_CREATION_METHODS = ACTION_IDS.filter(isExecutionRunStartActionIdV1)
-  .flatMap(id => {
-    const { bindings } = getActionSpec(id);
-    return [bindings?.rpcMethod, ...(bindings?.rpcMethodAliases ?? [])].filter((method): method is string => typeof method === 'string');
-  });
+// Read on the first restart hold: `getActionSpec` builds the whole Action
+// catalog, which at module evaluation every importing process would pay.
+let runCreationMethods: readonly string[] | undefined;
+function readRunCreationMethods(): readonly string[] {
+  return runCreationMethods ??= ACTION_IDS.filter(isExecutionRunStartActionIdV1)
+    .flatMap(id => {
+      const { bindings } = getActionSpec(id);
+      return [bindings?.rpcMethod, ...(bindings?.rpcMethodAliases ?? [])].filter((method): method is string => typeof method === 'string');
+    });
+}
 const restartAdmissionRequestSchema = z.strictObject({
   action: z.enum(['restart_hold', 'restart_prepare']),
   ...SessionRunnerRestartAdmissionIdentitySchema.shape,
@@ -104,7 +109,7 @@ export function createSessionRunnerRestartAdmission(readRpc: () => RpcHandlerMan
     };
     try {
       const rpc = readRpc();
-      release = rpc.pauseRequestAdmission(RUN_CREATION_METHODS, {
+      release = rpc.pauseRequestAdmission(readRunCreationMethods(), {
         details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated'),
         revalidate: preparing.revalidate,
         wait: async callerSignal => {
@@ -114,7 +119,7 @@ export function createSessionRunnerRestartAdmission(readRpc: () => RpcHandlerMan
           }
         },
       });
-      await rpc.waitForIdle(holdSignal, RUN_CREATION_METHODS);
+      await rpc.waitForIdle(holdSignal, readRunCreationMethods());
       holdSignal.throwIfAborted();
       preparing.resolve();
       // This request remains in flight after readiness. Existing RPC cancellation
