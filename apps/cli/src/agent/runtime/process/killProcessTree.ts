@@ -1,10 +1,6 @@
 import psList from 'ps-list';
 
-import {
-  killProcessTree as terminateProcessTree,
-  withWindowsFastlistFallback,
-  type ProcessTreeTerminationResult,
-} from '../../../../scripts/process_tree.cjs';
+import { killProcessTree as terminateProcessTree, type ProcessTreeTerminationResult } from '../../../../scripts/process_tree.cjs';
 import { logger } from '@/ui/logger';
 
 type ProcessTreeRoot = Readonly<{ pid?: number; exitCode?: number | null; signalCode?: NodeJS.Signals | null }>;
@@ -15,9 +11,7 @@ type ProcessTreeOptions = Readonly<{ graceMs?: number }>;
 
 export async function killProcessTree(proc: ProcessTreeRoot, opts?: ProcessTreeOptions): Promise<ProcessTreeTerminationResult> {
   try {
-    // ps-list cannot find fastlist.exe inside the Bun-compiled Windows binary; the fallback runs
-    // the payload's on-disk copy instead, so descendant discovery works there too.
-    return await terminateProcessTree(proc, opts, withWindowsFastlistFallback(() => psList()));
+    return await terminateProcessTree(proc, opts, psList);
   } catch (error) {
     // Existing best-effort callers may catch cleanup rejection. Keep this outcome
     // observable at its canonical owner without exposing OS errors or terminal noise.
@@ -25,6 +19,7 @@ export async function killProcessTree(proc: ProcessTreeRoot, opts?: ProcessTreeO
       logger.infoFile('[process-tree] Owned process cleanup could not be verified', {
         code: 'process_tree_termination_incomplete',
         discoveryFailed: 'discoveryFailed' in error && error.discoveryFailed === true,
+        discoveryErrorCode: 'discoveryErrorCode' in error ? error.discoveryErrorCode : undefined,
         probeFailed: 'probeFailed' in error && error.probeFailed === true,
         signallingFailed: 'signallingFailed' in error && error.signallingFailed === true,
       });
