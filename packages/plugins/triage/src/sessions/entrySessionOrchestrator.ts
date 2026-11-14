@@ -2,7 +2,7 @@ import type {
     PluginActionInputById,
     PluginActionResultById,
 } from '@happier-dev/plugin-sdk/actions';
-import { isPluginError } from '@happier-dev/plugin-sdk/errors';
+import { isPluginError, ActionFailureCauseV1Schema } from '@happier-dev/plugin-sdk/errors';
 import { SessionServerStartSpawnDraftV1Schema, projectSessionSpawnNewActionInputV2, type SessionId } from '@happier-dev/plugin-sdk/sessions';
 import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 import type { TriageStartEntrySessionInputV1 } from '../actions/entrySessionProtocol.js';
@@ -200,7 +200,7 @@ export type TriageEntrySessionStartResultV1 = (
     | Readonly<{
         type: 'creationFailed';
         failureCode: Extract<PluginActionResultById['session.spawn_new'], { type: 'error' }>['code'];
-        failureCause?: string;
+        failureCause?: ReturnType<typeof ActionFailureCauseV1Schema.parse>;
         creationKey: string;
         workspace: TriageEntrySessionWorkspaceFactsV1;
     }>
@@ -230,6 +230,16 @@ export type TriageEntrySessionDepsV1 = Readonly<{
     prepareReviewWorkspace?: TriageReviewWorkspacePreparationDepsV1;
     signal?: AbortSignal;
 }>;
+
+/** Preserve the creator's cause; older launch replies provide only a native code. */
+function spawnFailureCause(result: Extract<PluginActionResultById['session.spawn_new'], { type: 'error' }>) {
+    const launchError = 'launchError' in result ? result.launchError : undefined;
+    const failureCause = ('failureCause' in result ? result.failureCause : undefined) ?? (launchError === undefined ? undefined : {
+        phase: 'session.spawn_new', errorClass: 'Error' as const,
+        errorCode: null, nativeErrorCode: launchError.code, httpStatus: null,
+    });
+    return failureCause === undefined ? {} : { failureCause };
+}
 
 /** SDK admission refusals reject; Session creation settlements are returned. */
 async function spawnEntrySession(
@@ -445,7 +455,7 @@ export async function resumeEntrySessionStart(
             return {
                 type: 'creationFailed',
                 failureCode: result.code,
-                ...('launchError' in result && result.launchError ? { failureCause: result.launchError.code } : {}),
+                ...spawnFailureCause(result),
                 creationKey: pending.creationKey,
                 workspace: pending.workspace,
             };
@@ -666,7 +676,7 @@ export async function startEntrySession(
         // relabelled `rejoined`, linked or opened. A new visible user action
         // receives a new key.
         return { type: 'creationFailed', failureCode: result.code,
-            ...('launchError' in result && result.launchError ? { failureCause: result.launchError.code } : {}),
+            ...spawnFailureCause(result),
             creationKey: destination.creationKey, workspace };
     }
     return await linkDeliverThenOpen(deps, {

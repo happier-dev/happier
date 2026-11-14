@@ -1,5 +1,6 @@
 import { MAX_COMPOSER_ATTACHMENT_LABEL_CODE_POINTS_V1 } from '@happier-dev/plugin-sdk/ui';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/plugin-sdk/connected-accounts';
+import { ActionFailureCauseV1ProtocolSchema } from '@happier-dev/plugin-sdk/errors';
 import { PluginTargetedContributionSelectionV1Schema } from '@happier-dev/plugin-sdk/contributions';
 import { ScmComparisonSourceProtocolSchema } from '@happier-dev/plugin-sdk/scm';
 import { SessionTargetV1Schema } from '@happier-dev/plugin-sdk/sessions';
@@ -637,6 +638,8 @@ const startEntrySessionResult = defineProtocolUnion([
          * creation conflict, so none can be fabricated, linked or opened.
          */
         type: defineProtocolLiteral('creationFailed'),
+        failureCode: defineProtocolString().optional(),
+        failureCause: ActionFailureCauseV1ProtocolSchema.optional(),
     }, { policy: 'closed' }),
     defineProtocolObject({
         v: defineProtocolLiteral(1),

@@ -24,6 +24,7 @@ import { createTestkitAccountKv } from '../../settings/testkit/accountKv.test-su
 
 /** Only host transport handlers are substituted; the public client and provider run for real. */
 type BoundaryHost = Readonly<{
+    presentActionFailure?: import('@happier-dev/plugin-sdk/ui').PluginUiHostApi['presentActionFailure'];
     executeAction: (actionId: string, input: unknown, options?: Readonly<{
         signal?: AbortSignal;
         selectedActionInput?: unknown;
@@ -181,6 +182,7 @@ async function mount(host: BoundaryHost, targetedContributions?: ReturnType<type
             } }),
             adapter: createPluginUiRnwSemanticSurfaceAdapter(),
             handlers: {
+                ...(host.presentActionFailure === undefined ? {} : { presentActionFailure: host.presentActionFailure }),
                 executeAction: async ({ action, input, signal, selectedActionInput }) => testkitTriageActionId(action) === 'actions/read-v1'
                     ? await readTriageActionsForSurface({ v: 1 }, { catalog: catalog.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1) })
                     : await host.executeAction(testkitTriageActionId(action), input, { signal, selectedActionInput }) as JsonValue,
@@ -201,6 +203,32 @@ async function flush(): Promise<void> {
         await act(async () => { await Promise.resolve(); });
     }
 }
+
+it.each(['oneSessionForAllEntries', 'oneSessionPerEntry'] as const)('presents the spawn refusal code and cause for %s', async destination => {
+    const failureCause = { phase: 'session.spawn_new', errorClass: 'Error', errorCode: 'SPAWN_VALIDATION_FAILED', httpStatus: null } as const;
+    const received: unknown[] = [];
+    const notifications: string[] = [];
+    await mount({
+        executeAction: async id => id === 'projects.list' ? { items: [], truncated: false }
+            : { v: 1, type: 'creationFailed', failureCode: 'spawn_failed', failureCause },
+        selectActionInput: async () => ({ kind: 'serverStartDraft', draft: {
+            executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.test.agent', localId: 'agent' } },
+            directory: { kind: 'path', path: '/workspace' },
+        } }),
+        presentActionFailure: async ({ failure }) => { received.push(failure); return {
+            reason: 'Cannot create session', nextStep: 'Try again', technicalDetails: [
+                { key: 'code', label: 'Code', value: failure.errorCode },
+                { key: 'cause', label: 'Cause', value: failure.failureCause?.errorCode ?? '' },
+            ],
+        }; },
+        notify: async message => { notifications.push(message); },
+    });
+    await act(async () => { controller?.run({ action: action(null), destination, entries: [ENTRY] }); });
+    await flush();
+    expect(received).toEqual([expect.objectContaining({ errorCode: 'spawn_failed', failureCause })]);
+    expect(notifications.join(' ')).toContain('SPAWN_VALIDATION_FAILED');
+});
 
 beforeEach(() => {
     controller = null;

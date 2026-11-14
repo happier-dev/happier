@@ -24,6 +24,18 @@ export function useTriageBulkEntrySessions(options?: TriageBulkSessionsOptionsV1
             ...(failure.requestId === undefined ? {} : { details: { requestId: failure.requestId } }),
         }), text);
     }, [failure, host, text]);
+    React.useEffect(() => {
+        if (snapshot.phase.kind !== 'settled') return;
+        for (const result of snapshot.phase.results) {
+            if (result.status !== 'settled') continue;
+            const start = result.outcome.start;
+            if (start.type !== 'creationFailed' || start.failureCode === undefined) continue;
+            void presentTriageMountedUiActionFailure(host, new PluginError({
+                code: start.failureCode,
+                ...(start.failureCause === undefined ? {} : { failureCause: start.failureCause }),
+            }), text);
+        }
+    }, [snapshot.phase, host, text]);
     const cancel = React.useCallback(async () => {
         try { await owner.getSnapshot().cancel(); }
         catch (error) { await presentTriageMountedUiActionFailure(host, error, text); }

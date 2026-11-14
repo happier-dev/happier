@@ -934,7 +934,9 @@ describe('startEntrySession', () => {
                 directory: { kind: 'path', path: '/projects/example' }, workspace: { kind: 'referenceOnly' } },
         });
         expect(result).toEqual({ type: 'creationFailed', failureCode: 'spawn_failed',
-            failureCause: 'agent_startup_transport_failed', creationKey: 'creation-key-a', workspace: { kind: 'referenceOnly' } });
+            failureCause: { phase: 'session.spawn_new', errorClass: 'Error', errorCode: null,
+                nativeErrorCode: 'agent_startup_transport_failed', httpStatus: null },
+            creationKey: 'creation-key-a', workspace: { kind: 'referenceOnly' } });
         expect(invoker.callsFor('session.message.send')).toEqual([]);
     });
 

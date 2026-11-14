@@ -127,6 +127,17 @@ const NEW_DESTINATION = Object.freeze({
     materialization: { kind: 'referenceOnly' as const, directory: '/workspaces/example' },
 });
 
+it.each(['start', 'resume'] as const)('carries a typed spawn refusal through the entry Action result on %s', async phase => {
+    const failureCause = { phase: 'session.spawn_new', errorClass: 'Error', errorCode: 'SPAWN_VALIDATION_FAILED', httpStatus: null } as const;
+    const invoker = createTestkitActionInvoker({ spawn: [{ type: 'error', code: 'spawn_failed', retryable: false, failureCause }] });
+    const result = await startTriageEntrySession({ ...START_INPUT_BASE, workspaceMode: 'reference_only',
+        destination: NEW_DESTINATION,
+        ...(phase === 'resume' ? { resume: { phase: 'creationPending' as const } } : {}),
+    }, { execute: invoker.execute, linkSession: async () => ({ status: 'linked' }) });
+    expect(TriageStartEntrySessionResultV1Schema.parse(result)).toEqual({ v: 1, type: 'creationFailed',
+        failureCode: 'spawn_failed', failureCause });
+});
+
 function registeredHandler(localId: string): ActionHandler<JsonValue, JsonValue> {
     const handlers = new Map<string, ActionHandler<JsonValue, JsonValue>>();
     const api = {

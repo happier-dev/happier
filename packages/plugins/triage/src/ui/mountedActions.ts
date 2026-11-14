@@ -27,12 +27,13 @@ export async function presentTriageMountedUiActionFailure(host: PluginUiHostApi,
       ? error.diagnostics : [{ code: 'triage_mounted_ui_failed', severity: 'error' as const }];
     for (const diagnostic of diagnostics) host.diagnostic(diagnostic);
     const authored = readPluginActionFailureAuthorPayload(isPluginError(error) ? error.data : undefined);
+    const requestId = isPluginError(error) ? readPluginErrorRequestIdV1(error) : undefined;
     const presentation = isPluginError(error) ? await presentActionFailure(host, {
       ok: false, errorCode: error.code, message: error.message,
       ...(authored.details === undefined ? {} : { details: authored.details }),
       ...(authored.remediation === undefined ? {} : { remediation: authored.remediation }),
       ...(authored.failureCause === undefined ? {} : { failureCause: authored.failureCause }),
-      requestId: readPluginErrorRequestIdV1(error),
+      ...(requestId === undefined ? {} : { requestId }),
     }) : null;
     await host.notify(presentation === null ? text('happier.plugin-ui.action.error.unavailable', 'This isn’t available right now. Try again in a moment.')
       : [presentation.reason, presentation.nextStep, ...presentation.technicalDetails.map(line => `${line.label}: ${line.value}`)]

@@ -458,7 +458,12 @@ export async function runTriageConfiguredHandoffV1(
     }
     if (result.type === 'creationPending') return finish({ kind: 'uncertain', phase: 'create', session: null }, {
         ...custody, state: { ...custody.state, pending: { phase: 'creationPending' }, uncertainPhase: 'create' } });
-    if (result.type === 'creationFailed' || result.type === 'rejected' || result.type === 'workspacePreparationFailed') return targetUnavailable('session_start_refused', result.type === 'creationFailed' ? result.failureCause ?? result.failureCode : result.reason);
+    if (result.type === 'creationFailed') {
+        const cause = result.failureCause;
+        return targetUnavailable('session_start_refused', cause?.errorCode
+            ?? (cause && 'nativeErrorCode' in cause ? cause.nativeErrorCode : undefined) ?? result.failureCode);
+    }
+    if (result.type === 'rejected' || result.type === 'workspacePreparationFailed') return targetUnavailable('session_start_refused', result.reason);
     const session = { serverId: custody.state.serverId, sessionId: result.sessionId };
     if (result.type === 'linkPending' || result.delivery === 'outcomeUnknown') return finish({ kind: 'uncertain',
         phase: result.type === 'linkPending' ? 'link' : 'send', session }, { ...custody,
