@@ -14,6 +14,7 @@ import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
 import { formatBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import type { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
+import { buildNewSessionAuthoringDraftFromResolvedInputs, buildSessionSpawnNewInputV2FromAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -168,7 +169,8 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextInput: 'TextInput',
 }));
 
-vi.mock('@/agents/catalog/catalog', () => ({
+vi.mock('@/agents/catalog/catalog', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/agents/catalog/catalog')>(),
     AGENT_IDS: ['claude', 'codex', 'customAcp'],
     isBundledAgentId: (value: string) => ['claude', 'codex', 'custom-preset'].includes(value),
     getAgentCore: () => ({
@@ -618,6 +620,44 @@ describe('NewSessionEngineOptionDetail', () => {
             sessionModeId: 'review',
             configOverrides: {},
         });
+    });
+
+    it.each([null, undefined, '', 'plan', 'default'])('preserves mode %s when selecting a model without inventing a default mode', async (sessionModeId) => {
+        let selectedMode: string | undefined;
+        await renderScreen(<NewSessionEngineOptionDetail
+            backendTarget={backendTarget}
+            selectedMachineId="machine-1"
+            capabilityServerId="server-1"
+            cwd="/repo"
+            selectedModelId="default"
+            selectedSessionModeId={sessionModeId}
+            selectedConfigOverrides={{}}
+            onSelectionChange={(selection) => { selectedMode = selection.sessionModeId; }}
+        />);
+
+        act(() => {
+            lastOptionPickerOverlayProps.onSelect(renderedNativeModelOption('preset-fast').value);
+        });
+
+        expect(selectedMode).toBe(sessionModeId ?? '');
+        const request = buildSessionSpawnNewInputV2FromAuthoringDraft({
+            draft: buildNewSessionAuthoringDraftFromResolvedInputs({
+                directory: '/repo',
+                prompt: '',
+                executionTarget: { kind: 'machine', target: { serverId: 'server-1', machineId: 'machine-1' } },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.opencode', localId: 'opencode' } },
+                acpSessionModeId: selectedMode || null,
+            }),
+            permissionMode: 'default',
+            configurationUpdatedAtMs: 1,
+            creationKey: 'manual:mode-selection',
+        });
+        if (sessionModeId) {
+            expect(request.agentModeId).toBe(sessionModeId);
+        } else {
+            expect(request).not.toHaveProperty('agentModeId');
+            expect(request.configuration?.mode.value).toBeNull();
+        }
     });
 
     it('passes the full model list and custom-model capability through to OptionPickerOverlay', async () => {
