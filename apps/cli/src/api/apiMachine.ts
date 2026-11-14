@@ -47,7 +47,7 @@ import { registerDaemonCommittedServiceHealthDeliveryRpcHandler } from '@/notifi
 import type { AgentIsolationEffectDependencies } from '@/daemon/agentIsolation/agentIsolationProvisioner';
 import { readAgentIsolationMemberLaunchIdentity } from '@/daemon/agentIsolation/memberBindings';
 import { observeAgentIsolationMemberLaunchReadiness, observeUnqualifiedAgentIsolationNativeReadiness } from '@/daemon/agentIsolation/agentIsolationReadiness';
-import { readMachineAgentIsolationPolicyV1, type MachineAgentIsolationOwnStatusV1 } from '@happier-dev/protocol';
+import { readMachineAgentIsolationPolicyV1, type MachineAgentIsolationOwnStatusV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
 import { createAgentIsolationMemberOperations, type AgentIsolationMemberOperations } from '@/daemon/agentIsolation/createAgentIsolationMemberOperations';
 import type { HostAgentIsolationLaunchContext, HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
@@ -63,7 +63,8 @@ import { resolveMachineEffectCli } from '@/machines/adminAccess/machineEffectCli
 import { createMachineRebootAction, type DaemonMachineRebootRoutes, type MachineRebootDirectTargetInvocation } from '@/daemon/lifecycle/machineReboot';
 import { registerActionSpecRpcHandlers } from '@/rpc/handlers/registerActionSpecRpcHandlers';
 import type { MachineMetadataFieldReadV1, MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
-import { getMachineSetupDesiredV1, mutateMachineSetupDesiredV1, getMachineAdminAccessV1 } from '@happier-dev/protocol';
+import { getMachineSetupDesiredV1, mutateMachineSetupDesiredV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
+import { getMachineAdminAccessV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 import type { MountedAccountPluginExecutionSelectionResolver } from '@/plugins/runtime/invocation/mountedPluginInvocationCaller';
 import { registerDaemonMachineResourcesPolicyRpcHandlers, type DaemonMachineResourcesPolicyRoutes } from '@/rpc/handlers/daemonMachineResourcesPolicy';
 import { registerDaemonMachineRolesRpcHandlers, type DaemonMachineRolesRoutes } from '@/rpc/handlers/daemonMachineRoles';
@@ -3082,9 +3083,9 @@ export class ApiMachineClient {
     }
 
     /** Read-only first-use adoption joins the same owner as Machine Services. */
-    async ensureEnvironmentServices(): Promise<void> {
+    async ensureEnvironmentServices(scope?: import('@/plugins/runtime/invocation/services/environmentServiceRecovery').EnvironmentServiceRecoveryScope): Promise<void> {
         if (this.projectionSchedulingClosed) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
-        await this.getMachineServicesBinding().ensureEnvironmentServices();
+        await this.getMachineServicesBinding().ensureEnvironmentServices(scope);
     }
 
     async executeMachineServiceAction(request: MachineServiceActionDirectTargetInvocation) {
@@ -3121,7 +3122,7 @@ export class ApiMachineClient {
         registerDaemonDeploymentChildRpcHandler(this.rpcHandlerManager, {
             machineId: this.machine.id, signal: daemonWorkSignal,
             ...(executeManagedSnapshot ? { executeManagedSnapshot } : {}),
-            ensureServiceObservations: () => this.ensureEnvironmentServices(),
+            ensureServiceObservations: scope => this.ensureEnvironmentServices(scope),
             captureNativeSetup: () => {
                 const desired = this.captureMachineSetupDesired();
                 const elevation = this.captureMachineAdminAccess();

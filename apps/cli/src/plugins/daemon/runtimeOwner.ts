@@ -148,7 +148,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
   /** Daemon-owned live machine identity for host-stamped nested Action callers. */
   resolveCurrentMachineId?: () => string | null;
   readDaemonRequesterWorkAttribution?: () => RequesterWorkAttributionV1 | null;
-  ensureEnvironmentServices?(): Promise<void>;
+  ensureEnvironmentServices?: import('@/plugins/runtime/invocation/services/environmentServiceRecovery').EnsureEnvironmentServices;
   acquireServiceExportForward?: import('@/deployments/targets/ownServer/ownServerDeploymentHostRuntime').OwnServerDeploymentRuntimeHostInput['acquireServiceExportForward'];
   executeClientAction?: ClientContributedActionExecutor;
   /** Existing authenticated Machine admission authority for protected Session input. */

@@ -23,7 +23,7 @@ import { sameBindingIntent } from './secrets/sameBindingIntent';
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
 type Host = Readonly<{
     serverId: string; machineId: string;
-    ensureServiceObservations?(): Promise<void>;
+    ensureServiceObservations?: import('@/plugins/runtime/invocation/services/environmentServiceRecovery').EnsureEnvironmentServices;
     acquirePluginRuntimeRegistryLease?(): Promise<PluginRuntimeRegistryLease>;
     readInstallation(context: ActionExecutorContext): Promise<string>;
     prepareCreate(request: Readonly<{ input: ReturnType<typeof DeploymentEnvironmentCreateIntentInputV1Schema.parse>;

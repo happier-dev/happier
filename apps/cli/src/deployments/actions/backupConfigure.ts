@@ -44,11 +44,13 @@ function withBackupBindings<TBinding extends EnvironmentSecretBindingInputV1>(en
 export function createDeploymentBackupConfigureActionForHost<TRegistry extends Registry>(host: DeploymentBackupConfigureHost<TRegistry>) {
     return async (input: DeploymentBackupConfigureInputV1, context: ActionExecutorContext): Promise<DeploymentBackupConfigureResultV1 | ActionExecuteFailure> => {
         let settledSetup: Pick<Extract<DeploymentBackupConfigureResultV1, { kind: 'tested' }>, 'destinationSetup' | 'setupOperation'> | undefined;
-        const retainSetupFailure = (result: ActionExecuteFailure): ActionExecuteFailure => settledSetup
-            ? { ...result, effectAttempted: true, details: {
+        let nativeEffectAttempted = false;
+        const retainSetupFailure = (result: ActionExecuteFailure): ActionExecuteFailure => {
+            if (!settledSetup && !nativeEffectAttempted) return result;
+            return { ...result, effectAttempted: true, ...(settledSetup ? { details: {
                 ...(result.details && typeof result.details === 'object' && !Array.isArray(result.details) ? result.details : {}),
-                ...settledSetup } }
-            : result;
+                ...settledSetup } } : {}) };
+        };
         const failure = (code: string) => retainSetupFailure(projectDeploymentFailure(code));
         try {
             if (input.serverId !== host.serverId) return failure('server_scope_mismatch');
@@ -71,6 +73,7 @@ export function createDeploymentBackupConfigureActionForHost<TRegistry extends R
                     role: 'repositoryPassword' as const, source: { kind: 'secret' as const, ...input.replacement } }];
                 const lease = await host.acquirePluginRuntimeRegistryLease();
                 try {
+                    nativeEffectAttempted = true;
                     const native = await host.executeNative({ environment: withBackupBindings(environment, bindings),
                         previousEnvironment: environment, configuration: current, intent: input.intent, context }, lease.registry);
                     if (native.test.kind !== 'reachable') return { kind: 'tested', test: native.test };
@@ -126,6 +129,7 @@ export function createDeploymentBackupConfigureActionForHost<TRegistry extends R
                 if (!prepared.ok) return failure(prepared.code);
                 if (prepared.bindingState === 'needsBinding') return { kind: 'needsBinding', configuration: prepared.configuration,
                     missingRoles: prepared.missingRoles, ...settledSetup, ...(review ? { review } : {}) };
+                nativeEffectAttempted = input.intent === 'initializeAndSave';
                 const native = await host.executeNative({ environment: { ...candidateEnvironment, content: { ...candidateEnvironment.content,
                     bindings: candidateEnvironment.content.bindings.filter(isSettledEnvironmentSecretBindingV1) } }, configuration: prepared.configuration,
                     intent: input.intent, context }, lease.registry);

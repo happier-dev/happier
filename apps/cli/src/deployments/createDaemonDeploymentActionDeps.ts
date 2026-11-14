@@ -232,7 +232,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
     machineId: string;
     resolveRequesterIdentity: import('./readDeploymentSourceIntentForHost').DeploymentSourceRequesterIdentityResolver;
     readMachineVitals?: () => MachineVitalsSampleV1 | null;
-    ensureServiceObservations?(): Promise<void>;
+    ensureServiceObservations?: import('@/plugins/runtime/invocation/services/environmentServiceRecovery').EnsureEnvironmentServices;
     savedSecretOperationContext?: SavedSecretOperationContextV1;
     runtime: OwnServerDeploymentRuntime;
     captureNativeSetup?: () => import('./targets/ownServer/ownServerDomainNative').DomainNativeSetupForHost;

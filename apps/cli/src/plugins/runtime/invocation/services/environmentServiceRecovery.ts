@@ -1,6 +1,12 @@
 import type { MachineServiceRowV1 } from '@happier-dev/protocol';
 
 export type EnvironmentServiceRecoveryRow = MachineServiceRowV1 & Readonly<{ environmentId: string }>;
+export type EnvironmentServiceRecoveryScope = Readonly<{
+    environmentId: string;
+    serviceId?: string;
+    composeService?: string;
+}>;
+export type EnsureEnvironmentServices = (scope?: EnvironmentServiceRecoveryScope) => Promise<void>;
 
 /** A requested Home/Machine inventory joins one recovery at the retained
  * service owner. Failed reads remain retryable at the next requested read. */

@@ -9,7 +9,7 @@ export function createDeploymentTargetRoleWorkloadBindingForHost(input: Readonly
     admission: DeploymentTargetRoleAdmissionForHost;
     host: DeploymentTargetRoleAdmissionHost;
     context: ActionExecutorContext;
-    ensureEnvironmentServices(): Promise<void>;
+    ensureEnvironmentServices: import('@/plugins/runtime/invocation/services/environmentServiceRecovery').EnsureEnvironmentServices;
     readOwner(): ResolvedExecutablePluginRuntimeRegistry['projectManagedServices'] | undefined;
 }>): ManagedServices['observeWorkload'] | undefined {
     const { admission, host, context } = input;
@@ -35,7 +35,7 @@ export function createDeploymentTargetRoleWorkloadBindingForHost(input: Readonly
                 canReadEnvironments: async () => new Set([environmentId]) },
             select: handle => handle.kind === 'environment' && handle.environmentId === environmentId
                 && (!receipt || handle.deploymentId === receipt.deployment.id),
-            ensureRecovered: input.ensureEnvironmentServices,
+            ensureRecovered: () => input.ensureEnvironmentServices({ environmentId, serviceId: request.serviceId }),
             ...(control ? { control } : {}),
         })(request, options);
     };

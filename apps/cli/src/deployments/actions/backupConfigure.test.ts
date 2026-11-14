@@ -59,6 +59,16 @@ function fixture() {
 }
 
 describe('backup configure coordinator', () => {
+    it('retains attempted repository initialization when Home publication throws', async () => {
+        const f = fixture();
+        const result = await createDeploymentBackupConfigureActionForHost({ ...f.host,
+            // Home persistence is the failing external boundary; native proof and
+            // the configuration coordinator retain their real control flow.
+            async saveBackup() { throw Object.assign(new Error('publication failed'), { code: 'ECONNRESET' }); },
+        })({ ...f.input, intent: 'initializeAndSave' }, {});
+        expect(f.counts.native).toBe(1);
+        expect(result).toMatchObject({ ok: false, errorCode: 'ECONNRESET', effectAttempted: true });
+    });
 
     it('re-keys with old repository custody before publishing only the successor password binding', async () => {
         const f = fixture();

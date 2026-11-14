@@ -82,10 +82,10 @@ export function createApiMachineServicesBinding(input: Readonly<{
             const runtime = await acquire();
             return !disposed && runtime ? runtime.canReadHistory(...args) : false;
         },
-        async ensureEnvironmentServices() {
+        async ensureEnvironmentServices(...args: Parameters<import('@/plugins/runtime/invocation/services/environmentServiceRecovery').EnsureEnvironmentServices>) {
             const runtime = await acquire();
             if (disposed || !runtime) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
-            await runtime.ensureEnvironmentServices();
+            await runtime.ensureEnvironmentServices(...args);
         },
         async dispose() {
             if (disposed) return;

@@ -155,7 +155,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
     /** The same runtime-owned Resource reader used by Action options discovery. */
     readRuntimeRegistry?(): (Pick<ResolvedExecutablePluginRuntimeRegistry, 'contributes' | 'readUiResource'>
         & Partial<Pick<ResolvedExecutablePluginRuntimeRegistry, 'projectManagedServices'>>) | null;
-    ensureEnvironmentServices?(): Promise<void>;
+    ensureEnvironmentServices?: import('@/plugins/runtime/invocation/services/environmentServiceRecovery').EnsureEnvironmentServices;
     readCurrentPluginOccurrenceId?(pluginId: string): PluginRuntimeOccurrenceId | null;
     readCurrentPluginSourceCustody?(pluginId: string): PluginSourceCustodyV1 | null;
     /** Resolved runtime-owned dispatch-time caller provenance lookup. */

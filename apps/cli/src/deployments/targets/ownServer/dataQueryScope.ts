@@ -15,7 +15,7 @@ export function resolveOwnServerDataServiceDeclarationForHost(content: Deploymen
     const candidates = template?.data?.filter(row => row.service === service) ?? [];
     if (!template?.services.includes(service) || candidates.length !== 1) return refuse('target_mismatch');
     const data = candidates[0]!;
-    const engine = data.engine === 'postgres' ? 'postgresql' : data.engine;
+    const engine = data.engine === 'postgres' ? 'postgresql' as const : data.engine;
     if (engine !== 'postgresql' && engine !== 'mysql' && engine !== 'mariadb') return refuse('unsupported_action');
     assertOwnServerDataQuerySupportedEngine(engine);
     return { engine, data };
@@ -33,7 +33,7 @@ export function resolveOwnServerDataQueryDefinitionForHost(content: DeploymentEn
 export type OwnServerDataServiceHost = Pick<OwnServerDeploymentTargetHostInput,
     'serverId' | 'machineId' | 'readEnvironment' | 'readReceipt'> & Readonly<{
     assertCurrent(context: ActionExecutorContext): Promise<void>;
-    ensureServiceObservations?(): Promise<void>;
+    ensureServiceObservations?: import('@/plugins/runtime/invocation/services/environmentServiceRecovery').EnsureEnvironmentServices;
 }>;
 export type OwnServerDataServiceSelector = Readonly<{
     environmentId: string; expectedRevision: number; targetLinkId: string; deploymentId: string;
@@ -61,7 +61,7 @@ export async function acquireOwnServerDataServiceForHost(host: OwnServerDataServ
     const use = environment.content.bindings.find(binding => binding.purpose === 'dataRole'
         && 'service' in binding && binding.service === selector.service && binding.role === 'readOnlyPassword');
     if (!use || use.purpose !== 'dataRole') return refuse('read_role_setup_required');
-    await host.ensureServiceObservations?.();
+    await host.ensureServiceObservations?.({ environmentId: selector.environmentId, composeService: selector.service });
     const identity = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: configuration.happyHomeDir,
         serverId: host.serverId, environmentId: selector.environmentId });
     const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
@@ -79,8 +79,10 @@ export async function acquireOwnServerDataServiceForHost(host: OwnServerDataServ
             || handle.readNativeRuntimeFacts?.().freshness !== 'current') return refuse('service_unavailable');
         await handle.release.assertCurrent();
         const containers = handle.readNativeContainers?.();
+        // The current mounted owner proves native identity after cold restore too.
+        // Its optional activation comparison is not a data-operation prerequisite.
         if (containers?.length !== 1 || containers[0]!.service !== selector.service
-            || containers[0]!.composeProject !== projection.physicalProjectName || containers[0]!.configurationMatches !== true) return refuse('service_unavailable');
+            || containers[0]!.composeProject !== projection.physicalProjectName) return refuse('service_unavailable');
         context.signal?.throwIfAborted();
         return { environment, definition, use, handle, containerId: containers[0]!.id, dispose: () => lease!.release() };
     } catch (error) { await lease?.release(); throw error; }

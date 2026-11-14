@@ -1,5 +1,5 @@
 import { deploymentAuthorizationFailure, refuseDeploymentAuthorization } from './deploymentAuthorizationFailure';
-import { DeploymentChildRpcV1Schema, readDeploymentChildRpcV1 } from '@happier-dev/protocol';
+import { DeploymentChildRpcV1Schema, readDeploymentChildRpcV1 } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
 import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { readReviewedDeploymentChildRoot } from '@/api/externalActionExecutionAuthorization';
@@ -11,8 +11,6 @@ import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/contro
 import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import type { AdmittedRequesterAccountReadRuntime } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
-import { createDaemonDeploymentActionDeps } from './createDaemonDeploymentActionDeps';
-import { createOwnServerDeploymentRuntimeForHost } from './targets/ownServer/ownServerDeploymentHostRuntime';
 import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 type InstalledRuntime = Readonly<{ serverId: string; machineId: string; accountId: string;
@@ -26,7 +24,7 @@ export function registerDaemonDeploymentChildRpcHandler(registrar: RpcHandlerReg
     resolveRequesterRuntime(ingress: RpcHandlerContext): Promise<AdmittedRequesterAccountReadRuntime | null>;
     resolveInstalledRuntime(signal: AbortSignal, accountId: string): Promise<InstalledRuntime | null>;
     acquirePluginRuntimeRegistryLease(): Promise<PluginRuntimeRegistryLease>;
-    ensureServiceObservations?(): Promise<void>;
+    ensureServiceObservations?: import('@/plugins/runtime/invocation/services/environmentServiceRecovery').EnsureEnvironmentServices;
     captureNativeSetup?(): import('./targets/ownServer/ownServerDomainNative').DomainNativeSetupForHost;
     signal?: AbortSignal;
 }>): void {
@@ -90,6 +88,11 @@ export function registerDaemonDeploymentChildRpcHandler(registrar: RpcHandlerReg
             runtimeAccountId: requesterRuntime.accountId,
             serverId: job.input.serverId, externalActionTarget: authority.binding.target,
             externalActionExecutionAuthorization: requesterRuntime.accountAuthorization });
+        // Deployment dependencies load on the first deployment child RPC.
+        const [{ createDaemonDeploymentActionDeps }, { createOwnServerDeploymentRuntimeForHost }] = await Promise.all([
+            import('./createDaemonDeploymentActionDeps'),
+            import('./targets/ownServer/ownServerDeploymentHostRuntime'),
+        ]);
         const deps = createDaemonDeploymentActionDeps({ credentials: requester.credentials,
             ...(host.executeManagedSnapshot ? { executeManagedSnapshot: host.executeManagedSnapshot } : {}),
             ...(host.ensureServiceObservations ? { ensureServiceObservations: host.ensureServiceObservations } : {}),

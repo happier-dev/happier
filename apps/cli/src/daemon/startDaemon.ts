@@ -3,8 +3,6 @@ import { publishDaemonHostEvent } from './events/publishDaemonHostEvent';
 import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1 } from '@happier-dev/protocol/plugins/events/machineServiceObservationV1';
 import { readRequesterAccountActionContext } from './sessionEncryption/requesterAccountActionContext';
 import { enableLocalSessionRpcCalls } from '@/session/transport/rpc/localSessionRpcChannel';
-import { createDaemonDeploymentActionDeps } from '@/deployments/createDaemonDeploymentActionDeps';
-import { createOwnServerDeploymentRuntimeForHost } from '@/deployments/targets/ownServer/ownServerDeploymentHostRuntime';
 import { createServiceExportMachineForward } from './peer/iroh/serviceExportMachineForward';
 import { observeSourceRuntimeDependencies } from '@happier-dev/cli-common/sourceRuntimeEntries';
 import { combineRecordingStorageOwners, type RecordingStorageOwner } from './recording/service';
@@ -1227,7 +1225,6 @@ export async function startDaemon(
     const connectedServicesRestartRequestedSessions = new Set<SessionTrackingKey>();
     const connectedServicesMaterializationBaseDir = resolveConnectedServicesMaterializationBaseDir(configuration.happyHomeDir);
     const connectedServiceRuntimeRegistry = new ConnectedServiceRuntimeRegistry();
-    let connectedServiceMaterializedHomeCleanupInterval: NodeJS.Timeout | null = null;
     const spawnAwaiterByKey = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
     const spawnResultResolverByKey = new Map<SessionTrackingKey, (result: SpawnSessionResult) => void>();
     const spawnWebhookTimeoutByKey = new Map<SessionTrackingKey, NodeJS.Timeout>();
@@ -1305,10 +1302,6 @@ export async function startDaemon(
         pluginWebhookWorker = null;
         await pluginChangeService?.shutdown();
         pluginChangeService = null;
-        if (connectedServiceMaterializedHomeCleanupInterval) {
-          clearInterval(connectedServiceMaterializedHomeCleanupInterval);
-          connectedServiceMaterializedHomeCleanupInterval = null;
-        }
         teamCredentialDirectMaterialChangeCleanup?.();
         teamCredentialDirectMaterialChangeCleanup = null;
         teamCredentialDirectMaterialAccountChangeCleanup?.();
@@ -1505,16 +1498,8 @@ export async function startDaemon(
     void connectedServiceMaterializedHomeCleanupScheduler.reconcile().catch((error) => {
       logger.debug('[DAEMON RUN] Connected-service materialized home startup reconciliation failed (non-fatal)', error);
     });
-    connectedServiceMaterializedHomeCleanupInterval = setInterval(() => {
-      void connectedServiceMaterializedHomeCleanupScheduler.cleanupPendingMaterializedHomes().catch((error) => {
-        logger.debug('[DAEMON RUN] Connected-service materialized home periodic cleanup failed (non-fatal)', error);
-      });
-    }, resolvePositiveIntEnv(
-      process.env.HAPPIER_CONNECTED_SERVICES_MATERIALIZED_HOME_CLEANUP_INTERVAL_MS,
-      60 * 60_000,
-      { min: 60_000, max: 24 * 60 * 60_000 },
-    ));
-    connectedServiceMaterializedHomeCleanupInterval.unref?.();
+    // Later cleanup is edge-driven: every runner exit runs `cleanupPendingMaterializedHomes` (session
+    // control `onChildExited`), and startup reconciles above. No hourly sweep (I6).
 
     let onTrackedSessionPidPromoted:
       NonNullable<
@@ -1980,9 +1965,9 @@ export async function startDaemon(
         resolveCurrentMachineExecutionOriginContext,
       }),
       readSpawnFailureLimits: () => machineVitals?.latest()?.limits,
-      ensureEnvironmentServices: async () => {
+      ensureEnvironmentServices: async scope => {
         if (!apiMachineForSessions) throw new Error('Machine service recovery is unavailable');
-        await apiMachineForSessions.ensureEnvironmentServices();
+        await apiMachineForSessions.ensureEnvironmentServices(scope);
       },
       happyHomeDir: configuration.happyHomeDir,
       marketplaceRegistryHost: {
@@ -4335,6 +4320,11 @@ export async function startDaemon(
           const host = { credentials, serverId: homeId, serverHttpBaseUrl: readDaemonHomeServerHttpBaseUrl(), machineId,
             resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' } as const),
             acquirePluginRuntimeRegistryLease };
+          // Deployment dependencies load on the first service-export binding (P03-CODE-COVERAGE).
+          const [{ createDaemonDeploymentActionDeps }, { createOwnServerDeploymentRuntimeForHost }] = await Promise.all([
+            import('@/deployments/createDaemonDeploymentActionDeps'),
+            import('@/deployments/targets/ownServer/ownServerDeploymentHostRuntime'),
+          ]);
           const dependencies = createDaemonDeploymentActionDeps({ ...host,
             runtime: createOwnServerDeploymentRuntimeForHost(host) });
           return await dependencies.resolveServiceExportBinding(binding, signal ?? homeTransportCancellation.signal);

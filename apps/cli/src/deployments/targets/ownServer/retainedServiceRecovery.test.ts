@@ -333,6 +333,18 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
 }
 
 describe('retained Environment service recovery on first use', () => {
+    it('reads a healthy selected service when another retained service source is missing', async () => {
+        const fixture = await createRestartedEnvironmentFixture('running', 'plain', 'mixed-service-sources', true, false, 'app', [], true);
+        try {
+            await rm(fixture.sourcePath, { recursive: true });
+            expect(await fixture.reads('deployments.health.read', {
+                ...fixture.readInput, service: fixture.serviceFor('worker'),
+            }, fixture.context)).toMatchObject({ ok: true, freshness: 'current', health: 'healthy' });
+            expect(await fixture.reads('deployments.health.read', fixture.readInput, fixture.context))
+                .toMatchObject({ ok: false, errorCode: 'ENOENT',
+                    failureCause: { phase: 'service.restoration', errorCode: 'ENOENT' } });
+        } finally { await fixture.dispose(); }
+    });
     it('preserves the retained service restoration cause through default bindings preparation', async () => {
         const fixture = await createRestartedEnvironmentFixture('running', 'plain', undefined, true, false, 'app', [], true, true);
         try {

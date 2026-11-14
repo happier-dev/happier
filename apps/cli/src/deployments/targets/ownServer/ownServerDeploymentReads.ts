@@ -31,7 +31,7 @@ export function createOwnServerDeploymentReads(host: Pick<OwnServerDeploymentTar
             targetLinks: ReadonlyArray<DeploymentEnvironmentDetailV1['targetLinks'][number]['targetLink']>;
         }>>;
         assertCurrent(context: ActionExecutorContext): Promise<void>;
-        ensureServiceObservations?(): Promise<void>;
+        ensureServiceObservations?: import('@/plugins/runtime/invocation/services/environmentServiceRecovery').EnsureEnvironmentServices;
     }>): NonNullable<ActionExecutorDeps['deploymentAction']> {
     return async (actionId, rawInput, context) => {
         if (actionId !== 'deployments.health.read' && actionId !== 'deployments.drift.read' && actionId !== 'deployments.logs.read') return failure('unsupported_action');
@@ -109,7 +109,7 @@ export function createOwnServerDeploymentReads(host: Pick<OwnServerDeploymentTar
             const service = input.service;
             if (!service) return failure('invalid_parameters');
             if (!link.members.some(member => member.machineId === input.machineId && member.installationId === input.installationId)) return failure('target_mismatch');
-            await host.ensureServiceObservations?.();
+            await host.ensureServiceObservations?.({ environmentId: input.environmentId, serviceId: service.serviceId });
             lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
             const identity = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: configuration.happyHomeDir,
                 serverId: host.serverId, environmentId: input.environmentId });

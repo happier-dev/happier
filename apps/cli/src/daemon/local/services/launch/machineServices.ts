@@ -1,20 +1,13 @@
 import type { MachineManagedServicesSummaryV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
-import type { EnvironmentServiceRecoveryRow } from '@/plugins/runtime/invocation/services/environmentServiceRecovery';
+import type { EnvironmentServiceRecoveryRow, EnsureEnvironmentServices, EnvironmentServiceRecoveryScope } from '@/plugins/runtime/invocation/services/environmentServiceRecovery';
 import type { MachineServiceUsageV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsHistoryV1';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { createHash, randomUUID } from 'node:crypto';
-import {
-    MACHINE_SERVICE_ACTION_INPUT_SCHEMAS, MACHINE_SERVICE_ACTION_OUTPUT_SCHEMAS,
-    MachineServiceWatchV1Schema, MachineServiceWatchesFieldV1, MachineServiceDiscoveryCandidateV1Schema,
-    MachineServiceAccountingV1Schema, getMachineServiceWatchesV1, readMachineServiceWatchesV1,
-    mutateMachineServiceWatchesV1, machineServiceNativeIdentityKeyV1,
-    type MachineMetadataFieldPortV1, type MachineMetadataFieldReadV1, type MachineServiceWatchV1,
-    type MachineServiceWatchesV1, type MachineServiceRowV1, type MachineServiceActionOutput,
-    type MachineServiceDiscoveryCandidateV1, type MachineServicesDiscoveryResultV1,
-    type MachineServiceAccountingV1, type MachineServicesListInputV1,
-} from '@happier-dev/protocol';
+import { MACHINE_SERVICE_ACTION_INPUT_SCHEMAS, MACHINE_SERVICE_ACTION_OUTPUT_SCHEMAS, MachineServiceDiscoveryCandidateV1Schema, MachineServiceAccountingV1Schema, type MachineServiceRowV1, type MachineServiceActionOutput, type MachineServiceDiscoveryCandidateV1, type MachineServicesDiscoveryResultV1, type MachineServiceAccountingV1, type MachineServicesListInputV1 } from '@happier-dev/protocol/actions/specs/machine/services';
+import { MachineServiceWatchV1Schema, MachineServiceWatchesFieldV1, getMachineServiceWatchesV1, readMachineServiceWatchesV1, mutateMachineServiceWatchesV1, machineServiceNativeIdentityKeyV1, type MachineServiceWatchV1, type MachineServiceWatchesV1 } from '@happier-dev/protocol/machines/machineServiceWatchesV1';
+import type { MachineMetadataFieldPortV1, MachineMetadataFieldReadV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import type { MachineManagedServiceHandle } from '@/plugins/runtime/invocation/services/machineManagedServices';
@@ -51,7 +44,7 @@ export function createMachineServicesRuntime(input: Readonly<{
     readMetadata(): MachineMetadataFieldReadV1;
     captureMetadataPort(): MachineMetadataFieldPortV1;
     restoreEnvironmentServices?(owner: ResolvedExecutablePluginRuntimeRegistry['projectManagedServices'], signal: AbortSignal): Promise<void | readonly EnvironmentServiceRecoveryRow[]>;
-}>): Readonly<{ execute(request: Invocation): Promise<MachineServiceActionOutput | ActionExecuteFailure>; sampleUsage(): Promise<readonly MachineServiceUsageV1[]>; getSummary(): MachineManagedServicesSummaryV1 | undefined; canReadHistory(serviceId: string, request: MachineServiceDisclosureRequest): Promise<boolean>; reconcile(): Promise<void>; ensureEnvironmentServices(): Promise<void>; dispose(): Promise<void> }> {
+}>): Readonly<{ execute(request: Invocation): Promise<MachineServiceActionOutput | ActionExecuteFailure>; sampleUsage(): Promise<readonly MachineServiceUsageV1[]>; getSummary(): MachineManagedServicesSummaryV1 | undefined; canReadHistory(serviceId: string, request: MachineServiceDisclosureRequest): Promise<boolean>; reconcile(): Promise<void>; ensureEnvironmentServices: EnsureEnvironmentServices; dispose(): Promise<void> }> {
     let disposed = false;
     const rows = createMachineServiceRowProjection(revision);
     const lifetime = new AbortController();
@@ -529,11 +522,13 @@ export function createMachineServicesRuntime(input: Readonly<{
             return await owner.restoreEnvironmentServices(target, () => input.restoreEnvironmentServices!(owner, lifetime.signal), lifetime.signal);
         } finally { await lease.release(); }
     }
-    async function ensureEnvironmentServices(): Promise<void> {
+    async function ensureEnvironmentServices(scope?: EnvironmentServiceRecoveryScope): Promise<void> {
         const failures = await readEnvironmentServices();
-        const failure = failures[0];
-        // Execution/discovery callers still require complete observation custody;
-        // the list/detail read alone can disclose an unavailable, inert row.
+        const failure = failures.find(row => !scope || row.environmentId === scope.environmentId
+            && (!scope.serviceId || row.serviceId === scope.serviceId)
+            && (!scope.composeService || row.identity?.kind === 'deployment' && row.identity.composeService === scope.composeService));
+        // Selected operations require their own custody; native discovery still
+        // requires the complete inventory before classifying unmanaged services.
         if (failure) throw { ok: false, errorCode: failure.failureCause?.errorCode ?? 'service_unavailable',
             error: 'Service restoration is unavailable', failureCause: failure.failureCause };
     }

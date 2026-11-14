@@ -544,7 +544,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         resolveCurrentMachineId?: () => string | null;
         /** Existing daemon Machine/Account attribution owner; no requester fallback. */
         readDaemonRequesterWorkAttribution?: () => RequesterWorkAttributionV1 | null;
-        ensureEnvironmentServices?(): Promise<void>;
+        ensureEnvironmentServices?: import('@/plugins/runtime/invocation/services/environmentServiceRecovery').EnsureEnvironmentServices;
         acquireServiceExportForward?: import('@/deployments/targets/ownServer/ownServerDeploymentHostRuntime').OwnServerDeploymentRuntimeHostInput['acquireServiceExportForward'];
         executeClientAction?: ClientContributedActionExecutor;
         /** Existing authenticated Machine admission authority for protected Session input. */

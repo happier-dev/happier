@@ -40,7 +40,7 @@ import {
 import { createMachineServiceRowProjection } from '@/daemon/local/services/launch/machineServiceRowProjection';
 import type { LiveWorkProducerV1, LiveWorkInventoryV1, LiveWorkItemV1 } from '@/daemon/lifecycle/managedActivity';
 import type { HappierProcessRootSource, NativeContainerProcessSource } from '@/daemon/processes/roots/listHappierProcessRoots';
-import { MachineDeploymentServiceIdentityV1Schema, type MachineDeploymentServiceIdentityV1, type MachineServiceIdentityV1 } from '@happier-dev/protocol';
+import { MachineDeploymentServiceIdentityV1Schema, type MachineDeploymentServiceIdentityV1, type MachineServiceIdentityV1 } from '@happier-dev/protocol/local/services/serviceIdentityV1';
 import type { ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol';
 import type { ManagedServiceNativeLogReadOptionsForHost } from './managedServiceNativeLogs';
 import type { MachineNativeEffectKey, MachineNativeEffectOperation } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
@@ -119,7 +119,7 @@ import type {
 import {
     createRunnerManagedProviderBindingLaunchEnvironmentTransformer,
 } from '@/agent/runtime/session/process/runnerManagedProviderBindingMaterialization';
-import { machineServiceNativeIdentityKeyV1 } from '@happier-dev/protocol';
+import { machineServiceNativeIdentityKeyV1 } from '@happier-dev/protocol/machines/machineServiceWatchesV1';
 import { createMachineManagedServices, type MachineManagedServiceHandle, type MachineManagedServiceSupervisionInput,
     type ManagedNativeServiceReference } from './machineManagedServices';
 import { runManagedServiceNativeControl, type ManagedServiceNativeControl } from './managedServiceNativeControl';

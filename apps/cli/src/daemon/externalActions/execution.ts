@@ -3,7 +3,7 @@ import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol
 import { isSessionStopChildRootV1 } from '@happier-dev/protocol/actions/sessionSections';
 import { projectSessionSpawnNewActionInputV2 } from "@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2";
 import { isManagedControllerCodecRootV1, openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
-import { isDeploymentActionIdV1 } from "@happier-dev/protocol";
+import { isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { prepareManagedMachineSetupApplyInput } from '@happier-dev/cli-common/machines/managed';
 import { createRequesterBoundDeploymentActionDeps } from './deploymentActionDeps';
 import { carriesNonLocalRequesterAuthority, isCustodianMachineAdmission } from '@/daemon/lifecycle/requesterWorkAttribution';
@@ -614,7 +614,7 @@ resolveServerFeaturesSnapshot?: () =>
         serverHttpBaseUrl: requesterAccountContext?.serverHttpBaseUrl ?? requesterRuntime?.bootstrap.serverHttpBaseUrl ?? params.serverBaseUrl,
         machineId: params.machineId,
         readMachineVitals: () => params.readDoctorResourceVitals?.().sample ?? null,
-        ...(apiMachineForSessions ? { ensureServiceObservations: () => apiMachineForSessions.ensureEnvironmentServices() } : {}),
+        ...(apiMachineForSessions ? { ensureServiceObservations: scope => apiMachineForSessions.ensureEnvironmentServices(scope) } : {}),
         runtime: createOwnServerDeploymentRuntimeForHost({
           // The native receiver consumes only installation grants and the admitted
           // requester's source projection, never the controller's Account keys.

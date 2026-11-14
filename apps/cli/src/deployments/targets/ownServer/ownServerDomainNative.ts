@@ -162,7 +162,7 @@ export function createOwnServerDomainNative(host: Readonly<{
     installedCredentials?: StoredCredentials;
     runtime?: Pick<OwnServerDeploymentRuntime, 'prepareDomainCaddy'>;
     captureNativeSetup?(): DomainNativeSetupForHost;
-    ensureServiceObservations?(): Promise<void>;
+    ensureServiceObservations?: import('@/plugins/runtime/invocation/services/environmentServiceRecovery').EnsureEnvironmentServices;
     acquirePluginRuntimeRegistryLease?(): Promise<PluginRuntimeRegistryLease>;
     open(id: string, context: ActionExecutorContext): Promise<DeploymentArtifactDocumentV1 | null>;
     readEnvironment(request: Readonly<{ environmentId: string; context: ActionExecutorContext }>): Promise<DeploymentEnvironmentDetailV1>;
@@ -210,7 +210,9 @@ export function createOwnServerDomainNative(host: Readonly<{
             environmentContent = { ...environmentContent, ingress: resolved.ingress };
         }
         const member = members.find(member => member.machineId === host.machineId && member.installationId === identity.installationId);
-        if (!withoutWorkload && member) await host.ensureServiceObservations?.();
+        if (!withoutWorkload && member) await host.ensureServiceObservations?.({
+            environmentId: job.input.environmentId, composeService: opened.content.target.service,
+        });
         const lease = withoutWorkload ? undefined
             : await (host.acquirePluginRuntimeRegistryLease ?? acquireAuthoritativePluginRuntimeRegistryLease)();
         const custody = createProjectNativeInvocationCustody({ signal });
