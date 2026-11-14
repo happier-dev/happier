@@ -25,6 +25,7 @@ import type { SessionSummaryCardModel } from './sessionSummaryProjection';
 const ASK: SessionPendingPermission = {
     requestId: 'req-1',
     toolName: 'Bash',
+    canApprove: true,
     summary: 'Run yarn test:ui',
     command: 'yarn test:ui',
     createdAtMs: 1_000,

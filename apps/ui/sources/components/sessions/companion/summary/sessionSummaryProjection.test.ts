@@ -222,6 +222,7 @@ function pending(requestId: string, createdAtMs: number, answers: SessionPending
     return {
         requestId,
         toolName: 'Bash',
+        canApprove: answers.length > 0,
         summary: 'Run yarn test:ui',
         command: 'yarn test:ui',
         createdAtMs,

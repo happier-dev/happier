@@ -46,7 +46,7 @@ function isScmRow(node: renderer.ReactTestInstance) {
     return Boolean(node.props.file) && Object.hasOwn(node.props, 'statsColumnWidth');
 }
 
-function findScmRow(tree: renderer.ReactTestInstance) {
+function findScmRow(tree: Pick<renderer.ReactTestInstance, 'find'>) {
     return tree.find(isScmRow);
 }
 

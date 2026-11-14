@@ -222,7 +222,7 @@ describe('useServicesOpenInBrowser', () => {
                 reopenedRead.resolve();
             }
             if (hydration === 'settled-empty' || hydration === 'failed-first-read') {
-                await vi.waitFor(() => expect(screen.root.findByType(DetectedLocalServicesPane).props.launcherState.refreshStatus)
+                await vi.waitFor(() => expect(screen.root.findByType(DetectedLocalServicesPane).props.launcherState?.refreshStatus)
                     .toBe(hydration === 'settled-empty' ? 'idle' : 'error'));
                 expect(screen.root.findAll(node => node.props.testID === 'retained-services-loading')).toHaveLength(0);
                 expect(screen.root.findAll(node => node.props.testID === `retained-services-${hydration === 'settled-empty' ? 'empty' : 'error'}`).length)

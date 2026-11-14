@@ -42,7 +42,7 @@ it('deletes only the owner’s template draft after menu confirmation and hides 
     const draftId = 'ed10c191-207e-4076-99e9-8db2f392ae50';
     const releaseId = 'f77c79f3-beb6-4e4b-8e89-5f3957a48589';
     const source = createSessionFixture({ id: 'source', serverId: home.home.id,
-        metadata: { bot: { kind: 'bot' }, work: { templateDraftRef: { serverId: home.home.id, artifactId: draftId } } } });
+        metadata: { path: '/Users/tester/project', host: 'tester.local', bot: { kind: 'bot' }, work: { templateDraftRef: { serverId: home.home.id, artifactId: draftId } } } });
     const content = { v: 1 as const, identity: { name: 'Garden', description: 'Plant care' },
         instructions: { markdown: 'Grow herbs' }, skills: [], memoryRules: [],
         needs: { software: [], connectedAccounts: [], mcpServers: [] } };

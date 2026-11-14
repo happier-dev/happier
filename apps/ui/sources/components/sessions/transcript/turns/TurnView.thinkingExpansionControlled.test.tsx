@@ -156,7 +156,6 @@ describe('TurnView (thinking expansion controlled)', () => {
       transcriptToolCallsGroupShowBackground: false,
     } satisfies TranscriptToolChromeCommon;
     const toolRouteCommon = {
-      messagesById: {},
       reducerState: null,
     } satisfies TranscriptToolRouteCommon;
     messageById = {

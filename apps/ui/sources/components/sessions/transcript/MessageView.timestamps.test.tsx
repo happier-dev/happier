@@ -398,7 +398,6 @@ describe('MessageView timestamps', () => {
                     transcriptToolCallsGroupShowBackground: false,
                 }}
                 toolRouteCommon={{
-                    messagesById: {},
                     reducerState: null,
                 }}
             />,

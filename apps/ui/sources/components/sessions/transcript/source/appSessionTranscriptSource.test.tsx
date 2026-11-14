@@ -68,7 +68,7 @@ describe('app transcript source', () => {
         ] };
         const session = createSessionFixture({ id: 'source-native-owner', serverId: getActiveServerSnapshot().serverId,
             active: true, access: createSessionAccessFixture('edit', { approveRuntimePermissions: true }),
-            ownerProfile: { firstName: ' Ada ', lastName: ' Lovelace ', username: 'ada', avatarUrl: null },
+            ownerProfile: { id: 'owner-ada', firstName: ' Ada ', lastName: ' Lovelace ', username: 'ada', avatar: null },
             agentState: { requests: { request: { tool: 'Shell', arguments: {}, nativeChoices } } } });
         try {
             storage.getState().applySessions([session]);

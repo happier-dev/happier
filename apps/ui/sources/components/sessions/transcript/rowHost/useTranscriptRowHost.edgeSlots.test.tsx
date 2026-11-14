@@ -17,17 +17,12 @@ describe('useTranscriptItemsEdgeSlots', () => {
         // pager-owned continuation instead of rendering an empty, inert root.
         const onContinueOlderPagination = vi.fn();
         const hook = await renderHook(() => useTranscriptItemsEdgeSlots({
-            bottomNotice: null,
             composerInsetHeight: 0,
-            controlSwitchTo: null,
-            controlledByUserOverride: undefined,
-            externalControlFooter: undefined,
             handleComposerInsetHeightChange: vi.fn(),
             isLoadingOlder: false,
             mainTranscriptListShellFrame: resolveMainTranscriptListShellFrame({
                 platformOS: 'web',
             }),
-            onRequestSwitchToRemote: undefined,
             olderPaginationIsLoadingOlder: false,
             olderPaginationLoadFailed: false,
             olderPaginationCanContinue: true,

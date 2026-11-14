@@ -43,7 +43,7 @@ export function aggregateMachineRunReads(reads: readonly Readonly<{
             runsByMachineAddressKey[executionRunMachineAddressKey(serverId, machineId)] = result.runs;
         } else {
             unavailableMachines.push({ serverId, machineId,
-                reason: result?.notOffered ? 'not_offered' : result ? 'read_failed' : 'not_read',
+                reason: result && 'notOffered' in result && result.notOffered ? 'not_offered' : result ? 'read_failed' : 'not_read',
                 error: result?.error ?? null, errorCode: result?.errorCode ?? null });
         }
     }

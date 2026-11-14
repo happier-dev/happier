@@ -48,7 +48,7 @@ describe('SessionListIdentity', () => {
         setReducedMotionPreferenceOverride(reduced);
         vi.stubGlobal('ImageData', class { constructor(public data: Uint8ClampedArray, public width: number, public height: number) {} });
         storage.setState({ settings: { ...settings, botMotion: mode } });
-        const session = createSessionFixture({ metadata: { path: '/repo', bot: { kind: 'bot' } } });
+        const session = createSessionFixture({ metadata: { path: '/repo', host: 'test', bot: { kind: 'bot' } } });
         const row = (mood: 'quiet' | 'working') => <SessionListIdentity session={session} display="avatar"
             serverId="server-a" color="currentColor" avatarSize={24} agentLogoSize={16} connected botActivity={mood} />;
         const frames = () => readReanimatedFrameCallbacks().filter(record => record.handle.isActive && record.handle.callbackId !== -1);
@@ -95,7 +95,7 @@ describe('SessionListIdentity', () => {
         const { createSessionListPresentationSource } = await import('@/sync/domains/session/listing/sessionListRenderableSessionProjection');
         vi.stubGlobal('ImageData', class { constructor(public data: Uint8ClampedArray, public width: number, public height: number) {} });
         const session = createSessionFixture({ id: 'failed-roster-bot', latestTurnStatus: 'failed', latestTurnStatusObservedAt: 20,
-            metadata: { path: '/repo', machineId: 'machine-a', bot: { kind: 'bot' } } as ReturnType<typeof createSessionFixture>['metadata'] });
+            metadata: { path: '/repo', host: 'test', machineId: 'machine-a', bot: { kind: 'bot' } } });
         const row = buildSessionListRenderableFromSession(session);
         const source = createSessionListPresentationSource(row, { baseSession: session, serverId: 'server-a' });
         const screen = await renderScreen(<SessionListIdentity session={session} presentationSource={source}
@@ -212,7 +212,7 @@ describe('SessionListIdentity', () => {
         const { BotFace } = await import('@/components/sessions/bots/face/BotFace');
         vi.stubGlobal('ImageData', class { constructor(public data: Uint8ClampedArray, public width: number, public height: number) {} });
         const canvas = { createNodeMock: (node: { type: unknown }) => node.type === 'canvas' ? { getContext: () => ({ putImageData() {} }) } : null };
-        const metadata = { path: '/repo', machineId: 'machine-a', flavor: 'codex', bot: { kind: 'bot' } } as ReturnType<typeof createSessionFixture>['metadata'];
+        const metadata = { path: '/repo', host: 'test', machineId: 'machine-a', flavor: 'codex', bot: { kind: 'bot' } };
         const first = createSessionFixture({ id: 'bot-release-captain', metadata });
         const second = createSessionFixture({ id: 'bot-flake-hunter', metadata });
         const render = (session: ReturnType<typeof createSessionFixture>, extra: Partial<{ connected: boolean; roster: boolean; botActivity: 'quiet' | 'working' | 'needsYou' }> = {}) => renderScreen(
@@ -249,7 +249,7 @@ describe('SessionListIdentity', () => {
         const { BotFace } = await import('@/components/sessions/bots/face/BotFace');
         vi.stubGlobal('ImageData', class { constructor(public data: Uint8ClampedArray, public width: number, public height: number) {} });
         const session = createSessionFixture({ id: 'bot-coffee-companion',
-            metadata: { path: '/repo', machineId: 'machine-a', flavor: 'codex', bot: { kind: 'bot' } } as ReturnType<typeof createSessionFixture>['metadata'] });
+            metadata: { path: '/repo', host: 'test', machineId: 'machine-a', flavor: 'codex', bot: { kind: 'bot' } } });
         for (const display of ['agentLogo', 'agentWithTrailingProject', 'project', 'projectWithAgent'] as const) {
             const screen = await renderScreen(<SessionListIdentity session={session} display={display} serverId="server-a" color="currentColor"
                 avatarSize={28} agentLogoSize={16} connected testID="identity" />,

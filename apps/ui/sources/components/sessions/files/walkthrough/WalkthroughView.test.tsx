@@ -197,7 +197,7 @@ describe('WalkthroughView (lab WT1-A)', () => {
 
         nativeScrollRequests.length = 0;
         const moved = await renderScreen(<WalkthroughView reading={{ ...initial, stops }} scopeLabel="This session" layout={layout} />);
-        const scroller = moved.findAll((node) => node.type === 'ScrollView' && typeof node.props.onScroll === 'function')[0]!;
+        const scroller = moved.findAll((node) => Object.is(node.type, 'ScrollView') && typeof node.props.onScroll === 'function')[0]!;
         await act(async () => { scroller.props.onScroll({ nativeEvent: { contentOffset: { y: 40 } } }); });
         await measure(moved, 500);
         expect(nativeScrollRequests).toEqual([]);

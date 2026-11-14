@@ -67,7 +67,7 @@ function layoutViewTab(screen: Awaited<ReturnType<typeof renderScreen>>, viewId:
     const tab = screen.findHostByTestId(`session-board-views-view-${viewId}`);
     let layoutOwner = tab?.parent ?? null;
     // The strip measures the outer native View; the shared pressable owns its hit-area geometry.
-    while (layoutOwner && !(layoutOwner.type === 'View' && typeof layoutOwner.props.onLayout === 'function')) {
+    while (layoutOwner && !(Object.is(layoutOwner.type, 'View') && typeof layoutOwner.props.onLayout === 'function')) {
         layoutOwner = layoutOwner.parent;
     }
     if (!layoutOwner) throw new Error(`No measured Board view tab: ${viewId}`);

@@ -358,7 +358,7 @@ describe('SessionWidgetHost caller-authored hosted HTML', () => {
         expect(screen.tree.findByType('BrowserViewFrame').props.count).toBe(1);
         expect(state.physicalMounts).toBe(1);
 
-        await screen.update(renderWidget({ itemId: item.itemId, state: { kind: 'removed' } }));
+        await screen.update(renderWidget({ itemId: item.itemId, revision: null, state: { kind: 'removed' } }));
         expect(screen.tree.root.findAllByType('BrowserViewFrame')).toHaveLength(0);
         await expect(generationG.onMessage({
             version: 1,

@@ -180,7 +180,7 @@ describe('SessionPeopleReadinessSection when nothing needs anyone', () => {
   // People speaks about readiness only when asking this Session can't work now: a ready, unchecked
   // or unreadable state is no reason to put a row between its conversations and who follows it.
   it.each([
-    ['ready', () => ({ readiness: composeSessionReadinessV1({ ...facts, agent: { agentId: 'codex', state: 'ready', current: true, observedAtMs: 1 } }), repair: null, loading: false, unavailableReason: null })],
+    ['ready', () => ({ readiness: composeSessionReadinessV1({ ...facts, agent: { agentId: 'codex', state: 'ready', current: true, observedAtMs: 1, repair: null } }), repair: null, loading: false, unavailableReason: null })],
     ['still reading', () => ({ readiness: null, repair: null, loading: true, unavailableReason: null })],
     ['read failed', () => ({ readiness: null, repair: null, loading: false, unavailableReason: 'unavailable' })],
   ] as const)('says nothing when %s', async (_state, current) => {

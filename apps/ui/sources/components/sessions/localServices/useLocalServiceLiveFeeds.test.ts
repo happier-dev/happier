@@ -758,7 +758,7 @@ describe('Project Services source feed plus actual native binding', () => {
         before = managedReads;
         const values = await Promise.all([freshCensus.readChildMachines(['source', 'parent']), freshCensus.readChildMachines(['source'])]);
         expect(values.map(value => value.map(fact => fact.machineId))).toEqual([['source'], ['source']]);
-        expect(values.map(value => value.map(fact => fact.managedMachine.intentRevision))).toEqual([[2], [2]]);
+        expect(values.map(value => value.map(fact => fact.managedMachine?.intentRevision))).toEqual([[2], [2]]);
         expect(managedReads - before).toBe(1);
         cancellation.abort();
         await expect(freshCensus.readChildMachines(['source'])).rejects.toThrow();

@@ -2,7 +2,7 @@ import { act } from 'react';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createScmCapabilities } from '@happier-dev/protocol/scm';
-import { ScmPullRequestSummarySchema } from '@happier-dev/protocol/scm/pullRequests';
+import { ScmHostingProviderRefSchema, ScmPullRequestSummarySchema } from '@happier-dev/protocol/scm/pullRequests';
 import { createScmNetworkTestHarness, scmNetworkSnapshot } from '@/hooks/session/sourceControl/scmNetworkTestHarness';
 
 const harness = await createScmNetworkTestHarness();
@@ -12,7 +12,7 @@ const { scmStatusSync } = await import('@/scm/scmStatusSync');
 const { createSessionGitPullRequest } = await import('./createSessionGitPullRequest');
 const snapshot = { ...scmNetworkSnapshot,
     capabilities: createScmCapabilities({ readPullRequestStatus: true }),
-    hostingProvider: { id: 'github', kind: 'github' as const, displayName: 'GitHub', baseUrl: 'https://github.com', nameWithOwner: 'acme/repo' },
+    hostingProvider: ScmHostingProviderRefSchema.parse({ id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com', nameWithOwner: 'acme/repo' }),
 };
 const listRequests = () => harness.network.requests.filter(request => request.method === RPC_METHODS.SCM_PULL_REQUEST_LIST);
 const pullRequest = ScmPullRequestSummarySchema.parse({ provider: snapshot.hostingProvider,

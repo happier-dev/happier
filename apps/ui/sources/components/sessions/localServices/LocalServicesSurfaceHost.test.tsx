@@ -150,7 +150,7 @@ describe('LocalServicesSurfaceHost', () => {
         ? [{ ...openableTarget, title: 'Session workspace service' }] : [{ ...openableTarget, title: 'Foreign workspace service' }] } };
     };
     const inventorySnapshotClient: import('@/sync/domains/local/services/inventory/useLocalServiceInventoryState').LocalServiceInventorySnapshotClient = async () => ({ ok: true,
-      snapshot: { protocolVersion: 1, machineId: 'machine-a', generatedAt: 1000, refreshState: 'idle', entries: [], diagnostics: [] } });
+      snapshot: { v: 1, machineId: 'machine-a', generatedAt: 1000, refreshState: 'idle', entries: [], diagnostics: [] } });
     const screen = await renderScreen(<LocalServicesSurfaceHost machineId="machine-a" serverId={serverId} sessionId="session-a"
       scope="workspace" launcherSnapshotClient={launcherSnapshotClient} inventorySnapshotClient={inventorySnapshotClient} testID="workspace-scope" />);
     try {

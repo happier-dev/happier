@@ -90,7 +90,8 @@ export function useCommittedMessageActions(input: CommittedMessageActionInput, p
         && !input.isStructuredOnly && !input.hasUnsupportedContent;
     const readAloudEligible = readableAssistantMessage && input.copyText.trim().length > 0;
     const [readAloudReadiness, setReadAloudReadiness] = React.useState<ReadAloudReadiness | null>(null);
-    const readAloudRecoveryTarget = readAloudReadiness ? resolveVoiceSettingsRecoveryTarget(readAloudReadiness) : null;
+    // `&&`, not `?:`: a conditional subtype-reduces the typed-route `Href` union against null (TS2590).
+    const readAloudRecoveryTarget = readAloudReadiness && resolveVoiceSettingsRecoveryTarget(readAloudReadiness);
     const readAloudPresentation = readAloudReadiness
         ? resolveVoiceProviderReadinessPresentation(readAloudReadiness, translateVoiceReadiness) : null;
     const readAloudRecovery = readAloudRecoveryTarget && readAloudPresentation?.action

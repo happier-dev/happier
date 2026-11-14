@@ -257,8 +257,8 @@ function useProjectServiceBindings(input: LocalServiceLiveFeedsInput, sourceStat
         for (const { key } of subscriptions.values()) {
             if (!key.serverId || !binding?.isCurrent()) return;
             invalidateLocalServiceLauncherStore(key);
-            const state = await readLocalServiceLauncherStore(key);
-            refreshed = refreshed || state.refreshStatus !== 'error';
+            await readLocalServiceLauncherStore(key);
+            refreshed = refreshed || getLocalServiceLauncherState(key).refreshStatus !== 'error';
         }
         // Retry renews the existing native bindings and Project census even when
         // the source scan is unchanged or unavailable to this requester.

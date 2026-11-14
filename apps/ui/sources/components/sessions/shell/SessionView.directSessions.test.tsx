@@ -5197,7 +5197,7 @@ describe('SessionView (direct sessions)', () => {
     });
     const renderContent = readGoalChip()?.collapsedContentPopover?.renderContent;
     if (typeof renderContent !== 'function') throw new Error('Expected active goal content');
-    const goalScreen = await renderScreen(renderContent({ requestClose: () => {}, maxHeight: 420 }));
+    const goalScreen = await renderScreen(<>{renderContent({ requestClose: () => {}, maxHeight: 420 })}</>);
     pendingGoalReceipt = createDeferred<unknown>();
     const receipt = pendingGoalReceipt;
     let clearExecution: typeof actionExecutions[number] | undefined;

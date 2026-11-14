@@ -24,10 +24,13 @@ const rpc = vi.hoisted(() => ({ responses: [] as unknown[], requests: [] as unkn
 const transfer = vi.hoisted(() => ({ fetch: vi.fn<typeof fetch>() }));
 vi.mock('@/utils/system/runtimeFetch', async importOriginal => {
   const actual = await importOriginal<typeof import('@/utils/system/runtimeFetch')>();
-  return { ...actual, runtimeFetch: (...args: Parameters<typeof fetch>) => String(args[0]).includes('/machine-transfers/direct/')
+  // Named first so the getter's `this` is this object, not vi.mock's Partial<unknown> factory type; the getter's
+  // return type is explicit because it reads its own object (TS7023 otherwise).
+  const mocked = { ...actual, runtimeFetch: (...args: Parameters<typeof fetch>) => String(args[0]).includes('/machine-transfers/direct/')
     ? transfer.fetch(...args) : actual.runtimeFetch(...args) ,
-      get runtimeFetchManualResponse() { return this.runtimeFetch; },
+      get runtimeFetchManualResponse(): (...args: Parameters<typeof fetch>) => Promise<Response> { return this.runtimeFetch; },
   };
+  return mocked;
 });
 // Keep Action approval, output validation, restore dispatch and notices real.
 // The remote Machine RPC is the genuine network boundary.

@@ -188,7 +188,7 @@ it.each([
 
 
 it('withholds private Managed by candidates and masks a retained manager without changing the selection', async () => {
-    const receiver = createSessionFixture({ id: 'daily-coordinator', serverId, metadata: { name: 'Private daily coordinator', path: '/daily' } });
+    const receiver = createSessionFixture({ id: 'daily-coordinator', serverId, metadata: { name: 'Private daily coordinator', path: '/daily', host: 'test' } });
     const worker = createSessionFixture({ id: 'worker', serverId, origin: { kind: 'none' }, ownerAccountId: 'alice', projectKey: 'payments',
         metadata: { path: '/work/payments', host: 'test', projectId: 'payments' } });
     const coordinator = { ...getStorage().getState().sessions.coordinator!, origin: { kind: 'none' as const }, ownerAccountId: 'alice' };

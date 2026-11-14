@@ -113,11 +113,13 @@ const structuredMessageRegistryEntries: readonly (StructuredMessageRegistryEntry
         kind: 'voice_note.v1',
         schema: VoiceTranscriptNotePayloadSchema,
         // A Voice note ("Continued on Chrome") is an event in the conversation, not something the agent said.
-        render: (_payload, params) => params.message.kind === 'agent-text'
-            ? <TranscriptEventLine icon="planet" testID="transcript-voice-note" renderText={(textStyle) => (
-                <StructuredFindText blockId="structured-voice-note" style={textStyle} text={resolveVoiceContinuationNoteText(params.message.meta) ?? params.message.text} />
-            )} />
-            : null,
+        render: (_payload, params) => {
+            if (params.message.kind !== 'agent-text') return null;
+            const text = resolveVoiceContinuationNoteText(params.message.meta) ?? params.message.text;
+            return <TranscriptEventLine icon="planet" testID="transcript-voice-note" renderText={(textStyle) => (
+                <StructuredFindText blockId="structured-voice-note" style={textStyle} text={text} />
+            )} />;
+        },
         projectFindText: (_payload, params) => params.message.kind === 'agent-text'
             ? [{ id: 'structured-voice-note', text: resolveVoiceContinuationNoteText(params.message.meta) ?? params.message.text }]
             : null,

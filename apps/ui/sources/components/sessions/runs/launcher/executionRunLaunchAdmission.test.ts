@@ -393,9 +393,7 @@ describe('real execution Run launch admission', () => {
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
             if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
             if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: launchSettings }, version: 0 });
-            if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({
-                features: { execution: { runs: { enabled: true } } },
-            }));
+            if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
             if (path === ACP_CATALOG_ROWS_ROUTE_V1) return Response.json(AcpCatalogRowReadResponseV1Schema.parse({
                 status: 'present', revision: 1, content: { t: 'plain', v: { v: 1, definitions: [] } },
             }));
@@ -629,7 +627,7 @@ describe('real execution Run launch admission', () => {
                 return Response.json({ resources: [teamResource], nextCursor: null, failures: [] });
             }
             const body = path === '/v1/features'
-                ? FeaturesResponseSchema.parse(createRootLayoutFeaturesResponse({ features: { execution: { runs: { enabled: true } }, teams: FeatureGatesSchema.shape.teams.parse({
+                ? FeaturesResponseSchema.parse(createRootLayoutFeaturesResponse({ features: { teams: FeatureGatesSchema.shape.teams.parse({
                     enabled: true, credentialResources: { enabled: true } }) } }))
                 : path === '/v1/teams/list'
                     ? { items: [teamSummaryFixture({ id: teamModel.teamId, capabilities: teamCapabilitiesFixture({}) })], nextCursor: null }

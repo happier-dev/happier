@@ -60,7 +60,7 @@ describe('useRegisterSessionPaneDriver (module prefetch)', () => {
         const { useRegisterSessionPaneDriver } = await import('./useRegisterSessionPaneDriver');
         let scopeId = '';
         const Probe = () => {
-            scopeId = useRegisterSessionPaneDriver('same-session', null, undefined, {
+            scopeId = useRegisterSessionPaneDriver('same-session', null, {
                 pluginUiProjection: null,
                 pluginBrowserProjection: null,
                 phase: 'current',

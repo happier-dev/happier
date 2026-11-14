@@ -2,7 +2,8 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createToolCallMessageFixture, renderScreen } from '@/dev/testkit';
-import { resolveMessageRouteIdForDisplay, type ToolCallMessage } from "@happier-dev/session-core/messages";
+import type { ToolCallMessage } from "@happier-dev/session-core/messages";
+import { resolveTranscriptToolRouteMessageId } from "@/components/sessions/transcript/transcriptSessionCommon";
 import { installToolCallsGroupViewCommonModuleMocks } from '@/components/sessions/transcript/turns/toolCalls/toolCallsGroupViewTestHelpers';
 import { createTranscriptSessionCommonPropsFixture, flattenStyleProp } from './toolCallsGroupUnitsTestFixtures';
 
@@ -86,7 +87,7 @@ async function renderToolRow(props: Record<string, unknown>) {
         ...props,
     } as React.ComponentProps<typeof ToolCallsGroupUnitToolRowWithSessionCommon>;
     const rowProps = { ...input,
-        messageRouteId: resolveMessageRouteIdForDisplay({ message: input.message, ...toolRouteCommon }) };
+        messageRouteId: resolveTranscriptToolRouteMessageId(input.message, toolRouteCommon) };
     const { createTestSessionTranscriptSource, renderWithSessionTranscriptSource } = await import('@/dev/testkit');
     return renderWithSessionTranscriptSource(React.createElement(ToolCallsGroupUnitToolRowWithSessionCommon, rowProps), createTestSessionTranscriptSource({
         navigate: rowProps.interaction.canSendMessages ? vi.fn() : null,

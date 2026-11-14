@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createScmCapabilities, type ScmWorkingSnapshot } from '@happier-dev/protocol/scm';
 import { ScmPullRequestSummarySchema } from '@happier-dev/protocol/scm/pullRequests';
 import { SessionInputForgeEvidenceV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
-import { normalizePluginUiDestinationBindingV1, normalizePluginUiInlineSurfaceBindingV1 } from '@happier-dev/protocol/plugins/ui';
+import { normalizePluginUiDestinationBindingV1, normalizePluginUiInlineSurfaceBindingV1, PluginUiSurfaceBindingV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createMachineFixture, createSessionFixture, createThemeFixture, renderScreen } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -86,14 +86,14 @@ function ResourceDestinationHost({ children, targetKind = 'session', available =
             availability: { state: 'available', reason: 'available', diagnostics: [] }, hostOrigin };
         return normalizePluginUiProjection({ v: 2, generation: 1, installedPackagesById: {}, agentsById: {}, actionsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
             familiesById: { pluginUi: { family: 'pluginUi', entriesById: {
-                scm: { ...common, id: 'scm', descriptorId: 'pr', binding: inline, target: inline.target, renderer: { kind: 'declarative', contributionId: 'card' }, display: { title: 'Pull request' },
+                scm: { ...common, id: 'scm', descriptorId: 'pr', binding: PluginUiSurfaceBindingV1Schema.parse(inline), target: inline.target, renderer: { kind: 'declarative', contributionId: 'card' }, display: { title: 'Pull request' },
                     resourceLinks: [
                         { kind: 'pullRequest', urlPattern: '^https://github\\.com/[^/]+/[^/]+/pull/[0-9]+$', destination: 'resource-details' },
                         { kind: 'issue', urlPattern: '^https://github\\.com/[^/]+/[^/]+/issues/[0-9]+$', destination: 'resource-details' },
                         { kind: 'ciRun', urlPattern: '^https://github\\.com/[^/]+/[^/]+/actions/runs/[0-9]+$', destination: 'resource-details' },
                         { kind: 'securityAlert', urlPattern: '^https://github\\.com/[^/]+/[^/]+/security/dependabot/[0-9]+$', destination: 'resource-details' },
                     ] },
-                details: { ...common, id: 'details', descriptorId: 'resource-details', binding: details, target: details.target, renderer: { kind: 'declarative', contributionId: 'detail' }, display: { title: 'Resource' } },
+                details: { ...common, id: 'details', descriptorId: 'resource-details', binding: PluginUiSurfaceBindingV1Schema.parse(details), target: details.target, renderer: { kind: 'declarative', contributionId: 'detail' }, display: { title: 'Resource' } },
             } } } });
     }, [targetKind]);
     React.useLayoutEffect(() => {

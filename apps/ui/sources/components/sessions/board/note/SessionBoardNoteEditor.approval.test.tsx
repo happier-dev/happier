@@ -134,7 +134,7 @@ describe('mounted Board note approval continuation', () => {
             expect(controller.noteDraft).not.toBeNull();
             expect(mutations).toHaveLength(0);
             const stored = homes.artifacts(serverId).readPlainBody(artifactId);
-            expect(JSON.parse(stored)).toMatchObject({ actionId: 'session.board.item.upsert',
+            expect(JSON.parse(stored ?? 'null')).toMatchObject({ actionId: 'session.board.item.upsert',
                 actionArgs: { item: { title: 'Shipping' } } });
             await act(async () => {
                 const result = await executor.execute('approval.request.decide', { artifactId, decision }, { serverId, surface: 'ui', authority: 'present_user', runtimeAccountId: 'alice' });

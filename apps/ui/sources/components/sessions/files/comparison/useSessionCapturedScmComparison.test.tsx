@@ -75,8 +75,8 @@ async function renderScreen(...args: Parameters<typeof renderUnmeasuredScreen>) 
     };
     await measure();
     const update = screen.update;
-    screen.update = async (...updateArgs) => { await update(...updateArgs); await measure(); };
-    return screen;
+    const measuredUpdate: typeof update = async (...updateArgs) => { await update(...updateArgs); await measure(); };
+    return Object.assign(screen, { update: measuredUpdate });
 }
 // Saved-result discovery is legitimate alongside capture; it is not a checkout read.
 function comparisonCalls() {

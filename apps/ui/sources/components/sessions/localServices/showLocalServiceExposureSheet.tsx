@@ -223,7 +223,7 @@ const LocalServiceExposureSheet: React.FC<ExposureSheetProps> = (props) => {
             ) : null}
 
             {mode === 'people' && scope ? (
-                <LocalServicePreviewAudienceEditor scope={scope} draft={audience} onChange={setAudience}
+                <LocalServicePreviewAudienceEditor scope={scope} draft={audience} onChange={(draft) => setAudience([...draft])}
                     testID={`${props.testIDPrefix}-audience`} />
             ) : null}
 

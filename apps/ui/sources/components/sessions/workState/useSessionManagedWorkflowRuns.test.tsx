@@ -146,7 +146,7 @@ it('restores Discussion Runs by origin and checks pushed identities through that
         origin: { kind: 'direct', discussion: origin } });
     discussionOrigins.set(run.id, origin);
     readPage.mockImplementation(async ({ filter }) => ({
-        runs: filter?.originDiscussionId === origin.discussion.discussionId && (!filter.runIds || filter.runIds.includes(run.id)) ? [run] : [],
+        runs: filter?.originDiscussionId === origin.discussion.discussionId && (!Array.isArray(filter.runIds) || filter.runIds.includes(run.id)) ? [run] : [],
         metadataByRunId: {}, nextCursor: undefined,
     }));
     const useRuns = () => useDiscussionManagedWorkflowRuns({ discussion: origin.discussion, accountLifetime: lifetime });

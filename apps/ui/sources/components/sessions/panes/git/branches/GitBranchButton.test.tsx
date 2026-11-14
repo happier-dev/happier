@@ -188,7 +188,7 @@ describe('GitBranchButton', () => {
     it('counts changes from a summary delivery, which carries no rows', async () => {
         const counted: ScmWorkingSnapshot = { ...snapshot, detail: 'summary', entries: [],
             totals: { ...snapshot.totals, pendingFiles: 3 },
-            summary: { changedFiles: 3, truncated: false } as NonNullable<ScmWorkingSnapshot['summary']> };
+            summary: { changedFiles: 3, includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 } };
         const popover = await menu(await renderBranch(false, counted));
         const keepAside = popover.props.branchItems.find((item: { id: string }) => item.id === 'git:keep-aside');
         expect(keepAside).toBeDefined();

@@ -64,7 +64,7 @@ describe('Pending presentation at committed turn anchors', () => {
 
     it('yields a non-durable discarded twin to its committed message through the canonical crossover', () => {
         const message: Message = { kind: 'user-text', id: 'user', localId: 'retry-local', createdAt: 3, seq: 1, text: 'Please continue' };
-        const committed = { kind: 'message' as const, id: 'msg:user', messageId: 'user', createdAt: 3 };
+        const committed = { kind: 'message' as const, id: 'msg:user', messageId: 'user', createdAt: 3, seq: 1 };
         const items = projectPendingTranscriptItems({ items: [committed], messageIdsOldestFirst: ['user'],
             messagesById: { user: message }, pendingMessages: [],
             discardedMessages: [{ ...blocked, source: 'local_outbound', discardedAt: 5, discardedReason: 'manual' }],

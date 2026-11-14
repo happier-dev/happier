@@ -42,7 +42,7 @@ describe('Session bootstrap reachability', () => {
             multiPaneEnabled: false, sessionsRightPaneDefaultOpen: false, deviceType: 'desktop',
             sessionPath: null, sessionAccepted: false, surfaceFocused: false, surfaceVisible: false,
             routeAnchor: false, paneUrlSyncRouteActive: false, paneEffectsEnabled: false,
-        }), { wrapper: AppPaneProvider });
+        }), { wrapper: ({ children }) => <AppPaneProvider>{children}</AppPaneProvider> });
         expect(bootstrap.getCurrent()).toMatchObject({ machineReachable: true, machineReachability: 'reachable' });
         await bootstrap.unmount();
         await presence.unmount();

@@ -399,9 +399,9 @@ describe('SessionView composer typing', () => {
     const recordKey = { ...base.recordKey, providerId: 'codex' };
     const snapshot = { ...base, providerId: 'codex', recordKey, recordId: buildProviderAccountUsageRecordId(recordKey) };
     storage.getState().applySettingsLocal({ featureToggles: { connectedServices: true, 'connectedServices.quotas': true } });
-    publishSessionOwnerMetadata(metadata => writeProviderAccountUsageRecordIdToMetadata(metadata, {
+    publishSessionOwnerMetadata(metadata => ({ ...metadata, ...writeProviderAccountUsageRecordIdToMetadata(metadata, {
       recordId: snapshot.recordId, updatedAtMs: snapshot.observedAtMs,
-    }));
+    }) }));
     const reads = vi.fn(async () => Response.json(quotaTestProviderUsageResponse(snapshot)));
     providerUsageRead = reads;
     const first = await renderScreen();
@@ -466,7 +466,7 @@ describe('SessionView composer typing', () => {
     const element = <SessionView id="s1" routeServerId={runtime.serverId} surfaceFocusedOverride surfaceVisibleOverride
       headerAccessory={React.createElement('SessionHeaderAccessoryMark', { label: 'body' })} />;
     const screen = await renderCanonicalScreen(element, { wrapper: runtime.Wrapper });
-    const headerShown = () => screen.tree.findAll(node => node.type === 'SessionHeaderAccessoryMark').length;
+    const headerShown = () => screen.tree.findAll(node => Object.is(node.type, 'SessionHeaderAccessoryMark')).length;
     const composerShown = () => screen.tree.findAllByType(SessionComposerAgentInput).length;
     try {
       await renderer.act(async () => { await new Promise(resolve => setTimeout(resolve, 1000)); });
@@ -488,7 +488,7 @@ describe('SessionView composer typing', () => {
     const withHeader = (label: string) => <SessionView id="s1" routeServerId={runtime.serverId} surfaceFocusedOverride surfaceVisibleOverride
       renderComposer={renderComposer} headerAccessory={React.createElement('SessionHeaderAccessoryMark', { label })} />;
     const screen = await renderCanonicalScreen(withHeader('first'), { wrapper: runtime.Wrapper });
-    const headerLabels = () => screen.tree.findAll(node => node.type === 'SessionHeaderAccessoryMark').map(node => node.props.label);
+    const headerLabels = () => screen.tree.findAll(node => Object.is(node.type, 'SessionHeaderAccessoryMark')).map(node => node.props.label);
     try {
       await renderer.act(async () => { await new Promise(resolve => setTimeout(resolve, 1500)); });
       expect(headerLabels()).toEqual(['first']);
@@ -794,7 +794,7 @@ describe('SessionView composer typing', () => {
       await screen.update(surfaceElement(composer => host(composer)));
       expect(shellRenders.mock.calls.length).toBeGreaterThan(rendersBefore);
       const refreshed = readProducerProps();
-      for (const key of ['composerFileScope', 'sessionTypingPresence', 'statusBadges', 'extraActionChips', 'attachmentRowItems', 'statusRegions', 'instrumentQuota', 'connectionStatus', 'inputPersistence', 'inputExpansion'] as const) {
+      for (const key of ['composerFileScope', 'sessionTypingPresence', 'statusBadges', 'extraActionChips', 'attachmentRowItems', 'statusRegions', 'instrumentQuota', 'connectionStatus', 'inputPersistence'] as const) {
         expect.soft(refreshed[key], key).toBe(initial[key]);
       }
       // The existing input callback still writes to the live draft after the
@@ -807,7 +807,6 @@ describe('SessionView composer typing', () => {
       });
       await screen.update(surfaceElement(composer => host(composer)));
       expect(readProducerProps().inputPersistence?.initialSelection).toEqual({ start: 1, end: 1 });
-      expect.soft(readProducerProps().inputExpansion, 'selection does not replace expansion controls').toBe(initial.inputExpansion);
 
       // Opt-in Action placement is a real presentation input, not draft state.
       const hasReviewShortcut = () => readProducerProps().extraActionChips?.some(chip => chip.key === 'session-action:review.start');

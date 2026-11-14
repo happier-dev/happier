@@ -45,7 +45,7 @@ export function readTranscriptOperationsProducedResults(messages: readonly Messa
                         const receipt = { serverId, environmentId: parsed.data.environmentId,
                             deploymentId: parsed.data.deploymentId, state: parsed.data.state };
                         receipts.set(JSON.stringify([serverId, receipt.environmentId, receipt.deploymentId]), receipt);
-                    } else if (parsed.success && parsed.data.operation) {
+                    } else if (parsed.success && 'operation' in parsed.data && parsed.data.operation) {
                         const operation = parsed.data.operation;
                         const key = actionOperationAddressKey(operation);
                         if (!operations.has(key)) pendingOperations.set(key, operation);

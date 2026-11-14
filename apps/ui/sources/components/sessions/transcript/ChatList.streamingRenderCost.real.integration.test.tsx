@@ -163,7 +163,7 @@ describe('streaming transcript render cost', () => {
         container = document.createElement('div');
         document.body.appendChild(container);
         root = createRoot(container);
-        const request = { id: 'waiting-permission', tool: 'Bash', arguments: { command: 'git status' }, createdAt: Date.now() };
+        const request = { id: 'waiting-permission', kind: 'permission' as const, tool: 'Bash', arguments: { command: 'git status' }, createdAt: Date.now() };
         const transcript = <ChatList session={session} sessionSurfaceKey="streamui-surface"
             onEditPendingMessage={() => {}} />;
         const scene = (permissionArrived: boolean, cardRequest = request) => (
@@ -198,7 +198,7 @@ describe('streaming transcript render cost', () => {
         await settle();
 
         const phases: Record<string, unknown> = {};
-        const measure = async (name: string, steps: readonly (() => void | Promise<void>)[]) => {
+        const measure = async (name: string, steps: readonly (() => unknown)[]) => {
             requestPhase = name;
             counts.start();
             for (const apply of steps) {

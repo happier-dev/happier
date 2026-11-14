@@ -38,6 +38,7 @@ function RegisteredSessionDetails(props: React.ComponentProps<typeof SessionDeta
 }
 const { WorkspaceDetailsPanel } = await import('@/components/projects/panes/WorkspaceDetailsPanel');
 const { SessionCockpitSurfaceScreen } = await import('@/components/workspaceCockpit/session/SessionCockpitSurfaceScreen');
+const { resolveSessionCockpitMobileCatalog } = await import('@/components/workspaceCockpit/session/sessionCockpitMobileCatalog');
 const { resetLocalServiceInventoryStoreForTests } = await import('@/sync/domains/local/services/inventory/sharedStore');
 const { resetLocalServiceLauncherStoreForTests } = await import('@/sync/domains/local/services/launch/sharedStore');
 const { getLocalServicePreviewState, resetLocalServicePreviewStoreForTests } = await import('@/sync/domains/local/services/preview/sharedStore');
@@ -159,8 +160,8 @@ describe('SessionDetailsPanel local service launcher handoff', () => {
         function ChatSurface() {
             scopeId = createSessionPaneScopeId('session-a', runtime.serverId);
             pane = useAppPaneScope(scopeId);
-            return <SessionCockpitSurfaceScreen sessionId="session-a" scopeId={scopeId} surface="chat"
-                experience="classic" routeServerId={runtime.serverId} />;
+            return <SessionCockpitSurfaceScreen catalog={resolveSessionCockpitMobileCatalog({ terminalTabAvailable: false })}
+                sessionId="session-a" scopeId={scopeId} surface="chat" experience="classic" routeServerId={runtime.serverId} />;
         }
         storage.getState().applyMachines([createMachineFixture({ id: 'machine-a', active: true, activeAt: Date.now() })],
             false, { sourceServerId: runtime.serverId, sourceAccountId: 'account-a' });
@@ -213,8 +214,8 @@ describe('SessionDetailsPanel local service launcher handoff', () => {
         function ChatSurface() {
             const scopeId = createSessionPaneScopeId('session-a', runtime.serverId);
             pane = useAppPaneScope(scopeId);
-            return <SessionCockpitSurfaceScreen sessionId="session-a" scopeId={scopeId} surface="chat"
-                experience="classic" routeServerId={runtime.serverId} />;
+            return <SessionCockpitSurfaceScreen catalog={resolveSessionCockpitMobileCatalog({ terminalTabAvailable: false })}
+                sessionId="session-a" scopeId={scopeId} surface="chat" experience="classic" routeServerId={runtime.serverId} />;
         }
         const machine = createMachineFixture({ id: 'machine-a', active: true, activeAt: Date.now(),
             daemonStateVersion: 1, daemonState: { status: 'running', pid: 17, localServices: { v: 1, state: 'ready', runningCount: 0 } } });

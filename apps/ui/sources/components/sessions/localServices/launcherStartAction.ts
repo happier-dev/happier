@@ -169,13 +169,13 @@ export function useLocalServiceLauncherStartAction(
                 const workspace = { serverId: target.workspace.serverId, refId: target.declaration.workspaceRefId };
                 const placement = await executeProjectWorkerActionV1('projects.service.placement.get', {
                     workspace, serviceName: target.declaration.selection.name,
-                }, { expectedAccountId: context.expectedAccountId, signal: context.signal });
+                }, { expectedAccountId: context.expectedAccountId ?? undefined, signal: context.signal });
                 if (placement.status !== 'ready') throw new Error('project_service_placement_unavailable');
                 const destination = placement.placement.runsOn;
                 if (destination.kind !== 'workers' || destination.destination.kind !== 'pool') return destination;
                 if (destination.destination.selection === 'ask') throw new Error('choice_required');
                 const resolved = await resolveMachinePool(workspace.serverId, { poolId: destination.destination.poolId,
-                    purpose: 'service-start', workspace, requestKey: randomUUID() }, { expectedAccountId: context.expectedAccountId });
+                    purpose: 'service-start', workspace, requestKey: randomUUID() }, context.expectedAccountId ? { expectedAccountId: context.expectedAccountId } : undefined);
                 if (resolved.kind !== 'resolved') {
                     if (placement.placement.unavailable === 'primary') return { kind: 'primary' };
                     throw new Error(resolved.reason);

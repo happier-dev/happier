@@ -13,7 +13,8 @@ import { ReviewFindingsV2Schema } from '@happier-dev/protocol/messages/structure
 import { ScmDiffSummaryGenerateSuccessSchema } from '@happier-dev/protocol/scm/diffSummary';
 import { deriveTranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
-import { resolveMessageRouteIdForDisplay, type UserTextMessage } from "@happier-dev/session-core/messages";
+import type { UserTextMessage } from "@happier-dev/session-core/messages";
+import { resolveTranscriptToolRouteMessageId } from "@/components/sessions/transcript/transcriptSessionCommon";
 import type { MediaStageProps } from '@/components/ui/media/stage/mediaStageItems';
 import { DEFAULT_SESSION_CAPABILITIES } from '@happier-dev/protocol/features/payload/capabilities/sessionCapabilities';
 import { PENDING_INPUT_PROTOCOL_VERSION_V4 } from '@happier-dev/protocol/clientCompatibility/primitives';
@@ -1410,7 +1411,7 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             const message = source.useMessage(initial!.id);
             if (!message || message.kind !== 'tool-call') return null;
             return <ToolCallsGroupUnitToolRowWithSessionCommon {...common} message={message} expanded={false}
-                messageRouteId={resolveMessageRouteIdForDisplay({ message, ...common.toolRouteCommon })}
+                messageRouteId={resolveTranscriptToolRouteMessageId(message, common.toolRouteCommon)}
                 sessionId="s1" groupId="review-group" metadata={null} interaction={sessionInteraction} />;
         }
         const row = (enabled: boolean) => <TranscriptContentDemandProvider enabled={enabled}><ColdReviewRow /></TranscriptContentDemandProvider>;

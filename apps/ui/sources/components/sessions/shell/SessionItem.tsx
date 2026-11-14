@@ -9,6 +9,7 @@ import {
     Platform,
     Pressable,
     View,
+    type BlurEvent,
     type GestureResponderEvent,
     type StyleProp,
     type ViewStyle,
@@ -975,10 +976,12 @@ const SessionItemContent = React.memo(
             const target = event.nativeEvent?.target as { matches?: (selector: string) => boolean } | undefined;
             if (target?.matches?.(':focus-visible') === true) setKeyboardFocusWithin(true);
         }, []);
-        const handleRowBlur = React.useCallback((event: { nativeEvent?: { relatedTarget?: unknown }; currentTarget?: unknown }) => {
-            const next = event.nativeEvent?.relatedTarget;
-            const root = event.currentTarget as { contains?: (node: unknown) => boolean } | undefined;
-            if (next && root?.contains?.(next) === true) return;
+        const handleRowBlur = React.useCallback((event: BlurEvent) => {
+            // Web only: RNW forwards the DOM FocusEvent, whose `relatedTarget` RN's event type does not declare.
+            const nativeEvent: object | undefined = event.nativeEvent;
+            const next = nativeEvent && 'relatedTarget' in nativeEvent ? nativeEvent.relatedTarget : undefined;
+            const root: object | null | undefined = event.currentTarget;
+            if (next && root && 'contains' in root && typeof root.contains === 'function' && root.contains(next) === true) return;
             setKeyboardFocusWithin(false);
         }, []);
 

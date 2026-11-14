@@ -66,8 +66,8 @@ describe('transcript Find surface registration', () => {
             registration: {
                 find: registry, refreshFindAvailability() {}, registerHandlers: () => () => {},
                 executeCommand: () => false, submitFindInput: () => false,
+                labels: { getState: () => NO_KEYBOARD_SHORTCUT_LABELS, subscribe: () => () => {} },
             },
-            labels: NO_KEYBOARD_SHORTCUT_LABELS,
         };
         const viewportRef = React.createRef<React.ElementRef<typeof View>>();
         const publishCorpus = (next: TranscriptFindCorpus) => { corpus = next; };

@@ -130,8 +130,9 @@ function InlineOccurrences(props: Readonly<{ probe: { current: MountedSessionBoa
     props.probe.current = mounted;
     const report = mounted?.reportInlineTranscriptDemand;
     React.useEffect(() => {
-        const releaseFirst = report?.('visual-1', 'first');
-        const releaseSecond = report?.('visual-1', 'second');
+        // The first occurrence sits later in the transcript, so it stays the default target.
+        const releaseFirst = report?.('visual-1', 'first', 2);
+        const releaseSecond = report?.('visual-1', 'second', 1);
         return () => { releaseFirst?.(); releaseSecond?.(); };
     }, [report]);
     return null;

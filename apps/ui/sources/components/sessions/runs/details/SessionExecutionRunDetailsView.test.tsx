@@ -814,7 +814,7 @@ describe('SessionExecutionRunDetailsView — real Home, transcript and interacti
             const { Item } = await import('@/components/ui/lists/Item');
             const finishedToggle = () => screen.findAllByType(Item).find(node => node.props.title === 'runs.showFinished')!.findByType(Switch);
             await vi.waitFor(() => expect(finishedToggle()).toBeDefined());
-            await act(async () => finishedToggle().props.onValueChange(true));
+            await act(async () => finishedToggle().props.onValueChange?.(true));
         }
         const { ExecutionRunRow } = await import('@/components/sessions/runs/ExecutionRunRow');
         await vi.waitFor(() => expect(screen.findAllByType(ExecutionRunRow)).toHaveLength(1));

@@ -836,7 +836,7 @@ describe('session browser recording runtime', () => {
         await registerNativeCaptureHandler();
         await homes.requireUiApproval(homeId, 'browser.recording.start');
         const { ModalProvider } = await import('@/modal');
-        const screen = await renderScreen(<ModalProvider />);
+        const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
         const { useSessionBrowserRecordingRuntime } = await import('./sessionBrowserRecordingRuntime');
         const hook = await renderHook(({ sessionId }) => useSessionBrowserRecordingRuntime({
             enabled: true, scopeKey: sessionId, sessionId, machineId: 'machine_1', serverId: 'srv_recording',

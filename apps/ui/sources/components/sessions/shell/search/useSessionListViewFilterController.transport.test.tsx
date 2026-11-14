@@ -33,6 +33,7 @@ import { clearSessionListViewFilterRetentionForTests } from './useSessionListVie
 import { SessionListFilterControl } from './SessionListFilterControl';
 import { useSessionListRowsByServerId, useSessionOrganizationProjections } from '@/sync/domains/state/storage';
 import { useSessionListSpaceChrome } from './useSessionListSpaceChrome';
+import type { SessionSpaceDrop } from './SessionSpaceTabDropZone';
 import { SessionListFilterEditor } from './SessionListFilterEditor';
 import { buildSessionListFilterEditorLabels } from './SessionListFilterControl';
 import { useSessionListFilterEditorOptions } from './useSessionListFilterEditorOptions';
@@ -478,7 +479,9 @@ describe('saved Session spaces through the mounted query transport', () => {
                 });
                 const ids = React.useMemo(() => controller.homeOptions.map(home => home.serverId), [controller.homeOptions]);
                 const organization = useSessionOrganizationProjections(ids);
-                const chrome = useSessionListSpaceChrome({ controller, organizationProjectionsByServerId: organization });
+                // No row drag source in this harness: the drop target reads an empty Space drop.
+                const spaceDropRef = React.useRef<SessionSpaceDrop | null>(null);
+                const chrome = useSessionListSpaceChrome({ controller, organizationProjectionsByServerId: organization, spaceDropRef });
                 const options = useSessionListFilterEditorOptions(ids, controller.filters.homeServerIds);
                 return <>
                     <SessionListFilterControl controller={controller} spaceChrome={chrome} organizationProjectionsByServerId={organization} />

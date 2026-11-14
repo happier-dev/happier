@@ -394,10 +394,10 @@ describe('mixed Session and Run search projection', () => {
             searchQuery: query, selectedTagIds: [], ...hook.getCurrent(),
         });
         expect(matches('qa-agents-1110-kilo')).toHaveLength(0);
-        act(() => storage.getState().applyMessages(session.id, [{
+        act(() => { storage.getState().applyMessages(session.id, [{
             id: 'first-prompt', role: 'user', localId: null, createdAt: 1, seq: 2, isSidechain: false,
             content: { type: 'text', text: 'qa-agents-1110-kilo' },
-        }]));
+        }]); });
         const row = storage.getState().sessionListRowsByServerId[serverId]![session.id]!;
         expect(getSessionName(row, serverId)).toBe('qa-agents-1110-kilo');
         expect(hook.getCurrent().primarySearchableTextBySessionKey[sessionTagKey(serverId, session.id)]?.split('\n'))

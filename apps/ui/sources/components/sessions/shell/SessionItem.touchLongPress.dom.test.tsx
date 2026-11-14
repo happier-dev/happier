@@ -112,8 +112,8 @@ describe('SessionItem real web touch responder', () => {
 
     async function renderRow() {
         await act(async () => root.render(
-            <InjectedAuthProvider credentials={{ token: 'touch-row-test', encryption: null }}>
-                <ModelBackedSessionItem session={createSessionFixture({ id: 'touch_row', metadata: null, presence: 'offline' })}
+            <InjectedAuthProvider credentials={{ token: 'touch-row-test' }}>
+                <ModelBackedSessionItem session={createSessionFixture({ id: 'touch_row', metadata: null, presence: 1 })}
                     serverId={serverId} onTogglePinned={vi.fn()} />
             </InjectedAuthProvider>,
         ));

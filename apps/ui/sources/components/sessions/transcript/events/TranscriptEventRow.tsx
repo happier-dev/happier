@@ -258,7 +258,7 @@ function formatConnectedServiceSwitchAttemptFailureText(event: Extract<AgentEven
     const diagnosticPresentation = resolveConnectedServiceUxDiagnosticPresentation(diagnostic);
     return diagnosticPresentation
         ? t(diagnosticPresentation.statusKey)
-        : presentSessionAuthSwitchFailure(event.errorCode);
+        : presentSessionAuthSwitchFailure(event.errorCode ?? undefined);
 }
 
 function formatConnectedServiceSwitchAttemptSuccessText(event: Extract<AgentEvent, { type: 'connected-service-account-switch-attempt' }>): string {

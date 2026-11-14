@@ -34,7 +34,6 @@ let machineSequence = 0;
 afterEach(async () => { standardCleanup(); await fixture?.dispose(); });
 
 const reviewHome = {
-    featureOverrides: { features: { execution: { runs: { enabled: true } } } },
     settings: { experiments: true, featureToggles: { 'execution.runs': true } },
 } satisfies Parameters<typeof createSessionFilesViewFixture>[0];
 

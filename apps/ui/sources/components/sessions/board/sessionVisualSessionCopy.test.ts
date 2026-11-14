@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { copySessionVisualToSession } from './sessionVisualSessionCopy';
 import { createActionExecutor } from '@happier-dev/protocol/actions';
+import { SESSION_BOARD_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/sessions/board';
 import { createSessionBoardActionAdapter } from '@/sync/api/session/sessionBoardActions';
 import { createSessionSystemRecordRepository } from '@/sync/domains/sessionSystemRecords/repository';
 
@@ -42,10 +43,13 @@ describe('copySessionVisualToSession', () => {
         const repository = createSessionSystemRecordRepository({ scope, request });
         const executor = createActionExecutor({
             presentUserActionConfirmation: async () => true,
-            sessionBoardAction: args => createSessionBoardActionAdapter({ scope, request, repository,
-                session: { serverId: scope.serverId, sessionId: args.input.sessionId! }, contentContext: { mode: 'plain' },
-                boardEnabled: true, capabilities: { readTranscript: true, editSessionRecords: args.input.sessionId === 'session-b' },
-            })(args),
+            sessionBoardAction: args => {
+                const { sessionId } = SESSION_BOARD_ACTION_INPUT_SCHEMAS_V1[args.actionId].parse(args.input);
+                return createSessionBoardActionAdapter({ scope, request, repository,
+                    session: { serverId: scope.serverId, sessionId: sessionId! }, contentContext: { mode: 'plain' },
+                    boardEnabled: true, capabilities: { readTranscript: true, editSessionRecords: sessionId === 'session-b' },
+                })(args);
+            },
         });
         const outcome = await copySessionVisualToSession({ serverId: scope.serverId,
             source: { sessionId: 'session-a', itemId: 'chart', revision: sourceRevision },

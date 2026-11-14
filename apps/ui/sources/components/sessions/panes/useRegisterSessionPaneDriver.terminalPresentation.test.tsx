@@ -50,7 +50,7 @@ function Draft() {
     return React.createElement('RetainedChatDraft', { text, setText });
 }
 function Scene(props: Readonly<{ surface: 'chat' | 'terminal'; runtime: SessionPluginRuntimeState }>) {
-    const scopeId = useRegisterSessionPaneDriver('session', props.runtime.serverId, undefined, props.runtime);
+    const scopeId = useRegisterSessionPaneDriver('session', props.runtime.serverId, props.runtime);
     return <AppPaneScopeHost scopeId={scopeId} main={props.surface === 'terminal'
         ? <SessionTerminalSurface sessionId="session" scopeId={scopeId} /> : <Draft />} />;
 }

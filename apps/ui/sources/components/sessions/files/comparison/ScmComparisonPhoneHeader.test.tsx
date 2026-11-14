@@ -27,7 +27,7 @@ describe('ScmComparisonPhoneHeader', () => {
         const onFind = vi.fn(); const onPropose = vi.fn(); const onDisplay = vi.fn();
         const screen = await renderScreen(<ScmComparisonPhoneHeader view="files" views={['files', 'walkthrough']}
             scope={{ options: [], current: null, currentLabel: 'Pending changes', fileCount: 3, onSelect: () => {} }}
-            onSelectView={() => {}} onBack={() => {}} onStartReview={() => {}} onProposeCommits={onPropose}
+            onSelectView={() => {}} onStartReview={() => {}} onProposeCommits={onPropose}
             sections={[
                 { id: 'find', items: [{ id: 'open', title: 'find.surface.changes' }], onSelect: onFind },
                 { id: 'display', title: 'Display', items: [{ id: 'wrap', title: 'Wrap lines', checked: true }], onSelect: onDisplay },

@@ -67,11 +67,11 @@ let serverId: string;
 let portalBoundary: ReturnType<typeof installReactDomPortalBoundaryForTests> | undefined;
 
 function createSession(id: string) {
-    return createSessionFixture({ id, metadata: null, presence: 'offline' });
+    return createSessionFixture({ id, metadata: null, presence: 1 });
 }
 
 function renderScreen(element: React.ReactElement) {
-    return renderCanonicalScreen(<InjectedAuthProvider credentials={{ token: 'touch-row-test', encryption: null }}>
+    return renderCanonicalScreen(<InjectedAuthProvider credentials={{ token: 'touch-row-test' }}>
         {element}
     </InjectedAuthProvider>);
 }
