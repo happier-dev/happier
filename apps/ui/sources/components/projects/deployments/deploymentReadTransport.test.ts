@@ -529,6 +529,10 @@ describe('deployment scoped read transport', () => {
             occurrenceId: 'destination', config: { bucket: 'recovery' }, credentialBindings: [],
             sources: [{ kind: 'dump', sourceId: 'database', service: 'db', consistency: 'logical' }],
             ownership: { environmentId: detail.environment.id, prefix: 'backups' }, retention: { kind: 'keepEverything' } };
+        // An App installed from a catalog keeps its private template provenance; the collection carries only the
+        // listing pointer, so Installed draws the App's own mark (J50, QA-SHELL-1114).
+        detail.content.template = { templateRef: { sourceId: 'apps', itemId: 'postgres', version: '1',
+            ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } }, definition: detail.content.definition, services: ['web'] } as never;
         const receiptDetail = createDeploymentReceiptDetailV1();
         receiptDetail.deployment.state = 'running';
         receiptDetail.content.steps = [{ id: 'source', label: 'Source', state: 'succeeded' }];
@@ -571,7 +575,7 @@ describe('deployment scoped read transport', () => {
         const options = { signal: new AbortController().signal };
         expect(await transport.listEnvironments(scope, {}, options)).toMatchObject({ ok: true,
             value: { items: [{ environment: environmentHeader, title: detail.content.name,
-                backupConfigured: true,
+                backupConfigured: true, catalogTemplate: { sourceId: 'apps', itemId: 'postgres', version: '1' },
                 projectSourceName: projectSources[0]!.name, liveVersionTitle: 'Exact revision A',
                 currentDeployment: { ...receiptHeader, title: 'Exact revision A', steps: receiptDetail.content.steps } }] } });
         const exactHeaderQuery = { environmentIds: [environmentHeader.id], machineId: undefined };

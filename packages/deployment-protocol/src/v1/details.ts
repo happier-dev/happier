@@ -23,6 +23,8 @@ export const DeploymentEnvironmentCollectionV1Schema = z.strictObject({
         backupConfigured: z.optional(z.boolean()),
         /** Actual opened template configuration; omitted when the private Artifact is unavailable. */
         previewTemplateConfigured: z.optional(z.boolean()),
+        /** The catalog listing an App was installed from (its pointer only), opened from the private template provenance. */
+        catalogTemplate: z.optional(z.strictObject({ sourceId: z.string(), itemId: z.string(), version: z.string() })),
         /** Unknown unless the carried receipt is the runtime link's actual active deployment. */
         liveVersionTitle: z.optional(z.nullable(z.string())),
         /** Opened serving address; null means none resolved, omission means unknown. */

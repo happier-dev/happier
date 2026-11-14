@@ -275,7 +275,9 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 items.push({ environment, title: label.title, projectSourceName,
                     ...(opened.ok ? { backupConfigured: opened.content.backup !== undefined
                         && !('notNeeded' in opened.content.backup),
-                        previewTemplateConfigured: opened.content.previewTemplate !== undefined } : {}),
+                        previewTemplateConfigured: opened.content.previewTemplate !== undefined,
+                        ...(opened.content.template ? { catalogTemplate: { sourceId: opened.content.template.templateRef.sourceId,
+                            itemId: opened.content.template.templateRef.itemId, version: opened.content.template.templateRef.version } } : {}) } : {}),
                     liveVersionTitle: currentDeployment && runtimeTargetLink?.activeDeploymentId === currentDeployment.id
                         ? currentDeployment.title ?? null : null,
                     ...(liveAddress === undefined ? {} : { liveAddress }),

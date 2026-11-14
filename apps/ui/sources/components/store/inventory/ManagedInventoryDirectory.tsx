@@ -17,6 +17,8 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { StoreItemMark } from '../catalog/StoreItemMark';
+import { useStoreRegistryIdentity } from '../catalog/StoreRegistryIdentity';
+import { StoreDiscoverRegistryIdentityScope } from '../catalog/StoreDiscoverRegistryIdentityScope';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
@@ -176,8 +178,12 @@ export function ManagedInventoryDirectory(
     !added.some((row) => row.kind === 'plugin')
       ? state.families.find((entry) => entry.kind === 'plugin')
       : undefined;
+  // The App catalogs' listings, read once per source by the same summary owner Discover uses, give each row its mark.
+  const appListings = React.useMemo(() => state.rows.flatMap((row) => row.kind === 'app' && row.native.catalogTemplate
+    ? [{ reference: { type: 'registryItem' as const, kind: 'app' as const, ...row.native.catalogTemplate }, title: row.native.title }] : []),
+  [state.rows]);
   return (
-    <>
+    <StoreDiscoverRegistryIdentityScope items={appListings} presented={appListings.length > 0}>
       {state.attention.length > 0 ? (
         <ItemGroup
           testID={`${props.testIDPrefix}.needs`}
@@ -247,7 +253,7 @@ export function ManagedInventoryDirectory(
           testID={`${props.testIDPrefix}.section.included`}
         />
       ) : null}
-    </>
+    </StoreDiscoverRegistryIdentityScope>
   );
 }
 
@@ -300,6 +306,11 @@ export function RowMark(
 ) {
   const { theme } = useUnistyles();
   const { row } = props;
+  // An App installed from a catalog draws its listing's own artwork through the Store's registry identity (J50).
+  const appTemplate = row.kind === 'app' ? row.native.catalogTemplate ?? null : null;
+  const appListing = useStoreRegistryIdentity(appTemplate ? { type: 'registryItem', kind: 'app', ...appTemplate } : null);
+  if (row.kind === 'app' && appListing?.brandMark)
+    return <StoreItemMark facts={{ kind: 'app', title: props.title, brand: appListing.brandMark }} size={MARK_PX} />;
   switch (row.kind) {
     case 'skill':
       return (
