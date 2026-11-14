@@ -12,6 +12,7 @@ import {
 } from './projectionInvalidation';
 import { getPluginUiClientExecutableComposition } from './clientExecutableContributions';
 import { createPluginUiCommonJsLoaderBackend } from './commonJsLoaderBackend';
+import { loadPluginReactNativeBundleExport, loadPluginReactNativeBundleModule } from './loader';
 import { PluginContributesV2Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 import { PluginUiArtifactsManifestEntryV2Schema } from '@happier-dev/protocol/plugins/ui';
 import { settleAppShellPluginRuntimeUpdate } from '@/components/appShell/plugins/AppShellPluginUiProjection';
@@ -247,7 +248,73 @@ describe('plugin UI React Native runtime projection invalidation owner', () => {
 
         sourceA.dispose();
         sourceB.dispose();
+        // The Artifact, not the scope that mounted it, owns its bytes; evaluated modules leave with the scope.
+        expect(cache.readInstalledArtifact(generation13Identity)).not.toBeNull();
+        expect(surfaceModules.read(generation13CacheKey)).toBeNull();
+        reconciler.retainEnabledPlugins(sourceBAccountLifetime, new Set());
         expect(cache.readInstalledArtifact(generation13Identity)).toBeNull();
         expect(surfaceModules.read(generation13CacheKey)).toBeNull();
+    });
+
+    it('compiles a plugin Artifact once across Session opens and leaves, and again only when its Artifact changes', async () => {
+        const cache = createPluginReactNativeBundleCache();
+        const surfaceModules = createPluginReactNativeModuleRegistry();
+        const reconciler = createPluginUiReactNativeRuntimeProjectionReconciler({ cache, surfaceModules });
+        const account = createRetirableAccountLifetime();
+        const backend = createPluginUiCommonJsLoaderBackend();
+        const bytes = new TextEncoder().encode(
+            'exports.renderSurface = function () { return null; }; exports.activate = function () { return exports; };',
+        );
+        const decode = vi.spyOn(TextDecoder.prototype, 'decode');
+        let acquisitions = 0;
+        let surfaceEvaluations = 0;
+        const activationNamespaces = new Set<unknown>();
+        // One Session open: its scoped source publishes, its surface mounts (shared module) and
+        // its client executable activates (fresh namespace); leaving disposes the source.
+        const openAndLeaveSession = async (cacheIdentity: ReturnType<typeof identity>) => {
+            const source = reconciler.createSource();
+            source.update({ projection: model(1, [bundle(cacheIdentity)]), accountLifetime: account.lifetime,
+                isCurrent: account.lifetime.isCurrent });
+            if (!cache.readInstalledArtifact(cacheIdentity)) {
+                acquisitions += 1;
+                cache.putInstalledArtifact({ identity: cacheIdentity, bytes, format: 'plainJs' });
+            }
+            const cacheKey = derivePluginReactNativeBundleCacheKey(cacheIdentity);
+            if (!surfaceModules.read(cacheKey)) {
+                const fence = surfaceModules.captureWriteFence(cacheKey);
+                const loaded = await loadPluginReactNativeBundleModule({ cache, identity: cacheIdentity, backend });
+                surfaceEvaluations += 1;
+                expect(loaded.ok && fence && surfaceModules.write(cacheKey, loaded.module, fence)).toBe(true);
+            }
+            const activation = await loadPluginReactNativeBundleExport({ cache, identity: cacheIdentity,
+                moduleReference: { exportName: 'activate' }, backend });
+            if (activation.ok) activationNamespaces.add(Reflect.apply(activation.exported, undefined, []));
+            source.dispose();
+        };
+        try {
+            for (let open = 0; open < 5; open += 1) await openAndLeaveSession(identity(12));
+            expect({ acquisitions, compiles: decode.mock.calls.length, surfaceEvaluations,
+                activationNamespaces: activationNamespaces.size })
+                .toEqual({ acquisitions: 1, compiles: 1, surfaceEvaluations: 5, activationNamespaces: 5 });
+
+            await openAndLeaveSession(identity(13));
+            expect({ acquisitions, compiles: decode.mock.calls.length, surfaceEvaluations })
+                .toEqual({ acquisitions: 2, compiles: 2, surfaceEvaluations: 6 });
+            // The replaced Artifact is released; the current one stays until the census or Account drops it.
+            expect(cache.readInstalledArtifact(identity(12))).toBeNull();
+            expect(surfaceModules.read(derivePluginReactNativeBundleCacheKey(identity(12)))).toBeNull();
+            expect(cache.readInstalledArtifact(identity(13))).not.toBeNull();
+
+            reconciler.retainEnabledPlugins(account.lifetime, new Set(['acme.preview']));
+            expect(cache.readInstalledArtifact(identity(13))).not.toBeNull();
+            // Memory pressure releases what no mounted scope declares; the next open re-creates it.
+            reconciler.releaseRetained();
+            expect(cache.readInstalledArtifact(identity(13))).toBeNull();
+            await openAndLeaveSession(identity(13));
+            expect({ acquisitions, compiles: decode.mock.calls.length }).toEqual({ acquisitions: 3, compiles: 3 });
+            account.retire();
+            expect(cache.readInstalledArtifact(identity(13))).toBeNull();
+            expect(surfaceModules.read(derivePluginReactNativeBundleCacheKey(identity(13)))).toBeNull();
+        } finally { decode.mockRestore(); }
     });
 });

@@ -13,6 +13,8 @@ export type PluginReactNativeLoaderBackend = Readonly<{
         identity: PluginReactNativeBundleCacheIdentity;
         bytes: Uint8Array;
         moduleReference?: PluginReactNativeExecutableModuleReference;
+        /** The byte owner's per-digest compiled program slot (compiles on first use). */
+        readProgram?: <TProgram>(compile: (bytes: Uint8Array) => TProgram) => TProgram | null;
     }>) => Promise<PluginReactNativeExecutableExport>;
     unavailableReason?: string;
     diagnostics?: readonly string[];
@@ -85,6 +87,7 @@ export async function loadPluginReactNativeBundleExport(params: Readonly<{
         identity: params.identity,
         bytes: cached.bytes,
         ...(params.moduleReference ? { moduleReference: params.moduleReference } : {}),
+        readProgram: (compile) => params.cache.readInstalledProgram(params.identity, compile),
     });
     if (typeof exported !== 'function') {
         return Object.freeze({

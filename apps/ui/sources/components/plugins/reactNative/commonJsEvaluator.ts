@@ -57,63 +57,88 @@ export type PluginUiCommonJsModule = Readonly<{
     readExport: (requestedExport: string) => (...args: never[]) => unknown;
 }>;
 
-/** Instantiate bytes separately from selecting an export or activating a scope. */
-export function instantiatePluginUiCommonJsBundle(input: PluginUiCommonJsEvaluationInput): PluginUiCommonJsModule {
+type PluginUiCommonJsModuleFunction = (
+    module: { exports: unknown },
+    exports: unknown,
+    require: (specifier: string) => unknown,
+) => void;
+
+/**
+ * An Artifact's compiled module function: decoding and `new Function` (the Hermes
+ * compile) depend only on the bytes, so the byte owner may keep it beside them.
+ * Running it is instantiation, which always gets a fresh namespace.
+ */
+export type PluginUiCommonJsProgram = Readonly<{
+    identity: PluginUiCommonJsArtifactIdentity;
+    moduleFunction: PluginUiCommonJsModuleFunction;
+}>;
+
+export function compilePluginUiCommonJsBundle(
+    input: Pick<PluginUiCommonJsEvaluationInput, 'bytes' | 'identity' | 'requestedExport'>,
+): PluginUiCommonJsProgram {
+    // The program outlives this call: close over identity facts, not the input or its bytes.
+    const { identity, requestedExport } = input;
     let source: string;
     try {
         source = new TextDecoder('utf-8', { fatal: true }).decode(input.bytes);
     } catch {
-        fail({
-            code: 'module_instantiation_failed',
-            identity: input.identity,
-            requestedExport: input.requestedExport,
-        });
+        fail({ code: 'module_instantiation_failed', identity, requestedExport });
     }
+    try {
+        const moduleFunction = new Function(
+            'module',
+            'exports',
+            'require',
+            `"use strict";\n${source}${boundedSourceUrl(identity)}`,
+        ) as PluginUiCommonJsModuleFunction;
+        return Object.freeze({ identity, moduleFunction });
+    } catch {
+        fail({ code: 'module_instantiation_failed', identity, requestedExport });
+    }
+}
 
+/** Run a compiled program in a fresh namespace, separately from selecting an export or activating a scope. */
+export function instantiatePluginUiCommonJsProgram(
+    program: PluginUiCommonJsProgram,
+    input: Pick<PluginUiCommonJsEvaluationInput, 'requestedExport' | 'hostModules'>,
+): PluginUiCommonJsModule {
     const module = { exports: {} as unknown };
     const exports = module.exports;
     const hostModules = input.hostModules ?? PLUGIN_UI_COMMON_JS_HOST_MODULES;
+    // The module keeps `require` for its lifetime: it must close over these facts, not the artifact bytes.
+    const { identity } = program;
+    const { requestedExport } = input;
     const requireHostModule = (specifier: string): unknown => {
         if (!Object.prototype.hasOwnProperty.call(hostModules, specifier)) {
-            fail({
-                code: 'unknown_host_module',
-                identity: input.identity,
-                requestedExport: input.requestedExport,
-                specifier,
-            });
+            fail({ code: 'unknown_host_module', identity, requestedExport, specifier });
         }
         return (hostModules as Readonly<Record<string, unknown>>)[specifier];
     };
 
     try {
-        const instantiate = new Function(
-            'module',
-            'exports',
-            'require',
-            `"use strict";\n${source}${boundedSourceUrl(input.identity)}`,
-        ) as (module: { exports: unknown }, exports: unknown, require: (specifier: string) => unknown) => void;
-        instantiate(module, exports, requireHostModule);
+        program.moduleFunction(module, exports, requireHostModule);
     } catch (error) {
         if (error instanceof PluginUiCommonJsEvaluationError) throw error;
-        fail({
-            code: 'module_instantiation_failed',
-            identity: input.identity,
-            requestedExport: input.requestedExport,
-        });
+        fail({ code: 'module_instantiation_failed', identity, requestedExport });
     }
 
     const namespace = module.exports;
     return Object.freeze({
-        readExport: (requestedExport) => {
+        readExport: (exportName) => {
             const exported = namespace && (typeof namespace === 'object' || typeof namespace === 'function')
-                ? Reflect.get(namespace, requestedExport)
+                ? Reflect.get(namespace, exportName)
                 : undefined;
             if (typeof exported !== 'function') {
-                fail({ code: 'invalid_executable_export', identity: input.identity, requestedExport });
+                fail({ code: 'invalid_executable_export', identity, requestedExport: exportName });
             }
             return exported as (...args: never[]) => unknown;
         },
     });
+}
+
+/** Instantiate bytes separately from selecting an export or activating a scope. */
+export function instantiatePluginUiCommonJsBundle(input: PluginUiCommonJsEvaluationInput): PluginUiCommonJsModule {
+    return instantiatePluginUiCommonJsProgram(compilePluginUiCommonJsBundle(input), input);
 }
 
 export function evaluatePluginUiCommonJsBundle(input: PluginUiCommonJsEvaluationInput): (...args: never[]) => unknown {

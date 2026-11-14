@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { AppState } from 'react-native';
 import { useShallow } from 'zustand/react/shallow';
 import { publishCommittedAppShellPluginUiProjection, readCurrentAppShellPluginUiExecutionOriginCandidates } from './committedPluginUiProjection';
 import type { AppShellPluginUiProjectionRead } from './committedPluginUiProjection';
@@ -19,6 +20,8 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
 import {
     createInstalledPluginUiReactNativeRuntimeProjectionSource,
+    releaseRetainedInstalledPluginUiReactNativeArtifacts,
+    retainInstalledPluginUiReactNativeArtifactsForEnabledPlugins,
     type PluginUiReactNativeRuntimeProjectionSource,
 } from '@/components/plugins/reactNative/projectionInvalidation';
 import { useIsActiveMachineListSettled, useSettingsSelector } from '@/sync/domains/state/storage';
@@ -473,19 +476,29 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         accountArtifactProjectionSource.current?.dispose();
         accountArtifactProjectionSource.current = null;
     }, []);
+    // Retained plugin Artifacts (bytes + compiled programs) are re-creatable; the platform's
+    // memory-pressure signal (iOS) releases those no mounted scope declares.
+    React.useEffect(() => {
+        const subscription = AppState.addEventListener('memoryWarning', releaseRetainedInstalledPluginUiReactNativeArtifacts);
+        // react-native-web accepts 'memoryWarning' but returns no subscription (only 'change' is wired on web).
+        return () => (subscription as typeof subscription | undefined)?.remove();
+    }, []);
     const hasEstablishingMembers = projectionUnion.hasEstablishingMembers;
     const hasCurrentAccountUi = accountUiProjection !== null && isCurrentAccountLifetime(accountLifetime);
     const { interactionEnabled, phase, unavailableReasonCode } = projectPluginUiProjectionAvailability(
         projectionUnion, hasCurrentAccountUi ? accountUiProjection : null,
     );
     // A plugin the Account no longer has enabled takes its retained idle values (a Home widget's
-    // warm list, for one) with it, instead of keeping them until the Account changes.
+    // warm list, for one) and its retained Artifact bytes and compiled modules with it, instead of
+    // keeping them until the Account changes.
     React.useEffect(() => {
         if (phase !== 'current' || !pluginUiProjection) return;
         const enabledPluginIds = new Set(Object.entries(pluginUiProjection.installedPackagesById)
             .filter(([, installed]) => installed.enabled)
             .map(([pluginId]) => pluginId));
-        retireIdlePluginUiEphemeralSharedValuesExcept(captureActiveServerAccountScopeLifetime(), enabledPluginIds);
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        retireIdlePluginUiEphemeralSharedValuesExcept(lifetime, enabledPluginIds);
+        retainInstalledPluginUiReactNativeArtifactsForEnabledPlugins(lifetime, enabledPluginIds);
     }, [phase, pluginUiProjection]);
     const platform = resolvePluginUiProjectionPlatform();
     const clientExecutablePlatform = resolvePluginUiClientExecutablePlatform();

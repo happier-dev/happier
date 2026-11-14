@@ -3096,9 +3096,17 @@ a later activation evaluates a fresh CommonJS namespace, even for unchanged
 bytes and the same Account. Different concurrent authorities or activation
 targets also receive separate namespaces: a plugin may capture its activation
 API in module-level state. There is no process-global executable namespace
-cache. Installed and bundled Artifacts share this loader. The separate surface
-module registry retains only modules owned by active scoped projections and
-rejects late writes after retirement. Byte admission, activation/currentness
+cache. Installed and bundled Artifacts share this loader. The byte cache keeps
+each installed digest's compiled program (decode plus `new Function`) beside its
+bytes, so a later activation instantiates a fresh namespace without recompiling.
+The separate surface module registry shares one evaluated module per digest only
+while a current scope mounts it (an evaluation can hold hundreds of MB of native
+memory). Bytes and programs belong to the Artifact, not to the scope that
+mounted it: a digest declared by a current Account-scoped projection stays
+retained after that scope withdraws (leaving a Session), and is released when the
+same plugin contribution is declared with another digest, when the plugin leaves
+the Account's enabled census (AppShell), or when the Account lifetime retires.
+Late writes for a key that is neither active nor retained are rejected. Byte admission, activation/currentness
 checks, registrations and cleanup retain their existing owners; module reuse
 grants no authority.
 

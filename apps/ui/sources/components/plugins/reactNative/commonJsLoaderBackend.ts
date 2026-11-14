@@ -6,18 +6,19 @@ export function createPluginUiCommonJsLoaderBackend(): PluginReactNativeLoaderBa
         backendId: 'commonJs',
         available: true,
         diagnostics: Object.freeze([]),
-        // Current active/pending reuse belongs to the executable activation host.
+        // Current active/pending reuse belongs to the executable activation host. The compiled
+        // program is the byte owner's (one per digest); every load still runs it in a fresh namespace.
         loadInstalledBundle: async (input) => {
-            const { evaluatePluginUiCommonJsBundle } = await import('./commonJsEvaluator');
-            return evaluatePluginUiCommonJsBundle({
-                bytes: input.bytes,
-                identity: {
-                    pluginId: input.identity.pluginId,
-                    artifactId: input.identity.artifactId,
-                    digest: input.identity.artifactDigest,
-                },
-                requestedExport: input.moduleReference?.exportName ?? 'renderSurface',
-            });
+            const { compilePluginUiCommonJsBundle, instantiatePluginUiCommonJsProgram } = await import('./commonJsEvaluator');
+            const requestedExport = input.moduleReference?.exportName ?? 'renderSurface';
+            const identity = {
+                pluginId: input.identity.pluginId,
+                artifactId: input.identity.artifactId,
+                digest: input.identity.artifactDigest,
+            };
+            const compile = (bytes: Uint8Array) => compilePluginUiCommonJsBundle({ bytes, identity, requestedExport });
+            const program = input.readProgram?.(compile) ?? compile(input.bytes);
+            return instantiatePluginUiCommonJsProgram(program, { requestedExport }).readExport(requestedExport);
         },
     });
 }

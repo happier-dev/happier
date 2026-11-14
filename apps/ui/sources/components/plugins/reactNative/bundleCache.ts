@@ -127,6 +127,14 @@ export type PluginReactNativeBundleCache = Readonly<{
         files?: readonly PluginReactNativeCachedArtifactFile[];
     }>, writeFence?: PluginReactNativeBundleCacheWriteFence) => PluginReactNativeBundleCachePutResult;
     readInstalledArtifact: (identity: PluginReactNativeBundleCacheIdentity | Pick<PluginReactNativeBundleCacheIdentity, 'artifactDigest'>, accountScope?: ServerAccountScope) => PluginReactNativeCachedArtifact | null;
+    /**
+     * The installed entry's compiled program, compiled from its retained bytes on
+     * first use and released with them. Null when the digest is not installed.
+     */
+    readInstalledProgram: <TProgram>(
+        identity: Pick<PluginReactNativeBundleCacheIdentity, 'artifactDigest'>,
+        compile: (bytes: Uint8Array) => TProgram,
+    ) => TProgram | null;
     readPersistentArtifact: (
         identity: PluginReactNativePersistentArtifactIdentity,
     ) => Promise<PluginReactNativePersistentArtifactRecord | null>;
@@ -152,9 +160,9 @@ export type PluginReactNativeBundleCache = Readonly<{
     }>) => PluginReactNativePersistentAccountOperation | null;
     retireAccount: (scope: ServerAccountScope) => Promise<void>;
     /**
-     * Reconciles the process-local executable cache with every active scoped
-     * projection source. A cache identity remains reusable until its last
-     * current source withdraws it.
+     * Reconciles the process-local executable cache with the projection owner's
+     * active and retained identities. A cache identity remains reusable until
+     * that owner releases it (Artifact changed, plugin disabled, Account retired).
      */
     reconcileActiveProjectionIdentities: (
         identities: readonly PluginReactNativeBundleCacheIdentity[],
@@ -521,7 +529,15 @@ export function createPluginReactNativeBundleCache(
         onDiagnostic: options.onPersistentCacheDiagnostic,
     });
     const hotEntryAccountScopes = new Map<string, string>();
+    // One compiled program per installed digest. Only the single installed
+    // loader backend compiles, so the slot holds that backend's program type.
+    const programs = new Map<string, unknown>();
     const activeProjectionKeys = new Set<string>();
+    const deleteEntry = (key: string): void => {
+        entries.delete(key);
+        hotEntryAccountScopes.delete(key);
+        programs.delete(key);
+    };
     // Before the reconciler observes its first complete source union, the
     // incumbent Artifact path may still be writing bytes for the mount which
     // is about to register that union. Afterwards, this existing set is the
@@ -552,11 +568,8 @@ export function createPluginReactNativeBundleCache(
             for (const key of nextKeys) activeProjectionKeys.add(key);
         }
 
-        for (const [key, entry] of entries.entries()) {
-            if (!activeProjectionKeys.has(key)) {
-                entries.delete(key);
-                hotEntryAccountScopes.delete(key);
-            }
+        for (const key of [...entries.keys()]) {
+            if (!activeProjectionKeys.has(key)) deleteEntry(key);
         }
     }
 
@@ -564,8 +577,7 @@ export function createPluginReactNativeBundleCache(
         const key = accountScopeKey(scope);
         for (const [cacheKey, entryScope] of hotEntryAccountScopes.entries()) {
             if (entryScope !== key) continue;
-            entries.delete(cacheKey);
-            hotEntryAccountScopes.delete(cacheKey);
+            deleteEntry(cacheKey);
         }
     }
 
@@ -585,8 +597,7 @@ export function createPluginReactNativeBundleCache(
     ): Promise<void> {
         const key = derivePluginReactNativeBundleCacheKey(identity);
         if (isCurrent() && hotEntryAccountScopes.get(key) === accountScopeKey(identity.accountScope)) {
-            entries.delete(key);
-            hotEntryAccountScopes.delete(key);
+            deleteEntry(key);
         }
         await persistentCustody.removePersistentArtifact(identity, isCurrent);
     }
@@ -621,6 +632,7 @@ export function createPluginReactNativeBundleCache(
                     });
                 }
             }
+            programs.delete(cacheKey);
             entries.set(cacheKey, Object.freeze({
                 identity: entry.identity,
                 cacheKey,
@@ -648,6 +660,18 @@ export function createPluginReactNativeBundleCache(
                     ...(entry.files ? { files: cloneCachedArtifactFiles(entry.files) } : {}),
                 })
                 : null;
+        },
+        readInstalledProgram: <TProgram>(
+            identity: Pick<PluginReactNativeBundleCacheIdentity, 'artifactDigest'>,
+            compile: (bytes: Uint8Array) => TProgram,
+        ): TProgram | null => {
+            const key = derivePluginReactNativeBundleCacheKey(identity);
+            const entry = entries.get(key);
+            if (!entry) return null;
+            if (programs.has(key)) return programs.get(key) as TProgram;
+            const program = compile(entry.bytes);
+            if (entries.get(key) === entry) programs.set(key, program);
+            return program;
         },
         readPersistentArtifact: async (identity) => {
             const operation = persistentCustody.capturePersistentAccountOperation({

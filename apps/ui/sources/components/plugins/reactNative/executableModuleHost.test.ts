@@ -44,10 +44,11 @@ function backend(exported: PluginReactNativeExecutableExport): PluginReactNative
 }
 
 describe('PluginUiExecutableModuleHost', () => {
-    it('reuses a current activation but reevaluates CommonJS bytes after activation retirement', async () => {
-        // Forward the real loader and evaluator; count the expensive operation itself.
-        const evaluations = vi.spyOn(commonJs, 'evaluatePluginUiCommonJsBundle');
-        onTestFinished(() => evaluations.mockRestore());
+    it('reuses a current activation, re-instantiates a fresh namespace after activation retirement, and compiles once per digest', async () => {
+        // Forward the real loader and evaluator; count instantiation (fresh namespace) and compilation.
+        const evaluations = vi.spyOn(commonJs, 'instantiatePluginUiCommonJsProgram');
+        const compiles = vi.spyOn(commonJs, 'compilePluginUiCommonJsBundle');
+        onTestFinished(() => { evaluations.mockRestore(); compiles.mockRestore(); });
         const host = createPluginUiExecutableModuleHost();
         onTestFinished(() => host.unload());
         const cache = createPluginReactNativeBundleCache();
@@ -64,12 +65,14 @@ describe('PluginUiExecutableModuleHost', () => {
         await host.invalidatePlugin(identity.pluginId);
         expect(await host.activate(input)).toEqual({ ok: true });
         expect(evaluations).toHaveBeenCalledTimes(2);
+        expect(compiles).toHaveBeenCalledTimes(1);
         const replacement: PluginReactNativeBundleCacheIdentity = { ...identity, artifactDigest: 'sha256:replacement' };
         cache.putInstalledArtifact({ identity: replacement, format: 'plainJs',
             bytes: new TextEncoder().encode('exports.activateClientRuntime = function () {};') });
         expect(await host.activate({ ...input, identity: replacement })).toEqual({ ok: true });
         expect(await host.activate({ ...input, identity: replacement })).toEqual({ ok: true });
         expect(evaluations).toHaveBeenCalledTimes(3);
+        expect(compiles).toHaveBeenCalledTimes(2);
     });
 
     it('releases all executable namespaces across seven retired external Account activations', async () => {
@@ -142,7 +145,7 @@ describe('PluginUiExecutableModuleHost', () => {
     });
 
     it('does not reuse a real external namespace whose asynchronous load settled after Account retirement', async () => {
-        const evaluations = vi.spyOn(commonJs, 'evaluatePluginUiCommonJsBundle');
+        const evaluations = vi.spyOn(commonJs, 'instantiatePluginUiCommonJsProgram');
         onTestFinished(() => evaluations.mockRestore());
         const host = createPluginUiExecutableModuleHost();
         onTestFinished(() => host.unload());

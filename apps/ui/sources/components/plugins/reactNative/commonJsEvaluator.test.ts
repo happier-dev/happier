@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { setFlagsFromString } from 'node:v8';
+import { runInNewContext } from 'node:vm';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
@@ -274,5 +276,22 @@ describe('evaluatePluginUiCommonJsBundle', () => {
             expect(error).toBeInstanceOf(PluginUiCommonJsEvaluationError);
             expect(String(error)).not.toContain('secret plugin payload');
         }
+    });
+
+    it('does not keep the artifact bytes alive through the instantiated module', async () => {
+        setFlagsFromString('--expose-gc');
+        const collect: () => void = runInNewContext('gc');
+        setFlagsFromString('--no-expose-gc');
+        const padding = ' '.repeat(8 * 1024 * 1024);
+        let bytes: Uint8Array | null = encoder.encode(`module.exports.render = () => require('react');/*${padding}*/`);
+        const released = new WeakRef(bytes.buffer);
+        const module = instantiatePluginUiCommonJsBundle({ bytes, identity, requestedExport: 'render' });
+        bytes = null;
+        // A WeakRef keeps its target for the rest of the job that created it.
+        await new Promise(resolve => setTimeout(resolve, 0));
+        collect();
+        expect(typeof module.readExport('render')).toBe('function');
+        // Compare a boolean: printing a retained 8 MiB buffer in a failure diff exhausts the worker heap.
+        expect(released.deref() === undefined).toBe(true);
     });
 });
