@@ -77,6 +77,8 @@ describe('Session spawn defaults at admission', () => {
     { name: 'MCP Team defaults', surface: 'mcp' as const, layer: 'team', permission: 'safe-yolo', modelId: 'team-model' },
     { name: 'saved member defaults', surface: 'mcp' as const, layer: 'member', permission: 'read-only', modelId: 'member-model' },
     { name: 'Voice spawn binding reaches saved member model and service defaults', surface: 'voice' as const, layer: 'member', permission: 'read-only', modelId: 'member-model' },
+    { name: 'explicit Muse source excludes the saved Codex pool', surface: 'mcp' as const, layer: 'muse', permission: 'safe-yolo', modelId: 'team-model' },
+    { name: 'no explicit source retains the saved Codex pool', surface: 'mcp' as const, layer: 'pool-default', permission: 'safe-yolo', modelId: 'team-model' },
     { name: 'explicit Automatic', surface: 'mcp' as const, layer: 'automatic', permission: 'safe-yolo', modelId: 'team-model' },
     { name: 'V2 native Team model', surface: 'mcp' as const, layer: 'v2', permission: 'safe-yolo', modelId: 'team-model' },
     { name: 'V2 Team resource model', surface: 'mcp' as const, layer: 'team-resource', permission: 'safe-yolo', modelId: 'team-model' },
@@ -148,7 +150,9 @@ describe('Session spawn defaults at admission', () => {
         snapshot: { settings, settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], source: 'network',
           scopeKey: resolveAccountSettingsScopeKeyForToken(token), whenRefreshed: null,
           connectedPurposeCatalog: { status: 'ready', revision: 1, record: { key: 'purposes',
-            value: ConnectedPurposeCatalogV1Schema.parse({ v: 1, bindings: testCase.layer === 'member' || testCase.layer === 'policy' || crossAccount
+            value: ConnectedPurposeCatalogV1Schema.parse({ v: 1, bindings: testCase.layer === 'muse' || testCase.layer === 'pool-default'
+              ? [{ purpose: purpose.purpose, target: { kind: 'group', service, groupId: 'saved-codex-pool' } }]
+              : testCase.layer === 'member' || testCase.layer === 'policy' || crossAccount
               ? [{ purpose: purpose.purpose, target: { kind: 'account', account: { service, accountId: 'member-account' } } }] : [] }) } } } }),
       sessionSpawnDirectTargetTransport: { machineId: 'machine', prepare: async () => ({ ok: true, directory: '/tmp', directoryKind: 'path', directoryCreationRequired: false, checkout: null }),
         spawnedSession: { spawn: async request => { launched.push(request); return { type: 'success', sessionId: 'created',
@@ -206,7 +210,9 @@ describe('Session spawn defaults at admission', () => {
         model: { value: null, updatedAtMs: 1, selectionSource: 'explicit' },
         permissionIntent: { value: null, updatedAtMs: 1 }, options: {} } } : {}),
       ...(testCase.layer === 'policy' ? { permissionMode: 'safe-yolo', modelSelection: model('explicit-model') } : {}),
-      connectedServices: { v: 2, bindingsByServiceId: testCase.layer === 'policy' ? { [serviceId]: { source: 'connected', profileId: 'explicit-account' } } : {} }, memoryEnabled: false });
+      connectedServices: { v: 2, bindingsByServiceId: testCase.layer === 'muse'
+        ? { 'happier.agent.muse/muse-account': { source: 'connected', selection: 'profile', profileId: 'own-muse' } }
+        : testCase.layer === 'policy' ? { [serviceId]: { source: 'connected', profileId: 'explicit-account' } } : {} }, memoryEnabled: false });
     // Voice binds the Agent before forwarding to the ordinary receiving Action.
     // Leave model/services unset: supplying them here would hide a defaults bypass.
     // Keep the UI module in its owning compiler program, as other cross-app
@@ -249,7 +255,19 @@ describe('Session spawn defaults at admission', () => {
     expect(launched, JSON.stringify(result)).toHaveLength(1);
     expect(launched[0]).toMatchObject({ permissionMode: testCase.permission,
       ...(testCase.layer === 'team-resource' || testCase.layer === 'automatic' ? {} : { modelSelection: model(testCase.modelId) }),
-      connectedServices: { v: 2, bindingsByServiceId: { [serviceId]: { source: 'connected', profileId: testCase.modelId.replace('-model', '-account') } } } });
+    });
+    const expectedBindings = testCase.layer === 'muse'
+      ? { 'happier.agent.muse/muse-account': { source: 'connected', selection: 'profile', profileId: 'own-muse' } }
+      : testCase.layer === 'pool-default'
+        ? { [serviceId]: { source: 'connected', selection: 'group', groupId: 'saved-codex-pool' } }
+        : { [serviceId]: { source: 'connected', profileId: testCase.modelId.replace('-model', '-account') } };
+    if (testCase.layer === 'muse' || testCase.layer === 'pool-default') {
+      const connectedBindings = Object.fromEntries(Object.entries(launched[0]?.connectedServices?.bindingsByServiceId ?? {})
+        .filter(([, binding]) => binding.source !== 'native'));
+      expect(connectedBindings).toEqual(expectedBindings);
+    } else {
+      expect(launched[0]?.connectedServices).toMatchObject({ v: 2, bindingsByServiceId: expectedBindings });
+    }
     if (testCase.layer === 'automatic') expect(launched[0]?.modelSelection).toBeUndefined();
     if (testCase.layer === 'team-resource') {
       expect(launched[0]?.modelSelection).toBeUndefined();

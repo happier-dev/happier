@@ -1,3 +1,5 @@
+import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
+import { resolveAgentSpawnPurposeDeclarations } from '@/daemon/connectedServices/requestAuth/agentPurposeDeclarations';
 import type { OrganizationPolicyLoadResult } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
 import { getOrganizationPolicySessionDefaults } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
 import { readAccountSettingValueForBackendTarget } from '@happier-dev/protocol/account/settings/accountSettings';
@@ -60,6 +62,19 @@ export async function resolveSessionSpawnManagedDefaults(input: SpawnDefaultSele
     // only when the canonical decision actually selected explicit intent.
     return [{ purpose: entry.purpose, service: entry.service, target, teamResource: null }];
   });
+  if (explicitPurposes.length > 0) {
+    // An explicit authentication source leaves unchosen optional sources native,
+    // rather than adding saved alternatives. Required additive purposes still default.
+    // Submit that intent to the shared precedence owner so policy locks still apply.
+    const requiredPurposes = new Set(resolveAgentSpawnPurposeDeclarations({
+      agentId: params.agentId, contributions: readCurrentContributionRegistry(),
+    })?.declarations.filter(entry => entry.required).map(entry => entry.purpose));
+    const explicitKeys = new Set(explicitPurposes.map(entry => qualifiedPurposeKey(entry.purpose)));
+    for (const entry of declarations) {
+      if (explicitKeys.has(qualifiedPurposeKey(entry.purpose)) || requiredPurposes.has(entry.purpose.purpose)) continue;
+      explicitPurposes.push({ ...entry, target: null, teamResource: null });
+    }
+  }
   const sharedTeamIds = new Set(input.initialAccess?.grants.flatMap(({ subject }) => subject.kind === 'account' ? [] : [subject.teamId]));
   const defaultsTeamId = input.primaryTeamId ?? (sharedTeamIds.size === 1 ? sharedTeamIds.values().next().value : undefined);
   const team = defaultsTeamId
