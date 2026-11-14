@@ -58,6 +58,7 @@ import { useOptionalScreenIsFocused } from '@/utils/navigation/useOptionalScreen
 import { getSettledMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 
+import { FLEET_ACTIVITY_WHEN, fleetActivityWhenRange, type FleetActivityWhen } from './fleetActivityFilters';
 import { useFleetActivityPage } from './useFleetActivityPage';
 
 const s = 'machineFleetActivity' as const;
@@ -65,6 +66,23 @@ const NO_TITLES: ReadonlyMap<string, string> = new Map();
 /** The actor's mark on the rail: an avatar for a person, the same size as the rail's glyphs. */
 const MARK_PX = 18;
 const ALL_MACHINES = '__all__';
+const ANYONE = '__anyone__';
+const EVERYTHING = '__everything__';
+const ANY_TIME = Object.freeze({ choice: 'any' as FleetActivityWhen, range: Object.freeze({}) });
+const NO_SCOPE = Object.freeze({ serverId: '', accountId: '' });
+
+function whenLabel(choice: FleetActivityWhen): string {
+  switch (choice) {
+    case 'any':
+      return t(`${s}.whenAny`);
+    case 'today':
+      return t(`${s}.whenToday`);
+    case '7d':
+      return t(`${s}.when7d`);
+    case '30d':
+      return t(`${s}.when30d`);
+  }
+}
 
 type MachineChoice = Readonly<{ id: string; label: string }>;
 
@@ -114,7 +132,18 @@ export function MachineFleetActivityView() {
     [machines],
   );
   const [machineId, setMachineId] = React.useState<string | null>(null);
-  const filter = React.useMemo(() => ({ machineId }), [machineId]);
+  const [actorAccountId, setActorAccountId] = React.useState<string | null>(null);
+  const [kind, setKind] = React.useState<'receipt' | 'operation' | null>(null);
+  const [when, setWhen] = React.useState<Readonly<{ choice: FleetActivityWhen; range: ReturnType<typeof fleetActivityWhenRange> }>>(ANY_TIME);
+  const filter = React.useMemo(
+    () => ({
+      machineId,
+      ...(actorAccountId ? { actorAccountId } : {}),
+      ...(kind ? { kind } : {}),
+      ...when.range,
+    }),
+    [actorAccountId, kind, machineId, when],
+  );
   const { state, loadMore, retry } = useFleetActivityPage(
     lifetime,
     machineIds,
@@ -144,6 +173,39 @@ export function MachineFleetActivityView() {
       }),
     [state.items],
   );
+  // People are named by the one profile owner, read once for the Accounts this page shows (and the chosen one).
+  const accountIds = React.useMemo(
+    () => [
+      ...new Set([
+        ...(actorAccountId ? [actorAccountId] : []),
+        ...state.items.flatMap((item) =>
+          item.kind === 'receipt'
+            ? [item.receipt.requestedByAccountId]
+            : item.operation.scope.sessionId
+              ? []
+              : [item.operation.scope.accountId],
+        ),
+      ]),
+    ],
+    [actorAccountId, state.items],
+  );
+  const profiles = useDiscussionParticipantProfiles({
+    scope: lifetime?.scope ?? NO_SCOPE,
+    roster: null,
+    accountIds,
+    enabled: presented && lifetime !== null,
+    accountLifetime: lifetime,
+  });
+  const people = React.useMemo(
+    () =>
+      accountIds.flatMap((id) => {
+        const actor = profiles.accounts.get(id);
+        if (!actor || !lifetime) return [];
+        const presentation = resolveAccountActorPresentation(actor, lifetime.scope);
+        return [{ id, label: presentation.name, self: presentation.isSelf }];
+      }).sort((a, b) => Number(b.self) - Number(a.self)),
+    [accountIds, lifetime, profiles.accounts],
+  );
   const openReceipt = React.useCallback(
     (environmentId: string, projectSourceId: string, deploymentId: string) =>
       router.push(
@@ -156,9 +218,33 @@ export function MachineFleetActivityView() {
       ),
     [router, serverId],
   );
-  // Only the filters the activity read narrows by are offered; who/what/when wait for their reads.
+  // Every filter narrows the activity read itself (FleetActivityFilter); the page never filters rows it holds.
   const filters = React.useMemo(
     () => [
+      {
+        id: 'machines.activity.who',
+        testID: 'machines.activity.filter.who',
+        label: t(`${s}.filterWho`),
+        showLabel: true,
+        active: actorAccountId !== null,
+        selectedId: actorAccountId ?? ANYONE,
+        options: [{ id: ANYONE, label: t(`${s}.whoAnyone`) }, ...people.map((person) => ({ id: person.id, label: person.label }))],
+        onChange: (id: string) => setActorAccountId(id === ANYONE ? null : id),
+      },
+      {
+        id: 'machines.activity.what',
+        testID: 'machines.activity.filter.what',
+        label: t(`${s}.filterWhat`),
+        showLabel: true,
+        active: kind !== null,
+        selectedId: kind ?? EVERYTHING,
+        options: [
+          { id: EVERYTHING, label: t(`${s}.whatEverything`) },
+          { id: 'receipt', label: t(`${s}.whatDeploys`) },
+          { id: 'operation', label: t(`${s}.whatActions`) },
+        ],
+        onChange: (id: string) => setKind(id === 'receipt' || id === 'operation' ? id : null),
+      },
       {
         id: 'machines.activity.machine',
         testID: 'machines.activity.filter.machine',
@@ -175,8 +261,21 @@ export function MachineFleetActivityView() {
         ],
         onChange: (id: string) => setMachineId(id === ALL_MACHINES ? null : id),
       },
+      {
+        id: 'machines.activity.when',
+        testID: 'machines.activity.filter.when',
+        label: t(`${s}.filterWhen`),
+        showLabel: true,
+        active: when.choice !== 'any',
+        selectedId: when.choice,
+        options: FLEET_ACTIVITY_WHEN.map((choice) => ({ id: choice, label: whenLabel(choice) })),
+        onChange: (id: string) => {
+          const choice = FLEET_ACTIVITY_WHEN.find((candidate) => candidate === id) ?? 'any';
+          setWhen(choice === 'any' ? ANY_TIME : { choice, range: fleetActivityWhenRange(choice, Date.now()) });
+        },
+      },
     ],
-    [machineId, machines],
+    [actorAccountId, kind, machineId, machines, people, when.choice],
   );
 
   return (
@@ -187,9 +286,10 @@ export function MachineFleetActivityView() {
         alwaysShowTitle
         description={t(`${s}.description`)}
       />
-      {machines.length > 1 || machineId !== null ? (
+      {lifetime ? (
         <ItemGroup surface="none" testID="machines.activity.filters">
-          <SelectionListFilterChips placement="inline" filters={filters} />
+          {/* A narrow page scrolls the four chips sideways rather than squeezing them (lab fActp). */}
+          <SelectionListFilterChips placement="row" filters={filters} />
         </ItemGroup>
       ) : null}
       {state.status === 'loading' ? (
@@ -235,7 +335,7 @@ export function MachineFleetActivityView() {
               lifetime={lifetime}
               titles={titles}
               onOpenReceipt={openReceipt}
-              presented={presented}
+              accounts={profiles.accounts}
             />
           ) : null}
           {state.coverage === 'partial' ? (
@@ -272,32 +372,9 @@ function ActivityDays(props: Readonly<{
   lifetime: ServerAccountScopeLifetime;
   titles: ReadonlyMap<string, string>;
   onOpenReceipt: RowProps['onOpenReceipt'];
-  presented: boolean;
+  accounts: RowProps['accounts'];
 }>) {
   const scope = props.lifetime.scope;
-  const accountIds = React.useMemo(
-    () => [
-      ...new Set(
-        props.days.flatMap((day) =>
-          day.items.flatMap((item) =>
-            item.kind === 'receipt'
-              ? [item.receipt.requestedByAccountId]
-              : item.operation.scope.sessionId
-                ? []
-                : [item.operation.scope.accountId],
-          ),
-        ),
-      ),
-    ],
-    [props.days],
-  );
-  const profiles = useDiscussionParticipantProfiles({
-    scope,
-    roster: null,
-    accountIds,
-    enabled: props.presented,
-    accountLifetime: props.lifetime,
-  });
   return (
     <CorePluginUiPresentationScope>
       <View style={styles.card}>
@@ -320,7 +397,7 @@ function ActivityDays(props: Readonly<{
                 activityRowContent({
                   item,
                   scope,
-                  accounts: profiles.accounts,
+                  accounts: props.accounts,
                   environmentTitle:
                     item.kind === 'receipt'
                       ? (props.titles.get(item.environment.id) ?? null)
