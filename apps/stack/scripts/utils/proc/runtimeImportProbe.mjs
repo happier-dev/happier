@@ -4,6 +4,10 @@ import { fileURLToPath } from 'node:url';
 
 const privateLine = /:\/\/|bearer |token|secret|password|api_?key|credential|database_url|-----begin|private_key|[A-Za-z0-9+/_=-]{40,}\.[A-Za-z0-9+/_=-]{20,}/i;
 
+export function isPublicRuntimeImportDiagnostic(value) {
+  return typeof value === 'string' && !privateLine.test(value);
+}
+
 export function describeRuntimeImportFailure(stderr, entrypoint = null) {
   // Node's first location names the throwing module, including TDZ failures;
   // bundlers/Vite also publish file:line locations before their stack frames.
