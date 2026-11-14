@@ -84,14 +84,11 @@ git show --no-patch --format=fuller "$commit"
 **Fast path (default for lane commits, owner 2026-11-07).** Skip the finalizer. After the focused tests and entry-loads pass:
 
 ```bash
-tree=$(GIT_INDEX_FILE="$idx" git write-tree)
-commit=$(git commit-tree "$tree" -p "$head" -F /tmp/happier-commit-message.txt)
-# guard: the commit may change only the paths you staged
-diff <(git diff --name-only "$head" "$commit" | sort) <(printf '%s\n' "${files[@]}" | sort) || { echo 'commit touches unexpected paths: abort'; exit 1; }
-git update-ref "refs/heads/$(git symbolic-ref --short HEAD)" "$commit" "$head"
+node scripts/git/commitFromPrivateIndex.mjs --message-file /tmp/happier-commit-message.txt -- "${files[@]}"
 ```
 
-The tree and the parent must come from the same HEAD: `read-tree "$head"` and `-p "$head"` use one captured value. If `update-ref` refuses because HEAD moved, rebuild the private index from the new HEAD (fresh `read-tree`), re-add the same paths and retry. Never reuse an old tree with a new parent: that silently reverts every commit in between (2026-11-07: 5dce4fdca5 reverted Voice's and others' just-landed hunks). Then stop: don't write the shared index (`update-index`, `add`, `reset -- path`, `read-tree` on the default index) and don't touch `.git/index.lock`. A stale shared-index entry after a private-index commit is expected and harmless, while any write can change other lanes' staging (2026-11-07: three lanes did it; Systemic owns the shared index). Use the finalizer below only for a pre-push HEAD coherence pass or when someone explicitly asks for an exact-tree check.
+This canonical fast path creates a fresh private index from HEAD, stages exact files, checks the diff, creates the commit, advances HEAD by compare-and-swap, and synchronizes only its changed paths in the shared index. Run from the repository root. It rejects directories, empty packets and `.project` paths; it never force-adds ignored files or changes working-tree bytes. Review whole-path bytes before invocation. For mixed files, pass `--patch-file /tmp/selected.patch` and list only whole-path files after `--`; the patch is applied only to the private index.
+The script captures one HEAD for both the private tree and parent. If CAS loses, it rebuilds from the new HEAD and reapplies the selected files and patch; a conflicting patch refuses instead of overwriting intervening commits. The shared-index update is part of every fast-path commit (owner-approved 2026-11-14, INDEX-SYNC-FASTPATH-1114), replacing the earlier instruction to leave it stale. The exact-tree finalizer remains available only for a pre-push HEAD coherence pass or an explicit exact-tree request.
 
 Verify the current-user identity and complete commit-specific co-authors in the message before invoking the finalizer, and inspect the created object with `git show --no-patch --format=fuller "$commit"` afterwards. The finalizer uses ordinary `git commit-tree` configuration, including configured signing; required hook-equivalent checks remain the caller's responsibility.
 
@@ -126,48 +123,17 @@ After committing a partial file, synchronize its full committed HEAD blob into t
 
 ## 4. Shared-index synchronization
 
-**Not part of a lane commit.** Only the shared-index owner (Systemic) runs this, or a commit-campaign owner the user explicitly asked to. Lanes using the fast path skip this section.
+The canonical fast-path script synchronizes the commit's exact changed file paths after CAS succeeds. It reads the latest HEAD, proves the commit is still an ancestor, and prepares one deletion-aware, NUL-delimited `update-index --index-info` batch. Additions, symlinks and gitlinks use tree modes and object IDs; removed files use explicit zero-mode records. Literal pathspecs preserve whitespace and wildcard characters. Unrelated shared-index entries are untouched; excluded or later worktree edits remain dirty.
 
-After `update-ref` succeeds, synchronize only the committed paths. Another authorized writer may already have advanced HEAD again, so first prove the created commit remains in current history and capture the latest tree.
+Git acquires its ordinary index lock for the single batch. On contention the script waits for filesystem change notifications and retries with fresh HEAD records. It never deletes another writer's lock or imposes a competing timeout. An abandoned lock requires its owner's diagnosis; interrupting a wait does not undo the commit.
 
-For a multi-path packet, do not invoke `git update-index` once per path. That repeatedly acquires the shared index lock and exposes a long-lived partially synchronized index; an 800-path packet can temporarily appear as hundreds of staged modifications and false deletions. Build one deletion-aware NUL-delimited index-info stream outside the repository, verify its record count matches the exact packet manifest, then apply it through one `update-index` transaction:
+If the process is interrupted after CAS, its stderr identifies the created commit. Resume synchronization without making another commit:
 
 ```bash
-sync_head=$(git rev-parse HEAD)
-git merge-base --is-ancestor "$commit" "$sync_head"
-
-index_info=$(mktemp -t happier-index-info.XXXXXX)
-cleanup_index_info() {
-  if test -e "$index_info"; then
-    unlink "$index_info"
-  fi
-}
-trap cleanup_index_info EXIT
-
-for file_path in "${files[@]}"; do
-  if git cat-file -e "$sync_head:$file_path" 2>/dev/null; then
-    git ls-tree -z "$sync_head" -- "$file_path" >> "$index_info"
-  else
-    printf '0 0000000000000000000000000000000000000000\t%s\0' "$file_path" >> "$index_info"
-  fi
-done
-
-record_count=$(tr -cd '\0' < "$index_info" | wc -c | tr -d ' ')
-test "$record_count" -eq "${#files[@]}"
-git update-index -z --index-info < "$index_info"
-unlink "$index_info"
-trap - EXIT
+node scripts/git/commitFromPrivateIndex.mjs --sync-commit <created-commit>
 ```
 
-Do not use `path` as a loop or scalar variable in `zsh`: it is the shell's special array tied to `$PATH`, so assigning it can make commands such as `git` unavailable.
-
-The zero-mode deletion record is mandatory. `git ls-tree` emits nothing for a deleted path; omitting an explicit deletion record leaves the old shared-index entry staged as a deletion. Use the per-path synchronization form only for a deliberately diagnosed repair of a small known subset, not as the ordinary large-packet transaction.
-
-The batch must be prepared completely before `git update-index` starts. This reduces lock hold time and makes the shared-index transition atomic from observers' perspective. If acquiring the lock fails, HEAD is already advanced but the shared index remains in its previous complete state; follow the interrupted-synchronization recovery procedure rather than rebuilding or duplicating the commit.
-
-This synchronization changes only index entries for selected paths. It does not write worktree files. A later worktree edit remains dirty against the committed/index blob. If a later commit changed the same path, synchronizing from `$sync_head` prevents the shared index from staging an accidental rollback to the older commit; treat that overlap as a collision and inspect both intents.
-
-If the selected path had pre-existing shared staged bytes, this step replaces that selected index entry with the committed snapshot. That is why selected-path staging must be understood before the transaction.
+Recovery derives the selected paths from that commit, proves ancestry and uses the same synchronization owner. Selected-path staging is replaced by HEAD, so understand any pre-existing staged bytes for selected paths before committing. A concurrent later edit of the same path is a genuine collision requiring inspection; unrelated packets can proceed concurrently. The exact-tree coherence finalizer does not invoke this fast path; after an explicitly requested finalization, use this same recovery command to synchronize its committed paths.
 
 ## 5. Concurrency semantics
 
