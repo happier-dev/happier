@@ -9,7 +9,27 @@ import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionEx
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { createExternalActionAuthorizedRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { withTeamCredentialActionRuntime } from './teamCredentialActionRuntime';
 import { createManagedMachineControllerClient } from '@/machines/managed/acquire';
+import { createDaemonMachineIrohRuntime } from '@/daemon/peer/iroh/daemonMachineIrohRuntime';
+import { createProviderBrokerMachineCarrierTunnelOpen } from '@/daemon/peer/iroh/providerBrokerMachineCarrierTunnelOpen';
+import { startPeerMediationLoopbackServer } from '@/daemon/peer/mediation/loopback/server';
+import { openTeamCredentialProviderBroker } from '@/api/client/providerBrokerApi';
+import { createConnectedServiceCredentialApi } from '@/api/client/connectedServiceCredentialApi';
+import { resolveQualifiedConnectedAccountAtomicV4Negotiation, listQualifiedConnectedAccountsV4,
+  listQualifiedConnectedAccountGroupsV4, readQualifiedConnectedAccountGroupV4 } from '@/api/client/qualifiedConnectedAccountApi';
+import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { createDaemonConnectedAccountPurposeBindingRuntime } from '@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
+import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from '@/daemon/connectedServices/qualifiedConnectedAccountEstablishedRuntimeOwner';
+import { createAccountSettingsConnectedAccountSecrets, createQualifiedConnectedAccountDaemonPersistence } from '@/daemon/connectedServices/qualifiedConnectedAccountDaemonPersistence';
+import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
+import { startDaemonProviderBrokerRuntime } from './daemonProviderBrokerRuntime';
+import { createTeamCredentialBrokerSourceOwner } from './teamCredentialBrokerSourceOwner';
+import { createTeamCredentialBrokerActionExecutor } from './teamCredentialActionExecution';
+import { createTeamCredentialBrokerActionPurposeExecutor } from './teamCredentialActionClient';
+import { ProviderBrokerActionAdmissionResponseV3Schema, PROVIDER_BROKER_REQUEST_ADMISSION_HTTP_PATH_V1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { createManagedNativeInvocation } from '@/machines/managed/reconcile';
 import { createDaemonManagedMachineActionAdapter } from '@/daemon/startup/managedMachineActionAdapter';
 import { createCurrentMachineExecutionOriginContextResolver } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
@@ -67,14 +87,16 @@ describe('two-Account Team provisioner managed entry point', () => {
       }
     } finally { await rm(directory, { recursive: true, force: true }); }
   });
-  it.each([AGENT37, BOAT].flatMap(manifest => (['options', 'acquire'] as const).map(role => ({ manifest, role }))))(
-    'runs $manifest.id $role in the real Account host with a signed native root', async ({ manifest, role }) => {
+  it.each([AGENT37, BOAT].flatMap(manifest => [...(['options', 'acquire'] as const).map(role => ({ manifest, role, brokerRealm: false })), { manifest, role: 'options' as const, brokerRealm: true }]))(
+    'runs $manifest.id $role brokerRealm=$brokerRealm in the real Account host with a signed native root', async ({ manifest, role, brokerRealm }) => {
     const server = '../../../../server/sources/';
     const { createLightSqliteHarness, createAccountTokenForTests }: typeof import('../../../../server/sources/testkit/lightSqliteHarness') = await import(server + 'testkit/lightSqliteHarness');
     const { createAuthenticatedTestApp }: typeof import('../../../../server/sources/app/api/testkit/sqliteFastify') = await import(server + 'app/api/testkit/sqliteFastify');
     const { db }: typeof import('../../../../server/sources/storage/db') = await import(server + 'storage/db');
     const { createTeamDirectActionMaterialFixture }: typeof import('../../../../server/sources/app/teams/credentials/directActionMaterial.testkit') = await import(server + 'app/teams/credentials/directActionMaterial.testkit');
     const { registerTeamCredentialResourceRoutes }: typeof import('../../../../server/sources/app/teams/credentials/registerTeamCredentialResourceRoutes') = await import(server + 'app/teams/credentials/registerTeamCredentialResourceRoutes');
+    const { registerQualifiedConnectedAccountCredentialRoutesV4 }: typeof import('../../../../server/sources/app/api/routes/connect/qualifiedConnectedAccounts/registerQualifiedConnectedAccountCredentialRoutesV4') = await import(server + 'app/api/routes/connect/qualifiedConnectedAccounts/registerQualifiedConnectedAccountCredentialRoutesV4');
+    const { resolvePeerMediationGrantSigningConfig }: typeof import('../../../../server/sources/app/machines/peer/mediation/mintDirectRouteGrantV1') = await import(server + 'app/machines/peer/mediation/mintDirectRouteGrantV1');
     const { registerExternalActionRoutes }: typeof import('../../../../server/sources/app/api/routes/actions/registerExternalActionRoutes') = await import(server + 'app/api/routes/actions/registerExternalActionRoutes');
     const { registerPluginAvailabilityRoutes }: typeof import('../../../../server/sources/app/plugins/availability/routes') = await import(server + 'app/plugins/availability/routes');
     const { accountRoutes }: typeof import('../../../../server/sources/app/api/routes/account/accountRoutes') = await import(server + 'app/api/routes/account/accountRoutes');
@@ -90,10 +112,12 @@ describe('two-Account Team provisioner managed entry point', () => {
       HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional', HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED: '1',
       HAPPIER_SERVER_IDENTITY_ID: homeId,
     } });
-    onTestFinished(harness.close);
+    let closeTransport: (() => Promise<void>) | undefined;
+    onTestFinished(async () => { try { await closeTransport?.(); } finally { await harness.close(); } });
     const descriptor = manifest.contributes.connectedAccountDescriptors[0]!;
     const shared = await createTeamDirectActionMaterialFixture({ manifest, serviceId: descriptor.id,
-      authenticationModeId: descriptor.authentication.defaultModeId, homeServerIdentityId: homeId });
+      authenticationModeId: descriptor.authentication.defaultModeId, homeServerIdentityId: homeId,
+      deliveryMode: brokerRealm ? 'brokered' : 'direct' });
     const signing = nacl.sign.keyPair();
     const installationId = crypto.randomUUID();
     await db.machine.update({ where: { id: shared.machine.id }, data: { installationId,
@@ -105,16 +129,16 @@ describe('two-Account Team provisioner managed entry point', () => {
       archiveDigestSha256: createReleaseLessDeclarationV1(manifest).manifestDigestSha256,
       uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: new Date() } });
     const app = createAuthenticatedTestApp({ authentication: 'real' });
-    onTestFinished(() => app.close());
     registerExternalActionRoutes(app);
     registerTeamCredentialResourceRoutes(app);
+    registerQualifiedConnectedAccountCredentialRoutesV4(app);
     registerPluginAvailabilityRoutes(app);
     accountRoutes(app);
     featuresRoutes(app);
     changesRoutes(app);
     registerManagedMachineRoutes(app);
     const presence = startTeamCredentialActionSocketPresence(app);
-    onTestFinished(presence.close);
+    closeTransport = async () => { try { await presence.close(); } finally { await app.close(); } };
     const materialRequests: unknown[] = [];
     app.addHook('preHandler', async request => { if (request.url.endsWith('/direct-material')) materialRequests.push(request.body); });
     const serverUrl = await app.listen({ host: '127.0.0.1', port: 0 });
@@ -133,7 +157,8 @@ describe('two-Account Team provisioner managed entry point', () => {
     const contribution = { pluginId: manifest.id, localId: manifest.contributes.machineProvisioners[0]!.id };
     const input = { homeId, controller, contribution, selectors: {}, credentials: [{ purpose: { consumer: contribution, purpose: 'cloud-api' },
       teamId: shared.team.id, selection: { source: 'team_resource' as const, resourceId: shared.resource.id,
-        deliveryMode: 'direct' as const, disclosedMember: shared.sourceAccount } }] };
+        ...(brokerRealm ? { deliveryMode: 'brokered' as const }
+          : { deliveryMode: 'direct' as const, disclosedMember: shared.sourceAccount }) } }] };
     const choices = manifest.id === AGENT37.id ? { kind: 'vm', size: '2-4', region: 'eu' }
       : { size: 'small', source: { kind: 'blank' } };
     const acquireInput = { enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' }, selection: {
@@ -201,7 +226,100 @@ describe('two-Account Team provisioner managed entry point', () => {
       const native = await createAdmittedPluginRuntimeFixture({ happyHomeDir, runtimeOptions: { pluginIds: [manifest.id],
         scopedActionRuntime: { credentials, savedSecretOperationContext, actionsSettingsProvider: createActionSettingsProvider() } } });
       onTestFinished(native.dispose);
+      let accountCompositions = 0;
+      let brokerAdmissions = 0;
+      let brokerExecute: Parameters<typeof resolveAccountExecutionRuntime>[0]['executeTeamCredentialBrokerAction'];
+      if (brokerRealm) {
+        if (!shared.broker) throw new Error('Missing custodian Machine');
+        const brokerMachine = shared.broker;
+        const source = await createDaemonMachineIrohRuntime({ happyHomeDir: join(happyHomeDir, 'requester-iroh'), identity: 'ephemeral', relayConfig: { relayPolicy: 'disabled', relayUrls: [] } });
+        const target = await createDaemonMachineIrohRuntime({ happyHomeDir: join(happyHomeDir, 'custodian-iroh'), identity: 'ephemeral', relayConfig: { relayPolicy: 'disabled', relayUrls: [] } });
+        onTestFinished(source.shutdown); onTestFinished(target.shutdown);
+        expect(source.available, 'Native requester endpoint required').toBe(true);
+        expect(target.available, 'Native custodian endpoint required').toBe(true);
+        if (!source.available || !target.available) throw new Error('Native endpoints unavailable');
+        const custodianCredentials = { token: await createAccountTokenForTests(shared.custodian.id, { kind: 'account', authority: 'present_user' }), encryption: null } as const;
+        const custodianKeys = nacl.sign.keyPair();
+        const custodianInstallationId = crypto.randomUUID();
+        await db.machine.update({ where: { id: shared.machine.id }, data: {
+          operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] }, irohMachineEndpoint: { protocolVersions: [1], ...source.endpoint } } } });
+        await db.machine.update({ where: { id: brokerMachine.id }, data: { installationId: custodianInstallationId,
+          installationPublicKey: custodianKeys.publicKey, operationProtocolCapabilitiesRevision: 1,
+          operationProtocolCapabilities: { providerBrokerIngress: { protocolVersions: [1, 3] }, irohMachineEndpoint: { protocolVersions: [1], ...target.endpoint } } } });
+        await presence.connect({ baseUrl: serverUrl, token: credentials.token, accountId: shared.recipient.id,
+          machineId: shared.machine.id, installationId, keys: signing });
+        await presence.connect({ baseUrl: serverUrl, token: custodianCredentials.token, accountId: shared.custodian.id,
+          machineId: brokerMachine.id, installationId: custodianInstallationId, keys: custodianKeys });
+        const routeSigning = resolvePeerMediationGrantSigningConfig(process.env);
+        if (!routeSigning.ok) throw new Error('Home route signing unavailable');
+        const trustRoots = [routeSigning.capability];
+        brokerExecute = createTeamCredentialBrokerActionPurposeExecutor({ initiatorMachineId: shared.machine.id,
+          openTunnel: createProviderBrokerMachineCarrierTunnelOpen({ accountId: shared.recipient.id,
+            localMachineId: shared.machine.id, runtime: source, resolveTrustRoots: () => trustRoots }),
+          openBroker: (request, signal, requestHeaders) => openTeamCredentialProviderBroker({ token: credentials.token,
+            serverBaseUrl: serverUrl, request, signal, requestHeaders }) });
+        const custodianHome = join(happyHomeDir, 'custodian');
+        const reload = createPluginReloadController({ happyHomeDir: custodianHome });
+        onTestFinished(() => reload.shutdown());
+        const api = createConnectedServiceCredentialApi(custodianCredentials);
+        const getAccountEncryptionMode = () => api.getAccountEncryptionMode();
+        const persistence = createQualifiedConnectedAccountDaemonPersistence({ credentials: custodianCredentials, getAccountEncryptionMode,
+          secrets: createAccountSettingsConnectedAccountSecrets({ expectedScopeKey: resolveAccountSettingsScopeKey(custodianCredentials) }) });
+        const established = createQualifiedConnectedAccountEstablishedRuntimeOwner({ credentials: custodianCredentials,
+          reloadController: reload, getAccountEncryptionMode, configuration: persistence.configuration });
+        const purposes = createDaemonConnectedAccountPurposeBindingRuntime({ establishedRuntimeOwner: established,
+          credentialOwnerAccountId: shared.custodian.id, workerMachineId: brokerMachine.id, reloadController: reload,
+          qualifiedApi: {
+            listAccountsForServices: (services, signal) => listQualifiedConnectedAccountsV4({ token: custodianCredentials.token, services, signal }),
+            listAccounts: (service, signal) => listQualifiedConnectedAccountsV4({ token: custodianCredentials.token, service, signal }),
+            listGroups: (service, signal) => listQualifiedConnectedAccountGroupsV4({ token: custodianCredentials.token, service, signal }),
+            readGroup: (group, signal) => readQualifiedConnectedAccountGroupV4({ token: custodianCredentials.token, group, signal }),
+          }, resolveQualifiedConnectedAccountV4Support: async () => resolveQualifiedConnectedAccountAtomicV4Negotiation(
+            await fetchServerFeaturesSnapshot({ serverUrl, token: custodianCredentials.token })) });
+        const custodian = await createAdmittedPluginRuntimeFixture({ happyHomeDir: custodianHome, controller: reload,
+          runtimeOptions: { connectedAccounts: purposes.owner, actionFormConnectedAccounts: purposes,
+            scopedActionRuntime: { credentials: custodianCredentials, actionsSettingsProvider: createActionSettingsProvider() } } });
+        onTestFinished(custodian.dispose);
+        expect(custodian.registry.activatedPluginIds).not.toContain(manifest.id);
+        expect(custodian.registry.targetActionInvocations.has(manifest.id, 'options')).toBe(false);
+        const unreachable = async (): Promise<never> => { throw new Error('Unrelated model broker port'); };
+        const broker = await startDaemonProviderBrokerRuntime({ machineId: brokerMachine.id, resolveTrustRoots: () => trustRoots,
+          nowMs: Date.now, createRequestId: crypto.randomUUID, resolveRequestPolicy: unreachable, admitRequest: unreachable,
+          authorizeModelCatalog: unreachable,
+          sourceOwner: createTeamCredentialBrokerSourceOwner({ machineId: brokerMachine.id, custody: { retire: unreachable },
+            selectConnectedServicesSourceMember: unreachable, openConnectedServicesSource: unreachable, openProviderConnectionSource: unreachable }),
+          actionOperations: { execute: createTeamCredentialBrokerActionExecutor({ purposeBindings: purposes,
+            withRuntime: (read, request) => withTeamCredentialActionRuntime({ native: custodian.lease, action: request.action,
+              resolveAccount: async () => {
+                accountCompositions++;
+                const registry = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir: custodianHome, signal: request.signal,
+                  connectedAccounts: purposes.owner, actionFormConnectedAccounts: purposes,
+                  accountExecution: { credentials: custodianCredentials, serverUrl, serverId: 'two-account-home', serverIdentityId: homeId,
+                    machineId: brokerMachine.id, explicitMachineId: brokerMachine.id, isCurrent: () => !request.signal.aborted } });
+                expect(registry.activatedPluginIds).not.toContain(manifest.id);
+                expect(registry.targetActionInvocations.has(manifest.id, 'options')).toBe(false);
+                return registry;
+              },
+            }, read) }),
+            admit: async (request, signal) => {
+              brokerAdmissions++;
+              const response = await fetch(`${serverUrl}${PROVIDER_BROKER_REQUEST_ADMISSION_HTTP_PATH_V1}`, {
+                method: 'POST', headers: { authorization: `Bearer ${custodianCredentials.token}`, 'content-type': 'application/json' },
+                body: JSON.stringify(request), signal });
+              return ProviderBrokerActionAdmissionResponseV3Schema.parse(await response.json());
+            } },
+        });
+        onTestFinished(broker.close);
+        const admission = await startPeerMediationLoopbackServer({ nowMs: Date.now, trustRoots,
+          endpointExpiresAt: Date.now() + 300_000, expected: { accountId: shared.custodian.id, machineId: brokerMachine.id,
+            flowKind: 'machine_rpc', routeKind: 'loopback_direct', endpointFingerprint: target.endpoint.endpointId },
+          irohMachineAdmission: { localEndpointId: target.endpoint.endpointId, role: 'acceptor', allowedFlows: [],
+            resolveApplicationTarget: async () => null, resolveProviderBrokerApplicationTarget: broker.resolveProviderBrokerApplicationTarget } });
+        onTestFinished(admission.stop);
+        await target.startAttemptAcceptor({ admissionPort: Number(new URL(admission.url).port) });
+      }
       const account = await resolveAccountExecutionRuntime({ happyHomeDir, credentialRuntimeRegistry: native.registry,
+        ...(brokerExecute ? { executeTeamCredentialBrokerAction: brokerExecute } : {}),
         accountExecution: { credentials, serverUrl, serverId: 'two-account-home', serverIdentityId: homeId,
           machineId: shared.machine.id, explicitMachineId: shared.machine.id,
           savedSecretOperationContext, isCurrent: () => true } });
@@ -222,13 +340,14 @@ describe('two-Account Team provisioner managed entry point', () => {
       const options = { requestId, context, signal: new AbortController().signal };
       let invoke: () => Promise<unknown>;
       if (role === 'options') {
-        const adapter = createDaemonManagedMachineActionAdapter({ credentials, machineId: shared.machine.id,
-          serverBaseUrl: serverUrl, serverId: 'two-account-home',
-          installationIdentity: { installationId, privateKey: signing.secretKey }, managedProviderOperationAuthority: authority,
-          resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({ serverUrl,
-            resolveCurrentMachineId: () => shared.machine.id, resolveCurrentServerIdentityId: () => homeId }),
-          acquireRuntimeRegistryLease: () => native.controller.acquireRuntimeRegistry() });
-        invoke = () => adapter({ actionId: 'machines.provisioners.options', input, context, signal: options.signal });
+          const adapter = createDaemonManagedMachineActionAdapter({ credentials, machineId: shared.machine.id,
+            serverBaseUrl: serverUrl, serverId: 'two-account-home',
+            ...(brokerExecute ? { executeTeamCredentialBrokerAction: brokerExecute } : {}),
+            installationIdentity: { installationId, privateKey: signing.secretKey }, managedProviderOperationAuthority: authority,
+            resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({ serverUrl,
+              resolveCurrentMachineId: () => shared.machine.id, resolveCurrentServerIdentityId: () => homeId }),
+            acquireRuntimeRegistryLease: () => native.controller.acquireRuntimeRegistry() });
+          invoke = () => adapter({ actionId: 'machines.provisioners.options', input, context, signal: options.signal });
       }
       else {
         const client = createManagedMachineControllerClient(driverInput, options, 'machines.managed.acquire');
@@ -245,6 +364,7 @@ describe('two-Account Team provisioner managed entry point', () => {
           return acquired;
         };
       }
+      expect(accountCompositions).toBe(0);
       let outcome: unknown;
       try { outcome = await invoke(); }
       catch (cause) {
@@ -262,17 +382,19 @@ describe('two-Account Team provisioner managed entry point', () => {
       if (role === 'options') expect(outcome).toMatchObject({ dimensions: {
         size: expect.arrayContaining([expect.objectContaining({ id: choices.size })]),
       } });
+      expect(accountCompositions).toBe(brokerRealm ? 1 : 0);
       expect(provider.request).toHaveBeenCalled();
       expect(provider.failures).toEqual([]);
-      expect(materialRequests).toHaveLength(1);
-      expect(materialRequests[0]).toMatchObject({ consumer: { kind: 'action_operation', operationId: requestId,
+      expect(materialRequests).toHaveLength(brokerRealm ? 0 : 1);
+      expect(brokerAdmissions).toBe(brokerRealm ? 1 : 0);
+      if (!brokerRealm) expect(materialRequests[0]).toMatchObject({ consumer: { kind: 'action_operation', operationId: requestId,
         actionId: `${manifest.id}/actions/${role}`, pluginVersion: manifest.version,
         purpose: { consumer: { pluginId: manifest.id, localId: role }, purpose: 'cloud-api' } } });
       expect(JSON.stringify(outcome)).not.toContain('shared-token');
       expect(authorization.binding.accountId).toBe(shared.recipient.id);
       await db.teamCredentialResource.update({ where: { id: shared.resource.id }, data: { memberGrants: { deleteMany: {} } } });
       const effectsBeforeRevocation = provider.request.mock.calls.length;
-      await expect(invoke()).rejects.toMatchObject({ code: role === 'options'
+      await expect(invoke()).rejects.toMatchObject({ code: brokerRealm ? 'resource_forbidden' : role === 'options'
         ? 'plugin_connected_account_direct_access_removed' : 'admission_unavailable' });
       expect(provider.request).toHaveBeenCalledTimes(effectsBeforeRevocation);
     });

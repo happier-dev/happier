@@ -8,11 +8,10 @@ import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
 import type { Fastify } from '@/app/api/types';
 import { startSocket } from '@/app/api/socket';
 import { getMachineSocketRoom } from '@/app/api/socketRooms';
-import { initiateShutdown } from '@/utils/process/shutdown';
 
 /** Real daemon sockets, shared by the Home-open preflight and carrier journey. */
 export function startTeamCredentialActionSocketPresence(app: Fastify) {
-    startSocket(app);
+    const closeSocket = startSocket(app);
     const server = app.machineDaemonPresence;
     if (!(server instanceof Server)) throw new Error('Real Home Socket.IO presence unavailable');
     const clients: Socket[] = [];
@@ -46,7 +45,7 @@ export function startTeamCredentialActionSocketPresence(app: Fastify) {
         async close() {
             for (const client of clients) client.disconnect();
             app.server.closeAllConnections();
-            await initiateShutdown('team-credential-action-socket-fixture');
+            await closeSocket();
         },
     };
 }

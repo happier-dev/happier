@@ -47,6 +47,7 @@ import { startPeerMediationLoopbackServer } from '@/daemon/peer/mediation/loopba
 import { startDaemonProviderBrokerRuntime } from './daemonProviderBrokerRuntime';
 import { createTeamCredentialBrokerSourceOwner } from './teamCredentialBrokerSourceOwner';
 import { createTeamCredentialBrokerActionExecutor } from './teamCredentialActionExecution';
+import { withTeamCredentialActionRuntime } from './teamCredentialActionRuntime';
 import { createTeamCredentialBrokerActionPurposeExecutor } from './teamCredentialActionClient';
 import { captureConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
 
@@ -404,7 +405,10 @@ export function activate(api) {
       sourceOwner: createTeamCredentialBrokerSourceOwner({ machineId: shared.broker.id, custody: { retire: unreachable },
         selectConnectedServicesSourceMember: unreachable, openConnectedServicesSource: unreachable, openProviderConnectionSource: unreachable }),
       actionOperations: { execute: createTeamCredentialBrokerActionExecutor({ purposeBindings: custodian.purposes,
-        withRuntime: async read => await runWithServerHttpBaseUrl(serverUrl, () => read(custodian.registry)) }),
+        withRuntime: async (read, request) => await runWithServerHttpBaseUrl(serverUrl, () => withTeamCredentialActionRuntime({
+          native: custodian.lease, action: request.action,
+          resolveAccount: async () => { throw new Error('Daemon Actions must not compose an Account host'); },
+        }, read)) }),
         admit: async (request, signal) => {
           homeAdmissionAttempts++;
           const response = await fetch(`${serverUrl}${PROVIDER_BROKER_REQUEST_ADMISSION_HTTP_PATH_V1}`, {

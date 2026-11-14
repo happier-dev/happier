@@ -230,7 +230,7 @@ function classifySocketHandshakeException(error: unknown): SocketAuthHandshakeEx
 
 const SOCKET_IO_PATH = '/v1/updates';
 
-export function startSocket(app: Fastify) {
+export function startSocket(app: Fastify): () => Promise<void> {
     const sessionPublisherPresence = createSessionPublisherPresence();
     const socketAdapterConfig = readSocketAdapterRuntimeConfigFromEnv(process.env, "memory");
     const socketAdapter = socketAdapterConfig.adapter;
@@ -1277,7 +1277,7 @@ export function startSocket(app: Fastify) {
         );
     });
 
-    onShutdown('api:socket', async () => {
+    const close = async () => {
         releasePresenceDeadlineNotifications();
         releaseMachineAccessLoss();
         try {
@@ -1297,5 +1297,10 @@ export function startSocket(app: Fastify) {
         if (shouldEnableRedisAdapter) {
             closeRedisSocketClusterClient();
         }
-    });
+    };
+    const releaseShutdown = onShutdown('api:socket', close);
+    return async () => {
+        releaseShutdown();
+        await close();
+    };
 }

@@ -301,6 +301,8 @@ import {
 import { createDaemonConnectedAccountPurposeBindingRuntime } from './connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
 import { createConnectedAccountActionTeamResourceCatalogReader } from './connectedServices/purposeBindings/actionTeamResourceCatalog';
 import { createTeamCredentialBrokerActionExecutor } from '@/providers/broker/teamCredentialActionExecution';
+import { withTeamCredentialActionRuntime } from '@/providers/broker/teamCredentialActionRuntime';
+import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createTeamCredentialBrokerActionPurposeExecutor } from '@/providers/broker/teamCredentialActionClient';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import {
@@ -3908,12 +3910,23 @@ export async function startDaemon(
                     admit: async (request, signal) => await api.admitTeamCredentialProviderBrokerRequest(request, { signal }),
                     execute: createTeamCredentialBrokerActionExecutor({
                       purposeBindings: connectedAccountPurposeBindingRuntime,
-                      withRuntime: async read => {
+                      withRuntime: async (read, request) => {
                         const lease = await acquireAuthoritativePluginRuntimeRegistryLease({
                           happyHomeDir: configuration.happyHomeDir,
                           controller: pluginReloadController,
                         });
-                        try { return await read(lease.registry); }
+                        try { return await withTeamCredentialActionRuntime({ native: lease, action: request.action,
+                          resolveAccount: () => resolveExecutablePluginRuntimeRegistry({
+                            happyHomeDir: configuration.happyHomeDir, signal: request.signal,
+                            connectedAccounts: connectedAccountPurposeBindingRuntime.owner,
+                            actionFormConnectedAccounts: connectedAccountPurposeBindingRuntime,
+                            accountExecution: { credentials, serverUrl: readDaemonHomeServerHttpBaseUrl(),
+                              serverId: deploymentAccountHomeServerId,
+                              serverIdentityId: managedPolicyHomeId ?? deploymentAccountHomeServerId,
+                              machineId: registeredMachineId, explicitMachineId: registeredMachineId,
+                              isCurrent: () => !request.signal.aborted && !homeTransportCancellation.signal.aborted },
+                          }),
+                        }, read); }
                         finally { await lease.release(); }
                       },
                     }),

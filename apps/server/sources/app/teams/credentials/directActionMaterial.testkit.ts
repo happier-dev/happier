@@ -69,7 +69,7 @@ export async function createTeamDirectActionMaterialFixture(options: Readonly<{
     const shared = await inTx(tx => createTeamCredentialResourceInTx(tx, {
         actorAccountId: custodian.id, authentication: readTeamOperationAuthenticationFromRequest({
             authAuthority: 'present_user', authTokenAuthenticationEvidence: [] }),
-        resourceId: crypto.randomUUID(), teamId: team.id, displayName: 'Shared cloud',
+        resourceId: crypto.randomUUID(), teamId: team.id, displayName: { content: { t: 'plain', v: 'Shared cloud' }, recipients: [] },
         source: { v: 1, kind: 'connected_account', target: { kind: 'account', account: sourceAccount }, credentialIncarnation: credential.id },
         deliveryPolicy: { preferredAllowedModes: [deliveryMode] },
         brokerPlacement: broker ? { kind: 'machine', machineId: broker.id } : null,
