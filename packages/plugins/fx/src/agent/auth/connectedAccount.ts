@@ -153,6 +153,14 @@ export async function prepareFxConnectedAccount(environment?: AgentLaunchEnviron
 export async function verifyFxResumeReachable(input: AgentConnectedAccountResumeReachabilityInputV1) {
   const id = input.vendorResumeId;
   if (!id || !isFxSessionId(id)) return { ok: false as const, reason: 'fx_session_not_found' };
+  // FX481104fdbc24 uses sessions v2 for ACP. The log and its whole
+  // session directory (including blobs) are the retained native state.
+  const currentRoot = `.fx/sessions/v2/${id}`;
+  const current = await input.sessionFiles.verifyDeclaredPaths({ paths: [
+    { path: `${currentRoot}/log.jsonl`, kind: 'file' }, { path: currentRoot, kind: 'directory' },
+  ] });
+  if (current.found) return { ok: true as const };
+  // Released v0.0.14 sessions remain resumable through the same owner.
   const root = `.fx/sessions/${id}`;
   const result = await input.sessionFiles.verifyDeclaredPaths({ paths: [{ path: `${root}/events.jsonl`, kind: 'file' }, { path: `${root}/session.json`, kind: 'json_object' }, { path: root, kind: 'directory' }] });
   return result.found ? { ok: true as const } : { ok: false as const, reason: 'fx_session_not_found' };

@@ -156,6 +156,37 @@ describe('verifyDeclaredResumeFileReachability', () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
+  it('retains FX v2 session logs and blobs through resume proof and import', async () => {
+    // FX481104fdbc24 session_adapter.zig:178 and session_manager/session.zig:541–578:
+    // the native writer publishes v2/<id>/log.jsonl with per-session blobs.
+    const root = await mkdtemp(join(tmpdir(), 'happier-resume-fx-v2-'));
+    const id = 'agREN7IUrM7Q';
+    const sessions = join(root, '.fx', 'sessions');
+    const session = join(sessions, 'v2', id);
+    const log = join(session, 'log.jsonl');
+    const verify = (vendorResumeId = id) => verifyDeclaredResumeFileReachability({
+      targetMaterializedRoot: root, stateSharingDescriptor: { providerId: 'fx', ...FX_STATE_SHARING },
+      vendorResumeId, verifyResumeReachable: verifyFxResumeReachable,
+    });
+    try {
+      await mkdir(join(session, 'blobs'), { recursive: true });
+      await writeFile(log, 'native framed log bytes');
+      await writeFile(join(session, 'blobs', 'snapshot'), 'native blob bytes');
+      const proof = await verify();
+      expect(proof).toEqual({ ok: true, resolvedPath: log, requiredPaths: [log, session] });
+      if (!proof.ok) throw new Error('FX v2 state not reachable');
+      const destination = join(root, 'target', '.fx', 'sessions');
+      await importConnectedServiceSessionFiles({ roots: [{ sourceRoot: sessions, destinationRoot: destination,
+        includePaths: proof.requiredPaths?.map(path => relative(sessions, path)),
+      }] });
+      expect(await readFile(join(destination, 'v2', id, 'log.jsonl'), 'utf8')).toBe('native framed log bytes');
+      expect(await readFile(join(destination, 'v2', id, 'blobs', 'snapshot'), 'utf8')).toBe('native blob bytes');
+      await expect(verify('another-session')).resolves.toEqual({ ok: false, reason: 'fx_session_not_found' });
+      await rm(log);
+      await expect(verify()).resolves.toEqual({ ok: false, reason: 'fx_session_not_found' });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
   it.each(['.jsonl', '.jsonl.zst'])('resolves a Codex %s resume without opening transcript bodies', async extension => {
     const root = await mkdtemp(join(tmpdir(), 'happier-resume-codex-names-'));
     const sessions = join(root, 'sessions');
