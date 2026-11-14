@@ -15,13 +15,20 @@ export type NotificationAccountNavigationTarget = Readonly<{
     accountId?: string | null;
 }>;
 
+let latestNavigationIntent: symbol | null = null;
+
 export async function navigateWithNotificationAccount(params: Readonly<{
     target: NotificationAccountNavigationTarget;
     navigate: () => void;
     refreshAuth: (() => Promise<void>) | null;
     isDisposed: () => boolean;
 }>): Promise<void> {
-    const { target, navigate, refreshAuth, isDisposed } = params;
+    const { target, navigate, refreshAuth } = params;
+    if (params.isDisposed()) return;
+    const intent = Symbol();
+    latestNavigationIntent = intent;
+    // A newer click owns navigation while an earlier Home admission is pending.
+    const isInactive = () => params.isDisposed() || latestNavigationIntent !== intent;
     if (!target.accountId) {
         navigate();
         return;
@@ -39,23 +46,25 @@ export async function navigateWithNotificationAccount(params: Readonly<{
         }
         const profile = getServerProfileById(scope.serverId);
         if (!profile) throw new Error('Notification Home unavailable');
-        if (isDisposed()) return;
+        if (isInactive()) return;
         await setActiveServerAndSwitch({ serverId: profile.id, scope: 'device', refreshAuth });
+        if (isInactive()) return;
         const currentProfile = getServerProfileById(scope.serverId);
         if (!currentProfile || !areServerAccountScopesEqual(
             await resolveNotificationPermissionTarget(currentProfile.serverUrl, target.accountId), scope,
         ) || !areServerProfileIdentifiersEquivalent(getActiveServerSnapshot().serverId, scope.serverId)) {
             throw new Error('Notification Account changed');
         }
-        if (!isDisposed()) navigate();
+        if (!isInactive()) navigate();
     } catch {
+        if (isInactive()) return;
         console.warn('[notifications] Session navigation Account unavailable');
         const [{ Modal }, { t }] = await withTimeout(
             () => Promise.all([import('@/modal'), import('@/text')]),
             EXPO_NOTIFICATIONS_LOAD_TIMEOUT_MS,
             'notification navigation UI module load',
         );
-        if (!isDisposed() && AppState.currentState === 'active') {
+        if (!isInactive() && AppState.currentState === 'active') {
             Modal.alert(t('common.error'), t('notifications.permissionActionReviewUnavailable'));
         }
     }

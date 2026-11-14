@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccountProfileSchema } from '@happier-dev/protocol';
 import { AppState } from 'react-native';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
-import { createOkFetchResponse, createServerFetchWithReachabilityProbe, getServerFetchUrl } from '@/dev/testkit';
+import { createDeferred, createOkFetchResponse, createServerFetchWithReachabilityProbe, getServerFetchUrl } from '@/dev/testkit';
 import * as profiles from '@/sync/domains/server/serverProfiles';
 import { resetServerReachabilitySupervisors, setServerReachabilityNetworkAllowed } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 import { navigateToLocalNotificationSession } from './navigateToLocalNotificationSession';
@@ -80,6 +80,37 @@ afterEach(async () => {
 });
 
 describe('local notification session navigation', () => {
+    it('keeps the newer click as the final destination while an older Home switch finishes', async () => {
+        const profileReadStarted = createDeferred<void>();
+        const releaseProfileRead = createDeferred<void>();
+        const fetch = globalThis.fetch;
+        let holdFirstProfileRead = true;
+        vi.stubGlobal('fetch', vi.fn(async (...args: Parameters<typeof fetch>) => {
+            const url = getServerFetchUrl(args[0]);
+            if (holdFirstProfileRead && url.origin === targetUrl && url.pathname === '/v1/account/profile') {
+                holdFirstProfileRead = false;
+                profileReadStarted.resolve();
+                await releaseProfileRead.promise;
+            }
+            return fetch(...args);
+        }));
+
+        const olderNavigation = navigateToLocalNotificationSession({ ...notificationData(), sessionId: 'session-a' }, () => false);
+        await profileReadStarted.promise;
+        try {
+            expect(profiles.areServerProfileIdentifiersEquivalent(profiles.getActiveServerSnapshot().serverId, targetId)).toBe(true);
+            await navigateToLocalNotificationSession({ ...notificationData(), sessionId: 'session-b' }, () => false);
+            expect(boundary.navigate.mock.calls.map(([href]) => new URL(String(href), 'https://ui.example.test').pathname))
+                .toEqual(['/session/session-b']);
+        } finally {
+            releaseProfileRead.resolve();
+            await olderNavigation;
+        }
+
+        expect(boundary.navigate.mock.calls.map(([href]) => new URL(String(href), 'https://ui.example.test').pathname))
+            .toEqual(['/session/session-b']);
+    });
+
     it('opens the original saved Home and Account while another Home is active', async () => {
         await navigateToLocalNotificationSession(notificationData(), () => false);
 
