@@ -93,6 +93,26 @@ it('uses the warm admitted identity for pure Account KV reads without recurring 
     } finally { await fixture.close(); }
 });
 
+// p03redesign.F3 flow shape (PLAN 2026-11-14-p03-redesign X0): `client mode reads per write = 0`,
+// `observation reads = 1 per Account+Home connection`. Registered as it.fails until R1/R2 land; their lane flips it.
+it.fails('p03redesign.F3: N Account KV writes on a held observation cost 0 mode reads beyond the one connect read', async () => {
+    const fixture = await accountKvAuthorityFixture();
+    const writes = 3;
+    try {
+        await fixture.warm();
+        for (let index = 0; index < writes; index += 1) {
+            await expect(fixture.transport(`todo.f3-${index}`).compareAndSet({ title: `F3 write ${index}` }, -1))
+                .resolves.toEqual({ success: true, version: 0 });
+        }
+        const modeReadsPerWrite = (fixture.currentnessReads() - 1) / writes;
+        // it.fails hides the assertion message, so the measured count is printed for the flow-budgets row.
+        console.info(`[p03redesign.F3] currentness reads=${fixture.currentnessReads()} for 1 connect + ${writes} writes`);
+        expect({ observationReads: Math.min(fixture.currentnessReads(), 1), modeReadsPerWrite },
+            `F3 current: ${fixture.currentnessReads()} currentness reads for 1 connect + ${writes} writes`)
+            .toEqual({ observationReads: 1, modeReadsPerWrite: 0 });
+    } finally { await fixture.close(); }
+});
+
 it.each(['mode', 'key', 'epoch'] as const)('freshly admits a KV write after a committed %s change before socket delivery', async change => {
     const fixture = await accountKvAuthorityFixture();
     try {

@@ -165,6 +165,31 @@ describe('installed Session API-root authorization diagnostics', () => {
         expect(post).toHaveBeenCalledTimes(1);
     });
 
+    // p03redesign.F5 flow shape (PLAN 2026-11-14-p03-redesign X0): each requester-isolated Session RPC already carries
+    // the server's per-request Machine admission; the CLI adds 0 signed re-verifies. it.fails until R5 lands (its lane flips it).
+    it.fails('p03redesign.F5: 20 server-admitted Session RPCs cost 0 CLI admission re-verifies', async () => {
+        const { state, post } = setup();
+        post.mockResolvedValue({ status: 200, data: { v: 1, ok: true } });
+        const authorize = createSessionRpcAuthorization({ sessionId: 'session', localMachineId: state.machineId,
+            serverUrl: 'https://session-diagnostic.test', isClosed: () => false,
+            readHomeServerIdentityId: () => state.homeId,
+            readOwnerCredentials: async () => ({ token: 'never-log-owner-token', encryption: null }) });
+        const rpc = new RpcHandlerManager({ scopePrefix: 'session', scopeKind: 'session', localMachineId: state.machineId,
+            encryptionMode: 'plain', authorizeRequest: authorize, logger: () => {} });
+        let effects = 0;
+        rpc.registerHandler(RPC_METHODS.WRITE_FILE, () => { effects += 1; return { ok: true }; });
+        const requests = 20;
+        for (let index = 0; index < requests; index += 1) {
+            expect(await rpc.handleRequest({ method: `session:${RPC_METHODS.WRITE_FILE}`, params: {}, callerAuthority: 'present_user',
+                machineAdmission: { actorAccountId: 'never-log-owner', custodianAccountId: 'never-log-owner', machineId: state.machineId,
+                    installationId: installation.installationId, role: 'use', encryptionMode: 'plain' } })).toMatchObject({ ok: true });
+        }
+        expect(effects).toBe(requests);
+        // it.fails hides the assertion message, so the measured count is printed for the flow-budgets row.
+        console.info(`[p03redesign.F5] CLI admission re-verifies=${post.mock.calls.length} for ${requests} admitted Session RPCs`);
+        expect(post.mock.calls.length, `F5 current: ${post.mock.calls.length} CLI re-verifies for ${requests} admitted RPCs`).toBe(0);
+    });
+
     function setupAttachmentRequester() {
         const { state, post, fetch } = setup();
         const requester = { sessionId: 'session', homeServerIdentityId: state.homeId,
