@@ -8421,7 +8421,10 @@ class Sync {
                       }
                   }
 
-                  if (reason !== 'changes-catch-up') this.metadataUpgradeDiscovery.requestRefresh();
+                  // The catch-up below invalidates the census for every change that can need it (and its
+                  // snapshot path for gaps), and a failed census stays pending. Only an explicit refresh
+                  // re-asks without a new authority signal; a foreground or reconnect alone changed nothing.
+                  if (reason === 'manual') this.metadataUpgradeDiscovery.requestRefresh();
                   const { status, refreshedByCatchUp } = await this.resumeViaChanges({
                       accountId,
                       shouldContinue,

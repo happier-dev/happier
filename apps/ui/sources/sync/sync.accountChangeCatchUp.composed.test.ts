@@ -409,6 +409,8 @@ describe('sync AccountChange catch-up projection', () => {
         expect(http.filter(route => route === 'GET /v2/changes')).toHaveLength(1);
         expect(batchIds).toEqual([]);
         expect(http.filter(route => route === 'GET /v2/sessions')).toEqual([]);
+        // Nothing changed while away: the metadata-upgrade census has no new authority signal to answer.
+        expect(http.filter(route => route === 'GET /v2/sessions/metadata-upgrades')).toEqual([]);
         rows[0] = { ...rows[0]!, metadataVersion: rows[0]!.metadataVersion + 1 };
         changesResponse.mockResolvedValueOnce({ changes: [{ kind: 'session', entityId: rows[0]!.id,
             cursor: 1, changedAt: 1 }], nextCursor: 1 });
