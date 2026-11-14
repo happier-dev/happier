@@ -132,8 +132,10 @@ function CardGridBand(props: Readonly<{ band: WidgetGroupBand; byId: ReadonlyMap
     );
 }
 
-// A card fills its cell, so every card in a row is as tall as the tallest.
-const cellStyle: ViewStyle = { flex: 1 };
+// A card fills its cell, so every card in a row is as tall as the tallest. Grow from the card's own
+// height, never `flex: 1`: native Yoga gives that a zero basis, so a height-bounded host (a sheet)
+// shrinks every card to nothing and the rows draw stacked over each other.
+const cellStyle: ViewStyle = { flexGrow: 1 };
 const bandListStyle: ViewStyle = { rowGap: CARD_GRID.gapPx };
 const rowBandStyle: ViewStyle = { flexDirection: 'column' };
 const columnsBandStyle: ViewStyle = { flexDirection: 'row', columnGap: CARD_GRID.gapPx };

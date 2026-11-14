@@ -415,8 +415,9 @@ const styles = StyleSheet.create((theme) => ({
     containerCovered: {
         overflow: 'hidden',
     },
+    // Fills the cell from the tile's own height (see CardGrid's cell: never a zero basis).
     slot: {
-        flex: 1,
+        flexGrow: 1,
     },
     frame: {
         position: 'absolute',

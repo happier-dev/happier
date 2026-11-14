@@ -170,8 +170,9 @@ const styles = StyleSheet.create((theme) => ({
         marginTop: theme.space.s2,
         color: theme.colors.text.secondary,
     },
+    // Fills the grid cell from the tile's own height: `flex: 1` (a zero native basis) collapsed every tile in the sheet.
     press: {
-        flex: 1,
+        flexGrow: 1,
     },
     foot: {
         marginTop: 'auto',

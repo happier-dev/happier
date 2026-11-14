@@ -106,7 +106,7 @@ const styles = StyleSheet.create((theme) => {
     return {
         card: {
             ...paper,
-            flex: 1,
+            flexGrow: 1,
             position: 'relative',
             minHeight: 152,
             padding: 14,
