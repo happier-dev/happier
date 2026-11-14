@@ -10328,7 +10328,12 @@ projects can have the same hashed name shape. An adopted identity stays adopted.
 
 Selected Machine service detail may carry optional `runtimeFacts` with
 `configuration`, `observedAt` and `freshness`. Every nested object stays closed;
-the redacted configuration shares the existing deployment-review service
+the optional closed `configurationDetails` array carries each immutable
+container's redacted image, image CONFIG digest, effective command, network names/mode,
+environment variable names (never values), and health-check test/interval.
+Older producers without the array remain readable; matching Protocol, daemon
+and UI source reload together when producing it.
+The redacted configuration shares the existing deployment-review service
 schema, including bind address and TCP/UDP protocol for every reported port.
 Absent facts remain valid. These are matching-reader, unpublished 0.3 direct
 cuts within V1, independently of package SemVer: prior strict development

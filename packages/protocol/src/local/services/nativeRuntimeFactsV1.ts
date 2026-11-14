@@ -34,6 +34,20 @@ export const MachineServiceObservedAccountingV1Schema = lazyZodSchema(() => z.st
 /** The existing capture's facts; unavailable retains its last admitted observation. */
 export const MachineServiceNativeRuntimeFactsV1Schema = lazyZodSchema(() => z.strictObject({
   configuration: z.nullable(DeploymentReviewServiceV1Schema),
+  /** Redacted effective Docker configuration, per immutable container; environment values never cross this boundary. */
+  configurationDetails: z.optional(z.array(z.strictObject({
+    nativeResourceId: z.string(),
+    image: z.nullable(z.string()),
+    imageDigest: z.nullable(z.string()),
+    command: z.nullable(z.array(z.string())),
+    networks: z.nullable(z.array(z.string())),
+    networkMode: z.nullable(z.string()),
+    variableNames: z.nullable(z.array(z.string())),
+    healthcheck: z.nullable(z.strictObject({
+      test: z.array(z.string()),
+      intervalNs: z.nullable(z.number().check(z.int(), z.minimum(0))),
+    })),
+  }))),
   accounting: z.optional(MachineServiceObservedAccountingV1Schema),
   healthSince: z.optional(z.number().check(z.int(), z.minimum(1))),
   observedAt: z.nullable(z.number()),

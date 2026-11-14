@@ -4,6 +4,7 @@ import { Duplex } from 'node:stream';
 
 import { spawnAuthorizedHostExecLaunchForHost, type HostAuthorizedPluginExecLaunch } from '@/plugins/runtime/invocation/services/exec';
 import { MANAGED_SERVICE_NUMERIC_CONTRACT } from '@/plugins/runtime/invocation/services/managedServiceSpecNormalization';
+import type { MachineServiceNativeRuntimeFactsV1 } from '@happier-dev/protocol/local/services/nativeRuntimeFactsV1';
 
 type Subscription = Readonly<{ dispose(): Promise<void> }>;
 export type DockerEngineEventSource = (request: Readonly<{
@@ -125,6 +126,8 @@ type Registration = Readonly<{
     inspect(ids: readonly string[], signal: AbortSignal): Promise<readonly unknown[] | null>;
     /** Derive the one safe comparison fact before raw Config/HostConfig are discarded. */
     configurationMatches?(container: unknown): boolean | undefined;
+    /** Project masked detail facts before raw Config/HostConfig are discarded. */
+    configurationDetails?(container: unknown): NonNullable<MachineServiceNativeRuntimeFactsV1['configurationDetails']>[number] | undefined;
     changed(rows: readonly unknown[] | null): void;
 }>;
 
@@ -253,7 +256,9 @@ function createEngine(retired: () => void) {
                             const observed = byId.get(id);
                             if (!observed) return [];
                             const configurationMatches = registration.configurationMatches?.(observed.native);
-                            return [{ ...observed.facts, ...(configurationMatches === undefined ? {} : { configurationMatches }) }];
+                            const configurationDetails = registration.configurationDetails?.(observed.native);
+                            return [{ ...observed.facts, ...(configurationMatches === undefined ? {} : { configurationMatches }),
+                                ...(configurationDetails === undefined ? {} : { configurationDetails }) }];
                         }));
                     }
                 } catch { if (current === connection) down(); }

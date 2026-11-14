@@ -10720,6 +10720,16 @@ resource facts. Unavailable observations retain their last admitted facts and
 timestamp; missing captures do not invent them. Lists carry only the configuration's port projection; detail retains the full
 redacted structure for every Compose service, including services without a
 healthcheck. Detail accounting uses the same explicit native reader as the list.
+Detail also carries optional `configurationDetails` per immutable Docker container:
+image reference and image CONFIG digest, effective entrypoint plus command argv,
+network names and native network mode, environment variable names only, and health-check test argv plus
+its native nanosecond interval. These facts come from the existing retained
+inspection, with text passed through its active redaction lease; missing masking
+custody omits this projection. Network membership explains an unpublished port's
+container-network context without claiming public reachability or isolation;
+host networking remains explicitly identified. The service row's
+existing `deployment.deploymentId` identifies the deploying receipt. No additional
+inspection, sampling or polling is introduced.
 In 0.3 development source, Compose samples also carry optional nullable
 `networkReceivedBytes`, `networkSentBytes` and `restartCount` per immutable
 container ID. Network values are Docker CLI humanized lifetime totals decoded

@@ -51,6 +51,7 @@ import { admitNativeResticCommand, type NativeResticCommandInput } from './nativ
 import { RESTIC_RUNTIME_V1 } from '@happier-dev/deployments';
 import { createNativeComposeActivatedProject } from './nativeComposeActivatedProject';
 import { readNativeComposePublishedPorts } from './nativeComposePorts';
+import { projectNativeComposeConfigurationDetails } from './nativeComposeConfigurationDetails';
 import { createNativeComposeProgressOutput } from './nativeComposeProgress';
 import { prepareNativeComposeReferenceNetwork, readNativeComposeReferenceNetwork } from './nativeComposeReferenceNetwork';
 export type { NativeResticCommandInput } from './nativeResticCommand';
@@ -199,6 +200,7 @@ export type NativeComposeEnvironmentProject = Readonly<{
 type Container = ProjectNativeContainerObservation & Readonly<{
     state: string; health: string; ports: Readonly<Record<string, unknown>>; workingDirectory?: string;
     startedAtMs?: number; healthSince?: number;
+    configurationDetails?: NonNullable<ProjectNativeRuntimeFacts['configurationDetails']>[number];
 }>;
 const unknown: ManagedServiceNativeObservationV1 = { phase: 'unknown', readiness: 'not_reported', endpoint: null };
 const stopped: ManagedServiceNativeObservationV1 = { phase: 'stopped', readiness: 'not_reported', endpoint: null };
@@ -293,16 +295,19 @@ function containers(stdout: string, project?: string): readonly Container[] | nu
             const startedAtMs = typeof item.State.StartedAt === 'string' ? Date.parse(item.State.StartedAt) : NaN;
             const healthSince = record(item.State.Health) ? item.State.Health.Since : undefined;
             const configurationMatches = typeof item.configurationMatches === 'boolean' ? item.configurationMatches : undefined;
+            const networkNames = record(item.NetworkSettings.Networks) ? Object.keys(item.NetworkSettings.Networks) : undefined;
+            const nativeImageId = typeof item.Image === 'string' && /^sha256:[a-f0-9]{64}$/u.test(item.Image) ? item.Image : undefined;
             result.push({ ...(configurationMatches === undefined ? {} : { configurationMatches }), id: item.Id,
+                ...(item.configurationDetails ? { configurationDetails: item.configurationDetails as NonNullable<ProjectNativeRuntimeFacts['configurationDetails']>[number] } : {}),
                 composeProject: item.Config.Labels['com.docker.compose.project'], service: item.Config.Labels['com.docker.compose.service'], state: item.State.Status,
                 ...(Number.isSafeInteger(startedAtMs) && startedAtMs > 0 && item.State.Status === 'running' ? { startedAtMs } : {}),
                 ...(typeof healthSince === 'number' && Number.isSafeInteger(healthSince) && healthSince > 0 ? { healthSince } : {}),
                 ...(typeof item.Name === 'string' && item.Name.startsWith('/') && item.Name.length > 1
                     ? { containerName: nativeComposeContainerDnsName(item.Id, item.Name.slice(1)) } : {}),
-                ...(record(item.NetworkSettings.Networks) ? { networkNames: Object.keys(item.NetworkSettings.Networks) } : {}),
+                ...(networkNames ? { networkNames } : {}),
                 ...(typeof item.Config.Labels['com.docker.compose.project.working_dir'] === 'string'
                     ? { workingDirectory: item.Config.Labels['com.docker.compose.project.working_dir'] } : {}),
-                ...(typeof item.Image === 'string' && /^sha256:[a-f0-9]{64}$/u.test(item.Image) ? { nativeImageId: item.Image } : {}),
+                ...(nativeImageId ? { nativeImageId } : {}),
                 ...(typeof item.State.Pid === 'number' && Number.isSafeInteger(item.State.Pid) && item.State.Pid > 0 ? { pid: item.State.Pid } : {}),
                 ...(typeof item.RestartCount === 'number' && Number.isSafeInteger(item.RestartCount) && item.RestartCount >= 0 ? { restartCount: item.RestartCount } : {}),
                 ...(policy && typeof policy.Name === 'string' ? { restartPolicy: { name: policy.Name,
@@ -664,6 +669,15 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
                     return record(row) && typeof row.Id === 'string'
                         ? imageProofs.get(row.Id)?.configurationMatches(row.Config, row.HostConfig) : undefined;
                 },
+                configurationDetails(row) {
+                    const lease = launch?.secretRedactionLease;
+                    if (!lease?.isActive() || !record(row) || typeof row.Id !== 'string' || !record(row.Config)) return undefined;
+                    return projectNativeComposeConfigurationDetails({ nativeResourceId: row.Id, config: row.Config, redact: lease.redact,
+                        ...(record(row.HostConfig) && typeof row.HostConfig.NetworkMode === 'string' ? { networkMode: row.HostConfig.NetworkMode } : {}),
+                        ...(typeof row.Image === 'string' && /^sha256:[a-f0-9]{64}$/u.test(row.Image) ? { nativeImageId: row.Image } : {}),
+                        ...(record(row.NetworkSettings) && record(row.NetworkSettings.Networks)
+                            ? { networkNames: Object.keys(row.NetworkSettings.Networks) } : {}) });
+                },
                 changed(rows) {
                     const parsed = rows ? containers(JSON.stringify(rows), project) : null;
                     if (parsed) observedIds = parsed.map(row => row.id);
@@ -681,6 +695,9 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
                         value => launch?.secretRedactionLease?.redact(value) ?? value);
                     runtimeFacts = { configuration: engineRows && configuration
                         ? ports ? { ...configuration, ports } : null : runtimeFacts.configuration,
+                        ...(engineRows ? (engineRows.every(row => row.configurationDetails) ? {
+                            configurationDetails: engineRows.map(row => row.configurationDetails!),
+                        } : {}) : runtimeFacts.configurationDetails ? { configurationDetails: runtimeFacts.configurationDetails } : {}),
                         observedAt: engineRows ? Date.now() : runtimeFacts.observedAt,
                         freshness: engineRows ? 'current' : 'unavailable',
                         ...(startedAtMs === undefined && memoryBytes === undefined ? {} : { accounting: {

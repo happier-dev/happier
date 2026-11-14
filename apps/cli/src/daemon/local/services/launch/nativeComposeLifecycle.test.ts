@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setImmediate as nextTurn } from 'node:timers/promises';
 import { MachineServiceAccountingV1Schema } from '@happier-dev/protocol';
+import { MachineServiceNativeRuntimeFactsV1Schema } from '@happier-dev/protocol/local/services/nativeRuntimeFactsV1';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { createNativeComposeLifecycle } from './nativeComposeLifecycle';
 import { openDockerEngineEvents } from './dockerEngineObservation';
@@ -17,6 +18,44 @@ import type { ProjectNativeToolchainIo } from '@/workspaces/toolchain/preparePro
 
 describe('Compose exact native resource lifetime', () => {
     afterEach(() => vi.useRealTimers());
+
+    it('reads redacted Configuration from the retained inspection without exporting environment values or issuing reads', async () => {
+        const args = ['compose', '--project-name', 'happier-test', '--file', '/release/compose.yaml'];
+        const requests: string[][] = [];
+        const row = { ...container('a', 'running'), Image: `sha256:${'b'.repeat(64)}`,
+            Config: { Labels: { 'com.docker.compose.project': 'happier-test', 'com.docker.compose.service': 'worker' },
+                Image: 'registry.example/worker:stable', Entrypoint: ['/entrypoint'], Cmd: ['serve', '--password=private-password'],
+                Env: ['DATABASE_PASSWORD=private-password', 'PUBLIC_LABEL=private-label', 'DATABASE_PASSWORD=another-value'],
+                Healthcheck: { Test: ['CMD-SHELL', 'check private-password'], Interval: 30_000_000_000 } },
+            HostConfig: { NetworkMode: 'private-network' },
+            NetworkSettings: { Ports: { '3000/tcp': null }, Networks: { 'private-network': {} } } };
+        const hostRow = { ...container('c', 'running'),
+            Config: { Labels: row.Config.Labels, Entrypoint: null, Cmd: null, Env: [], Healthcheck: { Test: ['NONE'] } },
+            HostConfig: { NetworkMode: 'host' }, NetworkSettings: { Ports: {}, Networks: { host: {} } } };
+        const capture = createNativeComposeLifecycle({ args, engineId: 'configuration-test',
+            environment: { composeService: 'worker', containerIds: [row.Id, hostRow.Id] }, io: {
+                async events() { return { async dispose() {} }; }, async run(request) {
+                    requests.push([...request.args]);
+                    return { exitCode: 0, stdout: JSON.stringify([row, hostRow]) };
+                },
+            } });
+        capture.bindLaunch({ command: '/docker', args, cwd: '/release', env: {},
+            secretRedactionLease: createProviderRedactionLease({ values: ['private-password'] }), release() {} });
+        const subscription = await capture.lifecycle.observe!(() => {});
+        try {
+            const facts = MachineServiceNativeRuntimeFactsV1Schema.parse(capture.lifecycle.runtimeFacts!());
+            expect(facts).toMatchObject({ configurationDetails: [{ nativeResourceId: row.Id,
+                image: 'registry.example/worker:stable', imageDigest: row.Image,
+                command: ['/entrypoint', 'serve', expect.not.stringContaining('private-password')],
+                networks: ['private-network'], networkMode: 'private-network', variableNames: ['DATABASE_PASSWORD', 'PUBLIC_LABEL'],
+                healthcheck: { test: ['CMD-SHELL', expect.not.stringContaining('private-password')], intervalNs: 30_000_000_000 },
+            }, { nativeResourceId: hostRow.Id, networks: ['host'], networkMode: 'host', command: [], variableNames: [], healthcheck: null }] });
+            expect(JSON.stringify(facts)).not.toMatch(/private-password|private-label|another-value/u);
+            const reads = requests.length;
+            for (let index = 0; index < 100; index++) capture.lifecycle.runtimeFacts!();
+            expect(requests).toHaveLength(reads);
+        } finally { await subscription.dispose(); }
+    });
 
     it('lends the retained Docker transport and every observed replica name and network to Domain routing', async () => {
         const args = ['compose', '--project-name', 'happier-test', '--file', '/release/compose.yaml'];
@@ -38,6 +77,7 @@ describe('Compose exact native resource lifetime', () => {
         expect(capture.lifecycle.nativeContainers?.()).toMatchObject(rows.map(row => ({
             containerName: row.Id.slice(0, 12), networkNames: ['generation-network'],
         })));
+        expect(capture.lifecycle.runtimeFacts!().configurationDetails).toBeUndefined();
         const docker = await capture.lifecycle.nativeDocker?.();
         expect(docker?.engineId).toBe('selected-engine');
         expect(docker?.engineKind).toBe('dockerDesktop');
