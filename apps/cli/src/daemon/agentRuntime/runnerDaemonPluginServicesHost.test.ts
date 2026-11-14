@@ -810,6 +810,21 @@ describe('runner daemon PluginServices host', () => {
             } finally { await host.dispose(); }
         });
 
+    it('keeps a closed managed-provider refusal site through preparation wrappers only in file diagnostics', () => {
+        const source = new PluginError({ code: 'plugin_services_managed_provider_authority_unavailable',
+            message: 'PRIVATE_TOKEN_AND_PATH', details: { refusalSite: 'gateway_execution_identity', private: 'PRIVATE_TOKEN_AND_PATH' } });
+        const wrapped = createRunnerDaemonPluginServicesPreparationError(
+            createRunnerDaemonPluginServicesPreparationError(source, 'managed_provider'), 'managed_provider');
+        const diagnostic = projectRunnerDaemonPluginServicesFailureDiagnostic(wrapped);
+        expect(diagnostic).toMatchObject({ refusalSite: 'gateway_execution_identity',
+            cause: { code: source.code, stage: 'managed_provider' } });
+        expect(JSON.stringify(diagnostic)).not.toContain('PRIVATE_TOKEN_AND_PATH');
+        expect(JSON.stringify(projectRunnerDaemonPluginServicesFailure(wrapped))).not.toContain('gateway_execution_identity');
+        const untrusted = new PluginError({ code: source.code, message: 'PRIVATE_TOKEN_AND_PATH',
+            details: { refusalSite: 'PRIVATE_TOKEN_AND_PATH' } });
+        expect(projectRunnerDaemonPluginServicesFailureDiagnostic(untrusted)).not.toHaveProperty('refusalSite');
+    });
+
     it('retains redacted native materialization details in file diagnostics while keeping RPC failures private', () => {
         const error = new Error('Provider binding refused token=synthetic-private-token\nPRIVATE_STDERR');
         const diagnostic = projectRunnerDaemonPluginServicesFailureDiagnostic(error);

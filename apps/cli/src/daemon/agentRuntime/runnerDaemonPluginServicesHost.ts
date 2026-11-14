@@ -1,3 +1,4 @@
+import { createManagedProviderAuthorityError, readManagedProviderAuthorityRefusalSite } from './managedProviderAuthorityError';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { randomUUID } from 'node:crypto';
 import { closeSync, openSync, writeSync } from 'node:fs';
@@ -137,7 +138,8 @@ export function createRunnerDaemonPluginServicesPreparationError(
         code: failure.code,
         message: failure.message,
         retryable: isPluginError(error) ? error.retryable : true,
-        details: { cause: { code: failure.cause?.code ?? failure.code, stage } },
+        details: { cause: { code: failure.cause?.code ?? failure.code, stage },
+            ...readManagedProviderAuthorityRefusalSite(error) },
         failureCause: failure.failureCause,
     });
 }
@@ -146,6 +148,7 @@ export function createRunnerDaemonPluginServicesPreparationError(
 export function projectRunnerDaemonPluginServicesFailureDiagnostic(error: unknown) {
     return {
         cause: projectRunnerDaemonPluginServicesFailure(error).cause,
+        ...readManagedProviderAuthorityRefusalSite(error),
         ...readAccountConnectionProviderBrokerFailureDiagnostic(error),
         ...readNativeStartupFailureDetail(error),
     };
@@ -1029,10 +1032,7 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                 } finally {
                     completePendingCreation();
                 }
-                return fail(
-                    'plugin_services_managed_provider_authority_unavailable',
-                    'Runner managed Provider PluginServices authority is unavailable',
-                );
+                throw createManagedProviderAuthorityError('host_initial_currentness');
             }
             // Creation positively validates the new snapshot before retiring the old Run.
             // A rejected preparation must leave the existing invocation available for cleanup.
@@ -1231,10 +1231,7 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                 !managedProvider
                 || !await managedProvider.isCurrent()
             ) {
-                return fail(
-                    'plugin_services_managed_provider_authority_unavailable',
-                    'Runner managed Provider PluginServices authority is unavailable',
-                );
+                throw createManagedProviderAuthorityError('host_invocation_currentness');
             }
             return managedProvider;
         };
@@ -1334,10 +1331,7 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                     invocation.managedProviderStart ??= Promise.resolve(managedProvider.start());
                     await invocation.managedProviderStart;
                     if (!await managedProvider.isCurrent()) {
-                        return fail(
-                            'plugin_services_managed_provider_authority_unavailable',
-                            'Runner managed Provider authority changed during start',
-                        );
+                        throw createManagedProviderAuthorityError('host_started_currentness');
                     }
                     return result(operation, null);
                 } catch (error) {
@@ -1362,10 +1356,7 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                 }
                 await invocation.managedProviderStart;
                 if (!await managedProvider.isCurrent()) {
-                    return fail(
-                        'plugin_services_managed_provider_authority_unavailable',
-                        'Runner managed Provider authority changed before Agent materialization',
-                    );
+                    throw createManagedProviderAuthorityError('host_before_materialization');
                 }
                 const prior = invocation
                     .managedProviderMaterialization;
@@ -1390,10 +1381,7 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                                             .credentialPlaceholder,
                                 });
                             if (!await managedProvider.isCurrent()) {
-                                return fail(
-                                    'plugin_services_managed_provider_authority_unavailable',
-                                    'Runner managed Provider authority changed during Agent materialization',
-                                );
+                                throw createManagedProviderAuthorityError('host_after_materialization');
                             }
                             return value;
                         })(),
@@ -1410,7 +1398,7 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                 const managedProvider = await requireManagedProvider();
                 assertManagedProviderRetention(operation.retained, managedProvider.bootstrap);
                 if (managedProvider.bootstrap.custody !== 'daemonShared' || !managedProvider.readSharedGatewayAccess) {
-                    return fail('plugin_services_managed_provider_authority_unavailable', 'Shared Provider access is unavailable');
+                    throw createManagedProviderAuthorityError('host_shared_access_custody');
                 }
                 if (!invocation.managedProviderStart) {
                     return fail('plugin_services_managed_provider_start_required', 'Shared Provider must start before access');
@@ -1418,7 +1406,7 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                 await invocation.managedProviderStart;
                 const access = await managedProvider.readSharedGatewayAccess(operationOptions.signal);
                 if (!await managedProvider.isCurrent()) {
-                    return fail('plugin_services_managed_provider_authority_unavailable', 'Shared Provider authority changed during access');
+                    throw createManagedProviderAuthorityError('host_shared_access_currentness');
                 }
                 return result(operation, access);
             }

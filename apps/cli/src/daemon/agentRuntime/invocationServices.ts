@@ -1,3 +1,4 @@
+import { createManagedProviderAuthorityError } from './managedProviderAuthorityError';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isRetainedManagedProviderInvocationCurrent, isManagedProviderSessionInvocationCurrent } from "@/providers/broker/invocationCurrentness";
 import { createAgentIsolationSessionContext } from "@/daemon/agentIsolation/agentIsolationSessionContext";
@@ -329,10 +330,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
           ) => {
             const origin = await params.resolveCurrentMachineExecutionOriginContext?.(signal);
             if (!origin || origin.machineId !== params.machineId || !params.externalActionAccountId) {
-              throw new PluginError({
-                code: 'plugin_services_managed_provider_authority_unavailable',
-                message: 'Managed gateway execution identity is unavailable',
-              });
+              throw createManagedProviderAuthorityError('gateway_execution_identity');
             }
             return Object.freeze({
               homeId: origin.serverIdentityId,
@@ -350,10 +348,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
             isCurrent: () => Promise<boolean>,
           ) => {
             if (basis.deployment.kind !== 'managedLocal' || created.lifetime !== 'sharedConsumer') {
-              throw new PluginError({
-                code: 'plugin_services_managed_provider_authority_unavailable',
-                message: 'Managed gateway shared custody is unavailable',
-              });
+              throw createManagedProviderAuthorityError('gateway_shared_custody');
             }
             const deployment = basis.deployment;
             const lifetimeScope = createProviderLaunchResourceScope();
@@ -461,11 +456,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                 lease.registry
                   .createRetainedManagedProviderRuntimeInvocationServices;
               if (!createRetainedInvocation) {
-                throw new PluginError({
-                  code: 'plugin_services_managed_provider_authority_unavailable',
-                  message:
-                    'Retained managed Provider invocation services are unavailable',
-                });
+                throw createManagedProviderAuthorityError('retained_invocation_services');
               }
               const storePaths = resolvePluginStorePaths({
                 happyHomeDir: configuration.happyHomeDir,
@@ -522,8 +513,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                 if (retained.custody !== 'daemonShared' || !metadata?.runtimeBindingBasis
                   || !sameProviderRuntimeBindingBasis(metadata.runtimeBindingBasis, retainedBasis)
                   || currentHardRevocationRevision !== retained.providerPluginHardRevocationRevisionAtAdmission) {
-                  throw new PluginError({ code: 'plugin_services_managed_provider_authority_unavailable',
-                    message: 'Retained remote managed gateway authority changed' });
+                  throw createManagedProviderAuthorityError('retained_remote_authority');
                 }
                 return await createRemoteManagedProjection(retainedBasis, metadata, currentHardRevocationRevision,
                   async () => readsRetainedAuthorityCurrent() && await revalidateRetainedProviderPolicy(), readsRetainedAuthorityCurrent, {
@@ -545,10 +535,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                     },
                   )))
               ) {
-                throw new PluginError({
-                  code: 'plugin_services_managed_provider_authority_unavailable',
-                  message: 'Retained managed Provider authority was hard-revoked',
-                });
+                throw createManagedProviderAuthorityError('retained_hard_revocation');
               }
               const created = await createRetainedInvocation({
                 ...(retained.custody === 'daemonShared'
@@ -572,11 +559,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                 revalidatePolicy: revalidateRetainedProviderPolicy,
               });
               if (!created || (retained.custody === 'daemonShared') !== (created.lifetime === 'sharedConsumer')) {
-                throw new PluginError({
-                  code: 'plugin_services_managed_provider_authority_unavailable',
-                  message:
-                    'Retained managed Provider authority could not be reauthorized',
-                });
+                throw createManagedProviderAuthorityError('retained_reauthorization');
               }
               managedProviderCleanup.current = () => created.cleanup();
               const bootstrap = created.bootstrap;
@@ -665,11 +648,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                     ) ||
                     !(await isRetainedProviderCurrent())
                   ) {
-                    throw new PluginError({
-                      code: 'plugin_services_managed_provider_authority_unavailable',
-                      message:
-                        'Retained managed Provider public outcome is unavailable',
-                    });
+                    throw createManagedProviderAuthorityError('retained_public_outcome');
                   }
                 },
                 materializeAgentBinding: async ({
@@ -779,11 +758,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
               });
             const runtimeBindingBasis = authorization.runtimeBindingBasis;
             if (runtimeBindingBasis.deployment.kind !== 'managedLocal') {
-              throw new PluginError({
-                code: 'plugin_services_managed_provider_authority_unavailable',
-                message:
-                  'Runner Provider authorization is not a managed-local binding',
-              });
+              throw createManagedProviderAuthorityError('authorization_deployment');
             }
             if (
               !sameProviderRuntimeBindingBasis(
@@ -791,22 +766,14 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                 runtimeBindingBasis,
               )
             ) {
-              throw new PluginError({
-                code: 'plugin_services_managed_provider_authority_unavailable',
-                message:
-                  'Runner managed Provider authorization is not current for this Session binding',
-              });
+              throw createManagedProviderAuthorityError('authorization_binding');
             }
             const identity =
               runtimeBindingBasis.deployment.implementationIdentity;
             const createInvocation =
               lease.registry.createManagedProviderRuntimeInvocationServices;
             if (!createInvocation) {
-              throw new PluginError({
-                code: 'plugin_services_managed_provider_authority_unavailable',
-                message:
-                  'Managed Provider runtime invocation services are unavailable',
-              });
+              throw createManagedProviderAuthorityError('runtime_invocation_services');
             }
             const storePaths = resolvePluginStorePaths({
               happyHomeDir: configuration.happyHomeDir,
@@ -867,9 +834,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                     })) === providerPluginHardRevocationRevisionAtAdmission
                   );
                 } catch (error) {
-                  throw new PluginError({
-                    code: 'plugin_services_managed_provider_authority_unavailable',
-                    message: 'Managed Provider initial authority is unavailable',
+                  throw createManagedProviderAuthorityError('initial_authority', {
                     failureCause: projectActionFailureCauseV1(error, 'providers.runtime_start'),
                   });
                 }
@@ -937,11 +902,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
               isCurrent: readsSessionProviderAuthorityCurrent,
             });
             if (!createdManagedProviderInvocation) {
-              throw new PluginError({
-                code: 'plugin_services_managed_provider_authority_unavailable',
-                message:
-                  'Managed Provider runtime invocation authority could not be prepared',
-              });
+              throw createManagedProviderAuthorityError('runtime_invocation_preparation');
             }
             managedProviderCleanup.current = () =>
               createdManagedProviderInvocation.cleanup();
@@ -961,11 +922,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                     bootstrap.sourceCustody.immutableGenerationId,
                 })))
             ) {
-              throw new PluginError({
-                code: 'plugin_services_managed_provider_authority_unavailable',
-                message:
-                  'Managed Provider runtime authority changed while preparing the Runner invocation',
-              });
+              throw createManagedProviderAuthorityError('runtime_authority_changed');
             }
             const managedRuntimeDeclaration =
               lease.registry.contributes.providers?.find(
@@ -977,11 +934,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
               managedRuntimeDeclaration?.kind !== 'managed' ||
               !lease.registry.acquireManagedProviderRuntime
             ) {
-              throw new PluginError({
-                code: 'plugin_services_managed_provider_authority_unavailable',
-                message:
-                  'Managed Provider public runtime declaration is unavailable',
-              });
+              throw createManagedProviderAuthorityError('public_runtime_declaration');
             }
             const providerConnectionRevision =
               authorization.sessionBindingMetadata.connectionRevision;
