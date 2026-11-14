@@ -865,7 +865,11 @@ describe('Environment draft Machine Home', () => {
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
   });
 
-  it('never defaults to an answering Machine whose Deployments role is off (Machine roles)', async () => {
+  it.each([false, true])('never defaults to a Deployments-off Machine, including a copy source (copy: %s)', async copying => {
+    const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const base = createDeploymentEnvironmentDetailV1();
+    const copy = createDeploymentEnvironmentDetailV1({ targetLinks: base.targetLinks.map(row => ({ ...row, targetLink: {
+      ...row.targetLink, machines: ['a-parked'], members: [{ machineId: 'a-parked', installationId: 'parked-installation', state: 'active' as const }] } })) });
     const serverId = await homes.addHome({ name: 'Project', serverUrl: 'https://draft-roles.test', accountId: 'alice',
       serverIdentityId: `srv_${'q'.repeat(32)}`, currentAccount: true });
     const account = await captureLazyActionAccountContext(serverId);
@@ -880,7 +884,7 @@ describe('Environment draft Machine Home', () => {
       const deployer = createMachineFixture({ id: 'z-deployer', installationId: 'deployer-installation', activeAt: Date.now() - 1_000 });
       await publishMachineInventoryForTest(account.accountLifetime.scope, [parked, deployer]);
       const screen = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId="source-app"
-        phone={false} actions={createDeploymentActions(account.accountLifetime, 'source-app')}
+        phone={false} copyFrom={copying ? copy : undefined} actions={createDeploymentActions(account.accountLifetime, 'source-app')}
         onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />);
       const machine = () => screen.findAllByType(SessionMachineField).find(node => node.props.testID === 'project-deployments.draft.machine')!;
       // The Deployments-off Machine is listed and answers; it must still not be the default.
@@ -889,6 +893,8 @@ describe('Environment draft Machine Home', () => {
       // With only the Deployments-off Machine, nothing is chosen for the person.
       await publishMachineInventoryForTest(account.accountLifetime.scope, [parked]);
       await waitForTestEvent(screen.subscribe, () => machine().props.machineId, selected => selected === null);
+      await act(async () => machine().props.onSelectMachine(parked));
+      expect(machine().props.machineId).toBe('a-parked');
       await screen.unmount();
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
   });

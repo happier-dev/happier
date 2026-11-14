@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { MachineRolesMutationResultV1Schema, type MachineRoleListEntryV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
+import { CoreMachineRoleIdV1Schema, MachineRolesMutationResultV1Schema, type CoreMachineRoleIdV1, type MachineRoleListEntryV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -11,11 +11,7 @@ import { readSyncedMachineRolesList } from '@/sync/domains/machines/roles/machin
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 
-type CoreRoleId = 'sessions' | 'broker' | 'intake' | 'deployments' | 'workspaces' | 'relay' | 'memory' | 'voice' | 'devices';
-const CORE_ROLE_COPY: Readonly<Record<CoreRoleId, true>> = {
-    sessions: true, broker: true, intake: true, deployments: true, workspaces: true, relay: true, memory: true, voice: true, devices: true,
-};
-function isCoreRoleId(id: string): id is CoreRoleId { return Object.prototype.hasOwnProperty.call(CORE_ROLE_COPY, id); }
+function isCoreRoleId(id: string): id is CoreMachineRoleIdV1 { return CoreMachineRoleIdV1Schema.safeParse(id).success; }
 
 /** A saved choice waits here until synced metadata reaches its version, so the switch never flickers back. */
 type PendingRoles = Readonly<{ active: readonly string[]; settledAtVersion: number | null }>;

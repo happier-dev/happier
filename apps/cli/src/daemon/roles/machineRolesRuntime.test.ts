@@ -100,3 +100,18 @@ describe('daemon machine roles boot from the last applied set', () => {
     runtime.stop();
   });
 });
+
+it('keeps applying roles when recording the applied set rejects', async () => {
+  const m = machine({ rolesV1: { active: ['sessions'] } });
+  const runtime = createMachineRolesRuntime({ port: m.port,
+    persistApplied: async () => { throw new Error('disk unavailable'); } });
+  try {
+    await runtime.reload();
+    await Promise.resolve();
+    expect([...runtime.activeRoles()]).toEqual(['sessions']);
+    m.edit({ rolesV1: { active: ['deployments'] } });
+    await runtime.reload();
+    await Promise.resolve();
+    expect([...runtime.activeRoles()]).toEqual(['deployments']);
+  } finally { runtime.stop(); }
+});

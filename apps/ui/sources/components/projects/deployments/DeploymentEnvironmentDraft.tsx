@@ -183,11 +183,11 @@ export const DeploymentEnvironmentDraft = React.memo(
     // A Machine whose Deployments role is off refuses deploys, so it is never the default home (Machine roles).
     const deploysHere = (machine: (typeof machines)[number]) => answers(machine) && isMachineRoleActiveV1(machine.metadata, 'deployments');
     // The person's choice wins. Otherwise a copy starts on its source's Machine and a new draft on the first one that
-    // answers; an unreachable Machine is never chosen for the person, so with none answering nothing is chosen.
+    // answers and accepts Deployments; with no eligible Machine nothing is chosen for the person.
     const preferredId = props.copyFrom ? copySourceMachineId(props.copyFrom) : null;
     const chosen =
       machineId !== null ? machines.find((machine) => machine.id === machineId) ?? null :
-      machines.find((machine) => machine.id === preferredId && answers(machine)) ?? machines.find(deploysHere) ?? null;
+      machines.find((machine) => machine.id === preferredId && deploysHere(machine)) ?? machines.find(deploysHere) ?? null;
     const branch = ref ?? source?.defaultRef ?? null;
     const platformEnvironment = React.useMemo(() => sourceId ? { projectSourceId: sourceId,
       ...(chosen ? { controllerMachineId: chosen.id } : {}) } : null, [sourceId, chosen?.id]);
