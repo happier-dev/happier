@@ -49,9 +49,10 @@ type ResourceUpdate =
     | Readonly<{ kind: 'published_host'; host: MachineVitalsHostFactsV1 | undefined }>
     | Readonly<{ kind: 'freshness' }>
     | Readonly<{ kind: 'slow' | 'error' | 'not_reported'; errorCode?: string; failure?: MachineDaemonRpcFailure }>;
-type HistoryInput = MachineResourceKey & Readonly<{ range: MachineVitalsRange }>;
+type HistoryInput = Omit<MachineVitalsHistoryReadInput, 'signal'>;
 
 function machineKey(input: MachineResourceKey): string { return JSON.stringify([input.serverId ?? null, input.expectedAccountId ?? null, input.machineId]); }
+function historyKey(input: HistoryInput): string { return JSON.stringify([machineKey(input), input.serviceId ?? null, input.range]); }
 /** Children have already been reconciled; a changed live tail must never be deep-walked here. */
 function retainState<T extends object>(previous: T, next: T): T {
     const keys = Object.keys(next) as (keyof T)[];
@@ -183,6 +184,11 @@ export function createMachineResourceStore(clients: MachineResourceClients, nowM
     const publishedHosts = new Map<string, MachineVitalsHostFactsV1>();
     // These are live consumer/read demands, never retained snapshots or a second transport owner.
     const views = new Map<string, { summary: number; overview: number }>();
+    const serviceHistoryDemands = new Map<string, Map<string, { input: HistoryInput; count: number }>>();
+    function invalidateHistories(input: MachineResourceKey) {
+        for (const range of ['1h', '24h', '7d'] as const) histories.invalidate({ ...input, range });
+        for (const demand of serviceHistoryDemands.get(machineKey(input))?.values() ?? []) histories.invalidate(demand.input);
+    }
     const strongestView = (counts: { overview: number }): MachineVitalsView => counts.overview > 0 ? 'overview' : 'summary';
     function acquireView(input: MachineResourceStoreInput): () => void {
         const key = machineKey(input);
@@ -247,7 +253,7 @@ export function createMachineResourceStore(clients: MachineResourceClients, nowM
             const newestAt = update.samples.reduce((latest, sample) => Math.max(latest, sample.sampledAt), previousAt);
             if (input.view === 'overview' && Math.floor(newestAt / 60_000) > Math.floor(previousAt / 60_000)) {
                 // History buckets and today totals are daemon-owned; only demanded ranges refresh.
-                for (const range of ['1h', '24h', '7d'] as const) histories.invalidate({ ...input, range });
+                invalidateHistories(input);
             }
         },
         watch: ({ input, state, watchClient, signal }) => {
@@ -284,7 +290,7 @@ export function createMachineResourceStore(clients: MachineResourceClients, nowM
     const histories = createSharedSubscriptionStore<HistoryInput, MachineResourceHistoryState, MachineVitalsHistoryV1, MachineResourceClients['historyClient']>({
         emptyState: EMPTY_MACHINE_RESOURCE_HISTORY_STATE, createState: () => EMPTY_MACHINE_RESOURCE_HISTORY_STATE,
         normalizeInput: input => ({ ...input, serverId: input.serverId ?? null }),
-        storeKey: input => JSON.stringify([machineKey(input), input.range]),
+        storeKey: historyKey,
         defaultSnapshotClient: clients.historyClient, retainState: true,
         refresh: async ({ input, state, snapshotClient, signal }) => {
             if (unsupported.has(machineKey(input))) return state.status === 'not_reported' ? state : NOT_REPORTED_HISTORY_STATE;
@@ -344,7 +350,26 @@ export function createMachineResourceStore(clients: MachineResourceClients, nowM
             return unsupported.has(machineKey(input)) && state.status !== 'not_reported' ? NOT_REPORTED_HISTORY_STATE : state;
         },
         observeHistory: histories.observe,
-        demandHistory(input: HistoryInput, listener: () => void = () => {}) { return histories.subscribe(input, listener, { nowMs }); },
+        demandHistory(input: HistoryInput, listener: () => void = () => {}) {
+            const release = histories.subscribe(input, listener, { nowMs });
+            if (input.serviceId === undefined) return release;
+            const machine = machineKey(input);
+            const demands = serviceHistoryDemands.get(machine) ?? new Map<string, { input: HistoryInput; count: number }>();
+            serviceHistoryDemands.set(machine, demands);
+            const key = historyKey(input);
+            const demand = demands.get(key) ?? { input, count: 0 };
+            demand.count++;
+            demands.set(key, demand);
+            let released = false;
+            return () => {
+                if (released) return;
+                released = true;
+                release();
+                if (--demand.count > 0) return;
+                demands.delete(key);
+                if (demands.size === 0 && serviceHistoryDemands.get(machine) === demands) serviceHistoryDemands.delete(machine);
+            };
+        },
         readHistory(input: HistoryInput) { return histories.read(input, { nowMs }); },
         retryHistory(input: HistoryInput) { histories.invalidate(input); return histories.read(input, { nowMs }); },
         daemonStateChanged(input: MachineResourceKey, version: number | null | undefined) {
@@ -360,10 +385,10 @@ export function createMachineResourceStore(clients: MachineResourceClients, nowM
                 store.invalidate({ ...input, view: 'summary' });
             }
             if (wasUnsupported) {
-                for (const range of ['1h', '24h', '7d'] as const) histories.invalidate({ ...input, range });
+                invalidateHistories(input);
             }
         },
-        reset() { store.reset(); histories.reset(); unsupported.clear(); daemonVersions.clear(); publishedHosts.clear(); views.clear(); },
+        reset() { store.reset(); histories.reset(); unsupported.clear(); daemonVersions.clear(); publishedHosts.clear(); views.clear(); serviceHistoryDemands.clear(); },
     };
 }
 

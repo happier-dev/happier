@@ -22,7 +22,7 @@ export type MachineResourceKey = Readonly<{ machineId: string; serverId?: string
 export type MachineVitalsView = 'summary' | 'overview';
 export type MachineVitalsRange = MachineVitalsHistoryV1['range'];
 export type MachineVitalsReadInput = MachineResourceKey & Readonly<{ view: MachineVitalsView; signal?: AbortSignal }>;
-export type MachineVitalsHistoryReadInput = MachineResourceKey & Readonly<{ range: MachineVitalsRange; signal?: AbortSignal }>;
+export type MachineVitalsHistoryReadInput = MachineResourceKey & Readonly<{ range: MachineVitalsRange; serviceId?: string; signal?: AbortSignal }>;
 export type MachineVitalsWatchInput = MachineVitalsReadInput & Readonly<{ sinceSampledAt?: number; onDispatched?: () => void }>;
 export type MachineResourceRpcResult<T> = Readonly<{ ok: true; value: T }> | MachineDaemonRpcFailure;
 
@@ -73,6 +73,7 @@ export function watchMachineVitalsViaMachineRpc(input: MachineVitalsWatchInput):
 }
 
 export function fetchMachineVitalsHistoryViaMachineRpc(input: MachineVitalsHistoryReadInput): Promise<MachineResourceRpcResult<MachineVitalsHistoryV1>> {
-    const payload = MachineVitalsHistoryGetInputV1Schema.parse({ machineId: input.machineId, range: input.range });
+    const payload = MachineVitalsHistoryGetInputV1Schema.parse({ machineId: input.machineId, range: input.range,
+        ...(input.serviceId === undefined ? {} : { serviceId: input.serviceId }) });
     return read(input, () => execute(input, 'machines.vitals.history.get', payload), (raw) => MachineVitalsHistoryV1Schema.safeParse(raw));
 }

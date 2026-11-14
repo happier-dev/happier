@@ -386,6 +386,27 @@ describe('machine resources subscription owner', () => {
     h.store.reset();
   }, 120_000);
 
+  it('isolates service histories from the Machine and other services, sharing only identical demand', async () => {
+    const h = harness();
+    const machine = { ...key, range: '1h' as const };
+    const a = { ...machine, serviceId: 'a' };
+    const b = { ...machine, serviceId: 'b' };
+    h.historyClient.mockImplementation(async input => ({ ok: true, value: {
+      range: input.range, bucketMs: 60_000, points: [],
+      today: { rxBytes: input.serviceId === 'a' ? 1 : input.serviceId === 'b' ? 2 : 3, txBytes: 0 },
+      ...(input.serviceId ? { service: { serviceId: input.serviceId, points: [] } } : {}),
+    } }));
+    await Promise.all([h.store.readHistory(a), h.store.readHistory(a), h.store.readHistory(b), h.store.readHistory(machine)]);
+    expect(h.historyClient).toHaveBeenCalledTimes(3);
+    expect([a, b, machine].map(input => h.store.getHistory(input).history?.today.rxBytes)).toEqual([1, 2, 3]);
+    expect([a, b, machine].map(input => h.store.getHistory(input).history?.service?.serviceId)).toEqual(['a', 'b', undefined]);
+    h.historyClient.mockResolvedValueOnce({ ok: false, reason: 'request_failed' });
+    await h.store.retryHistory(a);
+    expect(h.store.getHistory(a).status).toBe('error');
+    expect(h.store.getHistory(b).status).toBe('ready');
+    expect(h.store.getHistory(machine).status).toBe('ready');
+  });
+
   it('retains unchanged history points and totals when a range answer changes one point', async () => {
     const h = harness();
     const input = { ...key, range: '1h' as const };
@@ -556,14 +577,15 @@ describe('machine resources subscription owner', () => {
       18,
       19,
     ]);
-    // Each slot keeps the time of the observation that covers it; nothing is invented between them.
-    expect(cpu[1]).toEqual({ t: 60_000, y: 10 });
+    // The canonical projection timestamps covered 15-second buckets at their boundary;
+    // the source minute value covers each bucket until its 60-second expiry.
+    expect(cpu[1]).toEqual({ t: 75_000, y: 10 });
 
     // The tick slowing from the Overview's 2 s to the list's 15 s is a cadence change, not a skipped sample.
     const slower = { ...sample(372_000), intervalMs: 15_000 };
     h.watches[0]!.answer.resolve({ ok: true, value: { changed: true, samples: [{ ...sample(358_000), intervalMs: 2_000 }, slower] } });
     await settle();
-    expect(h.store.getState(key).snapshot?.series5m.cpu.at(-1)).toEqual({ t: 372_000, y: 20 });
+    expect(h.store.getState(key).snapshot?.series5m.cpu.at(-1)).toEqual({ t: 360_000, y: 20 });
     expect(h.store.getState(key).snapshot?.series5m.cpu.some(point => point.y === null && point.t > 300_000)).toBe(false);
     release();
     h.store.reset();
@@ -981,7 +1003,7 @@ describe('machine resources subscription owner', () => {
     h.store.reset();
   });
 
-  it('appends raw one-hour live data and refreshes only demanded daemon history at the minute frontier', async () => {
+  it.each([undefined, 'web'])('appends raw one-hour live data and refreshes only demanded daemon history at the minute frontier (service=%s)', async serviceId => {
     const h = harness();
     let rxBytes = 0;
     h.historyClient.mockImplementation(async (input) => ({
@@ -994,7 +1016,7 @@ describe('machine resources subscription owner', () => {
       },
     }));
     const overviewKey = { ...key, view: 'overview' as const };
-    const historyKey = { ...key, range: '24h' as const };
+    const historyKey = { ...key, range: '24h' as const, serviceId };
     const releaseHistory = h.store.demandHistory(historyKey);
     const release = h.store.demand(overviewKey);
     await settle();

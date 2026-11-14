@@ -47,13 +47,17 @@ describe('buildProjectsTreeRows (lab p-projects RULES)', () => {
         const projects = buildProjectsTreeProjects({
             groups: [{ projectKey: { projectKey: 'anchor' }, items: refs }],
             projectName: () => 'first', machine: () => ({ name: 'devbox', homeDir: null, online: null }),
-            sources: [{ id: 'source-a', name: 'Repository', audience: [{ principal: { kind: 'team', teamId: 'team-a' }, level: 'view' }] }],
+            sources: [{ id: 'source-a', revision: 1, createdByAccountId: 'owner', name: 'Repository', audience: [{ principal: { kind: 'team', teamId: 'team-a' }, level: 'view' }] }],
             teamName: (teamId: string) => teamId === 'team-a' ? 'Acme' : null,
             checkoutFacts: (ref: typeof refs[number]) => ref.rootPath === '/work/first'
                 ? { branch: 'main', isWorktree: false, attention: 'working' as const, newFromSession: false }
                 : { branch: 'fix-modal', isWorktree: true, attention: 'needs-you' as const, newFromSession: true },
         });
         expect(projects[0]).toMatchObject({ name: 'Repository', teamLabel: 'Acme', newFromSession: true });
+        expect(projects[0]).toHaveProperty('source', { serverId: 'home-a', source: {
+            id: 'source-a', revision: 1, createdByAccountId: 'owner', name: 'Repository',
+            audience: [{ principal: { kind: 'team', teamId: 'team-a' }, level: 'view' }],
+        } });
         expect(projects[0]?.checkouts.map(row => [row.refId, row.label, row.branch, row.isWorktree, row.attention]))
             .toEqual([['same-id', 'main', 'main', false, 'working'], ['same-id', 'fix-modal', 'fix-modal', true, 'needs-you']]);
         for (const rows of [
@@ -61,8 +65,16 @@ describe('buildProjectsTreeRows (lab p-projects RULES)', () => {
             buildProjectsPhoneTreeRows({ projects, openRefId: null, expandedKeys: new Set(), describe: {
                 checkoutCount: String, machineCount: String, offlineCount: String,
             } }),
-        ]) expect(rows[0]).toMatchObject({ attention: 'needs-you', newFromSession: true });
+        ]) {
+            expect(rows[0]).toMatchObject({ attention: 'needs-you', newFromSession: true });
+            expect(rows[0]).toHaveProperty('source', projects[0]!.source);
+        }
         expect(projects[0]?.checkouts.map(row => row.workspaceAddress?.rootPath)).toEqual(['/work/first', '/work/second']);
+        const common = { groups: [{ projectKey: { projectKey: 'anchor' }, items: refs }],
+            projectName: () => 'first', machine: () => ({ name: 'devbox', homeDir: null, online: null }) };
+        const retained = buildProjectsTreeProjects({ ...common, sources: [projects[0]!.source!.source] });
+        expect(buildProjectsTreeProjects({ ...common, sources: [projects[0]!.source!.source], previousProjects: retained })).toBe(retained);
+        expect(buildProjectsTreeProjects({ ...common, sources: [], previousProjects: retained })[0]?.source).toBeUndefined();
     });
 
     it('leads a not-yet-viewed Project\'s second line with where it came from, in the column and on the phone', () => {

@@ -10,8 +10,10 @@ import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { createPluginUiProjectPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy/projectContext';
 import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
+import { readProjectSourceLink } from '@/sync/domains/workspaces/projectSourceLink';
 
 export type ProjectSurfaceTargetV1 = Extract<PluginUiHostApiSurfaceTargetV1, { kind: 'project' }>;
+
 export type ProjectScmContextSnapshotV1 = Pick<ScmWorkingSnapshot, 'hostingProvider'> & Partial<Pick<ScmWorkingSnapshot, 'branch'>>;
 type RepositoryInput =
     | Readonly<{ kind: 'source' | 'observed'; provider: Pick<NonNullable<ScmWorkingSnapshot['hostingProvider']>, 'kind' | 'baseUrl' | 'nameWithOwner'> | null }>
@@ -75,8 +77,7 @@ export function readProjectWidgetAreaContextV1(input: ProjectWidgetAreaContextIn
     const checkout = acceptedCheckout ? reconcileCheckout(baseline?.target?.checkout, acceptedCheckout) : undefined;
     // An accepted checkout selects its own Source; another anchor cannot lend its provenance.
     const sourceId = (acceptedCheckout ?? projectRef)?.source?.sourceId ?? null;
-    const acceptedSource = projectIdentity && input.source?.source.id === sourceId
-        && areServerProfileIdentifiersEquivalent(input.source.serverId, serverId) ? input.source.source : null;
+    const acceptedSource = projectIdentity ? readProjectSourceLink({ serverId, sourceId, source: input.source }) : null;
     const sourceValue = acceptedSource ? reconcileSource(baseline?.target?.source?.source, acceptedSource) : null;
     const source = sourceValue ? baseline?.target?.source?.source === sourceValue ? baseline.target.source
         : { serverId, source: sourceValue } : undefined;

@@ -3,6 +3,8 @@ import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/worksp
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { readSourceTeamId } from './sources/projectSourceGroups';
 import { shallow } from 'zustand/vanilla/shallow';
+import type { ProjectSurfaceTargetV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
+import { readProjectSourceLink } from '@/sync/domains/workspaces/projectSourceLink';
 
 /**
  * The Projects tree's rows (plan 10 §2/§8, lab p-projects TREE/RULES): one Project's accepted
@@ -51,6 +53,7 @@ export type ProjectsTreeCheckout = Readonly<{
 export type ProjectsTreeProject = Readonly<{
     key: string;
     name: string;
+    source?: ProjectSurfaceTargetV1['source'];
     /** The Team a Team project is shared with ("Acme"), drawn quietly after the name. */
     teamLabel?: string | null;
     /** Accepted Session checkout not yet viewed through the existing device presentation owner. */
@@ -62,6 +65,7 @@ export type ProjectsTreeProject = Readonly<{
 
 export type ProjectsTreeRow = Readonly<{
     key: string;
+    source?: ProjectSurfaceTargetV1['source'];
     level: number;
     kind: 'project' | 'machine' | 'checkout';
     title: string;
@@ -184,6 +188,7 @@ export function buildProjectsTreeRows(input: Readonly<{
                 key: project.key,
                 level: 0,
                 kind: 'project',
+                source: project.source,
                 title: project.name,
                 titleQualifier: project.teamLabel ?? null,
                 subtitle: `${only.machineName} · ${selected ? only.path : checkoutWhere(only)}`,
@@ -207,6 +212,7 @@ export function buildProjectsTreeRows(input: Readonly<{
             key: project.key,
             level: 0,
             kind: 'project',
+            source: project.source,
             title: project.name,
             // One machine: it folds into the Project row ("happier-plugins devbox").
             titleQualifier: singleMachine
@@ -345,7 +351,8 @@ function retainProjectsTreeProject(previous: ProjectsTreeProject | undefined, ne
         // The key proves every address field equal; reuse that nested identity for the shallow comparison.
         return shallow(prior, checkout.workspaceAddress ? { ...checkout, workspaceAddress: prior.workspaceAddress } : checkout) ? prior : checkout;
     });
-    const retained = { ...next, checkouts: shallow(previous.checkouts, checkouts) ? previous.checkouts : checkouts };
+    const retained = { ...next, source: shallow(previous.source, next.source) ? previous.source : next.source,
+        checkouts: shallow(previous.checkouts, checkouts) ? previous.checkouts : checkouts };
     return shallow(previous, retained) ? previous : retained;
 }
 
@@ -371,7 +378,7 @@ export function buildProjectsTreeProjects<TRef extends Readonly<{
     /** Every referenced Machine has a name from the machine-name owner, even one this Home no longer lists. */
     machine: (machineId: string) => ProjectsTreeMachineFacts;
     /** Only current authorized catalog rows from the same Home/Account as these accepted refs. */
-    sources?: readonly Pick<ProjectSourceV1, 'id' | 'name' | 'audience'>[];
+    sources?: readonly ProjectSourceV1[];
     teamName?: (teamId: string) => string | null;
     checkoutFacts?: (ref: TRef) => ProjectsTreeCheckoutFacts | null;
     /** The preceding output of this producer; unchanged Projects and checkouts keep their identities. */
@@ -405,6 +412,8 @@ export function buildProjectsTreeProjects<TRef extends Readonly<{
         });
         const project: ProjectsTreeProject = {
             key: group.projectKey.projectKey,
+            source: source && first.serverId && readProjectSourceLink({ serverId: first.serverId, sourceId: first.source?.sourceId ?? null,
+                source: { serverId: first.serverId, source } }) ? { serverId: first.serverId, source } : undefined,
             name: first.label?.trim() ? input.projectName(first) : source?.name ?? input.projectName(first),
             teamLabel: teamId ? input.teamName?.(teamId) ?? null : null,
             newFromSession: false,
@@ -457,6 +466,7 @@ export function buildProjectsPhoneTreeRows(input: Readonly<{
             title: project.name,
             titleQualifier: project.teamLabel ?? null,
             subtitle,
+            source: project.source,
             machineId: single?.machineId ?? null,
             glyph: 'project',
             expandable: !single,

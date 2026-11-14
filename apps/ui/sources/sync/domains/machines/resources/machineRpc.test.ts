@@ -14,17 +14,26 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
 });
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes); installDisconnectedServerSocketBoundary();
+// Initialize storage through Sync before resource RPC imports its daemon read target.
+await loadSyncSingletonForTests();
 const { machineRpcWithPeerMediationRoute } = await import('@/sync/domains/machines/peer/mediation/rpc/client');
 const { fetchMachineVitalsHistoryViaMachineRpc, fetchMachineVitalsViaMachineRpc, watchMachineVitalsViaMachineRpc } = await import('./machineRpc');
 
 const key = { serverId: 'home', machineId: 'machine', view: 'summary' as const };
-// Load the real Sync/Action graph during collection, outside each test's setup deadline.
-await loadSyncSingletonForTests();
 beforeEach(async () => {
     await homes.reset(); await loadSyncSingletonForTests(); network.execute.mockReset();
     key.serverId = await homes.addHome({ name: 'Vitals', serverUrl: 'https://vitals-read.test', accountId: 'owner', currentAccount: true });
 });
 afterEach(async () => { vi.useRealTimers(); await homes.reset(); });
+
+it('carries service history selection through real Action admission to the daemon', async () => {
+    const history = { range: '1h', bucketMs: 60_000, points: [], today: { rxBytes: 1, txBytes: 2 },
+        service: { serviceId: 'web', points: [{ t: 60_000, cpuPercent: 150, cpuMaxPercent: 170, memoryBytes: 1024, memoryMaxBytes: 2048 }] } };
+    network.execute.mockResolvedValue(history);
+    const result = await fetchMachineVitalsHistoryViaMachineRpc({ ...key, range: '1h', serviceId: 'web' });
+    expect(result).toEqual({ ok: true, value: history });
+    expect(network.execute.mock.calls[0]?.[0]).toMatchObject({ payload: { machineId: key.machineId, range: '1h', serviceId: 'web' } });
+});
 
 it.each([true, false])('recovers demanded Vitals after consecutive transport deadlines and a renderer stall (changed=%s)', async changed => {
     vi.useFakeTimers();
