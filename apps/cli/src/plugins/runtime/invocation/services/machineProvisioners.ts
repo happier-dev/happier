@@ -15,16 +15,16 @@ export function createMachineProvisionersInvocationService(params: Readonly<{
     const binding = seed.managedBootstrapCredential;
     const native = seed.managedNativeCredentials;
     const retainCleanup = seed.retainCleanup;
-    if (!retainCleanup || seed.signal.aborted || !seed.isOccurrenceCurrent()
-        || !binding && !native) return null;
+    if (!retainCleanup || seed.signal.aborted || !seed.isOccurrenceCurrent()) return null;
+    // Native build observation needs the invocation lifetime, independently of SSH credential custody.
     const unavailable = () => new PluginError({ code: 'plugin_service_unavailable', message: 'The admitted bootstrap credential is unavailable' });
     const byteService = createManagedBootstrapCredentialByteService({ binding, signal: seed.signal,
         isCurrent: seed.isOccurrenceCurrent, retainCleanup, unavailable,
         registerRawForRedaction: params.registerRawForRedaction });
     const { assertActive } = byteService;
     const waitForNativeObservation = createManagedNativeObservationWait(seed.signal);
-    function materializeCredential(request: Readonly<{ kind: 'bytes' | 'file' }>):
-        Promise<MachineProvisionerBootstrapCredentialLeaseV1> {
+    const materializeCredential = (request: Readonly<{ kind: 'bytes' | 'file' }>):
+        Promise<MachineProvisionerBootstrapCredentialLeaseV1> => {
         if (request.kind === 'bytes') return byteService.materializeBootstrapCredential();
         let byteLease: Awaited<ReturnType<typeof byteService.materializeBootstrapCredential>> | null = null;
         let fileCleanup: ManagedServiceCredentialFileCleanup | null = null;
@@ -67,7 +67,7 @@ export function createMachineProvisionersInvocationService(params: Readonly<{
             }
         })();
         return materialization;
-    }
+    };
     return Object.freeze({
         async waitForNativeObservation(): Promise<void> {
             await waitForNativeObservation();

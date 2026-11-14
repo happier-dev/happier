@@ -43,6 +43,33 @@ it('waits for native snapshot observation under the admitted invocation cancella
     } finally { vi.useRealTimers(); }
 });
 
+it('settles native power without an SSH credential while keeping credential acquisition unavailable', async () => {
+    vi.useFakeTimers();
+    const lifetime = createPluginInvocationLifetime();
+    const service = createMachineProvisionersInvocationService({ seed: {
+        plugin: { id: 'happier.machine.coder', version: '0' },
+        contribution: { id: 'power', qualifiedId: 'happier.machine.coder/power' },
+        occurrenceId: 'occurrence', correlationId: 'start', surface: 'plugin',
+        signal: lifetime.signal, isOccurrenceCurrent: () => true, retainCleanup: lifetime.retainCleanup,
+    } });
+    try {
+        expect(service).not.toBeNull();
+        const settled = service!.waitForNativeObservation();
+        await vi.runOnlyPendingTimersAsync();
+        await settled;
+        await expect(service!.materializeBootstrapCredential({ kind: 'bytes' })).rejects.toMatchObject({ code: 'plugin_service_unavailable' });
+        await expect(service!.materializeGuestHostCredential()).rejects.toMatchObject({ code: 'plugin_service_unavailable' });
+        await expect(service!.materializeNativeCredentialHeaders({ bindingKey: 'unbound' }))
+            .resolves.toEqual({ ok: false, code: 'native_credential_binding_unavailable' });
+        const cancelled = expect(service!.waitForNativeObservation()).rejects.toMatchObject({ code: 'cancelled' });
+        await lifetime.complete();
+        await cancelled;
+    } finally {
+        await lifetime.complete();
+        vi.useRealTimers();
+    }
+});
+
 describe('DigitalOcean acquire consumes the admitted private guest-host lease', () => {
     async function invocation(status: number, generated = true, privateReader = true) {
         const credential = readManagedBootstrapCredential(createManagedBootstrapSshCredential({
