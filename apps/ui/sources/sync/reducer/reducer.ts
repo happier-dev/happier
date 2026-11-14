@@ -124,7 +124,7 @@ import { runMessageToEventConversion } from "./phases/messageToEventConversion";
 import { runAgentStatePermissionsPhase } from "./phases/agentStatePermissions";
 import { runUserAndTextPhase } from "./phases/userAndText";
 import { runToolCallsPhase } from "./phases/toolCalls";
-import { runToolResultsPhase } from "./phases/toolResults";
+import { runToolResultsPhase, resolveSidechainParentMessageId } from "./phases/toolResults";
 import { runSidechainsPhase } from "./phases/sidechains";
 import { runModeSwitchEventsPhase } from "./phases/modeSwitchEvents";
 import { equalOptionalStringArrays } from "./helpers/arrays";
@@ -600,9 +600,7 @@ export function reducer(
     const sidechainChildIds = new Set<string>();
     const sidechainParentByChildId = new Map<string, string>();
     for (const [sidechainId, chain] of state.sidechains) {
-        // A root permission mirror is not the nested tool's ancestor.
-        const parentId = state.sidechainToolIdToMessageId.get(sidechainId)
-            ?? state.toolIdToMessageId.get(sidechainId);
+        const parentId = resolveSidechainParentMessageId(state, sidechainId);
         for (const m of chain) {
             sidechainChildIds.add(m.id);
             if (parentId) sidechainParentByChildId.set(m.id, parentId);
