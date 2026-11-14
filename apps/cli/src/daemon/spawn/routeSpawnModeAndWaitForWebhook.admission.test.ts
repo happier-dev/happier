@@ -126,7 +126,7 @@ it.each(['opencode', 'codex'] as const)('requires managed runtime bootstrap befo
                 : { kind: 'runner' as const, startingMode: 'remote' as const },
             terminalRequest: { requested: 'plain' as const },
             directory, options: spawnOptions, trackedSpawnOptions: spawnOptions,
-            normalizedExistingSessionId: '', effectiveResume: '',
+            normalizedExistingSessionId: 'session-native-admission', effectiveResume: '',
             effectiveBackendTargetV2: backendTarget,
             directoryCreated: false, extraEnvForChildWithMessage: {}, processEnv: { ...process.env }, happyHomeDir: homeDir,
             trackedSessionsByKey, spawnAwaiterByKey, spawnResultResolverByKey, spawnWebhookTimeoutByKey,
@@ -263,10 +263,12 @@ it.each(['opencode', 'codex'] as const)('requires managed runtime bootstrap befo
             const tracked = [...trackedSessionsByKey.values()][0]!;
             phase = 'persist accepted runner marker custody';
             await tracked.acceptedSpawnMarkerGate;
-            expect(native.args).toEqual([agentId, '--happy-starting-mode', 'remote', '--started-by', 'daemon']);
+            expect(native.args).toEqual([agentId, '--happy-starting-mode', 'remote', '--started-by', 'daemon',
+                '--existing-session', 'session-native-admission']);
             // Exercise the runner's actual argument parser and Session binding,
             // not a separately reconstructed Workflow/daemon starting mode.
             const parsed = partitionProviderSessionArgs({ args: native.args, providerSubcommand: agentId });
+            expect(parsed.existingSessionId).toBe('session-native-admission');
             const codexOptions = agentId === 'codex'
                 ? resolveCodexCliSessionExtraOptions({
                     startingMode: parsed.startingMode, directory: parsed.directory, agentArgs: parsed.providerArgs,
@@ -282,7 +284,7 @@ it.each(['opencode', 'codex'] as const)('requires managed runtime bootstrap befo
             expect(binding.runtimePreferences.startingMode).toBe('remote');
             const acceptedMarkers = await listSessionMarkers();
             expect(acceptedMarkers).toEqual(expect.arrayContaining([expect.objectContaining({
-                pid: tracked.pid, happySessionId: `PID-${tracked.pid}`, cwd: directory,
+                pid: tracked.pid, happySessionId: 'session-native-admission', cwd: directory,
                 processStartTimeMs: tracked.processStartTimeMs,
             })]));
             const marker = acceptedMarkers.find(candidate => candidate.pid === tracked.pid);

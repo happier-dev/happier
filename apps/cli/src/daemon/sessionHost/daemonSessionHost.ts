@@ -19,6 +19,7 @@ import type { HappyCliSubprocessLaunchOptions } from '@/utils/spawnHappyCLI';
 
 import { buildDaemonOwnedSpawnChildEnv } from '../spawn/daemonOwnedSpawnChildEnvironment';
 import { launchDetachedHappierProcess } from '../spawn/launchDetachedHappierProcess';
+import { buildChildExitBeforeWebhookFailure } from '../spawn/childStderrDiagnostic';
 import type { ChildExit } from '../sessions/onChildExited';
 import type { TrackedSession } from '../types';
 
@@ -159,8 +160,11 @@ export function createDaemonSessionHost(params: Readonly<{
     const pid = await waitForHostReady(child);
     params.logDebug('[DAEMON RUN] Session host launched', { launchedPid, pid });
     if (pid === null) {
-      return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
-        errorMessage: `Session host PID ${launchedPid} exited before it was ready` };
+      const exit = await exited;
+      launched.launch.flushDiagnostics();
+      const stderr = launched.launch.readStderr();
+      return buildChildExitBeforeWebhookFailure({ pid: launchedPid, ...exit,
+        stderrTail: stderr.head, failureCause: stderr.failureCause });
     }
     void exited.then(() => removeExitedSessionHostDescriptor(pid)).catch((error: unknown) => {
       params.logDebug('[DAEMON RUN] Exited session host descriptor not removed', { pid, error });
