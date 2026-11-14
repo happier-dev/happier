@@ -4244,6 +4244,14 @@ describe("plugin collection UI query route", () => {
             { rowId: "task-current", revision: 3, deletedAt: null },
             { rowId: "task-written", revision: 1, deletedAt: null },
         ]);
+        const writtenIndexEntries = await db.pluginCollectionIndexEntry.findMany({
+            where: {
+                rowId: "task-written",
+                indexState: { accountId, pluginId: ref.pluginId, collectionId: ref.collectionId },
+            },
+            select: { encodedSortKey: true, indexState: { select: { indexId: true } } },
+        });
+        expect(writtenIndexEntries.length).toBeGreaterThan(0);
         await expect(db.accountChange.findMany({
             where: { accountId },
             select: { hint: true },
@@ -4255,6 +4263,13 @@ describe("plugin collection UI query route", () => {
                 contractDigest: ref.contractDigest,
                 revision: 1,
                 rowIds: ["task-written"],
+                indexChanges: {
+                    previousCursor: 0,
+                    keys: writtenIndexEntries.map(entry => ({
+                        indexId: entry.indexState.indexId,
+                        key: Buffer.from(entry.encodedSortKey).toString("hex"),
+                    })),
+                },
             },
         }]);
 

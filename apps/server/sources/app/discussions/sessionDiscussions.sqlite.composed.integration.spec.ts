@@ -579,6 +579,8 @@ describe('First-class Discussions service (SQLite)', () => {
         expect(await settlePendingInputAdmission({ actorUserId: owner.id, sessionId: session.id, localId: requestLocalId, publisherAuthority,
             decision: { kind: 'admit', finalContent, validation: { reply } } })).toMatchObject({ ok: true, result: { status: 'accepted' } });
         const acceptedTurnId = `native-final-${source}`;
+        await db.sessionTurn.create({ data: { sessionId: session.id, turnId: acceptedTurnId,
+            status: 'running', startedAt: 1n, updatedAt: 1n } });
         expect(await resolveAcceptedPendingDelivery({ actorUserId: owner.id, sessionId: session.id, localId: requestLocalId, publisherAuthority,
             acceptedTurn: { kind: 'newTurn', turnId: acceptedTurnId } })).toMatchObject({ ok: true, didResolve: true });
         expect(await db.sessionPendingMessage.count({ where: { sessionId: session.id } })).toBe(0);
@@ -587,7 +589,7 @@ describe('First-class Discussions service (SQLite)', () => {
         const final = await db.sessionMessage.create({ data: { sessionId: session.id, seq: 5, messageRole: 'agent',
             content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'Two plus two is four.' } } } } });
         await db.session.update({ where: { id: session.id }, data: { seq: 6 } });
-        const turn = await db.sessionTurn.create({ data: { sessionId: session.id, turnId: acceptedTurnId, status: 'completed', startedAt: 1n, updatedAt: 2n,
+        const turn = await db.sessionTurn.update({ where: { sessionId_turnId: { sessionId: session.id, turnId: acceptedTurnId } }, data: { status: 'completed', updatedAt: 2n,
             transcriptAnchorsJson: JSON.stringify({ startUserMessageSeq: 3, userMessageSeqs: [3], startSeqInclusive: 3,
                 endSeqInclusive: 6, finalAssistantMessageSeq: 5 }) } });
         await inTx(tx => projectSessionInputRepliesFromTurnInTx(tx, turn));
