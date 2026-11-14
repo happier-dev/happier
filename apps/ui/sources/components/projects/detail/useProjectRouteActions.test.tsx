@@ -59,9 +59,9 @@ function mountWorkspace() {
     navigation.initialize(`/projects/wr_1/context?serverId=${workspaceRef.serverId}`);
     const execute = createWorkspaceActionAdapter({ getState: () => state, navigation, readCanvas: () => null, createId: () => `project:${++nextId}` });
     unregister = registerMountedWorkspaceAction(async request => {
-        let outcome: WorkspaceActionOutcome = workspaceActionFailure('workspace_navigation_cancelled');
+        let outcome: WorkspaceActionOutcome | Promise<WorkspaceActionOutcome> = workspaceActionFailure('workspace_navigation_cancelled');
         await runGuardedNavigation(() => { outcome = execute(request.actionId, request.input); });
-        return outcome;
+        return await outcome;
     });
     return { hrefs, replacements, state: () => state };
 }

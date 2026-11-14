@@ -15,12 +15,12 @@ export function DeploymentTemplateMappingCorrection(props: Readonly<{
     const [draft, setDraft] = React.useState(props.source);
     return <ItemGroup>
         <Item title={t('capabilities.store.appPage.choices.source')} accessoryLayout="stacked" showChevron={false}
-            rightElement={<FieldTextInput testID={`${props.testID}.document`} multiline autoCapitalize="none" autoCorrect={false}
+            rightElement={<FieldTextInput testID={`${props.testID}.document`} multiline autoCapitalize="none"
                 accessibilityLabel={t('capabilities.store.appPage.choices.source')} value={draft.document}
                 onChangeText={document => setDraft(previous => ({ ...previous, document }))} />} />
         {draft.template !== undefined ? <Item title={t('capabilities.store.appPage.choices.sourceMapping')}
             accessoryLayout="stacked" showChevron={false} rightElement={<FieldTextInput testID={`${props.testID}.template`} multiline
-                autoCapitalize="none" autoCorrect={false} accessibilityLabel={t('capabilities.store.appPage.choices.sourceMapping')}
+                autoCapitalize="none" accessibilityLabel={t('capabilities.store.appPage.choices.sourceMapping')}
                 value={draft.template} onChangeText={template => setDraft(previous => ({ ...previous, template }))} />} /> : null}
         <Item title={t('capabilities.store.appPage.choices.checkMapping')} showChevron={false}
             rightElement={<RoundButton testID={`${props.testID}.review`} size="small" display="secondary"

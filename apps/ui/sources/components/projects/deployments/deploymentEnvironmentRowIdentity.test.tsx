@@ -107,7 +107,7 @@ it('chooser receipt updates retain sibling callbacks and select the changed curr
   const screen = await renderScreen(<DeploymentEnvironmentChooser controller={controller} testID="chooser" title="Destination"
     eligible={() => true} selectedId={null} onSelect={select} disabled={false}
     loadFailedTitle="Unavailable" emptyTitle="Empty" emptyBody="No environments" />);
-  await act(async () => waitForTestEvent(screen.subscribe, () => screen.findByTestId('chooser:environment-0'), node => node !== null));
+  await act(async () => { await waitForTestEvent(screen.subscribe, () => screen.findByTestId('chooser:environment-0'), node => node !== null); });
   const before = screen.findAllByType(Item).filter(node => node.props.testID?.startsWith('chooser:')).map(node => node.props);
   const lease = controller.acquireCollection({}, { mounted: true, visible: true, focused: true });
   for (let batch = 0; batch < 13; batch++) {

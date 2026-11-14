@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { definePlugin, DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetPreparationBaseV1ProtocolSchema } from '@happier-dev/plugin-sdk';
 import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { act, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -28,11 +29,11 @@ it.each([false, true])('retains connection recovery and requires each existing v
   const pluginId = 'com.example.managed-database';
   const execution = { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activate' } } as const;
   const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
-  const reference = { type: 'object', properties: { ref: { type: 'string' }, resourceRevision: { type: 'number' } },
-    required: ['ref', 'resourceRevision'], additionalProperties: false } as const;
-  const previous = { type: 'object', properties: { status: { type: 'string' },
+  const reference: PluginJsonSchemaV2 = { type: 'object', properties: { ref: { type: 'string' }, resourceRevision: { type: 'number' } },
+    required: ['ref', 'resourceRevision'], additionalProperties: false };
+  const previous: PluginJsonSchemaV2 = { type: 'object', properties: { status: { type: 'string' },
     connections: { type: 'object', properties: { DATABASE_URL: reference, DIRECT_URL: reference }, additionalProperties: false },
-    incomplete: { type: 'array', items: { type: 'string' } } }, required: ['status', 'connections', 'incomplete'], additionalProperties: false } as const;
+    incomplete: { type: 'array', items: { type: 'string' } } }, required: ['status', 'connections', 'incomplete'], additionalProperties: false };
   const common = DeploymentTargetRoleInputProtocolSchemasV1['connectionSecret.save'].jsonSchema;
   const plugin = definePlugin({ id: pluginId, version: '1.0.0', displayName: 'Managed database',
     actions: { save: { title: 'Save connections', execution, surfaces: ['ui'], dangerLevel: 'writesLocal', readOnly: false,
@@ -73,7 +74,7 @@ it.each([false, true])('retains connection recovery and requires each existing v
       return calls.length === 1 ? partial : { ...partial, status: 'complete', incomplete: [],
         connections: { ...partial.connections, DIRECT_URL: { ref: directRef, resourceRevision: 4 } } };
     } });
-  const screen = await renderScreen(<DeploymentManagedDataSheet detail={detail} linked={detail.targetLinks[0]}
+  const screen = await renderScreen(<DeploymentManagedDataSheet detail={readDetail(detail)} linked={detail.targetLinks[0]}
     lifetime={account.accountLifetime} actions={createDeploymentActions(account.accountLifetime, detail.environment.projectSourceId)}
     onApproval={() => {}} onClose={() => {}} />);
   try {
@@ -115,6 +116,11 @@ it.each([false, true])('retains connection recovery and requires each existing v
   } finally { await screen.unmount(); await installed.dispose(); account.dispose(); await homes.reset(); }
 });
 
+
+/** The read projection the sheet receives: an opened detail without a linked runtime or retained receipts. */
+function readDetail(detail: ReturnType<typeof createDeploymentEnvironmentDetailV1>) {
+  return { ...detail, runtimeTargetLink: null, memberVersions: {}, secretRevisions: [] };
+}
 
 it('reviews native creation options, retains an ambiguous create and continues through exact adoption without replay', async () => {
   const pluginId = 'com.example.managed-create';
@@ -158,7 +164,7 @@ it('reviews native creation options, retains an ambiguous create and continues t
         : { state: 'provisioned', providerIdentity: { providerAccountId: 'organization', providerResourceId: 'exact-project', providerEnvironment: 'main' },
           providerEnvironment: { kind: 'custom', id: 'main' } };
     } });
-  const screen = await renderScreen(<DeploymentManagedDataSheet detail={detail} lifetime={account.accountLifetime}
+  const screen = await renderScreen(<DeploymentManagedDataSheet detail={readDetail(detail)} lifetime={account.accountLifetime}
     actions={createDeploymentActions(account.accountLifetime, detail.environment.projectSourceId)} onApproval={() => {}} onClose={() => {}} />);
   try {
     const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
@@ -239,7 +245,7 @@ it('pages native branches and creates from a linked target with recorded custody
       return value.cursor ? { branches: [{ branchId: 'branch-2', name: 'Second branch', status: 'ready' }] }
         : { branches: [{ branchId: 'branch-1', name: 'First branch', status: 'ready' }], nextCursor: 'native-page-2' };
     } });
-  const screen = await renderScreen(<DeploymentManagedDataSheet detail={detail} linked={detail.targetLinks[0]}
+  const screen = await renderScreen(<DeploymentManagedDataSheet detail={readDetail(detail)} linked={detail.targetLinks[0]}
     lifetime={account.accountLifetime} actions={createDeploymentActions(account.accountLifetime, detail.environment.projectSourceId)}
     onApproval={() => {}} onClose={() => {}} />);
   try {

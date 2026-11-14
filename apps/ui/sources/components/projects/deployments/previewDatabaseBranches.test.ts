@@ -5,6 +5,7 @@ import { PLUGIN_MANIFEST as supabase } from '../../../../../../packages/plugins/
 import { branchListInput, inputSchema } from '../../../../../../packages/plugins/deployment-neon/src/data/schemas';
 import { actionSchema } from '../../../../../../packages/plugins/deployment-supabase/src/data/schemas';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/jsonSchemaValidation';
+import { PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { buildPreviewBranchReadInput, previewBranchTargets, readPreviewBranchParents } from './previewDatabaseBranches';
 
 function linked(pluginId: string, project: string, environment: string) {
@@ -21,8 +22,8 @@ function linked(pluginId: string, project: string, environment: string) {
 it('discovers branch reads from real Neon and Supabase contributions and preserves the recorded custody in each admitted input', () => {
   for (const [manifest, schema] of [[neon, inputSchema(branchListInput, true)], [supabase, actionSchema('branches-list')]] as const) {
     const row = linked(manifest.id, 'project', 'main');
-    const detail = createDeploymentEnvironmentDetailV1({ targetLinks: [row] });
-    const choices = previewBranchTargets([{ manifest }], detail);
+    const detail = { ...createDeploymentEnvironmentDetailV1({ targetLinks: [row] }), runtimeTargetLink: null, memberVersions: {}, secretRevisions: [] };
+    const choices = previewBranchTargets([{ manifest: PluginPortableReleaseManifestV1Schema.parse(manifest) }], detail);
     expect(choices).toHaveLength(1);
     const choice = choices[0]!;
     expect(choice.actionId).toContain(manifest.id);

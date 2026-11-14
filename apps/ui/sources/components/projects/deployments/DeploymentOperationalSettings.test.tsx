@@ -110,12 +110,14 @@ it.each(['plain', 'e2ee'] as const)('edits and removes registry access through t
   const initial = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId: context.serverIdentityId! }) });
   const binding = EnvironmentSecretBindingV1Schema.parse({ purpose: 'registry', targetLinkId: initial.environment.runtimeTargetLinkId,
     registryOrigin: 'https://registry.example', access: 'pull', source: { kind: 'secret', ref: entry.ref, resourceRevision: 1 } });
+  if (binding.purpose !== 'registry') throw new Error('Expected a registry binding');
   let detail = { ...initial, content: { ...initial.content, bindings: [...initial.content.bindings, binding] },
     runtimeTargetLink: selectDeploymentRuntimeTargetLinkV1(initial), memberVersions: {}, secretRevisions: [] };
   boundary = await createExternalActionAccountHttpBoundary({ serverUrl: context.endpointUrl,
     serverIdentityId: context.serverIdentityId!, accountId: context.accountId, machineId: detail.environment.controllerMachineId,
     actionId: 'deployments.bindings.set', tokenEpoch: 0, ...(encryption ? { encryption } : {}), execute: raw => {
       const input = DeploymentActionInputSchemasV1['deployments.bindings.set'].parse(raw);
+      if (!('set' in input)) throw new Error('Expected a binding patch');
       writes.push({ set: input.set, remove: input.remove });
       return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision + 1 };
     } });

@@ -142,7 +142,8 @@ describe('ProjectsAddMenu "New app…" (plan 60 §5.1)', () => {
     await act(async () => { menu().props.onSelect(folder.id); });
     expect(onAdd).not.toHaveBeenCalled();
     const { router } = await import('expo-router');
-    const href = String(vi.mocked(router.push).mock.calls.at(-1)?.[0] ?? '');
+    const pushed: unknown = vi.mocked(router.push).mock.calls.at(-1)?.[0];
+    const href = String(pushed ?? '');
     expect(href.startsWith('/settings/machines/add')).toBe(true);
   });
 

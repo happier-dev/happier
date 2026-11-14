@@ -1,4 +1,5 @@
 import { act } from 'react-test-renderer';
+import { ActionExecuteResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -120,7 +121,7 @@ it('keeps a human plugin-page layout write bound to its own rejection receipt', 
     if (!binding) throw new Error('Expected a declared plugin page');
     const surfaceId = 'surfacePlacement:example.checks:overview';
     const controller = createBoundPluginSurfaceController({ facts: {
-        pluginId: 'example.checks', contributionId: 'overview', surfaceId, placement: 'appPage', platform: 'web', serverId,
+        pluginId: 'example.checks', contributionId: 'overview', surfaceId, placement: 'appSurface', platform: 'web', serverId,
         accountLifetime: captureActiveServerAccountScopeLifetime(), interactionEnabled: true, daemonInteractionEnabled: false,
         pluginUiProjection: { ...EMPTY_PLUGIN_UI_PROJECTION, surfacePlacementsById: {
             [surfaceId]: { id: surfaceId, pluginId: 'example.checks', occurrenceId: 'current-occurrence',
@@ -131,10 +132,12 @@ it('keeps a human plugin-page layout write bound to its own rejection receipt', 
         } },
     }, binding: { executeHostAction: scopedHomeActionExecutor({ serverId, accountId: 'account-a' }) } });
     // PluginPageWidgetArea lends this mounted host-control port, not a plugin-code invocation.
-    const execute: import('./useProjectDashboards').WidgetAreaLayoutsExecute = (id, args) => {
+    const execute: import('./useProjectDashboards').WidgetAreaLayoutsExecute = async (id, args) => {
         const fields = Object.fromEntries(Object.entries(WidgetInstanceActionInputSchemasV1[id].parse(args))
             .filter(([key]) => key !== 'surface'));
-        return controller.widgetArea!({ area: 'pinned', operation: PluginUiWidgetAreaOperationV1Schema.parse({ ...fields, actionId: id }) });
+        // The port answers JSON; the Action settlement contract admits it, as the page port's caller does.
+        return ActionExecuteResultSchema.parse(await controller.widgetArea!({ area: 'pinned',
+            operation: PluginUiWidgetAreaOperationV1Schema.parse({ ...fields, actionId: id }) }));
     };
     const hook = await renderHook(() => useWidgetAreaLayouts({ surface, execute }));
     await vi.waitFor(() => expect(hook.getCurrent().state.status).toBe('ready'));

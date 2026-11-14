@@ -35,11 +35,13 @@ describe('promotion binding preflight demand', () => {
             observeEnvironmentHealth: () => { healthReads++; return () => {}; },
         } });
         const counts = createRenderCommitCounter();
-        const hook = await renderHook((props: { demand: DeploymentReadDemandV1; destination: string | null }) => {
+        type Props = { demand: DeploymentReadDemandV1; destination: string | null };
+        const initialProps: Props = { demand: hidden, destination: null };
+        const hook = await renderHook((props: Props) => {
             useRenderCommitCounter(counts);
             return { first: useDeploymentPromotionBindingGaps(controller, 'source', props.destination, props.demand),
                 peer: useDeploymentPromotionBindingGaps(controller, 'source', props.destination, props.demand) };
-        }, { initialProps: { demand: hidden, destination: null } });
+        }, { initialProps });
         try {
             expect(hook.getCurrent().first.result.status).toBe('idle');
             await hook.rerender({ demand: shown, destination: null });

@@ -313,6 +313,7 @@ describe('Scripts canonical operation subscriptions', () => {
                 if (path === '/v1/actions/projects.script.run/execution-authorization') {
                     const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(typeof init?.body === 'string' ? JSON.parse(init.body) : null);
                     const envelope = ExternalActionRequestEnvelopeV1Schema.parse(request.envelope);
+                    if (envelope.requestId === undefined) throw new Error('Expected the envelope request id');
                     const input = PROJECT_ACTION_INPUT_SCHEMAS_V1['projects.script.run'].parse(envelope.input);
                     const machine = createPlainMachineRowFixture({ id: input.choice?.kind === 'workers' ? targetMachineId : 'source-machine', accountId: 'account' });
                     expect(request.machineId).toBe(machine.id);

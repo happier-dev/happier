@@ -286,7 +286,7 @@ describe('ProjectRightPanelServicesView', () => {
             return <MachinePageStateContext.Provider value={{ target, managedEnrolled: enrolled, refreshKey: 0, reload }}>
                 <MachinePageHeader target={target} managedIdentity={identity} renaming={false} onRename={() => {}} />
                 <MachineOverview serverId={serverId} machineId={machine.id} machineName={launch.name}
-                    online={presenceTarget.online} setParams={() => {}} />
+                    online={presenceTarget.online} params={{ id: 'overview' }} setParams={() => {}} />
             </MachinePageStateContext.Provider>;
         }
         function NativeDetails() {

@@ -8,7 +8,6 @@ import { createSecretSettingsTestHarness } from '@/components/settings/secrets/s
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { storage } from '@/sync/domains/state/storage';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
-import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -23,12 +22,6 @@ await loadSyncSingletonForTests();
 const { FieldValueItem } = await import('@/components/ui/forms/FieldValueItem');
 const { SessionMachineField } = await import('@/components/sessions/new/placement/SessionPlacementChips');
 const original = storage.getState();
-const projectPages = import.meta.glob<{ ProjectDeploymentDefaultsSettings: React.ComponentType<{
-    lifetime: ServerAccountScopeLifetime | null; sourceId: string; demand: { mounted: boolean; visible: boolean; focused: boolean };
-    environments?: readonly Readonly<{ id: string; title: string; previewTemplateConfigured?: boolean }>[];
-    onOpenEnvironment?: (environmentId: string) => void; onOpenPreviews?: (environmentId: string) => void;
-}> }>('./ProjectDeploymentDefaultsSettings.tsx');
-const environmentPages = import.meta.glob<typeof import('./DeploymentEnvironmentSettingsPanel')>('./DeploymentEnvironmentSettingsPanel.tsx');
 afterEach(() => { standardCleanup(); storage.setState(original, true); router.resetParams(); vi.unstubAllGlobals(); });
 
 describe('Project deployment defaults', () => {
@@ -38,7 +31,7 @@ describe('Project deployment defaults', () => {
         const { createDeploymentReadControllerV1 } = await import('@happier-dev/deployments');
         const { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
         const { createDeploymentReadTransport } = await import('./deploymentReadTransport');
-        const { DeploymentEnvironmentSettingsPanel } = await environmentPages['./DeploymentEnvironmentSettingsPanel.tsx']!();
+        const { DeploymentEnvironmentSettingsPanel } = await import('./DeploymentEnvironmentSettingsPanel');
         const context = await captureLazyActionAccountContext(account.scope.serverId);
         const controller = createDeploymentReadControllerV1({ scope: { ...account.scope, projectSourceId: 'source-app' }, transport: createDeploymentReadTransport(context.accountLifetime) });
         try {
@@ -143,7 +136,7 @@ describe('Project deployment defaults', () => {
                 return null;
             } });
         const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
-        const { ProjectDeploymentDefaultsSettings } = await projectPages['./ProjectDeploymentDefaultsSettings.tsx']!();
+        const { ProjectDeploymentDefaultsSettings } = await import('./ProjectDeploymentDefaultsSettings');
         const context = await captureLazyActionAccountContext(account.scope.serverId);
         try {
             const screen = await renderScreen(<InjectedAuthProvider credentials={account.credentials}><ProjectDeploymentDefaultsSettings
@@ -172,7 +165,7 @@ describe('Project deployment defaults', () => {
                 return null;
             } });
         const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
-        const { ProjectDeploymentDefaultsSettings } = await projectPages['./ProjectDeploymentDefaultsSettings.tsx']!();
+        const { ProjectDeploymentDefaultsSettings } = await import('./ProjectDeploymentDefaultsSettings');
         const context = await captureLazyActionAccountContext(account.scope.serverId);
         let show = () => {};
         function Page() {
@@ -195,7 +188,7 @@ describe('Project deployment defaults', () => {
     });
 
     it('leads to each Environment’s own Triggers instead of a Project trigger list', async () => {
-        const { ProjectDeploymentDefaultsSettings } = await projectPages['./ProjectDeploymentDefaultsSettings.tsx']!();
+        const { ProjectDeploymentDefaultsSettings } = await import('./ProjectDeploymentDefaultsSettings');
         const opened: string[] = [];
         const screen = await renderScreen(<ProjectDeploymentDefaultsSettings lifetime={null} sourceId="source-app"
             demand={{ mounted: true, visible: true, focused: true }}
@@ -207,7 +200,7 @@ describe('Project deployment defaults', () => {
     });
 
     it('links only admitted preview templates to their Environment editor', async () => {
-        const { ProjectDeploymentDefaultsSettings } = await projectPages['./ProjectDeploymentDefaultsSettings.tsx']!();
+        const { ProjectDeploymentDefaultsSettings } = await import('./ProjectDeploymentDefaultsSettings');
         const opened = vi.fn();
         const screen = await renderScreen(<ProjectDeploymentDefaultsSettings lifetime={null} sourceId="source-app"
             demand={{ mounted: true, visible: true, focused: true }} onOpenPreviews={opened}

@@ -123,7 +123,7 @@ it.each([false, true])('finishes an acknowledged created resource by exact assoc
     await homes.setActionPolicy(serverId, 'links.openExternal', 'ui', 'allowed');
     await screen.pressByTestIdAsync('project-deployments.platform.openProvider');
     expect(browserOpen.mock.calls.map(call => call[0])).toEqual([providerUrl]);
-    await act(async () => recovery()!.props.action.onPress());
+    await act(async () => { await surfaceAction(recovery()).onPress(); });
     await waitForHomeGovernance(async () => { await act(async () => {}); expect(associations).toHaveLength(1); });
     expect(creates).toHaveLength(1);
     await waitForHomeGovernance(async () => {
@@ -133,7 +133,7 @@ it.each([false, true])('finishes an acknowledged created resource by exact assoc
       const refusal = screen.root.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'project-deployments.platform.linkRefused');
       expect(refusal?.props.diagnosticCode).toBe('action_outcome_unknown');
     });
-    await act(async () => recovery()!.props.action.onPress());
+    await act(async () => { await surfaceAction(recovery()).onPress(); });
     await waitForHomeGovernance(async () => { await act(async () => {}); expect(associations).toHaveLength(2); });
     expect(creates).toHaveLength(1);
     expect(associations.map(value => DeploymentTargetLinkInputV1Schema.parse(value).requestKey)).toEqual([
@@ -143,7 +143,7 @@ it.each([false, true])('finishes an acknowledged created resource by exact assoc
     expect(associated).toMatchObject({ provisioned: true,
       requestKey: (creates[0] as { requestKey: string }).requestKey });
     const artifact = await context.readArtifactContent(associated.contentArtifactId);
-    if (!artifact) throw new Error('Expected the associated target artifact');
+    if (!artifact || typeof artifact.body !== 'string') throw new Error('Expected the associated target artifact as text');
     expect(JSON.parse(artifact.body)).toMatchObject({ providerIdentity: { providerResourceId: 'created-beta' } });
   } finally { await installed.dispose(); context.dispose(); }
 });
@@ -254,7 +254,7 @@ it.each(['provisioned', 'unknown', 'unavailable', 'missingPlugin', 'staleRevisio
       return;
     }
     if (ambiguous) { expect(associations).toHaveLength(0); return; }
-    await act(async () => card()!.props.action.onPress());
+    await act(async () => { await surfaceAction(card()).onPress(); });
     await waitForHomeGovernance(async () => { await act(async () => {}); expect(associations).toHaveLength(1); });
     expect(associations[0]).toMatchObject({ provisioned: true, requestKey: recovery.requestKey, expectedRevision: recovery.expectedRevision });
     const later = ActionOperationSnapshotV1Schema.parse({ ...full, operationId: 'cold-linked-operation', requestId: 'cold-linked-request',
@@ -271,6 +271,13 @@ it.each(['provisioned', 'unknown', 'unavailable', 'missingPlugin', 'staleRevisio
   }
 });
 
+/** The action a rendered state card offers; a missing card or action fails the step. */
+function surfaceAction(card: { props: React.ComponentProps<typeof SurfaceStateCard> } | undefined) {
+  const action = card?.props.action;
+  if (!action) throw new Error('Expected the state card to offer an action');
+  return action;
+}
+
 it('keeps a settled empty required choice visible with a typed reason and Retry', async () => {
   const pluginId = 'com.example.empty-deploy';
   const authored = createDeploymentTargetsTestPlugin(pluginId, undefined, { emptyChoices: true });
@@ -281,11 +288,12 @@ it('keeps a settled empty required choice visible with a typed reason and Retry'
     activate: api => authored.activateAccount(api, DEPLOYMENT_TARGETS_TEST_EXECUTION.account), accountLifetime: context.accountLifetime, publishProjection: true });
   const producer = await createPluginTestkit({ manifest: authored.manifest, module: authored });
   try {
-  const definition = authored.manifest.contributes.inputTypes[0]!;
+  const definition = authored.manifest.contributes.inputTypes?.[0];
+  if (!definition) throw new Error('Expected the declared input type');
   const typeRef = { pluginId, localId: definition.id };
   const resourceRef = qualifyPluginContributionReferenceV1(definition.options!.resource, pluginId);
-  const resource = authored.manifest.contributes.resources.find(entry => entry.id === resourceRef.localId)!;
-  if (resource.source !== 'dynamic') throw new Error('Expected the declared dynamic options Resource');
+  const resource = authored.manifest.contributes.resources?.find(entry => entry.id === resourceRef.localId);
+  if (resource?.source !== 'dynamic') throw new Error('Expected the declared dynamic options Resource');
   const runtime = producer.registration('resources', resource.id);
   if (!runtime) throw new Error('Expected the authored options Resource registration');
   const machineId = 'empty-options-controller';
@@ -327,7 +335,7 @@ it('keeps a settled empty required choice visible with a typed reason and Retry'
     await waitForHomeGovernance(async () => { await act(async () => {}); expect(failure()?.props.diagnosticCode).toBe('provider_options_empty'); });
     expect(screen.findByTestId('project-deployments.platform.check')?.props.disabled).toBe(true);
     const readsBeforeRetry = optionReads;
-    await act(async () => failure()!.props.action.onPress());
+    await act(async () => { await surfaceAction(failure()).onPress(); });
     await waitForHomeGovernance(async () => { await act(async () => {});
       expect(optionReads).toBeGreaterThan(readsBeforeRetry);
       expect(failure()?.props.diagnosticCode).toBe('provider_options_empty'); });

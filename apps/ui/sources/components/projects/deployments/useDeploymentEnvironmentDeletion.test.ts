@@ -294,6 +294,7 @@ describe('Environment deletion client over the Action owner', () => {
             machineId, installationId: 'installation-controller', tokenEpoch: 0, requesterInvocation: 'required',
             execute: raw => {
                 const input = DeploymentTeardownActionInputV1Schema.parse(raw);
+                if (input.requestKey === undefined) throw new Error('Expected a keyed teardown');
                 retained = { version: 1, operationId: 'late-teardown', revision: 1, actionId: 'deployments.teardown',
                     requestId: computeCanonicalDomainSeparatedDigest('happier-deployment-operation-request-v1', [
                         input.serverId, input.environmentId, input.requestKey,
@@ -371,6 +372,7 @@ describe('Environment deletion client over the Action owner', () => {
             machineId, installationId: 'installation-controller', tokenEpoch: 0,
             requesterInvocation: 'required', execute: raw => {
                 const input = DeploymentTeardownActionInputV1Schema.parse(raw);
+                if (input.requestKey === undefined) throw new Error('Expected a keyed teardown');
                 operationRequestId = computeCanonicalDomainSeparatedDigest('happier-deployment-operation-request-v1', [
                     input.serverId, input.environmentId, input.requestKey,
                 ]);
@@ -446,6 +448,7 @@ describe('Environment deletion client over the Action owner', () => {
             machineId, installationId: 'installation-controller', tokenEpoch: 0,
             requesterInvocation: 'required', execute: (raw, context) => {
                 const input = DeploymentTeardownActionInputV1Schema.parse(raw);
+                if (input.requestKey === undefined) throw new Error('Expected a keyed teardown');
                 // The live host retains the Environment intent, not this HTTP envelope id.
                 operationRequestId = computeCanonicalDomainSeparatedDigest('happier-deployment-operation-request-v1', [
                     input.serverId, input.environmentId, input.requestKey,

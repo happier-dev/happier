@@ -1375,9 +1375,10 @@ describe('Environment → Settings: checks, backups, previews', () => {
       listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
       readReceipt: async () => ({ ok: true, value: createDeploymentReceiptDetailV1() }),
     } });
-    let changeDetail: React.Dispatch<React.SetStateAction<typeof initial>> = () => {};
+    const readInitial = { ...initial, runtimeTargetLink: null, memberVersions: {}, secretRevisions: [] };
+    let changeDetail: React.Dispatch<React.SetStateAction<typeof readInitial>> = () => {};
     function Harness() {
-      const [detail, setDetail] = React.useState(initial);
+      const [detail, setDetail] = React.useState(readInitial);
       changeDetail = setDetail;
       return <PreviewTemplateRows detail={detail} controller={controller} demand={shown} machineName={id => id}
         onSave={() => {}} saving={false} inspect={null} prepareDefaults={null}

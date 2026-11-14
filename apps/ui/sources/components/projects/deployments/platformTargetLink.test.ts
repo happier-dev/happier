@@ -88,6 +88,7 @@ const repository = {
 describe('platform target link model', () => {
   it('offers runtime logs only when the runtime target declares that canonical role', () => {
     const runtime = manifest.contributes.deploymentTargets![0]!;
+    if (runtime.role !== 'runtime') throw new Error('Expected the runtime target descriptor');
     const withLogs = { ...manifest, contributes: { ...manifest.contributes,
       deploymentTargets: [{ ...runtime, actions: { ...runtime.actions, logs: { runtime: 'runtime-logs-read' } } }],
     } } as PluginPortableReleaseManifestV1;
@@ -96,6 +97,7 @@ describe('platform target link model', () => {
   });
   it('offers creation fields and credential purpose only from an implemented create Action', () => {
     const runtime = manifest.contributes.deploymentTargets![0]!;
+    if (runtime.role !== 'runtime') throw new Error('Expected the runtime target descriptor');
     const create = { ...manifest.contributes.actions![0]!, id: 'create-project',
       hostAccess: ['create.manage'], connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'create.manage' }],
       inputHints: { fields: [{ path: 'resourceName', title: 'Project name', widget: 'text' as const, required: true }] } };

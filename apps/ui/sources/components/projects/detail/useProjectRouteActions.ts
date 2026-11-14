@@ -17,7 +17,7 @@ export function useProjectRouteActions(params: Readonly<{
     activeWorktreeId?: string | null;
     showWorktrees?: boolean;
     sourceSurface?: ProjectDetailsSourceSurface | null;
-    pane?: Pick<AppPaneScopeApi, 'scopeId' | 'openDetailsTab'> | null;
+    pane?: Pick<AppPaneScopeApi, 'scopeId'> & Parameters<typeof openEmbeddedToolInDockLocation>[0]['pane'] | null;
 }>) {
     const paneContext = React.useContext(AppPaneContext);
     const routerRef = useProjectRouteRouterRef();

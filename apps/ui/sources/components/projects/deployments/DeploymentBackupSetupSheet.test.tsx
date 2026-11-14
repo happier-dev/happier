@@ -21,6 +21,8 @@ const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 const { DeploymentBackupSetupSheet } = await import('./DeploymentBackupControls');
 afterEach(standardCleanup);
+/** Configure-mode props of the sheet (its props are a Configure | intent union). */
+type ConfigureProps = Extract<React.ComponentProps<typeof DeploymentBackupSetupSheet>, { mode?: 'configure' }>;
 
 const destination: React.ComponentProps<typeof DeploymentBackupSetupSheet>['destination'] = {
     id: 'com.acme.backups/archive', pluginId: 'com.acme.backups', pluginVersion: '1.0.0',
@@ -44,7 +46,7 @@ describe('Backup destination setup fields', () => {
             sources: { backupRetention: 'project' as const } }, retention: { kind: 'keep' as const, daily: 14 } },
     ])('renders descriptor fields and submits the captured first-configuration retention ($retention.kind)', async ({ defaults, retention }) => {
         const detail = environmentDetail();
-        const configure = vi.fn<React.ComponentProps<typeof DeploymentBackupSetupSheet>['configure']>(async draft => ({
+        const configure = vi.fn<ConfigureProps['configure']>(async draft => ({
             kind: 'configured', environmentId: detail.environment.id, revision: 2,
             configuration: DeploymentBackupConfigurationV1Schema.parse(draft.configuration),
         }));
@@ -65,11 +67,11 @@ describe('Backup destination setup fields', () => {
     it.each([null, { kind: 'cron' as const, scheduleExpr: '30 3 * * *', everyMs: null, timezone: 'Europe/Amsterdam' }])(
         'authors only the captured nonnull schedule after configuration settles (%j)', async schedule => {
             const detail = environmentDetail();
-            const configure = vi.fn<React.ComponentProps<typeof DeploymentBackupSetupSheet>['configure']>(async draft => ({
+            const configure = vi.fn<ConfigureProps['configure']>(async draft => ({
                 kind: 'configured', environmentId: detail.environment.id, revision: 2,
                 configuration: DeploymentBackupConfigurationV1Schema.parse(draft.configuration),
             }));
-            const onConfigured = vi.fn<NonNullable<React.ComponentProps<typeof DeploymentBackupSetupSheet>['onConfigured']>>(async () => {});
+            const onConfigured = vi.fn<NonNullable<ConfigureProps['onConfigured']>>(async () => {});
             const screen = await renderScreen(<DeploymentBackupSetupSheet detail={detail} destination={destination}
                 defaults={{ values: { retainPreviousDeployments: 1, backupSchedule: schedule }, sources: { backupSchedule: 'project' } }}
                 sourceChoices={[{ kind: 'dump', sourceId: 'database', service: 'database', consistency: 'logical' }]}
@@ -89,8 +91,8 @@ describe('Backup destination setup fields', () => {
         const preset: typeof destination = { ...destination, id: 'com.acme.backups/archive-preset', definition: {
             ...destination.definition, id: 'archive-preset', title: 'Archive preset', fieldHints: { fields: [{
                 ...destination.definition.fieldHints!.fields[0]!, defaultValue: 'modern' }] } } };
-        const render = (props: Partial<React.ComponentProps<typeof DeploymentBackupSetupSheet>>, configure = vi.fn<
-            React.ComponentProps<typeof DeploymentBackupSetupSheet>['configure']>(async draft => ({
+        const render = (props: Partial<ConfigureProps>, configure = vi.fn<
+            ConfigureProps['configure']>(async draft => ({
             kind: 'configured', environmentId: 'env', revision: 2,
             configuration: DeploymentBackupConfigurationV1Schema.parse(draft.configuration) }))) => renderScreen(
             <DeploymentBackupSetupSheet detail={environmentDetail()} destination={destination}
@@ -101,7 +103,7 @@ describe('Backup destination setup fields', () => {
             .find(entry => entry.props.field.path === 'layout')!;
 
         it('opens a preset destination with its descriptor defaults and saves them unchanged', async () => {
-            const configure = vi.fn<React.ComponentProps<typeof DeploymentBackupSetupSheet>['configure']>(async draft => ({
+            const configure = vi.fn<ConfigureProps['configure']>(async draft => ({
                 kind: 'configured', environmentId: 'env', revision: 2,
                 configuration: DeploymentBackupConfigurationV1Schema.parse(draft.configuration) }));
             const screen = await render({ destination: preset }, configure);
@@ -133,11 +135,11 @@ describe('Backup destination setup fields', () => {
 
     it('retries schedule authoring without replaying the settled Configure write', async () => {
         const detail = environmentDetail();
-        const configure = vi.fn<React.ComponentProps<typeof DeploymentBackupSetupSheet>['configure']>(async draft => ({
+        const configure = vi.fn<ConfigureProps['configure']>(async draft => ({
             kind: 'configured', environmentId: detail.environment.id, revision: 2,
             configuration: DeploymentBackupConfigurationV1Schema.parse(draft.configuration),
         }));
-        const onConfigured = vi.fn<NonNullable<React.ComponentProps<typeof DeploymentBackupSetupSheet>['onConfigured']>>()
+        const onConfigured = vi.fn<NonNullable<ConfigureProps['onConfigured']>>()
             .mockRejectedValueOnce(new HappyError('approval_stale', false, { code: 'approval_stale' })).mockResolvedValueOnce(undefined);
         const onClose = vi.fn();
         const screen = await renderScreen(<DeploymentBackupSetupSheet detail={detail} destination={destination}

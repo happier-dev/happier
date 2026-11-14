@@ -50,7 +50,7 @@ it('offers Move for a stored definition through Environment Settings without rea
         listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
         readEnvironment: async () => ({ ok: true, value: detail }),
         listHistory: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
-        readReceipt: async () => ({ ok: false, error: 'not_found' }),
+        readReceipt: async () => ({ ok: false, failure: { code: 'not_found', retryable: false } }),
     } });
     const screen = await renderAccountScreen(<ItemList><DeploymentEnvironmentSettingsPanel detail={detail} controller={controller}
         definitionDocument={{ document: detail.content.definition.kind === 'stored' ? detail.content.definition.document : '', change: () => {} }}
@@ -201,7 +201,7 @@ it.each(['existing', 'attach', 'create', 'create-new', 'resume'] as const)('revi
     const controller = createDeploymentReadControllerV1({ scope, transport: {
         listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
         readEnvironment: async () => ({ ok: true, value: detail }), listHistory: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
-        readReceipt: async () => ({ ok: false, error: 'not_found' }),
+        readReceipt: async () => ({ ok: false, failure: { code: 'not_found', retryable: false } }),
     } });
     const changed = vi.fn();
     const screen = await renderAccountScreen(<ItemList><DeploymentEnvironmentSettingsPanel detail={detail} controller={controller}
@@ -215,16 +215,16 @@ it.each(['existing', 'attach', 'create', 'create-new', 'resume'] as const)('revi
         await act(async () => { await waitForTestEvent(screen.subscribe, () => screen.findByTestId(`${id}.createRepository`), node => node !== null); });
         await screen.pressByTestIdAsync(`${id}.createRepository`);
         // The platform modal is the boundary. Its real form stages the native input from the person's choices.
-        const config = modal.spies.show.mock.calls.at(-1)![0] as { props: { form: ActionInputForm } };
-        await act(async () => { config.props.form.replaceInput({ providerKind: 'github', owner: 'acme', repositoryName: 'app', visibility: 'private' });
-            await config.props.form.submit(); });
+        const form: ActionInputForm = modal.spies.show.mock.calls.at(-1)![0].props?.form;
+        await act(async () => { form.replaceInput({ providerKind: 'github', owner: 'acme', repositoryName: 'app', visibility: 'private' });
+            await form.submit(); });
     }
     await act(async () => { await waitForTestEvent(screen.subscribe, () => screen.root.findAllByType(ProjectSourceWorkspaceChoice)[0], node => node !== undefined); });
     if (repositoryChoice === 'create-new') {
         expect(screen.findByTestId(`${id}.preview`)?.props.disabled).toBe(true);
         await screen.pressByTestIdAsync(`${id}.chooseDestination`);
-        const browser = modal.spies.show.mock.calls.at(-1)![0] as { props: { onResolve(path: string, machineId: string): void } };
-        await act(async () => browser.props.onResolve(checkout.rootPath, checkout.machineId));
+        const onResolve: (path: string, machineId: string) => void = modal.spies.show.mock.calls.at(-1)![0].props?.onResolve;
+        await act(async () => onResolve(checkout.rootPath, checkout.machineId));
         await waitForHomeGovernance(() => expect(modal.spies.show.mock.calls.length, screen.getTextContent()).toBeGreaterThanOrEqual(3));
         const dialog = modal.spies.show.mock.calls.at(-1)![0] as { props: React.ComponentProps<typeof ProjectOpenScreen> };
         const chooser = await renderAccountScreen(<ProjectOpenScreen {...dialog.props} onClose={() => {}} />);

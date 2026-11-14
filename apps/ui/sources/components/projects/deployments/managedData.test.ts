@@ -2,6 +2,7 @@ import { expect, it } from 'vitest';
 import { managedDataConnections, managedDataLinkContent, managedDataTargets } from './managedData';
 import { definePlugin, DeploymentTargetRoleInputProtocolSchemasV1 } from '@happier-dev/plugin-sdk';
 import type { DeploymentTargetCredentialPrincipalV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
+import { PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability';
 
 const principal: DeploymentTargetCredentialPrincipalV1 = { kind: 'account', accountId: 'owner',
   purpose: { consumer: { pluginId: 'com.example.data', localId: 'link' }, purpose: 'manage' },
@@ -16,11 +17,13 @@ it('projects a data descriptor, its credential purpose and authored fields witho
       scope: { serviceRefs: [service], operations: ['use'], materializationKinds: ['httpHeaders'] } }], optional: [] },
     actions: { save: { title: 'Save connections', surfaces: ['ui'], execution: { target: 'account',
       account: { artifactId: 'account-runtime', exportName: 'activate' } }, dangerLevel: 'writesLocal', readOnly: false,
+      confirmation: { title: 'Save these database connections?' },
       hostAccess: ['manage'], connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'manage' }],
-      inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['connectionSecret.save'].jsonSchema, run: async () => ({}) } },
+      inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['connectionSecret.save'].jsonSchema, resultSchema: closed,
+      run: async () => ({}) } },
     deploymentTargets: { database: { role: 'data', title: 'Database', targetKind: 'database', icon: 'server-outline',
       targetSchema: closed, linkSchema: closed, dataV1: { connectionSecret: { save: 'save' } } } } });
-  const [target] = managedDataTargets([{ manifest: plugin.manifest }]);
+  const [target] = managedDataTargets([{ manifest: PluginPortableReleaseManifestV1Schema.parse(plugin.manifest) }]);
   expect(target?.operations[0]).toMatchObject({ role: 'connectionSecret.save',
     actionId: 'com.example.data/actions/save', credential: { purpose: 'manage', service } });
   expect(target?.operations[0]?.inputHints.fields.some(field => field.path === 'expectedRevision')).toBe(false);

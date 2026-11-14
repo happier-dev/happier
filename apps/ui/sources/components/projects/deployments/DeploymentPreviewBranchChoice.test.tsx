@@ -79,7 +79,7 @@ it('reads a parent only on selection, settles a provider refusal, retries explic
       ? { errorCode: String(result.errorCode), error: String(result.errorCode) } : null,
   });
   const readsBeforeOpen = homes.requestsFor('/v1/artifacts/read').length;
-  const screen = await renderScreen(<DeploymentPreviewBranchChoice detail={detail} lifetime={account.accountLifetime}
+  const screen = await renderScreen(<DeploymentPreviewBranchChoice detail={{ ...detail, runtimeTargetLink: null, memberVersions: {}, secretRevisions: [] }} lifetime={account.accountLifetime}
     inspect={createDeploymentActions(account.accountLifetime, detail.environment.projectSourceId).inspectPlatformTarget}
     saving={false} onSave={data => saved.push(data)} testID="preview.branch" />);
   try {
@@ -94,12 +94,14 @@ it('reads a parent only on selection, settles a provider refusal, retries explic
     await act(async () => picker().props.onSelect(link.id));
     await waitForHomeGovernance(async () => { await act(async () => {}); expect(reads).toBe(1); });
     // The picker holds while the parent is read, in place.
-    expect(picker().props.itemTrigger.itemProps.disabled).toBe(true);
+    expect(picker().props.itemTrigger?.itemProps?.disabled).toBe(true);
     expect(saved).toEqual([]);
     await act(async () => refuse());
     const failure = () => screen.root.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'preview.branch.failed');
     await waitForHomeGovernance(async () => { await act(async () => {}); expect(failure()?.props.diagnosticCode).toBe('credential_unavailable'); });
-    await act(async () => failure()!.props.action.onPress());
+    const retry = failure()?.props.action;
+    if (!retry) throw new Error('Expected the failure card to offer Retry');
+    await act(async () => { await retry.onPress(); });
     await waitForHomeGovernance(async () => { await act(async () => {});
       expect(failure()?.props.diagnosticCode).toBeUndefined();
       expect(reads).toBe(3);
@@ -114,7 +116,7 @@ it('reads a parent only on selection, settles a provider refusal, retries explic
       inspect={createDeploymentActions(account.accountLifetime, detail.environment.projectSourceId).inspectPlatformTarget}
       saving={false} onSave={data => saved.push(data)} testID="preview.branch" />));
     await waitForHomeGovernance(async () => { await act(async () => {});
-      expect(picker().props.itemTrigger.detailFormatter()).toBe('Customer database · Production'); });
+      expect(picker().props.itemTrigger?.detailFormatter?.(null)).toBe('Customer database · Production'); });
     expect(reads).toBe(3);
     expect(mutations).toBe(0);
   } finally { await screen.unmount(); await installed.dispose(); account.dispose(); await homes.reset(); }

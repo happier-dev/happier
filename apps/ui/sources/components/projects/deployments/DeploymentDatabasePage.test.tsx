@@ -798,7 +798,7 @@ describe('Environment → Data → Add (P10)', () => {
     const link = createDeploymentTargetLinkHeaderV1();
     if (link.targetKind !== 'ownServer') throw new Error('Expected own server');
     const member = link.members[0]!;
-    const detail = { ...base, environment: { ...base.environment, controllerMachineId: member.machineId }, runtimeTargetLink: link, memberVersions: {},
+    const detail = { ...base, environment: { ...base.environment, controllerMachineId: member.machineId }, runtimeTargetLink: link, memberVersions: {}, secretRevisions: [],
       content: { ...base.content, definition: { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}`,
         document: 'services:\n  app:\n    image: app:1\n', profiles: [], services: ['app'], primaryService: 'app' } } };
     const pluginId = 'happier.deployment-templates';
@@ -846,7 +846,7 @@ describe('Environment → Data → Add (P10)', () => {
     const screen = await renderScreen(<AppShellPluginUiProjectionValueProvider value={{ pluginUiProjection, pluginBrowserProjection: null,
       phase: 'current', interactionEnabled: true, machineId: controller.id, serverId, platform: 'web', accountLifetime: account.accountLifetime,
       reloadConnectedAccountProjection: () => {}, connectedAccountProjectionState: createConnectedAccountDescriptorProjectionLoadingState('database-controller'),
-      clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {} }}><ModalProvider /></AppShellPluginUiProjectionValueProvider>);
+      clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {} }}><ModalProvider>{null}</ModalProvider></AppShellPluginUiProjectionValueProvider>);
     try {
       await act(async () => showDeploymentAddSheet({ detail, review: noReview, machineName: () => 'Controller',
         catalogFilters: { source: { include: [sourceId], exclude: [] } }, lifetime: account.accountLifetime }));
@@ -904,7 +904,7 @@ describe('Environment → Data → Add (P10)', () => {
     // The Environment already sets the app's connection values; the template's own DB_USER is new to it.
     const existingBindings = choices ? ['DATABASE_URL', 'DIRECT_URL'].map(name => ({ purpose: 'variable' as const, name,
       phase: 'runtime' as const, source: { kind: 'value' as const, value: 'postgres://old' } })) : base.content.bindings;
-    const detail = { ...base, runtimeTargetLink: createDeploymentTargetLinkHeaderV1(), memberVersions: {},
+    const detail = { ...base, runtimeTargetLink: createDeploymentTargetLinkHeaderV1(), memberVersions: {}, secretRevisions: [],
       content: { ...base.content, bindings: existingBindings, definition: repository ? { kind: 'repository' as const, ref: 'main', compose: { path: 'deploy/compose.yaml', profiles: [], services: ['app'] } } : { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}`,
         document: 'services:\n  app:\n    image: app:1\n', profiles: [], services: ['app'], primaryService: 'app' } } };
     const link = detail.runtimeTargetLink;
@@ -1009,7 +1009,7 @@ describe('Environment → Data → Add (P10)', () => {
     const opened: string[] = [];
     const navigate = vi.fn();
     const review = { ...noReview, request: vi.fn() };
-    const screen = await renderScreen(<ModalProvider />);
+    const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
     try {
       await act(async () => update ? showDeploymentTemplateUpdateSheet({ detail, review, machineName: () => 'vps-2',
         catalogFilters: {}, lifetime: account.accountLifetime, template: { sourceId, itemId: 'postgresql' },
@@ -1138,10 +1138,10 @@ describe('Environment → Data → Add (P10)', () => {
     const { showDeploymentAddSheet } = await import('./DeploymentDatabasePage');
     const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
     const base = createDeploymentEnvironmentDetailV1();
-    const detail = { ...base, runtimeTargetLink: createDeploymentTargetLinkHeaderV1(), memberVersions: {},
+    const detail = { ...base, runtimeTargetLink: createDeploymentTargetLinkHeaderV1(), memberVersions: {}, secretRevisions: [],
       content: { ...base.content, definition: { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}`,
         document: 'services:\n  app:\n    image: app:1\n', profiles: [], services: ['app'], primaryService: 'app' } } };
-    const screen = await renderScreen(<ModalProvider />);
+    const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
     try {
       await act(async () => {
         showDeploymentAddSheet({ detail, review: noReview, machineName: () => 'vps-2',
@@ -1162,9 +1162,9 @@ describe('Environment → Data → Add (P10)', () => {
       serverIdentityId: 'srv_managed_add', accountId: 'owner', currentAccount: true });
     const account = await captureLazyActionAccountContext(serverId);
     const base = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }) });
-    const detail = { ...base, runtimeTargetLink: null,
+    const detail = { ...base, runtimeTargetLink: null, memberVersions: {}, secretRevisions: [],
       content: { ...base.content, definition: { kind: 'repository' as const, ref: 'main' } } };
-    const screen = await renderScreen(<ModalProvider />);
+    const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
     try {
       await act(async () => showDeploymentAddSheet({ detail, review: noReview, machineName: () => 'Controller',
         catalogFilters: { category: { include: ['database'], exclude: [] } }, lifetime: account.accountLifetime }));
@@ -1183,9 +1183,9 @@ describe('Environment → Data → Add (P10)', () => {
     const account = await captureLazyActionAccountContext(serverId);
     const { showDeploymentAddSheet } = await import('./DeploymentDatabasePage');
     const base = createDeploymentEnvironmentDetailV1();
-    const detail = { ...base, runtimeTargetLink: null, memberVersions: {},
+    const detail = { ...base, runtimeTargetLink: null, memberVersions: {}, secretRevisions: [],
       content: { ...base.content, definition: { kind: 'repository' as const, ref: 'main' } } };
-    const screen = await renderScreen(<ModalProvider />);
+    const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
     try {
       await act(async () => {
         showDeploymentAddSheet({ detail, review: noReview, machineName: () => 'vps-2',

@@ -174,7 +174,8 @@ describe('retained stored deployment source', () => {
         serverIdentityId: `srv_${'a'.repeat(32)}`, accountId: 'account-owner', currentAccount: true });
       const environment = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }) });
       const receipt = createDeploymentReceiptDetailV1();
-      if (receipt.content.sourceIntent.kind !== 'repository' || environment.content.definition.kind !== 'repository') throw new Error('repository fixture required');
+      const definition = environment.content.definition;
+      if (receipt.content.sourceIntent.kind !== 'repository' || definition.kind !== 'repository') throw new Error('repository fixture required');
       const baseOid = receipt.content.sourceIntent.sha;
       const headOid = relation === 'equal' ? baseOid : 'b'.repeat(40);
       let selectedHeadOid = headOid;
@@ -187,7 +188,7 @@ describe('retained stored deployment source', () => {
       rpc.mockImplementation(async ({ method }: { method: string }) => method === RPC_METHODS.SCM_STATUS_SNAPSHOT
         ? { success: true, snapshot } : method === RPC_METHODS.SCM_LOG_LIST
           ? { success: true, entries: [], revisionRange: { ...range, headOid: selectedHeadOid,
-            ...(relation === 'older' ? {} : { headRef: relation === 'mismatch' ? 'wrong-source-ref' : environment.content.definition.ref }), historyComplete: relation !== 'partial',
+            ...(relation === 'older' ? {} : { headRef: relation === 'mismatch' ? 'wrong-source-ref' : definition.ref }), historyComplete: relation !== 'partial',
             graphRelation: relation === 'partial' || relation === 'mismatch' || relation === 'older' ? 'forward' : relation, totalCount: relation === 'equal' ? 0 : 3 } }
           : { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'Unexpected RPC' });
       const controller = createDeploymentReadControllerV1({ scope: { serverId, accountId: 'account-owner', projectSourceId: environment.environment.projectSourceId }, transport: {
@@ -205,7 +206,7 @@ describe('retained stored deployment source', () => {
       await waitForReceipt(screen);
       await act(async () => {});
       expect(rpc.mock.calls.find(([input]) => input.method === RPC_METHODS.SCM_LOG_LIST)?.[0]).toMatchObject({
-        machineId: 'source-machine', payload: { cwd: '/source', revisionRangeFromRef: { baseOid, headRef: environment.content.definition.ref } } });
+        machineId: 'source-machine', payload: { cwd: '/source', revisionRangeFromRef: { baseOid, headRef: definition.ref } } });
       expect(rpc.mock.calls.filter(([input]) => input.method === RPC_METHODS.SCM_STATUS_SNAPSHOT)).toHaveLength(0);
       expect(rpc.mock.calls.filter(([input]) => input.method === RPC_METHODS.SCM_LOG_LIST)).toHaveLength(1);
       const newerText = t('projects.deployments.editors.commitsNewer', { count: 3 });

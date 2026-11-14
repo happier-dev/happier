@@ -129,7 +129,7 @@ it('keeps a replacement Account binding independent of its predecessor’s held 
         await vi.waitFor(() => expect(accountB?.persistedSettings.deploymentDefaultsV1.previewDatabase).toBe('branch'));
         await act(async () => first.resolve());
         await vi.waitFor(() => expect(accountA.persistedSettings.deploymentDefaultsV1.previewDatabase).toBe('none'));
-        expect(accountB.persistedSettings.deploymentDefaultsV1.previewDatabase).toBe('branch');
+        expect(accountB?.persistedSettings.deploymentDefaultsV1.previewDatabase).toBe('branch');
         expect(database().props.value).toBe('branch');
         expect(writes).toEqual(['account-a', 'account-b']);
     } finally { first.resolve(); standardCleanup(); await accountB?.dispose(); await accountA.dispose(); }

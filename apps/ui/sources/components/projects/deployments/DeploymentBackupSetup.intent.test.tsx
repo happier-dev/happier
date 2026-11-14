@@ -4,6 +4,7 @@ import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-pro
 import { DeploymentBackupConfigurationV1Schema } from '@happier-dev/deployment-protocol';
 import type { DeploymentPreviewDataSelectionV1 } from '@happier-dev/protocol/deployments/deploymentPreviewTemplateV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { BackupDestinationContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/backupDestinations';
 import { act, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { PLUGIN_MANIFEST } from '../../../../../../packages/plugins/backup-destinations/src/manifest';
@@ -21,8 +22,9 @@ afterEach(standardCleanup);
 type DestinationIntent = NonNullable<Extract<DeploymentPreviewDataSelectionV1, { kind: 'template' }>['destinationBackup']>;
 
 it('authors backup destination intent with exact Saved Secret references and no Configure, Test or Initialize effect', async () => {
-  const detail = createDeploymentEnvironmentDetailV1();
-  const definition = PLUGIN_MANIFEST.contributes.backupDestinations?.find(entry => entry.id === 'local');
+  const detail = { ...createDeploymentEnvironmentDetailV1(), runtimeTargetLink: null, memberVersions: {}, secretRevisions: [] };
+  const declared = PLUGIN_MANIFEST.contributes.backupDestinations?.find(entry => entry.id === 'local');
+  const definition = declared ? BackupDestinationContributionV1Schema.parse(declared) : undefined;
   if (!definition) throw new Error('Expected canonical local backup destination');
   const destination = { id: `${PLUGIN_MANIFEST.id}/${definition.id}`, pluginId: PLUGIN_MANIFEST.id,
     pluginVersion: PLUGIN_MANIFEST.version, definition };

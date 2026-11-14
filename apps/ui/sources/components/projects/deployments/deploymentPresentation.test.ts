@@ -72,8 +72,9 @@ describe('receipt titles name the operation the receipt records', () => {
 
     it('a succeeded teardown never reads as deployed', () => {
         expect(headline('teardown', 'succeeded')).not.toBe(headline('deploy', 'succeeded'));
-        expect(deploymentHistoryLead(createDeploymentReceiptHeaderV1({ operation: 'teardown', state: 'failed' }), { code: 'failed' })?.text)
-            .toBe(deploymentFailureTitle({ code: 'failed' }, 'teardown'));
+        const failure = { code: 'failed', phase: 'teardown' as const };
+        expect(deploymentHistoryLead(createDeploymentReceiptHeaderV1({ operation: 'teardown', state: 'failed' }), failure)?.text)
+            .toBe(deploymentFailureTitle(failure, 'teardown'));
     });
 });
 
@@ -137,7 +138,7 @@ describe('an unconfirmed receipt names its recorded cause', () => {
     it('says the recovery owner remedy for a typed cause, and keeps the check-the-Machine body without one', async () => {
         const { readDeploymentRefusalRecoveryV1 } = await import('@happier-dev/protocol/deployments/deploymentFailureRecoveryV1');
         const caused = { code: 'outcome_unknown', phase: 'activate' as const, failureCause: {
-            phase: 'deployment.transition', errorCode: 'database_transaction_conflict_exhausted', httpStatus: 503 } };
+            phase: 'deployment.transition', errorClass: 'HttpStatusError' as const, errorCode: 'database_transaction_conflict_exhausted', httpStatus: 503 } };
         expect(deploymentStateNotice('outcome_unknown', caused)?.text)
             .toBe(readDeploymentRefusalRecoveryV1('database_transaction_conflict_exhausted')?.remedy);
         expect(deploymentStateNotice('outcome_unknown', { code: 'outcome_unknown', phase: 'activate' })?.text)

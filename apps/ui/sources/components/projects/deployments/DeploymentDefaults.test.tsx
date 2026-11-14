@@ -29,7 +29,6 @@ const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedCho
 const { Item } = await import('@/components/ui/lists/Item');
 const { IconButton } = await import('@/components/ui/buttons/IconButton');
 const original = storage.getState();
-const settingsRoutes = import.meta.glob<{ WorkspaceRouteBody: React.ComponentType }>('../../../app/**/settings/deployments.tsx');
 afterEach(() => { standardCleanup(); storage.setState(original, true); router.resetParams(); vi.unstubAllGlobals(); });
 
 describe('deployment defaults pages', () => {
@@ -42,9 +41,7 @@ describe('deployment defaults pages', () => {
             actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } } });
         const account = await createSecretSettingsTestHarness({ mode, settings: baseline });
         try {
-            const route = Object.entries(settingsRoutes).find(([path]) => path.endsWith('/deployments.tsx'));
-            expect(route).toBeDefined();
-            const { WorkspaceRouteBody: AccountDefaults } = await route![1]();
+            const { WorkspaceRouteBody: AccountDefaults } = await import('@/app/(app)/settings/deployments');
             const screen = await renderSettingsView(<InjectedAuthProvider credentials={account.credentials}><AccountDefaults /></InjectedAuthProvider>);
             const retention = () => screen.findAllByType(FieldValueItem).find(row => row.props.testID === 'deployment-defaults.retention')!;
             await act(async () => { retention().props.onCommit('2'); });

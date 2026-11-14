@@ -195,7 +195,7 @@ describe('Projects › Sources', () => {
   it('keeps Project chrome on the standalone Deployments entry without inventing a checkout', async () => {
     const homes = await serveAccountHomes({ homes: [
       { key: 'source', serverUrl: 'https://standalone-deployments.example', accountId: 'account-1' },
-    ] });
+    ], route: request => { throw new Error(`Unexpected Home request: ${request.path}`); } });
     try {
       shared.routes.params = { serverId: homes.homes.source!.id, projectSourceId: 'stored-source' };
       shared.sources = [{ id: 'stored-source', revision: 1, name: 'Production', audience: [], createdByAccountId: 'account-1' }];
@@ -642,7 +642,7 @@ describe('Projects › Sources', () => {
           .toMatchObject({ selection: { value: { source: { kind: 'source', id: 'foreign-source' } } } });
         expect(shared.navigation).toEqual([]);
         expect(shared.calls.some(call => call.actionId === 'projects.open')).toBe(false);
-        expect(storage.getState().projectAccountRows.workspaceRefs[0]?.source).toBeUndefined();
+        expect(storage.getState().projectAccountRows?.workspaceRefs[0]?.source).toBeUndefined();
       } else {
         const url = new URL(String(shared.navigation.at(-1)), 'https://happier.test');
         expect(url.pathname).toBe('/projects/foreign-checkout/overview');
