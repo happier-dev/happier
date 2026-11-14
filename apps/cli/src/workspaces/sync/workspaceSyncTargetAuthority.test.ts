@@ -1444,7 +1444,7 @@ describe('committed-copy retirement at the target authority', () => {
     }
   });
 
-  it('refreshes Home rows before preview and before disclosure instead of trusting an unchanged cached relationship', async () => {
+  it('admits a preview on one fresh Home read instead of trusting an unchanged cached relationship', async () => {
     const fixture = await realpath(await mkdtemp(join(tmpdir(), 'workspace-copy-preview-rows-')));
     const source = join(fixture, 'source');
     const target = join(fixture, 'copy');
@@ -1454,8 +1454,9 @@ describe('committed-copy retirement at the target authority', () => {
     // The Home row-read boundary and the daemon's cached snapshot are deliberately
     // independent: a retired relationship must not remain readable from old cache.
     let homeAnswers: ActiveProjectAccountRowsSnapshot[] = [changed];
+    let homeReads = 0;
     const receiver = createAuthorityHarness({ getProjectSnapshot: () => cached,
-      refreshProjectSnapshot: async () => homeAnswers.shift() ?? changed,
+      refreshProjectSnapshot: async () => { homeReads += 1; return homeAnswers.shift() ?? changed; },
     });
     const request = { kind: 'preview' as const, workspace: { serverId: 'server-1', refId: 'workspace-alpha' },
       machineId: 'machine-a', expectedRelationship: cached.relationships[0]!,
@@ -1470,11 +1471,16 @@ describe('committed-copy retirement at the target authority', () => {
       await materialization.custody.bindPromotedTarget();
       await materialization.custody.commit();
       const receiptBytes = await readFile(receiptPath, 'utf8');
+      // Changed before admission: refused before the filesystem read.
       await expect(receiver.authority.previewCommittedCopyHere(request))
         .rejects.toMatchObject({ code: 'bootstrap_definition_conflict' });
+      // Changed after admission: the admitted read finishes on its one Home read;
+      // a later destructive request re-checks its reviewed fingerprint.
       homeAnswers = [cached, changed];
+      homeReads = 0;
       await expect(receiver.authority.previewCommittedCopyHere(request))
-        .rejects.toMatchObject({ code: 'bootstrap_definition_conflict' });
+        .resolves.toMatchObject({ ok: true, preview: { targetMachineId: 'machine-b', workspaceRefId: 'workspace-beta' } });
+      expect(homeReads).toBe(1);
       expect(await readFile(receiptPath, 'utf8')).toBe(receiptBytes);
       expect(await readFile(join(target, 'copy.txt'), 'utf8')).toBe('owned copy');
     } finally {
@@ -1520,8 +1526,13 @@ describe('committed-copy retirement at the target authority', () => {
     let current = snapshot(source, target);
     let credentialCurrent = true;
     let retireDuringRead = false;
+    const homeReads = { receiver: 0, controller: 0 };
     const receiver = createAuthorityHarness({ getProjectSnapshot: () => {
       // The Project row persistence boundary may settle after this runtime's credential retires.
+      if (retireDuringRead) credentialCurrent = false;
+      return current;
+    }, refreshProjectSnapshot: async () => {
+      homeReads.receiver += 1;
       if (retireDuringRead) credentialCurrent = false;
       return current;
     } });
@@ -1549,9 +1560,7 @@ describe('committed-copy retirement at the target authority', () => {
           isCurrent: async () => credentialCurrent,
         });
         await assertCurrent();
-        const result = await receiver.authority.previewCommittedCopyAtTarget({ ...request, ...(signal ? { signal } : {}) });
-        await assertCurrent();
-        return result;
+        return await receiver.authority.previewCommittedCopyAtTarget({ ...request, ...(signal ? { signal } : {}) });
       },
     } satisfies Pick<MachineWorkspaceSyncRpcService, 'inspectCommittedCopyHere'>;
     // Only transport and persistent rows are fixtures: manager, authorization, registration,
@@ -1564,6 +1573,7 @@ describe('committed-copy retirement at the target authority', () => {
       method: `machine-b:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT}`, params, machineAdmission: admission,
     });
     const controller = createAuthorityHarness({ localMachineId: 'machine-a', getProjectSnapshot: () => current,
+      refreshProjectSnapshot: async () => { homeReads.controller += 1; return current; },
       callMachineRpc: async ({ machineId, method, request: forwarded }) => rpc.handleRequest({
         method: `${machineId}:${method}`, params: forwarded, machineAdmission,
       }),
@@ -1601,12 +1611,16 @@ describe('committed-copy retirement at the target authority', () => {
       await expect(inspect()).resolves.toEqual({ ok: true, preview: {
         targetMachineId: 'machine-b', workspaceRefId: 'workspace-beta', rootFingerprint: fingerprint, sizeBytes: 27,
       } });
+      // One admitted topology read per preview boundary: local preview 1, two-daemon preview 2.
+      expect(homeReads).toEqual({ receiver: 1, controller: 0 });
+      homeReads.receiver = 0;
       await expect(controllerRpc.handleRequest({
         method: `machine-a:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT}`, params: request,
         machineAdmission: { ...machineAdmission, machineId: 'machine-a', installationId: 'controller-installation' },
       })).resolves.toEqual({ ok: true, preview: {
         targetMachineId: 'machine-b', workspaceRefId: 'workspace-beta', rootFingerprint: fingerprint, sizeBytes: 27,
       } });
+      expect(homeReads).toEqual({ receiver: 1, controller: 1 });
       for (const malformed of [
         { ...request, expectedRelationship: undefined },
         { ...request, rootPath: target },
@@ -1626,9 +1640,11 @@ describe('committed-copy retirement at the target authority', () => {
       ingressCurrent = false;
       await expect(inspect()).resolves.toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
       ingressCurrent = true;
+      // Retirement during an admitted read takes effect at the next request.
       retireDuringRead = true;
-      await expect(inspect()).resolves.toMatchObject({ errorCode: 'forbidden' });
+      await expect(inspect()).resolves.toMatchObject({ ok: true, preview: { rootFingerprint: fingerprint } });
       retireDuringRead = false;
+      await expect(inspect()).resolves.toMatchObject({ errorCode: 'forbidden' });
       credentialCurrent = true;
       await expect(inspect({ ...request, workspace: { ...request.workspace, serverId: 'other-home' } }))
         .resolves.toMatchObject({ errorCode: 'forbidden' });

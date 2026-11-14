@@ -2464,9 +2464,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
           ...(retained ? { requesterAccountId: retained.execution.accountRowsCustody.accountId } : {}),
           machineId: input.localMachineId, credentials: input.credentials, isCurrent: input.isCurrent };
         await assertCurrentWorkspaceCopyPreview(current);
-        const result = await targetAuthority.previewCommittedCopyAtTarget({ ...request, ...(signal ? { signal } : {}) }, context);
-        await assertCurrentWorkspaceCopyPreview(current);
-        return result;
+        return await targetAuthority.previewCommittedCopyAtTarget({ ...request, ...(signal ? { signal } : {}) }, context);
       }
       await targetAuthority.inspectCommittedCopyHere({ ...request, ...(signal ? { signal } : {}) }, context);
       return { ok: true };

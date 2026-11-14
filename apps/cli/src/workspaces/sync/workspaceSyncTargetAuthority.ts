@@ -1231,7 +1231,6 @@ export function createWorkspaceSyncTargetAuthority(
   const inspectCommittedCopyPreviewHere = async (
     request: WorkspaceSyncCommittedCopyPreviewRequest,
     resolved: ReturnType<typeof resolveCommittedCopyPreview>,
-    assertCurrent?: () => Promise<void>,
   ): Promise<WorkspaceSyncCommittedCopyPreviewResultV1> => {
     if (resolved.workspace.machineId.trim() !== localMachineId) {
       throw authorityError('root_mismatch', 'Workspace copy preview must run at its physical target');
@@ -1248,10 +1247,8 @@ export function createWorkspaceSyncTargetAuthority(
     } catch (error) {
       if (!(error instanceof Error && 'code' in error && error.code === 'workspace_copy_not_owned')) throw error;
     }
-    if (assertCurrent) await assertCurrent();
-    else if ((await refreshCommittedCopyPreview(request)).workspace.rootPath !== resolved.workspace.rootPath) {
-      throw authorityError('root_mismatch', 'Workspace copy preview root changed during inspection');
-    }
+    // Admitted once before the read; a later change takes effect at the next
+    // request, and removal re-checks its reviewed fingerprint.
     if (!observed) return { ok: false, errorCode: 'workspace_copy_not_owned' };
     return { ok: true, preview: { targetMachineId: resolved.workspace.machineId.trim(),
       workspaceRefId: resolved.workspace.id, rootFingerprint: observed.rootFingerprint,
@@ -2551,14 +2548,14 @@ export function createWorkspaceSyncTargetAuthority(
       if (context?.workspaceSyncSourceWriterTargetRouting?.target.phase !== 'inspect') {
         return inspectCommittedCopyPreviewHere(request, await refreshCommittedCopyPreview(request, context));
       }
-      const { entry, relationship, workspace, sourceWorkspace, assertCurrent } = await resolveRetainedCopyCustody({
+      const { entry, relationship, workspace, sourceWorkspace } = await resolveRetainedCopyCustody({
         relationshipId: request.expectedRelationship.relationshipId, targetWorkspaceRefId: request.targetWorkspaceRefId,
         expectedRelationship: request.expectedRelationship, sourceWorkspace: request.workspace, sourceMachineId: request.machineId,
       }, context, 'inspect');
       if (request.targetMachineId !== workspace.machineId) throw authorityError('forbidden', 'Workspace copy target changed');
       const { signal: _signal, ...wire } = request;
       return inspectCommittedCopyPreviewHere(request, { parsed: WorkspaceSyncCommittedCopyPreviewV1Schema.parse(wire),
-        relationship, workspace, sourceWorkspace, endpointRole: entry.endpointRole }, assertCurrent);
+        relationship, workspace, sourceWorkspace, endpointRole: entry.endpointRole });
     },
     previewCommittedCopyAtTarget: async (request, context) => {
       const resolved = await refreshCommittedCopyPreview(request, context);
@@ -2593,9 +2590,6 @@ export function createWorkspaceSyncTargetAuthority(
       if (result.data.ok && (result.data.preview.targetMachineId !== parsed.targetMachineId
         || result.data.preview.workspaceRefId !== parsed.targetWorkspaceRefId)) {
         throw authorityError('root_mismatch', 'Workspace copy preview response changed target');
-      }
-      if ((await refreshCommittedCopyPreview(request, context)).workspace.rootPath !== workspace.rootPath) {
-        throw authorityError('root_mismatch', 'Workspace copy preview root changed during inspection');
       }
       return result.data;
     },
@@ -2913,6 +2907,15 @@ export function createWorkspaceSyncTargetAuthority(
         throw authorityError('target_unavailable', 'Handoff target server does not match this daemon');
       }
       const source = context?.workspaceSyncSourceWriterTargetRouting?.source ?? context?.workspaceSyncSourceRouting;
+      // Home never routes a daemon's signed call back to its own socket: a
+      // same-Machine destination keeps the original requester context here and
+      // consumes the role Home admitted on this Machine for the same Manage rule.
+      if (wireRequest.machineId === localMachineId) {
+        if (context?.callerInputAuthorization && source && context.machineAdmission?.role !== 'manage') {
+          throw authorityError('machine_manage_required', 'Replacing a destination folder needs Manage access to this Machine');
+        }
+        return await authority.preflightHandoffTargetReplacementHere(wireRequest, request.signal, context);
+      }
       if (context?.callerInputAuthorization && source) {
         context.signal.throwIfAborted();
         if (!source.sourceContext || source.accountServerId !== localServerId || source.operationId !== wireRequest.operationId
@@ -2925,9 +2928,6 @@ export function createWorkspaceSyncTargetAuthority(
             accountServerId: localServerId, targetMachineId: wireRequest.machineId, targetRootPath: wireRequest.targetPath },
           ...(request.signal ? { signal: request.signal } : {}),
         }, context));
-      }
-      if (wireRequest.machineId === localMachineId) {
-        return await authority.preflightHandoffTargetReplacementHere(wireRequest, request.signal, context);
       }
       const target = await readReplacementTarget(wireRequest.machineId, wireRequest.targetPath, request.signal);
       if (target.machineId === localMachineId) {

@@ -1220,7 +1220,8 @@ describe('Project Open RPC', () => {
         await mkdir(targetRoot, { recursive: true });
         await writeFile(join(targetRoot, 'existing.txt'), 'member bytes');
         const refusedOpen = await register(RPC_METHODS.PROJECTS_OPEN, runtime)(input, context);
-        expect(refusedOpen, JSON.stringify(refusedOpen)).toMatchObject({ kind: 'refused' });
+        // The target bootstrap owner refuses a non-empty replacement without its approval.
+        expect(refusedOpen, JSON.stringify(refusedOpen)).toMatchObject({ kind: 'refused', code: 'approval_stale' });
         expect(await readFile(join(targetRoot, 'existing.txt'), 'utf8')).toBe('member bytes');
         await expect(access(join(targetRoot, 'payload.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
         const graph = rows.find(row => row.key.kind === 'relationship-graph');
