@@ -1426,6 +1426,63 @@ describe('deployment children retain their controller Action authority', () => {
         }, { authentication: 'real' });
     });
 
+    it.each(['deployments.rollback', 'deployments.teardown'] as const)
+    ('bounds accepted native receipt list/get reads to the admitted Environment (%s)', async actionId => {
+        const f = await fixture('account', 'account');
+        const foreign = await fixture('account', 'account');
+        await db.deployment.update({ where: { id: f.receipt.id }, data: { state: 'succeeded' } });
+        const otherEnvironment = await db.deploymentEnvironment.create({ data: { ...f.environment, id: crypto.randomUUID(),
+            runtimeTargetLinkId: null, ...await f.content('deployment-environment.v1') } });
+        const otherLink = await db.deploymentTargetLink.create({ data: { ...f.link, id: crypto.randomUUID(),
+            environmentId: otherEnvironment.id, ...await f.content('deployment-target-link.v1') } });
+        await db.deploymentEnvironment.update({ where: { id: otherEnvironment.id }, data: { runtimeTargetLinkId: otherLink.id } });
+        const otherReceipt = await db.deployment.create({ data: { ...f.receipt, id: crypto.randomUUID(),
+            environmentId: otherEnvironment.id, targetLinkId: otherLink.id, state: 'succeeded',
+            requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(), ...await f.content('deployment-receipt.v1') } });
+        const common = { ...f.input, expectedRevision: f.environmentRevision, requestKey: crypto.randomUUID(),
+            ...await f.content('deployment-receipt.v1') };
+        const input = actionId === 'deployments.rollback' ? { ...common, deploymentId: f.receipt.id }
+            : { ...common, reason: 'manual' as const };
+        const target = f.authorization.binding.target;
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+        const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+            accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+            actionId, machineId: f.controller.id, target, requestId: envelope.requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input });
+        const headers = (method: 'GET' | 'POST', path: string, body?: unknown) =>
+            createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId: actionId, target,
+                installationId: f.controller.installationId, privateKey: f.controller.keys.secretKey,
+                method, path, ...(body === undefined ? {} : { body }) });
+        const listPath = (environmentId: string) => `/v1/deployments/environments/${environmentId}/deployments?serverId=${serverId}`;
+        const getPath = (deploymentId: string) => `/v1/deployments/receipts/${deploymentId}?serverId=${serverId}`;
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const path = `/v1/deployments/environments/${f.environment.id}/${actionId === 'deployments.rollback' ? 'rollback' : 'teardown'}`;
+            const body = { ...input, actionOperationId: crypto.randomUUID() };
+            const response = await app.inject({ method: 'POST', url: path, payload: body, headers: headers('POST', path, body) });
+            expect(response.statusCode, response.body).toBe(200);
+            const admission = DeploymentReceiptResultV1Schema.parse(response.json());
+            if (!admission.ok) throw new Error('Expected accepted native deployment job');
+            const list = await app.inject({ method: 'GET', url: listPath(f.environment.id), headers: headers('GET', listPath(f.environment.id)) });
+            expect(list.statusCode, list.body).toBe(200);
+            expect(list.json()).toMatchObject({ ok: true, items: expect.arrayContaining([
+                expect.objectContaining({ id: f.receipt.id }), expect.objectContaining({ id: admission.deploymentId }),
+            ]) });
+            for (const receipt of list.json().items) expect(receipt.environmentId).toBe(f.environment.id);
+            for (const deploymentId of [f.receipt.id, admission.deploymentId]) {
+                const read = await app.inject({ method: 'GET', url: getPath(deploymentId), headers: headers('GET', getPath(deploymentId)) });
+                expect(read.statusCode, read.body).toBe(200);
+                expect(read.json()).toMatchObject({ ok: true, deployment: { id: deploymentId, environmentId: f.environment.id } });
+            }
+            for (const deniedPath of [listPath(otherEnvironment.id), getPath(otherReceipt.id),
+                listPath(foreign.environment.id), getPath(foreign.receipt.id)]) {
+                const denied = await app.inject({ method: 'GET', url: deniedPath, headers: headers('GET', deniedPath) });
+                expect.soft(denied.statusCode, denied.body).toBe(401);
+                expect.soft(denied.json()).not.toHaveProperty('deployment');
+                expect.soft(denied.json()).not.toHaveProperty('items');
+            }
+        }, { authentication: 'real' });
+    });
+
     it.each([
         { platformTarget: 'vercel' as const, pluginId: 'happier.deploy.vercel', localId: 'deploy-upload-v1' },
         { platformTarget: 'workers' as const, pluginId: 'happier.deploy.cloudflare', localId: 'pages-upload' },

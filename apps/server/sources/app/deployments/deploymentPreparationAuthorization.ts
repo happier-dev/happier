@@ -104,6 +104,16 @@ function collectDeploymentOperands(value: unknown, visit: (kind: ReturnType<type
     }
 }
 
+function readPreviewTemplateInAdmittedSource(environment: Readonly<{
+    projectSourceId: string;
+    previewTemplateEnvironment: Readonly<{ id: string; projectSourceId: string }> | null;
+}>): string | undefined {
+    // Preview admission binds its template to this Source. A saved reference
+    // cannot expand that admitted Source to another Account's template.
+    const template = environment.previewTemplateEnvironment;
+    return template?.projectSourceId === environment.projectSourceId ? template.id : undefined;
+}
+
 /**
  * The one admitted deployment scope: every Environment, Source, Artifact and
  * Machine operand the signed root, accepted receipt or validated reviewed
@@ -175,14 +185,18 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
         if (selectedReferenceEnvironmentId === undefined && !preparation && (deployFamily === 'deploy' || deployFamily === 'rollback' || deployFamily === 'promote')
             && seeds.environment.size > 0) {
             const previews = await tx.deploymentEnvironment.findMany({ where: { id: { in: [...seeds.environment] }, purpose: 'preview',
-                deletedAt: null }, select: { previewTemplateEnvironmentId: true } });
-            for (const preview of previews) if (preview.previewTemplateEnvironmentId) seeds.environment.add(preview.previewTemplateEnvironmentId);
+                deletedAt: null }, select: { projectSourceId: true,
+                    previewTemplateEnvironment: { select: { id: true, projectSourceId: true } } } });
+            for (const preview of previews) {
+                const templateId = readPreviewTemplateInAdmittedSource(preview);
+                if (templateId) seeds.environment.add(templateId);
+            }
         }
         return { environmentIds: seeds.environment, sourceIds: seeds.source, artifactIds: seeds.artifact, machineIds: seeds.machine };
     }
     let environments = await tx.deploymentEnvironment.findMany({ where: { id: { in: [...seeds.environment] } },
         select: { id: true, projectSourceId: true, contentArtifactId: true, controllerMachineId: true, buildMachineId: true,
-            previewTemplateEnvironmentId: true, purpose: true, deletedAt: true,
+            previewTemplateEnvironment: { select: { id: true, projectSourceId: true } }, purpose: true, deletedAt: true,
             targetLinks: { select: { id: true, predecessorTargetLinkId: true, contentArtifactId: true, activeDeploymentId: true, machineId: true, machines: { select: { machineId: true } } } },
             domains: { select: { id: true, contentArtifactId: true,
                 ...(backup ? { capturedPlacements: true, state: true, deletedAt: true } : {}) } } } });
@@ -245,11 +259,12 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
     }
     for (const environment of environments) {
         // A preview reads the template Environment it was derived from.
-        if (selectedReferenceEnvironmentId === undefined && environment.previewTemplateEnvironmentId && !receiptRead && !binding.deploymentReadAdmission && !binding.registryAppUpdateAdmission
+        const previewTemplateId = readPreviewTemplateInAdmittedSource(environment);
+        if (selectedReferenceEnvironmentId === undefined && previewTemplateId && !receiptRead && !binding.deploymentReadAdmission && !binding.registryAppUpdateAdmission
             && (readActionId === undefined || readActionId !== DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1
                 && (!membershipDomainRead || readActionId === deploymentActionIds.DEPLOYMENT_DOMAIN_GET_ACTION_ID_V1 && environment.purpose === 'preview'
                     && !environment.deletedAt && deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission) !== 'teardown')))
-            environmentIds.add(environment.previewTemplateEnvironmentId);
+            environmentIds.add(previewTemplateId);
         sourceIds.add(environment.projectSourceId);
         artifactIds.add(environment.contentArtifactId);
         machineIds.add(environment.controllerMachineId);

@@ -97,6 +97,48 @@ describe('admitted deployment read scope (real SQLite)', () => {
     ).toBe(false);
   });
 
+  it.each(['deployments.deploy', 'deployments.rollback', 'deployments.promote'] as const)(
+    '%s refuses a preview template from another Account at the admitted scope owner', async actionId => {
+      const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+      const foreign = await db.account.create({ data: { encryptionMode: 'plain' } });
+      const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: account.id, metadata: '{}' } });
+      const environment = async (accountId: string) => {
+        const source = await db.projectSource.create({ data: { createdByAccountId: accountId, name: 'Preview scope',
+          owner: { kind: 'account', accountId }, audience: {}, attachments: [] } });
+        const artifact = await db.artifact.create({ data: { id: crypto.randomUUID(), accountId,
+          header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: new Uint8Array() } });
+        return await db.deploymentEnvironment.create({ data: { projectSourceId: source.id, createdByAccountId: accountId,
+          protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', controllerMachineId: machine.id,
+          contentArtifactId: artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 } });
+      };
+      const template = await environment(account.id);
+      const foreignTemplate = await environment(foreign.id);
+      const runtime = await db.deploymentTargetLink.create({ data: { environmentId: template.id, createdByAccountId: account.id,
+        role: 'runtime', state: 'configured', sourceKind: 'host', hostTargetId: 'own-server', targetKind: 'ownServer',
+        contentArtifactId: template.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1 } });
+      const preview = await db.deploymentEnvironment.create({ data: { ...template, id: crypto.randomUUID(),
+        purpose: 'preview', previewTemplateEnvironmentId: template.id, previewRepositoryId: template.projectSourceId,
+        previewPullRequestId: '17', previewTargetLinkId: runtime.id } });
+      const admitted = { serverIdentityId: `srv_${'b'.repeat(32)}`, accountId: account.id,
+        custodianAccountId: account.id, authentication: { kind: 'account', tokenEpoch: 0 },
+        machineId: machine.id, installationId: 'installation', actionId, requestId: crypto.randomUUID(),
+        requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: machine.id }, environmentId: preview.id,
+      } satisfies ExternalActionExecutionAuthorizationBindingV1;
+      const canRead = (environmentId: string, readActionId?: 'deployments.environments.get') =>
+        isDeploymentReadOperandInAdmittedScopeInTx(db, admitted, { serverId: admitted.serverIdentityId, environmentId },
+          undefined, undefined, readActionId);
+      for (const readActionId of ['deployments.environments.get', undefined] as const) {
+        expect(await canRead(template.id, readActionId)).toBe(true);
+      }
+      // The persisted reference is a DB boundary input. It cannot expand the
+      // admitted preview's Source to another Account's unrelated template.
+      await db.deploymentEnvironment.update({ where: { id: preview.id }, data: { previewTemplateEnvironmentId: foreignTemplate.id } });
+      for (const readActionId of ['deployments.environments.get', undefined] as const) {
+        expect.soft(await canRead(foreignTemplate.id, readActionId)).toBe(false);
+      }
+    },
+  );
+
   it('refuses an Environment, Receipt or unnamed operand the admission does not own', async () => {
     const admitted = binding({
       operation: 'setup',
