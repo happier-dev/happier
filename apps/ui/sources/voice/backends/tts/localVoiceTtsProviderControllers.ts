@@ -9,7 +9,8 @@ import { speakDeviceText } from '@/voice/local/speakDeviceText';
 import { speakKokoroText } from '@/voice/output/KokoroTtsController';
 import { DaemonTtsController } from '@/voice/runtime/daemonInference/DaemonTtsController';
 import { resolveDaemonVoiceInferenceExecution } from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
-import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
+import { createVoiceMachineError, VoiceMachineFailure } from '@/voice/runtime/machine/voiceMachineError';
+import { normalizeVoiceFailureCode } from '@happier-dev/protocol/voice/providerOperations';
 import type { VoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
 import type { VoicePlaybackStopperRegistrar } from '@/voice/runtime/playback/VoicePlaybackController';
 import { readVoiceProviderSettingsConfig, voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
@@ -75,7 +76,8 @@ export function reportTtsFailure(ctx: LocalVoiceTtsRequest, error: unknown): voi
         ctx.onTtsFailed(machineError);
         return;
     }
-    throw Object.assign(new Error(machineError.reason), machineError);
+    throw Object.assign(new VoiceMachineFailure(machineError.kind,
+        normalizeVoiceFailureCode(machineError.reason) ?? 'tts_failed', error), machineError);
 }
 
 export type LocalVoiceTtsProviderId = VoiceLocalTtsSettings['provider'];

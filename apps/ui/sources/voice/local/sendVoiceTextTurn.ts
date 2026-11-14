@@ -12,8 +12,7 @@ import {
 } from '@/voice/transcript/voiceConversationTranscript';
 import { voiceConversationRuntimeMachine } from '@/voice/runtime/machine/VoiceConversationRuntimeMachine';
 import { transitionVoiceRuntimeToIdle } from '@/voice/runtime/machine/voiceConversationRuntimeHelpers';
-import { classifyVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
-import type { VoiceMachineErrorKind } from '@/voice/runtime/machine/voiceConversationRuntimeTypes';
+import { classifyVoiceMachineError, VoiceMachineFailure } from '@/voice/runtime/machine/voiceMachineError';
 import { voiceOutputStatusStore } from '@/voice/runtime/outputStatus/voiceOutputStatusStore';
 import type { VoicePlaybackStopperRegistrar } from '@/voice/runtime/playback/VoicePlaybackController';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
@@ -53,12 +52,7 @@ type VoiceAgentSessionsLike = Readonly<{
   ) => Promise<{ assistantText: string; actions?: ReadonlyArray<unknown> }>;
 }>;
 
-/** Carries playback failure facts to the lifecycle owner without ending its mic. */
-export class VoiceTextTurnError extends Error {
-  constructor(readonly kind: VoiceMachineErrorKind, readonly code: string, cause: unknown) {
-    super(code, { cause });
-  }
-}
+export { VoiceMachineFailure as VoiceTextTurnError } from '@/voice/runtime/machine/voiceMachineError';
 
 export async function sendVoiceTextTurn(params: {
   sessionId: string;
@@ -509,7 +503,7 @@ export async function sendVoiceTextTurn(params: {
           kind: 'tts_failed',
           reason: 'tts_failed',
         });
-        throw new VoiceTextTurnError(machineError.kind, machineError.reason, streamingPlaybackError);
+        throw new VoiceMachineFailure(machineError.kind, machineError.reason, streamingPlaybackError);
       }
       if (isTurnAbortedError(error) || params.signal?.aborted) {
         transitionVoiceRuntimeToIdleIfCurrent({ controlSessionId: sessionId });

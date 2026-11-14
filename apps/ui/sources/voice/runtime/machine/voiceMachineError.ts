@@ -19,6 +19,13 @@ import type {
 
 export type { VoiceMachineError, VoiceMachineErrorKind };
 
+/** Carries a failure's typed identity from its producer to the lifecycle owner. */
+export class VoiceMachineFailure extends Error {
+    constructor(readonly kind: VoiceMachineErrorKind, readonly code: string, cause: unknown) {
+        super(code, { cause });
+    }
+}
+
 /**
  * Single source of truth for lifecycle, retry, recovery, and presentation
  * semantics for every machine error kind. Callers provide only identity and a
@@ -230,7 +237,7 @@ export function classifyVoiceMachineError(
     // Typed authentication/setup refusals need their existing preflight remedy;
     // retrying cannot supply a sign-in or a missing client capability.
     const code = readSafeVoiceRuntimeFailureCode(error);
-    const kind = resolveVoiceMachineErrorKind(code ?? '', fallback.kind);
+    const kind = resolveVoiceMachineErrorKind(code ?? '', error instanceof VoiceMachineFailure ? error.kind : fallback.kind);
     return createVoiceMachineError({
         kind,
         // A specific owner code survives a generic pre-effect wrapper. A family

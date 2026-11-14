@@ -4,7 +4,7 @@ import { createAttemptGuard } from '@/utils/timing/attemptGuard';
 import { storage } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { presentVoiceUsageLimitMessage } from '@/voice/runtime/machine/voiceMachineErrorCopy';
-import { classifyVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
+import { classifyVoiceMachineError, VoiceMachineFailure } from '@/voice/runtime/machine/voiceMachineError';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import { settingsParse, type Settings } from '@/sync/domains/settings/settings';
@@ -79,7 +79,7 @@ import {
   resolveLocalVoiceAdapterSettings,
   resolveLocalConversationControlSessionId,
 } from './localVoiceSettings';
-import { sendVoiceTextTurn as sendVoiceTextTurnImpl, VoiceTextTurnError } from './sendVoiceTextTurn';
+import { sendVoiceTextTurn as sendVoiceTextTurnImpl } from './sendVoiceTextTurn';
 import {
   bindCurrentUiContextVoiceToolPortToAdmission,
   type VoiceCurrentUiToolPort,
@@ -854,7 +854,7 @@ async function readNativeTurnMessage(
     assistantEntryId = await persistLocalVoiceAgentAssistantText(sessionId, text);
   } catch (error) {
     if (isCurrent()) await surfaceLocalVoiceTurnFailure(sessionId,
-      new VoiceTextTurnError('provider_error', 'voice_transcript_persist_failed', error), admission, captureAttempt);
+      new VoiceMachineFailure('provider_error', 'voice_transcript_persist_failed', error), admission, captureAttempt);
     return;
   }
   if (!isCurrent()) return;
@@ -886,7 +886,7 @@ async function readNativeTurnMessage(
     // Only speech failed. Keep the native turn and its pending request alive
     // while retiring the failed capture through the usual failure cleanup.
     await surfaceLocalVoiceTurnFailure(
-      sessionId, new VoiceTextTurnError('tts_failed', 'tts_failed', error), admission, captureAttempt,
+      sessionId, new VoiceMachineFailure('tts_failed', 'tts_failed', error), admission, captureAttempt,
     );
   } finally { noteTtsStopped(); }
   if (!isCurrent() || interrupted) return;
@@ -1051,7 +1051,7 @@ async function surfaceLocalVoiceTurnFailure(
   transitionVoiceRuntimeToIdle({
     controlSessionId: sessionId,
     reason: readSafeVoiceRuntimeFailureCode(error) ?? 'send_failed',
-    ...(error instanceof VoiceTextTurnError ? { kind: error.kind } : {}),
+    ...(error instanceof VoiceMachineFailure ? { kind: error.kind } : {}),
     cause: error,
   });
 }

@@ -14,12 +14,15 @@ import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/met
 import { VOICE_CONVERSATION_SYSTEM_SESSION_KEY } from '@/voice/persistence/voiceConversationSystemSessionLookup';
 import { createDeferred, createMachineFixture, createSessionFixture, waitForTestEvent } from '@/dev/testkit';
 import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { ExecutionRunStartRequestSchema } from '@happier-dev/protocol/execution/runs/startRequest';
 import type { PartialOptions as ElevenLabsStartOptions } from '@elevenlabs/client';
 import {
     getStorage, loadLocalVoiceEngineWithCompatState, registerLocalVoiceEngineHarnessHooks,
     machineRpcWithServerScope, localVoiceHomeId, localVoiceSpeechOutputBoundary, replaceLocalVoiceSessionHttpSeed,
     setLocalVoiceHttpResponder,
     waitForLocalVoiceBoundaryEvent,
+    waitForLocalVoiceState,
     emitSpeechRecEvent, expoSpeechSpeak, localVoiceAgentRpc, localVoicePendingEnqueue,
     sessionRpcWithServerScope, speechRecStart, speechRecStop,
 } from './localVoiceEngine.testHarness';
@@ -172,6 +175,49 @@ describe('local voice engine local conversation binding', () => {
                 conversationSessionId: 'voice-home-session',
                 targetSessionAddress: { serverId: localVoiceHomeId, sessionId: 'session-1' },
         });
+    }, 60_000);
+
+    it.each(['', 'voice_tts_provider_unavailable'])('keeps a generated greeting speech failure typed through the real Local Voice start (%j)', async reason => {
+        await configureAgentMode();
+        const runBoundary = await createExternalActionAccountHttpBoundary({
+            serverUrl: 'https://local-voice-actions.example.test', serverIdentityId: 'srv_local_voice_actions',
+            accountId: 'account-a', machineId: 'machine-1', actionId: 'execution.run.start', tokenEpoch: 0,
+            async execute(input) {
+                if (!input || typeof input !== 'object' || !('sessionId' in input)) throw new Error('Expected attached Voice Run');
+                const { sessionId: _sessionId, ...rawStart } = input;
+                await localVoiceAgentRpc.dispatch(SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START, {
+                    start: ExecutionRunStartRequestSchema.parse(rawStart),
+                });
+                return { runId: 'local-agent-run', callId: 'local-call', sidechainId: 'local-sidechain' };
+            },
+        });
+        setLocalVoiceHttpResponder(async request => await runBoundary.handle(request.url, { method: request.method, headers: request.headers,
+                ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) }) ?? undefined);
+        const storage = await getStorage();
+        const voice = storage.getState().settings.voice;
+        const config = readLocalConversationVoiceSettings(voice);
+        storage.__setState({ settings: { ...storage.getState().settings, voice: { ...voice,
+            welcome: { ...voice.welcome, enabled: true, mode: 'immediate' },
+            providers: { ...voice.providers, local_conversation: { schemaVersion: 1, config: { ...config,
+                stt: { ...config.stt, provider: 'happier.voice.openai-compat/stt' },
+                tts: { ...config.tts, provider: 'device', autoSpeakReplies: true },
+            } } },
+        } } });
+        // Expo Speech is the external boundary; generation, speech ownership,
+        // capture cleanup and lifecycle projection remain real.
+        expoSpeechSpeak.mockImplementationOnce((_text, options) => options.onError?.(new Error(reason)));
+        const { voiceConversationRuntimeMachine } = await import('@/voice/runtime/machine/VoiceConversationRuntimeMachine');
+        await localVoiceEngine.toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+        await waitForLocalVoiceState(state => Boolean(state.error));
+        expect(expoSpeechSpeak.mock.calls[0]?.[0]).toBe('Welcome!');
+        expect(voiceConversationRuntimeMachine.getSnapshot()).toMatchObject({
+            state: 'disconnected', error: {
+                kind: 'tts_failed', reason: reason || 'tts_failed', phase: 'turn',
+                recoveryAction: 'retry', retryPolicy: 'user_action',
+            },
+        });
+        expect(localVoiceSpeechOutputBoundary.getAudioSessionCoordinator().getSnapshot().leaseCount).toBe(0);
+        expect(localVoiceAgentRpc.readRetainedRun()).toMatchObject({ status: 'running' });
     }, 60_000);
 
     it('keeps the lifecycle, working binding and permission delivery on the Session opened by Voice', async () => {
