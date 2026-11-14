@@ -10,7 +10,7 @@ import type { MachineAdmission } from '@happier-dev/protocol/machines/machineAcc
 import { resolveMachineAdmissionInTx } from '@/app/machines/machineAccess';
 import { resolveMachinePresetForAcquireInTx } from '@/app/machines/managed/machinePresetService';
 import { isManagedMachineCreator, requireManagedCreationAccessInTx } from '@/app/machines/managed/managedRead';
-import { ManagedMachineError, readManagedMachineInTx, readManagedAdmissionState, sameManagedInput, resolveManagedMachineRole, resolveManagedMachineRoleInTx, type StoredManagedMachine } from '@/app/machines/managed/managedRows';
+import { ManagedMachineError, readManagedMachineInTx, readManagedAdmissionState, readManagedAcquisitionIdentity, projectManagedAcquisitionComputeInput, sameManagedInput, resolveManagedMachineRole, resolveManagedMachineRoleInTx, type StoredManagedMachine } from '@/app/machines/managed/managedRows';
 import type { Tx } from '@/storage/inTx';
 import { resolveSignedManagedAccountExecutorInTx } from '@/app/machines/managed/managedRequestAuthority';
 
@@ -109,7 +109,10 @@ export async function hasAdmittedManagedCreationRootInTx(reader: Tx,
 }
 
 /** Internal placement result consumed by the signer, never a caller-supplied grant. */
-export type ManagedCreationRecoveryAdmission = Readonly<{ managedCreationRecovery?: true }>;
+export type ManagedActionMachineAdmissionFacts = Readonly<{
+    managedCreationRecovery?: true;
+    managedAcquireDelegation?: true;
+}>;
 
 /** Home reads the same closed control projection for plain and encrypted roots. */
 export function readExternalActionManagedControlAdmission(actionId: string, envelope: ExternalActionRequestEnvelope) {
@@ -172,7 +175,7 @@ export function readExternalActionManagedAcquireAdmission(envelope: ExternalActi
 export async function resolveManagedActionMachineAdmissionInTx(reader: Tx,
     input: ExternalActionManagedAdmissionContext & Readonly<{
         actorAccountId: string; machineId: string; actionId: string; requireOnline?: boolean;
-    }>): Promise<MachineAdmission & ManagedCreationRecoveryAdmission> {
+    }>): Promise<MachineAdmission & ManagedActionMachineAdmissionFacts> {
     const denied = { kind: 'denied', code: 'access_denied' } as const;
     try {
         if (input.actionId === 'machines.managed.credentials.install') {
@@ -228,10 +231,10 @@ export async function resolveManagedActionMachineAdmissionInTx(reader: Tx,
         let custodianAccountId: string;
         let installationId: string | undefined;
         let creatorRecovery = false;
+        let managedAcquireDelegation: true | undefined;
         if (retained) {
             // An accepted creation survives later preset edits/withdrawal. Its
             // exact requester and compute identity remain owned by admission.
-            const state = readManagedAdmissionState(retained.admittedInput);
             const creationAccess = input.actionId === 'machines.managed.cancel'
                 ? await requireManagedCreationAccessInTx(reader, retained, input.actorAccountId) : undefined;
             creatorRecovery = creationAccess === 'creator' && input.actorAccountId !== retained.custodianAccountId;
@@ -241,8 +244,8 @@ export async function resolveManagedActionMachineAdmissionInTx(reader: Tx,
                     : retained.controllerMachineId !== input.machineId)
                 || binding && (retained.custodianAccountId !== binding.custodianAccountId
                     || retained.controllerMachineId !== null && retained.controllerInstallationId !== binding.installationId)
-                || projected && !sameManagedInput({ computeInput: state.computeInput, continuation: state.continuation }, {
-                    computeInput: projected.input,
+                || projected && !sameManagedInput(readManagedAcquisitionIdentity(retained.admittedInput), {
+                    computeInput: projectManagedAcquisitionComputeInput(projected.input),
                     continuation: projected.continuationPresent ? { requestEnvelopeDigest: input.envelope
                         ? computeExternalActionRequestEnvelopeDigestV1(input.envelope) : binding?.requestEnvelopeDigest } : null,
                 })) return denied;
@@ -258,6 +261,7 @@ export async function resolveManagedActionMachineAdmissionInTx(reader: Tx,
                 || review.controller.machineId !== input.machineId) return denied;
             custodianAccountId = selected.custodianAccountId;
             installationId = review.controller.installationId;
+            managedAcquireDelegation = true;
         }
         // Custody retains the canonical installation, encryption and availability
         // checks, without publishing controller contents or keys to the requester.
@@ -267,6 +271,7 @@ export async function resolveManagedActionMachineAdmissionInTx(reader: Tx,
         if (controller.kind !== 'admitted') return controller;
         return installationId === undefined || controller.installationId === installationId
             ? { ...controller, actorAccountId: input.actorAccountId,
+                ...(managedAcquireDelegation ? { managedAcquireDelegation } : {}),
                 ...(creatorRecovery ? { managedCreationRecovery: true as const } : {}) } : denied;
     } catch (error) {
         if (error instanceof ManagedMachineError) return denied;

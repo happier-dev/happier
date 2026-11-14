@@ -12,6 +12,7 @@ import {
     type ManagedDeclaration,
     createManagedMachineDeclaredSchema,
     readManagedAcquisitionIdentity,
+    projectManagedAcquisitionComputeInput,
     readManagedEnrollmentAccountId,
     readManagedAdmissionState,
     readManagedOpaquePresetContent,
@@ -60,16 +61,7 @@ export async function admitManagedAcquire(params: Readonly<{
         if (!review.controller && params.custodianAccountId !== params.requesterAccountId) throw new ManagedMachineError('permission_denied');
         // Dedupe includes the private continuation without retaining its prompt,
         // attachments, or startup instructions in a Home-visible resource row.
-        const persistedComputeInput = request.input.selection.kind === 'preset'
-            ? (() => {
-                // The optional replacement is carried by admittedInput, not
-                // the request identity. A replay returns the first retained
-                // ciphertext even if a caller retries with another one.
-                const { presetContentOverride: _override, ...computeInput } = request.input;
-                return computeInput;
-            })()
-            : request.input;
-        const admittedInputIdentity = { computeInput: persistedComputeInput,
+        const admittedInputIdentity = { computeInput: projectManagedAcquisitionComputeInput(request.input),
             continuation: request.continuationPresent ? { requestEnvelopeDigest: params.requestEnvelopeDigest } : null };
         const existingAdmission = async (tx: Tx) => {
             const existing = await tx.managedMachine.findUnique({ where: { homeId_admittedActionRequestId: { homeId: review.homeId, admittedActionRequestId: request.requestId } } });

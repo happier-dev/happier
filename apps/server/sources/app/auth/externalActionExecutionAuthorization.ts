@@ -316,7 +316,7 @@ export async function resolveExternalActionExecutionMachineAdmissionInTx(reader:
         managedCreationAdmission?: ManagedCreationChildAdmission;
         capturedMachineAdmission?: SocketRpcMachineAdmissionContextV1;
         nativePurpose?: 'machine_npm_profile_acquisition' }>): Promise<Awaited<ReturnType<typeof resolveMachineAdmissionInTx>>
-            & import('./externalActionManagedAdmission').ManagedCreationRecoveryAdmission> {
+            & import('./externalActionManagedAdmission').ManagedActionMachineAdmissionFacts> {
     if (input.nativePurpose) {
         const action = SignedRootActionIdSchema.safeParse(input.actionId);
         if (!action.success || getActionSpec(action.data).originalExecution?.nativePurpose !== input.nativePurpose) {

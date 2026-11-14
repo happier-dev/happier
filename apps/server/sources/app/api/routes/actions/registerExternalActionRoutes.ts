@@ -861,6 +861,7 @@ export function registerExternalActionRoutes(
                     ...(continuation?.admission ? { managedCreationAdmission: continuation.admission } : {}),
                     ...('managedCreationRecovery' in admission && admission.managedCreationRecovery === true
                         ? { managedCreationRecovery: true } : {}),
+                    managedMachineAdmission: admission,
                     browserSessionId: body.data.envelope.v === 2 ? body.data.envelope.browserSessionId : undefined,
                     input: body.data.envelope.v === 1 ? body.data.envelope.input
                         : deploymentMetadataEnvironmentId === undefined

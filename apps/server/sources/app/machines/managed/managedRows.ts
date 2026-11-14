@@ -9,7 +9,7 @@ import * as z from "zod/mini";
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { ManagedCreationScopeRetentionV1Schema, createManagedMachineV1Schema, RetainedManagedLaunchSnapshotV1Schema, type ManagedMachineV1, type ValidatedLaunchSnapshotV1, type RetainedManagedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { ManagedAdmissionComputeInputV1Schema, ManagedAdmissionPresetContentV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControlAdmissionInputV1Schema, type ManagedControllerCurrentnessV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAdmissionComputeInputV1Schema, ManagedAdmissionPresetContentV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControlAdmissionInputV1Schema, type ManagedControllerCurrentnessV1, type ManagedAdmissionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachinePresetLaunchNameOverrideV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { ManagedPolicyAdmissionInputV1Schema, type ManagedMachinePolicyChangeHintV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { SupportedNativeIntentSchema, ManagedResourceV1Schema, type SupportedNativeIntent, type ManagedRefusalCodeV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
@@ -187,6 +187,14 @@ export function readManagedOpaquePresetContentOverride(row: Pick<StoredManagedMa
     if (current?.kind !== 'control' || !isManagedResizeActionIdV1(current.request.action) || current.resizeSettled) return undefined;
     const input = current.request.input;
     return 'presetContentOverride' in input ? input.presetContentOverride : undefined;
+}
+
+/** Optional replacement content is carried separately from the admitted request identity. */
+export function projectManagedAcquisitionComputeInput(input: ManagedAdmissionInputV1['input']): NonNullable<StoredManagedAdmission['computeInput']> {
+    if (input.selection.kind !== 'preset') return input;
+    // A replay returns the first retained ciphertext even when a retry carries another one.
+    const { presetContentOverride: _override, ...computeInput } = input;
+    return computeInput;
 }
 
 export function readManagedAcquisitionIdentity(value: unknown) {

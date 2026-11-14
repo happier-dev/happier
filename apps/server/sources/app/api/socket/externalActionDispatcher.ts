@@ -140,7 +140,7 @@ type ResolveMachine = (params: Readonly<{
     admittedDelivery?: true;
     /** Retain only the canonical admission produced by this successful resolution. */
     onAdmission?: (admission: SocketRpcMachineAdmissionContextV1
-        & import('@/app/auth/externalActionManagedAdmission').ManagedCreationRecoveryAdmission) => void;
+        & import('@/app/auth/externalActionManagedAdmission').ManagedActionMachineAdmissionFacts) => void;
 } & Partial<MachineOperationRequesterContext>>) => Promise<MachineResolution>;
 
 type ResolveSessionMachine = (params: Readonly<{
@@ -783,7 +783,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
 
         let executionAuthorization = request.executionAuthorization;
         let capturedMachineAdmission: (SocketRpcMachineAdmissionContextV1
-            & import('@/app/auth/externalActionManagedAdmission').ManagedCreationRecoveryAdmission) | undefined;
+            & import('@/app/auth/externalActionManagedAdmission').ManagedActionMachineAdmissionFacts) | undefined;
         let admittedFiniteOperation: ReturnType<typeof readAdmittedFiniteOperationPrincipal> = null;
         if (executionAuthorization) {
             // Dispatch is also an internal ingress: prove its supplied root token.
@@ -830,6 +830,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
             const context = { ...(request.workflowAdmission ? { workflowAdmission: request.workflowAdmission } : {}),
                 ...(request.managedCreationAdmission ? { managedCreationAdmission: request.managedCreationAdmission } : {}),
                 ...(capturedMachineAdmission?.managedCreationRecovery ? { managedCreationRecovery: true as const } : {}),
+                managedMachineAdmission: capturedMachineAdmission,
                 input: request.envelope.v === 1 ? request.envelope.input
                 : deploymentMetadataEnvironmentId === undefined
                     ? deploymentNativeAdmission ?? request.envelope.sessionSpawnAdmission ?? managedAdmission?.input
