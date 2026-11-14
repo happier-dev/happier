@@ -108,3 +108,71 @@ it('reads Activity only while presented, and keeps the rows it read once hidden'
   expect(environmentReads).toBe(reads);
   expect(hook.getCurrent().state.items).toHaveLength(1);
 });
+
+it('narrows Activity to the chosen Machine through the read, never by filtering rows on the page', async () => {
+  const serverId = await homes.addHome({
+    name: 'Activity filter',
+    serverUrl: 'https://fleet-activity-filter.test',
+    accountId: 'account-owner',
+    accountEncryptionMode: 'plain',
+  });
+  const detail = createDeploymentEnvironmentDetailV1({
+    environment: createDeploymentEnvironmentHeaderV1({ serverId }),
+  });
+  const receipt = createDeploymentReceiptDetailV1();
+  const { captureLazyActionAccountContext } =
+    await import('@/sync/ops/actions/actionAccountContext');
+  const account = await captureLazyActionAccountContext(serverId);
+  try {
+    await account.createArtifactDocument({
+      artifactId: detail.environment.contentArtifactId,
+      header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: detail.content.name },
+      body: JSON.stringify(detail.content),
+    });
+    await account.createArtifactDocument({
+      artifactId: receipt.deployment.contentArtifactId,
+      header: { kind: DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, title: 'Deploy', steps: receipt.content.steps },
+      body: JSON.stringify(receipt.content),
+    });
+  } finally {
+    account.dispose();
+  }
+  const root = '/v1/deployments/environments';
+  homes.answer(serverId, `${root}/${detail.environment.id}`, { body: { ok: true, environment: detail.environment,
+    targetLinks: detail.targetLinks.map((item) => item.targetLink) } });
+  homes.answer(serverId, root, {
+    body: { ok: true, items: [detail.environment], nextCursor: null },
+  });
+  homes.answer(serverId, `${root}/${detail.environment.id}/deployments`, {
+    body: {
+      ok: true,
+      items: [receipt.deployment],
+      nextCursor: null,
+    },
+  });
+  const lifetime: ServerAccountScopeLifetime = {
+    scope: { serverId, accountId: 'account-owner' },
+    isCurrent: () => true,
+    onRetire: () => ({ dispose() {} }),
+  };
+  const settle = async (hook: { getCurrent(): { state: { status: string } } }) => {
+    for (let attempt = 0; attempt < 50 && hook.getCurrent().state.status === 'loading'; attempt++)
+      await flushHookEffects();
+  };
+
+  const hook = await renderHook(
+    (machineId: string | null) => useFleetActivityPage(lifetime, [], true, { machineId }),
+    { initialProps: 'machine-elsewhere' as string | null },
+  );
+  await settle(hook);
+  expect(hook.getCurrent().state.status).toBe('ready');
+  expect(hook.getCurrent().state.items).toHaveLength(0);
+
+  // The receipt ran on the Machines its opened content names.
+  expect(receipt.content.machines.length).toBeGreaterThan(0);
+  await hook.rerender(receipt.content.machines[0]!);
+  await settle(hook);
+  expect(hook.getCurrent().state.items).toMatchObject([
+    { kind: 'receipt', receipt: { id: receipt.deployment.id } },
+  ]);
+});

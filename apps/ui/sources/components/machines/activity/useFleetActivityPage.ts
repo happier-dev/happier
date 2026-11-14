@@ -43,15 +43,27 @@ const codeOf = (error: unknown) =>
  * Machines → Activity's read: deploy receipts and Machine Action operations through the one activity read owner
  * (`readDeploymentActivityPage`), read when the page is presented, kept while it is not, and paged on request.
  */
+/** What the read itself narrows by; the page never filters rows it already holds. */
+export type FleetActivityFilter = Readonly<{ machineId: string | null }>;
+const NO_FILTER: FleetActivityFilter = Object.freeze({ machineId: null });
+
 export function useFleetActivityPage(
   lifetime: ServerAccountScopeLifetime | null,
   machineIds: readonly string[],
   presented: boolean,
+  filter: FleetActivityFilter = NO_FILTER,
 ) {
   const [state, setState] = React.useState<FleetActivityState>(INITIAL);
   const [generation, setGeneration] = React.useState(0);
   const pageAbort = React.useRef<AbortController | null>(null);
   const machineKey = machineIds.join('\n');
+  const filterMachineId = filter.machineId;
+  // Another filter is another history: its first read starts over rather than showing the previous rows under it.
+  const [readFilter, setReadFilter] = React.useState(filterMachineId);
+  if (readFilter !== filterMachineId) {
+    setReadFilter(filterMachineId);
+    setState(INITIAL);
+  }
 
   React.useEffect(() => {
     if (!presented || !lifetime) return;
@@ -59,7 +71,7 @@ export function useFleetActivityPage(
     pageAbort.current?.abort();
     readDeploymentActivityPage(
       lifetime,
-      { limit: ACTIVITY_PAGE_SIZE },
+      { limit: ACTIVITY_PAGE_SIZE, ...(filterMachineId ? { machineId: filterMachineId } : {}) },
       machineKey ? machineKey.split('\n') : [],
       { signal: controller.signal },
     )
@@ -86,7 +98,7 @@ export function useFleetActivityPage(
         }));
       });
     return () => controller.abort();
-  }, [generation, lifetime, machineKey, presented]);
+  }, [filterMachineId, generation, lifetime, machineKey, presented]);
 
   const loadMore = React.useCallback(() => {
     if (!lifetime || !state.nextCursor || state.loadingMore) return;
@@ -96,7 +108,7 @@ export function useFleetActivityPage(
     setState((previous) => ({ ...previous, loadingMore: true }));
     readDeploymentActivityPage(
       lifetime,
-      { limit: ACTIVITY_PAGE_SIZE, cursor },
+      { limit: ACTIVITY_PAGE_SIZE, cursor, ...(filterMachineId ? { machineId: filterMachineId } : {}) },
       machineKey ? machineKey.split('\n') : [],
       { signal: controller.signal },
     )
@@ -122,7 +134,7 @@ export function useFleetActivityPage(
           loadingMore: false,
         }));
       });
-  }, [lifetime, machineKey, state.loadingMore, state.nextCursor]);
+  }, [filterMachineId, lifetime, machineKey, state.loadingMore, state.nextCursor]);
 
   React.useEffect(() => () => pageAbort.current?.abort(), []);
   const retry = React.useCallback(

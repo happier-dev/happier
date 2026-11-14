@@ -1,56 +1,87 @@
 import * as React from 'react';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
+import {
+  Timeline,
+  type TimelineItemContent,
+} from '@happier-dev/plugin-ui/components';
 import type { DeploymentActivityItemV1 } from '@happier-dev/deployments';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useDiscussionParticipantProfiles } from '@/components/discussions/useDiscussionParticipantProfiles';
 import {
   describeActionOperationStatusLabel,
   resolveActionOperationStatus,
 } from '@/components/inbox/actionOperations/actionOperationPresentation';
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
+import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
 import { deploymentEnvironmentRoute } from '@/components/projects/deployments/deploymentNavigation';
 import {
-  deploymentOperationLabel,
-  deploymentReceiptTitle,
   deploymentRevisionLabel,
+  deploymentStateLabel,
   deploymentWorkStatus,
 } from '@/components/projects/deployments/deploymentPresentation';
 import { useDeploymentInventory } from '@/components/projects/deployments/useDeploymentProject';
-import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
+import { MainScreenHeader } from '@/components/navigation/shell/MainScreenHeader';
+import { Avatar } from '@/components/ui/avatar/Avatar';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
-import { Item } from '@/components/ui/lists/Item';
+import { Icon } from '@/components/ui/icons/Icon';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { SelectionListFilterChips } from '@/components/ui/selectionList/SelectionListFilterChips';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { Text } from '@/components/ui/text/Text';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { WorkStatusGlyph } from '@/components/work/status/WorkStatusGlyph';
+import type { TranscriptAccountActor } from '@happier-dev/session-core/messages';
 import {
-  buildSessionListDateGroups,
-  formatDayGroupedAgeShort,
-} from '@/sync/domains/session/listing/sessionListDateGroups';
+  resolveAccountActorPresentation,
+  resolveUnknownAccountActorName,
+} from '@/sync/domains/account/accountActorPresentation';
+import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { buildSessionListDateGroups } from '@/sync/domains/session/listing/sessionListDateGroups';
 import {
   useActiveServerAccountScopeLifetime,
   useMachineListForServerSelection,
 } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import { useServerScopedMachineLabel } from '@/sync/store/hooks';
-import { t } from '@/text';
+import {
+  useServerScopedMachineLabel,
+  useSessionDisplayNameSource,
+} from '@/sync/store/hooks';
+import { getPreferredLanguage, t } from '@/text';
+import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { useOptionalScreenIsFocused } from '@/utils/navigation/useOptionalScreenIsFocused';
+import { getSettledMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
+import { getSessionName } from '@/utils/sessions/sessionUtils';
 
 import { useFleetActivityPage } from './useFleetActivityPage';
 
 const s = 'machineFleetActivity' as const;
 const NO_TITLES: ReadonlyMap<string, string> = new Map();
+/** The actor's mark on the rail: an avatar for a person, the same size as the rail's glyphs. */
+const MARK_PX = 18;
+const ALL_MACHINES = '__all__';
 
-const selectMachineIds = (() => {
-  let previous: readonly string[] = [];
-  return (machines: readonly Machine[]): readonly string[] => {
-    const next = machines.map((machine) => machine.id);
+type MachineChoice = Readonly<{ id: string; label: string }>;
+
+const selectMachines = (() => {
+  let previous: readonly MachineChoice[] = [];
+  return (machines: readonly Machine[]): readonly MachineChoice[] => {
+    const next = machines.map((machine) => ({
+      id: machine.id,
+      label: getSettledMachineDisplayName(machine) ?? machine.id,
+    }));
     if (
       next.length === previous.length &&
-      next.every((id, index) => id === previous[index])
+      next.every(
+        (choice, index) =>
+          choice.id === previous[index]!.id &&
+          choice.label === previous[index]!.label,
+      )
     )
       return previous;
     previous = next;
@@ -58,10 +89,17 @@ const selectMachineIds = (() => {
   };
 })();
 
+const formatClock = (ms: number) =>
+  formatWithCachedDateTimeFormatter(ms, getPreferredLanguage(), {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+
 /**
- * Machines → Activity (pfc-redesign fAct): what happened on this Home's Machines and services, newest first by day:
- * deploy receipts and Machine Action operations from the one activity read. History only; what needs you stays in
- * Inbox. A row opens its receipt or its operation.
+ * Machines → Activity (pfc-redesign fAct): what people, agents and workflows did on this Home's Machines and services,
+ * newest first, one card of day-grouped Timeline rows (the actor first, the object in ink, the time right). Deploy
+ * receipts and Machine Action operations come from the one activity read, narrowed by Machine through that read.
+ * History only; what needs you stays in Inbox. A row opens its receipt or its operation.
  */
 export function MachineFleetActivityView() {
   const router = useRouter();
@@ -70,14 +108,18 @@ export function MachineFleetActivityView() {
   const layoutPresented = useLayoutPresentationActive();
   const focused = useOptionalScreenIsFocused() !== false;
   const presented = layoutPresented && focused;
-  const machineIds = useMachineListForServerSelection(
-    serverId,
-    selectMachineIds,
+  const machines = useMachineListForServerSelection(serverId, selectMachines);
+  const machineIds = React.useMemo(
+    () => machines.map((machine) => machine.id),
+    [machines],
   );
+  const [machineId, setMachineId] = React.useState<string | null>(null);
+  const filter = React.useMemo(() => ({ machineId }), [machineId]);
   const { state, loadMore, retry } = useFleetActivityPage(
     lifetime,
     machineIds,
     presented,
+    filter,
   );
   const demand = React.useMemo(
     () => ({ mounted: true, visible: presented, focused: presented }),
@@ -102,23 +144,52 @@ export function MachineFleetActivityView() {
       }),
     [state.items],
   );
+  const openReceipt = React.useCallback(
+    (environmentId: string, projectSourceId: string, deploymentId: string) =>
+      router.push(
+        deploymentEnvironmentRoute({
+          serverId,
+          projectSourceId,
+          environmentId,
+          deploymentId,
+        }) as never,
+      ),
+    [router, serverId],
+  );
+  // Only the filters the activity read narrows by are offered; who/what/when wait for their reads.
+  const filters = React.useMemo(
+    () => [
+      {
+        id: 'machines.activity.machine',
+        testID: 'machines.activity.filter.machine',
+        label: t(`${s}.filterMachine`),
+        showLabel: true,
+        active: machineId !== null,
+        selectedId: machineId ?? ALL_MACHINES,
+        options: [
+          { id: ALL_MACHINES, label: t(`${s}.filterAll`) },
+          ...machines.map((machine) => ({
+            id: machine.id,
+            label: machine.label,
+          })),
+        ],
+        onChange: (id: string) => setMachineId(id === ALL_MACHINES ? null : id),
+      },
+    ],
+    [machineId, machines],
+  );
 
   return (
     <ItemList>
-      <SettingsPageHeader
+      <MainScreenHeader
         testID="machines.activity.header"
+        title={t(`${s}.title`)}
         alwaysShowTitle
         description={t(`${s}.description`)}
       />
-      {state.coverage === 'partial' && state.status === 'ready' ? (
-        <ItemGroup surface="none">
-          <SurfaceStateCard
-            testID="machines.activity.partial"
-            kind="warning"
-            size="line"
-            title={t(`${s}.partial`)}
-            action={{ label: t('common.retry'), onPress: retry }}
-          />
+      {machines.length > 1 || machineId !== null ? (
+        <ItemGroup surface="none" testID="machines.activity.filters">
+          <SelectionListFilterChips placement="inline" filters={filters} />
         </ItemGroup>
       ) : null}
       {state.status === 'loading' ? (
@@ -137,119 +208,262 @@ export function MachineFleetActivityView() {
           />
         </ItemGroup>
       ) : state.items.length === 0 ? (
-        // An incomplete read never claims nothing happened: the partial line above already says what is missing.
-        state.coverage === 'partial' ? null : <EmptyState
-          testID="machines.activity.empty"
-          layout="page"
-          scene="shipped"
-          title={t(`${s}.emptyTitle`)}
-          subtitle={t(`${s}.emptyBody`)}
-        />
+        // An incomplete read never claims nothing happened: it says what it could not read and offers to read again.
+        state.coverage === 'partial' ? (
+          <EmptyState
+            testID="machines.activity.partialEmpty"
+            layout="page"
+            scene="homeOffline"
+            title={t(`${s}.partialEmptyTitle`)}
+            subtitle={t(`${s}.partial`)}
+            primaryAction={{ label: t('common.retry'), onPress: retry, testID: 'machines.activity.partialEmpty.retry' }}
+          />
+        ) : (
+          <EmptyState
+            testID="machines.activity.empty"
+            layout="page"
+            scene="shipped"
+            title={t(`${s}.emptyTitle`)}
+            subtitle={t(`${s}.emptyBody`)}
+          />
+        )
       ) : (
-        <>
-          {days.map((day) => (
-            <ItemGroup
-              key={day.dateKey}
-              testID={`machines.activity.day.${day.dateKey}`}
-              title={day.title}
-            >
-              {day.items.map((item) => (
-                <ActivityRow
-                  key={item.id}
-                  item={item}
-                  serverId={serverId}
-                  accountId={lifetime?.scope.accountId ?? ''}
-                  environmentTitle={
-                    item.kind === 'receipt'
-                      ? (titles.get(item.environment.id) ?? null)
-                      : null
-                  }
-                  onOpenReceipt={(
-                    environmentId,
-                    projectSourceId,
-                    deploymentId,
-                  ) =>
-                    router.push(
-                      deploymentEnvironmentRoute({
-                        serverId,
-                        projectSourceId,
-                        environmentId,
-                        deploymentId,
-                      }) as never,
-                    )
-                  }
-                />
-              ))}
-            </ItemGroup>
-          ))}
-          {state.nextCursor ? (
-            <ItemGroup surface="none" header="none">
-              <SectionActionButton
-                testID="machines.activity.older"
-                title={t('projects.deployments.pageOlder')}
-                icon="caret-right"
-                loading={state.loadingMore}
-                onPress={loadMore}
-              />
-            </ItemGroup>
+        <ItemGroup testID="machines.activity.card">
+          {lifetime ? (
+            <ActivityDays
+              days={days}
+              lifetime={lifetime}
+              titles={titles}
+              onOpenReceipt={openReceipt}
+              presented={presented}
+            />
           ) : null}
-        </>
+          {state.coverage === 'partial' ? (
+            <SurfaceStateCard
+              testID="machines.activity.partial"
+              kind="warning"
+              size="line"
+              title={t(`${s}.partial`)}
+              action={{ label: t('common.retry'), onPress: retry }}
+            />
+          ) : null}
+        </ItemGroup>
       )}
+      {state.status === 'ready' && state.nextCursor ? (
+        <ItemGroup surface="none" header="none">
+          <SectionActionButton
+            testID="machines.activity.older"
+            title={t('projects.deployments.pageOlder')}
+            icon="caret-right"
+            loading={state.loadingMore}
+            onPress={loadMore}
+          />
+        </ItemGroup>
+      ) : null}
     </ItemList>
   );
 }
 
-const ActivityRow = React.memo(function ActivityRow(
-  props: Readonly<{
-    item: DeploymentActivityItemV1;
-    serverId: string;
-    accountId: string;
-    environmentTitle: string | null;
-    onOpenReceipt: (
-      environmentId: string,
-      projectSourceId: string,
-      deploymentId: string,
-    ) => void;
-  }>,
-) {
+type ActivityDay = ReturnType<typeof buildSessionListDateGroups<DeploymentActivityItemV1>>[number];
+
+/** The card's day groups. People are named by the one profile owner, read once for the Accounts on this page. */
+function ActivityDays(props: Readonly<{
+  days: readonly ActivityDay[];
+  lifetime: ServerAccountScopeLifetime;
+  titles: ReadonlyMap<string, string>;
+  onOpenReceipt: RowProps['onOpenReceipt'];
+  presented: boolean;
+}>) {
+  const scope = props.lifetime.scope;
+  const accountIds = React.useMemo(
+    () => [
+      ...new Set(
+        props.days.flatMap((day) =>
+          day.items.flatMap((item) =>
+            item.kind === 'receipt'
+              ? [item.receipt.requestedByAccountId]
+              : item.operation.scope.sessionId
+                ? []
+                : [item.operation.scope.accountId],
+          ),
+        ),
+      ),
+    ],
+    [props.days],
+  );
+  const profiles = useDiscussionParticipantProfiles({
+    scope,
+    roster: null,
+    accountIds,
+    enabled: props.presented,
+    accountLifetime: props.lifetime,
+  });
+  return (
+    <CorePluginUiPresentationScope>
+      <View style={styles.card}>
+        {props.days.map((day) => (
+          <View
+            key={day.dateKey}
+            testID={`machines.activity.day.${day.dateKey}`}
+            style={styles.day}
+          >
+            <Text variant="meta" style={styles.dayTitle}>
+              {day.title}
+            </Text>
+            <Timeline
+              inline
+              timeAlign="end"
+              accessibilityLabel={day.title}
+              items={day.items}
+              keyForItem={(item) => item.id}
+              renderItem={(item) =>
+                activityRowContent({
+                  item,
+                  scope,
+                  accounts: profiles.accounts,
+                  environmentTitle:
+                    item.kind === 'receipt'
+                      ? (props.titles.get(item.environment.id) ?? null)
+                      : null,
+                  onOpenReceipt: props.onOpenReceipt,
+                })
+              }
+            />
+          </View>
+        ))}
+      </View>
+    </CorePluginUiPresentationScope>
+  );
+}
+
+type RowProps = Readonly<{
+  item: DeploymentActivityItemV1;
+  scope: ServerAccountScope;
+  accounts: ReadonlyMap<string, TranscriptAccountActor>;
+  environmentTitle: string | null;
+  onOpenReceipt: (
+    environmentId: string,
+    projectSourceId: string,
+    deploymentId: string,
+  ) => void;
+}>;
+
+type ReceiptOutcome = 'done' | 'failed' | 'running' | 'requested';
+
+function receiptOutcome(
+  state: Extract<
+    DeploymentActivityItemV1,
+    { kind: 'receipt' }
+  >['receipt']['state'],
+): ReceiptOutcome {
+  switch (state) {
+    case 'succeeded':
+    case 'running_unverified':
+      return 'done';
+    case 'failed':
+      return 'failed';
+    case 'queued':
+    case 'running':
+      return 'running';
+    default:
+      // Cancelled, or an outcome nobody saw: say what was asked, and let the state word say the rest.
+      return 'requested';
+  }
+}
+
+/** Timeline asks for row content; each part is a leaf that reads only the fact it shows (actor, Machine). */
+function activityRowContent(props: RowProps): TimelineItemContent {
+  return {
+    glyph: <ActivityMark {...props} />,
+    heading: <ActivitySentence {...props} />,
+    time: (
+      <Text variant="meta" style={styles.time}>
+        {formatClock(props.item.requestedAtMs)}
+      </Text>
+    ),
+    body: <ActivitySecondary {...props} />,
+  };
+}
+
+function useActivityActor(props: RowProps) {
+  const { item, scope } = props;
+  const sessionId = item.kind === 'operation' ? (item.operation.scope.sessionId ?? null) : null;
+  const session = useSessionDisplayNameSource(sessionId ?? '', scope.serverId);
+  if (sessionId) {
+    return {
+      kind: 'agent' as const,
+      name: session ? getSessionName(session, scope.serverId) : t(`${s}.anAgent`),
+      avatar: null,
+    };
+  }
+  const accountId = item.kind === 'receipt' ? item.receipt.requestedByAccountId : item.operation.scope.accountId;
+  const actor = props.accounts.get(accountId);
+  if (actor) {
+    const presentation = resolveAccountActorPresentation(actor, scope);
+    return { kind: 'person' as const, name: presentation.name, avatar: presentation.avatar };
+  }
+  return {
+    kind: 'person' as const,
+    name: resolveUnknownAccountActorName('sentence'),
+    avatar: { id: accountId, imageUrl: null },
+  };
+}
+
+function ActivityMark(props: RowProps) {
   const { item } = props;
-  const machineId =
-    item.kind === 'operation'
-      ? item.operation.scope.machineId
-      : (item.receipt.machineIds?.[0] ?? null);
-  const machine = useServerScopedMachineLabel(props.serverId, machineId);
-  const age = formatDayGroupedAgeShort(item.requestedAtMs, Date.now());
+  const actor = useActivityActor(props);
+  if (item.kind === 'receipt') {
+    const outcome = receiptOutcome(item.receipt.state);
+    if (outcome !== 'done')
+      return (
+        <WorkStatusGlyph
+          status={deploymentWorkStatus(item.receipt.state)}
+          testIDSuffix={`activity-${item.receipt.id}`}
+        />
+      );
+  } else {
+    const status = resolveActionOperationStatus(item.operation, 'available');
+    if (item.operation.state !== 'succeeded')
+      return (
+        <WorkStatusGlyph
+          status={resolveWorkStatusTone({
+            kind: 'action_operation',
+            facts: {
+              state: item.operation.state,
+              observation: 'available',
+              setupReview: item.operation.setupReview,
+              word: describeActionOperationStatusLabel(status.label),
+            },
+          })}
+          testIDSuffix={`activity-${item.operation.operationId}`}
+        />
+      );
+  }
+  if (actor.kind === 'agent') return <Icon name="robot" size={14} />;
+  return actor.avatar ? (
+    <Avatar
+      id={actor.avatar.id}
+      imageUrl={actor.avatar.imageUrl ?? null}
+      size={MARK_PX}
+      monogram={actor.name}
+    />
+  ) : (
+    <Icon name="person" size={14} />
+  );
+}
+
+function ActivitySentence(props: RowProps) {
+  const { item } = props;
+  const actor = useActivityActor(props);
   if (item.kind === 'receipt') {
     const { receipt, environment } = item;
+    const revision = receipt.source
+      ? deploymentRevisionLabel(receipt.source)
+      : null;
     return (
-      <Item
+      <Text
+        variant="reading"
         testID={`machines.activity.receipt.${receipt.id}`}
-        leftElement={
-          <WorkStatusGlyph
-            status={deploymentWorkStatus(receipt.state)}
-            testIDSuffix={`activity-${receipt.id}`}
-          />
-        }
-        title={
-          receipt.source
-            ? deploymentReceiptTitle(
-                receipt,
-                deploymentRevisionLabel(receipt.source),
-              )
-            : (receipt.title ?? deploymentOperationLabel(receipt.operation))
-        }
-        subtitle={
-          [
-            props.environmentTitle,
-            receipt.requestedByAccountId === props.accountId
-              ? t('projects.deployments.byYou')
-              : null,
-            machine ? t(`${s}.onMachine`, { machine }) : null,
-          ]
-            .filter(Boolean)
-            .join(' · ') || undefined
-        }
-        detail={age}
         onPress={() =>
           props.onOpenReceipt(
             environment.id,
@@ -257,40 +471,89 @@ const ActivityRow = React.memo(function ActivityRow(
             receipt.id,
           )
         }
-      />
+        accessibilityRole="link"
+      >
+        <Text variant="reading" emphasis="medium">
+          {actor.name}
+        </Text>
+        <Text variant="reading" style={styles.verb}>
+          {` ${t(`${s}.receiptVerb`, { operation: receipt.operation, outcome: receiptOutcome(receipt.state) })} `}
+        </Text>
+        {revision ? <Text variant="reading">{`${revision} `}</Text> : null}
+        <Text variant="reading" style={styles.verb}>{`${t(receipt.operation === 'teardown' ? `${s}.from` : `${s}.to`)} `}</Text>
+        <Text variant="reading">
+          {props.environmentTitle ?? receipt.title ?? environment.id}
+        </Text>
+      </Text>
     );
   }
   const { operation } = item;
-  const status = resolveActionOperationStatus(operation, 'available');
-  const word = describeActionOperationStatusLabel(status.label);
   return (
-    <Item
+    <Text
+      variant="reading"
       testID={`machines.activity.operation.${operation.operationId}`}
-      leftElement={
-        <WorkStatusGlyph
-          status={resolveWorkStatusTone({
-            kind: 'action_operation',
-            facts: {
-              state: operation.state,
-              observation: 'available',
-              setupReview: operation.setupReview,
-              word,
-            },
-          })}
-          testIDSuffix={`activity-${operation.operationId}`}
-        />
-      }
-      title={operation.title}
-      subtitle={[word, machine ? t(`${s}.onMachine`, { machine }) : null]
-        .filter(Boolean)
-        .join(' · ')}
-      detail={age}
       onPress={() =>
         openActionOperationDetail({
-          serverId: props.serverId,
+          serverId: props.scope.serverId,
           operationId: operation.operationId,
         })
       }
-    />
+      accessibilityRole="link"
+    >
+      <Text variant="reading" emphasis="medium">
+        {actor.name}
+      </Text>
+      <Text variant="reading" style={styles.verb}>{` ${t(`${s}.ran`)} `}</Text>
+      <Text variant="reading">{operation.title}</Text>
+    </Text>
   );
-});
+}
+
+function ActivitySecondary(props: RowProps) {
+  const { item } = props;
+  const machineId =
+    item.kind === 'operation'
+      ? item.operation.scope.machineId
+      : (item.receipt.machineIds?.[0] ?? null);
+  const machine = useServerScopedMachineLabel(
+    props.scope.serverId,
+    machineId,
+  );
+  const where = machine ? t(`${s}.onMachine`, { machine }) : null;
+  const state =
+    item.kind === 'receipt'
+      ? receiptOutcome(item.receipt.state) === 'done'
+        ? null
+        : deploymentStateLabel(item.receipt.state)
+      : item.operation.state === 'succeeded'
+        ? null
+        : describeActionOperationStatusLabel(
+            resolveActionOperationStatus(item.operation, 'available').label,
+          );
+  const line = [where, state].filter(Boolean).join(' · ');
+  return line ? (
+    <Text variant="meta" style={styles.secondary} numberOfLines={2}>
+      {line}
+    </Text>
+  ) : null;
+}
+
+const styles = StyleSheet.create((theme) => ({
+  card: {
+    paddingHorizontal: theme.space.s16,
+    paddingVertical: theme.space.s12,
+    gap: theme.space.s16,
+  },
+  day: { gap: theme.space.s4 },
+  dayTitle: {
+    color: theme.colors.text.secondary,
+    // Day titles stand on the sentences' column, like the rows they group.
+    paddingLeft: 24 + theme.space.s12,
+  },
+  verb: { color: theme.colors.text.secondary },
+  secondary: { color: theme.colors.text.secondary },
+  time: {
+    color: theme.colors.text.secondary,
+    fontVariant: ['tabular-nums'],
+  },
+}));
