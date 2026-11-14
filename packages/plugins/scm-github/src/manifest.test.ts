@@ -316,6 +316,7 @@ describe('GitHub SCM manifest', () => {
     const mountedOnly = [
       ...Object.values(GITHUB_HOSTING_OPERATION_ACTION_IDS_V1),
       GITHUB_TRIAGE_ACTION_IDS_V1.listInstances,
+      GITHUB_TRIAGE_ACTION_IDS_V1.listCreationPlaces,
       GITHUB_TRIAGE_ACTION_IDS_V1.get,
       GITHUB_TRIAGE_ACTION_IDS_V1.readPullRequestStatus,
       GITHUB_TRIAGE_ACTION_IDS_V1.linkSession,

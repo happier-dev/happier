@@ -1,6 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { runInNewContext } from 'node:vm';
+import { describe, expect, it } from 'vitest';
 import { createStubGithubTransport, createTestGithubApiClient, GITHUB_TEST_ACCOUNT } from '../triage/testkit/githubTriage.test-support.js';
 import type { GithubHttpInvocationContextV1 } from '../observations/githubHttpInvocation.js';
+import { createGithubApiClient } from '../observations/githubApiClient.js';
 import { executeGithubCiAction } from './operations.js';
 import { readGithubWorkflowDefinitionV1 } from './workflowInputs.js';
 import { readGithubTrigger } from './dispatch.js';
@@ -11,6 +15,20 @@ const first = 'a'.repeat(40);
 const second = 'b'.repeat(40);
 describe('immutable workflow acquisition', () => {
   it('reads selected-ref Unicode workflow inputs on a host without Buffer', async () => {
+    // CLI owns the browser graph tool, as in the plugin browser-boundary suites.
+    const { build } = createRequire(new URL('../../../../../apps/cli/package.json', import.meta.url))('esbuild') as typeof import('esbuild');
+    const compiled = await build({
+      entryPoints: [fileURLToPath(new URL('./dispatch.ts', import.meta.url))],
+      bundle: true, write: false, platform: 'browser', format: 'cjs',
+      conditions: ['happier-source'], logLevel: 'silent',
+    });
+    const module = { exports: {} as Record<string, unknown> };
+    // Keep the Node runner's IPC globals intact while the real browser closure has no Buffer.
+    runInNewContext(compiled.outputFiles[0]!.text, {
+      module, exports: module.exports, TextEncoder, TextDecoder, URL, AbortController, atob, btoa,
+    });
+    const portableRead = module.exports.readGithubTrigger;
+    if (typeof portableRead !== 'function') throw new Error('Missing portable workflow reader');
     const yaml = 'name: Révision 東京 🧪\non:\n  workflow_dispatch:\n    inputs:\n      message:\n        description: Révision 東京 🧪\n        type: string\njobs: {}';
     const content = Buffer.from(yaml, 'utf8').toString('base64');
     const transport = createStubGithubTransport({ respond: request => {
@@ -33,14 +51,19 @@ describe('immutable workflow acquisition', () => {
         },
       } },
     } satisfies GithubHttpInvocationContextV1;
-    vi.stubGlobal('Buffer', undefined);
-    try {
-      const result = ForgeCiActionResultSchemasV1.readTrigger.parse(await executeGithubCiAction('readTrigger',
-        { repository, credentialRef: GITHUB_TEST_ACCOUNT, workflowId: '12', ref: 'topic' }, context));
-      expect(result).toMatchObject({ kind: 'value', value: { dispatchable: true,
-        inputs: [{ name: 'message', description: 'Révision 東京 🧪', type: 'string' }] } });
-      expect(transport.requests).toHaveLength(3);
-    } finally { vi.unstubAllGlobals(); }
+    const input = { repository, credentialRef: GITHUB_TEST_ACCOUNT, workflowId: '12', ref: 'topic' };
+    const expected = { kind: 'value', value: { dispatchable: true,
+      inputs: [{ name: 'message', description: 'Révision 東京 🧪', type: 'string' }] } };
+    expect(ForgeCiActionResultSchemasV1.readTrigger.parse(await executeGithubCiAction('readTrigger', input, context)))
+      .toMatchObject(expected);
+    expect(transport.requests).toHaveLength(3);
+    const beforePortable = transport.requests.length;
+    const client = await createGithubApiClient(context, GITHUB_TEST_ACCOUNT);
+    const reply = await portableRead(client, input);
+    // Transfer the browser result through the Action's JSON boundary before host validation.
+    const result = ForgeCiActionResultSchemasV1.readTrigger.parse(JSON.parse(JSON.stringify(reply)));
+    expect(result).toMatchObject(expected);
+    expect(transport.requests.slice(beforePortable)).toHaveLength(3);
   });
   it('carries graph facts through the canonical trigger result even for a non-dispatchable workflow', async () => {
     const transport = createStubGithubTransport({ respond: request => {
