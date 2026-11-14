@@ -8,6 +8,8 @@ import { BrowserExtensionsListResultV1Schema, BrowserExtensionMutationResultV1Sc
 import { bindExternalActionExecutionAuthorizationHttpPathV1,
     ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
 const rpc = createProviderSettingsHarness({ machines: [] });
 installProviderSettingsRpcBoundary(rpc);
@@ -77,6 +79,51 @@ it('checks only the selected Store Machine and shows its current installed exten
     expect([...new Set(inventoryTargets)]).toEqual([machineId]);
     await vi.waitFor(() => expect(screen.findHostByTestId(`${rowId}.review`)).toBeNull());
     expect(screen.findHostByTestId(rowId)).not.toBeNull();
+});
+
+it('keeps Check now available before the first Apps-only observation', async () => {
+    const scope = await account.restore({ currentAccount: true, serverIdentityId: 'srv_store_updates', machines: [
+        createMachineFixture({ id: 'app-machine', activeAt: Date.now(), metadata: {
+            ...createMachineFixture().metadata!, agentInventory: { checkedAt: 1, installedAgentIds: [] },
+        } }),
+    ] });
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const { replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } =
+        await import('@/sync/domains/plugins/availability/projection');
+    const context = await captureLazyActionAccountContext(scope.serverId);
+    const environment = createDeploymentEnvironmentHeaderV1({ serverId: context.accountLifetime.scope.serverId,
+        controllerMachineId: 'app-machine', buildMachineId: 'app-machine',
+        owner: { kind: 'account', accountId: scope.accountId } });
+    try {
+        replacePluginAccountAvailabilityProjection({ scope: context.accountLifetime.scope, snapshot: { availabilityCursor: 1,
+            intentReads: [], materializations: [], snapshots: [], inventoryComplete: true } });
+        await context.createArtifactDocument({ artifactId: environment.contentArtifactId,
+            header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'App' },
+            body: JSON.stringify(createDeploymentEnvironmentDetailV1({ environment }).content) });
+        account.home.answer(scope.serverId, '/v1/deployments/environments', { body: { ok: true,
+            items: [environment], runtimeTargetLinks: [], nextCursor: null, coverage: 'complete' } });
+        account.home.answer(scope.serverId, '/v1/actions/browser.extensions.list', { select: body => {
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
+            return { body: { v: 1, actionId: 'browser.extensions.list', requestId: envelope.requestId,
+                execution: { ok: true, result: { status: 'ready', entries: [] } } } };
+        } });
+        const checks: unknown[] = [];
+        account.home.answer(scope.serverId, '/v1/actions/registries.updates.check', { select: body => {
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
+            checks.push(envelope.input);
+            return { body: { v: 1, actionId: 'registries.updates.check', requestId: envelope.requestId,
+                execution: { ok: true, result: { checkedAt: 10, results: [] } } } };
+        } });
+        const screen = await renderScreen(<ModalProvider><PluginSurfaceFocusEligibilityProvider active>
+            <StoreUpdatesScreen />
+        </PluginSurfaceFocusEligibilityProvider></ModalProvider>);
+        // The real inventory must have admitted the App before we exercise its first check.
+        await vi.waitFor(() => expect(screen.findAll(node => Array.isArray(node.props.families))[0]?.props.families
+            .find((family: { kind: string }) => family.kind === 'app')?.result.rows).toHaveLength(1));
+        expect(screen.findByTestId('store.updates.checkNow')?.props.disabled).toBe(false);
+        await screen.pressByTestIdAsync('store.updates.checkNow');
+        await vi.waitFor(() => expect(checks).toContainEqual({}));
+    } finally { clearPluginAccountAvailabilityProjection(); context.dispose(); }
 });
 
 it('while inventory is still loading, says only that, never "nothing waiting" or a Retry', async () => {

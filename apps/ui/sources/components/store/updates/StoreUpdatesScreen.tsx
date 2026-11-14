@@ -105,11 +105,7 @@ export function StoreUpdatesScreen(): React.ReactNode {
                 }
                 icon="arrow-clockwise"
                 loading={check.checking}
-                disabled={
-                  check.checking ||
-                  !execution.ready ||
-                  (!loading && view.tracked === 0)
-                }
+                disabled={check.checking || !execution.ready}
                 onPress={() => void checkNow()}
               />
             ) : null}</>

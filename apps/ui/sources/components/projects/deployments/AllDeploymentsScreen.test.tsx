@@ -9,7 +9,8 @@ import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-pro
 import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol';
 import {
   act,
-  renderScreen,
+  createDeferred,
+  renderScreen as renderScreenWithoutAuth,
   standardCleanup,
   waitForTestEvent,
 } from '@/dev/testkit';
@@ -42,6 +43,11 @@ afterEach(standardCleanup);
 
 const { AllDeploymentsView } = await import('./AllDeploymentsScreen');
 const { useDeploymentCollection } = await import('./useDeploymentReads');
+const { AuthProvider } = await import('@/auth/context/AuthContext');
+
+function renderScreen(body: React.ReactNode) {
+  return renderScreenWithoutAuth(<AuthProvider initialCredentials={null}>{body}</AuthProvider>);
+}
 
 const shown = { mounted: true, visible: true, focused: true };
 type ListResult = Awaited<
@@ -119,6 +125,15 @@ async function render(controller: DeploymentReadControllerV1, ready: string) {
 }
 
 describe('Projects → All deployments', () => {
+  it('keeps other Services views reachable while Apps is loading', async () => {
+    const held = createDeferred<ListResult>();
+    const { controller } = controllerFor(() => page([]), { listEnvironments: () => held.promise });
+    try {
+      const screen = await render(controller, 'all-deployments.loading');
+      expect(screen.findByTestId('services.views')).not.toBeNull();
+    } finally { controller.retire(); held.resolve(page([])); }
+  });
+
   it('groups one page under each Project’s admitted name, keeps unavailable names in one last group, and opens a row on its Project’s page', async () => {
     const { controller } = controllerFor(() =>
       page([
@@ -168,6 +183,7 @@ describe('Projects → All deployments', () => {
     const { controller } = controllerFor(() => page([]));
     const screen = await render(controller, 'all-deployments.empty');
     expect(screen.findByTestId('all-deployments.older')).toBeNull();
+    expect(screen.findByTestId('services.views')).not.toBeNull();
     controller.retire();
   });
 
@@ -291,6 +307,34 @@ describe('Projects → All deployments', () => {
 });
 
 describe('Services (pfc-redesign svcApps · svcDb)', () => {
+  it('settles a pending Databases read to unavailable and recovers to answered empty', async () => {
+    type DataResult = Awaited<ReturnType<NonNullable<DeploymentReadTransportV1['listDataServicePage']>>>;
+    const pending = createDeferred<DataResult>();
+    let recovered = false;
+    const { controller } = controllerFor(() => page([]), {
+      listDataServicePage: async () => recovered
+        ? { ok: true, value: { nextCursor: null, items: [] } } : pending.promise,
+    });
+    const screen = await renderScreen(<Page controller={controller} view="databases" />);
+    try {
+      expect(screen.findByTestId('services.databases.loading')).not.toBeNull();
+      expect(screen.findByTestId('services.databases.empty')).toBeNull();
+      await act(async () => {
+        pending.resolve({ ok: false, failure: { code: 'machine_offline', retryable: true } });
+      });
+      await vi.waitFor(() => expect(screen.findByTestId('services.databases.error')).not.toBeNull());
+      expect(screen.findByTestId('services.databases.loading')).toBeNull();
+      expect(screen.findByTestId('services.databases.empty')).toBeNull();
+      recovered = true;
+      await act(async () => { await controller.refreshDemanded(); });
+      await vi.waitFor(() => expect(screen.findByTestId('services.databases.empty')).not.toBeNull());
+      expect(screen.findByTestId('services.databases.loading')).toBeNull();
+      expect(screen.findByTestId('services.databases.error')).toBeNull();
+    } finally {
+      pending.resolve({ ok: false, failure: { code: 'machine_offline', retryable: true } });
+      controller.retire();
+    }
+  });
   it('names the page Services and, in its Databases view, lists each environment\'s databases with their measured size', async () => {
     const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
     const shop = createDeploymentEnvironmentHeaderV1({ id: 'env-shop', projectSourceId: 'source-shop' });
@@ -317,15 +361,15 @@ describe('Services (pfc-redesign svcApps · svcDb)', () => {
     expect(screen.findByTestId('all-deployments.row.env-shop')).toBeNull();
     controller.retire();
   });
-  it('reads the Domains view from the Account-wide domain page, and says when there is none', async () => {
+  it.each(['populated', 'empty', 'unavailable'] as const)('reads Domains independently of the %s Apps inventory', async (apps) => {
     let reads = 0;
-    const { controller } = controllerFor(() => page([environment('env-shop', 'source-shop', 'Production')]), {
+    const { controller } = controllerFor(() => apps === 'unavailable'
+      ? { ok: false, failure: { code: 'home_unreachable', retryable: true } }
+      : page(apps === 'empty' ? [] : [environment('env-shop', 'source-shop', 'Production')]), {
       listDomainPage: async () => { reads += 1; return { ok: true, value: { nextCursor: null, items: [] } }; },
     });
     const screen = await renderScreen(<Page controller={controller} view="domains" />);
-    await act(async () => {
-      await waitForTestEvent(screen.subscribe, () => screen.findByTestId('services.domains.empty'), (node) => node !== null);
-    });
+    await vi.waitFor(() => expect(screen.findByTestId('services.domains.empty')).not.toBeNull());
     expect(reads).toBe(1);
     expect(screen.findByTestId('all-deployments.row.env-shop')).toBeNull();
     controller.retire();

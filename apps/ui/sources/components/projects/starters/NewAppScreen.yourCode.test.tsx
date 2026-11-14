@@ -26,13 +26,17 @@ vi.mock('@/components/ui/popover', async (importOriginal) =>
   ),
 );
 
-afterEach(() => standardCleanup());
+afterEach(() => {
+  routerMock.resetParams();
+  standardCleanup();
+});
 
 const { createPlainPromptLibraryCatalogHomeFixture } =
   await import('@/dev/testkit/harness/promptLibraryCatalogBoundary');
 const { waitForHomeGovernance } =
   await import('@/dev/testkit/harness/homeGovernanceHarness');
 const { NewAppScreen } = await import('./NewAppScreen');
+const { WorkspaceRouteBody: NewAppRouteBody } = await import('@/app/(app)/projects/new-app');
 
 const repository = {
   provider: {
@@ -115,7 +119,7 @@ it("Deploy an app: your code opens that Project's new Environment, stepping asid
   }
 });
 
-it('Deploy an app here keeps its Machine through Your code and the catalog (lab dMachine "Deploy an app here")', async () => {
+it('the Deploy route keeps its Machine through Your code and the catalog (lab dMachine "Deploy an app here")', async () => {
   const fixture = await createPlainPromptLibraryCatalogHomeFixture(
     'https://deploy-here-machine.test',
     { key: 'registry-sources', value: { v: 2, disabledSourceIds: [], sources: [] } },
@@ -127,7 +131,8 @@ it('Deploy an app here keeps its Machine through Your code and the catalog (lab 
   try {
     const machine = { serverId: fixture.home.id, machineId: 'hetzner-fsn1' };
     routerMock.spies.push.mockClear();
-    const screen = await renderScreen(<NewAppScreen onClose={() => {}} machine={machine} />);
+    routerMock.spies.setParams(machine);
+    const screen = await renderScreen(<NewAppRouteBody />);
     await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.code:source-invoices')).toBeTruthy());
     await screen.pressByTestIdAsync('newApp.code:source-invoices');
     await screen.pressByTestIdAsync('newApp.continue');
