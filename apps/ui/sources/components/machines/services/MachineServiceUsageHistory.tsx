@@ -36,14 +36,19 @@ export const MachineServiceUsageHistory = React.memo(function MachineServiceUsag
   const [range] = useMachineVitalsRange();
   const usage = useMachineServiceUsageHistory({ serverId: props.serverId, machineId: props.machineId,
     serviceId: props.serviceId, range, enabled: props.active });
-  const timeline = React.useMemo(() => buildMachineServiceTimeline({ range, serviceId: props.serviceId, history: usage.history }),
+  const read = React.useMemo(() => buildMachineServiceTimeline({ range, serviceId: props.serviceId, history: usage.history }),
     [range, props.serviceId, usage.history]);
+  // While another range reads, the last drawn history stays (never a flash of nothing); the axis still names the new range.
+  const lastDrawn = React.useRef<MachineVitalsTimeline | null>(null);
+  if (read) lastDrawn.current = read;
+  const timeline = read ?? (usage.status === 'loading' ? lastDrawn.current : null);
   const axis = React.useMemo(() => resolveVitalsAxis(range, timeline, false), [range, timeline, language]);
   const accent = usageSignatureAccent(theme);
   const charts = React.useMemo(() => timeline ? serviceCharts(timeline, accent, theme.dark) : null, [timeline, accent, theme.dark, language]);
+  // The range picker shows with a history to draw; a service with none says so in one line, without a picker over nothing.
   return (
     <>
-      <MachineVitalsRangeBar freshness={NO_FRESHNESS} showRange />
+      {timeline && charts ? <MachineVitalsRangeBar freshness={NO_FRESHNESS} showRange /> : null}
       {timeline && charts ? (
         <VitalsSheet testID="machine-service-usage-history">
           <VitalsTile testID="machine-service-usage-history-cpu" label={t('machineServices.usage.cpu')}
