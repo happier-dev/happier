@@ -719,6 +719,39 @@ describe('mounted current-context descendant commands', () => {
         expect(sessionReads.componentRequests.filter(request => request.path === `/v2/sessions/${session.id}`)).toHaveLength(1);
     });
 
+    it('reviews a replaced request through the mounted command and retires that command after review', async () => {
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://collection-request-replacement.test', accountId: 'account-a', currentAccount: true }],
+            route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+        const executor = (await import('@/sync/ops/actions/defaultActionExecutor')).createDefaultActionExecutor();
+        const session = createSessionFixture({ id: 'request-replacement-session', serverId: server.id, encryptionMode: 'plain',
+            active: true, agentState: { controlledByUser: null, requests: { permission: {
+                tool: 'Bash', kind: 'permission', arguments: { command: 'git status' }, createdAt: 1, turnId: 'current',
+            } }, completedRequests: {} } });
+        getStorage().getState().applySessions([session]);
+        const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+                <PluginSurfaceFocusEligibilityProvider active currentUiContextActive>
+                    <Publication /><CollectionRequestPeek request={{ kind: 'permission', serverId: server.id,
+                        sessionId: session.id, requestId: 'permission', turnId: 'previous' }} testID="replacement-slot"><View /></CollectionRequestPeek>
+                </PluginSurfaceFocusEligibilityProvider>
+            </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>);
+        await screen.pressByTestIdAsync('replacement-slot');
+        expect(screen.findByTestId('collection-request-peek.replaced')).not.toBeNull();
+        const review = reader!.readCurrentUiContext()!.commands.find(command => command.title === t('sessionsList.requestPeekReviewNew'));
+        expect(review, 'the visible Review new control is executable by an agent').toBeDefined();
+        await act(async () => { expect(await executor.execute('ui.current_context.command.invoke', { commandId: review!.id }, { surface: 'agent' })).toMatchObject({ ok: true }); });
+        expect(screen.findByTestId('replacement-slot:peek')).toBeNull();
+        expect(await executor.execute('ui.current_context.command.invoke', { commandId: review!.id }, { surface: 'agent' })).toMatchObject({ ok: false });
+        await screen.pressByTestIdAsync('replacement-slot');
+        expect(screen.findByType(CollectionSessionRequestPeekData).props.request.turnId).toBe('current');
+        expect(screen.findByTestId('collection-request-peek.replaced')).toBeNull();
+    });
+
     it('opens a request through the mounted command and retires its old address when a row is recycled', async () => {
         home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://collection-request-command.test', accountId: 'account-a' }],
             route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });

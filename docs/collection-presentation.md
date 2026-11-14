@@ -600,6 +600,10 @@ does not advance the cursor. The CLI's native, prompt-failure and strict-resume
 terminal paths share the failure-marker receipt owner. This describes current
 source ownership, not completed loaded-runtime or provider certification.
 
+Collection request peeks publish open, close, Retry and Review new through the existing
+`ui.current_context.command.invoke` mounted command owner. Review new selects the replacement
+request through the same command as the button; its old command retires when that peek closes.
+
 The same public `HappierWorkStatusPresentation` family carries domain `state`,
 existing bucket/tone/word, C1 `attentionType` (nullable when not admitted), and an
 optional public icon token. Plugin UI renders those supplied facts; it does not

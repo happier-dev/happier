@@ -10,6 +10,7 @@ import { Popover } from '@/components/ui/popover';
 import { useHoverPreviewPopover } from '@/components/ui/popover/useHoverPreviewPopover';
 import { Text } from '@/components/ui/text/Text';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import {
   readPressFocusReturnTarget,
   type FocusReturnTarget,
@@ -199,6 +200,12 @@ function PeekState(
 ): React.ReactElement {
   const { theme } = useUnistyles();
   const state = props.state;
+  const replaced = state.kind === 'replaced' ? state.replacement : null;
+  const reviewKey = replaced ? `request.reviewReplacement:${collectionRequestRefKey(replaced)}` : '';
+  const commands = useCurrentUiContextLocalCommands(React.useMemo(() => replaced ? [{
+    key: reviewKey, title: t('sessionsList.requestPeekReviewNew'),
+    invoke: () => { props.onReviewReplacement(replaced); },
+  }] : [], [props.onReviewReplacement, replaced, reviewKey]));
   if (state.kind === 'loading') {
     return (
       <View style={styles.state} testID="collection-request-peek.loading">
@@ -209,7 +216,6 @@ function PeekState(
       </View>
     );
   }
-  const replaced = state.kind === 'replaced' ? state.replacement : null;
   const retry = 'retry' in state ? state.retry : undefined;
   const message =
     state.kind === 'settled'
@@ -230,7 +236,7 @@ function PeekState(
           size="small"
           display="secondary"
           title={t('sessionsList.requestPeekReviewNew')}
-          onPress={() => props.onReviewReplacement(replaced)}
+          onPress={() => { void commands.invoke(reviewKey); }}
         />
       ) : state.kind === 'unavailable' && retry ? (
         <RoundButton
