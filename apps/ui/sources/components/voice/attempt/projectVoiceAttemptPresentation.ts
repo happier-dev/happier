@@ -43,7 +43,7 @@ export function projectVoiceAttemptPresentation(input: Readonly<{
     const reconnectProfile = recoveryAction === 'connect_agent'
         ? connectedService?.actions.find(action => action.kind === 'reconnect_profile') : undefined;
     const recoveryPresentation = !control.recoveryAvailable ? null
-        : provider ? providerRecovery ? { label: t(providerRecovery.titleKey), icon: 'gear' as const } : null
+        : provider && recoveryAction !== 'connect_agent' ? providerRecovery ? { label: t(providerRecovery.titleKey), icon: 'gear' as const } : null
         : control.surfaceState === 'permission_required'
             ? { label: t('voicePresence.recovery.allow'), icon: 'microphone' as const }
             : recovery

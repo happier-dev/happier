@@ -10,6 +10,7 @@ import { createReadyMachineAgentInventoryFixture } from '@/dev/testkit/fixtures/
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { t } from '@/text';
+import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
 
 import {
     emitSpeechRecEvent,
@@ -70,10 +71,14 @@ function configureSessionRpcObservers() {
         const response = ExecutionRunEnsureOrStartResponseSchema.parse(override);
         // A daemon refusal precedes run creation; do not secretly create a
         // retained run beneath an externally supplied negative wire reply.
-        if (!response.ok) return response;
+        if (!response.ok) return { ...response,
+          details: withExecutionRunStartFailureDetails(response.details, 'noRunCreated') };
       }
       const admitted = await incumbent(request);
-      return override === undefined ? admitted : ExecutionRunEnsureOrStartResponseSchema.parse(override);
+      return override === undefined ? admitted : ExecutionRunEnsureOrStartResponseSchema.parse({
+        ...ExecutionRunEnsureOrStartResponseSchema.parse(admitted),
+        ...ExecutionRunEnsureOrStartResponseSchema.parse(override),
+      });
     }
     if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START
       || request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2) return startTurnRpc(request);
@@ -287,15 +292,13 @@ describe('local voice engine agent behavior', () => {
         ensureAgentRpc.mockResolvedValue(unsupported);
         const prewarm = holdNextAgentStartAtDaemon();
 
-        localVoiceSpeechTranscription.mockResolvedValueOnce('hello world');
-
         const { toggleLocalVoiceTurn, getLocalVoiceState } = localVoiceEngine;
         const beforeCapture = await readLocalVoiceMachinePrerequisites();
         try {
             await toggleLocalVoiceTurn('s1');
             await prewarm.reached;
-            // Join the real initializer while its daemon reply is held. The
-            // next user turn must retry a settled failure, not share prewarm.
+            // Join the real initializer while its daemon reply is held, then
+            // observe the explicit Start refusal before the person retries.
             const settlement = expect(voiceAgentSessions.ensureRunning(VOICE_AGENT_GLOBAL_SESSION_ID))
                 .rejects.toMatchObject({ rpcErrorCode: 'VOICE_AGENT_UNSUPPORTED' });
             prewarm.reply.resolve(unsupported);
@@ -303,13 +306,16 @@ describe('local voice engine agent behavior', () => {
         } finally {
             prewarm.reply.resolve(unsupported);
         }
+        await waitForLocalVoiceState(state => state.status === 'idle' && state.error === 'VOICE_AGENT_UNSUPPORTED');
         const afterCapture = await readLocalVoiceMachinePrerequisites();
-        await expect(toggleLocalVoiceTurn('s1')).rejects.toMatchObject({ rpcErrorCode: 'VOICE_AGENT_UNSUPPORTED' });
+        await toggleLocalVoiceTurn('s1');
+        await waitForLocalVoiceState(state => state.status === 'idle' && state.error === 'VOICE_AGENT_UNSUPPORTED');
 
         expect(ensureAgentRpc, JSON.stringify({ beforeCapture, afterCapture,
-            afterTranscription: await readLocalVoiceMachinePrerequisites(), runtime: getLocalVoiceState(),
+            afterRetry: await readLocalVoiceMachinePrerequisites(), runtime: getLocalVoiceState(),
         })).toHaveBeenCalledTimes(2);
-        expect(localVoiceSpeechTranscription).toHaveBeenCalledTimes(1);
+        // Start admission fails before any spoken input is transcribed.
+        expect(localVoiceSpeechTranscription).not.toHaveBeenCalled();
         expect(localVoicePendingEnqueue.mock.calls.filter(([request]) => request.sessionId === 's1')).toEqual([]);
         expect(readLocalConversationVoiceSettings(storage.getState().settings.voice).conversationMode).toBe('agent');
         expect(getLocalVoiceState()).toMatchObject({
@@ -726,7 +732,7 @@ describe('local voice engine agent behavior', () => {
             await prewarm.reached;
             const settlement = expect(voiceAgentSessions.ensureRunning(VOICE_AGENT_GLOBAL_SESSION_ID))
                 .rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
-            prewarm.reply.reject(unavailable);
+            prewarm.reply.resolve({ ok: false, error: unavailable.message, errorCode: unavailable.rpcErrorCode });
             await settlement;
         } finally {
             prewarm.reply.resolve(undefined);
@@ -1169,12 +1175,13 @@ describe('local voice engine agent behavior', () => {
             .rejects.toMatchObject({ uxDiagnostic });
         const snapshot = deriveLocalVoiceSessionSnapshot('local_conversation', 'local', voiceConversationRuntimeMachine.getSnapshot());
         expect(snapshot).toMatchObject({ errorConnectedServiceDiagnostic: uxDiagnostic, errorRecoveryAction: 'connect_agent' });
+        expect(snapshot.errorProviderError).toMatchObject({ code: uxDiagnostic.code, action: 'review_connection' });
         const { resolveVoiceConnectRecoveryTarget } = await import('@/components/voice/surface/resolveVoiceConnectRecoveryTarget');
         const { executeVoiceAttemptRecovery, resolveVoiceAttemptRecoveryAvailable } = await import('@/components/voice/attempt/voiceAttemptRecovery');
         const { resolveVoiceSurfaceRecovery } = await import('@/components/voice/surface/resolveVoiceSurfaceRecovery');
         const { resolveVoiceAttemptControl } = await import('@/components/voice/attempt/resolveVoiceAttemptControl');
         const { buildConnectedServiceSetupRoute } = await import('@/sync/domains/connectedServices/connectedAccountSettingsRoute');
-        const recoveryContext = { connectRecoveryTarget: resolveVoiceConnectRecoveryTarget({
+        const recoveryContext = { providerError: snapshot.errorProviderError, connectRecoveryTarget: resolveVoiceConnectRecoveryTarget({
             uxDiagnostic: snapshot.errorConnectedServiceDiagnostic, agentRuntime: null, bindingScope: 'global',
             runtimeTarget: null, provider: null, providerConfig: null, sessionMetadata: null, connectedServiceEntries: [],
         }), runtimeRecoveryTarget: null, attemptSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
@@ -1325,7 +1332,7 @@ describe('local voice engine agent behavior', () => {
         { code: 'acp_turn_failed', message: 'Cannot connect to API: Unable to connect. https://user:PRIVATE_PASSWORD@example.test/v1?api_key=PRIVATE_API_KEY token=PRIVATE_TOKEN /home/alice/private/model',
             reason: 'Cannot connect to API', recovery: 'retry' },
         { code: 'usage_limit', message: 'Codex usage limit reached. Try another connected account or try again after your limit resets.',
-            reason: 'usage limit', recovery: 'open_settings' },
+            reason: 'usage limit', recovery: 'none' },
     ])('shows the $code reason and recovery from the live turn stream without leaking provider credentials', async ({ code, message, reason, recovery }) => {
         const storage = await getStorage();
         const voice = storage.getState().settings.voice;
@@ -1493,25 +1500,19 @@ describe('local voice engine agent behavior', () => {
         // Let the real binding create its separate Voice conversation before
         // replacing only the subsequent coding-Session daemon response.
         await localVoiceEngine.toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
-        const { resolveServerCredentialAccountScope, captureServerCredentialAccountScopeLifetime } =
-            await import('@/sync/domains/scope/serverCredentialAccountScope');
-        const { serverAccountScopedResourceKey } = await import('@/sync/domains/scope/serverAccountScope');
-        const { machineAgentInventoryStore } = await import('@/agents/machineAgents/machineAgentInventoryStore');
-        const scope = await resolveServerCredentialAccountScope(localVoiceHomeId);
-        if (scope.kind !== 'bound') throw new Error('Expected current Voice Account scope');
-        const lifetime = captureServerCredentialAccountScopeLifetime(scope);
         const inventory = createReadyMachineAgentInventoryFixture([
             { agentId: 'claude', title: 'Claude' }, { agentId: 'codex', title: 'Codex' },
         ]);
-        const items = Object.values(inventory.capabilities.results).map(result => result.data);
-        machineAgentInventoryStore.publish(serverAccountScopedResourceKey(lifetime.scope, 'machine-agents', 'machine-1'), {
-            status: 'ready', lastCheckedAt: 1,
-            items: items.map(item => outcome === 'signed-out' && item.agentId === 'claude'
-                ? { ...item, signIn: { ...item.signIn, status: 'signedOut' } } : item),
-        });
+        // Admission selects the ready default. The daemon may then report that
+        // its credentials changed before launch; that actual outcome owns speech.
         const incumbent = machineRpcWithServerScope.getMockImplementation();
         const creationInputs: Array<ReturnType<typeof SessionSpawnNewInputV2Schema.parse>> = [];
         machineRpcWithServerScope.mockImplementation(async (request: MachineRequest) => {
+            if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+                return { protocolVersion: 1, projection: inventory.projection };
+            }
+            if (request.method === RPC_METHODS.CAPABILITIES_DETECT) return inventory.capabilities;
+            if (request.method === RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST) return { jobs: [] };
             if (request.method !== RPC_METHODS.SESSION_SPAWN_NEW) {
                 if (!incumbent) throw new Error('Expected Machine daemon boundary');
                 return incumbent(request);
@@ -1533,6 +1534,9 @@ describe('local voice engine agent behavior', () => {
                 organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' },
             });
         });
+        const { publishMachineContributionRegistryProjectionInvalidation } =
+            await import('@/sync/ops/machineContributionRegistryProjectionRevision');
+        publishMachineContributionRegistryProjectionInvalidation({ serverId: localVoiceHomeId, machineId: 'machine-1' }, 'authority');
         startTurnRpc.mockResolvedValueOnce({ streamId: 'create-session-action' })
             .mockResolvedValueOnce({ streamId: 'create-session-followup' });
         readTurnRpc.mockImplementation(async request => {

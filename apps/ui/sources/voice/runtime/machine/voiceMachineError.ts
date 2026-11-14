@@ -145,6 +145,12 @@ export function createVoiceMachineError(params: Readonly<{
         // Waiting for quota is not a setup failure. The native Run owns any automatic recovery.
         ...(params.kind === 'provider_error' && params.reason === 'usage_limit'
             ? { recoveryAction: 'none' as const, presentation: 'error' as const, retryPolicy: 'never' as const } : {}),
+        ...(providerError ? {
+            providerError,
+            retryPolicy: providerError.retryable ? 'user_action' as const : 'never' as const,
+            recoveryAction: providerError.action === 'retry' ? 'retry' as const : 'open_settings' as const,
+            presentation: 'error' as const,
+        } : {}),
         // Connected Services owns retryability; its refusal stays visible until dismissed.
         ...(uxDiagnostic ? {
             uxDiagnostic,
@@ -153,12 +159,6 @@ export function createVoiceMachineError(params: Readonly<{
                 ? 'connect_agent' as const
                 : uxDiagnostic.retryable && uxDiagnostic.suggestedActions.includes(CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.retry)
                     ? 'retry' as const : 'none' as const,
-            presentation: 'error' as const,
-        } : {}),
-        ...(providerError ? {
-            providerError,
-            retryPolicy: providerError.retryable ? 'user_action' as const : 'never' as const,
-            recoveryAction: providerError.action === 'retry' ? 'retry' as const : 'open_settings' as const,
             presentation: 'error' as const,
         } : {}),
         // Only a notice ends gracefully. A blocked microphone stays on screen ("Microphone blocked"

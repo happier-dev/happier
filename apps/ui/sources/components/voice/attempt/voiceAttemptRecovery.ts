@@ -45,7 +45,8 @@ export function resolveVoiceAttemptRecoveryAvailable(
     context: VoiceAttemptRecoveryContext,
 ): boolean {
     if (recovery === null) return false;
-    if (context.providerError) return canDispatchProviderRecoveryAction(context.providerError, {
+    // Connected Services already chose Connect; provider metadata does not replace that remedy.
+    if (context.providerError && recovery.kind !== 'connect_agent') return canDispatchProviderRecoveryAction(context.providerError, {
         retry: resolveVoiceAttemptRetrySessionId(context) !== null,
     });
     switch (recovery.kind) {
@@ -106,7 +107,7 @@ export async function executeVoiceAttemptRecovery(params: Readonly<{
     const retrySessionId = resolveVoiceAttemptRetrySessionId(context);
     const retry = retrySessionId === null ? undefined : async () => { await voiceSessionManager.retry(retrySessionId); };
     const providerError = context.providerError;
-    if (providerError) return await dispatchProviderRecoveryAction({
+    if (providerError && recoveryAction !== 'connect_agent') return await dispatchProviderRecoveryAction({
         error: providerError,
         router: { push: href => { fireAndForget(Promise.resolve(navigate(href))); } },
         ...(retry ? { retry } : {}),

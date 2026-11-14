@@ -45,13 +45,14 @@ describe('local voice engine stop', () => {
     const { createLocalConversationVoiceAdapter } = await import('@/voice/adapters/localConversation/localConversationAdapter');
     const { registerVoiceAdapters } = await import('@/voice/session/voiceAdapterRegistry');
     const { createVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleController');
-    const { setVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleControllerStore');
+    const { acknowledgeVoiceSessionRuntimeReady, setVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleControllerStore');
     const { getVoiceSessionPresentedAttemptId, setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     const { executeVoiceConversationAction } = await import('@/sync/ops/actions/voiceConversationAction');
     const { localVoiceHomeId } = await import('./localVoiceEngine.testHarness');
     registerVoiceAdapters([createLocalConversationVoiceAdapter()]);
     const lifecycle = createVoiceSessionLifecycleController();
     setVoiceSessionLifecycleController(lifecycle);
+    acknowledgeVoiceSessionRuntimeReady(true);
     const unsubscribe = lifecycle.subscribe(() => setVoiceSessionSnapshot(lifecycle.getSnapshot()));
     lifecycle.setConfiguredProviderId('local_conversation');
     const target = { serverId: localVoiceHomeId, sessionId: 's1' };
@@ -102,7 +103,7 @@ describe('local voice engine stop', () => {
     const { createLocalConversationVoiceAdapter } = await import('@/voice/adapters/localConversation/localConversationAdapter');
     const { registerVoiceAdapters } = await import('@/voice/session/voiceAdapterRegistry');
     const { createVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleController');
-    const { setVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleControllerStore');
+    const { acknowledgeVoiceSessionRuntimeReady, setVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleControllerStore');
     const { getVoiceSessionPresentedAttemptId, setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     const { executeVoiceConversationAction } = await import('@/sync/ops/actions/voiceConversationAction');
     const { voiceAgentSessions } = await import('@/voice/agent/voiceAgentSessions');
@@ -117,6 +118,7 @@ describe('local voice engine stop', () => {
     registerVoiceAdapters([createLocalConversationVoiceAdapter()]);
     const lifecycle = createVoiceSessionLifecycleController();
     setVoiceSessionLifecycleController(lifecycle);
+    acknowledgeVoiceSessionRuntimeReady(true);
     const unsubscribe = lifecycle.subscribe(() => setVoiceSessionSnapshot(lifecycle.getSnapshot()));
     lifecycle.setConfiguredProviderId('local_conversation');
     const target = { serverId: localVoiceHomeId, sessionId: 's1' };
@@ -183,11 +185,14 @@ describe('local voice engine stop', () => {
       expect(lifecycle.getSnapshot()).toMatchObject({ status: 'disconnected', canStop: false });
       expect(voiceAgentSessions.isActive(VOICE_AGENT_GLOBAL_SESSION_ID)).toBe(false);
       expect(refusedRequests.filter(method => method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP)).toHaveLength(targetState === 'sweep_terminal_member' ? 0 : 1);
-      const endRequests = sessionRpcWithServerScope.mock.calls.slice(callsBeforeEnd).map(([request]) => request.method);
-      // Only a refused primary Stop needs its exact Run observation. The
-      // optional sweep does not acquire another finality decision.
-      expect(endRequests.filter(method => method === SESSION_RPC_METHODS.EXECUTION_RUN_GET))
-        .toHaveLength(targetState === 'sweep_terminal_member' ? 0 : 1);
+      const endRequests = sessionRpcWithServerScope.mock.calls.slice(callsBeforeEnd).map(([request]) => request);
+      // Only a refused primary Stop needs its exact Run observation. A lost
+      // Session read retries that same observation through the retained Action.
+      const readRouteUnavailable = targetState === 'inactive_carrier' || targetState === 'unreachable'
+        || targetState === 'unreachable_with_duplicate';
+      const endReads = endRequests.filter(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_GET);
+      expect(endReads).toHaveLength(targetState === 'sweep_terminal_member' ? 0 : readRouteUnavailable ? 2 : 1);
+      expect(endReads.every(request => (request.payload as { runId?: string }).runId === previousRun.runId)).toBe(true);
       if (duplicateRuns.length) expect(duplicateRuns.map(run => run.status)).toEqual(
         targetState === 'sweep_terminal_member' ? ['failed', 'cancelled'] : ['cancelled', 'cancelled'],
       );
@@ -201,10 +206,10 @@ describe('local voice engine stop', () => {
         expect(metadata).toBeNull();
       }
       if (targetState === 'terminal_inventory_unreachable') {
-        // Route recovery (49aa37cf8d) reports unavailable carrier content after
-        // the refused inventory RPC; the primary Stop remains authoritative.
+        // Both the live Session route and its retained Action read report the
+        // daemon's unavailability; the primary Stop remains authoritative.
         expect(warnings).toHaveBeenCalledWith(expect.stringContaining('[voiceRunRecovery]'),
-          expect.objectContaining({ errorCode: 'content_unavailable' }));
+          expect.objectContaining({ errorCode: 'target_unavailable' }));
         // Ending preserves the earlier genuine turn failure; optional cleanup
         // must not replace it with a new unconfirmed-Stop failure.
         expect(lifecycle.getSnapshot().errorCode).toBe(failureBeforeEnd.errorCode);
@@ -266,10 +271,11 @@ describe('local voice engine stop', () => {
     const { sessionRpcWithServerScope, localVoiceHomeId } = await import('./localVoiceEngine.testHarness');
     registerVoiceAdapters([createLocalConversationVoiceAdapter()]);
     const lifecycle = createVoiceSessionLifecycleController();
-    const { setVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleControllerStore');
+    const { acknowledgeVoiceSessionRuntimeReady, setVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleControllerStore');
     const { getVoiceSessionPresentedAttemptId, setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     const { executeVoiceConversationAction } = await import('@/sync/ops/actions/voiceConversationAction');
     setVoiceSessionLifecycleController(lifecycle);
+    acknowledgeVoiceSessionRuntimeReady(true);
     const unsubscribe = lifecycle.subscribe(() => setVoiceSessionSnapshot(lifecycle.getSnapshot()));
     lifecycle.setConfiguredProviderId('local_conversation');
     const target = fixedGlobalAgent ? null : { serverId: localVoiceHomeId, sessionId: 's1' };
@@ -378,11 +384,13 @@ describe('local voice engine stop', () => {
       expect(freshDaemon.readRetainedRun()).toMatchObject({ runId: 'fresh-recovered-run',
         status: freshStartup === 'failed' ? 'failed' : 'running' });
       if (fixedGlobalAgent) {
-        expect(acpReads).toBe(0);
         expect(freshDaemon.readRetainedRun()?.backendTarget).toMatchObject({ kind: 'builtInAgent', agentId: 'codex' });
         expect(readLocalConversationVoiceSettings(storage.getState().settings.voice).agent).toMatchObject({
           agentSource: 'agent', agentId: 'codex', agentTargetKey: 'agent:happier.agent.codex/codex', agentIdentity: null,
         });
+        // Run admission reads one complete Machine inventory. Unavailable
+        // configured-ACP rows cannot block this selected bundled Agent.
+        expect(acpReads).toBe(1);
       }
     } finally {
       await lifecycle.dispose();

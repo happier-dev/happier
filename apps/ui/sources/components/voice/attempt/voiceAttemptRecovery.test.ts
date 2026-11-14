@@ -19,7 +19,7 @@ import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } 
 import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS } from '../../../../../../packages/plugins/elevenlabs/src/protocol/voice/index';
-import { classifyRealtimeProviderFailure } from '@/voice/runtime/machine/voiceMachineError';
+import { classifyRealtimeProviderFailure, createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
 import { resolveVoiceMachineErrorTranslationKey } from '@/voice/runtime/machine/voiceMachineErrorCopy';
 import { translateVoiceReadiness } from '@/voice/settings/panels/voiceProviderReadinessPresentation';
 
@@ -196,15 +196,16 @@ describe('the one Voice recovery dispatch every placement fires', () => {
     expect(lifecycle.getSnapshot().status).toBe('disconnected');
   });
 
-  it.each(['web', 'ios'] as const)('reveals the Voice agent Account row for a usage limit on %s', async platform => {
+  it.each(['web', 'ios'] as const)('keeps the usage-limit wait free of setup recovery on %s', async platform => {
     state.platform = platform;
     const navigate = vi.fn();
+    const failure = createVoiceMachineError({ kind: 'provider_error', reason: 'usage_limit' });
     const { executeVoiceAttemptRecovery } = await import('./voiceAttemptRecovery');
     expect(await executeVoiceAttemptRecovery({
-      recoveryAction: 'open_settings', errorReason: 'usage_limit',
+      recoveryAction: failure.recoveryAction, errorReason: failure.reason,
       setupIncomplete: false, context: context(), navigate,
-    })).toBe(true);
-    expect(navigate).toHaveBeenCalledWith('/settings/voice/conversations?setting=voiceConversations.connectedServices');
+    })).toBe(false);
+    expect(navigate).not.toHaveBeenCalled();
     expect(state.openSettings).not.toHaveBeenCalled();
   });
 
