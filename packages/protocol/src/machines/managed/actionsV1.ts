@@ -389,7 +389,7 @@ export const ManagedAcquireInputV1Schema = lazyZodSchema(() => z.union([
     agentStart: z.optional(ManagedAcquireAgentStartV1Schema) }),
 ]));
 /** Selection kind owns the branch; optional policy and sealed deltas do not identify it. */
-export function isManagedPresetAcquireInputV1(input: ManagedAcquireInputV1): input is Extract<ManagedAcquireInputV1, { selection: { kind: 'preset' } }> {
+export function isManagedPresetAcquireInputV1<T extends ManagedAcquireInputV1>(input: T): input is Extract<T, { selection: { kind: 'preset' } }> {
   return input.selection.kind === 'preset';
 }
 /** One-off effects live in the selection; preset requests carry the separately reviewed policy. */

@@ -3,7 +3,6 @@ import { isDeepStrictEqual } from 'node:util';
 import { ManagedMachinePresetAccountEncryptionMigrationInventoryV1Schema, ManagedMachinePresetCreateInputV1Schema, ManagedMachinePresetRecipientCensusInputV1Schema, ManagedMachinePresetUpdateInputV1Schema, ManagedMachinePresetV1Schema, type AccountEncryptionMigrateManagedMachinePresetsDirectiveV1, type ManagedMachinePresetAccountEncryptionMigrationInventoryV1, type ManagedMachinePresetV1, type ManagedMachinePresetCreateInputV1, type ManagedMachinePresetRecipientCensusInputV1, type ManagedMachinePresetRecipientCensusResultV1, type ManagedMachinePresetUpdateInputV1, type ManagedMachinePresetRevisionInputV1, type ManagedMachinePresetGetInputV1, type ManagedMachinePresetListInputV1, type ManagedMachinePresetGetResultV1, type ManagedMachinePresetListResultV1, type PresetMutationResultV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { isManagedResizeActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
-import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import { ManagedOpaqueMachineSetupStateV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ProviderObservationV1Schema, projectManagedOpaquePresetObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -97,10 +96,11 @@ function inheritPresetOwnerArchive(row: StoredPreset, teamArchivedAt: Date | nul
 
 function readStoredPresetContent(row: StoredPreset) {
     if (hasStoredOpaquePresetEnvelope(row.launch)) return readStoredOpaquePresetLaunch(row.launch);
-    if (row.launch !== null && !isJsonObject(row.launch)) {
+    if (row.launch !== null && (typeof row.launch !== 'object' || Array.isArray(row.launch))) {
         throw new ManagedMachineError('invalid_request');
     }
-    const { controllerPoolId, controllerDisplayName, ...launch } = row.launch ?? {};
+    // Legacy database JSON is an object here; its member values remain unknown.
+    const { controllerPoolId, controllerDisplayName, ...launch } = (row.launch ?? {}) as Readonly<Record<string, unknown>>;
     if (controllerPoolId !== undefined && typeof controllerPoolId !== 'string') throw new ManagedMachineError('invalid_request');
     return storeOpaquePresetLaunch({
         contentEncryptionMode: 'plain', recipients: [],
