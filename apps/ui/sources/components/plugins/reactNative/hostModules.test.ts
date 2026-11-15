@@ -15,14 +15,14 @@ describe('PLUGIN_UI_COMMON_JS_HOST_MODULES', () => {
     });
 
     it('exposes author components while keeping private/runtime packages out', () => {
-        expect(PLUGIN_UI_COMMON_JS_HOST_MODULES['@happier-dev/plugin-ui']).toBeDefined();
-        expect(PLUGIN_UI_COMMON_JS_HOST_MODULES['@happier-dev/plugin-ui/components']).toBeDefined();
-        expect(PLUGIN_UI_COMMON_JS_HOST_MODULES['@happier-dev/plugin-ui/data']).toBeDefined();
+        // Author families load on an artifact's first require (hostModules.load.test.ts).
+        for (const specifier of ['@happier-dev/plugin-ui', '@happier-dev/plugin-ui/components', '@happier-dev/plugin-ui/data', '@happier-dev/protocol']) {
+            expect(Object.getOwnPropertyDescriptor(PLUGIN_UI_COMMON_JS_HOST_MODULES, specifier)?.get).toBeTypeOf('function');
+        }
         expect(PLUGIN_UI_COMMON_JS_HOST_MODULES).not.toHaveProperty('@happier-dev/plugin-ui/presentation');
         expect(PLUGIN_UI_COMMON_JS_HOST_MODULES).not.toHaveProperty('@happier-dev/plugin-ui/presentation/typeScale');
         expect(PLUGIN_UI_COMMON_JS_HOST_MODULES).not.toHaveProperty('@happier-dev/plugin-ui/testing');
         expect(Object.getOwnPropertyDescriptor(PLUGIN_UI_COMMON_JS_HOST_MODULES, '@happier-dev/plugin-sdk')?.get).toBeTypeOf('function');
-        expect(PLUGIN_UI_COMMON_JS_HOST_MODULES['@happier-dev/protocol']).toBeDefined();
         expect(PLUGIN_UI_COMMON_JS_HOST_MODULES.zod).toBeDefined();
         expect(PLUGIN_UI_COMMON_JS_HOST_MODULES['zod/mini']).toBeDefined();
     });

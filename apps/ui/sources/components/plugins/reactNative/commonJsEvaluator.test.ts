@@ -86,7 +86,7 @@ describe('evaluatePluginUiCommonJsBundle', () => {
         // shares that source namespace through the canonical Node boundary bridge.
         const preparationStarted = performance.now();
         const bridges = await Promise.all(result.externalSpecifiers
-            .filter(specifier => specifier.startsWith('@happier-dev/plugin-sdk'))
+            .filter(specifier => /^@happier-dev\/(?:plugin-sdk|plugin-ui|protocol)(?:\/|$)/u.test(specifier))
             .map(specifier => loadVitestModuleForNodeRequire(pathToFileURL(createRequire(import.meta.url).resolve(specifier)),
                 () => import(pathToFileURL(resolveWorkspaceSource(packages, specifier, { conditions: ['react-native', 'browser'] })).href))));
         const hostModulePreparationMs = performance.now() - preparationStarted;
@@ -157,13 +157,22 @@ describe('evaluatePluginUiCommonJsBundle', () => {
             await rm(root, { recursive: true, force: true });
         }
     });
-    it('uses the production author-module map and refuses host-private presentation', () => {
+    it('uses the production author-module map and refuses host-private presentation', async () => {
         const read = evaluatePluginUiCommonJsBundle({
             bytes: encoder.encode('exports.read = () => Boolean(require("@happier-dev/plugin-ui") && require("@happier-dev/plugin-ui/components"));'),
             identity,
             requestedExport: 'read',
         });
-        expect(read()).toBe(true);
+        // The host map loads these families on first require (Metro's call-time require).
+        const packages = await readWorkspacePackages(resolve(import.meta.dirname, '../../../../../..'));
+        const bridges = await Promise.all(['@happier-dev/plugin-ui', '@happier-dev/plugin-ui/components'].map(specifier => loadVitestModuleForNodeRequire(
+            pathToFileURL(createRequire(import.meta.url).resolve(specifier)),
+            () => import(pathToFileURL(resolveWorkspaceSource(packages, specifier, { conditions: ['react-native', 'browser'] })).href))));
+        try {
+            expect(read()).toBe(true);
+        } finally {
+            for (const bridge of bridges) bridge.dispose();
+        }
 
         for (const specifier of [
             '@happier-dev/plugin-ui/presentation',
