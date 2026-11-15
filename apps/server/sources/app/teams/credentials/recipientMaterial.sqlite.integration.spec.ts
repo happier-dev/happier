@@ -54,6 +54,7 @@ import {
     withdrawTeamCredentialRecipientMaterialInTx,
 } from "./recipientMaterial";
 import { readTeamCredentialActivityInTx } from "./resourceActivity";
+import { projectTeamCredentialResourceDisplayNameForRecipient } from "./privateLabels";
 import { readTeamCredentialCatalogInTx } from './resourceRead';
 import { updateTeamCredentialResourceInTx } from './resourceUpdate';
 
@@ -194,7 +195,7 @@ describe("Team credential recipient material", () => {
         const resource = await db.teamCredentialResource.create({ data: {
             teamId: team.id,
             custodianAccountId: custodian.id,
-            displayName: "Static credential",
+            displayName: storedPlainPrivateLabel("Static credential"),
             disclosureCeiling: "direct_allowed",
             sessionUsePolicy: "team_visibility_required",
             sourceBindingJson: JSON.stringify({ v: 1, kind: "connected_account", target: {
@@ -328,7 +329,7 @@ describe("Team credential recipient material", () => {
         const concurrentFirstOpens = await Promise.all([readCurrent(), readCurrent(), readCurrent()]);
         expect(concurrentFirstOpens).toEqual(Array.from({ length: 3 }, () => expect.objectContaining({
             ok: true,
-            admittedResource: { displayName: resource.displayName, teamId: team.id },
+            admittedResource: { teamId: team.id },
             sourceVersion,
             recipientMode: "plain",
             recipientContentPublicKeyFingerprint: null,
@@ -500,7 +501,7 @@ describe("Team credential recipient material", () => {
         const replacement = await inTx(tx => updateTeamCredentialResourceInTx(tx, {
             actorAccountId: custodian.id, authentication: { authenticationAuthority: 'present_user' },
             patch: { resourceId: resource.id, expectedRevision: resource.revision, replacement: {
-                enabled: true, displayName: resource.displayName, sessionUsePolicy: 'team_visibility_required',
+                enabled: true, sessionUsePolicy: 'team_visibility_required',
                 requestPolicy: null, allMembersAllowedRoutes: null, groupGrants: [],
                 memberGrants: [{ teamMembershipId: membership.id, allowedRoutes: ['direct'] }],
                 usageLimitDelta: { upserts: [], deleteIds: [] },
@@ -629,7 +630,7 @@ describe("Team credential recipient material", () => {
                 items: expect.arrayContaining([expect.objectContaining({
                     kind: "direct_delivered",
                     actorDisplayName: null,
-                    subjectDisplayName: resource.displayName,
+                    subjectDisplayName: projectTeamCredentialResourceDisplayNameForRecipient({ serialized: resource.displayName, recipientAccountId: custodian.id }),
                 })]),
                 nextCursor: null,
             },

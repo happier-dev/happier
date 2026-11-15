@@ -6,6 +6,12 @@ import type { Fastify } from '@/app/api/types';
 import type { TeamCredentialCatalogReadinessProjection } from './brokerReadiness';
 import { projectTeamCredentialCatalogModels } from './catalogModels';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { PrivateLabelStoredV1Schema, projectPrivateLabelForRecipientV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
+
+const SOURCE_LABEL = projectPrivateLabelForRecipientV1({
+    stored: PrivateLabelStoredV1Schema.parse({ content: { t: 'plain', v: 'Source' }, recipients: [] }),
+    recipientAccountId: 'recipient',
+});
 
 it.each(['storage_failure', 'application_mismatch'] as const)('preserves the source RPC failure reason (%s)', async failure => {
     const source = TeamCredentialSourceBindingV1Schema.parse({ v: 1, kind: 'connected_account', credentialIncarnation: 'incarnation',
@@ -13,7 +19,7 @@ it.each(['storage_failure', 'application_mismatch'] as const)('preserves the sou
     const application = { agentTargetKey: 'agent:happier.agent.codex/codex',
         implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
         endpointTemplateId: 'cliproxyapi-openai-responses', protocol: 'openai-responses' as const };
-    const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'resource', teamId: 'team', displayName: 'Source',
+    const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'resource', teamId: 'team', displayName: SOURCE_LABEL,
         resourceRevision: 4, readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
         directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', providerModels: [],
         sourcePresentation: { kind: 'connected_service', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } } });
@@ -45,7 +51,7 @@ it.each([0, 1, 2])('keeps Direct declaration discovery separate from broker obse
     const application = { agentTargetKey: 'agent:happier.agent.codex/codex',
         implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
         endpointTemplateId: 'cliproxyapi-openai-responses', protocol: 'openai-responses' as const };
-    const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'resource', teamId: 'team', displayName: 'Source',
+    const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'resource', teamId: 'team', displayName: SOURCE_LABEL,
         resourceRevision: 1, readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: true,
         directMaterialState: count ? 'current' : 'never_delivered', sessionUsePolicy: 'personal_allowed', providerModels: [],
         sourcePresentation: { kind: 'connected_service', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } } });

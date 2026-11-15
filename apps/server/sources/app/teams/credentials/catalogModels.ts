@@ -173,8 +173,12 @@ export async function projectTeamCredentialCatalogModels(
             resource.recoveryAction = 'source_owner_action';
             continue;
         }
+        // Current direct material keeps a row available only when the row can
+        // still be presented: an available row with no model rows needs a
+        // source presentation, which a failed Provider observation cannot supply.
         if (resource.providerModels.some(model => model.availability === 'available')
-            || (resource.mayReceiveDirect && resource.directMaterialState === 'current')) {
+            || (resource.mayReceiveDirect && resource.directMaterialState === 'current'
+                && (resource.providerModels.length > 0 || resource.sourcePresentation !== null))) {
             resource.readiness = { kind: 'available' };
             resource.recoveryAction = null;
             delete resource.deliveryUnavailableReason;

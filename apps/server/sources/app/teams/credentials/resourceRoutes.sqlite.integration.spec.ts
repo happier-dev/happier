@@ -1,4 +1,6 @@
-import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
+import { plainPrivateLabel, prepareE2eePrivateLabelForAccount, storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
+import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
+import { projectTeamCredentialResourceDisplayNameForRecipient } from "./privateLabels";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import tweetnacl from 'tweetnacl';
 import type { RouteOptions } from "fastify";
@@ -12,6 +14,7 @@ import {
     encodeSessionTeamCredentialSlotKeyV1,
     TeamCredentialResourceErrorV1Schema,
     TeamCredentialResourceSummaryV1Schema,
+    teamCredentialExternalApiKeyLabelPrivateLabelBindingV1,
 } from "@happier-dev/protocol/teams";
 import {
     MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent,
@@ -309,7 +312,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
         const credential = await db.serviceAccountToken.findFirstOrThrow({ where: { accountId: owner.id } });
         const source = { v: 1, kind: 'connected_account', target: { kind: 'account', account }, credentialIncarnation: credential.id };
         const resourceId = `access-only-${owner.id}`;
-        const draft = { teamId: team.id, resourceId, displayName: 'Imported source', source,
+        const draft = { teamId: team.id, resourceId, displayName: plainPrivateLabel('Imported source'), source,
             deliveryPolicy: { preferredAllowedModes: ['brokered', 'direct'] }, sessionUsePolicy: 'personal_allowed',
             brokerPlacement: null, requestPolicy: null, allMembersAllowedRoutes: null,
             groupGrants: [], memberGrants: [], usageLimits: [] };
@@ -795,8 +798,8 @@ describe("Team credential resource routes (SQLite integration)", () => {
     });
 
     it("authorizes only the assigned external key through the authenticated route without accepting caller proof", async () => {
-        const manager = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "e2ee" } });
-        const member = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "e2ee" } });
+        const manager = await db.account.create({ data: { encryptionMode: "e2ee", ...createSignedAccountContentBinding() } });
+        const member = await db.account.create({ data: { encryptionMode: "e2ee", ...createSignedAccountContentBinding() } });
         const team = await db.team.create({ data: { name: "External route qualification", authenticationPolicy: {
             v: 1, mode: "restricted", accepted: [{ kind: "home_method", methodId: "key_challenge" }],
         } } });
@@ -810,8 +813,11 @@ describe("Team credential resource routes (SQLite integration)", () => {
             memberGrants: { create: { teamMembershipId: membership.id, deliveryMode: "brokered" } },
         } });
         const evidence = [{ kind: "home_method", methodId: "key_challenge" }];
+        const keyId = crypto.randomUUID();
+        const label = await prepareE2eePrivateLabelForAccount(manager.id,
+            teamCredentialExternalApiKeyLabelPrivateLabelBindingV1(keyId), "Member's tool", { teamIds: [team.id] });
         const created = await post("/v1/teams/credential-resources/external-keys/create", manager.id, {
-            resourceId: resource.id, teamMembershipId: membership.id, label: "Member's tool", expiresAt: null,
+            resourceId: resource.id, teamMembershipId: membership.id, keyId, label, expiresAt: null,
         }, evidence);
         expect({ status: created.statusCode, error: created.json().error }).toEqual({ status: 200, error: undefined });
         const payload = { resourceId: resource.id, keyId: created.json().key.keyId };
@@ -993,7 +999,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
 
         const createDraft = {
             teamId: team.id,
-            displayName: "Created with policy",
+            displayName: plainPrivateLabel("Created with policy"),
             source: providerSource,
             deliveryPolicy: { preferredAllowedModes: ["brokered" as const] },
             sessionUsePolicy: "personal_allowed" as const,
@@ -1166,7 +1172,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
 
         const replacement = {
             enabled: true,
-            displayName: "Updated policy",
+            displayName: plainPrivateLabel("Updated policy"),
             sessionUsePolicy: "personal_allowed" as const,
             requestPolicy: {
                 allowedProtocolKinds: ["openai_responses" as const],
@@ -1207,7 +1213,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
         expect(supported.json()).toEqual({ resourceId: managedResource.id, revision: 1 });
         await expect(db.teamCredentialResource.findUniqueOrThrow({ where: { id: managedResource.id } })).resolves.toMatchObject({
             revision: 1,
-            displayName: "Updated policy",
+            displayName: storedPlainPrivateLabel("Updated policy"),
         });
 
         const aliasUpdate = await post(
@@ -1555,7 +1561,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
             }));
             const requestPolicy = { allowedProtocolKinds: ["openai_responses"], allowedModelIds: ["gpt-5"], reasoningEffort: null };
             const draft = {
-                teamId: team.id, source, brokerPlacement: placement, displayName: "Partial census policy",
+                teamId: team.id, source, brokerPlacement: placement, displayName: plainPrivateLabel("Partial census policy"),
                 deliveryPolicy: { preferredAllowedModes: ["brokered"] }, sessionUsePolicy: "personal_allowed", requestPolicy,
                 allMembersAllowedRoutes: null, groupGrants: [], memberGrants: [], usageLimits: [],
             };
@@ -1571,7 +1577,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
             expect(created.statusCode, created.body).toBe(200);
             const updatedPolicy = { ...requestPolicy, allowedModelIds: null };
             const replacement = {
-                enabled: true, displayName: "Updated partial policy", sessionUsePolicy: "personal_allowed",
+                enabled: true, displayName: plainPrivateLabel("Updated partial policy"), sessionUsePolicy: "personal_allowed",
                 requestPolicy: updatedPolicy, allMembersAllowedRoutes: null, groupGrants: [], memberGrants: [],
                 usageLimitDelta: { upserts: [], deleteIds: [] },
             };
@@ -1731,7 +1737,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
         // Reproduces the old editor's full replacement from a masked summary.
         const masked = await post("/v1/teams/credential-resources/update", custodian.id, {
             resourceId: resource.id, expectedRevision: 0, replacement: {
-                enabled: summary.enabled, displayName: summary.displayName, sessionUsePolicy: summary.sessionUsePolicy,
+                enabled: summary.enabled, displayName: plainPrivateLabel("Offered source"), sessionUsePolicy: summary.sessionUsePolicy,
                 requestPolicy: summary.requestPolicy, allMembersAllowedRoutes: summary.allMembersAllowedRoutes,
                 groupGrants: summary.groupGrants, memberGrants: summary.memberGrants,
                 usageLimitDelta: { upserts: [], deleteIds: [] }, custodian: custodianBlock,
@@ -1745,7 +1751,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
         expect(repaired.statusCode, repaired.body).toBe(200);
         expect(repaired.json()).toEqual({ resourceId: resource.id, revision: 1 });
         for (const managerEdit of [
-            { enabled: true }, { displayName: "Unauthorized rename" }, { sessionUsePolicy: "personal_allowed" },
+            { enabled: true }, { displayName: plainPrivateLabel("Unauthorized rename") }, { sessionUsePolicy: "personal_allowed" },
             { requestPolicy: null }, { allMembersAllowedRoutes: null }, { groupGrants: [] }, { memberGrants: [] },
             { usageLimitDelta: { upserts: [], deleteIds: [limit.id] } },
         ]) {
@@ -1770,7 +1776,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
         expect(stale.json()).toMatchObject({ error: "resource_changed" });
         const managed = await post("/v1/teams/credential-resources/update", manager.id, {
             resourceId: resource.id, expectedRevision: 1, replacement: {
-                enabled: true, displayName: "Manager policy", sessionUsePolicy: "team_context_required", requestPolicy: null,
+                enabled: true, displayName: plainPrivateLabel("Manager policy"), sessionUsePolicy: "team_context_required", requestPolicy: null,
                 allMembersAllowedRoutes: ["brokered"], groupGrants: [], memberGrants: [], usageLimitDelta: { upserts: [], deleteIds: [] },
             },
         });
@@ -2558,7 +2564,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
         const changed = await post("/v1/teams/credential-resources/update", custodian.id, {
             resourceId: resource.id,
             expectedRevision: resource.revision,
-            displayName: "Exact Provider updated",
+            displayName: plainPrivateLabel("Exact Provider updated"),
         });
         expect(changed.statusCode, changed.body).toBe(200);
         // A display-name edit carries no authority: the revision every durable
@@ -2568,7 +2574,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
         const changedDetail = await post("/v1/teams/credential-resources/get", custodian.id, { resourceId: resource.id });
         expect(changedDetail.statusCode, changedDetail.body).toBe(200);
         expect(changedDetail.json()).toMatchObject({
-            displayName: "Exact Provider updated",
+            displayName: { content: { t: "plain", v: "Exact Provider updated" }, recipientEnvelope: null },
             readiness: { kind: "available" },
             brokerPresentation: { selectedTarget: { machineId: online.id, availability: "available" } },
         });
@@ -3343,12 +3349,12 @@ describe("Team credential resource routes (SQLite integration)", () => {
                 },
                 eligiblePools: expect.arrayContaining([{
                     poolId: pool.id,
-                    displayName: "Catalog Pool",
+                    displayName: { kind: "available", label: expect.objectContaining({ content: { t: "plain", v: "Catalog Pool" } }) },
                     availability: "available",
                     availableMachineCount: 1,
                 }, {
                     poolId: unavailablePool.id,
-                    displayName: "Unavailable Pool",
+                    displayName: { kind: "available", label: expect.objectContaining({ content: { t: "plain", v: "Unavailable Pool" } }) },
                     availability: "unavailable",
                     availableMachineCount: 0,
                 }]),
@@ -3928,7 +3934,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
             ["/v1/teams/credential-resources/create", {
                 teamId: team.id,
                 resourceId: "denied-create",
-                displayName: "Denied create",
+                displayName: plainPrivateLabel("Denied create"),
                 source,
                 deliveryPolicy: { preferredAllowedModes: ["brokered"] },
                 sessionUsePolicy: "personal_allowed",
@@ -3940,7 +3946,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
                 usageLimits: [],
             }],
             ["/v1/teams/credential-resources/audience/set", { resourceId: resource.id, expectedRevision: resource.revision, allMembersAllowedRoutes: null, groupGrants: [], memberGrants: [] }],
-            ["/v1/teams/credential-resources/update", { resourceId: resource.id, expectedRevision: resource.revision, displayName: "Denied update" }],
+            ["/v1/teams/credential-resources/update", { resourceId: resource.id, expectedRevision: resource.revision, displayName: plainPrivateLabel("Denied update") }],
             ["/v1/teams/credential-resources/delete", { resourceId: resource.id, expectedRevision: resource.revision }],
         ] as const;
         for (const [url, payload] of deniedOperations) {
@@ -3959,7 +3965,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
         const deniedExternalKeyCreate = await post(
             "/v1/teams/credential-resources/external-keys/create",
             manager.id,
-            { resourceId: resource.id, teamMembershipId: recipientMembership.id, label: "Denied key", expiresAt: null },
+            { resourceId: resource.id, teamMembershipId: recipientMembership.id, keyId: crypto.randomUUID(), label: plainPrivateLabel("Denied key"), expiresAt: null },
         );
         expect({ status: deniedExternalKeyCreate.statusCode, body: deniedExternalKeyCreate.json() }).toEqual({
             status: 403,
@@ -4349,7 +4355,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
             sourceOwnerDisplayName: null,
             id: resource.id,
             teamId: team.id,
-            displayName: "Current shared source",
+            displayName: projectTeamCredentialResourceDisplayNameForRecipient({ serialized: resource.displayName, recipientAccountId: recipient.id }),
             resourceRevision: resource.revision,
             readiness: { kind: "available" },
             recoveryAction: null,
@@ -4408,7 +4414,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
             sourceOwnerDisplayName: null,
             id: resource.id,
             teamId: team.id,
-            displayName: "Current shared source",
+            displayName: projectTeamCredentialResourceDisplayNameForRecipient({ serialized: resource.displayName, recipientAccountId: groupRecipient.id }),
             resourceRevision: resource.revision,
             readiness: { kind: "available" },
             recoveryAction: null,
@@ -4442,7 +4448,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
             teamId: team.id,
             resourceId: resource.id,
             recipientAccountId: groupRecipient.id,
-            subjectDisplayName: resource.displayName,
+            subjectDisplayName: plainPrivateLabel("Current shared source"),
         }));
         const previouslyDeliveredCatalog = await post(
             "/v1/teams/credential-resources/entitled/list",
@@ -4675,7 +4681,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
         const unavailableMutation = await post("/v1/teams/credential-resources/update", manager.id, {
             resourceId: resource.id,
             expectedRevision: resource.revision,
-            displayName: "Must remain unchanged while policy is unavailable",
+            displayName: plainPrivateLabel("Must remain unchanged while policy is unavailable"),
         }, evidence);
         expect({ status: unavailableMutation.statusCode, body: unavailableMutation.json() }).toEqual({
             status: 503,
@@ -4700,7 +4706,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
         const deniedUpdate = await post("/v1/teams/credential-resources/update", manager.id, {
             resourceId: resource.id,
             expectedRevision: resource.revision,
-            displayName: "Must not change",
+            displayName: plainPrivateLabel("Must not change"),
         });
         expect({ status: deniedUpdate.statusCode, body: deniedUpdate.json() }).toEqual({
             status: 403,

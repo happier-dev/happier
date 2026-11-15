@@ -1,4 +1,4 @@
-import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
+import { plainPrivateLabel, storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
@@ -62,7 +62,7 @@ describe("Team credential resource lifecycle", () => {
                 const draft = {
                     ...EMPTY_CREATE_CONFIGURATION,
                     actorAccountId: custodian.id, authentication: TEST_AUTHENTICATION,
-                    teamId: team.id, resourceId, displayName: "Selected placement",
+                    teamId: team.id, resourceId, displayName: plainPrivateLabel("Selected placement"),
                     deliveryPolicy: { preferredAllowedModes: ["brokered" as const, "direct" as const] }, source,
                     allMembersAllowedRoutes: deliveryMode === null ? null : [deliveryMode],
                 };
@@ -132,7 +132,7 @@ describe("Team credential resource lifecycle", () => {
             sourceBindingJson: JSON.stringify(source), brokerPoolId: pool.id,
         } });
         const replacement = {
-            enabled: true, displayName: "Renamed repair source", sessionUsePolicy: "personal_allowed" as const,
+            enabled: true, displayName: plainPrivateLabel("Renamed repair source"), sessionUsePolicy: "personal_allowed" as const,
             requestPolicy: null, allMembersAllowedRoutes: null, groupGrants: [], memberGrants: [],
             usageLimitDelta: { upserts: [], deleteIds: [] },
         };
@@ -180,7 +180,7 @@ describe("Team credential resource lifecycle", () => {
             teamId: team.id,
             resourceId: "malformed-policy-resource",
             authentication: TEST_AUTHENTICATION,
-            displayName: "Must not be created",
+            displayName: plainPrivateLabel("Must not be created"),
             deliveryPolicy: { preferredAllowedModes: ["brokered", "direct"] },
             source: { v: 1, kind: "connected_pool", target: { kind: "group", service, groupId }, poolIncarnation: pool.id },
         }))).resolves.toEqual({ ok: false, error: "team_authentication_policy_unavailable" });
@@ -204,7 +204,7 @@ describe("Team credential resource lifecycle", () => {
             ...EMPTY_CREATE_CONFIGURATION,
             actorAccountId: actor.id, teamId: team.id, resourceId: "resource-create-intent",
             authentication: TEST_AUTHENTICATION,
-            displayName: "Shared source", deliveryPolicy: { preferredAllowedModes: ["brokered" as const] },
+            displayName: plainPrivateLabel("Shared source"), deliveryPolicy: { preferredAllowedModes: ["brokered" as const] },
             source: { v: 1 as const, kind: "connected_pool" as const,
                 target: { kind: "group" as const, service, groupId }, poolIncarnation: pool.id },
         };
@@ -213,7 +213,7 @@ describe("Team credential resource lifecycle", () => {
         await expect(db.teamCredentialResource.findUnique({ where: { id: input.resourceId } })).resolves.toMatchObject({
             teamId: team.id,
             custodianAccountId: actor.id,
-            displayName: input.displayName,
+            displayName: storedPlainPrivateLabel("Shared source"),
             disclosureCeiling: JSON.stringify({ policy: input.deliveryPolicy }),
             sessionUsePolicy: input.sessionUsePolicy,
             requestPolicyJson: null,
@@ -246,7 +246,7 @@ describe("Team credential resource lifecycle", () => {
         expect(await db.teamCredentialResource.findUnique({ where: { id: input.resourceId } })).toMatchObject({
             custodianAccountId: actor.id, allMembersDeliveryMode: null, sessionUsePolicy: "personal_allowed",
         });
-        await expect(inTx(tx => createTeamCredentialResourceInTx(tx, { ...input, displayName: "Different" })))
+        await expect(inTx(tx => createTeamCredentialResourceInTx(tx, { ...input, displayName: plainPrivateLabel("Different") })))
             .resolves.toEqual({ ok: false, error: "resource_changed" });
         await db.teamCredentialResource.update({
             where: { id: input.resourceId },
@@ -267,7 +267,7 @@ describe("Team credential resource lifecycle", () => {
         });
         expect(history.map(event => event.kind)).toEqual(["resource_created", "resource_deleted"]);
         expect(history.every(event => event.actorAccountId === actor.id
-            && event.teamId === team.id && event.subjectDisplayName === input.displayName)).toBe(true);
+            && event.teamId === team.id && event.subjectDisplayName === storedPlainPrivateLabel("Shared source"))).toBe(true);
     });
 
     it("source-lists only exact Account, Pool, and Provider resources after Team departure", async () => {
@@ -468,7 +468,7 @@ describe("Team credential resource lifecycle", () => {
         } });
         const base = {
             actorAccountId: actor.id, teamId: team.id, authentication: TEST_AUTHENTICATION,
-            displayName: "Atomic source", deliveryPolicy: { preferredAllowedModes: ["brokered" as const] },
+            displayName: plainPrivateLabel("Atomic source"), deliveryPolicy: { preferredAllowedModes: ["brokered" as const] },
             source: { v: 1 as const, kind: "connected_pool" as const, target: { kind: "group" as const, service, groupId }, poolIncarnation: pool.id },
             sessionUsePolicy: "team_context_required" as const,
             brokerPlacement: { kind: "machine" as const, machineId: broker.id }, requestPolicy: {
@@ -675,7 +675,7 @@ describe("Team credential resource lifecycle", () => {
             groupGrants: { create: { teamGroupId: group.id, deliveryMode: "both" } },
         } });
         const replacementOf = (brokerMachineId: string) => ({
-            enabled: true, displayName: "Replacement narrowing",
+            enabled: true,
             sessionUsePolicy: "personal_allowed" as const, requestPolicy: null,
             allMembersAllowedRoutes: ["direct" as const],
             groupGrants: [{ teamGroupId: group.id, allowedRoutes: ["brokered" as const, "direct" as const] }],
@@ -805,7 +805,7 @@ describe("Team credential resource lifecycle", () => {
         ]);
         const replacement = {
             enabled: false,
-            displayName: "After",
+            displayName: plainPrivateLabel("After"),
             sessionUsePolicy: "team_context_required" as const,
             requestPolicy: null,
             allMembersAllowedRoutes: ["brokered" as const],
@@ -830,7 +830,7 @@ describe("Team credential resource lifecycle", () => {
             patch: { resourceId: resource.id, expectedRevision: 0, replacement },
         }))).resolves.toEqual({ ok: true, resourceId: resource.id, revision: 1 });
         await expect(db.teamCredentialResource.findUniqueOrThrow({ where: { id: resource.id } })).resolves.toMatchObject({
-            enabled: false, displayName: "After", revision: 1, sourceBindingJson: JSON.stringify(nextSource),
+            enabled: false, displayName: storedPlainPrivateLabel("After"), revision: 1, sourceBindingJson: JSON.stringify(nextSource),
             disclosureCeiling: JSON.stringify({ policy: { preferredAllowedModes: ["brokered"] } }), sessionUsePolicy: "team_context_required",
             brokerMachineId: broker.id, brokerPoolId: null, allMembersDeliveryMode: JSON.stringify(["brokered"]),
             directSourceVersionsJson: null,
@@ -871,7 +871,7 @@ describe("Team credential resource lifecycle", () => {
             metric: "inference_requests", maximum: "10",
         } });
         const replacement = {
-            enabled: true, displayName: "Must not persist",
+            enabled: true, displayName: plainPrivateLabel("Must not persist"),
             sessionUsePolicy: "personal_allowed" as const, requestPolicy: null,
             allMembersAllowedRoutes: null, groupGrants: [], memberGrants: [],
             usageLimitDelta: { upserts: [], deleteIds: [] },
@@ -972,7 +972,7 @@ describe("Team credential resource lifecycle", () => {
             models: requestPolicySupportModels,
         };
         const replacement = {
-            enabled: true, displayName: "Policy source",
+            enabled: true, displayName: plainPrivateLabel("Policy source"),
             sessionUsePolicy: "personal_allowed" as const, requestPolicy,
             allMembersAllowedRoutes: null,
             groupGrants: [],
@@ -1074,7 +1074,7 @@ describe("Team credential resource lifecycle", () => {
         } });
         const managerReplacement = {
             enabled: true,
-            displayName: "After manager edit",
+            displayName: plainPrivateLabel("After manager edit"),
             sessionUsePolicy: "team_context_required" as const,
             requestPolicy: {
                 allowedProtocolKinds: ["openai_responses" as const],
@@ -1089,7 +1089,7 @@ describe("Team credential resource lifecycle", () => {
 
         const unchangedManagerDocument = {
             ...managerReplacement,
-            displayName: "Before manager edit",
+            displayName: plainPrivateLabel("Before manager edit"),
             sessionUsePolicy: "personal_allowed" as const,
             requestPolicy: null,
             allMembersAllowedRoutes: null,
@@ -1130,7 +1130,7 @@ describe("Team credential resource lifecycle", () => {
         }))).resolves.toEqual({ ok: true, resourceId: resource.id, revision: 1 });
         await expect(db.teamCredentialResource.findUniqueOrThrow({ where: { id: resource.id } })).resolves.toMatchObject({
             revision: 1,
-            displayName: "After manager edit",
+            displayName: storedPlainPrivateLabel("After manager edit"),
             sourceBindingJson: JSON.stringify(source),
             disclosureCeiling: JSON.stringify({ policy: { preferredAllowedModes: ["brokered"] } }),
             brokerMachineId: broker.id,
