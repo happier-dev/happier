@@ -12,12 +12,9 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { layout } from '@/components/ui/layout/layout';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
-import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
-import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { useActiveServerAccountScopeLifetime, useAutomationRunById, useServerScopedMachine } from '@/sync/domains/state/storage';
-import { sync } from '@/sync/sync';
-import { Modal } from '@/modal';
+import { useServerScopedMachine } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { navigateWithBlurOnWeb } from '@/utils/platform/deferOnWeb';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
@@ -27,18 +24,13 @@ import {
 } from '@/components/automations/list/automationListFormatting';
 import type {
     AutomationRunDetailPrivateContentInspection,
-    AutomationRunDetailRouteInspection,
 } from '@/sync/domains/automations/automationRunDetailInspection';
 import type { AutomationDefinitionRun } from '@/sync/domains/automations/automationTypes';
-import { formatAutomationErrorMessage } from '@/components/automations/automationErrorFormatting';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { Icon } from '@/components/ui/icons/Icon';
 import { TriggerFromActivityEvent } from '@/components/workflows/triggers/TriggerFromActivityEvent';
-import { createWorkflowRunRoute, type WorkflowRunRouteTarget } from '@/sync/domains/workflows/workflowRunRoute';
-import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
-import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { executeOccurrenceRunAction } from './occurrenceRunActions';
-import { resolveWorkflowRunProblemPresentation } from '../presentation/workflowProblemPresentation';
+import type { WorkflowRunRouteTarget } from '@/sync/domains/workflows/workflowRunRoute';
+import { useWorkflowOccurrenceRunDetail } from './useWorkflowOccurrenceRunDetail';
 
 const stylesheet = StyleSheet.create((theme) => ({
     loading: {
@@ -464,347 +456,47 @@ function AutomationRunDetailPrivateContent(props: Readonly<{
     );
 }
 
-type RouteScopedState<T> = Readonly<{
-    generation: number;
-    value: T;
-}>;
-
-type AccountScopedRouteState<T> = RouteScopedState<T> & Readonly<{
-    accountLifetime: ServerAccountScopeLifetime | null;
-}>;
-
 /**
  * The detail route reads direct detail only to retain the freshest safe Run
  * status alongside the incumbent bounded cache. It opens private envelopes
  * through the canonical Account crypto owner and keeps that projection route-
  * local, never in the bounded Run cache.
  */
-/** The occurrence reader of the canonical Run page; it never probes a managed Run to select a reader. */
+/** Resolves explicit managed correspondence before presenting a legacy occurrence; never probes another reader. */
 export function WorkflowOccurrenceRunContent(props: Readonly<{
     target: Extract<WorkflowRunRouteTarget, { kind: 'occurrence' }>;
     serverId: string | null;
-}>): React.ReactElement {
+    active: boolean;
+    renderManagedRun: (input: Readonly<{ runId: string; occurrenceDetails: React.ReactNode }>) => React.ReactElement;
+}>): React.ReactElement | null {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const router = useRouter();
     const { automationId, runId } = props.target;
-    const activeLifetime = useActiveServerAccountScopeLifetime();
-    const { binding, resolution } = useServerCredentialAccountScopeBinding(props.serverId);
-    const accountLifetime = props.serverId ? binding : activeLifetime;
-    const scopeUnavailable = props.serverId !== null && resolution.kind !== 'resolving' && binding === null;
-    // Resolved from the one Account-scoped Run row owner by exact `runId`. The
-    // Automation is route provenance here, not the key: a Run reached by deep
-    // link or notification resolves the same body with no list loaded.
-    const activeCachedRun = useAutomationRunById(runId);
-    const cachedRun = areServerAccountScopesEqual(activeLifetime?.scope, accountLifetime?.scope) ? activeCachedRun : null;
-    const routeCurrentRef = React.useRef({
-        automationId,
-        runId,
-        accountLifetime,
-        generation: 0,
-        mounted: true,
-    });
-    // Direct reads started before a mutation must not reclaim this route
-    // after its fresh post-mutation projection arrives.
-    const directReadEpochRef = React.useRef(0);
-    if (
-        routeCurrentRef.current.automationId !== automationId
-        || routeCurrentRef.current.runId !== runId
-        || routeCurrentRef.current.accountLifetime !== accountLifetime
-    ) {
-        routeCurrentRef.current = {
-            automationId,
-            runId,
-            accountLifetime,
-            generation: routeCurrentRef.current.generation + 1,
-            mounted: routeCurrentRef.current.mounted,
-        };
-    }
-    const routeGeneration = routeCurrentRef.current.generation;
-    React.useEffect(() => {
-        routeCurrentRef.current.mounted = true;
-        return () => {
-            routeCurrentRef.current.mounted = false;
-        };
-    }, []);
-    const isCurrentRoute = React.useCallback((expectedAutomationId: string | null, expectedRunId: string | null, expectedGeneration: number): boolean => {
-        const current = routeCurrentRef.current;
-        return current.mounted
-            && current.accountLifetime?.isCurrent() === true
-            && current.automationId === expectedAutomationId
-            && current.runId === expectedRunId
-            && current.generation === expectedGeneration;
-    }, []);
-    const [directDetailState, setDirectDetailState] = React.useState<AccountScopedRouteState<AutomationRunDetailRouteInspection | null>>({
-        generation: routeGeneration,
-        accountLifetime,
-        value: null,
-    });
-    const [loadingState, setLoadingState] = React.useState<RouteScopedState<boolean>>({
-        generation: routeGeneration,
-        value: cachedRun === null,
-    });
-    const [loadFailureState, setLoadFailureState] = React.useState<RouteScopedState<boolean>>({
-        generation: routeGeneration,
-        value: false,
-    });
-    const [cancellingState, setCancellingState] = React.useState<RouteScopedState<boolean>>({
-        generation: routeGeneration,
-        value: false,
-    });
-    const [retryingReplyHandoffState, setRetryingReplyHandoffState] = React.useState<RouteScopedState<boolean>>({
-        generation: routeGeneration,
-        value: false,
-    });
-    const [redeliveringResultState, setRedeliveringResultState] = React.useState<RouteScopedState<boolean>>({
-        generation: routeGeneration,
-        value: false,
-    });
-    const directDetail = directDetailState.generation === routeGeneration
-        && directDetailState.accountLifetime === accountLifetime
-        && accountLifetime?.isCurrent() === true
-        ? directDetailState.value
-        : null;
-    const directDetailIsCurrent = directDetail !== null
-        && (!cachedRun || directDetail.detail.revision > cachedRun.revision
-            || (directDetail.detail.revision === cachedRun.revision
-                && directDetail.detail.updatedAt >= cachedRun.updatedAt));
-    const run = directDetailIsCurrent
-        ? directDetail.detail
-        : cachedRun;
-    const runProblem = run ? resolveWorkflowRunProblemPresentation(run) : null;
-    const privateContent = directDetailIsCurrent
-        ? directDetail.privateContent
-        : null;
-    const workflowRunId = directDetailIsCurrent
-        ? directDetail.detail.workflowRun?.workflowRunId
-        : undefined;
-    const loading = loadingState.generation !== routeGeneration || loadingState.value
-        || (props.serverId !== null && resolution.kind === 'resolving');
-    const loadFailed = loadFailureState.generation === routeGeneration && loadFailureState.value;
-    const readNotCurrent = React.useRef(false);
-    readNotCurrent.current = loadFailed || directDetail === null;
-    const cancelling = cancellingState.generation === routeGeneration && cancellingState.value;
-    const retryingReplyHandoff = retryingReplyHandoffState.generation === routeGeneration
-        && retryingReplyHandoffState.value;
-    const redeliveringResult = redeliveringResultState.generation === routeGeneration
-        && redeliveringResultState.value;
-
-    React.useEffect(() => {
-        const retirement = accountLifetime?.onRetire(() => {
-            directReadEpochRef.current += 1;
-            setDirectDetailState((current) => (
-                current.accountLifetime === accountLifetime
-                    ? { ...current, value: null }
-                    : current
-            ));
-        });
-        return () => retirement?.dispose();
-    }, [accountLifetime]);
-
-    const refresh = React.useCallback(() => {
-        const request = {
-            automationId,
-            runId,
-            generation: routeGeneration,
-            directReadEpoch: directReadEpochRef.current,
-            accountLifetime,
-        };
-        const isCurrentRequest = () => (
-            isCurrentRoute(request.automationId, request.runId, request.generation)
-            && request.accountLifetime?.isCurrent() === true
-        );
-        if (!automationId || !runId || !request.accountLifetime?.isCurrent()) {
-            if (isCurrentRoute(request.automationId, request.runId, request.generation)) {
-                setDirectDetailState({
-                    generation: request.generation,
-                    accountLifetime: request.accountLifetime,
-                    value: null,
-                });
-                setLoadingState({ generation: request.generation, value: false });
-                setLoadFailureState({ generation: request.generation, value: false });
-            }
-            return;
-        }
-
-        setLoadFailureState({ generation: request.generation, value: false });
-        if (!cachedRun) {
-            setLoadingState({ generation: request.generation, value: true });
-        }
-        const directRead = sync.getAutomationRunDetailInspection(automationId, runId,
-            props.serverId ? { accountLifetime } : {})
-            .then((detail) => {
-                if (
-                    !isCurrentRequest()
-                    || directReadEpochRef.current !== request.directReadEpoch
-                ) return;
-                setDirectDetailState({
-                    generation: request.generation,
-                    accountLifetime: request.accountLifetime,
-                    value: detail,
-                });
-            })
-            // A direct route read may fail, but Account material/currentness
-            // unavailability is represented by the route projection itself.
-            // Keep the bounded cached Run projection visible on transport
-            // failure and never surface raw envelope bytes.
-            .catch(() => {
-                if (isCurrentRequest()) {
-                    setLoadFailureState({ generation: request.generation, value: true });
-                }
-            });
-        const rootPageRefresh = cachedRun || props.serverId
-            ? Promise.resolve()
-            : sync.fetchAutomationRuns(automationId).catch(() => {
-                if (isCurrentRequest()) {
-                    setLoadFailureState({ generation: request.generation, value: true });
-                }
-            });
-
-        void Promise.all([directRead, rootPageRefresh])
-            .finally(() => {
-                if (isCurrentRequest()) {
-                    setLoadingState({ generation: request.generation, value: false });
-                }
-            });
-    }, [accountLifetime, automationId, cachedRun, isCurrentRoute, props.serverId, routeGeneration, runId]);
-
-    React.useEffect(() => {
-        refresh();
-    }, [refresh]);
-    React.useEffect(() => !props.serverId ? undefined : subscribeHomeAccountChange(event => {
-        if (areServerProfileIdentifiersEquivalent(event.serverId, props.serverId)) refresh();
-    }, { reconnect: { readNotCurrent: () => readNotCurrent.current } }), [props.serverId, refresh]);
-
-    const handleCancel = React.useCallback(async () => {
-        if (!runId || !run) return;
-        const request = { automationId, runId, generation: routeGeneration };
-        if (!isCurrentRoute(request.automationId, request.runId, request.generation)) return;
-        try {
-            setCancellingState({ generation: request.generation, value: true });
-            if (!await executeOccurrenceRunAction('workflow.run.cancel', { runId: request.runId, expectedRevision: run.revision }, accountLifetime)) return;
-            if (!isCurrentRoute(request.automationId, request.runId, request.generation)) return;
-            directReadEpochRef.current += 1;
-            refresh();
-        } catch (error) {
-            if (!isCurrentRoute(request.automationId, request.runId, request.generation)) return;
-            await Modal.alert(
-                t('common.error'),
-                formatAutomationErrorMessage(error, t('automations.detail.runFailed')),
-            );
-        } finally {
-            if (isCurrentRoute(request.automationId, request.runId, request.generation)) {
-                setCancellingState({ generation: request.generation, value: false });
-            }
-        }
-    }, [accountLifetime, automationId, isCurrentRoute, refresh, routeGeneration, run, runId]);
-
-    const handleRetryReplyHandoff = React.useCallback(async () => {
-        if (!runId) return;
-        const request = { automationId, runId, generation: routeGeneration };
-        try {
-            setRetryingReplyHandoffState({ generation: request.generation, value: true });
-            if (!await executeOccurrenceRunAction('automation.run.reply_handoff.retry', { runId: request.runId }, accountLifetime)) return;
-            if (!isCurrentRoute(request.automationId, request.runId, request.generation)) return;
-            directReadEpochRef.current += 1;
-            if (props.serverId) { refresh(); return; }
-            setDirectDetailState({
-                generation: request.generation,
-                accountLifetime,
-                value: null,
-            });
-        } catch (error) {
-            if (!isCurrentRoute(request.automationId, request.runId, request.generation)) return;
-            await Modal.alert(
-                t('common.error'),
-                formatAutomationErrorMessage(error, t('automations.detail.runFailed')),
-            );
-        } finally {
-            if (isCurrentRoute(request.automationId, request.runId, request.generation)) {
-                setRetryingReplyHandoffState({ generation: request.generation, value: false });
-            }
-        }
-    }, [accountLifetime, automationId, isCurrentRoute, props.serverId, refresh, routeGeneration, runId]);
-
-    /**
-     * Sends the same result to the same conversation as a new delivery. It is
-     * offered only for custody the channel already accepted, because that is
-     * the one outcome the product cannot confirm for the user: a retry there
-     * would rejoin the delivery they are unsure about and change nothing.
-     * The revision shown on screen is what is authorized, so a second press
-     * after the Run moved is refused instead of sending twice.
-     */
-    const handleDeliverResultAgain = React.useCallback(async (expectedRevision: number) => {
-        if (!runId) return;
-        const request = { automationId, runId, generation: routeGeneration };
-        if (!isCurrentRoute(request.automationId, request.runId, request.generation)) return;
-        try {
-            setRedeliveringResultState({ generation: request.generation, value: true });
-            if (!await executeOccurrenceRunAction('automation.run.result.redeliver', { runId: request.runId, expectedRevision }, accountLifetime)) return;
-            if (!isCurrentRoute(request.automationId, request.runId, request.generation)) return;
-            directReadEpochRef.current += 1;
-            if (props.serverId) { refresh(); return; }
-            setDirectDetailState({
-                generation: request.generation,
-                accountLifetime,
-                value: null,
-            });
-        } catch (error) {
-            if (!isCurrentRoute(request.automationId, request.runId, request.generation)) return;
-            await Modal.alert(
-                t('common.error'),
-                formatAutomationErrorMessage(error, t('automations.detail.runFailed')),
-            );
-        } finally {
-            if (isCurrentRoute(request.automationId, request.runId, request.generation)) {
-                setRedeliveringResultState({ generation: request.generation, value: false });
-            }
-        }
-    }, [accountLifetime, automationId, isCurrentRoute, props.serverId, refresh, routeGeneration, runId]);
-
+    const detail = useWorkflowOccurrenceRunDetail(props);
+    const { accountLifetime, scopeUnavailable, run, runProblem, privateContent, currentDetail, loading, loadFailed, cancelling, refresh, handleCancel } = detail;
     const unknownDate = t('automations.detail.unknownDate');
     const title = runId ? t('runs.runLabel', { runId }) : t('runs.title');
     const canCancel = run?.state === 'queued' || run?.state === 'claimed' || run?.state === 'running';
-    // Retry exists only for a block an external change can still repair. When
-    // the server has classified this exact Run's frozen handoff facts as
-    // invalid, the recovery route refuses it, so the surface states that plainly
-    // instead of offering an action that cannot work. An older server that
-    // sends no classification keeps the previous behaviour.
-    const replyHandoffUnrecoverable = run?.replyHandoffState === 'blocked'
-        && 'replyHandoffRecoverable' in run
-        && run.replyHandoffRecoverable === false;
-    const occurrenceKey = run?.cause.kind === 'trigger' || run?.cause.kind === 'conversation'
-        ? run.cause.occurrenceKey
-        : null;
-    const sourceSelectorId = run?.cause.kind === 'trigger' && run.cause.triggerKind === 'pluginEvent'
-        ? run.cause.evidence.sourceSelectorId
-        : null;
-    const eventRef = run?.cause.kind === 'trigger' && run.cause.triggerKind === 'pluginEvent'
-        ? run.cause.evidence.eventRef
-        : null;
-    const triggerCause = run?.cause.kind === 'trigger' ? run.cause : null;
-    const triggerRetired = run?.triggerRetired === true;
     // A Run that produced a Session is the user's only pointer back to the
     // work it started, so the detail keeps that reachable rather than leaving
     // the identifier in the transport projection.
     const producedSessionId = run?.producedSessionId ?? null;
     // Only the direct detail response carries the native execution identity
     // and committed transition history; the cached list projection does not.
-    const nativeExecutionRunId = directDetailIsCurrent
-        ? directDetail.detail.executionNativeRunId
-        : null;
-    const nativeExecutionCallId = directDetailIsCurrent
-        ? directDetail.detail.executionNativeCallId
-        : null;
-    const nativeExecutionSidechainId = directDetailIsCurrent
-        ? directDetail.detail.executionNativeSidechainId
-        : null;
-    const runHistory = directDetailIsCurrent ? directDetail.detail.events : [];
+    const nativeExecutionRunId = currentDetail?.detail.executionNativeRunId ?? null;
+    const nativeExecutionCallId = currentDetail?.detail.executionNativeCallId ?? null;
+    const nativeExecutionSidechainId = currentDetail?.detail.executionNativeSidechainId ?? null;
+    const runHistory = currentDetail?.detail.events ?? [];
     const claimedByMachine = useServerScopedMachine(accountLifetime?.scope.serverId ?? '', run?.claimedByMachineId ?? '');
     const claimedByLabel = claimedByMachine ? getMachineDisplayName(claimedByMachine) : null;
 
     if (scopeUnavailable) return <SurfaceStateCard testID="workflow-run-unavailable" kind="unavailable"
         title={t('workflows.destination.history.loadFailedTitle')} reason={t('workflows.destination.history.loadFailedBody')} />;
+    const managedRunId = currentDetail?.detail.workflowRun?.workflowRunId;
+    if (managedRunId !== undefined) return props.renderManagedRun({
+        runId: managedRunId, occurrenceDetails: <WorkflowOccurrenceRunFacts detail={detail} />,
+    });
 
     return (
         <ItemList>
@@ -896,15 +588,6 @@ export function WorkflowOccurrenceRunContent(props: Readonly<{
                                     mode="info"
                                 />
                             ) : null}
-                            {replyHandoffUnrecoverable ? (
-                                <Item
-                                    testID="automation-run-reply-handoff-unrecoverable"
-                                    title={t('automations.detail.runMeta.replyHandoffUnrecoverableTitle')}
-                                    subtitle={t('automations.detail.runMeta.replyHandoffUnrecoverableSubtitle')}
-                                    showChevron={false}
-                                    mode="info"
-                                />
-                            ) : null}
                             <Item
                                 title={t('automations.detail.runMeta.admitted', {
                                     time: formatDate(run.createdAt, unknownDate),
@@ -978,27 +661,6 @@ export function WorkflowOccurrenceRunContent(props: Readonly<{
                                     mode="info"
                                 />
                             ) : null}
-                            {run.replyHandoffState !== 'none' ? (
-                                <Item
-                                    title={t('automations.detail.runMeta.replyHandoffTitle')}
-                                    detail={automationRunReplyHandoffStateLabels[run.replyHandoffState]()}
-                                    subtitle={joinRunFactLines([
-                                        run.replyHandoffAttempt > 0
-                                            ? t('automations.detail.runMeta.replyHandoffAttempt', {
-                                                attempt: run.replyHandoffAttempt,
-                                            })
-                                            : null,
-                                        run.replyHandoffDueAt === null
-                                            ? null
-                                            : t('automations.detail.runMeta.replyHandoffDue', {
-                                                time: formatDate(run.replyHandoffDueAt, unknownDate),
-                                            }),
-                                    ])}
-                                    subtitleLines={0}
-                                    showChevron={false}
-                                    mode="info"
-                                />
-                            ) : null}
                             {nativeExecutionRunId ? (
                                 <Item
                                     testID="automation-run-detail-native-execution"
@@ -1021,37 +683,7 @@ export function WorkflowOccurrenceRunContent(props: Readonly<{
                                     showChevron={false}
                                 />
                             ) : null}
-                            {run.replyHandoffState === 'blocked' && !replyHandoffUnrecoverable ? (
-                                <Item
-                                    testID="automation-run-retry-reply-handoff"
-                                    title={t('common.retry')}
-                                    subtitle={t('automations.detail.runMeta.replyHandoffTitle')}
-                                    onPress={() => void handleRetryReplyHandoff()}
-                                    loading={retryingReplyHandoff}
-                                    showChevron={false}
-                                />
-                            ) : null}
-                            {run.replyHandoffState === 'accepted' ? (
-                                <Item
-                                    testID="automation-run-deliver-result-again"
-                                    title={t('automations.detail.runMeta.replyHandoffDeliverAgainTitle')}
-                                    subtitle={t('automations.detail.runMeta.replyHandoffDeliverAgainSubtitle')}
-                                    onPress={() => void handleDeliverResultAgain(run.revision)}
-                                    loading={redeliveringResult}
-                                    showChevron={false}
-                                />
-                            ) : null}
-                            {workflowRunId ? (
-                                <Item
-                                    testID="automation-run-open-workflow"
-                                    title={t('runs.runLabel', { runId: workflowRunId })}
-                                    subtitle={t('automations.detail.runDetail.title')}
-                                    onPress={() => navigateWithBlurOnWeb(() => {
-                                        if (!accountLifetime?.isCurrent()) return;
-                                        router.push(createWorkflowRunRoute(workflowRunId, accountLifetime.scope.serverId) as never);
-                                    })}
-                                />
-                            ) : null}
+                            <WorkflowOccurrenceDeliveryItems detail={detail} />
                             {producedSessionId ? (
                                 <Item
                                     testID="automation-run-detail-produced-session"
@@ -1079,6 +711,103 @@ export function WorkflowOccurrenceRunContent(props: Readonly<{
                                 />
                             ) : null}
                         </ItemGroup>
+                        <WorkflowOccurrenceCauseAndHistory run={run} events={runHistory} />
+                        {privateContent ? (
+                            <AutomationRunDetailPrivateContent content={privateContent} accountLifetime={accountLifetime} />
+                        ) : null}
+                    </>
+                )}
+            </View>
+        </ItemList>
+    );
+}
+
+
+type OccurrenceDetail = ReturnType<typeof useWorkflowOccurrenceRunDetail>;
+
+function WorkflowOccurrenceDeliveryItems({ detail }: Readonly<{ detail: OccurrenceDetail }>): React.ReactElement | null {
+    const { run, retryingReplyHandoff, redeliveringResult, handleRetryReplyHandoff, handleDeliverResultAgain } = detail;
+    if (run === null) return null;
+    const unknownDate = t('automations.detail.unknownDate');
+    // Retry exists only for a block an external change can still repair. When
+    // the server has classified this exact Run's frozen handoff facts as
+    // invalid, the recovery route refuses it, so the surface states that plainly
+    // instead of offering an action that cannot work. An older server that
+    // sends no classification keeps the previous behaviour.
+    const replyHandoffUnrecoverable = run?.replyHandoffState === 'blocked'
+        && 'replyHandoffRecoverable' in run
+        && run.replyHandoffRecoverable === false;
+    return <>
+                            {replyHandoffUnrecoverable ? (
+                                <Item
+                                    testID="automation-run-reply-handoff-unrecoverable"
+                                    title={t('automations.detail.runMeta.replyHandoffUnrecoverableTitle')}
+                                    subtitle={t('automations.detail.runMeta.replyHandoffUnrecoverableSubtitle')}
+                                    showChevron={false}
+                                    mode="info"
+                                />
+                            ) : null}
+                            {run.replyHandoffState !== 'none' ? (
+                                <Item
+                                    title={t('automations.detail.runMeta.replyHandoffTitle')}
+                                    detail={automationRunReplyHandoffStateLabels[run.replyHandoffState]()}
+                                    subtitle={joinRunFactLines([
+                                        run.replyHandoffAttempt > 0
+                                            ? t('automations.detail.runMeta.replyHandoffAttempt', {
+                                                attempt: run.replyHandoffAttempt,
+                                            })
+                                            : null,
+                                        run.replyHandoffDueAt === null
+                                            ? null
+                                            : t('automations.detail.runMeta.replyHandoffDue', {
+                                                time: formatDate(run.replyHandoffDueAt, unknownDate),
+                                            }),
+                                    ])}
+                                    subtitleLines={0}
+                                    showChevron={false}
+                                    mode="info"
+                                />
+                            ) : null}
+                            {run.replyHandoffState === 'blocked' && !replyHandoffUnrecoverable ? (
+                                <Item
+                                    testID="automation-run-retry-reply-handoff"
+                                    title={t('common.retry')}
+                                    subtitle={t('automations.detail.runMeta.replyHandoffTitle')}
+                                    onPress={() => void handleRetryReplyHandoff()}
+                                    loading={retryingReplyHandoff}
+                                    showChevron={false}
+                                />
+                            ) : null}
+                            {run.replyHandoffState === 'accepted' ? (
+                                <Item
+                                    testID="automation-run-deliver-result-again"
+                                    title={t('automations.detail.runMeta.replyHandoffDeliverAgainTitle')}
+                                    subtitle={t('automations.detail.runMeta.replyHandoffDeliverAgainSubtitle')}
+                                    onPress={() => void handleDeliverResultAgain(run.revision)}
+                                    loading={redeliveringResult}
+                                    showChevron={false}
+                                />
+                            ) : null}
+    </>;
+}
+
+function WorkflowOccurrenceCauseAndHistory({ run, events: runHistory }: Readonly<{
+    run: NonNullable<OccurrenceDetail['run']>;
+    events: AutomationV3RunDetail['events'];
+}>): React.ReactElement {
+    const unknownDate = t('automations.detail.unknownDate');
+    const occurrenceKey = run?.cause.kind === 'trigger' || run?.cause.kind === 'conversation'
+        ? run.cause.occurrenceKey
+        : null;
+    const sourceSelectorId = run?.cause.kind === 'trigger' && run.cause.triggerKind === 'pluginEvent'
+        ? run.cause.evidence.sourceSelectorId
+        : null;
+    const eventRef = run?.cause.kind === 'trigger' && run.cause.triggerKind === 'pluginEvent'
+        ? run.cause.evidence.eventRef
+        : null;
+    const triggerCause = run?.cause.kind === 'trigger' ? run.cause : null;
+    const triggerRetired = run?.triggerRetired === true;
+    return <>
                         <ItemGroup
                             title={t('automationPages.run.causeTitle')}
                             description={t('automationPages.run.causeDescription')}
@@ -1174,12 +903,31 @@ export function WorkflowOccurrenceRunContent(props: Readonly<{
                                 ))}
                             </ItemGroup>
                         ) : null}
-                        {privateContent ? (
-                            <AutomationRunDetailPrivateContent content={privateContent} accountLifetime={accountLifetime} />
-                        ) : null}
-                    </>
-                )}
-            </View>
-        </ItemList>
-    );
+    </>;
+}
+
+/** Delivery recovery and immutable provenance supplement the canonical managed Run body. */
+function WorkflowOccurrenceRunFacts({ detail }: Readonly<{ detail: OccurrenceDetail }>): React.ReactElement {
+    const { run, currentDetail, loading, loadFailed, refresh } = detail;
+    return <>
+        {loadFailed ? <AttentionBanner testID="automation-run-detail-stale-refresh-error"
+            title={t('runs.runDetails.failedToLoad')} announce="alert" accessibilityLiveRegion="assertive"
+            action={{ label: t('common.retry'), onPress: refresh, testID: 'automation-run-detail-stale-refresh-retry' }} /> : null}
+        {run === null ? loading ? <ActivitySpinner size="small" /> : null : <>
+            {run.replyHandoffState === 'none' ? null : <ItemGroup title={t('automations.detail.runMeta.replyHandoffTitle')}>
+                <WorkflowOccurrenceDeliveryItems detail={detail} />
+            </ItemGroup>}
+            <WorkflowOccurrenceCauseAndHistory run={run} events={currentDetail?.detail.events ?? []} />
+        </>}
+    </>;
+}
+
+/** Direct managed links acquire their occurrence facts through the same reader, with no legacy page mounted. */
+export function WorkflowOccurrenceRunDetails(props: Readonly<{
+    target: Extract<WorkflowRunRouteTarget, { kind: 'occurrence' }>;
+    serverId: string | null;
+    active: boolean;
+}>): React.ReactElement {
+    const detail = useWorkflowOccurrenceRunDetail(props);
+    return <WorkflowOccurrenceRunFacts detail={detail} />;
 }

@@ -23,8 +23,10 @@ import { sealAutomationRunFailureDetailStoredEnvelopeV1} from '@happier-dev/prot
 import { installAutomationScreensCommonModuleMocks } from '@/components/automations/screens/automationScreensTestHelpers';
 import type { WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 
-const routeParamsState = vi.hoisted(() => ({ id: 'a1', runId: 'run-1', serverId: undefined as string | undefined }));
+const routeParamsState = vi.hoisted(() => ({ id: 'a1', runId: 'run-1', serverId: undefined as string | undefined,
+    target: 'occurrence' as 'occurrence' | 'managed' }));
 const routerPushSpy = vi.hoisted(() => vi.fn());
+const routerReplaceSpy = vi.hoisted(() => vi.fn());
 const modalConfirmSpy = vi.hoisted(() => vi.fn(async () => false));
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 const harness = createHomeGovernanceHarness();
@@ -39,8 +41,8 @@ installAutomationScreensCommonModuleMocks({
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         const expoRouterMock = createExpoRouterMock({
-            params: () => ({ ...routeParamsState, target: 'occurrence', automationId: routeParamsState.id }),
-            router: { push: routerPushSpy },
+            params: () => ({ ...routeParamsState, ...(routeParamsState.target === 'occurrence' ? { automationId: routeParamsState.id } : {}) }),
+            router: { push: routerPushSpy, replace: routerReplaceSpy },
         });
         return {
             ...expoRouterMock.module,
@@ -159,14 +161,7 @@ installAutomationScreensCommonModuleMocks({
     storage: async (importOriginal) => await importOriginal(),
     unistyles: async () => {
         const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-        return createUnistylesMock({
-            theme: {
-                colors: {
-                    textSecondary: '#777',
-                    text: '#111',
-                },
-            },
-        });
+        return createUnistylesMock();
     },
 });
 
@@ -185,6 +180,7 @@ vi.mock('@/components/ui/lists/Item', () => ({
         props,
         React.createElement('Text', null, props.title),
         props.subtitle ? React.createElement('Text', null, props.subtitle) : null,
+        props.detail ? React.createElement('Text', null, props.detail) : null,
         props.rightElement ?? null,
     ),
 }));
@@ -288,7 +284,9 @@ describe('canonical Run page occurrence target', () => {
         routeParamsState.id = 'a1';
         routeParamsState.runId = 'run-1';
         routeParamsState.serverId = undefined;
+        routeParamsState.target = 'occurrence';
         routerPushSpy.mockReset();
+        routerReplaceSpy.mockReset();
         modalConfirmSpy.mockReset();
         modalAlertSpy.mockReset();
         modalConfirmSpy.mockResolvedValue(false);
@@ -723,7 +721,8 @@ describe('canonical Run page occurrence target', () => {
         await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('run run-2'));
     });
 
-    it('keeps Channels recovery reachable while linking Workflow-owned admitted details', async () => {
+    it.each(['occurrence', 'managed'] as const)('shows the canonical managed Run and preserves Channels recovery from a %s route', async (target) => {
+        routeParamsState.target = target;
         const row = run({ state: 'succeeded', replyHandoffState: 'blocked',
             cause: { kind: 'conversation', occurredAt: 1, occurrenceKey: AutomationOccurrenceKeyV1Schema.parse('A'.repeat(43)) } });
         const definition = createWorkflowDefinitionFixture({ defaults: {
@@ -762,18 +761,39 @@ describe('canonical Run page occurrence target', () => {
             if (operation === 'invocations.list') return { body: { invocations: [], parentRevision: workflowRun.revision } };
             return { status: 400, body: { error: 'unexpected_storage_operation' } };
         } });
-        harness.answer(serverId, DETAIL_PATH, { body: { ...detail(row, { replyHandoffRecoverable: true, resultEnvelope }),
+        harness.answer(serverId, DETAIL_PATH, { body: { ...detail(row, { replyHandoffRecoverable: true, resultEnvelope,
+            events: [{ at: 10, type: 'run_started', machineId: 'machine-a', errorCode: null, executionAttempt: null, outcome: null, reason: null }],
+        }),
             workflowRun: { recipeKind: 'workflow-v2', workflowRunId: row.id } } });
-        const { sync } = await import('@/sync/sync');
-        const inspected = await sync.getAutomationRunDetailInspection('a1', row.id);
-        expect(inspected.detail.workflowRun).toEqual({ recipeKind: 'workflow-v2', workflowRunId: row.id });
-        const screen = await open(null);
+        await cache([]);
+        const { WorkflowRunScreen } = await import('../screens/WorkflowRunScreen');
+        const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+        const { ModalProvider } = await import('@/modal');
+        const screen = await renderScreen(<AppPaneProvider><ModalProvider><WorkflowRunScreen /></ModalProvider></AppPaneProvider>);
+        await waitForHomeGovernance(() => expect(routerReplaceSpy.mock.calls.length > 0
+            || screen.findAllByProps({ testID: 'workflow-run-screen' }).length > 0).toBe(true));
+        expect(screen.findAllByProps({ testID: 'workflow-run-screen' }).length).toBeGreaterThan(0);
+        expect(routerPushSpy).not.toHaveBeenCalled();
+        expect(screen.findAllByProps({ testID: 'automation-run-open-workflow' })).toHaveLength(0);
+        expect(screen.findAllByProps({ testID: 'automation-run-detail-header' })).toHaveLength(0);
         await waitForHomeGovernance(() => expect(screen.findAllByProps({ testID: 'automation-run-retry-reply-handoff' }).length).toBeGreaterThan(0));
-        expect(screen.findAllByProps({ testID: 'automation-run-open-workflow' }).length,
-            JSON.stringify({ text: screen.getTextContent(), detailRequests: harness.requestsFor(DETAIL_PATH).map(({ path }) => path) })).toBeGreaterThan(0);
-        await screen.pressByTestIdAsync('automation-run-open-workflow');
-        expect(routerPushSpy).toHaveBeenCalledWith(`/workflows/runs/run-1?serverId=${encodeURIComponent(serverId)}`);
-        expect(screen.findAllByProps({ testID: 'automation-run-retry-reply-handoff' }).length).toBeGreaterThan(0);
+        expect(screen.getTextContent()).toContain('Conversation');
+        expect(screen.getTextContent()).toContain('Started running');
+        expect(harness.requestsFor(DETAIL_PATH)).toHaveLength(1);
+        const retryPath = '/v3/automations/runs/run-1/retry-reply-handoff';
+        harness.answer(serverId, 'POST ' + retryPath, { body: { run: { ...row, revision: 2, replyHandoffState: 'ready', updatedAt: 12 } } });
+        await screen.pressByTestIdAsync('automation-run-retry-reply-handoff');
+        expect(harness.requestsFor(retryPath)).toHaveLength(1);
+    });
+
+    it('acquires occurrence details only while the managed Run is presented', async () => {
+        const { WorkflowOccurrenceRunDetails } = await import('./WorkflowOccurrenceRunContent');
+        const target = { kind: 'occurrence', automationId: 'a1', runId: 'run-1' } as const;
+        const screen = await renderScreen(<WorkflowOccurrenceRunDetails target={target} serverId={serverId} active={false} />);
+        expect(harness.requestsFor(DETAIL_PATH)).toHaveLength(0);
+        await screen.update(<WorkflowOccurrenceRunDetails target={target} serverId={serverId} active />);
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Cause'));
+        expect(harness.requestsFor(DETAIL_PATH)).toHaveLength(1);
     });
 
     it('announces retry when a cold direct read and root-page refresh fail, then recovers', async () => {

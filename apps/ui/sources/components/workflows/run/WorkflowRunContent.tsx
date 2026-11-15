@@ -157,6 +157,8 @@ export type WorkflowRunOperationKind =
     | 'delete';
 
 export type WorkflowRunContentProps = Readonly<{
+    /** Occurrence-owned delivery recovery and immutable cause/history, within this page's scroll owner. */
+    occurrenceDetails?: React.ReactNode;
     active?: boolean;
     serverId?: string | null;
     /** Exact Session resolved by the canonical conversation owner, including shared conversations. */
@@ -1800,6 +1802,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
 
     const footer = (
         <View style={styles.root}>
+            {props.occurrenceDetails == null ? null : <View style={styles.pageSection}>{props.occurrenceDetails}</View>}
             {technicalOpen ? (
             <View testID={`${testIDPrefix}-technical`} style={[styles.section, styles.pageSection]}>
                 <Text style={styles.sectionLabel}>{t('workflows.run.technicalDetails')}</Text>

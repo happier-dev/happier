@@ -135,7 +135,7 @@ import { RunWorkNotifications } from '@/components/sessions/work/RunWorkNotifica
 import { useDetailsPaneAvailable } from '@/components/appShell/panes/details/detailsPaneAvailability';
 import { createWorkflowDefinitionRoute, createWorkflowInvocationRoute, createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { WorkflowInvocationReview, type WorkflowInvocationReviewBuffers } from '../run/WorkflowInvocationReview';
-import { WorkflowOccurrenceRunContent } from '../run/WorkflowOccurrenceRunContent';
+import { WorkflowOccurrenceRunContent, WorkflowOccurrenceRunDetails } from '../run/WorkflowOccurrenceRunContent';
 import { readWorkflowRunTarget } from '@/sync/domains/workflows/workflowRunRoute';
 import { readSessionRouteServerId } from '@/hooks/session/sessionRouteServerScope';
 import { useWorkflowPluginSource } from '../library/workflowLibraryReads';
@@ -320,6 +320,9 @@ export function WorkflowRunScreen(props: Readonly<{
     const params = useDestinationParams<{ runId?: string | string[]; invocationId?: string | string[]; serverId?: string | string[];
         target?: string | string[]; automationId?: string | string[] }>();
     const target = readWorkflowRunTarget(params);
+    const hostActivelyViewed = useHostActivelyViewed();
+    const destinationVisible = useDestinationVisibility();
+    const activelyViewed = hostActivelyViewed && destinationVisible;
     const runId = target?.runId ?? null;
     const invocationId = readWorkflowInvocationId(firstParam(params.invocationId));
     const serverId = firstParam(params.serverId);
@@ -343,7 +346,10 @@ export function WorkflowRunScreen(props: Readonly<{
         {/* Beside the visible Workflows column, which already lists the Runs, the page has no Back of its
             own (as the editor): the column is where you came from (lab run-A). */}
         <NavigationBackChromeProvider control={columnVisible ? null : hosted ? pageBack : inheritedBack}>
-            {target?.kind === 'occurrence' ? <WorkflowOccurrenceRunContent target={target} serverId={readSessionRouteServerId(params)} />
+            {target?.kind === 'occurrence' ? <WorkflowOccurrenceRunContent target={target} serverId={readSessionRouteServerId(params)} active={activelyViewed}
+                renderManagedRun={({ runId: managedRunId, occurrenceDetails }) => <WorkflowRunBody runId={managedRunId}
+                    occurrenceDetails={occurrenceDetails} onCloseInvocation={onBack} embedded={props.embedded === true}
+                    acknowledgeFailure={props.acknowledgeFailure !== false} />} />
                 : target === null ? <RunStateFrame embedded={props.embedded === true}>
                     <View style={styles.centered}><SurfaceStateCard testID="workflow-run-unavailable" kind="unavailable"
                         title={t('workflows.destination.history.loadFailedTitle')} reason={t('workflows.destination.history.loadFailedBody')} /></View>
@@ -357,7 +363,7 @@ const selectMachineRevokedAt = (machine: Machine | null) => machine?.revokedAt;
 const selectMachineName = (machine: Machine | null): string | null => getMachineDisplayName(machine);
 const selectMachineHomeDir = (machine: Machine | null): string | null => machine?.metadata?.homeDir ?? null;
 
-function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedded?: boolean; acknowledgeFailure: boolean }>): React.ReactElement {
+function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: React.ReactNode; onCloseInvocation: () => void; embedded?: boolean; acknowledgeFailure: boolean }>): React.ReactElement {
     const openExecutionRunDetails = useOpenExecutionRunDetails();
     const { theme } = useUnistyles();
     const contentStyle = React.useMemo(() => ({
@@ -375,7 +381,7 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
     const sidePanesAvailable = useDetailsPaneAvailable();
     const detailsPaneAvailable = sidePanesAvailable && props.embedded !== true;
     const params = useDestinationParams<{ runId?: string | string[]; invocationId?: string | string[]; serverId?: string | string[] }>();
-    const runId = readWorkflowRunId(firstParam(params.runId));
+    const runId = props.runId ?? readWorkflowRunId(firstParam(params.runId));
     const requestedInvocationId = readWorkflowInvocationId(firstParam(params.invocationId));
     const exactServerId = firstParam(params.serverId);
     const activeLifetime = useActiveServerAccountScopeLifetime();
@@ -2158,6 +2164,10 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
             style={props.embedded ? styles.embeddedRoot : styles.root}
         >
             <WorkflowRunContent
+                occurrenceDetails={props.occurrenceDetails ?? (summary.origin.kind === 'automation'
+                    ? <WorkflowOccurrenceRunDetails target={{ kind: 'occurrence', automationId: summary.origin.automationId, runId: summary.id }}
+                        serverId={activeAccountScope?.serverId ?? null} active={activelyViewed} />
+                    : null)}
                 runAgainStatus={runAgainStatus}
                 embedded={props.embedded === true}
                 notificationOperation={activeAccountScope !== null && visibleAcceptedContext !== null
