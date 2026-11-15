@@ -632,8 +632,9 @@ function WorkflowsFirstVisit(props: Readonly<{ onNewWorkflow: () => void; onImpo
                     primaryAction={{ label: t('workflows.newWorkflow'), onPress: props.onNewWorkflow, testID: 'workflows-home:firstVisit:new' }}
                     secondaryAction={{ label: t('workflows.authoring.create'), onPress: props.onCreateWithAgent, testID: 'workflows-home:firstVisit:agent' }}
                 />
-                {columnListsBuiltins ? null : <WorkflowBuiltinsSection />}
+                {/* The examples are the invitation and follow it; without a column, Built-in comes after them. */}
                 <WorkflowExamplesSection presentation="featured" />
+                {columnListsBuiltins ? null : <WorkflowBuiltinsSection />}
                 <View style={styles.importLine}>
                     <Text style={styles.importPrompt}>{t('workflows.destination.importPrompt')}</Text>
                     <RoundButton

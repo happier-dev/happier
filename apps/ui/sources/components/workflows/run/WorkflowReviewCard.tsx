@@ -183,14 +183,15 @@ export function WorkflowReviewValue({ value, contract, blockKind, testIDPrefix: 
         return reading(<SectionContentRow><MarkdownView testID={`${prefix}-value`} markdown={value} /></SectionContentRow>);
     }
     // A structured result reads as label/value rows (lab run-A_completed): fields by their human names, a list
-    // one row per item. Raw serialization is only ever behind Copy.
+    // one row per item. Raw serialization is only ever behind Copy. Values carry the reading role so they grow
+    // with the text size beside their labels; an inherited size does not scale on web.
     const titles = contract?.kind === 'json' ? Object.fromEntries(Object.entries(contract.schema.properties ?? {})
         .map(([name, schema]) => [name, schema.title])) : undefined;
     const rows = readWorkflowResultRows(value, titles, blockKind);
     return rows ? <VirtualizedList data={rows} keyExtractor={row => row.key} style={styles.previewScroll} {...scrollProps}
         renderItem={({ item: row }) => <Item key={row.key} title={row.label} showChevron={false} accessoryLayout="stacked"
-            rightElement={<Text selectable style={styles.primary} testID={`${prefix}-value-${row.key}`}>{row.text}</Text>} />} />
-        : reading(<SectionContentRow><Text selectable style={styles.primary} testID={`${prefix}-value`}>{serializeWorkflowReviewValue(value, contract)}</Text></SectionContentRow>);
+            rightElement={<Text selectable variant="reading" style={styles.primary} testID={`${prefix}-value-${row.key}`}>{row.text}</Text>} />} />
+        : reading(<SectionContentRow><Text selectable variant="reading" style={styles.primary} testID={`${prefix}-value`}>{serializeWorkflowReviewValue(value, contract)}</Text></SectionContentRow>);
 }
 
 function WorkflowReviewFullValue(props: ReviewValueProps): React.ReactElement {
