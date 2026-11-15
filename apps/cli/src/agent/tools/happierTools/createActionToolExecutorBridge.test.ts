@@ -1077,7 +1077,7 @@ describe('createActionToolExecutorBridge', () => {
     });
   });
 
-  it('normalizes execution.run.wait success payloads instead of returning undefined tool content', async () => {
+  it('preserves execution.run.wait success payloads for the declared output schema', async () => {
     const bridge = createActionToolExecutorBridge({
       surface: 'mcp',
       executor: {
@@ -1109,6 +1109,7 @@ describe('createActionToolExecutorBridge', () => {
     expect(res).toEqual({
       ok: true,
       result: {
+        ok: true,
         status: 'failed',
         result: {
           run: {
@@ -1151,6 +1152,7 @@ describe('createActionToolExecutorBridge', () => {
     expect(res).toEqual({
       ok: true,
       result: {
+        ok: true,
         status: 'running',
         disposition: 'observation_timeout',
         runId: 'run-1',

@@ -68,16 +68,12 @@ export function normalizeExecutionRunToolResult(
     };
   }
 
-  if (ok === true) {
-    const data = readOwnDataProperty(result, 'data');
-    if (hasOwnDataProperty(result, 'data')) {
-      return { ok: true, result: data };
-    }
-
-    const { ok: _ok, ...payload } = result;
-    return { ok: true, result: payload };
+  if (ok === true && hasOwnDataProperty(result, 'data')) {
+    return { ok: true, result: readOwnDataProperty(result, 'data') };
   }
 
+  // Wait dispositions and send/stop acknowledgements own their `ok` field;
+  // only the service's explicit `data` envelope is unwrapped above.
   // `execution.run.start` returns its accepted run identity directly. It may
   // contain a nested typed waiter timeout, but that is observation metadata,
   // not a failed start and must keep the Run ID available to the caller.
