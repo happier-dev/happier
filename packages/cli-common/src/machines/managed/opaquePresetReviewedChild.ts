@@ -1,5 +1,6 @@
 import { createHostReviewedChildPortV1, retainManagedOpaquePresetCustodianAdmissionV1, type ActionExecutorContext,
   type ActionExecuteResult, type HostReviewedChildPortV1, type ManagedOpaquePresetCustodianAdmissionV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { prepareHostReviewedChildPolicyV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleApproval';
 import { readMachineProvisionerActionRolesV1, type MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { ValidatedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
@@ -23,13 +24,18 @@ export function createManagedOpaquePresetReviewedChildPortV1(params: Readonly<{
     .find(candidate => candidate.action === params.localId && candidate.role === params.role);
   if (!binding || !params.context.surface) return null;
   const action = { pluginId: params.launch.provider.pluginId, localId: params.localId };
+  // The canonical child policy owner decides explicit Require for the child
+  // the parent could not list before the custodian opened it.
+  const prepared = prepareHostReviewedChildPolicyV1({ action, role: binding.role }, params.context);
   const policy = params.custody === undefined ? { action, role: binding.role, surface: params.context.surface }
     : retainManagedOpaquePresetCustodianAdmissionV1({ action, role: binding.role, surface: params.context.surface }, {
       parent: params.parent, context: params.context, admission: params.custody,
     });
-  if (policy === null) {
-    // A supplied opaque custody admission is mandatory. Reuse the host
-    // issuer's typed refusal rather than falling through to requester policy.
+  if (policy === null || !prepared || prepared.requiredActionIds.length > 0) {
+    // A supplied opaque custody admission is mandatory. The opened child also
+    // has no later review that could hold the requester's Ask, so explicit
+    // Require (or an unresolvable policy) refuses before any native effect.
+    // Reuse the host issuer's typed refusal.
     return createHostReviewedChildPortV1({ actionId: params.parent.actionId, input: params.parent.input,
       context: params.context, reviewAdmitted: true });
   }

@@ -1,7 +1,7 @@
+import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
 import { registerDaemonExternalActionRoute } from '@/daemon/externalActions/registerDaemonExternalActionRoute';
 import fastify from 'fastify';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
-import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
 import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -1896,7 +1896,8 @@ describe('opaque managed preset admission', () => {
                 canonicalServerUrl: 'https://home.example', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' }) });
 
         await expect(acquisition.execute('machines.managed.acquire', carrier.acquisition, { requestId: 'team-e2ee-request',
-            context: { runtimeAccountId: 'team-member', defaultSessionMachineId: controller.machineId, actionRequestId: 'team-e2ee-request', surface: 'cli', externalActionExecutionAuthorization: authorization,
+            context: { runtimeAccountId: 'team-member', defaultSessionMachineId: controller.machineId, actionRequestId: 'team-e2ee-request', surface: 'cli',
+                actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }), externalActionExecutionAuthorization: authorization,
                 externalActionTarget: root.binding.target,
                 operationAcceptance: { operationId: 'team-e2ee-operation', accept(value) { accepted.push(value); } },
                 operationOwnerUpdate: { update() {} } },
@@ -2088,7 +2089,8 @@ describe('opaque managed preset admission', () => {
             const executeAcquisition = (context: ActionExecutorContext, dispatchedInput: unknown = parentInput) => operations.observeExecution({
                 actionId: 'machines.managed.acquire', input: dispatchedInput, actionRequestId: requestId,
                 execute: async operationContext => {
-                    const admittedContext = { ...context, ...operationContext };
+                    // The executor resolves the requester's Action settings onto every admitted context.
+                    const admittedContext = { actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }), ...context, ...operationContext };
                     expect(admittedContext.runtimeAccountId).toBe(principal.accountId);
                     if (requesterAccountId !== 'owner') expect(admittedContext.bypassApprovals === true).toBe(delegated);
                     if (requesterAccountId === 'owner') expect(admittedContext.defaultSessionMachineId).toBeUndefined();

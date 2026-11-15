@@ -16,6 +16,7 @@ import { AccountSettingsSchema, FeaturesResponseSchema, AUTHORITY_CEILING_HEADER
 import { ApprovalQueueListResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
 import { ApprovalExecutionV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { MachineProvisionersListResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { MachinePresetActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { MachineSetupApplyInputV1Schema, MachineSetupCombinedPlanInputV1Schema, MachineSetupCombinedPlanResultV1Schema, MachineSetupPlanResultV1Schema,
   machineSetupApplyTargetFromPlanV1, ManagedAdmissionOutputV1Schema, ManagedAcceptedV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -3474,7 +3475,8 @@ describe('managed catalog original Account transport', () => {
     const memberToken = await createAccountTokenForTests(member.id, { kind: credentialKind,
       authority: credentialKind === 'terminal' ? 'account_automation' : 'present_user' });
     const policy = normalizeActionsSettingsV1({ v: 1, ...(requireChildReview ? { actions: {
-      'machines.agentIsolation.set': { approvalRequiredSurfaces: ['cli'] } } } : {}), approvalWaivedSurfaces: { 'machines.presets.create': ['cli'], 'machines.managed.acquire': ['cli'] } });
+      [formatQualifiedPluginActionId({ pluginId: manifest.id,
+        localId: manifest.contributes.machineProvisioners[0]!.actions.acquire })]: { approvalRequiredSurfaces: ['cli'] } } } : {}), approvalWaivedSurfaces: { 'machines.presets.create': ['cli'], 'machines.managed.acquire': ['cli'] } });
     const makeExecutor = (credentials: StoredCredentials) => createCliActionExecutorFromCredentials({
       credentials, readCredentials: async () => credentials, serverId: configuration.activeServerId,
       serverApiUrl: serverUrl, serverIdentityId: homeId,
@@ -3524,13 +3526,11 @@ describe('managed catalog original Account transport', () => {
     registerExternalActionRoutes(app, { dispatch: createExternalActionDaemonDispatcher({ io: channel.server, forwardRpc: async request => {
       const { ExternalActionDaemonDispatchRequestSchema } = await import('@happier-dev/protocol/actions');
       const admitted = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
-      // The network substitute must run the real relay guard, which captures
-      // the Machine admission carried by live RPC ingress.
-      const recipient = createFakeSocket({ data: { clientType: 'machine-scoped', userId: owner.id,
-        machineId: controller.machineId, [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: controller.installationId } });
-      if (!request.targetGuard || (await request.targetGuard.filterTargets([recipient])).length !== 1)
-        throw new Error('Controller transport was not admitted');
-      const machineAdmission = await request.createMachineAdmission?.();
+      // Home has admitted this root; the network boundary carries that
+      // admission to the installed receiver without deciding it again.
+      expect(request.admittedMachineTarget).toMatchObject({ ...controller, custodianAccountId: owner.id });
+      expect(request.machineAdmission).toMatchObject({ ...controller, custodianAccountId: owner.id });
+      const machineAdmission = request.machineAdmission;
       const result = await executeExternalAction({ actionId: admitted.actionId, envelope: admitted.envelope,
         principal: admitted.principal, executionAuthorization: admitted.executionAuthorization,
         currentMachineId: controller.machineId, currentInstallationId: controller.installationId,
@@ -3554,7 +3554,7 @@ describe('managed catalog original Account transport', () => {
       const claim = await app.inject({ method: 'POST', url: PluginAvailabilityActionHttpPathsV1['account.plugins.availability.collectionWriters.claim'],
         headers: { authorization: `Bearer ${ownerToken}` }, payload: { manifest } });
       expect(claim.statusCode, claim.payload).toBe(200);
-      const { sealManagedMachinePresetContentV1, createManagedMachinePresetAcquireOverrideV1,
+      const { sealManagedMachinePresetContentV1, openManagedMachinePresetContentV1, createManagedMachinePresetAcquireOverrideV1,
         projectManagedMachinePresetForRecipientV1 } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetContentV1');
       const { ManagedMachinePresetGetResultV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetV1');
       const launch = { provider: { pluginId: manifest.id, localId: 'vm' }, schemaVersion: 1, name: 'Saved launch', choices: {} };
@@ -3591,7 +3591,14 @@ describe('managed catalog original Account transport', () => {
         if (requireChildReview) {
           // An admitted parent never waives explicit child Require or moves
           // the requester's private Ask into the controller's Account.
-          expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+          expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+          if (!result.ok) throw new Error(result.errorCode);
+          const accepted = ManagedAcceptedV1Schema.parse(result.result);
+          if (!accepted.operation) throw new Error('Acquisition has no controller operation');
+          const terminal = await operations.handlers.getV2({ operationId: accepted.operation.operationId, waitForTerminal: true });
+          expect(terminal, JSON.stringify(terminal)).toMatchObject({ kind: 'found', operation: {
+            state: 'failed', error: { errorCode: 'credential_scope_denied' },
+          } });
           expect(nativeLaunches).toHaveLength(0);
           expect(await db.artifact.count({ where: { accountId: owner.id } })).toBe(0);
           return;
@@ -3608,8 +3615,13 @@ describe('managed catalog original Account transport', () => {
           select: { custodianAccountId: true, admittedInput: true, launch: true, reviewedFacts: true } });
         expect(retained, JSON.stringify({ requestId, result })).toMatchObject({
           custodianAccountId: owner.id, admittedInput: { enrollmentAccountId: member.id },
-          ...(name ? { launch: { name }, reviewedFacts: { launch: { name } } } : {}),
+          launch: { contentEncryptionMode: 'plain' }, reviewedFacts: null,
         });
+        if (!retained || !retained.launch || typeof retained.launch !== 'object' || !('content' in retained.launch)) {
+          throw new Error('Expected retained opaque preset content');
+        }
+        expect(openManagedMachinePresetContentV1({ presetId, mode: 'plain', content: retained.launch.content }))
+          .toMatchObject({ ...(name ? { launch: { name } } : {}), nativeResult: { kind: 'rejected', code: 'provider_unavailable' } });
       }
     } finally { restoreHttp(); await app.close(); }
   });
