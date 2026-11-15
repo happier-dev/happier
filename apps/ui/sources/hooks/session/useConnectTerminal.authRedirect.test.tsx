@@ -196,6 +196,7 @@ async function renderHook(home: Home, options?: Parameters<typeof useConnectTerm
     modalConfirmSpy.mockClear();
     boundary.requests.length = 0;
     return {
+        get api() { return api!; },
         async process(url: string) {
             let result: boolean | undefined;
             await act(async () => { result = await api!.processAuthUrl(url); });
@@ -446,6 +447,24 @@ describe('useConnectTerminal unauthenticated flow', () => {
             expect(boundary.requests.filter(request => request.token !== null)).toHaveLength(0);
         },
     );
+
+    // P03-MOBILE-FIX: the outcome alert waits for the person indefinitely; the connecting spinner must not keep
+    // animating under it (iOS: a native-driven loop on the main thread for as long as the alert stays open).
+    it('settles the connecting state before the success alert waits for the person', async () => {
+        const home = await addHome({ credentials: keyedCredentials('keyed-account') });
+        const hook = await renderHook(home);
+        let release!: () => void;
+        modalAlertAsyncSpy.mockImplementationOnce(async (...args) => {
+            modalAlertSpy(...args);
+            await new Promise<void>((resolve) => { release = resolve; });
+        });
+        let done!: Promise<boolean>;
+        await act(async () => { done = hook.api.processAuthUrl(link(pairing())); });
+        await vi.waitFor(() => expect(modalAlertSpy).toHaveBeenCalledWith('common.success', 'modals.terminalConnectedSuccessfully', expect.anything()));
+        await act(async () => {});
+        expect(hook.api.isLoading).toBe(false);
+        await act(async () => { release(); await done; });
+    });
 
     it('seals pairing-bound v3 dataKey bytes and posts only to the explicit target', async () => {
         const home = await addHome({ credentials: keyedCredentials('keyed-account') });

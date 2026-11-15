@@ -108,6 +108,8 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
         }
         
         setIsLoading(true);
+        // The connect work is in flight only until an outcome or question is shown: an alert or confirmation
+        // waits for the person, and the button's spinner must not keep animating under it.
         try {
             const currentServerUrl = normalizeServerUrl(getActiveServerUrl());
             const target = await resolveTerminalApprovalTarget({
@@ -123,6 +125,7 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
                 }
                 const pendingServerUrl = preAuthTarget.pendingServerUrl;
                 if (preAuthTarget.canNavigateToAuth === false) {
+                    setIsLoading(false);
                     await Modal.alertAsync(
                         t('welcome.serverUnavailableTitle'),
                         t('welcome.serverUnavailableBody', { serverUrl: pendingServerUrl }),
@@ -135,6 +138,7 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
                 // here, and the same prompt reappears. Name both Homes once instead, and leave
                 // nothing pending when the switch is declined so nothing can bounce back.
                 if (auth.credentials) {
+                    setIsLoading(false);
                     const shouldSwitchHome = await Modal.confirm(
                         t('terminal.connectTerminal'),
                         t('terminal.switchServerToConnectTerminal', {
@@ -154,6 +158,7 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
                     router.replace(buildTerminalConnectAuthRedirectHref({ serverUrl: pendingServerUrl }));
                     return false;
                 }
+                setIsLoading(false);
                 await Modal.alertAsync(
                     t('terminal.connectTerminal'),
                     t('modals.pleaseSignInFirst'),
@@ -206,6 +211,7 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
             clearPendingTerminalConnect();
 
             if (approvalResult === 'approved') {
+                setIsLoading(false);
                 await Modal.alertAsync(t('common.success'), t('modals.terminalConnectedSuccessfully'), [
                     {
                         text: t('common.ok'),
@@ -216,6 +222,7 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
             }
 
             if (approvalResult === 'already_authorized') {
+                setIsLoading(false);
                 await Modal.alertAsync(
                     t('modals.terminalAlreadyConnected'),
                     t('modals.terminalConnectionAlreadyUsedDescription'),
@@ -225,6 +232,7 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
             }
 
             if (approvalResult === 'not_found') {
+                setIsLoading(false);
                 await Modal.alertAsync(
                     t('modals.authRequestExpired'),
                     t('modals.authRequestExpiredDescription'),
@@ -235,6 +243,7 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
 
             return true;
         } catch (e) {
+            setIsLoading(false);
             await Modal.alertAsync(t('common.error'), t('modals.failedToConnectTerminal'), [{ text: t('common.ok') }]);
             options?.onError?.(e);
             return false;
