@@ -2,7 +2,7 @@ import {
     SANITIZE_URL_PARITY_VECTORS,
     stripBrowserDiagnosticUrlValues,
 } from '@happier-dev/protocol/browser/diagnostics/egress/url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 type InjectedPageModule = Readonly<{
     buildInjectedBrowserDiagnosticsScript?: (input: Readonly<{
@@ -707,7 +707,7 @@ describe('injected browser diagnostics collector', () => {
         }
     });
 
-    it('emits complete console arguments through owner ingress when value capture is set', async () => {
+    it('emits every console call in a burst with complete owner arguments and distinct identities', async () => {
         const mod = await loadInjectedPageModule();
         expect(mod?.buildInjectedBrowserDiagnosticsScript).toBeTypeOf('function');
         if (!mod?.buildInjectedBrowserDiagnosticsScript) return;
@@ -720,11 +720,19 @@ describe('injected browser diagnostics collector', () => {
         });
 
         const longText = 'y'.repeat(5_000);
-        const messages = executeInjectedDiagnosticsScript(script, {
-            afterRun: ({ console: pageConsole }) => {
-                pageConsole.log('hello owner', longText, 'last argument');
-            },
-        });
+        let messages: readonly string[];
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(2_000);
+        try {
+            messages = executeInjectedDiagnosticsScript(script, {
+                afterRun: ({ console: pageConsole }) => {
+                    for (let index = 0; index < 80; index += 1) {
+                        pageConsole.log('hello owner', longText, 'last argument', index);
+                    }
+                },
+            });
+        } finally {
+            clock.mockRestore();
+        }
 
         const consoleMessage = messages
             .map((raw) => JSON.parse(raw) as { events?: { kind?: string; data?: { text?: string }; redaction?: { level?: string; truncated?: boolean } }[] })
@@ -734,7 +742,7 @@ describe('injected browser diagnostics collector', () => {
         expect(consoleMessage).toBeDefined();
         expect(typeof consoleMessage?.data?.text).toBe('string');
         expect(consoleMessage?.data?.text).toContain('hello owner');
-        expect(consoleMessage?.data?.text).toBe(`hello owner ${longText} last argument`);
+        expect(consoleMessage?.data?.text).toBe(`hello owner ${longText} last argument 0`);
         expect(consoleMessage?.redaction?.level).toBe('none');
         expect(consoleMessage?.redaction?.truncated).toBe(false);
         const ownerEvents = messages.flatMap((message) => {
@@ -742,8 +750,11 @@ describe('injected browser diagnostics collector', () => {
             expect(parsed).toMatchObject({ ok: true });
             return parsed?.events ?? [];
         });
-        expect(ownerEvents.filter((event) => event.kind === 'console.entry')).toHaveLength(1);
-        expect(ownerEvents.find((event) => event.kind === 'console.entry')?.data.text).toBe(`hello owner ${longText} last argument`);
+        const consoleEvents = ownerEvents.filter((event) => event.kind === 'console.entry');
+        expect(consoleEvents.map((event) => event.data.text)).toEqual(
+            Array.from({ length: 80 }, (_, index) => `hello owner ${longText} last argument ${index}`),
+        );
+        expect(new Set(consoleEvents.map((event) => event.eventId)).size).toBe(80);
     });
 
     it('omits console text from the in-page collector when owner value capture is unset', async () => {

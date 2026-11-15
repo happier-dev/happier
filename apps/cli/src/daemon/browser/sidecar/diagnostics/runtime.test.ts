@@ -214,6 +214,21 @@ describe('createSidecarCdpDiagnosticsRuntime', () => {
         expect(serialized).not.toContain('Bearer secret');
         expect(snapshot.events.find(event => event.family === 'console')?.data.text).toBe('token=secret should not leave the daemon');
 
+        // C07's burst must survive a single clock tick through the real source,
+        // mapper and retained store; capture time is not an event identity.
+        for (let index = 0; index < 80; index += 1) {
+            surface.emitCdp({
+                method: 'Runtime.consoleAPICalled', sessionId: 'cdp_session_1',
+                params: { type: 'log', args: [{ type: 'string', value: `Q94-burst-${index}` }] },
+            });
+        }
+        const burstEvents = store.getSnapshot().events.filter(event => event.kind === 'console.entry'
+            && typeof event.data.text === 'string' && event.data.text.startsWith('Q94-burst-'));
+        expect(new Set(burstEvents.map(event => event.eventId)).size).toBe(80);
+        expect(new Set(burstEvents.map(event => event.data.text))).toEqual(
+            new Set(Array.from({ length: 80 }, (_, index) => `Q94-burst-${index}`)),
+        );
+
         // The store is now non-empty: the context captureSummary path returns a redacted network summary.
         const networkSummary = await summaryContextSource(createBrowserContextDiagnosticsSummarySource({ store })).captureSummary({
             kind: 'browserNetworkSummary',

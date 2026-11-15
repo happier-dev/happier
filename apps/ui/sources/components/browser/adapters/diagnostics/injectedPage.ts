@@ -3,6 +3,7 @@ import { SAFE_TELEMETRY_HEADER_NAMES, redactDiagnosticsHeaders } from '@happier-
 import { BrowserDiagnosticEventBatchV1Schema, BrowserDiagnosticsElementPickerCommandMessageV1Schema, BrowserDiagnosticsElementPickerResultMessageV1Schema, BrowserDiagnosticsEvalCommandMessageV1Schema, BrowserDiagnosticsEvalResultMessageV1Schema, BrowserDiagnosticsGetPropertiesCommandMessageV1Schema, BrowserDiagnosticsGetPropertiesResultMessageV1Schema, BrowserDiagnosticsReleaseObjectGroupCommandMessageV1Schema, BrowserDiagnosticsReleaseObjectGroupResultMessageV1Schema, type BrowserDiagnosticEventV1, type BrowserDiagnosticsElementPickerCommandMessageV1, type BrowserDiagnosticsElementPickerRequestV1, type BrowserDiagnosticsElementPickerResultV1, type BrowserDiagnosticsEvalCommandMessageV1, type BrowserDiagnosticsEvalRequestV1, type BrowserDiagnosticsEvalResultV1, type BrowserDiagnosticsGetPropertiesCommandMessageV1, type BrowserDiagnosticsGetPropertiesRequestV1, type BrowserDiagnosticsGetPropertiesResultV1, type BrowserDiagnosticsReleaseObjectGroupCommandMessageV1, type BrowserDiagnosticsReleaseObjectGroupRequestV1, type BrowserDiagnosticsReleaseObjectGroupResultV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
 import { stripUrlValuesInString } from '@happier-dev/protocol/browser/diagnostics/egress/url';
 import { buildInjectedBrowserDiagnosticsRuntimeScript } from '@happier-dev/peer-mediation/browser/collector/build';
+import { computeSha256HexDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
 
 type InjectedBrowserDiagnosticsCollectorIdentity = Readonly<{
     browserSessionId: string;
@@ -428,15 +429,10 @@ function sanitizeRawInjectedDiagnosticBatch(
     };
 }
 
-function sanitizedInjectedEventId(event: BrowserDiagnosticEventV1, index: number): string {
-    return [
-        'injected',
-        event.navigationGeneration,
-        event.family,
-        event.kind,
-        event.capturedAtMs,
-        index + 1,
-    ].join(':');
+function sanitizedInjectedEventId(event: BrowserDiagnosticEventV1): string {
+    // Keep the producer's distinct identity without exposing page-controlled text.
+    // Capture time and batch position collide across single-event burst batches.
+    return `injected:${computeSha256HexDigest(event.eventId)}`;
 }
 
 function validateInjectedMessageBinding(
@@ -551,9 +547,9 @@ export function parseInjectedBrowserDiagnosticsMessage(
 
     return {
         ok: true,
-        events: parsedBatch.data.events.map((event, index) => ({
+        events: parsedBatch.data.events.map((event) => ({
             ...event,
-            eventId: sanitizedInjectedEventId(event, index),
+            eventId: sanitizedInjectedEventId(event),
             data: redactBrowserDiagnosticDataForDestination(event, 'localOwner'),
         })),
     };
