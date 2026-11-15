@@ -102,6 +102,8 @@ import { DeploymentEnvironmentAgentActions } from './DeploymentEnvironmentAgentA
 import { DeploymentEnvironmentSettingsPanel, type DeploymentEnvironmentEditing } from './DeploymentEnvironmentSettingsPanel';
 import { showDeploymentFleetSheet } from './DeploymentFleetSheet';
 import { StoredDefinitionOverview, useStoredDefinitionDocument } from './StoredDefinitionEditor';
+import { DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1, DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1,
+  DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentDomainsPanel, type DeploymentDomainEditing } from './DeploymentDomainsPanel';
 import { projectDeploymentConnections, type DeploymentConnection } from './deploymentConnections';
 import { DeploymentPermissionsPanel } from './DeploymentPermissionsPanel';
@@ -604,6 +606,9 @@ export const DeploymentEnvironmentDetail = React.memo(
       const { onDeleted } = props;
       showDeploymentDispositionSheet({
         subject: targetLinkId ? { kind: 'target', targetLinkId } : { kind: 'environment' },
+        // Stop and remove tears down first; then the target is unlinked or the Environment deleted.
+        agentApproval: { environment: detail.environment, actionIds: [DEPLOYMENT_TEARDOWN_ACTION_ID_V1,
+          targetLinkId ? DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1 : DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1] },
         name: detail.content.name,
         machine: machines.length > 0 ? machines.map(machineName).join(', ') : null,
         running,

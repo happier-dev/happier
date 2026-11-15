@@ -378,3 +378,45 @@ describe('Receipt → upload provenance', () => {
     } finally { await screen.unmount(); controller.retire(); }
   });
 });
+
+describe('Receipt → running, not verified', () => {
+  it.each([
+    { definition: 'stored', opens: true },
+    { definition: 'repository', opens: false },
+  ] as const)('a $definition definition offers its Compose file as the next action: $opens', async ({ definition, opens }) => {
+    const base = createDeploymentEnvironmentDetailV1();
+    // A stored Compose file is edited in the Environment's Settings; a repository's lives in its repository.
+    const detail = definition === 'stored' ? { ...base, content: { ...base.content, definition: {
+      kind: 'stored' as const, document: 'services: {app: {image: app:1}}', profiles: [], services: ['app'],
+      contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` as const } } } : base;
+    const receipt = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ state: 'running_unverified' }) });
+    const controller = createDeploymentReadControllerV1({ scope, transport: {
+      listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
+      readEnvironment: async () => ({ ok: true, value: detail }),
+      listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+      readReceipt: async () => ({ ok: true, value: receipt }),
+    } });
+    const opened: unknown[] = [];
+    const screen = await renderScreen(
+      <AccountNoticeInvestigationBoundary>
+        <DeploymentReceiptDetail controller={controller} environmentId={detail.environment.id}
+          deploymentId={receipt.deployment.id} environmentName="Staging" demand={{ mounted: true, visible: true, focused: true }}
+          accountId={scope.accountId} serverId={scope.serverId} readLogs={null} onBack={() => {}}
+          onOpenEnvironmentTab={next => { opened.push(next); }}
+          rollback={null} cancel={null} deploy={null} phone={false} linkPath={null}
+          review={{ pendingId: null, request() {}, open() {} }} onOpenReceipt={() => {}} />
+      </AccountNoticeInvestigationBoundary>,
+    );
+    const notice = 'project-deployments.receipt.notice.running_unverified';
+    try {
+      await act(async () => { await waitForTestEvent(screen.subscribe, () => screen.findByTestId(notice), node => node !== null); });
+      // The Environment read settles after the receipt; wait for the definition it names before judging the action.
+      await act(async () => { await controller.refreshDemanded(); });
+      const action = screen.findByTestId(`${notice}.action`);
+      if (!opens) { expect(action).toBeNull(); return; }
+      expect(action).not.toBeNull();
+      await screen.pressByTestIdAsync(`${notice}.action`);
+      expect(opened).toEqual([{ tab: 'settings', section: null }]);
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+});

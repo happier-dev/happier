@@ -563,6 +563,14 @@ export const DeploymentReceiptDetail = React.memo(
                   onPress: () => router.push(machinePageHref({ door: 'rail',
                     target: { machineId: content.machines[0]!, serverId: props.serverId }, tab: { id: 'services' } }) as never),
                 } } : {})}
+                // Running without a health check is fixed in the Compose file: a stored one is edited in Settings (lab d3d
+                // `unverified`); a repository's lives in its repository, so there is nothing here to open.
+                {...(deployment.state === 'running_unverified' && environmentValue?.content.definition.kind === 'stored'
+                  && props.onOpenEnvironmentTab ? { action: {
+                  label: t('projects.deployments.openComposeFile'),
+                  icon: 'file-text' as const,
+                  onPress: () => props.onOpenEnvironmentTab?.({ tab: 'settings', section: null }),
+                } } : {})}
               />
             ) : null}
             {/* The agent's finding follows what failed: it is the answer the page exists for, read before the record. */}

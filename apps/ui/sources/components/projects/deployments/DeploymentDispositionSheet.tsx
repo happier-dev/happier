@@ -15,6 +15,9 @@ import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { keepNamesWhole } from '@/utils/text/keepNamesWhole';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
+import { normalizeActionsSettings } from '@/components/settings/actions/normalizeActionsSettings';
+import { useSetting } from '@/sync/domains/state/storage';
+import { environmentAgentsAskFirst } from './environmentAgentApproval';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { t } from '@/text';
 import { Modal } from '@/modal';
@@ -62,6 +65,9 @@ export type DeploymentDispositionSheetInput = Readonly<{
   canRemove: boolean;
   /** The existing Domain read owner names retirement consequences in this confirmation. */
   domains?: Readonly<{ controller: DeploymentReadControllerV1; environmentId: string }>;
+  /** The Environment and the Actions these choices run; the footer says agents ask first only when the policy does. */
+  agentApproval?: Readonly<{ environment: Parameters<typeof environmentAgentsAskFirst>[0]['environment'];
+    actionIds: Parameters<typeof environmentAgentsAskFirst>[0]['actionIds'] }>;
   /** Runs the plan-defined disposition through the page's DTEAR hook. */
   reviewVolumes?: (signal: AbortSignal) => Promise<DeploymentTeardownPreviewV1['volumes']>;
   run: (choice: Choice, volumes?: DeploymentTeardownVolumesV1) => Promise<DeploymentEnvironmentDeletionOutcome>;
@@ -161,8 +167,15 @@ function DeploymentDispositionSheet(
     }
     if (outcome.kind === 'refused') setRefused(outcome);
   };
+  const rawActionsSettings = useSetting('actionsSettingsV1');
+  const { agentApproval } = props;
+  const agentsAskFirst = React.useMemo(() => agentApproval ? environmentAgentsAskFirst({
+    settings: normalizeActionsSettings(rawActionsSettings), environment: agentApproval.environment,
+    actionIds: agentApproval.actionIds }) : false, [agentApproval, rawActionsSettings]);
   const footer = (
-    <ModalCardFooterActions cancel={{ onPress: onClose, testID: 'project-deployments.disposition.cancel', disabled: busy }}>
+    <ModalCardFooterActions cancel={{ onPress: onClose, testID: 'project-deployments.disposition.cancel', disabled: busy }}
+      note={agentsAskFirst ? t('projects.deployments.agentsAskFirstNote') : null}
+      noteTestID="project-deployments.disposition.agentsAskFirst">
       <RoundButton
         testID="project-deployments.disposition.confirm"
         size="normal"

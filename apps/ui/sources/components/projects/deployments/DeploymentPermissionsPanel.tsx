@@ -2,7 +2,6 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
-import { readDeploymentEnvironmentApprovalScopeV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import {
   DEPLOYMENT_ACTION_IDS_V1,
   DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
@@ -34,6 +33,7 @@ import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { t } from '@/text';
 
 import { DeploymentDeployerFields } from './DeploymentDeployerFields';
+import { ENVIRONMENT_APPROVAL_AUDIENCE, environmentApprovalScopes } from './environmentAgentApproval';
 import { DeploymentPlatformAccess } from './DeploymentPlatformAccess';
 import { useDeploymentChangePress } from './deploymentActionOutcome';
 import { DeployOutcomeBanner } from './DeploymentEnvironmentDetail';
@@ -43,8 +43,7 @@ type DeployerMode = DeploymentEnvironmentReadDetailV1['environment']['deployerMo
 type Principal = DeploymentEnvironmentDeployerPrincipalV1;
 const noop = () => {};
 const NO_PRINCIPALS: readonly Principal[] = Object.freeze([]);
-/** Agents are the audience a per-Environment approval is offered for, as for a Machine (Plan 40 §6.1). */
-const AUDIENCE = 'agent' as const;
+const AUDIENCE = ENVIRONMENT_APPROVAL_AUDIENCE;
 /**
  * The operations an Environment's approvals are set for: its root operations (deploy, promote, roll back, tear
  * down), as the deployment Action owner classifies them, then changing its settings and its bindings.
@@ -214,9 +213,7 @@ function EnvironmentApprovals(props: Readonly<{ environment: DeploymentEnvironme
   const rawSettings = useSetting('actionsSettingsV1');
   const settings = React.useMemo(() => normalizeActionsSettings(rawSettings), [rawSettings]);
   const writePolicy = useActionPolicyWriter();
-  const scope = React.useMemo(() => ({ kind: 'environment' as const, environmentId: props.environment.id }), [props.environment.id]);
-  const admission = React.useMemo(() => readDeploymentEnvironmentApprovalScopeV1(props.environment), [props.environment]);
-  const approvalScope = 'scope' in admission ? admission.scope ?? undefined : undefined;
+  const { scope, approvalScope, admitted } = React.useMemo(() => environmentApprovalScopes(props.environment), [props.environment]);
   const prefix = 'project-deployments.environment.permissions.approvals';
   const rows = React.useMemo(() => ENVIRONMENT_APPROVAL_ACTION_IDS.map((actionId) => {
     const state = resolveActionSettingsTargetControlState({ settings, scope, approvalScope, actionId, targetId: AUDIENCE });
@@ -227,10 +224,10 @@ function EnvironmentApprovals(props: Readonly<{ environment: DeploymentEnvironme
       label: approvalLabel(actionId),
       value,
       // An Action that always asks (irreversible) has no choice to offer here.
-      fixed: !('scope' in admission) || state.kind === 'approval' && !state.approvalWaivable,
+      fixed: !admitted || state.kind === 'approval' && !state.approvalWaivable,
       notice: state.kind === 'approval' && value === 'allowed' ? state.approvalLooseningNotice : undefined,
     };
-  }), [scope, settings, approvalScope, 'scope' in admission]);
+  }), [scope, settings, approvalScope, admitted]);
   return (
     <ItemGroup
       testID={prefix}
