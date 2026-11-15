@@ -18,7 +18,7 @@ import { DeploymentControllerAvailabilityV1Schema } from './deploymentController
 import { DeploymentPreviewForkEligibilityV1Schema } from './deploymentPreviewTemplateV1.js';
 import { EnvironmentVariableBindingInputV1Schema } from './storedAppInputV1.js';
 export * from './deploymentControllerAvailabilityV1.js';
-import { ActionExecuteFailureSchema, ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
+import { ActionExecuteFailureSchema, ActionFailureCauseV1Schema, type ActionExecuteFailure } from '../actions/actionExecutionResult.js';
 export { buildDeploymentTargetLinkInputV1 } from './targetLinkInput.js';
 export { buildDeploymentTeardownInputV1 } from './teardownInput.js';
 import { DeploymentTeardownRequestInputV1Schema } from './deploymentTeardownRequestV1.js';
@@ -59,7 +59,7 @@ import { ScmHostingRepositoryIdentityV1Schema } from '../scm/hostingRepositoryId
 import { ArtifactJsonUpdateHttpInputV1Schema } from '../artifacts/artifactMutationHttpV1.js';
 import { ArtifactHttpReadV1Schema } from '../artifacts/artifactAccessV1.js';
 import { ArtifactQuotaExceededV1Schema } from '../artifacts/artifactActionsV1.js';
-import { isDeploymentChildEffectActionIdV1, type DeploymentTransportActionIdV1 } from './deploymentActionIdsV1.js';
+import { isDeploymentChildEffectActionIdV1, isDeploymentTargetLinkActionIdV1, type DeploymentTransportActionIdV1 } from './deploymentActionIdsV1.js';
 import { DeploymentEnvironmentRefV1Schema } from './deploymentEnvironmentRefV1.js';
 import { DeploymentDeployIntentInputV1Schema } from './deploymentDeployIntentV1.js';
 
@@ -492,6 +492,16 @@ export const DeploymentTargetLinkProvisionedResultV1Schema = lazyZodSchema(() =>
   failure: z.optional(ActionExecuteFailureSchema),
 }));
 export type DeploymentTargetLinkProvisionedResultV1 = z.infer<typeof DeploymentTargetLinkProvisionedResultV1Schema>;
+
+/** Direct execution and retained operation reads expose the same acknowledged-resource recovery. */
+export function projectDeploymentTargetLinkFailureV1(actionId: string, value: unknown): ActionExecuteFailure | null {
+  if (!isDeploymentTargetLinkActionIdV1(actionId)) return null;
+  const retained = DeploymentTargetLinkProvisionedResultV1Schema.safeParse(value);
+  if (!retained.success) return null;
+  return { ok: false, errorCode: retained.data.error, error: retained.data.error, details: retained.data,
+    ...(retained.data.failure?.failureCause ? { failureCause: retained.data.failure.failureCause } : {}) };
+}
+
 export const DeploymentTargetLinkResultV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ...result, targetLinkId: DeploymentIdentifierV1Schema, targetLinkRevision: DeploymentRevisionV1Schema,
     productionBranchOutcome: z.optional(DeploymentTargetProductionBranchOutcomeV1Schema),

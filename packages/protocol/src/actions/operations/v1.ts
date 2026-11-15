@@ -34,7 +34,7 @@ import { WorkspaceExecutionConfigAddressV1Schema } from '../../workspaces/projec
 import { ActionOperationIdentifierV1Schema, ACTION_OPERATION_REQUEST_ID_MAX_LENGTH_V1 } from './identifierV1.js';
 import { MachineAgentIsolationReadyPreviewV1Schema, MachineAgentIsolationUnavailableStatusV1Schema, MachineAgentIsolationPolicyV1Schema,
   MachineAgentIsolationSetResultV1Schema } from '../../machines/agentIsolationV1.js';
-import { DeploymentTargetLinkProvisionedResultV1Schema } from '../../deployments/deploymentActionsV1.js';
+import { DeploymentTargetLinkProvisionedResultV1Schema, projectDeploymentTargetLinkFailureV1 } from '../../deployments/deploymentActionsV1.js';
 import { DeploymentTemplateInstantiationPartialV1Schema } from '../../deployments/deploymentTemplateInstantiationV1.js';
 import { HomeAuthorityMismatchFailureDetailsV1Schema } from '../../ssh/homeAuthorityMismatch.js';
 import { GuestServiceFailureFactsV1Schema } from '../../ssh/commandFailure.js';
@@ -672,13 +672,16 @@ export function readActionOperationTerminalResultV1(snapshot: ActionOperationSna
     if (isolation?.success && isolation.data.kind === 'failed') return { ok: true, result: isolation.data, ...metadata };
     const backupFailure = projectDeploymentBackupFailureResultV1(snapshot.actionId,
       snapshot.error?.errorCode ?? 'action_operation_failed', snapshot.result);
+    const linkFailure = projectDeploymentTargetLinkFailureV1(snapshot.actionId, snapshot.result);
     return {
       ok: false,
       errorCode: snapshot.error?.errorCode ?? 'action_operation_failed',
       error: snapshot.error?.error ?? 'action_operation_failed',
       ...(snapshot.error?.effectAttempted !== undefined ? { effectAttempted: snapshot.error.effectAttempted } : {}),
-      ...(snapshot.error?.failureCause ? { failureCause: snapshot.error.failureCause } : {}),
-      ...(snapshot.error?.details ? { details: snapshot.error.details } : backupFailure ? { details: backupFailure } : {}),
+      ...(snapshot.error?.failureCause ?? linkFailure?.failureCause
+        ? { failureCause: snapshot.error?.failureCause ?? linkFailure?.failureCause } : {}),
+      ...(linkFailure ? { details: linkFailure.details }
+        : snapshot.error?.details ? { details: snapshot.error.details } : backupFailure ? { details: backupFailure } : {}),
       ...metadata,
     };
   }

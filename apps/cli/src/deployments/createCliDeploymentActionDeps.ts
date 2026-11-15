@@ -6,6 +6,7 @@ import { readDeploymentReceiptFailureCodeV1 } from '@happier-dev/protocol/deploy
 import { deploymentAuthorizationFailure, readDeploymentAuthorizationFailure } from './deploymentAuthorizationFailure';
 import { projectHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizationHttpFailure';
 import { deploymentOutputValidationFailure } from './outputValidation';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import axios from '@/api/client/credentialAxios';
 import { readHttpStatus } from '@/api/client/httpStatusError';
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentReceiptResultV1Schema, DeploymentTargetLinkInputV1Schema, DeploymentEnvironmentCreateResultV1Schema, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentReceiptHeaderV1, type DeploymentReceiptResultV1, type DeploymentEnvironmentCreationReviewV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -406,8 +407,9 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         if (denied) return denied;
       }
       const outcome = classifyHomeDomainHttpMutationFailureV1({ error, issued, aborted: context.signal?.aborted === true });
-      return failure(outcome === 'cancelled' ? 'cancelled' : method !== 'GET' && outcome === 'outcome_unknown'
-        ? 'outcome_unknown' : context.signal?.aborted ? 'cancelled' : 'home_unreachable');
+      return { ...failure(outcome === 'cancelled' ? 'cancelled' : method !== 'GET' && outcome === 'outcome_unknown'
+        ? 'outcome_unknown' : context.signal?.aborted ? 'cancelled' : 'home_unreachable'),
+        failureCause: normalizeActionExecutorThrownError(error, 'deployment.home.request').failureCause };
     }
   }
   return { readEnvironmentAccess, observeEnvironmentAccessChanges, resolveEnvironmentApprovalScope: args => {

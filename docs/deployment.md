@@ -299,6 +299,10 @@ production branch is applied within the same Create Action. If that branch
 update fails or its acknowledgement is uncertain, the created project identity is
 retained and the result shows the branch outcome and provider cause. The person
 can recover without creating the project again. This is unreleased 0.3 behavior.
+Create and Finish linking use the same association owner. If association fails,
+direct execution and retained operation reads preserve the typed failure cause
+and the provisioned `deployments.targets.link` recovery input; replay does not
+create another provider project.
 
 The existing `DeploymentTargetRoleResultV1` carries optional `uploadProvenance`: the exact source manifest and a provider build location, or the controller container image, toolchain name/version and prepared-output manifest fingerprint. This evidence lives in the existing receipt's platform observation, displayed by the receipt and its Build logs through one shared presenter. The canonical observation writer preserves the original evidence when subsequent status reads return lifecycle state alone; it creates no upload store or additional receipt. Provider preparation's existing `reviewNotice` discloses the upload build location and Cloudflare pins before execution.
 
@@ -4092,7 +4096,9 @@ whether deployment topology alone is sufficient.
 A Domain header can expose the current operation address derived from its
 existing private execution captures. The UI reads that exact controller
 operation and shows settled failure details through the shared approval
-technical-details component. A failed or cancelled Remove permits another
+technical-details component. A settled active or warning observation supersedes
+the retained Add failure; the original operation address still identifies
+placement custody. A failed or cancelled Remove permits another
 review and retry without rewriting the Domain's desired state. Legacy or mixed
 captures without an unambiguous controller address omit this projection.
 

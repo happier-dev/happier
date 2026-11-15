@@ -27,6 +27,62 @@ import { createOwnServerDeploymentRuntimeForHost } from './targets/ownServer/own
 
 afterEach(() => vi.restoreAllMocks());
 
+it('completes native Create through the same association owner as a retained Finish linking', async () => {
+    const fixture = createPlatformFailureNoticeFixture(true, true);
+    const environment = await fixture.host.readEnvironment();
+    const source = { kind: 'plugin', contribution: { pluginId: 'example.deploy', localId: 'platform' } } as const;
+    const input = DeploymentTargetLinkCreateIntentInputV1Schema.parse({ serverId: 'home',
+        environmentId: environment.environment.id, expectedRevision: environment.environment.revision,
+        requestKey: 'create-and-associate', targetId: 'platform', targetKind: 'example', role: 'runtime', machines: [], source,
+        providerCreate: { credentialRef: fixture.credentialPrincipal.target.account, credentialPrincipal: fixture.credentialPrincipal,
+            providerAccountId: 'native-owner', providerEnvironment: { kind: 'production' }, resourceName: 'reviewed-name' } });
+    const provider = { credentialPrincipal: fixture.credentialPrincipal, providerIdentity: {
+        providerAccountId: 'native-owner', providerResourceId: 'created-native-id', providerEnvironment: 'production' },
+        providerEnvironment: { kind: 'production' }, preparedNative: { projectName: 'created-name' } };
+    let associations = 0;
+    vi.spyOn(axios, 'request').mockImplementation(async request => {
+        const path = new URL(request.url!).pathname;
+        if (request.method === 'GET') return { status: 200,
+            data: { ok: true, environment: environment.environment, targetLinks: [] } };
+        if (path === '/v1/deployments/targets/list') return { status: 200,
+            data: { ok: true, items: [], nextCursor: null, coverage: 'complete' } };
+        if (path.endsWith('/targets')) {
+            associations++;
+            return { status: 200, data: { ok: true, environmentId: input.environmentId,
+                revision: 2, targetLinkId: 'created-link', targetLinkRevision: 1 } };
+        }
+        throw new Error(`Unexpected Home request: ${path}`);
+    });
+    const runtime = createOwnServerDeploymentRuntimeForHost({ ...fixture.host,
+        resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }) });
+    const deps = createDaemonDeploymentActionDeps({ ...fixture.host,
+        accountArtifacts: createCredentialedAccountArtifactStore(fixture.host.credentials), runtime,
+        resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }) });
+    const plan = await deps.prepareHostReviewedChildren!({ actionId: 'deployments.targets.link', input, context: {} });
+    if (!plan || 'ok' in plan) throw new Error('Expected native Create review');
+    const native = fastify();
+    let creates = 0;
+    // Native execution is the external boundary; preparation, association and operation settlement stay real.
+    native.post('/create', async () => { creates++; return { ok: true, result: provider }; });
+    const context: ActionExecutorContext = { hostReviewedChild: createHostReviewedChildPortV1({
+        actionId: 'deployments.targets.link', input, context: {}, plan,
+        async execute() {
+            return ActionExecuteResultSchema.parse((await native.inject({ method: 'POST', url: '/create' })).json());
+        },
+    }) };
+    const operations = createHostActionOperationRuntime({ machineId: 'controller', serverId: 'home',
+        resolveAccountId: async () => 'owner', generateOperationId: () => 'complete-create' });
+    try {
+        const result = await operations.runActionOperation({ actionId: 'deployments.targets.link', input, context,
+            execute: context => executeDeploymentAction('deployments.targets.link', input, context, deps) });
+        expect(result).toMatchObject({ ok: true, result: { ok: true, targetLinkId: 'created-link' } });
+        expect(operations.store.get({ accountId: 'owner', machineId: 'controller' }, 'complete-create'))
+            .toMatchObject({ state: 'succeeded', result: { ok: true, targetLinkId: 'created-link' } });
+        expect(creates).toBe(1);
+        expect(associations).toBe(1);
+    } finally { await native.close(); }
+});
+
 describe('provider link preparation through the installed Action host', () => {
     it.each([
         ['plain', 'match'], ['e2ee', 'match'], ['plain', 'partial'], ['e2ee', 'partial'],
@@ -202,16 +258,24 @@ it.each([false, true])('retains a native create acknowledgment before a failed H
             expect(result).toMatchObject({ ok: false, errorCode: 'deployment_link_incomplete', details: {
                 recovery: { requestKey: request.requestKey, provisioned: true, provider },
                 failure: { error: expect.stringContaining('target_link.environment_read') } } });
+            expect(result).toMatchObject({ failureCause: { phase: 'deployment.home.request', errorClass: 'Error' } });
             expect(timeline).toContain('durable-checkpoint');
             expect(interruptedSnapshot).toMatchObject({ state: 'failed',
                 error: { errorCode: 'action_outcome_unknown', effectAttempted: true },
                 result: { ok: false, error: 'deployment_link_incomplete', recovery: { provisioned: true, provider } } });
             expect((await open()).retained[0]?.snapshot).toMatchObject({ state: 'failed', result: {
-                ok: false, error: 'deployment_link_incomplete', recovery: { provisioned: true, provider } } });
+                ok: false, error: 'deployment_link_incomplete', recovery: { provisioned: true, provider },
+                failure: { error: expect.stringContaining('target_link.environment_read') } } });
         }
         const restarted = await createOperations();
-        expect(await invoke(restarted, 'fresh-transport-after-restart')).toMatchObject({ ok: false,
+        const replay = await invoke(restarted, 'fresh-transport-after-restart');
+        expect(replay).toMatchObject({ ok: false,
             errorCode: unknown ? 'action_outcome_unknown' : 'deployment_link_incomplete' });
+        if (!unknown) expect(replay).toMatchObject({
+            failureCause: { phase: 'deployment.home.request', errorClass: 'Error' },
+            details: { recovery: { requestKey: request.requestKey, provisioned: true, provider },
+                failure: { error: expect.stringContaining('target_link.environment_read') } },
+        });
         expect(timeline.filter(step => step === 'native')).toHaveLength(1);
     } finally { await app.close(); await rm(directory, { recursive: true, force: true }); }
 });

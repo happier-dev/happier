@@ -56,6 +56,28 @@ describe('Domain lifecycle projection', () => {
                 .toEqual({ state: header.state, retryRemoval: false, failure: null });
         }
     });
+
+    it('uses a settled Domain observation instead of the retained failed Add while preserving unresolved failures', () => {
+        const failedAdd: ActionOperationSnapshotV1 = { ...operation, operationId: 'addition', actionId: 'deployments.domains.add',
+            state: 'failed', settledAt: 3, error: { errorCode: 'provider_request_failed', error: 'provider_request_failed',
+                failureCause: { phase: 'deployment.provider', errorClass: 'Error', errorCode: 'duplicate-team-registration', httpStatus: 409 } } };
+        const retained = { ...domain, provider: true as const,
+            operationAddress: { ...domain.operationAddress!, operationId: failedAdd.operationId } };
+        const read = { kind: 'found' as const, operation: failedAdd };
+        for (const state of ['pending', 'applying', 'removing'] as const) {
+            expect(projectDeploymentDomainFactsV1({ ...retained, state, observedAtMs: 4 }, 'account', read))
+                .toMatchObject({ state: 'failed', failure: failedAdd.error });
+        }
+        for (const state of ['active', 'warning'] as const) {
+            expect(projectDeploymentDomainFactsV1({ ...retained, state }, 'account', read))
+                .toMatchObject({ state: 'failed', failure: failedAdd.error });
+            expect(projectDeploymentDomainFactsV1({ ...retained, state, observedAtMs: 4 }, 'account', read))
+                .toEqual({ state, retryRemoval: false, failure: null });
+            expect(projectDeploymentDomainFactsV1({ ...retained, state, observedAtMs: 4 }, 'account', {
+                kind: 'found', operation: { ...failedAdd, actionId: 'deployments.domains.remove' },
+            })).toMatchObject({ state: 'failed', failure: failedAdd.error });
+        }
+    });
 });
 
 describe('Domain saved health facts', () => {

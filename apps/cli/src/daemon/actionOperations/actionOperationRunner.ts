@@ -28,7 +28,7 @@ import { MachineAdminAccessMutationResultV1Schema } from '@happier-dev/protocol/
 import { MachineRebootResultV1Schema } from '@happier-dev/protocol/actions/specs/machine/reboot';
 import { MachineAgentIsolationSetResultV1Schema } from '@happier-dev/protocol/machines/agentIsolationV1';
 
-import { DeploymentActionOutputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentActionOutputSchemasV1, projectDeploymentTargetLinkFailureV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
 import { parseActionOperationProgressUpdate } from './actionOperationProgress';
 import { projectActionOperationFailure } from './actionOperationFailure';
@@ -483,6 +483,7 @@ export function createActionOperationRunner(deps: Readonly<{
           }
           const failureResult = !executionResult.ok
             ? (executionResult.errorCode === 'cancelled' ? undefined : request.failureResult?.project(executionResult))
+              ?? projectDeploymentTargetLinkFailureV1(action.actionId, executionResult.details)?.details
               ?? projectDeploymentBackupFailureResultV1(action.actionId, executionResult.errorCode, executionResult.details) : undefined;
           if (!executionResult.ok && executionResult.errorCode === 'cancelled') {
             deps.store.cancel(operationId, failureResult);

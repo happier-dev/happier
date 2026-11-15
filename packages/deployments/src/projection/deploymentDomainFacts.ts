@@ -1,6 +1,7 @@
 import type { ActionOperationGetV1Response, ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { DeploymentDomainHeaderV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import type { DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
+import { isDeploymentDomainAddActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { DeploymentCurrentDomainObservationV1, DeploymentDomainHealthFactsV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import type { DeploymentEnvironmentHeaderV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/v1';
 
@@ -22,6 +23,11 @@ export function projectDeploymentDomainFactsV1(domain: DeploymentDomainHeaderV1,
     const found = observation?.kind === 'found' ? observation.operation : null;
     const operation = address && found?.operationId === address.operationId && found.scope.accountId === accountId
         && found.scope.machineId === address.machineId ? found : null;
+    // Placement custody retains Add's operation after a later signed observation settles the Domain.
+    if (domain.observedAtMs !== undefined && (domain.state === 'active' || domain.state === 'warning')
+        && operation && isDeploymentDomainAddActionIdV1(operation.actionId)) {
+        return { state: domain.state, retryRemoval: false, failure: null };
+    }
     const retryRemoval = domain.state === 'removing' && (operation?.state === 'failed' || operation?.state === 'cancelled');
     const failure = operation?.state === 'failed' ? operation.error ?? null : null;
     const state = operation?.state === 'failed' ? failure?.errorCode === 'outcome_unknown' ? 'outcome_unknown' : 'failed'
