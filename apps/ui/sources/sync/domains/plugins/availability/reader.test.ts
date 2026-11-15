@@ -2562,6 +2562,51 @@ describe('Plugin Account Availability reader', () => {
         })).toEqual({ kind: 'unavailable', code: 'collection_not_current' });
     });
 
+    it('admits bundled Account Data without a daemon claim and respects disablement', () => {
+        const manifest = PluginPortableReleaseManifestV1Schema.parse({
+            ...intentRead().release!.normalizedManifest,
+            hostAccess: {
+                required: [{
+                    id: 'account-storage',
+                    capability: 'storage.account',
+                    reason: 'Read durable Session relations.',
+                    scope: { enabled: true },
+                }],
+                optional: [],
+            },
+        });
+        const readerFor = (disabled: boolean, declaredManifest = manifest) => createPluginAccountAvailabilityReader({
+            scope,
+            snapshot: snapshot({
+                intentReads: disabled ? [{
+                    pluginId: manifest.id,
+                    response: { ...intentRead(), intent: { ...intentRead().intent!, enabled: false } },
+                }] : [],
+                materializations: [],
+                snapshots: [],
+            }),
+            hostBundledUi: [{
+                pluginId: manifest.id,
+                pluginVersion: manifest.version,
+                displayName: manifest.displayName,
+                packageName: '@happier-dev/plugins-fixture',
+                normalizedManifest: declaredManifest,
+                entriesById: {},
+            }],
+        });
+        expect(readerFor(false).readCurrentAccountExecution(manifest.id).kind).toBe('available');
+        expect(readerFor(false).readCurrentAccountKvCapability({ pluginId: manifest.id }).kind).toBe('available');
+        expect(readerFor(false).readCurrentAccountDataCapability({ pluginId: manifest.id })).toEqual({
+            kind: 'available', availabilityCursor: 42,
+        });
+        expect(readerFor(true).readCurrentAccountDataCapability({ pluginId: manifest.id }).kind).toBe('unavailable');
+        const optionalStorage = {
+            ...manifest,
+            hostAccess: { required: [], optional: manifest.hostAccess.required },
+        };
+        expect(readerFor(false, optionalStorage).readCurrentAccountDataCapability({ pluginId: manifest.id }).kind).toBe('unavailable');
+    });
+
     it('admits Account Data rendering for either a Collection contract or declared Account KV', () => {
         const ref = {
             pluginId: 'com.acme.fixture',

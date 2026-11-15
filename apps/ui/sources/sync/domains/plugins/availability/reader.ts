@@ -1734,6 +1734,8 @@ function readCurrentAccountDataCapabilityAdmission(
     }
     const current = readCurrentReleaseAdmission(state, scope, input.pluginId);
     if (current.kind !== 'available') {
+        const accountKv = readCurrentAccountKvCapabilityAdmission(state, scope, input);
+        if (accountKv.kind === 'available') return accountKv;
         return Object.freeze({ kind: 'unavailable', code: current.code });
     }
     const accountKvDeclared = releaseRequiresAccountKv(current.release.normalizedManifest);
