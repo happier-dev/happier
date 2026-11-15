@@ -72,6 +72,8 @@ export function RegistrySourcesUnavailable(props: RegistrySourcesUnavailableProp
   const translate = usePluginTranslation();
   return <HappierRegistrySourcesUnavailable {...props} host={unavailableHost} labels={{
     sourcesUnreachable: count => translate('capabilities.store.sourcesUnreachable', `${count} sources could not be reached`, { count }),
+    sourcesHidden: count => translate('capabilities.store.sourcesHidden', count === 1
+      ? 'Its items are hidden for now; everything else is here.' : 'Their items are hidden for now; everything else is here.', { count }),
     retry: translate('capabilities.store.retry', 'Try again'), showDetails: translate('common.details', 'Details'),
     hideDetails: translate('capabilities.store.hideSources', 'Hide sources'),
   }} />;

@@ -69,6 +69,7 @@ export type StoreTranslation = Readonly<{
   retry: string;
   /** One line for several catalogs that didn't answer; the names wait behind Details. */
   sourcesUnreachable: (params: Readonly<{ count: number }>) => string;
+  sourcesHidden: (params: Readonly<{ count: number }>) => string;
   hideSources: string;
   noMatch: (params: Query) => string;
   emptyTitle: string;
@@ -216,6 +217,7 @@ const en: StoreTranslation = {
   added: 'Added',
   retry: 'Retry',
   sourcesUnreachable: ({ count }) => `Couldn’t reach ${count} sources`,
+  sourcesHidden: ({ count }) => count === 1 ? 'Its items are hidden for now; everything else is here.' : 'Their items are hidden for now; everything else is here.',
   hideSources: 'Hide',
   noMatch: ({ query }) => `Nothing matches “${query}”.`,
   emptyTitle: 'Nothing here yet',
@@ -358,6 +360,7 @@ const ca: StoreTranslation = {
   added: 'Afegit',
   retry: 'Torna-ho a provar',
   sourcesUnreachable: ({ count }) => `No es pot contactar amb ${count} fonts`,
+  sourcesHidden: () => 'Els seus elements queden amagats de moment; la resta és aquí.',
   hideSources: 'Amaga',
   noMatch: ({ query }) => `Res no coincideix amb «${query}».`,
   emptyTitle: 'Encara no hi ha res',
@@ -499,6 +502,7 @@ const de: StoreTranslation = {
   added: 'Hinzugefügt',
   retry: 'Erneut versuchen',
   sourcesUnreachable: ({ count }) => `${count} Quellen nicht erreichbar`,
+  sourcesHidden: () => 'Ihre Einträge sind vorerst ausgeblendet; alles andere ist da.',
   hideSources: 'Ausblenden',
   noMatch: ({ query }) => `Nichts passt zu „${query}“.`,
   emptyTitle: 'Noch nichts hier',
@@ -640,6 +644,7 @@ const es: StoreTranslation = {
   added: 'Añadido',
   retry: 'Reintentar',
   sourcesUnreachable: ({ count }) => `${count} fuentes inaccesibles`,
+  sourcesHidden: () => 'Sus elementos quedan ocultos por ahora; todo lo demás está aquí.',
   hideSources: 'Ocultar',
   noMatch: ({ query }) => `Nada coincide con «${query}».`,
   emptyTitle: 'Aún no hay nada',
@@ -782,6 +787,7 @@ const fr: StoreTranslation = {
   added: 'Ajouté',
   retry: 'Réessayer',
   sourcesUnreachable: ({ count }) => `Impossible de joindre ${count} sources`,
+  sourcesHidden: ({ count }) => count === 1 ? 'Ses éléments sont masqués pour l’instant ; tout le reste est là.' : 'Leurs éléments sont masqués pour l’instant ; tout le reste est là.',
   hideSources: 'Masquer',
   noMatch: ({ query }) => `Rien ne correspond à « ${query} ».`,
   emptyTitle: 'Rien ici pour l’instant',
@@ -923,6 +929,7 @@ const it: StoreTranslation = {
   added: 'Aggiunto',
   retry: 'Riprova',
   sourcesUnreachable: ({ count }) => `${count} fonti non raggiungibili`,
+  sourcesHidden: ({ count }) => count === 1 ? 'I suoi elementi sono nascosti per ora; tutto il resto è qui.' : 'I loro elementi sono nascosti per ora; tutto il resto è qui.',
   hideSources: 'Nascondi',
   noMatch: ({ query }) => `Nessun risultato per «${query}».`,
   emptyTitle: 'Ancora niente qui',
@@ -1063,6 +1070,7 @@ const ja: StoreTranslation = {
   added: '追加済み',
   retry: '再試行',
   sourcesUnreachable: ({ count }) => `${count} 件のソースに接続できません`,
+  sourcesHidden: () => 'そのアイテムは一時的に非表示です。それ以外はすべて表示されています。',
   hideSources: '非表示',
   noMatch: ({ query }) => `「${query}」に一致するものはありません。`,
   emptyTitle: 'まだ何もありません',
@@ -1204,6 +1212,7 @@ const pl: StoreTranslation = {
   added: 'Dodano',
   retry: 'Spróbuj ponownie',
   sourcesUnreachable: ({ count }) => `Niedostępne źródła: ${count}`,
+  sourcesHidden: () => 'Ich elementy są na razie ukryte; cała reszta jest tutaj.',
   hideSources: 'Ukryj',
   noMatch: ({ query }) => `Nic nie pasuje do „${query}”.`,
   emptyTitle: 'Na razie nic tu nie ma',
@@ -1346,6 +1355,7 @@ const pt: StoreTranslation = {
   added: 'Adicionado',
   retry: 'Tentar novamente',
   sourcesUnreachable: ({ count }) => `${count} fontes inacessíveis`,
+  sourcesHidden: () => 'Os seus itens estão ocultos por agora; todo o resto está aqui.',
   hideSources: 'Ocultar',
   noMatch: ({ query }) => `Nada corresponde a “${query}”.`,
   emptyTitle: 'Nada aqui ainda',
@@ -1487,6 +1497,7 @@ const ru: StoreTranslation = {
   added: 'Добавлено',
   retry: 'Повторить',
   sourcesUnreachable: ({ count }) => `Недоступно источников: ${count}`,
+  sourcesHidden: () => 'Их элементы пока скрыты; всё остальное на месте.',
   hideSources: 'Скрыть',
   noMatch: ({ query }) => `Ничего не найдено по «${query}».`,
   emptyTitle: 'Здесь пока пусто',
@@ -1626,6 +1637,7 @@ const zhHans: StoreTranslation = {
   added: '已添加',
   retry: '重试',
   sourcesUnreachable: ({ count }) => `${count} 个来源无法连接`,
+  sourcesHidden: () => '其中的项目暂时隐藏；其他内容都在这里。',
   hideSources: '隐藏',
   noMatch: ({ query }) => `没有与“${query}”匹配的内容。`,
   emptyTitle: '这里还没有内容',
@@ -1765,6 +1777,7 @@ const zhHant: StoreTranslation = {
   added: '已新增',
   retry: '重試',
   sourcesUnreachable: ({ count }) => `${count} 個來源無法連線`,
+  sourcesHidden: () => '其中的項目暫時隱藏；其他內容都在這裡。',
   hideSources: '隱藏',
   noMatch: ({ query }) => `沒有與「${query}」相符的內容。`,
   emptyTitle: '這裡還沒有內容',

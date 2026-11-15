@@ -22,6 +22,8 @@ export type RegistrySourcesUnavailableProps = Readonly<{
 }>;
 export type RegistrySourcesUnavailableLabels = Readonly<{
   sourcesUnreachable: (count: number) => string;
+  /** What the outage costs on a page that keeps the rest: "Its items are hidden for now; everything else is here." */
+  sourcesHidden?: (count: number) => string;
   retry: string;
   showDetails: string;
   hideDetails: string;
@@ -70,7 +72,8 @@ export function HappierRegistrySourcesUnavailable(props: RegistrySourcesUnavaila
             ? single.message
             : props.labels.sourcesUnreachable(failures.length))
         }
-        {...(pageState?.reason ? { reason: pageState.reason } : {})}
+        {...(pageState?.reason ? { reason: pageState.reason }
+          : !pageState && props.labels.sourcesHidden ? { reason: props.labels.sourcesHidden(failures.length) } : {})}
         action={{
           label: props.labels.retry,
           onPress: retry,

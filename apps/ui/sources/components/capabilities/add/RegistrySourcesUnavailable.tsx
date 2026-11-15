@@ -31,6 +31,7 @@ export function RegistrySourcesUnavailable(props: RegistrySourcesUnavailableProp
     <CorePluginUiPresentationScope>
       <HappierRegistrySourcesUnavailable {...props} host={host} labels={{
         sourcesUnreachable: count => t('capabilities.store.sourcesUnreachable', { count }),
+        sourcesHidden: count => t('capabilities.store.sourcesHidden', { count }),
         retry: t('capabilities.store.retry'), showDetails: t('common.details'), hideDetails: t('capabilities.store.hideSources'),
       }} />
     </CorePluginUiPresentationScope>
