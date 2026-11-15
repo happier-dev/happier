@@ -54,7 +54,8 @@ describe('the one Environment row (UI refinements 2026-11-15 08:57Z)', () => {
     expect(
       screen.root.findAll((node) =>
         /WorkStatusRowMark|StatusPill/.test(
-          String(node.type?.displayName ?? node.type?.name ?? ''),
+          String(typeof node.type === 'string' ? node.type
+            : 'displayName' in node.type ? node.type.displayName : node.type.name),
         ),
       ),
     ).toEqual([]);

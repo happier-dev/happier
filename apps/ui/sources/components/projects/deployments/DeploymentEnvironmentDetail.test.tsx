@@ -520,7 +520,7 @@ describe('Project deployments page', () => {
     try {
       screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
         demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={phone}
-        deploy={ready ? vi.fn(async () => {}) : null}
+        deploy={ready ? vi.fn(async () => { throw new Error('Deploy is not invoked by this presentation test'); }) : null}
         review={noReview} onOpenReceipt={() => {}} />);
       const { AgentActionButton } = await import('@happier-dev/plugin-ui/components');
       const declared = screen.findAllByType(AgentActionButton);

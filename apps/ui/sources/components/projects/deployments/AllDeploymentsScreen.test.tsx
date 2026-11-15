@@ -1,11 +1,11 @@
 import * as React from 'react';
-import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createDeploymentReadControllerV1,
   type DeploymentReadControllerV1,
   type DeploymentAccountDomainReadItemV1,
   type DeploymentReadTransportV1,
+  type DeploymentReadResultV1,
 } from '@happier-dev/deployments';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol';
@@ -52,9 +52,7 @@ function renderScreen(body: React.ReactNode) {
 }
 
 const shown = { mounted: true, visible: true, focused: true };
-type ListResult = Awaited<
-  ReturnType<DeploymentReadTransportV1['listEnvironments']>
->;
+type ListResult = DeploymentReadResultV1<DeploymentEnvironmentCollectionV1>;
 
 function environment(id: string, projectSourceId: string, title: string,
   labels: Readonly<{ projectSourceName?: string | null; liveVersionTitle?: string | null }> = {}) {
