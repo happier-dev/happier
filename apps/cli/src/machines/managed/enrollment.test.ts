@@ -240,8 +240,10 @@ describe('runManagedMachineEnrollment', () => {
             if (input.mode === 'check') {
               if (!('basis' in input) || !('steps' in input)) throw new Error('Expected a bootstrap check');
               const plan = machineSetup.createMachineSetupEffectPlan({ basis: input.basis, steps: input.steps,
-                nativeFacts: input.steps.map(step => ({ stepId: step.id, status: 'drifted' as const,
-                  facts: step.kind === 'user' ? { present: false } : {} })) });
+                nativeFacts: input.steps.map(step => {
+                  const facts: Record<string, boolean> = step.kind === 'user' ? { present: false } : {};
+                  return { stepId: step.id, status: 'drifted' as const, facts };
+                }) });
               plans.push(plan);
               return ok(`${JSON.stringify({ type: 'ready' })}\n${JSON.stringify({ type: 'result', result: { status: 'checked', plan } })}\n`);
             }
@@ -377,10 +379,6 @@ describe('runManagedMachineEnrollment', () => {
     try {
       await writeFile(join(root, 'happier'), '#!/bin/sh\nexit 0\n');
       vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', root);
-      if (!serviceInstalled) {
-        vi.stubEnv('HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_TIMEOUT_MS', '100');
-        vi.stubEnv('HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_POLL_MS', '50');
-      }
       const update = runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, carrier, channel: 'preview' }, {
         readCurrentManagedRow: async () => ({ ...machine, enrolledMachineId: 'ordinary-machine', enrollmentIdentity: {
           kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'deployTarget', adminAccessAtCreation: 'preauthorized',
@@ -389,7 +387,7 @@ describe('runManagedMachineEnrollment', () => {
           commands.push(command);
           if (command.includes('effect-internal') || command.includes('useradd')) throw new Error('Creation authority must not replay after enrollment');
           if (/\bdaemon\b.*\bstatus\b.*--json/u.test(command)) return { status: 0, stderr: '', stdout: JSON.stringify({
-            daemon: { running: true, healthy: ++readyReads >= 2 }, service: { installed: serviceInstalled },
+            daemon: { running: serviceInstalled, healthy: ++readyReads >= 2, ...(!serviceInstalled ? { pid: 314 } : {}) }, service: { installed: serviceInstalled },
             auth: { needsAuth: false, machineId: reportedMachineId },
           }) };
           const stdout = command.includes('uname -m') ? 'Linux\naarch64\n/home/bootstrap\n'
@@ -404,7 +402,7 @@ describe('runManagedMachineEnrollment', () => {
       expect(commands.at(-1)).toContain('runuser -u happier');
       expect(commands.at(-1)).toContain('/opt/happier/cli-preview/current/happier');
       if (serviceInstalled) expect(readyReads).toBe(2);
-      else expect(readyReads).toBeGreaterThanOrEqual(2);
+      else expect(readyReads).toBe(1);
       expect(commands.filter(command => /\bdaemon\b.*\bservice\b.*\binstall\b.*--json/u.test(command))).toHaveLength(1);
     } finally { await rm(root, { recursive: true, force: true }); }
   });
@@ -640,7 +638,7 @@ describe('runManagedMachineEnrollment', () => {
       guestHome: { homeDir: '/persistent/home', happyHomeDir: '/persistent/home/.happier', daemonStartup: 'native-process' } } }, {
       readCurrentManagedRow: async () => ({ ...machine, enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } }),
       native: { exec: async ({ command }) => { commands.push(command); return { status: 1, stdout: '', stderr: '' }; }, putFile: async () => {} },
-    })).rejects.toMatchObject({ code: 'provider_unavailable' });
+    })).rejects.toMatchObject({ code: 'remote_command_failed' });
     expect(commands[0]).toContain("HOME='/persistent/home'");
     expect(commands[0]).toContain("HAPPIER_HOME_DIR='/persistent/home/.happier'");
     expect(commands[0]).toContain('uname -s; uname -m;');

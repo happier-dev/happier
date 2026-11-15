@@ -223,7 +223,7 @@ describe('managed native-role custody at contributed dispatch', () => {
         expect(f.activations()).toBe(0);
     });
 
-    it.each(['acquire', 'rebuild', 'reconcile'] as const)('retains a known managed %s identity after cancellation without changing ordinary Action cancellation', async role => {
+    it.each(['acquire', 'rebuild', 'reconcile'] as const)('retains known managed %s and ordinary mutation results after cancellation while refusing unissued work', async role => {
         const allocationAbort = new AbortController();
         const f = fixture({ ...(role === 'reconcile' ? { reconciliation: true } : {}),
             onNativeRole: currentRole => { if (currentRole === role) allocationAbort.abort(); } });
@@ -249,7 +249,7 @@ describe('managed native-role custody at contributed dispatch', () => {
             context: { surface: 'plugin', signal: ordinaryAbort.signal },
         });
         expect(ordinaryAbort.signal.aborted).toBe(true);
-        expect(canceledOrdinary).toMatchObject({ result: { ok: false, errorCode: 'plugin_action_outcome_unknown' } });
+        expect(canceledOrdinary).toMatchObject({ result: { ok: true, result: roleResult('exec') } });
     });
     it.each(['reconcile', 'cleanup'] as const)('requires retained operation custody for pending %s and after awaits', async role => {
         const config = { reconciliation: true, ...(role === 'cleanup' ? { cleanupObservation: { kind: 'confirmed' as const } } : {}) };
