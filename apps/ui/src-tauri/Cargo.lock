@@ -115,9 +115,10 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
- "tauri-winrt-notification",
  "tempfile",
  "tokio",
+ "url",
+ "windows 0.61.3",
  "windows-registry",
  "windows-sys 0.60.2",
 ]

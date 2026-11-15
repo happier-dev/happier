@@ -22,6 +22,7 @@ flate2 = "1.1"
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
+url = "2"
 libc = "0.2"
 flate2 = "1.1"
 tauri = { version = "2.12.1", features = ["tray-icon", "macos-private-api"] }
@@ -44,8 +45,9 @@ objc2-foundation = { version = "0.3.1", features = ["NSData"] }
 # already in the dependency tree (hyper-util, tauri's GTK stack).
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-registry = "0.5"
-# Same version tauri-plugin-notification already resolves to; used for clickable toasts.
-tauri-winrt-notification = "0.7"
+# The notification plugin already resolves this Windows SDK version. Protocol activation
+# lets both banners and retained Notification Center entries use the existing app-link owner.
+windows = { version = "0.61", features = ["Data_Xml_Dom", "UI_Notifications"] }
 windows-sys = { version = "0.60.2", features = ["Win32_Foundation", "Win32_System_Threading"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

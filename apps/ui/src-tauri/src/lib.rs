@@ -82,6 +82,10 @@ pub fn run() {
     #[cfg(desktop)]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            #[cfg(target_os = "windows")]
+            for argument in &args {
+                desktop_notification::handle_activation(app, argument);
+            }
             menu_bar::on_second_launch(app, args);
         }));
         builder = builder.plugin(tauri_plugin_deep_link::init());
@@ -172,6 +176,11 @@ pub fn run() {
                 system_tasks::set_desktop_context(app.handle())?;
                 autostart::register(app)?;
                 menu_bar::prepare_launch(app.handle());
+                // Preserve a retained toast's data before the cold-launch renderer subscribes.
+                #[cfg(target_os = "windows")]
+                for argument in std::env::args().skip(1) {
+                    desktop_notification::handle_activation(app.handle(), &argument);
+                }
                 // The main window first (unless this is a login start in menu-bar mode), so the
                 // tray can follow its theme events on Windows.
                 window_chrome::register(app)?;

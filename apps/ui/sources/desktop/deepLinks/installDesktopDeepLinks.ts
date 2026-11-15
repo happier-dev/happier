@@ -6,6 +6,8 @@ import { parseHappierCustomSchemeUrl } from '@/utils/url/parseHappierCustomSchem
 function resolveDesktopHref(url: string): string | null {
     const parsed = parseHappierCustomSchemeUrl(url);
     if (!parsed) return null;
+    // The native notification owner admits these commands and wakes its pending-click consumer.
+    if (parsed.hostname.toLowerCase() === 'notification-action') return null;
 
     const systemPath = redirectSystemPath({ path: url, initial: false });
     if (systemPath !== url) return systemPath;
