@@ -1505,7 +1505,7 @@ async function executeClientContributedAction(
         try {
             const result = SessionStatusActionResultV1Schema.parse(await createUiSessionStatusGet(account)({ sessionId: exactId,
                 serverId: accountLifetime.scope.serverId, ...(input.signal ? { signal: input.signal } : {}) }));
-            if (!result.ok) throw new PluginError({ code: result.code });
+            if (result.ok === false) throw new PluginError({ code: result.code });
             const contributedAction = result.session.machineId ? {
                 machineId: result.session.machineId, serverId: accountLifetime.scope.serverId,
                 accountLifetime, sessionId: result.session.id,
