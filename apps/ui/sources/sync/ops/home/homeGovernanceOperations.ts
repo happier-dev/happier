@@ -44,9 +44,10 @@ import { awaitActionApprovalResult, createActionApprovalContinuation, type Actio
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { invalidateHomeGovernance } from '@/sync/engine/home/governance/homeGovernanceEngine';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { scopedHomeActionExecutor } from '@/sync/ops/actions/scopedHomeActionExecutor';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
-import { classifyHomeActionOutcome, type HomeActionOutcome } from './homeActionOutcome';
+import { type HomeActionOutcome } from './homeActionOutcome';
+import { executeHomeGovernanceAction as executeHomeAction, queryHomeGovernanceAction as query, type HomeGovernanceQueryOutcome } from './homeGovernanceActionExecution';
+export type { HomeGovernanceQueryOutcome } from './homeGovernanceActionExecution';
 
 export { classifyHomeActionOutcome as classifyHomeGovernanceActionOutcome } from './homeActionOutcome';
 
@@ -90,10 +91,6 @@ export type HomeGovernanceMutationOutcome =
 export type HomeGovernanceAcknowledgedOutcome =
     Exclude<HomeGovernanceMutationOutcome, Readonly<{ kind: 'incomplete' }>>;
 
-export type HomeGovernanceQueryOutcome<TValue> =
-    | Readonly<{ kind: 'succeeded'; value: TValue }>
-    | Readonly<{ kind: 'failed'; failure: HomeDomainFailure }>;
-
 /**
  * A mutation whose answer is the Home's new state (settings) or its verdict (a test send).
  * Unlike a query, an approval request is a real outcome here: the change has not run yet.
@@ -105,29 +102,6 @@ export type HomeGovernanceValueMutationOutcome<TValue> =
 
 const SUCCEEDED: HomeGovernanceAcknowledgedOutcome = Object.freeze({ kind: 'succeeded' as const });
 const INCOMPLETE: HomeGovernanceMutationOutcome = Object.freeze({ kind: 'incomplete' as const });
-
-/**
- * Runs one Home intent through the shared executor.
- *
- * The executor is built per call with this Home's family dependency: the scope
- * is captured before anything is awaited, so focusing another Home while the
- * intent is in flight cannot retarget it or publish its result under the wrong
- * Home.
- */
-async function executeHomeAction(params: Readonly<{
-    scope: ServerAccountScope;
-    actionId: HomeGovernanceActionIdV1;
-    input: unknown;
-    signal?: AbortSignal;
-}>): Promise<HomeActionOutcome> {
-    const result = await scopedHomeActionExecutor(params.scope)(params.actionId, params.input, {
-        surface: 'ui',
-        authority: 'present_user',
-        serverId: params.scope.serverId,
-        ...(params.signal ? { signal: params.signal } : {}),
-    });
-    return classifyHomeActionOutcome(result);
-}
 
 /**
  * An acknowledgement-only mutation. The Action row owns what a valid answer
@@ -391,37 +365,6 @@ export function claimHomeWithCode(params: Readonly<{
         actionId: 'home.governance.claim',
         input: { code: params.code },
     });
-}
-
-/** Reads a typed answer whose shape the surface depends on. */
-async function query<TValue>(params: Readonly<{
-    scope: ServerAccountScope;
-    actionId: HomeGovernanceActionIdV1;
-    input: unknown;
-    parse: (value: unknown) => { success: true; data: TValue } | { success: false };
-}>): Promise<HomeGovernanceQueryOutcome<TValue>> {
-    const outcome = await executeHomeAction(params);
-    if (outcome.kind === 'failed') {
-        return Object.freeze({ kind: 'failed' as const, failure: outcome.failure });
-    }
-    if (outcome.kind === 'approval_pending') {
-        return Object.freeze({
-            kind: 'failed' as const,
-            failure: Object.freeze({
-                kind: 'conflict' as const,
-                retryable: false,
-                code: null,
-            }),
-        });
-    }
-    const parsed = params.parse(outcome.result);
-    if (!parsed.success) {
-        return Object.freeze({
-            kind: 'failed' as const,
-            failure: Object.freeze({ kind: 'invalid' as const, retryable: false, code: null }),
-        });
-    }
-    return Object.freeze({ kind: 'succeeded' as const, value: parsed.data });
 }
 
 /**

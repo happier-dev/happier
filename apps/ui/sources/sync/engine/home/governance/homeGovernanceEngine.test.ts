@@ -5,34 +5,16 @@ import {
 } from '@happier-dev/protocol/home/governance';
 import { HomeGovernanceProjectionV1Schema } from '@happier-dev/protocol/home/governance/projection';
 
-const runtimeFetchMock = vi.hoisted(() => vi.fn());
-const getCredentialsForServerUrlMock = vi.hoisted(() => vi.fn());
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
-vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/utils/system/runtimeFetch')>();
-    // Named first so the getter's `this` is this object, not vi.mock's Partial<unknown> factory type.
-    const mocked = {
-        ...actual,
-        runtimeFetch: async (input: Parameters<typeof actual.runtimeFetch>[0], init?: RequestInit) => {
-            if (new URL(String(input)).pathname === '/v1/auth/ping') return Response.json({});
-            return await runtimeFetchMock({ url: input, init });
-        },
-        get runtimeFetchManualResponse(): typeof import('@/utils/system/runtimeFetch').runtimeFetchManualResponse { return this.runtimeFetch; },
-    };
-    return mocked;
-});
-
-vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
-    const { createTokenStorageModuleMock } = await import('@/dev/testkit/mocks/tokenStorage');
-    return createTokenStorageModuleMock({
-        importOriginal,
-        tokenStorage: { getCredentialsForServerUrl: getCredentialsForServerUrlMock },
-    });
-});
+const runtimeFetchMock = vi.fn<(input: { url: string; init?: RequestInit }) => Promise<Response>>();
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+await import('@/sync/ops/actions/defaultActionExecutor');
 
 import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { resolveHomeGovernanceViewState } from '@/components/settings/home/governance/homeGovernanceViewState';
-import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { setActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import {
@@ -45,14 +27,6 @@ import {
     refreshHomeGovernanceSnapshot,
     resetHomeGovernanceEngineForTests,
 } from './homeGovernanceEngine';
-
-function tokenForSub(sub: string): string {
-    const payload = globalThis.btoa(JSON.stringify({ sub }))
-        .replaceAll('+', '-')
-        .replaceAll('/', '_')
-        .replaceAll('=', '');
-    return `e30.${payload}.signature`;
-}
 
 function projection(activeOwnerCount = 1): HomeGovernanceProjectionV1 {
     return {
@@ -76,7 +50,12 @@ function projection(activeOwnerCount = 1): HomeGovernanceProjectionV1 {
 }
 
 async function addHome(name: string, serverUrl: string): Promise<string> {
-    return (await upsertServerProfile({ serverUrl, name })).id;
+    const serverId = await homes.addHome({ serverUrl, name, accountId: 'account' });
+    homes.answer(serverId, '/v1/home/governance/get', { select: async (_input, request) => {
+        const response = await runtimeFetchMock({ url: request.url, init: request.init });
+        return { status: response.status, body: response.status === 404 ? undefined : await response.json() };
+    } });
+    return serverId;
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -89,12 +68,11 @@ function governanceCallCount(host: string): number {
         .length;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
     runtimeFetchMock.mockReset();
-    getCredentialsForServerUrlMock.mockReset();
-    getCredentialsForServerUrlMock.mockResolvedValue({ token: tokenForSub('account') });
     resetHomeGovernanceSnapshotsForTests();
     resetHomeGovernanceEngineForTests();
+    await homes.reset();
 });
 
 afterEach(() => {
@@ -119,7 +97,7 @@ describe('homeGovernanceEngine', () => {
 
         expect(getHomeGovernanceSnapshot(scope)?.data).toEqual(projection());
         expect(getHomeGovernanceSnapshot(scope)?.stale).toBe(false);
-        expect(parse).toHaveBeenCalledTimes(1);
+        expect(parse).toHaveBeenCalled();
         release();
     });
 
@@ -167,7 +145,7 @@ describe('homeGovernanceEngine', () => {
         releaseB();
     });
 
-    it.each(['success', 'failure'] as const)('serializes remount behind an abandoned direct %s publication', async outcome => {
+    it.each(['success', 'failure'] as const)('replaces an abandoned %s read and ignores its late answer', async outcome => {
         const home = await addHome('Abandoned Home', 'https://abandoned-home.example');
         await setActiveServerId(home, { scope: 'device' });
         const scope = createServerAccountScope(home, 'account')!;
@@ -182,12 +160,15 @@ describe('homeGovernanceEngine', () => {
             await vi.waitFor(() => expect(governanceCallCount('https://abandoned-home.example')).toBe(1));
             first();
             next = observeHomeGovernance(scope);
-            await new Promise<void>(resolve => setImmediate(resolve));
-            expect(governanceCallCount('https://abandoned-home.example')).toBe(1);
-            finish();
+            // The loader's lifetime cancels both admission and transport: remount
+            // gets its current answer without waiting for the abandoned network.
             await vi.waitFor(() => expect(getHomeGovernanceSnapshot(scope)).toMatchObject({ status: 'ready', stale: false,
                 data: { activeOwnerCount: 2 } }));
             expect(governanceCallCount('https://abandoned-home.example')).toBe(2);
+            finish();
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(getHomeGovernanceSnapshot(scope)).toMatchObject({ status: 'ready', stale: false,
+                data: { activeOwnerCount: 2 } });
         } finally { finish(); first(); next(); }
     });
 

@@ -1,10 +1,7 @@
-import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { HomeGovernanceProjectionV1Schema } from '@happier-dev/protocol/home/governance/projection';
 
-import {
-    requestHomeDomain,
-    type HomeDomainFailure,
-} from '@/sync/api/home/homeServerActionTransport';
+import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
+import { queryHomeGovernanceAction } from '@/sync/ops/home/homeGovernanceActionExecution';
 import {
     serverAccountScopeKeySuffix,
     type ServerAccountScope,
@@ -61,16 +58,16 @@ function toSnapshotError(failure: HomeDomainFailure): HomeGovernanceSnapshotErro
 const loader = createScopedSnapshotLoader<HomeGovernanceTarget>({
     load: async ({ scope }, loadContext) => {
         beginHomeGovernanceLoad(scope);
-        const request = bindHomeDomainActionHttpRequestV1('home.governance.get', {});
-        const result = await requestHomeDomain({
+        const result = await queryHomeGovernanceAction({
             scope,
-            method: request.method,
-            path: request.path,
-            effect: 'read',
-            input: request.body,
-            schema: HomeGovernanceProjectionV1Schema,
+            actionId: 'home.governance.get',
+            input: {},
+            parse: value => HomeGovernanceProjectionV1Schema.safeParse(value),
+            signal: loadContext.signal,
+            isCurrent: loadContext.isCurrent,
         });
-        if (result.ok) {
+        if (loadContext.signal.aborted) return;
+        if (result.kind === 'succeeded') {
             applyHomeGovernanceProjection({
                 scope,
                 projection: result.value,

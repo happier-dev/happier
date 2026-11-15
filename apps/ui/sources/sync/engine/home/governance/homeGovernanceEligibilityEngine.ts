@@ -1,8 +1,8 @@
 import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
-import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { HomeGovernanceEligibilityV1Schema } from '@happier-dev/protocol/home/governance/projection';
 
-import { requestHomeDomain, type HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
+import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
+import { queryHomeGovernanceAction } from '@/sync/ops/home/homeGovernanceActionExecution';
 import type { ScopedSnapshotError } from '@/sync/domains/scope/scopedSnapshotFacts';
 import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { createScopedSnapshotLoader, type ScopedLoadTarget } from '@/sync/engine/scope/scopedSnapshotLoader';
@@ -32,16 +32,16 @@ function toSnapshotError(failure: HomeDomainFailure): ScopedSnapshotError {
 const loader = createScopedSnapshotLoader<EligibilityTarget>({
     load: async ({ scope }, loadContext) => {
         beginHomeGovernanceEligibilityLoad(scope);
-        const request = bindHomeDomainActionHttpRequestV1('home.governance.eligibility.get', {});
-        const result = await requestHomeDomain({
+        const result = await queryHomeGovernanceAction({
             scope,
-            method: request.method,
-            path: request.path,
-            effect: 'read',
-            input: request.body,
-            schema: HomeGovernanceEligibilityV1Schema,
+            actionId: 'home.governance.eligibility.get',
+            input: {},
+            parse: value => HomeGovernanceEligibilityV1Schema.safeParse(value),
+            signal: loadContext.signal,
+            isCurrent: loadContext.isCurrent,
         });
-        if (result.ok) {
+        if (loadContext.signal.aborted) return;
+        if (result.kind === 'succeeded') {
             applyHomeGovernanceEligibility({
                 scope,
                 eligibility: result.value,

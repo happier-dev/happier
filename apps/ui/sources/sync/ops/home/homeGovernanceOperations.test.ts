@@ -23,6 +23,8 @@ vi.mock('@/modal', async () => {
 
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+// Cold source transformation belongs to collection, before the first mutation.
+await import('@/sync/ops/actions/defaultActionExecutor');
 const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
 // Cold source transformation is collection work, outside the contract's mutation deadline.
 const homeOperations = await import('./homeGovernanceOperations');
