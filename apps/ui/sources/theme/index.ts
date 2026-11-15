@@ -58,7 +58,8 @@ const lightThemeBase = {
             tertiary: '#6C6C70',
             link: HAPPIER_DEFAULT_SURFACE_COLORS.light.link,
             destructive: '#FF3B30',
-            placeholder: '#999999',
+            // Placeholder ink is read: the theme's meta step, at least 4.5:1 on fields and sheets (WCAG AA).
+            placeholder: '#6C6C70',
             disabled: '#C0C0C0',
         },
         accent: {
@@ -285,7 +286,8 @@ const lightThemeBase = {
         input: {
             background: '#F5F5F5',
             text: '#222222',
-            placeholder: '#999999',
+            // Placeholder ink is read: the theme's meta step, at least 4.5:1 on fields and sheets (WCAG AA).
+            placeholder: '#6C6C70',
         },
         composer: {
             chipTint: '#767676',
@@ -455,7 +457,8 @@ const darkThemeBase = {
             tertiary: '#8F8580',
             link: HAPPIER_DEFAULT_SURFACE_COLORS.dark.link,
             destructive: '#EE6E6C',
-            placeholder: '#766C67',
+            // Placeholder ink is read: the theme's meta step, at least 4.5:1 on fields and sheets (WCAG AA).
+            placeholder: '#8F8580',
             disabled: '#635955',
         },
         accent: {
@@ -653,7 +656,8 @@ const darkThemeBase = {
         input: {
             background: '#171515',
             text: '#EFEFEF',
-            placeholder: '#766C67',
+            // Placeholder ink is read: the theme's meta step, at least 4.5:1 on fields and sheets (WCAG AA).
+            placeholder: '#8F8580',
         },
         composer: {
             chipTint: '#A79D97',

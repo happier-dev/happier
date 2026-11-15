@@ -20,6 +20,7 @@ import { Typography } from '@/constants/Typography';
 import { readSurfaceStyleProperty } from '@/components/ui/surfaces/surfaceStyle';
 import { useGlassBackedInk } from '@/components/ui/glass/glassBackedInk';
 import { useLocalSetting } from '@/sync/store/settingsReadHooks';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { scaleTextStyle } from './uiFontScale';
 
@@ -147,7 +148,11 @@ const AppTextInput = React.forwardRef<any, AppTextInputProps>(
         const uiFontScaleSetting = useLocalSetting('uiFontScale');
         const paintColor = useHappierMaterialColorResolver();
         const uiFontScale = disableUiFontScaling ? 1 : uiFontScaleSetting;
-        const { accessibilityLabel, testID, ...restProps } = props;
+        const { accessibilityLabel, testID, placeholderTextColor, ...restProps } = props;
+        // A placeholder is read (WCAG AA), so every field draws it in the theme's placeholder ink unless it names its own.
+        // Web reads it from the custom property the shared `::placeholder` rule takes (theme.css); native from the prop.
+        const { theme } = useUnistyles();
+        const placeholderInk = placeholderTextColor ?? theme.colors.input.placeholder;
 
         const metricScale = Platform.OS === 'web' ? 1 : uiFontScale;
         const scaledStyle = React.useMemo(() => scaleTextStyle(style, metricScale), [style, metricScale]);
@@ -171,8 +176,11 @@ const AppTextInput = React.forwardRef<any, AppTextInputProps>(
                 const resolvedColor = paintColor(backgroundColor);
                 if (resolvedColor !== backgroundColor) out.push({ backgroundColor: resolvedColor });
             }
+            if (Platform.OS === 'web' && typeof placeholderInk === 'string') {
+                out.push({ ['--happier-placeholder-color' as string]: placeholderInk } as NonNullable<RNTextInputProps['style']>);
+            }
             return out;
-        }, [defaultStyle, scaledStyle, uiFontScale, paintColor, metricScale]);
+        }, [defaultStyle, scaledStyle, uiFontScale, paintColor, metricScale, placeholderInk]);
 
         const webAccessibilityProps = Platform.OS === 'web'
             ? { ...HAPPIER_TEXT_INPUT_WEB_MARKER, ...(disableUiFontScaling ? WEB_FONT_SCALING_DISABLED_PROPS : null) }
@@ -184,6 +192,7 @@ const AppTextInput = React.forwardRef<any, AppTextInputProps>(
                 style={mergedStyle}
                 accessibilityLabel={accessibilityLabel}
                 testID={testID}
+                placeholderTextColor={placeholderInk}
                 {...restProps}
                 {...webAccessibilityProps}
             />
