@@ -8563,7 +8563,6 @@ const machineDetailPageTranslations = { ru: translated({
             whenToday: "Сегодня",
             when7d: "Последние 7 дней",
             when30d: "Последние 30 дней",
-            anAgent: "Агент",
             ran: "запустил(а)",
             to: "в",
             from: "из",

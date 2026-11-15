@@ -72,6 +72,7 @@ import { Typography } from '@/constants/Typography';
 import type { DeploymentContentV1, DeploymentReceiptFailureV1, DeploymentReviewRevisionV1, DeploymentSourceMethodV1, DeploymentStepV1 } from '@happier-dev/deployment-protocol/v1';
 
 import {
+  deploymentActorIsViewer,
   deploymentDefinitionLabel,
   deploymentDurationMs,
   deploymentHistoryLead,
@@ -446,7 +447,7 @@ export const DeploymentEnvironmentDetail = React.memo(
             <ItemGroup testID="project-deployments.environment.recent" title={t('projects.deployments.recent')}>
               {history.result.items.slice(0, RECENT_COUNT).map((receipt) => (
                 <DeploymentReceiptRow key={receipt.id} receipt={receipt} live={false}
-                  byYou={receipt.requestedByAccountId === props.accountId} phone={props.phone} onOpen={openReceipt} />
+                  byYou={deploymentActorIsViewer(receipt.actor, props.accountId)} phone={props.phone} onOpen={openReceipt} />
               ))}
             </ItemGroup>
           ) : null}
@@ -963,7 +964,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                         attention: liveAddress?.attention ? <DomainStateLine state={liveAddress.attention} route={null} /> : null,
                         actions: liveActions(liveUrl),
                       } : null}
-                      byYou={activeReceipt.deployment.requestedByAccountId === props.accountId}
+                      byYou={deploymentActorIsViewer(activeReceipt.facts.actor, props.accountId)}
                       phone={props.phone}
                       onOpenReceipt={openServingReceipt} />
                   </ItemGroup>
@@ -1557,13 +1558,13 @@ function ReceiptFactsLine(props: Readonly<{
   return <Text variant="body" style={styles.factsLine} numberOfLines={1}>{parts}</Text>;
 }
 
-/** "you · 2 hours ago · took 49 s": who, when, how long, from the receipt header alone. */
+/** "by you · 2 hours ago · took 49 s": who (the caller's actor label, or nothing when unknown), when, how long. */
 export function describeReceipt(
   receipt: DeploymentReceiptHeaderV1,
-  byYou: boolean,
+  who: string | null,
 ): string {
   const parts: string[] = [];
-  if (byYou) parts.push(t('projects.deployments.byYou'));
+  if (who) parts.push(who);
   parts.push(
     formatRelativeTime(
       receipt.settledAtMs ?? receipt.startedAtMs ?? receipt.requestedAtMs,
@@ -1722,7 +1723,7 @@ function DeploymentHistoryPage(
               key={receipt.id}
               receipt={receipt}
               live={receipt.id === props.activeId}
-              byYou={receipt.requestedByAccountId === props.accountId}
+              byYou={deploymentActorIsViewer(receipt.actor, props.accountId)}
               phone={props.phone}
               onOpen={props.onOpen}
             />

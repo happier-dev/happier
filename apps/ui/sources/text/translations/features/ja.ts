@@ -8531,7 +8531,6 @@ const machineDetailPageTranslations = { ja: translated({
             whenToday: "今日",
             when7d: "過去7日",
             when30d: "過去30日",
-            anAgent: "エージェント",
             ran: "が実行:",
             to: "→",
             from: "←",

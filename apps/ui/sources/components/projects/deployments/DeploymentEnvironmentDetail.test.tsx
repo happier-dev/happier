@@ -424,9 +424,9 @@ function controllerFor(
       ok: true,
       value: { ok: true, items: [...retained, ...(servingId && !retained.some(row => row.deployment.id === servingId) ? [serving] : [])]
         .map(row => {
-          // The real transport's per-row projection: revision title, source and the recorded failure fact.
+          // The real transport's per-row projection: revision title, source, the recorded failure and captured actor.
           const entry = projectDeploymentReceiptHistoryEntryV1(row);
-          return { ...row.deployment, source: entry.source, failure: entry.failure,
+          return { ...row.deployment, source: entry.source, failure: entry.failure, actor: entry.actor,
             ...(entry.historyTitle ? { title: entry.historyTitle } : {}) };
         }), nextCursor: null },
     }),
@@ -1434,6 +1434,34 @@ describe('Project deployments page', () => {
           environmentId: detail.environment.id, revision: 1, deploymentId: 'rollback-result', deploymentRevision: 1, state: 'queued' })}
         review={noReview} onOpenReceipt={() => {}} />);
       expect(screen.findByTestId('project-deployments.receipt.rollback') !== null).toBe(eligible);
+    } finally { controller.retire(); }
+  });
+
+  it('names who acted in Recent activity from the captured actor, never from the requester (owner ruling 11-15)', async () => {
+    const base = environmentDetailForHome();
+    const servingId = base.targetLinks.find(row => row.targetLink.id === base.environment.runtimeTargetLinkId)?.targetLink.activeDeploymentId;
+    if (!servingId) throw new Error('Expected a serving receipt in the fixture');
+    const serving = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: servingId, state: 'succeeded' }) });
+    const plain = createDeploymentReceiptDetailV1();
+    // Both earlier attempts were requested by the viewer: one by their agent, one with no captured actor at all.
+    const byAgent = createDeploymentReceiptDetailV1({
+      deployment: createDeploymentReceiptHeaderV1({ id: 'agent-attempt', state: 'succeeded', requestedByAccountId: scope.accountId }),
+      content: { ...plain.content, actor: { actorKind: 'agent', sessionId: 'session-agent',
+        onBehalfOf: { serverId: scope.serverId, accountId: scope.accountId } } } as typeof plain.content });
+    const unknown = createDeploymentReceiptDetailV1({
+      deployment: createDeploymentReceiptHeaderV1({ id: 'unknown-attempt', state: 'succeeded', requestedByAccountId: scope.accountId }) });
+    const { controller, detail } = controllerFor({ receipt: serving, history: [serving, byAgent, unknown], detail: base });
+    const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+    try {
+      const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller}
+        environmentId={detail.environment.id} demand={shown} accountId={scope.accountId} serverId={scope.serverId}
+        phone={false} deploy={null} review={noReview} onOpenReceipt={() => {}} lifetime={lifetime} />);
+      await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('(your session)'));
+      const text = screen.getTextContent();
+      // The agent acted for the viewer, so it is not "You"; the receipt with no captured actor names nobody.
+      expect(text).toContain('An agent (your session)');
+      expect(text).not.toMatch(/\bYou\b/);
+      expect(text).not.toContain('by you');
     } finally { controller.retire(); }
   });
 

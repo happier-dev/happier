@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Timeline, type TimelineItemContent } from '@happier-dev/plugin-ui';
+import type { ActionActorV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import type { DeploymentReceiptHeaderV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type {
   DeploymentReceiptFailureV1,
@@ -10,8 +11,6 @@ import type {
 
 import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { useDiscussionParticipantProfiles } from '@/components/discussions/useDiscussionParticipantProfiles';
-import { resolveAccountActorPresentation, resolveUnknownAccountActorName } from '@/sync/domains/account/accountActorPresentation';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { Text } from '@/components/ui/text/Text';
 import { WorkStatusGlyph } from '@/components/work/status/WorkStatusGlyph';
@@ -19,7 +18,10 @@ import { formatElapsedDuration } from '@/components/machines/durationWords';
 import { buildSessionListDateGroups } from '@/sync/domains/session/listing/sessionListDateGroups';
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
+import { useDeploymentActorPresentations } from './useDeploymentActorPresentations';
 import {
+  deploymentActorIsViewer,
+  deploymentActorLabel,
   deploymentDurationMs,
   deploymentHistoryLead,
   deploymentReceiptTitle,
@@ -33,6 +35,8 @@ export type DeploymentActivityReceipt = DeploymentReceiptHeaderV1 &
     title?: string;
     failure?: DeploymentReceiptFailureV1 | null;
     source?: DeploymentReviewRevisionV1 | null;
+    /** The captured actor (history read); null when the older receipt captured none. */
+    actor?: ActionActorV1 | null;
   }>;
 
 const atOf = (receipt: DeploymentReceiptHeaderV1) =>
@@ -65,20 +69,20 @@ export const DeploymentActivityTimeline = React.memo(
       [props.receipts],
     );
     const { accountId, onOpen, lifetime } = props;
-    const otherIds = React.useMemo(() => [...new Set(props.receipts.map(receipt => receipt.requestedByAccountId)
-      .filter(id => id !== accountId))], [props.receipts, accountId]);
-    const people = useDiscussionParticipantProfiles({ scope: lifetime?.scope ?? NO_SCOPE, roster: null, accountIds: otherIds,
-      enabled: lifetime !== null && otherIds.length > 0, accountLifetime: lifetime });
+    // Who acted is the receipt's captured actor through the one actor display owner; the requester is audit only.
+    const actors = React.useMemo(() => props.receipts.map((receipt) => receipt.actor), [props.receipts]);
+    const presentations = useDeploymentActorPresentations({ actors, scope: lifetime?.scope ?? NO_SCOPE,
+      accountLifetime: lifetime, active: lifetime !== null });
+    const presentationById = React.useMemo(() => new Map(props.receipts.map((receipt, index) =>
+      [receipt.id, presentations[index]] as const)), [presentations, props.receipts]);
     const renderItem = React.useCallback(
       (receipt: DeploymentActivityReceipt): TimelineItemContent => {
-        const byYou = receipt.requestedByAccountId === accountId;
-        const actor = byYou ? null : people.accounts.get(receipt.requestedByAccountId);
-        // A person the profile owner can't name reads as the generic label once it has answered, never mid-read.
-        const actorName = byYou ? null : actor && lifetime ? resolveAccountActorPresentation(actor, lifetime.scope).name
-          : people.status === 'loading' ? null : resolveUnknownAccountActorName('value');
+        const byYou = deploymentActorIsViewer(receipt.actor, accountId);
+        const presentation = presentationById.get(receipt.id);
+        const actorName = byYou || !presentation ? null : deploymentActorLabel(presentation, receipt.actor, accountId);
         return activityContent(receipt, byYou, actorName, onOpen);
       },
-      [accountId, lifetime, onOpen, people.accounts, people.status],
+      [accountId, onOpen, presentationById],
     );
     return (
       // The public Timeline on a core page: the app's theme, type roles and icons, as a plugin surface receives them.
@@ -113,7 +117,7 @@ const NO_SCOPE: ServerAccountScope = Object.freeze({ serverId: '', accountId: ''
 function activityContent(
   receipt: DeploymentActivityReceipt,
   byYou: boolean,
-  /** Another person's name, once the profile owner has it; never guessed. */
+  /** Who acted when it isn't the viewer in person (a name, an agent and whose session, a workflow); never guessed. */
   actorName: string | null,
   onOpen: (id: string) => void,
 ): TimelineItemContent {

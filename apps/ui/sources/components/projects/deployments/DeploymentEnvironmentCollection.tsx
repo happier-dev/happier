@@ -239,8 +239,8 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
       runtimeKind: compose,
       /** The address it serves at (the collection's resolved live address); null when none or not known. */
       liveAddress: liveAddress ?? null,
-      /** Who asked for the latest deploy (its receipt's requester), for the row's who-and-what line. */
-      requestedByAccountId: currentDeployment?.requestedByAccountId ?? null,
+      /** Who did the latest deploy (its captured actor) for the row's who-and-what line; null when none was captured. */
+      actor: currentDeployment?.actor ?? null,
       // What was deployed last: its commit subject (the latest attempt's source facts), else its receipt's title, else
       // what is live; never one that only repeats the row's name.
       deploymentTitle: [currentDeployment?.commitSubject, currentDeployment?.title, liveVersionTitle]

@@ -8534,7 +8534,6 @@ const machineDetailPageTranslations = { fr: translated({
             whenToday: "Aujourd’hui",
             when7d: "7 derniers jours",
             when30d: "30 derniers jours",
-            anAgent: "Un agent",
             ran: "a lancé",
             to: "vers",
             from: "de",

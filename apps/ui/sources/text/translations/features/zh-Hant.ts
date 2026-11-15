@@ -8525,7 +8525,6 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
             whenToday: "今天",
             when7d: "最近 7 天",
             when30d: "最近 30 天",
-            anAgent: "一個代理",
             ran: "執行了",
             to: "到",
             from: "從",

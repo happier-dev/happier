@@ -8526,7 +8526,6 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
             whenToday: "今天",
             when7d: "最近 7 天",
             when30d: "最近 30 天",
-            anAgent: "一个智能体",
             ran: "运行了",
             to: "到",
             from: "从",

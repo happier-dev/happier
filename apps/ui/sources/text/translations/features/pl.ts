@@ -8554,7 +8554,6 @@ const machineDetailPageTranslations = { pl: translated({
             whenToday: "Dziś",
             when7d: "Ostatnie 7 dni",
             when30d: "Ostatnie 30 dni",
-            anAgent: "Agent",
             ran: "uruchomił(a)",
             to: "do",
             from: "z",

@@ -479,6 +479,7 @@ const ProjectDeploymentsPage = React.memo(
         onOpenEnvironment={openEnvironmentTriggers} onOpenPreviews={openEnvironmentPreviews} /> : draft ?? (environmentId === null ? null : selection.deploymentId ? (
         <DeploymentReceiptDetail
           key={`${environmentId}:${selection.deploymentId}`}
+          lifetime={props.lifetime}
           controller={props.controller}
           environmentId={environmentId}
           deploymentId={selection.deploymentId}

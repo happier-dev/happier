@@ -2170,7 +2170,6 @@ export const english = {
         whenToday: "Today",
         when7d: "Last 7 days",
         when30d: "Last 30 days",
-        anAgent: "An agent",
         ran: "ran",
         to: "to",
         from: "from",

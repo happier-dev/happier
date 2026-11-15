@@ -145,3 +145,38 @@ describe('an unconfirmed receipt names its recorded cause', () => {
             .toBe(deploymentStateNotice('outcome_unknown')?.text);
     });
 });
+
+describe('deploy and Action actor labels (lab envOv/fAct; owner ruling 05:14Z: actor, never requestedByAccountId)', () => {
+    const viewer = 'account-viewer';
+    const none = { actorKind: null, displayName: null, onBehalfOf: null } as const;
+
+    it('says You for the viewer, a person by name, and nothing for an unknown historical actor', async () => {
+        const { deploymentActorLabel } = await import('./deploymentPresentation');
+        expect(deploymentActorLabel({ actorKind: 'person', displayName: 'Viewer Name', onBehalfOf: null },
+            { actorKind: 'person', accountId: viewer }, viewer)).toBe('You');
+        expect(deploymentActorLabel({ actorKind: 'person', displayName: 'Ana Ruiz', onBehalfOf: null },
+            { actorKind: 'person', accountId: 'account-ana' }, viewer)).toBe('Ana Ruiz');
+        // A person whose name is still reading says nothing yet rather than a placeholder that flips.
+        expect(deploymentActorLabel({ actorKind: 'person', displayName: null, onBehalfOf: null },
+            { actorKind: 'person', accountId: 'account-ana' }, viewer)).toBeNull();
+        expect(deploymentActorLabel(none, null, viewer)).toBeNull();
+        expect(deploymentActorLabel(none, undefined, viewer)).toBeNull();
+    });
+
+    it('names an agent with whose session it is, and a workflow by its name', async () => {
+        const { deploymentActorLabel } = await import('./deploymentPresentation');
+        const onBehalfOf = (accountId: string, displayName: string) => ({ serverId: 'server-a', accountId, displayName });
+        expect(deploymentActorLabel({ actorKind: 'agent', displayName: 'Claude', onBehalfOf: onBehalfOf('account-ana', 'Ana') },
+            { actorKind: 'agent', sessionId: 'session-1', onBehalfOf: { serverId: 'server-a', accountId: 'account-ana' } }, viewer))
+            .toBe('Claude (Ana’s session)');
+        expect(deploymentActorLabel({ actorKind: 'agent', displayName: 'Claude', onBehalfOf: onBehalfOf(viewer, 'Viewer Name') },
+            { actorKind: 'agent', sessionId: 'session-1', onBehalfOf: { serverId: 'server-a', accountId: viewer } }, viewer))
+            .toBe('Claude (your session)');
+        expect(deploymentActorLabel({ actorKind: 'agent', displayName: null, onBehalfOf: null },
+            { actorKind: 'agent', sessionId: 'session-1' }, viewer)).toBe('An agent');
+        expect(deploymentActorLabel({ actorKind: 'workflow', displayName: 'Nightly backups', onBehalfOf: null },
+            { actorKind: 'workflow', runId: 'run-1' }, viewer)).toBe('Nightly backups');
+        expect(deploymentActorLabel({ actorKind: 'workflow', displayName: null, onBehalfOf: null },
+            { actorKind: 'workflow', runId: 'run-1' }, viewer)).toBe('A workflow');
+    });
+});

@@ -62,7 +62,11 @@ import {
   deploymentStateLabel,
   deploymentStateNotice,
   deploymentWorkStatus,
+  deploymentActorIsViewer,
+  deploymentActorLabel,
 } from './deploymentPresentation';
+import { useDeploymentActorPresentations } from './useDeploymentActorPresentations';
+import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { describeReceipt, DeployOutcomeBanner, type DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
 import { useDeploymentPress, type DeploymentRecoveryTarget } from './deploymentActionOutcome';
 import { useDeploymentCancellation } from './useDeploymentCancellation';
@@ -96,6 +100,8 @@ export const DeploymentReceiptDetail = React.memo(
       environmentName: string | null;
       demand: DeploymentReadDemandV1;
       accountId: string;
+      /** The viewer's Account lifetime: who acted is named through the shared actor display owner under it. */
+      lifetime?: ServerAccountScopeLifetime | null;
       onBack: () => void;
       /** Leaves the receipt for one of its Environment's pages (a recovery's next action: Variables, History, Logs). */
       onOpenEnvironmentTab?: (next: DeploymentEnvironmentDestinationV1) => void;
@@ -145,6 +151,10 @@ export const DeploymentReceiptDetail = React.memo(
     const { press: cancelPress, canCancel, cancelRequested, pressCancel } = useDeploymentCancellation({
       receipt: value, cancel: props.cancel, review: props.review, onOpenReceipt: props.onOpenReceipt,
     });
+    // Who acted is the receipt's captured actor through the one actor display owner; the requester is audit only.
+    const receiptActors = React.useMemo(() => [value?.facts.actor ?? null], [value?.facts.actor]);
+    const [actorPresentation] = useDeploymentActorPresentations({ actors: receiptActors,
+      scope: props.lifetime?.scope ?? NO_ACTOR_SCOPE, accountLifetime: props.lifetime ?? null, active: props.lifetime != null });
     const machineIds = React.useMemo(
       () => value?.content.machines ?? [],
       [value?.content.machines],
@@ -326,7 +336,8 @@ export const DeploymentReceiptDetail = React.memo(
         key: 'when',
         text: describeReceipt(
           deployment,
-          deployment.requestedByAccountId === props.accountId,
+          deploymentActorIsViewer(facts.actor, props.accountId) ? t('projects.deployments.byYou')
+            : actorPresentation ? deploymentActorLabel(actorPresentation, facts.actor, props.accountId) : null,
         ),
       },
       ...(props.environmentName
@@ -857,3 +868,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: theme.space.s8,
   },
 }));
+
+/** Read nothing without a lifetime: the actor owner is inactive then, so this scope is never queried. */
+const NO_ACTOR_SCOPE: ServerAccountScope = Object.freeze({ serverId: '', accountId: '' });

@@ -8536,7 +8536,6 @@ const machineDetailPageTranslations = { ca: translated({
             whenToday: "Avui",
             when7d: "Últims 7 dies",
             when30d: "Últims 30 dies",
-            anAgent: "Un agent",
             ran: "ha executat",
             to: "a",
             from: "de",

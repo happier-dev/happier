@@ -20,13 +20,13 @@ import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollec
 import { MiddleEllipsisText } from '@/components/ui/text/MiddleEllipsisText';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { useDiscussionParticipantProfiles } from '@/components/discussions/useDiscussionParticipantProfiles';
-import { resolveAccountActorPresentation } from '@/sync/domains/account/accountActorPresentation';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 
 import { isSameDeploymentName, useDeploymentEnvironmentRowParts } from './DeploymentEnvironmentCollection';
 import { DeploymentStepStrip } from './DeploymentStepStrip';
+import { deploymentActorIsViewer, deploymentActorLabel } from './deploymentPresentation';
+import { useDeploymentActorPresentations } from './useDeploymentActorPresentations';
 import { formatDeploymentLiveAddress } from './deploymentLiveAddressFacts';
 import { deploymentEnvironmentRoute } from './deploymentNavigation';
 import { groupDeploymentRowsByProject } from './deploymentProjectGroups';
@@ -151,18 +151,19 @@ export function DeploymentEnvironmentRows(
     onOpenChange: open,
   });
   const hereMachine = props.hereMachine === true;
-  // Who asked for each latest deploy, through the people owner the Environment's timeline uses ("by you", a name).
+  // Who did each latest deploy: its captured actor through the one actor display owner ("by you", a name, an agent
+  // and whose session, a workflow). The requester is an audit fact and never names the row.
   const accountId = props.lifetime?.scope.accountId ?? null;
-  const otherIds = React.useMemo(() => [...new Set(rows.flatMap((row) => row.requestedByAccountId && row.requestedByAccountId !== accountId
-    ? [row.requestedByAccountId] : []))], [accountId, rows]);
-  const people = useDiscussionParticipantProfiles({ scope: props.lifetime?.scope ?? NO_SCOPE, roster: null, accountIds: otherIds,
-    enabled: props.lifetime !== null && otherIds.length > 0, accountLifetime: props.lifetime });
+  const actors = React.useMemo(() => rows.map((row) => row.actor), [rows]);
+  const presentations = useDeploymentActorPresentations({ actors, scope: props.lifetime?.scope ?? NO_SCOPE,
+    accountLifetime: props.lifetime, active: props.lifetime !== null });
+  const presentationByRow = React.useMemo(() => new Map(rows.map((row, index) => [row, presentations[index]] as const)),
+    [presentations, rows]);
   const authorOf = React.useCallback((row: Row): string | null => {
-    if (!row.requestedByAccountId) return null;
-    if (row.requestedByAccountId === accountId) return t('projects.deployments.byYou');
-    const actor = people.accounts.get(row.requestedByAccountId);
-    return actor && props.lifetime ? resolveAccountActorPresentation(actor, props.lifetime.scope).name : null;
-  }, [accountId, people.accounts, props.lifetime]);
+    if (deploymentActorIsViewer(row.actor, accountId)) return t('projects.deployments.byYou');
+    const presentation = presentationByRow.get(row);
+    return presentation ? deploymentActorLabel(presentation, row.actor, accountId) : null;
+  }, [accountId, presentationByRow]);
   // Runs on keeps its longest name whole (it never truncates at a desktop width); Address gives way first.
   const runsOnWidth = React.useMemo(() => {
     const longest = Math.max(0, ...rows.map((row) => row.runsOn?.length ?? 0));
