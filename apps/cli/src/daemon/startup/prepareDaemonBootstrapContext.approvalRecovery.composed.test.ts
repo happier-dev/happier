@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import fastify from 'fastify';
+import * as fsPromises from 'node:fs/promises';
 import { TargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { FilesystemReadFileInputSchema } from '@happier-dev/protocol/actions/filesystemActionFamily';
@@ -17,7 +18,7 @@ import { acquireDaemonLock, releaseDaemonLock, writeStoredCredentialsForServerId
 import { ensureMachineIdForCredentials } from '@/ui/auth';
 import { prepareDaemonBootstrapContext } from './prepareDaemonBootstrapContext';
 
-afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); resetServerFeaturesClientForTests(); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); resetServerFeaturesClientForTests(); });
 
 it.each(['plain', 'e2ee'] as const)('settles only daemon-owned executing approvals at startup without executing any Action (%s)', async mode => {
   vi.stubEnv('HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED', 'false');
@@ -132,6 +133,7 @@ it.each(['plain', 'e2ee'] as const)('settles only daemon-owned executing approva
       const builtInOwn = await seedBuiltIn(ownMachineId, 'own-built-in-claimed', 'executing');
       const builtInOther = await seedBuiltIn('machine-2', 'other-built-in-claimed', 'executing');
       const builtInUnclaimed = await seedBuiltIn(ownMachineId, 'own-built-in-unclaimed', 'approved');
+      const startupFileReads = vi.spyOn(fsPromises, 'readFile');
       const bootstrap = await prepareDaemonBootstrapContext({ daemonLockHandle: lock,
         initialMachineMetadata: { host: 'fixture', platform: 'linux', happyCliVersion: '0.0.0',
           homeDir: configuration.happyHomeDir, happyHomeDir: configuration.happyHomeDir,
@@ -140,9 +142,11 @@ it.each(['plain', 'e2ee'] as const)('settles only daemon-owned executing approva
       const states = (selection: URLSearchParams) => selection.get('approvalStates');
       expect(selections.filter(selection => states(selection) === JSON.stringify(['executing'])),
         'Startup must reach its one recovery selection').toHaveLength(1);
-      // Startup also starts the one-time list-fact classification of open built-in headers (none here).
-      await vi.waitFor(() => expect(selections.filter(selection => states(selection) === JSON.stringify(['open'])).map(selection =>
-        selection.get('kinds'))).toEqual([JSON.stringify(['approval_request.v1'])]));
+      // Owner 2026-11-07: never migrate records written only by unshipped 0.3 builds.
+      expect(startupFileReads.mock.calls.filter(([path]) => String(path).includes('approval-startup-passes')),
+        'Startup must not read per-Account migration settlement files').toHaveLength(0);
+      expect(selections.filter(selection => states(selection) === JSON.stringify(['open'])),
+        'Startup must not select open approvals for development-data migration').toHaveLength(0);
       expect(missingRoutes, 'The HTTP boundary must implement every reached route').toEqual([]);
       expect(bodySelections).toHaveLength(1);
       expect(bodySelections[0]).toHaveLength(3);
@@ -155,7 +159,7 @@ it.each(['plain', 'e2ee'] as const)('settles only daemon-owned executing approva
       expect(await store.targetActionApprovalsGet({ artifactId: unclaimed })).toMatchObject({ status: 'approved' });
       expect(await store.targetActionApprovalsGet({ artifactId: sessionClaim })).toMatchObject({ status: 'executing' });
       expect(await store.approvalsGet({ artifactId: builtInOwn, serverId: null })).toMatchObject({ status: 'outcome_unknown',
-        execution: { ok: false, effectAttempted: true, errorCode: 'approval_execution_outcome_unknown' } });
+        execution: { ok: false, errorCode: 'approval_execution_outcome_unknown' } });
       expect(await store.approvalsGet({ artifactId: builtInOther, serverId: null })).toMatchObject({ status: 'executing' });
       expect(await store.approvalsGet({ artifactId: builtInUnclaimed, serverId: null })).toMatchObject({ status: 'approved' });
       expect(selections[0]?.get('approvalStates')).toBe(JSON.stringify(['executing']));

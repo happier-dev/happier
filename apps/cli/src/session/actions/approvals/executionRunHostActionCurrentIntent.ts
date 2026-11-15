@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { ExecutionRunHostActionApprovalRequestV1Schema, StoredExecutionRunHostActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/executionRunHostActionApprovalRequestV1';
+import { EXECUTION_RUN_HOST_ACTION_APPROVAL_LIMITS_V1, ExecutionRunHostActionApprovalRequestV1Schema, StoredExecutionRunHostActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/executionRunHostActionApprovalRequestV1';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import type { ExecutionRunHostActionApprovalRequestV1, ReviewCommentProposalV1 } from '@happier-dev/protocol';
 
@@ -43,12 +43,12 @@ function proposalPreview(proposal: ReviewCommentProposalV1) {
       : undefined;
   return {
     ...(proposal.findingId ? { findingId: proposal.findingId } : {}),
-    pathLabel: redactBugReportSensitiveText(proposal.anchor.filePath).slice(0, 512),
+    pathLabel: redactBugReportSensitiveText(proposal.anchor.filePath).slice(0, EXECUTION_RUN_HOST_ACTION_APPROVAL_LIMITS_V1.previewPathUtf16Units),
     pathSha256: sha256(proposal.anchor.filePath),
     ...(startLine !== undefined && endLine !== undefined ? { startLine, endLine } : {}),
     ...(proposal.severity ? { severity: proposal.severity } : {}),
     bodySha256: sha256(proposal.body),
-    bodyPreview: redactBugReportSensitiveText(proposal.body).slice(0, 1_024),
+    bodyPreview: redactBugReportSensitiveText(proposal.body).slice(0, EXECUTION_RUN_HOST_ACTION_APPROVAL_LIMITS_V1.previewBodyUtf16Units),
   };
 }
 
@@ -86,7 +86,7 @@ export function createExecutionRunHostActionCurrentIntentAdapter(deps: Readonly<
       workspaceId: subject.workspaceId,
       serverId: subject.serverId,
       proposalCount: subject.proposals.length,
-      proposalPreview: subject.proposals.slice(0, 20).map(proposalPreview),
+      proposalPreview: subject.proposals.slice(0, EXECUTION_RUN_HOST_ACTION_APPROVAL_LIMITS_V1.previewEntries).map(proposalPreview),
       subjectFingerprint: subject.subjectFingerprint,
       summary: `Create ${subject.proposals.length} proposed review comment${subject.proposals.length === 1 ? '' : 's'}`,
     });

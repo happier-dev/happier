@@ -31,8 +31,6 @@ import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSa
 import { createCliApprovalCreation, type WorkflowDiscussionReplyApprovalSubject } from './creation';
 import { createTargetActionApprovalLifecycle } from './targetActionLifecycle';
 import { recoverExecutingApprovals } from './recoverExecuting';
-import { classifyOpenApprovalListFacts } from './classifyListFacts';
-import { cancelDuplicateOpenApprovals } from './cancelDuplicateOpen';
 import {
   executionRunHostActionApprovalRequestsEqual,
   executionRunHostActionApprovalSubjectsEqual,
@@ -91,8 +89,6 @@ export function createCliApprovalsArtifactStore(params: Readonly<{
   targetActionApprovalsGet(args: Readonly<{ artifactId: string }>): Promise<TargetActionApprovalRequestV1 | null>;
   targetActionApprovalsUpdate(args: Readonly<{ artifactId: string; request: TargetActionApprovalRequestV1 }>): Promise<Readonly<{ ok: true } | { ok: false; errorCode: string; error: string }>>;
   approvalsRecoverExecuting(args: Readonly<{ machineId: string }>): ReturnType<typeof recoverExecutingApprovals>;
-  approvalsClassifyListFacts(): ReturnType<typeof classifyOpenApprovalListFacts>;
-  approvalsCancelDuplicateOpen(): ReturnType<typeof cancelDuplicateOpenApprovals>;
   executionRunHostActionApprovalsCreate(args: Readonly<{ request: ExecutionRunHostActionApprovalRequestV1;
     onReady?: (created: Readonly<{ artifactId: string; request: ExecutionRunHostActionApprovalRequestV1 }>) => void;
   }>): Promise<Readonly<{ artifactId: string }>>;
@@ -294,13 +290,6 @@ export function createCliApprovalsArtifactStore(params: Readonly<{
       getAccountId: () => readAccountIdFromToken(params.credentials.token), prepareRequesterRecipient }),
     approvalsRecoverExecuting: ({ machineId }) => recoverExecutingApprovals({ machineId, accountArtifactStore,
       approvalsUpdate: store.approvalsUpdate, targetActionApprovalsUpdate: store.targetActionApprovalsUpdate }),
-    approvalsCancelDuplicateOpen: () => cancelDuplicateOpenApprovals({ accountArtifactStore: {
-      list: options => accountArtifactStore.list(options), approvalsUpdate: store.approvalsUpdate,
-    } }),
-    approvalsClassifyListFacts: () => classifyOpenApprovalListFacts({ accountArtifactStore: {
-      list: options => accountArtifactStore.list(options),
-      readForUpdate: artifactId => accountArtifactStore.readForUpdate(artifactId, { authorizationHeaders: params.approvalAuthorizationHeaders }),
-    } }),
     approvalsList: args => listApprovalArtifactsV1({ ...args,
       readPage: options => accountArtifactStore.list(options),
       read: artifactId => accountArtifactStore.read(artifactId),

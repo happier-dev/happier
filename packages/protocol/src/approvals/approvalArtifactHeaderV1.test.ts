@@ -344,6 +344,23 @@ describe('approval Artifact header correspondence', () => {
     }));
   });
 
+  it('indexes deployment approvals by Environment across profile aliases and keeps body authority', () => {
+    const request = ApprovalRequestV2Schema.parse({ ...builtIn, status: 'open', decision: undefined,
+      actionId: 'deployments.deploy', actionArgs: { serverId: 'home', environmentId: 'production' },
+      executionOriginV1: { ...builtIn.executionOriginV1, actionId: 'deployments.deploy' },
+    });
+    const header = buildApprovalRequestArtifactHeaderV1(request);
+    expect(header.approvalSubjectKey).toEqual(expect.any(String));
+    expect(deriveArtifactStoredKindV1(header)).toBe(
+      `v1:other:${managedDeleteApprovalIndexedKindV1(String(header.approvalSubjectKey))}`);
+    expect(buildApprovalRequestArtifactHeaderV1({ ...request, actionArgs: { serverId: 'profile-alias', environmentId: 'production' } })
+      .approvalSubjectKey).toBe(header.approvalSubjectKey);
+    expect(buildApprovalRequestArtifactHeaderV1({ ...request, actionArgs: { serverId: 'home', environmentId: 'other' } })
+      .approvalSubjectKey).not.toBe(header.approvalSubjectKey);
+    expect(approvalArtifactBodyMatchesHeaderV1(header, JSON.stringify(request))).toEqual({ family: 'built_in', request });
+    expect(approvalArtifactBodyMatchesHeaderV1({ ...header, approvalSubjectKey: 'other' }, JSON.stringify(request))).toBeNull();
+  });
+
   it('lists only open publication requests for the exact Workflow Run through the admitted return binding', async () => {
     const publication = (runId: string) => ApprovalRequestV2Schema.parse({ ...builtIn,
       status: 'open', decision: undefined, actionId: 'discussion.reply', actionArgs: {},

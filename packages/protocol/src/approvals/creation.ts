@@ -97,25 +97,6 @@ function readRetainedPluginObligationSubject(request: ApprovalRequestV2): Plugin
     actionId, localId, requestInputDigest: request.requestInputDigest };
 }
 
-/**
- * Retried plugin obligations asked before their identity was retained (deferred
- * flow, one Ask per attempt requestId) are duplicates of one another exactly
- * when they share the retained identity this owner gives a blocking Ask: Home,
- * Account, requester, target, plugin, contribution, Action, obligation key
- * (Discussion `localId` / Event occurrence) and request input digest. The flow
- * stays part of the key. Null when stored facts cannot prove that identity:
- * not a V2 plugin Ask of a retained Action, no obligation key (for example an
- * admission without `occurrenceId`, or attempt-owned attachments), or no input
- * digest binding the remaining input.
- */
-export function deriveRetainedPluginObligationDuplicateKey(request: ApprovalRequest): string | null {
-  // A retired Publish history keeps unvalidated authorization JSON and is never a retained obligation.
-  if (request.v !== 2 || isHistoricalPublishApprovalRequestV2(request) || !request.requestInputDigest || !request.approval) return null;
-  const subject = readRetainedPluginObligationSubject(request);
-  return subject ? JSON.stringify([request.approval.flow,
-    deriveApprovalRequestSourceIdForSubject(request, request.executionOriginV1, subject)]) : null;
-}
-
 /** Identity contains no Action operands, titles, or credential material. */
 function deriveApprovalRequestSourceId(request: CapturedRequest, accountId?: string | null): string {
   const origin = request.executionOriginV1;

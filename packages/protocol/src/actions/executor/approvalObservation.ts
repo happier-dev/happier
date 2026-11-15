@@ -3,16 +3,11 @@ import { ActionIdSchema } from '../actionIds.js';
 import { projectApprovalRequestForPublicRead } from '../actionApprovalPresentation.js';
 import type { ActionExecuteResult } from '../actionExecutionResult.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './types.js';
-import { ApprovalRequestV2Schema, type ApprovalRequest } from '../../approvals/approvalRequestV1.js';
+import { ApprovalRequestV2Schema, ApprovalRequestV2StatusSchema, type ApprovalRequest } from '../../approvals/approvalRequestV1.js';
 import { projectDeploymentApprovalReceiptV1 } from '../../approvals/approvalRequestPublicRead.js';
 import { WorkspaceSyncRelationshipWriteActionInputV1Schema, WorkspaceSyncRelationshipCreationObservationV1Schema } from '../../sessions/control/handoff/workspaceSyncSchemas.js';
 import { isApprovalArtifactObservationGrantedV1, readApprovalArtifactObservationRequestV1,
   readApprovalArtifactObservationSubjectV1 } from '../../approvals/approvalArtifactHeaderV1.js';
-
-function readApprovalRequestStatus(raw: unknown): ApprovalRequest['status'] | null {
-  return raw === 'open' || raw === 'approved' || raw === 'rejected'
-    || raw === 'executed' || raw === 'failed' || raw === 'canceled' ? raw : null;
-}
 
 async function reconcileWorkspaceLink(request: ApprovalRequest, artifactId: string, context: ActionExecutorContext,
   deps: Pick<ActionExecutorDeps, 'workspaceSyncRelationshipObserveCreation' | 'approvalsUpdate'>): Promise<ApprovalRequest> {
@@ -59,8 +54,9 @@ export async function executeApprovalObservationAction(params: Readonly<{
     ? (sessionId: string) => resolveSessionMachine({ actionId, sessionId, context }) : undefined;
   if (actionId === 'approval.request.list') {
     if (!deps.approvalsList) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:approvals' };
+    const status = ApprovalRequestV2StatusSchema.safeParse(input.status);
     const listed = await deps.approvalsList({
-      status: readApprovalRequestStatus(input.status),
+      status: status.success ? status.data : null,
       ...(typeof input.workflowRunId === 'string' ? { workflowRunId: input.workflowRunId } : {}),
       ...(typeof input.actionId === 'string' ? { actionId: ActionIdSchema.parse(input.actionId) } : {}),
       ...(typeof input.cursor === 'string' ? { cursor: input.cursor } : {}),

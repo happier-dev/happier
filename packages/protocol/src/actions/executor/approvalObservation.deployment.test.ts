@@ -40,3 +40,16 @@ it('reads the existing deployment Ask as a waiting receipt and advances with the
   expect(await read()).toMatchObject({ deploymentReceipt: { state: 'rejected', approvalId: 'approval' } });
   expect(reads).toBe(5);
 });
+
+
+it.each(['outcome_unknown', 'executing'] as const)('preserves the %s filter at the approval store boundary', async status => {
+  let selected: unknown;
+  const result = await executeApprovalObservationAction({ actionId: 'approval.request.list', input: { status },
+    context: { surface: 'agent', serverId: 'home' }, deps: { approvalsList: async query => {
+      selected = query.status;
+      return { items: [], nextCursor: null, queryPlan: { kind: 'bounded_approval_artifact_header_scan', backingStore: 'ArtifactStore',
+        boundedBy: 'approval list query', hydratedTranscripts: false } };
+    } } });
+  expect(result.ok).toBe(true);
+  expect(selected).toBe(status);
+});

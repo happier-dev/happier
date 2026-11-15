@@ -3,7 +3,7 @@ import tweetnacl from 'tweetnacl';
 import { ApprovalExecutionOriginV1Schema, ApprovalRequestV2Schema } from '../../approvals/approvalRequestV1.js';
 import type { ActionExecutorContext } from './types.js';
 import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1, verifyExternalActionApprovalInputV1 } from '../externalActionExecutionAuthorization.js';
-import { buildApprovalExecutionOriginV1, isPresentUserApprovalDecisionForOrigin } from './approvalOrigins.js';
+import { buildApprovalExecutionOriginV1, isPresentUserApprovalDecisionForOrigin, resolveApprovalRequestingSessionId } from './approvalOrigins.js';
 import { projectDeploymentPreparationAdmissionV1 } from '../../deployments/deploymentPreparationAdmissionV1.js';
 import { buildMachineSetupTargetApplyInput } from '../../machines/managed/actionsV1.js';
 
@@ -184,5 +184,17 @@ describe('reviewed native root approval origin', () => {
     // A context whose signed root is another Action never lends that root's envelope.
     expect(buildApprovalExecutionOriginV1({ actionId: 'machines.setup.plan', input: { homeId: 'home', machineId: 'machine' },
       targetSessionId: null, context })?.originalActionEnvelope).toBeUndefined();
+  });
+});
+
+
+describe('requesting Session precedence', () => {
+  it('keeps the calling Session ahead of supplied transcript metadata', () => {
+    const resolve = resolveApprovalRequestingSessionId;
+    const origin = { kind: 'transcript_tool_call', sessionId: 'supplied-session', toolCallId: 'tool' };
+    expect(resolve(origin, { defaultSessionId: 'calling-session' }, 'target-session')).toBe('calling-session');
+    expect(resolve(origin, {}, 'target-session')).toBe('supplied-session');
+    expect(resolve({ kind: 'transcript_tool_call', sessionId: 'invalid-origin' }, {}, 'target-session')).toBe('target-session');
+    expect(resolve(undefined, {}, null)).toBeNull();
   });
 });

@@ -263,7 +263,7 @@ it.each([
         const { idScope: _idScope, ...stored } = body;
         artifacts.set(body.id, { ...stored, ownerAccountId: 'owner', access: 'owner', encryptionMode: mode, publicAudience: 'none',
           headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
-        return reply({ id: body.id, headerVersion: 1, bodyVersion: 1 });
+        return reply(artifacts.get(body.id));
       }
       const row = artifacts.get(id);
       if (!row) return reply({ error: 'not_found' }, 404);

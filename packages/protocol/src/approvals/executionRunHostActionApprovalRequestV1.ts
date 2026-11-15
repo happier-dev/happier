@@ -14,19 +14,22 @@ export const EXECUTION_RUN_HOST_ACTION_APPROVAL_LIMITS_V1 = Object.freeze({
   idUtf16Units: 512,
   summaryUtf16Units: 1_024,
   surfaceUtf16Units: 64,
+  previewPathUtf16Units: 512,
+  previewBodyUtf16Units: 1_024,
+  previewEntries: 20,
 });
 
 const boundedId = z.string().check(z.trim(), z.minLength(1), maxCodeUnits(EXECUTION_RUN_HOST_ACTION_APPROVAL_LIMITS_V1.idUtf16Units));
 
 const ExecutionRunHostActionProposalPreviewV1Schema = lazyZodSchema(() => z.strictObject({
   findingId: z.optional(boundedId),
-  pathLabel: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
+  pathLabel: z.string().check(z.trim(), z.minLength(1), z.maxLength(EXECUTION_RUN_HOST_ACTION_APPROVAL_LIMITS_V1.previewPathUtf16Units)),
   pathSha256: z.string().check(z.regex(/^[a-f0-9]{64}$/)),
   startLine: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(Number.MAX_SAFE_INTEGER))),
   endLine: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(Number.MAX_SAFE_INTEGER))),
   severity: z.optional(z.enum(['info', 'warning', 'error', 'critical'])),
   bodySha256: z.string().check(z.regex(/^[a-f0-9]{64}$/)),
-  bodyPreview: z.string().check(z.trim(), z.minLength(1), z.maxLength(1_024)),
+  bodyPreview: z.string().check(z.trim(), z.minLength(1), z.maxLength(EXECUTION_RUN_HOST_ACTION_APPROVAL_LIMITS_V1.previewBodyUtf16Units)),
 }).check(z.superRefine((value, ctx) => {
   if ((value.startLine === undefined) !== (value.endLine === undefined)) {
     ctx.addIssue({ code: 'custom', message: 'proposal preview line range must be complete' });
@@ -55,7 +58,7 @@ export const ExecutionRunHostActionApprovalRequestV1Schema = lazyZodSchema(() =>
   workspaceId: boundedId,
   serverId: boundedId,
   proposalCount: z.number().check(z.int(), z.minimum(1), z.maximum(200)),
-  proposalPreview: z.array(ExecutionRunHostActionProposalPreviewV1Schema).check(z.maxLength(20)),
+  proposalPreview: z.array(ExecutionRunHostActionProposalPreviewV1Schema).check(z.maxLength(EXECUTION_RUN_HOST_ACTION_APPROVAL_LIMITS_V1.previewEntries)),
   subjectFingerprint: z.string().check(z.regex(/^[a-f0-9]{64}$/)),
   summary: z.string().check(z.trim(), z.minLength(1), maxCodeUnits(EXECUTION_RUN_HOST_ACTION_APPROVAL_LIMITS_V1.summaryUtf16Units)),
   decision: z.optional(ApprovalDecisionV1Schema),

@@ -54,6 +54,7 @@ describe('target action current-intent adapter', () => {
 
   it.each(['executed', 'RPC_OUTCOME_UNKNOWN', 'receipt_write_failed'] as const)('claims authenticated live approval before execution and persists its typed receipt: %s', async outcome => {
     let stored: TargetActionApprovalRequestV1 | null = null;
+    const read = vi.fn(async () => stored);
     const adapter = createTargetActionCurrentIntentAdapter({
       create: async request => {
         stored = { ...request, createdAtMs: 1, status: 'approved', updatedAtMs: 2,
@@ -61,7 +62,7 @@ describe('target action current-intent adapter', () => {
         deliverApproved('live-execution-claim', stored);
         return { artifactId: 'live-execution-claim', request: stored };
       },
-      read: async () => stored,
+      read,
       update: async ({ request }) => {
         if (outcome === 'receipt_write_failed' && request.status === 'executed') {
           return { ok: false, errorCode: 'update_failed', error: 'fixture_receipt_write_failure' };
@@ -83,12 +84,15 @@ describe('target action current-intent adapter', () => {
     expect(admitted.status).toBe('approved');
     expect(stored).toMatchObject({ status: 'executing', decision: { kind: 'approve' } });
     if (admitted.status !== 'approved' || !admitted.settleExecution) throw new Error('Missing live execution custody');
+    read.mockClear();
     const settling = admitted.settleExecution({ artifactId: 'live-execution-claim', execution: {
       ok: outcome !== 'RPC_OUTCOME_UNKNOWN', effectAttempted: true,
       ...(outcome === 'RPC_OUTCOME_UNKNOWN' ? { errorCode: outcome } : {}),
     } });
     if (outcome === 'receipt_write_failed') await expect(settling).rejects.toThrow('approval_execution_outcome_unknown');
     else await settling;
+    // Settlement's transition writer owns currentness; the adapter adds no read.
+    expect(read).not.toHaveBeenCalled();
     expect(stored).toMatchObject({ status: outcome === 'executed' ? 'executed' : 'outcome_unknown', execution: {
       ok: outcome === 'executed', effectAttempted: true,
       ...(outcome === 'executed' ? {} : { errorCode: 'approval_execution_outcome_unknown' }),

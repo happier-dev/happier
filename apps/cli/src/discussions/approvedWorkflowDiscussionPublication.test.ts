@@ -284,7 +284,7 @@ async function runPublicationCase(mode: typeof publicationModes[number] | 'start
         if (artifacts.has(body.id)) return reply({ error: 'conflict' }, 409);
         artifacts.set(body.id, { ...body, ownerAccountId: accountId, access: 'owner', encryptionMode: witness.mode,
           headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
-        return reply({ id: body.id, headerVersion: 1, bodyVersion: 1 });
+        return reply(artifacts.get(body.id));
       }
       const row = artifacts.get(id);
       if (!row) return reply({ error: 'not_found' }, 404);

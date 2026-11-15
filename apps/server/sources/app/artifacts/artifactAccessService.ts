@@ -444,7 +444,7 @@ const approvalStoredKinds = Object.values(APPROVAL_ARTIFACT_KINDS_V1).flatMap(ki
     ArtifactCoarseKindV1Schema.options.map(coarse => `v1:${coarse}:${kind}`));
 const approvalKindWhere: Prisma.ArtifactWhereInput = { OR: [
     { kind: { in: approvalStoredKinds } },
-    ...ArtifactCoarseKindV1Schema.options.map(coarse => ({ kind: { startsWith: `v1:${coarse}:${APPROVAL_ARTIFACT_KINDS_V1.builtIn}#managed-delete:` } })),
+    ...ArtifactCoarseKindV1Schema.options.map(coarse => ({ kind: { startsWith: `v1:${coarse}:${APPROVAL_ARTIFACT_KINDS_V1.builtIn}#` } })),
 ] };
 
 function artifactApprovalSelectionWhere(input: Readonly<{ approvalStates?: readonly ApprovalArtifactStateV1[]; approvalSessionIds?: readonly string[] }>): Prisma.ArtifactWhereInput[] {
@@ -517,7 +517,7 @@ async function listArtifactHeaderQueryInTx(tx: Tx, input: Parameters<typeof list
             const annotations = exactKinds.has(APPROVAL_ARTIFACT_KINDS_V1.builtIn)
                 ? kinds.filter(kind => kind.endsWith(`:${APPROVAL_ARTIFACT_KINDS_V1.builtIn}`)) : [];
             selected.push(...await listArtifactHeaderSelectionInTx(tx, input, { OR: [
-                { kind: { in: [...kinds] } }, ...annotations.map(kind => ({ kind: { startsWith: `${kind}#managed-delete:` } })),
+                { kind: { in: [...kinds] } }, ...annotations.map(kind => ({ kind: { startsWith: `${kind}#` } })),
             ] }, new Set(kinds), annotations));
         }
         return mergeArtifactHeaderPages(selected, input.limit);
@@ -594,7 +594,7 @@ async function listArtifactHeaderSelectionInTx(tx: Tx, input: Parameters<typeof 
             // MySQL's retained column collation is case-insensitive. Indexed SQL
             // narrows candidates; exact literal membership precedes private opening.
             if (storedKinds && (row.kind === null || (!storedKinds.has(row.kind)
-                && !annotations.some(kind => row.kind?.startsWith(`${kind}#managed-delete:`))))) continue;
+                && !annotations.some(kind => row.kind?.startsWith(`${kind}#`))))) continue;
             if (input.kind !== undefined && input.kind !== null && row.kind !== input.kind
                 && !row.kind?.startsWith(`v1:${input.kind}:`)) continue;
             const access = resolveArtifactAccessFromFacts(row, input.actorAccountId);

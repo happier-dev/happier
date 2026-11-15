@@ -1,6 +1,9 @@
 import { expect, it } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { ApprovalRequestV1Schema, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
+import { listArtifactHeadersV1 } from '../artifacts/artifactListSelectionV1.js';
+import { deriveArtifactStoredKindV1, decodeArtifactKindV1 } from '../artifacts/artifactKindV1.js';
+import { listApprovalArtifactsV1, buildApprovalRequestArtifactHeaderV1 } from '../approvals/approvalArtifactHeaderV1.js';
 import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
 import { createDeploymentApprovalScopeResolverV1 } from '../deployments/deploymentApprovalScopeV1.js';
 
@@ -49,7 +52,7 @@ it.each(['delete', 'teardown', 'stop-only', 'failed'] as const)(
     expect(stored.get('other-home')?.status).toBe('open');
   });
 
-it('reads only the open deployment approvals when it settles a removed Environment, not every open approval of the Account', async () => {
+it('reads only approvals for the removed Environment through its subject index', async () => {
   // Live #142: an Account with 942 open approvals kept Stop and remove waiting minutes after the removal landed,
   // because every open approval was read back one by one before the result returned.
   const deploy = ApprovalRequestV1Schema.parse({
@@ -58,21 +61,43 @@ it('reads only the open deployment approvals when it settles a removed Environme
       targetLinkId: 'link', expectedTargetLinkRevision: 1, requestKey: 'pending',
       contentArtifactId: 'content', contentHeaderVersion: 1, contentBodyVersion: 1 }, summary: 'Deploy',
   });
-  const unrelated = Array.from({ length: 40 }, (_, index) => [`plugin-${index}`, ApprovalRequestV1Schema.parse({
-    v: 1, status: 'open', createdAtMs: 1, updatedAtMs: 1, createdBy: { surface: 'agent' }, requestedSurface: 'agent',
-    actionId: 'machines.managed.delete', actionArgs: { homeId: 'home', managedId: `managed-${index}` }, summary: 'Delete managed machine',
+  const unrelated = Array.from({ length: 942 }, (_, index) => [`other-${index}`, ApprovalRequestV1Schema.parse({
+    ...deploy, actionArgs: { ...deploy.actionArgs, environmentId: `environment-${index}` },
   })] as const);
   const stored = new Map<string, ApprovalRequest>([['pending', deploy], ...unrelated]);
+  const rows = [...stored].map(([artifactId, request]) => {
+    const header = buildApprovalRequestArtifactHeaderV1(request, { legacyServerId: 'home' });
+    return { artifactId, request, header, storedKind: deriveArtifactStoredKindV1(header) };
+  });
   const reads: string[] = [];
+  let listReads = 0;
+  let inventoryBodiesRead = 0;
   const transport: NonNullable<ActionExecutorDeps['deploymentAction']> = async () => ({ ok: true, environmentId: 'environment',
     revision: 4, deploymentId: 'receipt', deploymentRevision: 5, state: 'succeeded', environmentRemoved: true });
   const executor = createActionExecutor({ deploymentAction: transport, isActionApprovalRequired: () => false,
     resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(transport, async () => ({ ok: true,
       environment: { id: 'environment', projectSourceId: 'project', purpose: 'standard' } })),
     // Home transport and Artifact persistence are the only substituted boundaries.
-    approvalsList: async () => ({ items: [...stored].map(([artifactId, request]) => ({ artifactId,
-      status: request.status, actionId: request.actionId, summary: request.summary, serverId: 'home', updatedAtMs: request.updatedAtMs })),
-      nextCursor: null, queryPlan: { kind: 'approval_artifact_header_scan', hydratedTranscripts: false } }),
+    approvalsList: async args => {
+      listReads++;
+      return listApprovalArtifactsV1({ ...args, read: async () => null,
+        readPage: options => listArtifactHeadersV1({ options, encodeCursor: item => item.artifactId,
+          // Only persistent inventory transport is substituted: header construction,
+          // stored-kind projection, private selection and body admission remain real.
+          readPage: async physical => {
+            const selected = rows.filter(row => (!physical?.indexedKinds
+              || physical.indexedKinds.includes(decodeArtifactKindV1(row.storedKind).kindHint ?? ''))
+              && (!physical?.kinds || physical.kinds.includes(String(row.header.kind))));
+            const start = physical?.cursor ? selected.findIndex(row => row.artifactId === physical.cursor) + 1 : 0;
+            const items = selected.slice(start, start + (physical?.limit ?? 500));
+            inventoryBodiesRead += items.length;
+            return { items: items.map(row => ({ ...row, body: JSON.stringify(row.request), createdAt: 1, updatedAt: 1 })),
+              kindCoverage: { status: 'complete' as const, unclassifiedCount: 0 as const },
+              ...(start + items.length < selected.length ? { nextCursor: items.at(-1)!.artifactId } : {}) };
+          },
+        }),
+      });
+    },
     approvalsGet: async ({ artifactId }) => { reads.push(artifactId); return stored.get(artifactId) ?? null; },
     approvalsUpdate: async ({ artifactId, request }) => { stored.set(artifactId, request); return { ok: true }; },
   });
@@ -82,4 +107,7 @@ it('reads only the open deployment approvals when it settles a removed Environme
   expect(result).toMatchObject({ ok: true });
   expect(stored.get('pending')?.status).toBe('canceled');
   expect(reads).toEqual(['pending']);
+  expect(listReads).toBe(1);
+  expect(inventoryBodiesRead).toBe(1);
+  expect([...stored.values()].filter(request => request.status === 'open')).toHaveLength(942);
 });

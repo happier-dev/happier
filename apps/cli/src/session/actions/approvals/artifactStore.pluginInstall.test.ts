@@ -102,7 +102,7 @@ function createStore() {
 function persist(body: Record<string, unknown>) {
   rows.set(String(body.id), { ...body, ownerAccountId: 'account-1', access: 'owner', encryptionMode: accountMode,
     headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
-  return { status: 200, data: { id: body.id, headerVersion: 1, bodyVersion: 1 } };
+  return { status: 200, data: rows.get(String(body.id)) };
 }
 
 beforeEach(() => {
@@ -146,6 +146,17 @@ beforeEach(() => {
 });
 
 describe('plugin install approval Artifact rejoin', () => {
+  it('uses the acknowledged plugin approval create without reading its own write', async () => {
+    const store = createStore();
+    const request = installRequest();
+    const created = await store.approvalsCreate({ request, serverId: 'home-1' });
+    expect(created.request).toEqual(request);
+    // Two absence lookups cover the Account-scoped identity and retained legacy identity.
+    expect(http.get.mock.calls.filter(([url]) => /\/v1\/artifacts\/[^/]+$/.test(String(url)))).toHaveLength(2);
+    expect(await store.approvalsGet(created)).toEqual(request);
+    expect(rows.size).toBe(1);
+  });
+
 
   it('replays a retained plugin install at its daemon without requiring a second admission', async () => {
     const store = createStore();
@@ -825,14 +836,18 @@ describe('plugin install approval Artifact rejoin', () => {
     expect(await store.approvalsGet({ ...first, serverId: 'home-1' })).toEqual(approved);
   });
 
-  it('rejoins the winning Artifact after a concurrent create conflict without another write', async () => {
+  it.each([200, 409])('rejoins the winning Artifact after concurrent creation returns %s without another write', async status => {
     const store = createStore();
+    const approved = ApprovalRequestV2Schema.parse({ ...installRequest(), status: 'approved', updatedAtMs: 2,
+      decision: { kind: 'approve', decidedAtMs: 2 } });
     http.post.mockImplementationOnce(async (_url: string, body: Record<string, unknown>) => {
-      persist(body);
-      return { status: 409, data: { error: 'conflict' } };
+      const acknowledged = persist({ ...body,
+        header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(approved)),
+        body: encodePlainArtifactStoredContent(ArtifactBodyEnvelopeV1Schema.parse({ body: JSON.stringify(approved) })) });
+      return status === 200 ? acknowledged : { status: 409, data: { error: 'conflict' } };
     });
     expect(await store.approvalsCreate({ request: installRequest(), serverId: 'home-1' }))
-      .toEqual({ artifactId: deriveAccountScopedArtifactIdV1('account-1', pendingChangeId), request: installRequest() });
+      .toEqual({ artifactId: deriveAccountScopedArtifactIdV1('account-1', pendingChangeId), request: approved });
     expect(rows.size).toBe(1);
     expect(http.post).toHaveBeenCalledTimes(1);
   });

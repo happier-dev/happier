@@ -230,7 +230,7 @@ it.each([
     const { idScope: _idScope, ...stored } = body;
     artifacts.set(body.id, { ...stored, ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
       headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
-    return { status: 200, data: { id: body.id, headerVersion: 1, bodyVersion: 1 } };
+    return { status: 200, data: artifacts.get(body.id) };
   });
   const publisher = vi.fn();
   const executor = createCliActionExecutor({ token, credentials: { token, encryption: null }, sessionId: 'participant', mode: 'plain', ctx: null,

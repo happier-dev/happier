@@ -149,40 +149,36 @@ export function createTargetActionCurrentIntentAdapter(deps: Readonly<{
       || !sameStrictJsonValue(decidedRequest.data.input, request.input)) {
       return { status: 'unavailable', code: 'plugin_action_current_intent_mismatch', mismatch: { field: 'fingerprint_source' } };
     }
-    if (result.decision === 'approve') {
-      // A recorded approval decision is history once its effect has settled.
-      // Rejoining that receipt must not claim or execute the same intent again.
-      if (decidedRequest.data.status !== 'approved') {
-        const terminal = buildTargetActionApprovalDecisionResult(decidedRequest.data);
-        return terminal.ok ? { status: 'deferred', artifactId } : { status: 'unavailable', code: terminal.errorCode };
-      }
-      if (!update) return { status: 'unavailable', code: 'plugin_action_current_intent_unavailable' };
-      const executionClaim = TargetActionApprovalRequestV1Schema.parse({ ...decidedRequest.data,
-        status: 'executing', updatedAtMs: Math.max((deps.now ?? Date.now)(), decidedRequest.data.updatedAtMs),
-      });
-      const claimed = await update({ artifactId, request: executionClaim });
-      if (!claimed.ok) return { status: 'unavailable', code: 'plugin_action_current_intent_unavailable' };
+    if (result.decision !== 'approve') {
+      return { status: 'rejected', code: PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE };
     }
-    return result.decision === 'approve'
-      ? { status: 'approved', fingerprint, artifactId,
-          settleExecution: async ({ artifactId: admittedArtifactId, execution }) => {
-            if (admittedArtifactId !== artifactId || !update) throw new Error('approval_stale');
-            const latest = await deps.read(artifactId);
-            if (!latest || latest.approvalInputCustody !== 'live_only'
-              || latest.status !== 'executing' || latest.decision?.kind !== 'approve') throw new Error('approval_stale');
-            const executedAtMs = Math.max((deps.now ?? Date.now)(), latest.updatedAtMs);
-            const terminal = TargetActionApprovalRequestV1Schema.parse({ ...latest,
-              status: execution.ok ? 'executed' : 'failed', updatedAtMs: executedAtMs,
-              execution: { ...execution, executedAtMs,
-                ...(execution.errorCode === PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE
-                  ? { errorCode: 'approval_execution_outcome_unknown' } : {}),
-              },
-            });
-            const settled = await persistTargetActionReceipt({ request: terminal,
-              write: async request => (await update({ artifactId, request })).ok });
-            if (!settled) throw new Error('approval_execution_outcome_unknown');
+    // A recorded approval decision is history once its effect has settled.
+    // Rejoining that receipt must not claim or execute the same intent again.
+    if (decidedRequest.data.status !== 'approved') {
+      const terminal = buildTargetActionApprovalDecisionResult(decidedRequest.data);
+      return terminal.ok ? { status: 'deferred', artifactId } : { status: 'unavailable', code: terminal.errorCode };
+    }
+    if (!update) return { status: 'unavailable', code: 'plugin_action_current_intent_unavailable' };
+    const executionClaim = TargetActionApprovalRequestV1Schema.parse({ ...decidedRequest.data,
+      status: 'executing', updatedAtMs: Math.max((deps.now ?? Date.now)(), decidedRequest.data.updatedAtMs),
+    });
+    const claimed = await update({ artifactId, request: executionClaim });
+    if (!claimed.ok) return { status: 'unavailable', code: 'plugin_action_current_intent_unavailable' };
+    return { status: 'approved', fingerprint, artifactId,
+      settleExecution: async ({ artifactId: admittedArtifactId, execution }) => {
+        if (admittedArtifactId !== artifactId || !update) throw new Error('approval_stale');
+        const executedAtMs = Math.max((deps.now ?? Date.now)(), executionClaim.updatedAtMs);
+        const terminal = TargetActionApprovalRequestV1Schema.parse({ ...executionClaim,
+          status: execution.ok ? 'executed' : 'failed', updatedAtMs: executedAtMs,
+          execution: { ...execution, executedAtMs,
+            ...(execution.errorCode === PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE
+              ? { errorCode: 'approval_execution_outcome_unknown' } : {}),
           },
-        }
-      : { status: 'rejected', code: PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE };
+        });
+        const settled = await persistTargetActionReceipt({ request: terminal,
+          write: async request => (await update({ artifactId, request })).ok });
+        if (!settled) throw new Error('approval_execution_outcome_unknown');
+      },
+    };
   };
 }

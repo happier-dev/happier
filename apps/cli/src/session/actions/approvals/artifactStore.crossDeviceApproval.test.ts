@@ -97,7 +97,7 @@ describe('approval Artifact cross-device decision', () => {
           createdAt: 1,
           updatedAt: 1,
         });
-        return { status: 200, data: { id, headerVersion: 1, bodyVersion: 1 } };
+        return { status: 200, data: artifacts.get(id) };
       }
 
       const artifactId = decodeURIComponent(url.split('/').at(-1) ?? '');
@@ -247,6 +247,8 @@ describe('approval Artifact cross-device decision', () => {
           discussionAddressing: { discussionId: 'discussion', messageId: 'question', throughSeq: 1, participantSessionId: 'receiver' } },
       } });
     const first = await store.approvalsCreate({ request, serverId: 'profile-a' });
+    // Acknowledged creation needs only the scoped and retained-identity absence lookups.
+    expect(mockGet.mock.calls.filter(([url]) => /\/v1\/artifacts\/[^/]+$/.test(String(url)))).toHaveLength(2);
     const retry = ApprovalRequestV2Schema.parse({ ...request, createdAtMs: 5, updatedAtMs: 5,
       actionArgs: { ...request.actionArgs as object, content: { v: 1, parts: [{ t: 'text', text: 'Later terminal fallback' }] } },
       executionOriginV1: { ...request.executionOriginV1, caller: { kind: 'host' }, serverId: 'profile-b' } });

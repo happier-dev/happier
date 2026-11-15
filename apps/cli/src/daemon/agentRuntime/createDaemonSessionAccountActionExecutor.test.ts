@@ -559,7 +559,7 @@ describe('daemon Session Account authority', () => {
         const id = String(Reflect.get(body, 'id'));
         rows.set(id, { ...body, ownerAccountId: 'plugin-owner', access: 'owner', encryptionMode: 'plain',
           publicAudience: 'none', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
-        return { status: 200, data: { id, headerVersion: 1, bodyVersion: 1 } };
+        return { status: 200, data: rows.get(id) };
       }
       if (path.startsWith('/v1/artifacts/')) {
         const id = path.split('/').at(-1)!;

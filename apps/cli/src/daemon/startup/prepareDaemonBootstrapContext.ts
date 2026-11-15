@@ -1,5 +1,3 @@
-import { join } from 'node:path';
-import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { ApiClient } from '@/api/api';
 import { ensureMachineRegistered } from '@/api/machine/ensureMachineRegistered';
 import type { MachineMetadata } from '@/api/types';
@@ -16,7 +14,6 @@ import {
 import type { DaemonStartupSource } from '../ownership/daemonOwnershipMetadata';
 import { configuration } from '@/configuration';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
-import { runApprovalStartupPasses } from '@/session/actions/approvals/startupPasses';
 import {
     readOrCreateDeviceLocalSecretStorage,
     type DeviceLocalSecretStorage,
@@ -125,12 +122,6 @@ export async function prepareDaemonBootstrapContext(
             code: 'approval_recovery_unavailable',
         });
     }
-
-    // One-time approval owner passes; never blocks startup and reports on default log paths.
-    const approvalAccountId = readAccountIdFromToken(credentials.token);
-    void runApprovalStartupPasses(approvalsStore, approvalAccountId ? {
-        settlementPath: join(configuration.activeServerDir, 'approval-startup-passes', `${encodeURIComponent(approvalAccountId)}.json`),
-    } : undefined);
 
     return {
         daemonLockHandle,

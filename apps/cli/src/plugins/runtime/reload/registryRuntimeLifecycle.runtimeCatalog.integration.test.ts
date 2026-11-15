@@ -663,7 +663,7 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
         const { idScope: _idScope, ...storedBody } = body;
         artifacts.set(body.id, { ...storedBody, headerVersion: 1, bodyVersion: 1, seq: 1,
           createdAt: 1, updatedAt: 1, ownerAccountId: 'account-1', access: 'owner', encryptionMode: 'plain' });
-        return { status: 200, data: { id: body.id, headerVersion: 1, bodyVersion: 1 } };
+        return { status: 200, data: artifacts.get(body.id) };
       }
       const artifact = artifacts.get(path.slice('/v1/artifacts/'.length));
       if (!artifact) throw new Error(`Unexpected approval HTTP write: ${path}`);

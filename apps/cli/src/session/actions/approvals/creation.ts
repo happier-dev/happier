@@ -275,8 +275,9 @@ export function createCliApprovalCreation(params: Readonly<{
         const existing = await rejoin(resolved.artifact);
         if (existing) return existing;
         try {
-          await accountArtifactStore.create({ artifactId, idScope, header, body: JSON.stringify(request) });
-          const stored = await rejoin(await readOwnedArtifact(artifactId));
+          const created = await accountArtifactStore.create({ artifactId, idScope, header, body: JSON.stringify(request),
+            includeAcknowledgedContent: true });
+          const stored = await rejoin(created.acknowledged ?? null);
           if (!stored) throw new ApprovalRequestConflict();
           return stored;
         } catch (error) {
@@ -324,8 +325,9 @@ export function createCliApprovalCreation(params: Readonly<{
           return { artifactId, request: existingState.request };
         }
         try {
-          await accountArtifactStore.create({ artifactId, idScope, header, body: JSON.stringify(request) });
-          const stored = inspectPendingReviewArtifact(await readOwnedArtifact(artifactId));
+          const created = await accountArtifactStore.create({ artifactId, idScope, header, body: JSON.stringify(request),
+            includeAcknowledgedContent: true });
+          const stored = inspectPendingReviewArtifact(created.acknowledged ?? null);
           if (stored.state === 'absent') throw new ApprovalRequestConflict();
           if (stored.state === 'terminal') {
             continue;

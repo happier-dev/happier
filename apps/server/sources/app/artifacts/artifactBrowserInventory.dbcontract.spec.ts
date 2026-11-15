@@ -7,6 +7,8 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encod
 import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/protocol';
 import { ArtifactHttpHeaderReadV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { ArtifactHeaderMetadataV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { ApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { ArtifactKindCoverageV1Schema, deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { listArtifactHeadersV1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
@@ -92,6 +94,35 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')(`browser Artifa
             expect(new Set(receipts.json().items.map((row: { id: string }) => row.id))).toEqual(new Set([created[1], created[2]]));
         });
         expect(await db.artifact.count({ where: { accountId: owner.id } })).toBe(10004);
+    });
+
+    it('keeps Environment-indexed approvals in family and status reads within their Account', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const create = async (accountId: string, status: 'open' | 'canceled') => {
+            const request = ApprovalRequestV1Schema.parse({ v: 1, status, createdAtMs: 1, updatedAtMs: 1,
+                createdBy: { surface: 'agent' }, requestedSurface: 'agent', actionId: 'deployments.deploy',
+                actionArgs: { serverId: 'home', environmentId: 'production' }, summary: 'Deploy' });
+            const header = buildApprovalRequestArtifactHeaderV1(request, { legacyServerId: 'home' });
+            const artifactId = randomUUID();
+            expect(await createArtifact({ actorUserId: accountId, artifactId, header: bytes(header), body: bytes(request),
+                dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) })).toMatchObject({ ok: true });
+            return { artifactId, header };
+        };
+        const open = await create(owner.id, 'open');
+        const settled = await create(owner.id, 'canceled');
+        await create(stranger.id, 'open');
+        await db.$transaction(async tx => {
+            const family = await listArtifactHeadersForCallerInTx(tx, { actorAccountId: owner.id, cursor: null, limit: 500,
+                kinds: ['approval_request.v1'] });
+            expect(new Set(family.map(row => row.id))).toEqual(new Set([open.artifactId, settled.artifactId]));
+            const active = await listArtifactHeadersForCallerInTx(tx, { actorAccountId: owner.id, cursor: null, limit: 500,
+                approvalStates: ['open'] });
+            expect(active.map(row => row.id)).toEqual([open.artifactId]);
+            const exact = await listArtifactHeadersForCallerInTx(tx, { actorAccountId: owner.id, cursor: null, limit: 500,
+                kinds: [`approval_request.v1#${String(open.header.approvalSubjectKey)}`], approvalStates: ['open'] });
+            expect(exact.map(row => row.id)).toEqual([open.artifactId]);
+        });
     });
 
     it('preserves raw exact kinds that resemble encoded storage values', async () => {

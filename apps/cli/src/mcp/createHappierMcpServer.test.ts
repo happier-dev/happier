@@ -641,10 +641,11 @@ describe('createHappierMcpServer real host admission', () => {
     app.get('/v1/artifacts/:artifactId', async (_request, reply) => reply.code(404).send({ error: 'Artifact not found' }));
     const captured: ReturnType<typeof ApprovalRequestV2Schema.parse>[] = [];
     app.post('/v1/artifacts', async request => {
-      const body = z.object({ id: z.string(), body: z.string() }).parse(request.body);
+      const body = z.object({ id: z.string(), header: z.string(), body: z.string(), dataEncryptionKey: z.string() }).parse(request.body);
       const content = z.object({ body: z.string() }).parse(decodePlainArtifactStoredContent(body.body));
       captured.push(ApprovalRequestV2Schema.parse(JSON.parse(content.body)));
-      return { id: body.id, headerVersion: 1, bodyVersion: 1 };
+      return { ...body, ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain',
+        headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
     });
     const originalFetch = globalThis.fetch;
     // Home HTTP is the boundary. Daemon capability TCP and all MCP/Action,
