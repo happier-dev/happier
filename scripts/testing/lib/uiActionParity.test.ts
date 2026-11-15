@@ -346,6 +346,32 @@ test('occurrence UI mutations must enter Action admission, while the transport o
   ]);
 });
 
+test('Check and Automation pause controls enter Action admission instead of writing through Sync', () => {
+  const content = `import { sync as engine } from '@/sync/sync';
+    engine.pauseAutomation('check'); engine.resumeAutomation('check');
+    unrelated.pauseAutomation('check');`;
+  const report = collectUiActionParity([
+    { filePath: 'apps/ui/sources/components/projects/deployments/ServiceCheckDetail.tsx', content },
+    { filePath: 'apps/ui/sources/sync/ops/actions/automationAction.ts', content },
+  ], specs, []);
+  assert.deepEqual(report.findings.map(site => [site.code, site.operation]), [
+    ['direct_occurrence_write', 'pauseAutomation'],
+    ['direct_occurrence_write', 'resumeAutomation'],
+  ]);
+});
+
+test('a UI draft opener uses authoring admission while its Action terminal remains callable', () => {
+  const content = `import { seedAndOpenNewSession as openDraft } from '@/components/sessions/new/newSessionSeedComposer';
+    openDraft({ seed: { prompt: 'Prepare an app' } });`;
+  const report = collectUiActionParity([
+    { filePath: 'apps/ui/sources/components/projects/starters/NewAppScreen.tsx', content },
+    { filePath: 'apps/ui/sources/sync/ops/actions/authoringAction.ts', content },
+  ], specs, []);
+  assert.deepEqual(report.findings.map(site => [site.code, site.operation]), [
+    ['direct_session_draft_open', 'seedAndOpenNewSession'],
+  ]);
+});
+
 test('occurrence transport imports and retained aliases cannot bypass Action admission', () => {
   const content = `import { mutateAutomationOccurrence as mutate } from '@/sync/api/automations/apiAutomations';
     import * as api from '@/sync/api/automations/apiAutomations';

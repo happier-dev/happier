@@ -23,6 +23,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { PluginEventAutomationEditSeed } from '@/sync/domains/automations/pluginEventAutomationEditSeed';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { updateWorkflowTrigger } from '@/sync/domains/workflows/workflowTriggerActions';
 import { useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { sync } from '@/sync/sync';
 import { getPreferredLanguage, t } from '@/text';
@@ -169,14 +170,16 @@ export function ServiceCheckDetail(
     async (paused: boolean) => {
       setPausing(true);
       try {
-        await (paused
-          ? sync.pauseAutomation(row.automationId)
-          : sync.resumeAutomation(row.automationId));
+        await updateWorkflowTrigger({
+          automationId: row.automationId,
+          expectedRevision: row.native.templateVersion,
+          patch: { enabled: !paused },
+        }, { context: { serverId: row.scope.serverId, expectedAccountId: row.scope.accountId } });
       } finally {
         setPausing(false);
       }
     },
-    [row.automationId],
+    [row.automationId, row.native.templateVersion, row.scope.accountId, row.scope.serverId],
   );
   const failing =
     row.native.enabled &&

@@ -15,7 +15,7 @@ export type UiParityFinding = Site & Readonly<{
     | 'dynamic_action' | 'setting_unmapped' | 'dynamic_setting' | 'direct_settings_write' | 'direct_external_link' | 'direct_occurrence_write'
     | 'direct_pending_content_write' | 'direct_external_follow_write' | 'direct_clipboard_write' | 'direct_reviewed_mark_write'
     | 'direct_desktop_window_write' | 'direct_message_pin_write' | 'direct_view_control_write' | 'direct_session_runner_restart'
-    | 'direct_project_trust_write' | 'direct_saved_secret_repair';
+    | 'direct_project_trust_write' | 'direct_saved_secret_repair' | 'direct_session_draft_open';
   operation: string;
 }>;
 type Discovery = Readonly<{ agentIds?: ReadonlySet<string>; mcpIds?: ReadonlySet<string>;
@@ -812,6 +812,7 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
     const localRuntimeExecutionHooks = new Set<string>();
     const projectTrustWriters = new Set<string>();
     const savedSecretRepairWriters = new Set<string>();
+    const sessionDraftOpeners = new Set<string>();
     const clipboardWriters = new Map<string, string>();
     const clipboardNamespaces = new Set<string>();
     const reviewedPortFactories = new Set<string>();
@@ -829,6 +830,8 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
       }
       if (bindings && ts.isNamedImports(bindings)) for (const binding of bindings.elements) {
         const imported = binding.propertyName?.text ?? binding.name.text;
+        if (/(?:^|\/)newSessionSeedComposer(?:\.[cm]?[jt]s)?$/.test(statement.moduleSpecifier.text)
+          && imported === 'seedAndOpenNewSession') sessionDraftOpeners.add(binding.name.text);
         if (statement.moduleSpecifier.text === '@/utils/platform/desktopHost' && imported === 'invokeDesktopHost') {
           nativePathInvokers.add(binding.name.text);
         }
@@ -1086,7 +1089,7 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
             && !lookup(occurrenceReceiver, occurrenceReceiver.text);
         const directOccurrenceWrite = !effectOwner && consumer && (rawOccurrenceWrite || ts.isPropertyAccessExpression(node.expression)
           && ts.isIdentifier(node.expression.expression) && occurrenceSyncNames.has(node.expression.expression.text)
-          && /^(cancelAutomationRun|retryAutomationReplyHandoff|deliverAutomationResultAgain)$/.test(called));
+          && /^(cancelAutomationRun|retryAutomationReplyHandoff|deliverAutomationResultAgain|pauseAutomation|resumeAutomation)$/.test(called));
         const directPendingWrite = consumer && ts.isPropertyAccessExpression(node.expression)
           && ts.isIdentifier(node.expression.expression) && occurrenceSyncNames.has(node.expression.expression.text)
           && /^(updatePendingMessage|sendPendingMessageNow|deletePendingMessage|deleteDiscardedPendingMessage|restoreDiscardedPendingMessage)$/.test(called);
@@ -1107,6 +1110,8 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
           && projectTrustWriters.has(node.expression.text) && !lookup(node.expression, node.expression.text);
         const directSavedSecretRepair = consumer && ts.isIdentifier(node.expression)
           && savedSecretRepairWriters.has(node.expression.text) && !lookup(node.expression, node.expression.text);
+        const directSessionDraftOpen = consumer && !effectOwner && ts.isIdentifier(node.expression)
+          && sessionDraftOpeners.has(node.expression.text) && !lookup(node.expression, node.expression.text);
         const callable = ts.isIdentifier(node.expression) ? lookup(node.expression, node.expression.text)
           : ts.isPropertyAccessExpression(node.expression) && ts.isIdentifier(node.expression.expression)
             ? lookup(node.expression, node.expression.expression.text) : undefined;
@@ -1143,6 +1148,8 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
           findings.push({ ...location(node), code: 'direct_pending_content_write', operation: called });
         } else if (directExternalFollowWrite) {
           findings.push({ ...location(node), code: 'direct_external_follow_write', operation: 'machineExternalSessionFollowPolicySet' });
+        } else if (directSessionDraftOpen) {
+          findings.push({ ...location(node), code: 'direct_session_draft_open', operation: 'seedAndOpenNewSession' });
         } else if (directOccurrenceWrite) {
           findings.push({ ...location(node), code: 'direct_occurrence_write', operation: rawOccurrenceWrite ? 'mutateAutomationOccurrence' : called });
         } else if (directProjectWrite) {

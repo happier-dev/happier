@@ -7,6 +7,14 @@ import { buildGuardStopWarningPushDataV1, readGuardStopWarningPushActionV1 } fro
 
 const report = readCurrentUiActionParity();
 
+test('Check and Automation enabled switches use the shared trigger Action owner', () => {
+  const paths = new Set([
+    'apps/ui/sources/components/projects/deployments/ServiceCheckDetail.tsx',
+    'apps/ui/sources/components/automations/list/AutomationListGroup.tsx',
+  ]);
+  assert.deepEqual(report.findings.filter(site => paths.has(site.filePath)), []);
+});
+
 test('project, machine and workflow explicit links use Action admission', () => {
   const paths = new Set([
     'apps/ui/sources/components/projects/deployments/DeploymentDataCard.tsx',

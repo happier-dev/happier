@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { AutomationDefinition } from '@/sync/domains/automations/automationTypes';
-import { sync } from '@/sync/sync';
+import { updateWorkflowTrigger } from '@/sync/domains/workflows/workflowTriggerActions';
 import { Modal } from '@/modal';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -34,7 +34,7 @@ const MAX_VISIBLE_TRIGGER_SUMMARY_LINES = 3;
 
 type Props = Readonly<{
     title?: string;
-    automations: ReadonlyArray<Pick<AutomationDefinition, 'id' | 'name' | 'enabled' | 'triggers' | 'targetType'>>;
+    automations: ReadonlyArray<Pick<AutomationDefinition, 'id' | 'name' | 'enabled' | 'triggers' | 'targetType' | 'templateVersion'>>;
     onOpenAutomation?: (automationId: string) => void;
     /** Parent read currentness gates only mutations; list navigation remains available. */
     mutationsEnabled?: boolean;
@@ -137,7 +137,7 @@ export const AutomationListGroup = React.memo((props: Props) => {
         navigateWithBlurOnWeb(() => router.push(route as never));
     }, [mutationsEnabled, props.isInvocationCurrent, router, runNowController]);
 
-    const handleSetEnabled = React.useCallback(async (automationId: string, nextEnabled: boolean) => {
+    const handleSetEnabled = React.useCallback(async (automationId: string, expectedRevision: number, nextEnabled: boolean) => {
         if (
             !mutationsEnabled
             || !props.isInvocationCurrent()
@@ -146,11 +146,7 @@ export const AutomationListGroup = React.memo((props: Props) => {
         enabledMutationIdsRef.current.add(automationId);
         setEnabledMutationIds(new Set(enabledMutationIdsRef.current));
         try {
-            if (!nextEnabled) {
-                await sync.pauseAutomation(automationId);
-            } else {
-                await sync.resumeAutomation(automationId);
-            }
+            await updateWorkflowTrigger({ automationId, expectedRevision, patch: { enabled: nextEnabled } });
         } catch (error) {
             if (!props.isInvocationCurrent()) return;
             await Modal.alert(
@@ -231,7 +227,7 @@ export const AutomationListGroup = React.memo((props: Props) => {
                                 <Switch
                                     value={automation.enabled}
                                     onValueChange={mutationsEnabled
-                                        ? (next) => void handleSetEnabled(automation.id, next)
+                                        ? (next) => void handleSetEnabled(automation.id, automation.templateVersion, next)
                                         : undefined}
                                     disabled={!mutationsEnabled || enabledMutationPending}
                                     accessibilityLabel={[
