@@ -44,7 +44,7 @@ type ApprovalContext = Parameters<typeof isApprovalRequiredByActionsSettings>[2]
  * of their own (`presentUserConfirmation`) or set the Action to Allowed. An explicit Ask first stays the
  * Action policy's own approval, so the two never stack.
  */
-function scmRemotePreferenceAsks(
+export function scmRemotePreferenceAsks(
     actionId: ActionSettingsActionId,
     accountSettings: ActionSettingsAccountSnapshot | null | undefined,
     ctx: ApprovalContext,

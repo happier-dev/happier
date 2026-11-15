@@ -29,6 +29,7 @@ import {
   buildVoiceAgentUserTurnPrompt,
 } from './voiceAgentPrompts';
 import { finalizeVoiceAgentStreamingSpeech, ingestVoiceAgentStreamingDelta } from './voiceAgentStreamingDeltas';
+import { listDisabledActionIdsForSurface } from '@/settings/actionsSettings';
 import { resolveCliMemoryRecallGuidanceEnabled } from '@/agent/prompts/library/resolveCliMemoryRecallGuidanceEnabled';
 import type {
   BackendFactory,
@@ -645,7 +646,7 @@ export class VoiceAgentManager {
     }
     this.createRuntime = createRuntime;
     this.resolvePromptPreparation = opts.resolvePromptPreparation ?? (async () => ({
-      systemAppendBlocks: [], disabledActionIds: [],
+      systemAppendBlocks: [], disabledActionIds: listDisabledActionIdsForSurface('voice'),
       memoryRecallGuidanceEnabled: await resolveCliMemoryRecallGuidanceEnabled({ surfaces: ['voice'] }),
     }));
     this.responseTimeoutMs =

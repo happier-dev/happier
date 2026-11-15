@@ -59,6 +59,7 @@ export function withExecutionRunRuntimeIdentityPublication(params: Readonly<{
     readRespondToPermission: () => params.runtime.permissionCapability === 'responds'
       ? params.runtime.respondToPermission
       : undefined,
+    readAbortPendingPermissionRequests: () => params.runtime.abortPendingPermissionRequests?.bind(params.runtime),
     readWaitForTurnCompletion: () => params.runtime.waitForTurnCompletion,
     readProbeTurnLiveness: () => params.runtime.probeTurnLiveness,
     async dispose() {

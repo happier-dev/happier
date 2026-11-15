@@ -2,7 +2,7 @@ import { buildLocalVoiceAgentSystemPrompt } from '@happier-dev/agents';
 import { buildPromptPlanV1, renderPromptPlanV1 } from '@happier-dev/protocol/prompts/promptPlanV1';
 import type { PromptBlockV1 } from '@happier-dev/protocol';
 
-import { listDisabledActionIdsForSurfaceFromEnv } from '../../../settings/actionsSettings';
+import { listDisabledActionIdsForSurface } from '../../../settings/actionsSettings';
 import type { VoiceAgentTurn, VoiceAgentStartParams } from './voiceAgentTypes';
 
 function renderConversationHistory(history: readonly VoiceAgentTurn[]): string {
@@ -15,7 +15,7 @@ function renderConversationHistory(history: readonly VoiceAgentTurn[]): string {
 function resolveDisabledVoicePromptActionIds(disabledActionIds?: readonly string[]): readonly string[] {
   return Array.from(
     new Set([
-      ...listDisabledActionIdsForSurfaceFromEnv('voice'),
+      ...(disabledActionIds === undefined ? listDisabledActionIdsForSurface('voice') : []),
       ...((disabledActionIds ?? []).map((value) => String(value ?? '').trim()).filter(Boolean)),
     ]),
   );

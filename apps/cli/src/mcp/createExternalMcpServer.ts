@@ -7,7 +7,6 @@ import { WorkspaceSyncRelationshipWriteActionInputV1Schema } from '@happier-dev/
 import { ProjectServiceRelocateInputV1Schema } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { isActionExecutableFromStandaloneMcp } from '@happier-dev/protocol/actions/actionToolExposure';
 import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
-import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { REGISTRY_ACTION_IDS_V1 } from '@happier-dev/protocol/registries';
 import { DeploymentActionInputSchemasV1, type ActionId } from '@happier-dev/protocol';
 import { executeDeploymentAction } from '@happier-dev/protocol/actions/executor/deploymentAction';
@@ -16,7 +15,6 @@ import type { StoredCredentials } from '@/persistence';
 import { listHappierMcpToolNames, registerHappierMcpResources } from '@/mcp/resources/registerHappierMcpResources';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { createChangeTitleToolHandler } from '@/agent/tools/happierTools/createChangeTitleToolHandler';
-import { readActionsSettingsFromEnv } from '@/settings/actionsSettings';
 import {
   createMcpActionEnablementWithServerFeatureAvailability,
   createMcpActionSettingsProvider,
@@ -94,11 +92,10 @@ export function createExternalMcpServer(params: Readonly<{
   // daemon that owns the selected machine/Session. Plugin tools have no public
   // Action-id admission path yet, so do not advertise a local PAT bypass.
   const pluginToolCatalog = usesApiToken ? Object.freeze([]) : params.pluginToolCatalog;
-  const actionsSettings = readActionsSettingsFromEnv();
+  const actionsSettingsProvider = createMcpActionSettingsProvider({ credentials: params.credentials });
+  const actionsSettings = actionsSettingsProvider.getActionsSettings();
   const isServerFeatureAvailable = createMcpActionEnablementWithServerFeatureAvailability({
-    actionSettingsProvider: createMcpActionSettingsProvider({
-      accountSettings: accountSettingsParse({ actionsSettingsV1: actionsSettings }),
-    }),
+    actionSettingsProvider: actionsSettingsProvider,
     surface: toolSurface,
     hasAuthenticatedRuntime: true,
     readServerFeaturesSnapshot: () => params.serverFeaturesSnapshot,
@@ -125,6 +122,7 @@ export function createExternalMcpServer(params: Readonly<{
   const executor = usesApiToken
     ? createCliActionExecutorFromCredentials({
         credentials: params.credentials,
+        actionsSettingsProvider,
         serverId,
         serverApiUrl: serverHttpBaseUrl,
         ...(params.machineId ? { machineId: params.machineId } : {}),
@@ -163,6 +161,7 @@ export function createExternalMcpServer(params: Readonly<{
         });
         const host = {
           ...cryptoContext,
+          actionsSettingsProvider,
           token: params.credentials.token,
           credentials: params.credentials,
           isCredentialCurrent,

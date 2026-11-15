@@ -9,6 +9,10 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { describe, expect, it } from 'vitest';
 
+import { accountSettingsParse } from '@happier-dev/protocol';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { createMcpActionEnablement } from '@/mcp/server/createMcpActionEnablement';
+import { registerHappierMcpResources, HAPPIER_MCP_ACTION_SPECS_RESOURCE_URI } from '@/mcp/resources/registerHappierMcpResources';
 import { resolveNodeBackedMcpServerCommand } from '@/mcp/runtime/resolveNodeBackedMcpServerCommand';
 
 describe('Happier MCP stdio bridge', () => {
@@ -16,9 +20,13 @@ describe('Happier MCP stdio bridge', () => {
     let names = ['change_title', 'plugin_' + 'very_long_name_'.repeat(8), 'file.read', 'file_read', '日本語工具'];
     const forwarded: string[] = [];
     let discoveryAvailable = true;
+    const accountSettings = accountSettingsParse({ actionsSettingsV1: { v: 1, actions: { 'session.list': { enabled: false } } } });
+    const isActionEnabled = createMcpActionEnablement({ surface: 'mcp',
+      actionSettingsProvider: createActionSettingsProvider({ getAccountSettings: () => accountSettings, allowEnvironmentOverride: false }) });
     const upstream = createServer(async (request, response) => {
       const mcp = new McpServer({ name: 'test-title-upstream', version: '1.0.0' });
       mcp.server.registerCapabilities({ tools: {} });
+      registerHappierMcpResources(mcp, { surface: 'mcp', isActionEnabled });
       mcp.server.setRequestHandler(ListToolsRequestSchema, async (request) => {
         if (!discoveryAvailable) throw new Error('discovery unavailable');
         const selected = request.params?.cursor === 'later-page' ? names.slice(1) : names;
@@ -55,6 +63,12 @@ describe('Happier MCP stdio bridge', () => {
     const client = new Client({ name: 'happier-bridge-title-test', version: '1.0.0' }, { capabilities: {} });
     try {
       await client.connect(new StdioClientTransport(config));
+      const resource = await client.readResource({ uri: HAPPIER_MCP_ACTION_SPECS_RESOURCE_URI });
+      const content = resource.contents[0];
+      if (!content || !('text' in content) || typeof content.text !== 'string') throw new Error('Missing upstream Action resource');
+      const specs: { actionSpecs: Array<{ id: string }> } = JSON.parse(content.text);
+      expect(specs.actionSpecs.map(spec => spec.id)).not.toContain('session.list');
+      expect(specs.actionSpecs.map(spec => spec.id)).toContain('action.spec.search');
       const catalog = await client.listTools();
       expect(catalog.tools.map((tool) => tool.name)).toContain('change_title');
       if (maxToolNameLength === undefined) {

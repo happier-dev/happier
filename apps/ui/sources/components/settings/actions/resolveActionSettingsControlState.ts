@@ -2,6 +2,7 @@ import {
     type ActionSettingsActionId,
     type ActionsSettingsV1,
 } from '@happier-dev/protocol/actions/actionSettings';
+import type { ActionApprovalPolicyScopeV1 } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { applyActionPolicyMutation } from '@happier-dev/protocol/actions/actionAudiencePolicy';
 import { ActionPolicyInputSchemas, type ActionPolicySetInput } from '@happier-dev/protocol/actions/actionPolicyActionFamily';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
@@ -67,6 +68,8 @@ export type ActionSettingsTargetControlState =
          * the row names that so `Default` is not read as "does not ask".
          */
         approvalAskedBySourceControl: boolean;
+        /** The inherited default still asks for a declared input consequence (see Settings copy). */
+        approvalAskedForInput?: true;
         permissionChanging?: true;
         approvalLooseningNotice?: ActionApprovalLooseningNoticeData;
     }>
@@ -83,6 +86,7 @@ type ResolveActionSettingsTargetControlStateParams = Readonly<{
     settings: ActionsSettingsV1;
     /** Scope comes from the admitted subject, never the ambient selected Machine. */
     scope?: ActionApprovalScopeV1;
+    approvalScope?: ActionApprovalPolicyScopeV1;
     actionId: ActionSettingsActionId;
     targetId: ActionSettingsTargetId;
     target?: ActionSettingsTargetDefinition;
@@ -144,6 +148,7 @@ export function resolveActionSettingsTargetControlState(
     const approvalPolicy = getActionTargetApprovalPolicy({
         settings: params.settings,
         scope: params.scope,
+        approvalScope: params.approvalScope,
         actionId: params.actionId,
         targetId: params.targetId,
         ...(params.target ? { target: params.target } : {}),
@@ -202,8 +207,10 @@ export function resolveActionSettingsTargetPolicyInput(params: ApplyActionSettin
     if (params.targetId !== 'foreign_session_html' && (value === 'ask_first' || value === 'allowed')) {
         const inheritedSettings = setActionTargetApprovalRequired({ ...params, approvalRequired: null });
         const inheritedPolicy = getActionTargetApprovalPolicy({ ...params, settings: inheritedSettings });
-        // Choosing the inherited answer restores inheritance, including after a waiver.
-        if ((value === 'ask_first') === inheritedPolicy.approvalRequiredByPolicy) value = 'default';
+        // Choosing a constant inherited answer restores inheritance, including after a waiver.
+        // An explicit choice for an input-dependent default stays explicit.
+        if ((value === 'ask_first') === inheritedPolicy.approvalRequiredByPolicy
+            && inheritedPolicy.approvalAskedForInput !== true) value = 'default';
     }
     const target = resolveActionSettingsTargetDefinition(params);
     if (params.scope) return ActionPolicyInputSchemas['actions.policy.set'].parse({

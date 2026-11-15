@@ -53,23 +53,12 @@ export async function runMcpServeCommand(
     throw new Error('not_authenticated');
   }
   const { machineId } = await deps.ensureMachineIdForCredentials(credentials);
-  const accountSettingsContext = await deps.bootstrapAccountSettingsContext({
+  await deps.bootstrapAccountSettingsContext({
     credentials,
     mode: 'blocking',
     refresh: 'force',
     honorAccountSettingsModeEnv: false,
   });
-
-  try {
-    const actionsSettings = accountSettingsContext.settings.actionsSettingsV1;
-    if (actionsSettings && typeof actionsSettings === 'object') {
-      process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify(actionsSettings);
-    } else {
-      delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
-    }
-  } catch {
-    delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
-  }
 
   const daemonControlTarget = explicitServerSelection
     ? await deps.resolveLiveDaemonControlTargetForServer?.(

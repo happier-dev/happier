@@ -4,6 +4,9 @@ import {
 } from './resolveCliPromptStackSystemAppendBlocks';
 import { PromptStackPreparationError } from '@happier-dev/protocol/prompts/library/resolvePromptStackSystemAppendBlocksV1';
 import { configuration } from '@/configuration';
+import { accountSettingsParse } from '@happier-dev/protocol';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { listDisabledActionIdsForSurface } from '@/settings/actionsSettings';
 import { resolveCliHomeTarget } from '@/server/homeTarget';
 import { isServerProfileHomeIdentity, resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
@@ -307,7 +310,12 @@ export async function resolveCliVoicePromptPreparation(args?: CliVoicePromptStac
     const { blocks: systemAppendBlocks, admittedEntries } = await resolveBlocks(input);
     const hasSession = input?.sessionMetadata !== undefined && !isVoiceConversationSystemSessionMetadata(input.sessionMetadata);
     const memoryEnabled = !hasSession || readSessionMemoryEnabledV1(input?.sessionMetadata);
-    const memoryRecallGuidanceEnabled = memoryEnabled && await observePreparation('memory', () => resolveCliMemoryRecallGuidanceEnabled({ surfaces: ['voice'] }));
+    const preparedSettings = input?.settings === undefined ? undefined : accountSettingsParse(input.settings);
+    const actionsSettingsProvider = createActionSettingsProvider({
+      ...(input?.credentials ? { scopeKey: resolveAccountSettingsScopeKey(input.credentials) } : {}),
+      ...(preparedSettings ? { getAccountSettings: () => preparedSettings, allowEnvironmentOverride: false } : {}),
+    });
+    const memoryRecallGuidanceEnabled = memoryEnabled && await observePreparation('memory', () => resolveCliMemoryRecallGuidanceEnabled({ surfaces: ['voice'], actionsSettingsProvider }));
     const preparedHomeIdentity = hasSession && input?.sessionId
       && admittedEntries.some(entry => entry.layer === 'session' && entry.entryId === 'session.instructions'
         && (entry.outcome === 'ready' || entry.outcome === 'valid-empty'))
@@ -317,7 +325,10 @@ export async function resolveCliVoicePromptPreparation(args?: CliVoicePromptStac
       ? { serverId: preparedHomeIdentity, sessionId: input.sessionId } : undefined;
     return { systemAppendBlocks, memoryRecallGuidanceEnabled,
       ...(preparedInstructionsFor ? { preparedInstructionsFor } : {}),
-      disabledActionIds: hasSession ? MEMORY_WRITE_ACTION_IDS_V1.filter(id => !isActionEnabledWithSessionMemory(id, memoryEnabled)) : [] };
+      disabledActionIds: [...new Set([
+        ...listDisabledActionIdsForSurface('voice', actionsSettingsProvider),
+        ...(hasSession ? MEMORY_WRITE_ACTION_IDS_V1.filter(id => !isActionEnabledWithSessionMemory(id, memoryEnabled)) : []),
+      ])] };
   };
   return input?.serverUrl ? await runWithServerHttpBaseUrl(input.serverUrl, run) : await run();
 }

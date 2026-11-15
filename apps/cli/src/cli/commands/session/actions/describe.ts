@@ -4,7 +4,7 @@ import { getSerializedActionSpecForSurface } from '@happier-dev/protocol/actions
 
 import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { readCommandPositionals } from '@/cli/commands/shared/argvFlags';
-import { isActionEnabledByEnv } from '@/settings/actionsSettings';
+import { isActionEnabled } from '@/settings/actionsSettings';
 import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 import type { StoredCredentials } from '@/persistence';
 import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
@@ -27,7 +27,7 @@ export async function cmdSessionActionsDescribe(
     serialized = getSerializedActionSpecForSurface({
       id: id as any,
       surface: 'cli',
-      isActionEnabled: (actionId) => isActionEnabledByEnv(actionId, { surface: 'cli', placement: null }),
+      isActionEnabled: (actionId) => isActionEnabled(actionId, { surface: 'cli', placement: null }),
     });
   } catch {
     serialized = null;

@@ -3,7 +3,6 @@ import { parseExplicitSpawnEnvKeysFromProcessEnv } from '@/daemon/spawn/spawnExp
 
 type AccountSettingsEnvInput = Readonly<Record<string, unknown> & {
   scmIncludeCoAuthoredBy?: boolean;
-  actionsSettingsV1?: unknown;
   backendCliSourcePreferenceById?: unknown;
   backendCliSourcePreferenceByTargetKey?: unknown;
 }>;
@@ -11,7 +10,6 @@ type AccountSettingsEnvInput = Readonly<Record<string, unknown> & {
 const accountSettingsEnvironmentFields = [
   ['backendCliSourcePreferences', 'HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON'],
   ['scmIncludeCoAuthoredBy', 'HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY'],
-  ['actionsSettings', 'HAPPIER_ACTIONS_SETTINGS_V1'],
 ] as const;
 
 type AccountSettingsEnvironmentProjection = Record<typeof accountSettingsEnvironmentFields[number][0], string | null>;
@@ -26,9 +24,12 @@ export function __resetApplyAccountSettingsToProcessEnvStateForTests(): void {
 
 export function readAccountSettingsEnvironmentOverrideKeys(environment: NodeJS.ProcessEnv): readonly string[] {
   const projection = projectionByEnvironment.get(environment);
-  return accountSettingsEnvironmentFields.flatMap(([field, key]) => (
-    typeof environment[key] === 'string' && environment[key] !== projection?.[field] ? [key] : []
-  ));
+  return [
+    ...accountSettingsEnvironmentFields.flatMap(([field, key]) => (
+      typeof environment[key] === 'string' && environment[key] !== projection?.[field] ? [key] : []
+    )),
+    ...(typeof environment.HAPPIER_ACTIONS_SETTINGS_V1 === 'string' ? ['HAPPIER_ACTIONS_SETTINGS_V1'] : []),
+  ];
 }
 
 export function applyAccountSettingsToProcessEnv(params: Readonly<{
@@ -45,7 +46,6 @@ export function applyAccountSettingsToProcessEnv(params: Readonly<{
     projection = {
       backendCliSourcePreferences: inheritedValue('HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON'),
       scmIncludeCoAuthoredBy: inheritedValue('HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY'),
-      actionsSettings: inheritedValue('HAPPIER_ACTIONS_SETTINGS_V1'),
     };
     projectionByEnvironment.set(environment, projection);
   }
@@ -65,30 +65,6 @@ export function applyAccountSettingsToProcessEnv(params: Readonly<{
     } else if (projection.scmIncludeCoAuthoredBy !== null) {
       delete environment.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY;
       projection.scmIncludeCoAuthoredBy = null;
-    }
-  }
-
-  const currentActionsEnvValue = typeof environment.HAPPIER_ACTIONS_SETTINGS_V1 === 'string'
-    ? environment.HAPPIER_ACTIONS_SETTINGS_V1
-    : null;
-  if (projection.actionsSettings !== null && currentActionsEnvValue !== projection.actionsSettings) {
-    projection.actionsSettings = null;
-  }
-  if (!explicitKeys?.includes('HAPPIER_ACTIONS_SETTINGS_V1')
-    && (currentActionsEnvValue === null || projection.actionsSettings !== null)) {
-    const rawActions = params.settings.actionsSettingsV1;
-    const parsed = rawActions && typeof rawActions === 'object' ? rawActions : null;
-    if (parsed) {
-      try {
-        const serialized = JSON.stringify(parsed);
-        environment.HAPPIER_ACTIONS_SETTINGS_V1 = serialized;
-        projection.actionsSettings = serialized;
-      } catch {
-        // ignore
-      }
-    } else if (projection.actionsSettings !== null) {
-      delete environment.HAPPIER_ACTIONS_SETTINGS_V1;
-      projection.actionsSettings = null;
     }
   }
 

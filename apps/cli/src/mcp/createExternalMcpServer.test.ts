@@ -1,24 +1,32 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { HAPPIER_MCP_ACTION_SPECS_RESOURCE_URI } from '@/mcp/resources/registerHappierMcpResources';
 import { createExternalMcpServer as createExternalMcpServerStatic } from '@/mcp/createExternalMcpServer';
 
+import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { accountSettingsParse } from '@happier-dev/protocol';
+
+function publishActionSettings(actions: Record<string, unknown>) {
+  const rawSettings = { actionsSettingsV1: { v: 1, actions } };
+  setActiveAccountSettingsSnapshot({ scopeKey: resolveAccountSettingsScopeKeyForToken('token'), source: 'network',
+    settingsVersion: 1, settings: accountSettingsParse(rawSettings), rawSettings, settingsSecretsReadKeys: [], loadedAtMs: 1 });
+}
 const env = process.env;
 
 describe('createExternalMcpServer', () => {
   beforeEach(() => {
     process.env = { ...env };
     delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+    resetActiveAccountSettingsSnapshotForTests();
   });
+  afterEach(() => resetActiveAccountSettingsSnapshotForTests());
 
   it('returns toolNames aligned with per-surface action settings', async () => {
-    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
-      v: 1,
-      actions: {
-        'execution.run.list': { enabled: true, disabledSurfaces: ['mcp'], disabledPlacements: [] },
-      },
+    publishActionSettings({
+      'execution.run.list': { enabled: true, disabledSurfaces: ['mcp'], disabledPlacements: [] },
     });
 
     const { toolNames } = createExternalMcpServerStatic({
@@ -35,9 +43,7 @@ describe('createExternalMcpServer', () => {
   });
 
   it('advertises server-backed Session Actions only from enabled exact-Home feature snapshots', () => {
-    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({ v: 1, actions: {
-      'discussion.list': { toolExposureModes: { mcp: 'direct' } },
-    } });
+    publishActionSettings({ 'discussion.list': { toolExposureModes: { mcp: 'direct' } } });
     const credentials = {
       token: 'token',
       encryption: { type: 'legacy' as const, secret: new Uint8Array([1, 2, 3, 4]) },

@@ -6,7 +6,8 @@ import {
 } from './actionToolCatalog';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
-import { isActionEnabledByEnv, readActionsSettingsFromEnv } from '@/settings/actionsSettings';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { isActionEnabledByActionsSettings, normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { getActionRequiredServerFeatureId } from '@happier-dev/protocol/actions/actionRequiredServerFeature';
 import { SESSION_RUN_PROMPT_READ_ACTION_IDS_V1, SessionRunPromptReadActionIdV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import type { ActionId, ActionsSettingsV1, FeatureId, SessionRunPromptReadActionIdV1 } from '@happier-dev/protocol';
@@ -81,9 +82,11 @@ export function isBuiltInHappierToolAdmitted(toolName: string, params?: HappierT
 function admitHappierTools(params: HappierToolAdmissionParams | undefined, onlyToolName?: string) {
   if (params?.happierToolsEnabled === false) return [];
   const surface = params?.surface ?? 'agent';
-  const shouldReadEnvSettings = !params?.isActionEnabled && !Object.prototype.hasOwnProperty.call(params ?? {}, 'actionsSettings');
-  const actionsSettings = params?.actionsSettings ?? (shouldReadEnvSettings ? readActionsSettingsFromEnv() as ActionsSettingsV1 : null);
-  const isEnabledByPolicy = params?.isActionEnabled ?? ((id: ActionId) => isActionEnabledByEnv(id, { surface }));
+  const hasSettings = Object.prototype.hasOwnProperty.call(params ?? {}, 'actionsSettings');
+  const actionsSettings = hasSettings ? params?.actionsSettings ?? null
+    : params?.isActionEnabled ? null : createActionSettingsProvider().getActionsSettings();
+  const policy = actionsSettings ?? normalizeActionsSettingsV1(undefined);
+  const isEnabledByPolicy = params?.isActionEnabled ?? ((id: ActionId) => isActionEnabledByActionsSettings(id, policy, { surface }));
   const isActionEnabled = (id: ActionId): boolean => {
     if (!isEnabledByPolicy(id)) return false;
     if (params?.isServerFeatureEnabled === undefined) return true;

@@ -152,6 +152,16 @@ availability, authority, and approval checks. Settings uses this resolver for
 its default label. `happier mcp serve` captures Account Action settings at
 startup; restart that MCP process after changing its exposure preferences.
 
+In unreleased 0.3 source, advertisement reads the runtime's Account Action
+settings provider, including CLI list/describe, standalone MCP and native Voice
+prompts. The native Voice function carries a generic Action envelope; its
+prompt inventory is filtered, while the protocol decoder retains the full catalog.
+An environment setting is an explicit override for ordinary unscoped CLI use; it does not replace a credential-bound runtime's Account policy.
+Settings predicts confirmation through the execution approval router, including
+its UI confirmation result. For a declaration whose inherited confirmation
+depends on input, both Ask first and Allowed remain explicit saved choices.
+Resetting to Default restores the declaration's input-dependent behavior.
+
 In unreleased 0.3 source, configuring unused retention admits its scheduled
 Stop or Suspend. The managed policy runtime carries that consent to the selected
 effect without a new approval card when the unused window expires. Per-Machine

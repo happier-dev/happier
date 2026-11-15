@@ -2414,7 +2414,7 @@ export function listVoicePromptHotPathSpecs(): readonly ActionSpec[] {
 }
 
 export function listVoiceActionBlockSpecs(): readonly ActionSpec[] {
-  return listActionSpecsForSurface('voice').filter((spec) => Boolean(spec.bindings?.voiceClientToolName));
+  return listVoiceToolActionSpecs();
 }
 
 export function listVoiceClientToolNames(): readonly string[] {

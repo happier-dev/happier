@@ -30,6 +30,7 @@ import { runAddedHostedSession, sessionProcessEnvironment } from '@/agent/runtim
 import { __resetApplyAccountSettingsToProcessEnvStateForTests } from '@/settings/applyAccountSettingsToProcessEnv';
 import { resolveSpawnChildEnvironment } from '@/daemon/spawn/resolveSpawnChildEnvironment';
 import { buildSpawnChildProcessEnv } from '@/daemon/spawn/buildSpawnChildProcessEnv';
+import { parseExplicitSpawnEnvKeysFromProcessEnv } from '@/daemon/spawn/spawnExplicitEnvKeysMarker';
 
 function createCredentialsStub(): Credentials {
   return {
@@ -105,7 +106,7 @@ describe('bootstrapAccountSettingsContext', () => {
         readCache: async () => null, writeCache: async () => {}, fetchFromServer } });
     const readProjection = () => keys.map(key => sessionProcessEnvironment()[key]);
     const expectedProjection = (context: AccountSettingsContext) => [
-      context.settings.scmIncludeCoAuthoredBy ? '1' : '0', JSON.stringify(context.settings.actionsSettingsV1),
+      context.settings.scmIncludeCoAuthoredBy ? '1' : '0', undefined,
       JSON.stringify(context.settings.backendCliSourcePreferenceByTargetKey),
     ];
     const defaultsEnvironment = { ...process.env };
@@ -116,6 +117,7 @@ describe('bootstrapAccountSettingsContext', () => {
       await runAddedHostedSession({ environment: defaultsEnvironment, workingDirectory: '/session/defaults', end() {} }, async () => {
         const first = await bootstrap();
         expect(readProjection()).toEqual(expectedProjection(first));
+        expect(getActiveAccountSettingsSnapshot()?.settings.actionsSettingsV1).toEqual(first.settings.actionsSettingsV1);
         await runAddedHostedSession({ environment: explicitEnvironment, workingDirectory: '/session/explicit', end() {} }, async () => {
           await bootstrap();
           expect(readProjection()).toEqual(explicitValues);
@@ -126,8 +128,8 @@ describe('bootstrapAccountSettingsContext', () => {
         expect(readProjection()).toEqual(expectedProjection(refreshed));
         settingsVersion = 3;
         settings = {};
-        const cleared = await bootstrap();
-        expect(readProjection()).toEqual([undefined, JSON.stringify(cleared.settings.actionsSettingsV1), undefined]);
+        await bootstrap();
+        expect(readProjection()).toEqual([undefined, undefined, undefined]);
       });
       expect(keys.map(key => explicitEnvironment[key])).toEqual(explicitValues);
       expect(keys.map(key => process.env[key])).toEqual([undefined, undefined, undefined]);
@@ -139,7 +141,7 @@ describe('bootstrapAccountSettingsContext', () => {
       const prepareChild = async (explicit: boolean, unsetScm = false) => {
         const resolved = await resolveSpawnChildEnvironment({ options: { directory: '.' },
           profileEnvironmentVariables: explicit
-            ? Object.fromEntries(keys.map(key => [key, String(process.env[key])])) : {},
+            ? Object.fromEntries(keys.flatMap(key => typeof process.env[key] === 'string' ? [[key, process.env[key]]] : [])) : {},
           ...(unsetScm ? { providerEnvironmentOverlay: [{ source: 'provider' as const, name: keys[0], value: null }] } : {}),
           processEnv: process.env, daemonSpawnHooks: null, connectedServiceAuth: null,
           logDebug() {}, logInfo() {}, logWarn() {},
@@ -176,14 +178,18 @@ describe('bootstrapAccountSettingsContext', () => {
       // A shell value in the fresh host remains deliberate, even when it equals
       // an earlier Account default from the daemon process.
       process.env[keys[0]] = '1';
+      const shellActionsOverride = JSON.stringify(rawSettings(true).actionsSettingsV1);
+      process.env[keys[1]] = shellActionsOverride;
       settingsVersion = 7;
       settings = rawSettings(false);
       await bootstrap();
       const shellOverrideChild = await prepareChild(false);
+      expect(parseExplicitSpawnEnvKeysFromProcessEnv(shellOverrideChild)).toContain(keys[1]);
       settingsVersion = 8;
       await runAddedHostedSession({ environment: shellOverrideChild, workingDirectory: '/session/shell', end() {} }, async () => {
         await bootstrap();
         expect(sessionProcessEnvironment()[keys[0]]).toBe('1');
+        expect(sessionProcessEnvironment()[keys[1]]).toBe(shellActionsOverride);
       });
       // One admitted forced bootstrap performs one server read, with no Session fan-out.
       expect(fetchFromServer).toHaveBeenCalledTimes(11);
@@ -709,7 +715,7 @@ describe('bootstrapAccountSettingsContext', () => {
     expect(resolveCachePath).toHaveBeenCalledWith(expect.objectContaining({ token: tokenB }));
   });
 
-  it('does not synthesize a generic Codex setting or schema-v6 migration during bootstrap', async () => {
+  it('does not synthesize a generic Codex setting during bootstrap', async () => {
     const nowMs = 1_000_000;
     const applySideEffects = vi.fn();
 
@@ -736,7 +742,6 @@ describe('bootstrapAccountSettingsContext', () => {
 
     expect(applySideEffects).toHaveBeenCalledOnce();
     const appliedSettings = applySideEffects.mock.calls[0]?.[0].settings;
-    expect(appliedSettings?.schemaVersion).toBe(5);
     expect(appliedSettings).not.toHaveProperty('codexBackendMode');
   });
 

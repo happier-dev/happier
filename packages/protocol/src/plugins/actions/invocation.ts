@@ -654,6 +654,27 @@ export function pluginActionRequiresPresentUserIntent(
     && pluginActionDeclarationRequiresConfirmationForInput(policy, invocationSurface, input, invocationAuthority);
 }
 
+function readPluginActionConfirmationPredicate(
+  policy: Pick<PluginActionPresentUserGatePolicy, 'confirmationWhen'>,
+  invocationSurface: string,
+  invocationAuthority?: ActionRequiredAuthority,
+) {
+  const condition = policy.confirmationWhen;
+  return condition && 'presentUserUi' in condition
+    ? invocationSurface === 'cli' && condition.cli !== undefined ? condition.cli
+      : invocationSurface === 'ui' && invocationAuthority === 'present_user' ? condition.presentUserUi : condition.default
+    : condition;
+}
+
+/** Catalogs cannot collapse an input-dependent inherited policy into a saved boolean. */
+export function pluginActionConfirmationDependsOnInput(
+  policy: Pick<PluginActionPresentUserGatePolicy, 'confirmationWhen'>,
+  invocationSurface: string,
+  invocationAuthority?: ActionRequiredAuthority,
+): boolean {
+  return typeof readPluginActionConfirmationPredicate(policy, invocationSurface, invocationAuthority) === 'object';
+}
+
 /** Declaration/input semantics, independent of the invoking realm's prompt exemption. */
 export function pluginActionDeclarationRequiresConfirmationForInput(
   policy: Pick<PluginActionPresentUserGatePolicy, 'dangerLevel' | 'confirmation' | 'confirmationWhen'>,
@@ -665,12 +686,7 @@ export function pluginActionDeclarationRequiresConfirmationForInput(
   if (condition !== undefined) {
     // CLI defaults do not confer human authority. Only the UI exemption needs
     // present-user authority; all other requesters retain the declared default.
-    const predicate = 'presentUserUi' in condition
-      ? invocationSurface === 'cli' && condition.cli !== undefined
-        ? condition.cli
-        : invocationSurface === 'ui' && invocationAuthority === 'present_user'
-        ? condition.presentUserUi : condition.default
-      : condition;
+    const predicate = readPluginActionConfirmationPredicate(policy, invocationSurface, invocationAuthority);
     // Catalog reads cannot evaluate input predicates. Scoped boolean defaults
     // need no input; execution predicates see the parsed handler input only.
     if (predicate === false || (typeof predicate === 'object' && input !== undefined

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   __resetApplyAccountSettingsToProcessEnvStateForTests,
   applyAccountSettingsToProcessEnv,
+  readAccountSettingsEnvironmentOverrideKeys,
 } from './applyAccountSettingsToProcessEnv';
 
 describe('applyAccountSettingsToProcessEnv', () => {
@@ -61,72 +62,41 @@ describe('applyAccountSettingsToProcessEnv', () => {
     }
   });
 
-  it('still applies actions settings even when SCM env override is present', () => {
-    const prevScm = process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY;
-    const prevActions = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
-    process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY = '0';
+  it('does not mirror Account Action policy into the environment across refreshes', () => {
+    const previous = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
     delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
     try {
-      applyAccountSettingsToProcessEnv({ settings: { actionsSettingsV1: { v: 1, actions: { 'review.start': { enabled: false, disabledSurfaces: [], disabledPlacements: [] } } } } });
-      expect(process.env.HAPPIER_ACTIONS_SETTINGS_V1).toBe(
-        JSON.stringify({ v: 1, actions: { 'review.start': { enabled: false, disabledSurfaces: [], disabledPlacements: [] } } }),
-      );
+      for (const settings of [
+        { actionsSettingsV1: { v: 1, actions: { 'review.start': { enabled: false } } } },
+        { actionsSettingsV1: { v: 1, actions: { 'review.start': { enabled: true } } } },
+        {},
+      ]) {
+        applyAccountSettingsToProcessEnv({ settings });
+        expect(process.env.HAPPIER_ACTIONS_SETTINGS_V1).toBeUndefined();
+        expect(readAccountSettingsEnvironmentOverrideKeys(process.env)).not.toContain('HAPPIER_ACTIONS_SETTINGS_V1');
+      }
     } finally {
-      if (prevScm === undefined) delete process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY;
-      else process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY = prevScm;
-      if (prevActions === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
-      else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = prevActions;
+      __resetApplyAccountSettingsToProcessEnvStateForTests();
+      if (previous === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+      else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = previous;
     }
   });
 
-  it('does not override an explicitly set HAPPIER_ACTIONS_SETTINGS_V1 env var', () => {
-    const prev = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
-    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({ v: 1, actions: { 'subagents.plan.start': { enabled: false, disabledSurfaces: [], disabledPlacements: [] } } });
+  it('preserves an explicitly supplied Action policy and its child transport marker', () => {
+    const previous = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+    const override = JSON.stringify({ v: 1, actions: { 'review.start': { enabled: true } } });
+    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = override;
     try {
-      applyAccountSettingsToProcessEnv({ settings: { actionsSettingsV1: { v: 1, actions: { 'review.start': { enabled: false, disabledSurfaces: [], disabledPlacements: [] } } } } });
-      expect(process.env.HAPPIER_ACTIONS_SETTINGS_V1).toBe(
-        JSON.stringify({ v: 1, actions: { 'subagents.plan.start': { enabled: false, disabledSurfaces: [], disabledPlacements: [] } } }),
-      );
-    } finally {
-      if (prev === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
-      else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = prev;
-    }
-  });
-
-  it('refreshes actions settings env when settings change after an earlier settings-managed write', () => {
-    const prev = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
-    delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
-    try {
-      applyAccountSettingsToProcessEnv({ settings: { actionsSettingsV1: { v: 1, actions: { 'review.start': { enabled: false, disabledSurfaces: [], disabledPlacements: [] } } } } });
-      expect(process.env.HAPPIER_ACTIONS_SETTINGS_V1).toBe(JSON.stringify({ v: 1, actions: { 'review.start': { enabled: false, disabledSurfaces: [], disabledPlacements: [] } } }));
-
-      applyAccountSettingsToProcessEnv({ settings: { actionsSettingsV1: { v: 1, actions: { 'review.start': { enabled: true, disabledSurfaces: [], disabledPlacements: [] } } } } });
-      expect(process.env.HAPPIER_ACTIONS_SETTINGS_V1).toBe(JSON.stringify({ v: 1, actions: { 'review.start': { enabled: true, disabledSurfaces: [], disabledPlacements: [] } } }));
-
+      applyAccountSettingsToProcessEnv({ settings: {
+        actionsSettingsV1: { v: 1, actions: { 'review.start': { enabled: false } } },
+      } });
       applyAccountSettingsToProcessEnv({ settings: {} });
-      expect(process.env.HAPPIER_ACTIONS_SETTINGS_V1).toBeUndefined();
+      expect(process.env.HAPPIER_ACTIONS_SETTINGS_V1).toBe(override);
+      expect(readAccountSettingsEnvironmentOverrideKeys(process.env)).toContain('HAPPIER_ACTIONS_SETTINGS_V1');
     } finally {
       __resetApplyAccountSettingsToProcessEnvStateForTests();
-      if (prev === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
-      else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = prev;
-    }
-  });
-
-  it('stops managing actions settings env after an explicit override replaces a settings-managed value', () => {
-    const prev = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
-    delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
-    try {
-      applyAccountSettingsToProcessEnv({ settings: { actionsSettingsV1: { v: 1, actions: { 'review.start': { enabled: false, disabledSurfaces: [], disabledPlacements: [] } } } } });
-      expect(process.env.HAPPIER_ACTIONS_SETTINGS_V1).toBe(JSON.stringify({ v: 1, actions: { 'review.start': { enabled: false, disabledSurfaces: [], disabledPlacements: [] } } }));
-
-      process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({ v: 1, actions: { 'review.start': { enabled: true, disabledSurfaces: [], disabledPlacements: [] } } });
-
-      applyAccountSettingsToProcessEnv({ settings: { actionsSettingsV1: { v: 1, actions: { 'review.start': { enabled: false, disabledSurfaces: [], disabledPlacements: [] } } } } });
-      expect(process.env.HAPPIER_ACTIONS_SETTINGS_V1).toBe(JSON.stringify({ v: 1, actions: { 'review.start': { enabled: true, disabledSurfaces: [], disabledPlacements: [] } } }));
-    } finally {
-      __resetApplyAccountSettingsToProcessEnvStateForTests();
-      if (prev === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
-      else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = prev;
+      if (previous === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+      else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = previous;
     }
   });
 

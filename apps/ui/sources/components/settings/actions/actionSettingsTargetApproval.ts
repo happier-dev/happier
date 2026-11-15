@@ -1,9 +1,13 @@
-import { pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol/plugins/actions/invocation';
+import { pluginActionRequiresPresentUserIntent, pluginActionConfirmationDependsOnInput } from '@happier-dev/protocol/plugins/actions/invocation';
+import { hasInputDependentAgentApprovalDefaultV1, resolveActionApprovalRouting, type ActionApprovalPolicyScopeV1 } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { setActionAudiencePolicy } from '@happier-dev/protocol/actions/actionAudiencePolicy';
 import { readScopedActionApprovalPreference, setScopedActionApprovalPreference, setActionApprovalOverride,
     actionPolicyAudienceContextV1, type ActionApprovalScopeV1, type ActionSettingsActionId, type ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 
-import { isActionApprovalRequiredByAccountSettings } from '@/sync/domains/settings/actionsSettings';
+import { scmRemotePreferenceAsks } from '@/sync/domains/settings/actionsSettings';
+import { normalizeScmRemoteConfirmPolicy } from '@/scm/settings/remoteConfirmationPolicy';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { normalizeActionsSettings } from './normalizeActionsSettings';
 import {
     resolveActionSettingsTargetDefinition,
@@ -72,20 +76,23 @@ export function getActionTargetApprovalRequired(params: Readonly<{
  * Projects effective confirmation and whether a waiver can change it from the shared policy. The Source
  * Control preference (`scmRemoteConfirmPolicy`) is the UI default of remote pull and push, so it is part of
  * the answer; `approvalAskedBySourceControl` names the case where it, and nothing in the Actions policy,
- * makes the inherited default ask.
+ * makes the inherited default ask. `approvalAskedForInput` names a declared input consequence the
+ * inherited default still asks for.
  */
 export function getActionTargetApprovalPolicy(params: Readonly<{
     settings: ActionsSettingsV1;
     scope?: ActionApprovalScopeV1;
+    approvalScope?: ActionApprovalPolicyScopeV1;
     actionId: ActionSettingsActionId;
     targetId: ActionSettingsTargetId;
     target?: ActionSettingsTargetDefinition;
     scmRemoteConfirmPolicy?: unknown;
-}>): Readonly<{ approvalRequiredByPolicy: boolean; approvalWaivable: boolean; approvalAskedBySourceControl: boolean }> {
+}>): Readonly<{ approvalRequiredByPolicy: boolean; approvalWaivable: boolean; approvalAskedBySourceControl: boolean;
+    approvalAskedForInput?: true }> {
     const normalizedSettings = normalizeActionsSettings(params.settings);
     const surface = resolveActionSettingsExecutionSurface(params.actionId, params.targetId, params.target);
     const foreign = params.targetId === 'foreign_session_html';
-    const context: Parameters<typeof isActionApprovalRequiredByAccountSettings>[2] = {
+    const context: NonNullable<Parameters<typeof resolveActionApprovalRouting>[0]['context']> = {
         surface,
         ...(foreign ? { authority: 'account_automation' as const, callerSurface: 'foreign_session_html' as const }
             : surface === 'ui' ? { authority: 'present_user' as const, actionCaller: { kind: 'host' as const } } : {}),
@@ -103,14 +110,30 @@ export function getActionTargetApprovalPolicy(params: Readonly<{
         surface,
         approvalRequired: false,
     });
-    const requiredBy = (actionsSettingsV1: ActionsSettingsV1, scmRemoteConfirmPolicy: unknown) => isActionApprovalRequiredByAccountSettings(
-        params.actionId, { actionsSettingsV1, scmRemoteConfirmPolicy }, context,
-        { contributedApprovalDefault, approvalScope: params.scope });
+    const hostId = ActionIdSchema.safeParse(params.actionId);
+    const spec = getActionSpec(hostId.success ? hostId.data : 'action.invoke');
+    const requiredBy = (actionsSettingsV1: ActionsSettingsV1, scmRemoteConfirmPolicy: unknown) => {
+        const routing = resolveActionApprovalRouting({
+            actionId: spec.id, profileActionId: params.actionId, spec, settings: actionsSettingsV1, context,
+            approvalScope: params.approvalScope ?? params.scope,
+            ...(contributedApprovalDefault === undefined ? {} : {
+                defaultConfirmation: contributedApprovalDefault, defaultUiConfirmation: contributedApprovalDefault,
+            }),
+        });
+        return routing.required || routing.uiConfirmationRequired === true
+            || scmRemotePreferenceAsks(params.actionId, { actionsSettingsV1, scmRemoteConfirmPolicy: normalizeScmRemoteConfirmPolicy(scmRemoteConfirmPolicy) }, context);
+    };
     const approvalRequiredByPolicy = requiredBy(normalizedSettings, params.scmRemoteConfirmPolicy);
     return {
         approvalRequiredByPolicy,
         approvalWaivable: !requiredBy(waivedSettings, params.scmRemoteConfirmPolicy),
         approvalAskedBySourceControl: approvalRequiredByPolicy && !requiredBy(normalizedSettings, 'never'),
+        // Input-dependent defaults cannot represent an explicit Ask or Allowed choice.
+        ...(hasInputDependentAgentApprovalDefaultV1(params.actionId, context)
+            || surface === 'ui' && spec.approvalPolicy?.uiConfirmationForInput !== undefined
+            || params.target?.contributedAction && pluginActionConfirmationDependsOnInput(
+                params.target.contributedAction, surface, context.authority)
+            ? { approvalAskedForInput: true as const } : {}),
     };
 }
 

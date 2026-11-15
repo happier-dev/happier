@@ -16,8 +16,6 @@ import '../../configureZodLocale';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { registerHappierMcpResources } from '@/mcp/resources/registerHappierMcpResources';
-import { isActionEnabledByEnv } from '@/settings/actionsSettings';
 import { runMcpStdioBridgeLifecycle } from '@/mcp/runtime/runMcpStdioBridgeLifecycle';
 import { createForwardingMcpServer } from './forwardingMcpServer';
 
@@ -83,11 +81,7 @@ async function main() {
   const server = createForwardingMcpServer({
     upstream: async operation => await operation(await ensureHttpClient()),
     ...(toolNameMaxLength === undefined ? {} : { toolNameMaxLength }),
-    forwardResources: false,
-  });
-  // External URL bridges retain their existing local catalog.
-  registerHappierMcpResources(server, {
-    isActionEnabled: (id) => isActionEnabledByEnv(id, { surface: 'agent' }),
+    forwardResources: true,
   });
 
   const requestedSignal = await runMcpStdioBridgeLifecycle({

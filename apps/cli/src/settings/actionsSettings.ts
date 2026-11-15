@@ -1,33 +1,9 @@
-import { normalizeActionsSettingsV1, tryNormalizeActionsSettingsV1, isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { normalizeActionsSettingsV1, isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
 import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionId, ActionSettingsActionId, ActionSurfaces, ActionUiPlacement, ActionsSettingsV1 } from '@happier-dev/protocol';
-import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
-
-const ENV_KEY = 'HAPPIER_ACTIONS_SETTINGS_V1';
-const EMPTY_ACTIONS_SETTINGS = Object.freeze({
-  v: 1 as const,
-  actions: {},
-}) as ActionsSettingsV1;
-
-export function readActionsSettingsOverrideFromEnv(): ActionsSettingsV1 | null {
-  const env = sessionProcessEnvironment();
-  const raw = typeof env[ENV_KEY] === 'string' ? String(env[ENV_KEY]).trim() : '';
-  if (!raw) return null;
-
-  let parsedJson: unknown = null;
-  try {
-    parsedJson = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-
-  return tryNormalizeActionsSettingsV1(parsedJson);
-}
-
-export function readActionsSettingsFromEnv(): ActionsSettingsV1 {
-  return readActionsSettingsOverrideFromEnv() ?? EMPTY_ACTIONS_SETTINGS;
-}
+import { createActionSettingsProvider, type RuntimeActionSettingsProvider } from './actionsSettingsProvider';
+import { readActionsSettingsOverrideFromEnv } from './actionsSettingsOverride';
+export { readActionsSettingsOverrideFromEnv } from './actionsSettingsOverride';
 
 export function resolveActionsSettingsWithEnvironmentOverride(
   accountSettings: Readonly<Record<string, unknown>>,
@@ -37,31 +13,23 @@ export function resolveActionsSettingsWithEnvironmentOverride(
   return normalizeActionsSettingsV1(accountSettings.actionsSettingsV1);
 }
 
-export function isActionEnabledByEnv(
+export function isActionEnabled(
   actionId: ActionSettingsActionId,
   ctx?: Readonly<{ surface?: keyof ActionSurfaces | null; placement?: ActionUiPlacement | null }>,
 ): boolean {
-  return isActionEnabledByActionsSettings(actionId, readActionsSettingsFromEnv(), {
+  return isActionEnabledByActionsSettings(actionId, createActionSettingsProvider().getActionsSettings(), {
     surface: ctx?.surface ?? null,
     placement: ctx?.placement ?? null,
   });
 }
 
-export function isActionApprovalRequiredByEnv(
-  actionId: ActionSettingsActionId,
-  ctx?: Readonly<{ surface?: keyof ActionSurfaces | null }>,
-): boolean {
-  return isApprovalRequiredByActionsSettings(actionId, readActionsSettingsFromEnv(), {
-    surface: ctx?.surface ?? null,
-  });
-}
-
-export function listDisabledActionIdsForSurfaceFromEnv(surface: keyof ActionSurfaces): readonly ActionId[] {
-  const settings = readActionsSettingsFromEnv();
+export function listDisabledActionIdsForSurface(surface: keyof ActionSurfaces,
+  provider: RuntimeActionSettingsProvider = createActionSettingsProvider()): readonly ActionId[] {
+  const settings = provider.getActionsSettings();
   const disabled: ActionId[] = [];
   for (const spec of listActionSpecs()) {
-    if (!isActionEnabledByActionsSettings(spec.id as any, settings as any, { surface, placement: null })) {
-      disabled.push(spec.id as any);
+    if (!isActionEnabledByActionsSettings(spec.id, settings, { surface, placement: null })) {
+      disabled.push(spec.id);
     }
   }
   disabled.sort((a, b) => String(a).localeCompare(String(b)));

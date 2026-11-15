@@ -3,7 +3,7 @@ import chalk from 'chalk';
 import { listActionSpecsForCatalogSurface, serializeActionSpec } from '@happier-dev/protocol/actions/actionCatalog';
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { isActionEnabledByEnv } from '@/settings/actionsSettings';
+import { isActionEnabled } from '@/settings/actionsSettings';
 import type { StoredCredentials } from '@/persistence';
 import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
 
@@ -16,7 +16,7 @@ export async function cmdSessionActionsList(
   await ensureCliActionPolicySettings(credentials);
   const availableSpecs = listActionSpecsForCatalogSurface({
     surface: 'cli',
-    isActionEnabled: (id) => isActionEnabledByEnv(id, { surface: 'cli', placement: null }),
+    isActionEnabled: (id) => isActionEnabled(id, { surface: 'cli', placement: null }),
   });
   const actionSpecs = availableSpecs.map((spec) => serializeActionSpec(spec));
 

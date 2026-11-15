@@ -104,9 +104,11 @@ describe('happier mcp serve (env hardening)', () => {
     }
   });
 
-  it('overrides HAPPIER_ACTIONS_SETTINGS_V1 env var with account settings for mcp serve', async () => {
+  it.each([undefined, JSON.stringify({ v: 1, actions: { 'review.start': { enabled: true } } })])(
+    'keeps Action policy in the Account snapshot and preserves an explicit env override (%s)', async (explicitOverride) => {
     const prev = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
-    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({ v: 1, actions: { 'review.start': { enabled: true } } });
+    if (explicitOverride === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+    else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = explicitOverride;
 
     const credentials = {
       token: 't',
@@ -139,12 +141,7 @@ describe('happier mcp serve (env hardening)', () => {
     try {
       await runMcpServeCommand(['serve'], deps);
 
-      expect(process.env.HAPPIER_ACTIONS_SETTINGS_V1).toBe(JSON.stringify({
-        v: 1,
-        actions: {
-          'review.start': { enabled: false, disabledSurfaces: [], disabledPlacements: [] },
-        },
-      }));
+      expect(process.env.HAPPIER_ACTIONS_SETTINGS_V1).toBe(explicitOverride);
     } finally {
       if (prev === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
       else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = prev;

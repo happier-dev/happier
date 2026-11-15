@@ -3,7 +3,7 @@ import type { AccountSettings, ActionsSettingsV1 } from '@happier-dev/protocol';
 import type { AccountRoleOverridesReadV1 } from '@happier-dev/protocol/prompts/roles/roleOverrideRecordV1';
 
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken, readActiveAccountRoleOverrides, readAccountRoleOverridesFromSnapshot, type ActiveAccountSettingsSnapshot } from './accountSettings/activeAccountSettingsSnapshot';
-import { readActionsSettingsOverrideFromEnv } from './actionsSettings';
+import { readActionsSettingsOverrideFromEnv } from './actionsSettingsOverride';
 
 /** Narrow host-reviewed policy accepted by ordinary and restricted runtime constructors. */
 export type RuntimeActionSettingsProvider = Readonly<{

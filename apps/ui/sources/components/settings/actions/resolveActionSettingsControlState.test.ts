@@ -9,12 +9,53 @@ import { getActionTargetApprovalOverride } from './actionSettingsTargetApproval'
 import { resolveActionApprovalLooseningNoticeData } from './resolveActionSettingsControlState';
 import { applyActionPolicyMutation } from '@happier-dev/protocol/actions/actionAudiencePolicy';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol/plugins/actions/invocation';
+import { isApprovalRequiredByActionsSettings, resolveActionApprovalRouting } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { sealPrivateLabelV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 
 const resolveControlState = actionSettingsTargets.resolveActionSettingsTargetControlState;
 const applyControlState = actionSettingsTargets.applyActionSettingsTargetControlState;
 
 describe('resolveActionSettingsTargetControlState', () => {
+    it.each(['ask_first', 'allowed'] as const)('retains explicit %s for input-dependent contributed confirmation', (value) => {
+        const actionId = 'example.capabilities/actions/change';
+        const target = actionSettingsTargets.listActionSettingsTargetDefinitions({
+            surfaces: { ui: true }, placements: [], contributedAction: {
+                dangerLevel: 'writesRemote', confirmationWhen: { op: 'truthy', path: 'publish' },
+            },
+        }).find(target => target.id === 'contextual_ui')!;
+        const settings = applyControlState({ settings: DEFAULT_ACTIONS_SETTINGS_V1, actionId,
+            targetId: target.id, target, value });
+        expect(getActionTargetApprovalOverride({ settings, actionId, targetId: target.id, target })).toBe(value === 'ask_first');
+        expect(resolveControlState({ settings, actionId, targetId: target.id, target })).toMatchObject({ value });
+        for (const publish of [true, false]) {
+            const input = { publish };
+            const declarationDefault = pluginActionRequiresPresentUserIntent(target.contributedAction!, 'ui', input, 'present_user');
+            const routing = resolveActionApprovalRouting({ actionId: 'action.invoke', profileActionId: actionId,
+                spec: getActionSpec('action.invoke'), settings, input,
+                context: { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } },
+                defaultConfirmation: declarationDefault, defaultUiConfirmation: declarationDefault });
+            expect(routing.required || routing.uiConfirmationRequired === true).toBe(value === 'ask_first');
+        }
+    });
+    it.each(['ask_first', 'allowed'] as const)('retains explicit %s for built-in input-dependent UI confirmation', (value) => {
+        const actionId = 'usage.sources.consent.set';
+        const targetId = 'contextual_ui';
+        expect(resolveControlState({ settings: DEFAULT_ACTIONS_SETTINGS_V1, actionId, targetId }))
+            .toMatchObject({ approvalAskedForInput: true });
+        const settings = applyControlState({ settings: DEFAULT_ACTIONS_SETTINGS_V1, actionId, targetId, value });
+        expect(getActionTargetApprovalOverride({ settings, actionId, targetId })).toBe(value === 'ask_first');
+    });
+    it('reports irreversible UI confirmation and retains an explicit waiver', () => {
+        const actionId = 'usage.sources.history.delete';
+        const targetId = 'contextual_ui';
+        expect(resolveControlState({ settings: DEFAULT_ACTIONS_SETTINGS_V1, actionId, targetId }))
+            .toMatchObject({ approvalRequiredByPolicy: true });
+        const settings = applyControlState({ settings: DEFAULT_ACTIONS_SETTINGS_V1, actionId, targetId, value: 'allowed' });
+        expect(getActionTargetApprovalOverride({ settings, actionId, targetId })).toBe(false);
+        expect(resolveControlState({ settings, actionId, targetId })).toMatchObject({ value: 'allowed', approvalRequiredByPolicy: false });
+    });
     it('keeps a deliberate foreign HTML grant distinct from its refused default', () => {
         const actionId = 'session.message.send';
         const targetId = 'foreign_session_html' as const;
@@ -25,6 +66,27 @@ describe('resolveActionSettingsTargetControlState', () => {
         const reset = applyControlState({ settings: allowed, actionId, targetId, value: 'default' });
         expect(resolveControlState({ settings: reset, actionId, targetId })).toMatchObject({ value: 'off' });
     });
+    // Owner decision 2026-11-12 (W7): Agent placement in a managed target asks by default and
+    // the person can allow it from the existing Create session row.
+    it.each(['agent', 'mcp'] as const)('lets the person explicitly allow %s managed-target placement on Create session', (targetId) => {
+        const actionId = 'session.spawn_new';
+        const placement = { managedTargetPlacement: { managedId: 'managed-1', workspaceRoot: '/workspace' } };
+        expect(resolveControlState({ settings: DEFAULT_ACTIONS_SETTINGS_V1, actionId, targetId }))
+            .toMatchObject({ value: 'default', approvalRequiredByPolicy: false, approvalAskedForInput: true });
+        expect(isApprovalRequiredByActionsSettings(actionId, DEFAULT_ACTIONS_SETTINGS_V1, { surface: targetId },
+            undefined, undefined, placement)).toBe(true);
+        const allowed = applyControlState({ settings: DEFAULT_ACTIONS_SETTINGS_V1, actionId, targetId, value: 'allowed' });
+        expect(resolveControlState({ settings: allowed, actionId, targetId })).toMatchObject({ value: 'allowed' });
+        expect(isApprovalRequiredByActionsSettings(actionId, allowed, { surface: targetId },
+            undefined, undefined, placement)).toBe(false);
+        const reset = applyControlState({ settings: allowed, actionId, targetId, value: 'default' });
+        expect(isApprovalRequiredByActionsSettings(actionId, reset, { surface: targetId },
+            undefined, undefined, placement)).toBe(true);
+        // The person's own app placement is not changed by this default.
+        expect(resolveControlState({ settings: DEFAULT_ACTIONS_SETTINGS_V1, actionId, targetId: 'cli' }))
+            .not.toHaveProperty('approvalAskedForInput');
+    });
+
     it('keeps an Allowed token-update waiver disclosed and restores only its CLI Ask preference', () => {
         const actionId = 'account.apiTokens.update';
         const sibling = applyControlState({ settings: DEFAULT_ACTIONS_SETTINGS_V1,
@@ -35,7 +97,7 @@ describe('resolveActionSettingsTargetControlState', () => {
             approvalLooseningNotice: { keepAskFirst: { actionId, audience: 'cli', mode: 'default' } } });
         if (state.kind !== 'approval' || !state.approvalLooseningNotice) throw new Error('Missing token permission warning');
         const spec = getActionSpec(actionId);
-        for (const patch of [{ label: 'Renamed CI' }, { grant: API_TOKEN_FULL_GRANT_V1 }, { authorizeUnattendedTeamAccess: true }]) {
+        for (const patch of [{ label: sealPrivateLabelV1({ mode: 'plain', binding: { entity: 'api_token', field: 'label', id: '550e8400-e29b-41d4-a716-446655440000' }, value: 'Renamed CI' }) }, { grant: API_TOKEN_FULL_GRANT_V1 }, { authorizeUnattendedTeamAccess: true }]) {
             const admittedInput = spec.inputSchema.parse({ tokenId: '550e8400-e29b-41d4-a716-446655440000', ...patch });
             expect(resolveActionApprovalLooseningNoticeData({ spec, admittedInput, actionId, audience: 'cli',
                 mode: 'allowed', approvalRequiredByPolicy: state.approvalRequiredByPolicy, approvalWaivable: state.approvalWaivable,
@@ -163,7 +225,7 @@ describe('resolveActionSettingsTargetControlState', () => {
         const target = actionSettingsTargets.listActionSettingsTargetDefinitions({
             surfaces: { cli: true }, placements: [], contributedAction: { dangerLevel },
         }).find(target => target.id === 'cli')!;
-        const approvalRequired = dangerLevel !== 'safe';
+        const approvalRequired = false; // Safe and CLI-local edits both inherit Direct.
         const changed = applyControlState({ settings: DEFAULT_ACTIONS_SETTINGS_V1, actionId, targetId: 'cli', target,
             value: approvalRequired ? 'allowed' : 'ask_first' });
         const restored = applyControlState({ settings: changed, actionId, targetId: 'cli', target,
@@ -478,15 +540,15 @@ describe('resolveActionSettingsTargetControlState', () => {
         });
     });
     describe('Source Control remote confirmation preference', () => {
-        it.each(['always', 'never'] as const)('restores the inherited %s preference when the matching answer is chosen', (scmRemoteConfirmPolicy) => {
+        it.each(['always', 'never'] as const)('keeps an explicit choice with the inherited %s preference and force-push consequence', (scmRemoteConfirmPolicy) => {
             const actionId = 'scm.remote.push';
             const value = scmRemoteConfirmPolicy === 'always' ? 'ask_first' : 'allowed';
             const opposite = value === 'ask_first' ? 'allowed' : 'ask_first';
             const changed = applyControlState({ settings: DEFAULT_ACTIONS_SETTINGS_V1, actionId, targetId: 'contextual_ui', scmRemoteConfirmPolicy, value: opposite });
             const restored = applyControlState({ settings: changed, actionId, targetId: 'contextual_ui', scmRemoteConfirmPolicy, value });
-            expect(getActionTargetApprovalOverride({ settings: restored, actionId, targetId: 'contextual_ui' })).toBeNull();
+            expect(getActionTargetApprovalOverride({ settings: restored, actionId, targetId: 'contextual_ui' })).toBe(value === 'ask_first');
             expect(resolveControlState({ settings: restored, actionId, targetId: 'contextual_ui', scmRemoteConfirmPolicy }))
-                .toMatchObject({ value: 'default', approvalRequiredByPolicy: scmRemoteConfirmPolicy === 'always' });
+                .toMatchObject({ value, approvalRequiredByPolicy: scmRemoteConfirmPolicy === 'always', approvalAskedForInput: true });
         });
 
         const remote = (actionId: 'scm.remote.pull' | 'scm.remote.push', scmRemoteConfirmPolicy: unknown) => resolveControlState({

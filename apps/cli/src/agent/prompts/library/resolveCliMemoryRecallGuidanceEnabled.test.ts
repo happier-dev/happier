@@ -15,7 +15,7 @@ describe('resolveCliMemoryRecallGuidanceEnabled', () => {
     const enabled = await resolveCliMemoryRecallGuidanceEnabled({
       surfaces: ['mcp'],
       deps: {
-        isActionEnabledByEnv: () => true,
+        isActionEnabled: () => true,
         readMemorySettingsFromDisk: async () => buildMemorySettings({
           enabled: true,
           indexMode: 'deep',
@@ -30,7 +30,7 @@ describe('resolveCliMemoryRecallGuidanceEnabled', () => {
     const enabled = await resolveCliMemoryRecallGuidanceEnabled({
       surfaces: ['voice'],
       deps: {
-        isActionEnabledByEnv: (actionId, ctx) =>
+        isActionEnabled: (actionId, ctx) =>
           ctx?.surface === 'voice' && (actionId === 'memory.search' || actionId === 'memory.get_window'),
         readMemorySettingsFromDisk: async () => buildMemorySettings({
           enabled: true,
@@ -46,7 +46,7 @@ describe('resolveCliMemoryRecallGuidanceEnabled', () => {
     const enabled = await resolveCliMemoryRecallGuidanceEnabled({
       surfaces: ['voice'],
       deps: {
-        isActionEnabledByEnv: (actionId, ctx) => {
+        isActionEnabled: (actionId, ctx) => {
           if (ctx?.surface === 'voice') return actionId === 'memory.search';
           return false;
         },

@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { normalizePluginBackendCapabilitiesV1 } from '@happier-dev/protocol';
 
 import type { AgentMessage } from '@/agent/core/AgentMessage';
+import { createExecutionRunPermissionHandler } from '@/agent/executionRuns/policy/executionRunPermissionDecision';
+import { createRunScopedExecutionPermissionHandler } from '@/agent/executionRuns/policy/runScopedExecutionPermissionHandler';
 import type {
   ExecutionRunHostRuntime,
   ExecutionRunHostRuntimeMessageHandler,
@@ -137,7 +139,51 @@ describe('withExecutionRunRuntimeIdentityPublication', () => {
 
     expect(runtime.steerInput).toBeUndefined();
     expect(runtime.respondToPermission).toBeUndefined();
+    expect(runtime.abortPendingPermissionRequests).toBeUndefined();
     expect(runtime.waitForTurnCompletion).toBeUndefined();
+  });
+
+  it('aborts the real Run permission scope without settling a sibling request', async () => {
+    const permissionHandler = createExecutionRunPermissionHandler({
+      backendId: 'acme.backend',
+      permissionMode: 'default',
+      publishPendingRequest: () => {},
+    });
+    const permissionScope = createRunScopedExecutionPermissionHandler({
+      runId: 'run-1',
+      controllerOccurrenceId: 'controller-1',
+      handler: permissionHandler,
+    });
+    const producer = {
+      ...createMinimalRuntime(),
+      permissionScope,
+      async abortPendingPermissionRequests(reason: string) {
+        await this.permissionScope.dispose(reason);
+      },
+    };
+    const pending = permissionScope.handler.handleToolCall('permission-1', 'Write', { path: 'owned.txt' });
+    const sibling = permissionHandler.handleToolCall('sibling', 'Write', { path: 'sibling.txt' });
+    const runtime = withExecutionRunRuntimeIdentityPublication({
+      runtime: producer,
+      identity: {
+        runtimeDescriptor: null,
+        runtimeCapabilities: { executionRun: { supported: true } },
+        runtimeFacets: null,
+      },
+    });
+
+    try {
+      expect(runtime.abortPendingPermissionRequests).toBeTypeOf('function');
+      await runtime.abortPendingPermissionRequests?.('Execution run settled');
+      await expect(pending).resolves.toEqual({ decision: 'denied' });
+      expect(permissionScope.respondToPermissionRequest('permission-1', true)).toBe(false);
+      expect(permissionHandler.respondToPermissionRequest('sibling', true)).toBe(true);
+      await expect(sibling).resolves.toEqual({ decision: 'approved' });
+    } finally {
+      await permissionScope.dispose('Test cleanup');
+      await permissionHandler.abortPendingRequestsAndFlush?.('Test cleanup');
+      await runtime.dispose();
+    }
   });
 
   it('preserves dynamic permission response capability after startup', async () => {

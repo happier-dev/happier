@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { accountSettingsParse, isApprovalRequiredByActionsSettings } from '@happier-dev/protocol';
 import { clearActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from './accountSettings/activeAccountSettingsSnapshot';
 
-import { readActionsSettingsFromEnv, listDisabledActionIdsForSurfaceFromEnv } from './actionsSettings';
+import { readActionsSettingsOverrideFromEnv, listDisabledActionIdsForSurface } from './actionsSettings';
 import { createActionSettingsProvider } from './actionsSettingsProvider';
 
 describe('actionsSettings (env)', () => {
@@ -134,9 +134,9 @@ describe('actionsSettings (env)', () => {
       },
     });
     try {
-      const settings = readActionsSettingsFromEnv();
-      expect(settings.actions['session.message.send']?.enabled).toBe(false);
-      expect(settings.actions['session.stop']?.enabled).toBe(false);
+      const settings = readActionsSettingsOverrideFromEnv();
+      expect(settings?.actions['session.message.send']?.enabled).toBe(false);
+      expect(settings?.actions['session.stop']?.enabled).toBe(false);
     } finally {
       if (previous === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
       else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = previous;
@@ -153,7 +153,7 @@ describe('actionsSettings (env)', () => {
       },
     });
     try {
-      expect(readActionsSettingsFromEnv().actions['unknown.action']).toMatchObject({ enabled: false });
+      expect(readActionsSettingsOverrideFromEnv()?.actions['unknown.action']).toMatchObject({ enabled: false });
     } finally {
       if (prev === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
       else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = prev;
@@ -170,7 +170,7 @@ describe('actionsSettings (env)', () => {
       },
     });
     try {
-      expect(listDisabledActionIdsForSurfaceFromEnv('voice')).toEqual(['review.start', 'subagents.plan.start']);
+      expect(listDisabledActionIdsForSurface('voice')).toEqual(['review.start', 'subagents.plan.start']);
     } finally {
       if (prev === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
       else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = prev;
