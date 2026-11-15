@@ -23,6 +23,25 @@ import { MAX_AGENT_ROUTING_ID_BYTES } from '../../agents/agentIdV1.js';
 import { AgentProviderIdV1Schema } from '../../generated/providers/agentProviderIdsV1';
 import { SessionIndexedIdentifierMaxLengthV1 } from '../idsV1';
 import { resolveExternalSessionsSourceKey } from './sourceCatalog';
+import { readSessionInputPromptUserTextV1, renderSessionInputContextPromptV1 } from '../messages/sessionInputPromptContextV1';
+import { buildPromptPlanV1, renderSessionInputPromptPlanV1 } from '../../prompts/promptPlanV1';
+
+it('projects complete native prompt frames into candidate titles without changing transcript display', () => {
+  const context = renderSessionInputContextPromptV1({ inputProvenance: { v: 1, kind: 'host', producer: 'sessionAction' },
+    transformedUserText: 'Find the missing allowance' });
+  const plan = renderSessionInputPromptPlanV1(buildPromptPlanV1({ modality: 'coding', blocks: [
+    { id: 'resource', scope: 'session', text: 'Dynamic resource context' },
+  ] }));
+  const input = `${plan}\n\n${context}`;
+  expect(daemonRpcV1.projectExternalSessionCandidateTitle(input, { source: 'prompt' })).toBe('Find the missing allowance');
+  expect(daemonRpcV1.projectExternalSessionCandidateTitle(input)).toBe(input);
+  expect(readSessionInputPromptUserTextV1(input)).toBe(input);
+  for (const title of ['An explicit title', 'Explain <happier_input_context v="1"> as an example',
+    '<happier_input_context v="1">\nunfinished', '<happier_coding_prompt length="100">\nunfinished']) {
+    expect(daemonRpcV1.projectExternalSessionCandidateTitle(title)).toBe(title);
+    expect(daemonRpcV1.projectExternalSessionCandidateTitle(title, { source: 'prompt' })).toBe(title.replace(/\s+/gu, ' '));
+  }
+});
 
 describe('ExternalSessionsAgentIdSchema', () => {
   it('admits content searches and validates decoded source matches strictly while preserving metadata requests', () => {

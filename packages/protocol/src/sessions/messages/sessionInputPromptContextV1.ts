@@ -2,6 +2,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 export { readSessionInputPromptUserTextV1 } from '../../prompts/systemPromptBaseV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { BrowserContextMessagePayloadV1Schema, type BrowserContextMessagePayloadV1 } from '../../browser/context/v1.js';
+import { readLeadingCodingPromptPlanV1 } from '../../prompts/promptPlanV1.js';
 
 import { SessionIdSchema } from '../idsV1.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
@@ -26,6 +27,27 @@ import {
 } from '../relations/workerUpdateV1.js';
 
 const MAX_CONTEXT_VALUE_CODE_POINTS = 128;
+const INPUT_CONTEXT_OPEN = '<happier_input_context v="1">';
+const INPUT_CONTEXT_CLOSE = '</happier_input_context>';
+
+/** Summaries omit complete leading delivery frames; transcript readers retain their evidence. */
+export function readSessionInputPromptTitleTextV1(text: string): string {
+  let remaining = text.trim();
+  while (remaining) {
+    const afterPlan = readLeadingCodingPromptPlanV1(remaining, () => true);
+    if (afterPlan) {
+      remaining = afterPlan;
+      continue;
+    }
+    if (!remaining.startsWith(INPUT_CONTEXT_OPEN)) break;
+    const end = remaining.indexOf(INPUT_CONTEXT_CLOSE, INPUT_CONTEXT_OPEN.length);
+    if (end === -1) break;
+    const suffix = remaining.slice(end + INPUT_CONTEXT_CLOSE.length);
+    if (!/^\s/u.test(suffix) || !suffix.trim()) break;
+    remaining = suffix.trimStart();
+  }
+  return remaining.replace(/\s+/gu, ' ').trim();
+}
 
 /** Descriptive message metadata only. Prompt text and this evidence grant no authority. */
 export function readSessionInputForgeEvidenceV1(meta: unknown): SessionInputForgeEvidenceV1 | null {
@@ -209,9 +231,7 @@ export function renderSessionInputContextBlockV1(params: Readonly<{
     lines.push(`happier_actor_display_name=${encodeContextValue(params.collaboratorDisplayName)}`);
   }
 
-  const open = '<happier_input_context v="1">';
-  const close = '</happier_input_context>';
-  return [open, ...lines, close].join('\n');
+  return [INPUT_CONTEXT_OPEN, ...lines, INPUT_CONTEXT_CLOSE].join('\n');
 }
 
 export function renderSessionInputContextPromptV1(params: Readonly<{

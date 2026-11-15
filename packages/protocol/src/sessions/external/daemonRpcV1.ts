@@ -4,6 +4,7 @@ import { z } from '../../zodRuntimePolicy.js';
 import { RuntimeDescriptorV1Schema } from '../metadata/runtimeDescriptorV1.js';
 import { NonBlankOpaqueIdentifierSchema } from '../../strings/opaqueIdentifier.js';
 import { PluginAgentExternalSessionLinkDataSchema } from '../../plugins/contributions/agentExternalSessions.js';
+import { readSessionInputPromptTitleTextV1 } from '../messages/sessionInputPromptContextV1.js';
 import {
   ExternalSessionsAgentIdSchema,
   ExternalSessionsSourceSchema,
@@ -172,15 +173,6 @@ type ExternalSessionsCandidatesListInput = ExternalSessionRequestInput<z.input<t
 export const ExternalSessionsCandidatesListRequestSchema = lazyZodSchema(() => (<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform<ExternalSessionsCandidatesListInput, unknown>((value) => normalizeReleasedExternalSessionRequest(value)), ExternalSessionsCandidatesListCanonicalRequestSchema));
 export type ExternalSessionsCandidatesListRequest = z.infer<typeof ExternalSessionsCandidatesListRequestSchema>;
 
-export const ExternalSessionsCandidatePreparationSchema = lazyZodSchema(() => z.strictObject({
-    kind: z.literal('building_candidate_index'),
-    scanned: z.number().check(z.int(), z.minimum(0)),
-    total: z.optional(z.number().check(z.int(), z.minimum(0))),
-  }).check(z.refine((value) => value.total === undefined || value.total >= value.scanned, {
-    message: 'Candidate-index preparation total must be at least scanned',
-  })));
-export type ExternalSessionsCandidatePreparation = z.infer<typeof ExternalSessionsCandidatePreparationSchema>;
-
 export const ExternalSessionsAutoLinkPolicyScopeV1Schema = lazyZodSchema(() => z.strictObject({
   qualifiedIdentity: LinkedExternalSessionQualifiedIdentityV1Schema,
   sourcePolicyId: ExternalSessionsAutoLinkSourcePolicyIdV1Schema,
@@ -213,21 +205,20 @@ export const ExternalSessionsCandidatesListResponseSchema = lazyZodSchema(() => 
       /**
        * Positive `linkedSessionId` / `imported` projections are present when
        * known. When this is true, omitted projections are not a negative fact:
-       * the bounded canonical Session scan or candidate preparation did not
-       * cover every matching owner record.
+       * the bounded canonical Session scan did not cover every matching owner
+       * record.
        */
       annotationsIncomplete: z.optional(z.boolean()),
       /**
        * The continuation cursor the request carried can no longer address a
-       * page: its generation was rebuilt, retired with the Agent runtime that
-       * built it, or its body no longer verifies. This is not a listing failure
+       * page: the Agent no longer recognises it, or it was minted by the
+       * retired candidate index. This is not a listing failure
        * and not an empty last page — the only recovery is to drop that
        * continuation and rebuild the listing from the root, so retrying the
        * same cursor can never succeed. Rows already on screen stay visible but
        * stop being authoritative until the rebuild publishes.
        */
       cursorReset: z.optional(z.boolean()),
-      preparation: z.optional(ExternalSessionsCandidatePreparationSchema),
       autoLinkPolicyScopeV1: z.optional(ExternalSessionsAutoLinkPolicyScopeV1Schema),
       /**
        * Absence is not a negative fact a caller may invert into an offer: only
@@ -336,7 +327,8 @@ export type ExternalSessionActivityV1 = z.infer<typeof ExternalSessionActivityV1
 export const MAX_EXTERNAL_SESSION_CANDIDATE_TITLE_CODE_UNITS = 10_000;
 
 /** Preserve a usable candidate when native title text exceeds its existing wire field. */
-export function projectExternalSessionCandidateTitle(title: string): string {
+export function projectExternalSessionCandidateTitle(title: string, options?: Readonly<{ source: 'prompt' }>): string {
+  if (options?.source === 'prompt') title = readSessionInputPromptTitleTextV1(title);
   if (title.length <= MAX_EXTERNAL_SESSION_CANDIDATE_TITLE_CODE_UNITS) return title;
   const prefix = title.slice(0, MAX_EXTERNAL_SESSION_CANDIDATE_TITLE_CODE_UNITS - 3)
     .replace(/[\uD800-\uDBFF]$/, '');

@@ -6,7 +6,8 @@ import type {
   AgentExternalSessionsReadAfterTranscriptResult, AgentExternalSessionsTranscriptPage,
 } from '@happier-dev/plugin-sdk/sessions/external';
 import { createAgentExternalSessionsProducerOverflowFailure, getAgentExternalSessionsInvocationFailure,
-  isAgentExternalSessionsResultWithinByteBudget } from '@happier-dev/plugin-sdk/sessions/external';
+  isAgentExternalSessionsResultWithinByteBudget, readSessionInputPromptUserTextV1 } from '@happier-dev/plugin-sdk/sessions/external';
+import { projectExternalSessionCandidateTitle } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import { createMuseEventProjection, readMuseRecord } from './events.js';
 import { openMuseMsp, type MuseMsp } from './msp.js';
 
@@ -279,8 +280,13 @@ export const museExternalSessionsContribution: AgentExternalSessionsContribution
       const candidates: AgentExternalSessionCandidate[] = listed.sessions.map(value => {
         const session = readMuseRecord(value);
         if (typeof session.sessionId !== 'string') malformed();
+        const name = typeof session.name === 'string' ? session.name.trim() : '';
+        const prompt = typeof session.firstUserPrompt === 'string' && session.firstUserPrompt.trim()
+          ? session.firstUserPrompt : typeof session.title === 'string' ? session.title : '';
+        const title = name ? projectExternalSessionCandidateTitle(name)
+          : projectExternalSessionCandidateTitle(readSessionInputPromptUserTextV1(prompt), { source: 'prompt' });
         return { remoteSessionId: session.sessionId, updatedAtMs: timestamp(session.updatedAt), createdAtMs: timestamp(session.createdAt),
-          ...(request.includeTitles === false || typeof session.title !== 'string' ? {} : { title: session.title }),
+          ...(request.includeTitles === false || !title ? {} : { title }),
           ...(typeof session.workspaceRoot === 'string' ? { cwd: session.workspaceRoot } : {}),
           linkData: { museHome: source.museHome!, sessionId: session.sessionId, ...(typeof session.path === 'string' ? { path: session.path } : {}) },
         };
