@@ -67,6 +67,9 @@ export function computerTargetPickerChrome(params: Readonly<{ agentName: string;
         title: params.agentless ? t('computerUse.picker.titleMachine') : t('computerUse.picker.title', { agent: params.agentName }),
         // For which Session (and where), then the promise (lab TP).
         subtitle: params.purpose ? `${params.purpose} ${promise}` : promise,
+        // The purpose quotes the Session's title, which can be a whole prompt: two lines at most, as in the lab.
+        // The access row below restates what the agent can do, so a long title clipping the promise loses nothing.
+        subtitleLines: 2,
         actions: <MachineIdentity name={params.machineName} />,
         dimensions: { width: HAPPIER_PAGE_METRICS.dialogWidthPx.wide, maxHeightRatio: 0.9, size: 'md' },
         // A phone gets the lab's bottom sheet, in thumb reach.

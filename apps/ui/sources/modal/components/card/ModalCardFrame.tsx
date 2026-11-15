@@ -37,7 +37,7 @@ type ModalCardFrameProps = Readonly<{
     title?: React.ReactNode;
     subtitle?: React.ReactNode;
     /** `1`: the subtitle stays on one line and ends in an ellipsis. */
-    subtitleLines?: 1;
+    subtitleLines?: 1 | 2;
     actions?: React.ReactNode;
     /** A form's completion control in the close control's place (see `ModalCardHeader`). */
     completion?: React.ReactNode;
