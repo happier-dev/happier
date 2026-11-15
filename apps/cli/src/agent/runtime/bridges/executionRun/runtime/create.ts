@@ -61,6 +61,7 @@ import {
     type PreparedExecutionRunProviderLaunch,
 } from './providerLaunch';
 import { assertExecutionRunProviderLaunchPlacement, prepareExecutionRunRuntimeProviderLaunch } from './providerPreparation';
+import { assertExecutionRunStructuredAnalysisModelAllowed, usesExecutionRunProviderModel } from '../structuredOutputAdmission';
 
 /**
  * The Run's resolved connected-services selection, reported to its Run owner
@@ -148,6 +149,7 @@ type LazyExecutionRunRuntimeShellConfig = Parameters<typeof createLazyExecutionR
 }>;
 
 function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
+    nativeSandbox?: import('@happier-dev/plugin-sdk/agents/runtime').AgentSessionConfigurationSnapshot['nativeSandbox'];
     onToolNormalizationSource?: CreateCliExecutionRunBackendParams['onToolNormalizationSource'];
     functionTools?: CreateCliExecutionRunBackendParams['functionTools'];
     workflowActionContext?: CreateCliExecutionRunBackendParams['workflowActionContext'];
@@ -263,6 +265,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                     ...(opts.start?.allowedTools !== undefined ? { allowedTools: opts.start.allowedTools } : {}),
                     ...(opts.start?.unlistedTools !== undefined ? { unlistedTools: opts.start.unlistedTools } : {}),
                     workspaceWrites: opts.workspaceWrites,
+                    nativeSandbox: opts.nativeSandbox,
                     updatedAtMs: Date.now(),
                 })
                 : null;
@@ -352,6 +355,17 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                 ReturnType<typeof resolveExecutionRunConnectedServicesEnv>
             > = null;
             try {
+                if (effectiveBackendTarget && usesExecutionRunProviderModel(opts)) {
+                    await assertExecutionRunStructuredAnalysisModelAllowed({
+                        backendTarget: effectiveBackendTarget,
+                        intent: opts.start?.intent,
+                        modelId: opts.modelId,
+                        modelSelection: opts.modelSelection,
+                        teamCredentialModel: opts.teamCredentialModel,
+                        prepared: providerLaunch ?? undefined,
+                        signal,
+                    });
+                }
                 // The Run owner learns its exact selection before the daemon
                 // materializes it: direct Team material is opened inside that
                 // materialization, and the Home asks the Run owner to attest it.
@@ -639,6 +653,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
 }
 
 export function createExecutionRunRuntime(opts: Readonly<{
+    nativeSandbox?: import('@happier-dev/plugin-sdk/agents/runtime').AgentSessionConfigurationSnapshot['nativeSandbox'];
     onToolNormalizationSource?: CreateCliExecutionRunBackendParams['onToolNormalizationSource'];
     functionTools?: CreateCliExecutionRunBackendParams['functionTools'];
     workflowActionContext?: CreateCliExecutionRunBackendParams['workflowActionContext'];
@@ -719,6 +734,7 @@ export function createExecutionRunRuntime(opts: Readonly<{
         }
         : resolvedBackendTarget?.canonical;
     const runtimeShellConfig = createEngineExecutionRunRuntimeShellConfig({
+            nativeSandbox: opts.nativeSandbox,
             ...(opts.functionTools ? { functionTools: opts.functionTools } : {}),
                 ...(opts.onToolNormalizationSource ? { onToolNormalizationSource: opts.onToolNormalizationSource } : {}),
             ...(opts.workflowActionContext ? { workflowActionContext: opts.workflowActionContext } : {}),

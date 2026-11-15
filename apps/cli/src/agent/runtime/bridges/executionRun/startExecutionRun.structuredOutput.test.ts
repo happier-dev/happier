@@ -8,6 +8,10 @@ import { startExecutionRun } from './startExecutionRun';
 import type { ExecutionRunState } from './executionRunTypes';
 import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import { isDeepStrictEqual } from 'node:util';
+import { createExecutionRunRuntime } from './runtime/create';
+import { resolveCliEngineRegistry } from '@/agent/runtime/registry/engineRegistry';
+import { accountSettingsParse, AgentSessionProviderBindingV1Schema } from '@happier-dev/protocol';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
@@ -16,6 +20,72 @@ vi.mock('node:fs', async (importOriginal) => {
 });
 
 describe('structured analysis Run admission', () => {
+  it.each(['supported', 'unknown'] as const)('uses the once-prepared Provider binding for JSON admission (%s)', async structuredOutput => {
+    const fixture = await createAdmittedPluginRuntimeFixture({ runtimeOptions: { pluginIds: ['happier.agent.codex'] } });
+    const registry = await resolveCliEngineRegistry({ runtimeRegistry: fixture.registry });
+    const resolution = await registry.resolveForBackendId('codex');
+    if (!resolution) throw new Error('Missing Codex fixture contribution');
+    const binding = AgentSessionProviderBindingV1Schema.parse({
+      connectionId: 'pc_test', model: { id: 'provider-model', name: 'Provider model', capabilities: { structuredOutput } },
+      upstream: { protocol: 'openai-responses', normalizedUrl: 'https://provider.example/v1', credential: 'apiKey' },
+      materialization: { v: 1, kind: 'engineConfig', engineConfig: {} },
+    });
+    let preparations = 0;
+    let opened = false;
+    let cleaned = false;
+    let terminal: unknown;
+    const runs = new Map<string, ExecutionRunState>();
+    const controllers: Parameters<typeof startExecutionRun>[0]['controllers'] = new Map();
+    const voiceAgentManager = new VoiceAgentManager({ createRuntime: () => { throw new Error('Unused Voice boundary'); } });
+    const nativeRuntime = createTestExecutionRunHostRuntime();
+    // Replace only the plugin's native runtime boundary; selection, Provider
+    // preparation, admission, and lazy runtime lifecycle remain real.
+    const engine = { ...resolution, engineAdapter: { ...resolution.engineAdapter, runtimeCore: {
+      ...resolution.engineAdapter.runtimeCore,
+      createExecutionRunBackend: (input: import('@/agent/runtime/registry/engineRegistryTypes').CreateCliExecutionRunBackendParams) => {
+        expect(input.providerBinding).toBe(binding);
+        opened = true;
+        return nativeRuntime;
+      },
+    } } };
+    try {
+      const result = await startExecutionRun({
+        params: { sessionId: null, intent: 'scm_diff_summary', backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+          modelId: binding.model.id,
+          modelSelection: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: 'pc_test', modelId: binding.model.id },
+          connectedServices: null, instructions: '', permissionMode: 'read_only', retentionPolicy: 'resumable',
+          runClass: 'long_lived', ioMode: 'request_response' },
+        parentProvider: 'codex', sendAcp: async () => {}, streamedTranscriptSession: null,
+        createRuntime: input => createExecutionRunRuntime({ ...input, cwd: '/repo', scope: 'detached',
+          engineRegistry: { ...registry, resolveForBackendId: async () => engine, resolveForAgentTarget: async () => engine },
+          resolveAccountSettingsSnapshot: async () => ({ source: 'cache', settings: accountSettingsParse({}),
+            settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: 'account:test' }),
+          // The pinned daemon launch service is the Provider process boundary.
+          providerLaunch: { prepareLaunch: async () => {
+            preparations++;
+            return { environment: {}, unsetEnvKeys: [], providerBinding: binding, additionalRedactionValues: [],
+              sanitizeDiagnosticText: value => value, revalidateBeforeCommit: async () => ({ ok: true }),
+              cleanupOnExit: async () => { cleaned = true; } };
+          } },
+        }), getNowMs: () => 1, budgetRegistry: null, runs, controllers,
+        enqueueMarkerWrite: async () => {}, writeActivityMarker: async () => {}, finishRun: async (_runId, result) => { terminal = result; },
+        executeBoundedRun: async () => {}, send: async () => ({ ok: true }), voiceAgentManager,
+      });
+      const controller = controllers.get(result.runId);
+      if (controller?.kind !== 'backend') throw new Error('Missing backend controller');
+      await controller.provisioningPromise;
+      expect(preparations).toBe(1);
+      expect(opened).toBe(structuredOutput === 'supported');
+      if (structuredOutput === 'unknown') {
+        expect(terminal).toMatchObject({ status: 'failed', error: { code: 'model_structured_output_unsupported' } });
+        expect(cleaned).toBe(true);
+      }
+    } finally {
+      await Promise.all([...controllers.values()].flatMap(controller => controller.kind === 'backend' ? [controller.backend.dispose()] : []));
+      await voiceAgentManager.dispose();
+      await fixture.dispose();
+    }
+  });
   beforeEach(() => {
     vi.stubEnv('HAPPIER_CLAUDE_PATH', process.execPath);
     vi.stubEnv('HAPPIER_CLAUDE_DYNAMIC_MODEL_PROBE_ENABLED', '0');

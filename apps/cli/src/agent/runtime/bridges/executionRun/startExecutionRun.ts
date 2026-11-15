@@ -78,7 +78,7 @@ import type { ExecutionRunTranscriptPublisher } from './executionRunTranscriptPu
 import { shouldPublishExecutionRunTranscriptMarker } from './executionRunTranscriptPublisher';
 import { isExecutionRunControllerCurrent, settleExecutionRunController } from './settleExecutionRunController';
 import { createExactTurnUsageAccumulator } from '@/usage/exactTurnUsage';
-import { assertExecutionRunStructuredOutputModelAllowed, readExecutionRunOfferedModel } from './structuredOutputAdmission';
+import { assertExecutionRunStructuredAnalysisModelAllowed, usesExecutionRunProviderModel, readExecutionRunOfferedModel } from './structuredOutputAdmission';
 import { executionRunChildSelectionNeedsAppliedParent, resolveExecutionRunAgentDefaultSelection, resolveExecutionRunChildSelection, type ExecutionRunAppliedParentSelection, type ExecutionRunAppliedParentSelectionReader, type ResolvedExecutionRunChildSelection } from './runtime/openInputs';
 import { projectExecutionRunError } from './errors';
 import { resolveExecutionRunInitialInputLocalId } from './initialInput';
@@ -203,9 +203,11 @@ function assertPreparedReviewRunStartAllowed(params: ExecutionRunManagerStartPar
 }
 
 async function assertStructuredAnalysisModelAllowed(params: ExecutionRunManagerStartParams): Promise<void> {
-  if (params.intent !== 'scm_diff_summary' && params.intent !== 'review') return;
+  // Provider/Team admission belongs to runtime preparation, where the exact
+  // binding used for native open is available. Native catalogs stay here.
+  if (usesExecutionRunProviderModel(params)) return;
   try {
-    await assertExecutionRunStructuredOutputModelAllowed(params);
+    await assertExecutionRunStructuredAnalysisModelAllowed(params);
   } catch (error) {
     throw markExecutionRunStartFailure(error, 'noRunCreated');
   }

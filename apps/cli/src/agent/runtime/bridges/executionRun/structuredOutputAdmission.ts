@@ -18,6 +18,15 @@ type ModelAdmissionParams = Pick<ExecutionRunManagerStartParams,
     prepared?: Readonly<{ providerBinding?: Readonly<{ model: AgentModelDescriptor }> }>;
   }>;
 
+export function usesExecutionRunProviderModel(params: Pick<ModelAdmissionParams, 'modelSelection' | 'teamCredentialModel'>): boolean {
+  return Boolean(params.teamCredentialModel || params.modelSelection?.providerConnectionId);
+}
+
+export async function assertExecutionRunStructuredAnalysisModelAllowed(params: ModelAdmissionParams & Readonly<{ intent?: string }>): Promise<void> {
+  if (params.intent !== 'scm_diff_summary' && params.intent !== 'review') return;
+  await assertExecutionRunStructuredOutputModelAllowed(params);
+}
+
 function modelCatalogUnavailable(modelId: string, reason: string, causeCode?: string): Error {
   const code = 'model_catalog_unavailable';
   return Object.assign(new Error('The selected model catalog could not be read.'), {
@@ -85,7 +94,7 @@ export async function readExecutionRunOfferedModel(params: ModelAdmissionParams)
   const modelId = params.teamCredentialModel?.modelId ?? params.modelSelection?.modelId ?? params.modelId ?? 'default';
   // A Provider/Team model must supply its own evidence; a native catalog cannot
   // grant that distinct source the Agent's native JSON contract.
-  if (!params.teamCredentialModel && !params.modelSelection?.providerConnectionId) {
+  if (!usesExecutionRunProviderModel(params)) {
     try {
       const request = { backendTarget: params.backendTarget, modelId, cwd: params.cwd ?? sessionWorkingDirectory(),
         ...(params.connectedServices !== undefined ? { connectedServices: params.connectedServices } : {}),

@@ -22,7 +22,7 @@ import { readScmDiffSummaryIntent } from './kinds/scmDiffSummary/readScmDiffSumm
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
 import type { ExecutionRunEnsureResult } from './ensureExecutionRun';
 import type { ExecutionRunActionResult, ExecutionRunManagerStartParams, ExecutionRunStartResult, ExecutionRunState } from './executionRunTypes';
-import { assertExecutionRunStructuredOutputModelAllowed } from './structuredOutputAdmission';
+import { assertExecutionRunStructuredOutputModelAllowed, usesExecutionRunProviderModel } from './structuredOutputAdmission';
 import { readExecutionRunErrorCode } from './errors';
 import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { resolve } from 'node:path';
@@ -207,7 +207,9 @@ export async function applyReviewWalkthroughAction(host: Host): Promise<Executio
       && incumbent.backend.interaction?.kind === 'retained_agent_session.v1' && !incumbent.turnInFlight));
   if (canContinue) {
     try {
-      await assertExecutionRunStructuredOutputModelAllowed({
+      // A retained Provider Run was admitted against its runtime binding;
+      // recovery prepares and admits that binding before opening the backend.
+      if (!usesExecutionRunProviderModel(first.launch ?? {})) await assertExecutionRunStructuredOutputModelAllowed({
         backendTarget: first.backendTarget,
         modelId: first.launch?.modelId ?? first.effectiveEngine?.modelId,
         modelSelection: first.launch?.modelSelection,

@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { readBackendTargetRefV2 } from '@happier-dev/protocol';
+import { PluginAgentContributionV2Schema, readBackendTargetRefV2 } from '@happier-dev/protocol';
 
 import { captureScmComparison } from '@/scm/comparisons/captureScmComparison';
 import { buildReviewFindingsV2Payload } from '@/agent/reviews/normalize/buildReviewFindingsV2Payload';
@@ -13,6 +13,8 @@ import { applyReviewWalkthroughAction } from './reviewNarrationAction';
 import { ensureExecutionRun } from './ensureExecutionRun';
 import { startExecutionRun } from './startExecutionRun';
 import type { ExecutionRunState } from './executionRunTypes';
+import { projectManifestAgentContribution } from '@/plugins/projection/registry/projectManifestAgentContribution';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
@@ -27,9 +29,18 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 it.each([
-  ['retained reviewer', undefined],
-  ['seeded narrator', 'different-unoffered-model'],
-] as const)('rejects an unsupported %s before native startup or changing narration state', async (_path, narratorModelId) => {
+  ['retained reviewer', undefined, false],
+  ['seeded narrator', 'different-unoffered-model', false],
+  ['retained Provider reviewer', undefined, true],
+] as const)('preserves model admission at the owner for %s', async (_path, narratorModelId, provider) => {
+  const definition = PluginAgentContributionV2Schema.parse({
+    id: 'claude', title: 'Claude', primary: 'sessions', runtime: { kind: 'custom' },
+    capabilities: { sessions: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: true },
+      structuredOutput: { formats: ['json'] } },
+  });
+  const nativeModelRegistry = createResolvedContributionRegistry({ agents: [projectManifestAgentContribution({
+    definition, pluginId: 'happier.agent.claude', admittedAgentId: 'claude', provenance: 'first_party', source: { kind: 'bundled' },
+  })] });
   // Git/disk and native runtime startup are system boundaries; admission/catalog/recovery remain real.
   const cwd = mkdtempSync(join(tmpdir(), 'happier-review-model-admission-'));
   execFileSync('git', ['init'], { cwd, stdio: 'ignore' });
@@ -43,7 +54,9 @@ it.each([
     permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response',
     status: 'succeeded', startedAtMs: 1, finishedAtMs: 2,
     resumeHandle: { kind: 'provider_session.v1', backendTarget: readBackendTargetRefV2(backendTarget), providerSessionId: 'saved-reviewer' },
-    launch: { cwd, modelId: 'freeform-not-in-native-catalog' },
+    launch: { cwd, modelId: 'freeform-not-in-native-catalog', ...(provider ? {
+      modelSelection: { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: 'pc_test', modelId: 'freeform-not-in-native-catalog' },
+    } : {}) },
     intentInput: { cwd, comparisonId: captured.comparison.id },
     structuredMeta: { kind: 'review_findings.v2', payload: buildReviewFindingsV2Payload({
       runId: 'review-model-admission-run', callId: 'review-model-admission-call', backendId: 'claude',
@@ -53,7 +66,7 @@ it.each([
   const runs = new Map([[run.runId, run]]);
   const controllers = new Map<string, ExecutionRunController>();
   let nativeStartup = false;
-  const createRuntime = () => { nativeStartup = true; throw new Error('Native runtime unavailable'); };
+  const createRuntime = () => { nativeStartup = true; throw Object.assign(new Error('Provider runtime unavailable'), { code: 'provider_connection_not_found' }); };
   const voiceAgentManager = new VoiceAgentManager({ createRuntime });
   const shared = {
     runs, controllers, createRuntime, voiceAgentManager,
@@ -63,8 +76,9 @@ it.each([
   try {
     const result = await applyReviewWalkthroughAction({
       runId: run.runId, cwd, runs, controllers,
+      nativeModelRegistry,
       input: { reviewRunIds: [run.runId], comparisonId: captured.comparison.id,
-        ...(narratorModelId ? { narrator: { engineId: 'claude', modelId: narratorModelId } } : {}) },
+        ...(narratorModelId ? { narrator: { engineId: 'agent:happier.agent.claude/claude', modelId: narratorModelId } } : {}) },
       ensureRun: async runId => ensureExecutionRun({ ...shared, runId, params: { resume: true } }),
       startRun: async params => startExecutionRun({ ...shared, params, enqueueMarkerWrite: async () => {},
         finishRun: async () => {}, executeBoundedRun: async () => {}, send: async () => ({ ok: true }) }),
@@ -73,9 +87,11 @@ it.each([
       enqueueInput: async input => ({ status: 'accepted', localId: input.localId }),
       onStateUpdated: () => {}, failNarration: async () => {},
     });
-    expect(result).toMatchObject({ ok: false, errorCode: 'model_structured_output_unsupported' });
-    expect(nativeStartup).toBe(false);
-    expect(runs.get(run.runId)).toEqual(run);
+    expect(result).toMatchObject({ ok: false, errorCode: provider ? 'provider_connection_not_found' : 'model_structured_output_unsupported' });
+    // A recovered Provider Run must reach its runtime preparation, where its
+    // own binding can be admitted, rather than borrowing a native catalog fact.
+    expect(nativeStartup).toBe(provider);
+    if (!provider) expect(runs.get(run.runId)).toEqual(run);
   } finally {
     await voiceAgentManager.dispose();
   }
