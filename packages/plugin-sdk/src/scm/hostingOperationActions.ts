@@ -23,6 +23,7 @@ function readHostingProviderOperationHandler(adapter: HostingProviderRuntimeAdap
 
 type AccountActionDefinition = PluginActionDefinition<Extract<PluginActionDeclaration,
   Readonly<{ execution: Readonly<{ target: 'account' }> }>>>;
+type HostingAccountActionDefinition = AccountActionDefinition & Required<Pick<AccountActionDefinition, 'run'>>;
 
 /**
  * Declares the existing provider HTTP methods as Account Actions. Credentials
@@ -37,14 +38,17 @@ export function createHostingProviderOperationActions<const TOperations extends 
   service: PluginContributionRef;
   hostAccess: readonly string[];
   execution: Extract<PluginActionDeclaration, Readonly<{ execution: Readonly<{ target: 'account' }> }>>['execution'];
-}>): Readonly<Record<Extract<TOperations[keyof TOperations], string>, AccountActionDefinition>> {
+}>): Readonly<Record<Extract<TOperations[keyof TOperations], string>, HostingAccountActionDefinition>> {
   return Object.fromEntries(Object.entries(input.operationActions).map(([operationKey, localId]) => {
     const operation = operationKey as ScmHostingOperationV1;
     const schemas = ScmHostingOperationSchemasV1[operation];
+    // Every finite operation input is an object. Retain that common parser
+    // contract when selecting from the heterogeneous schema union.
+    const operationInputSchema: Readonly<{ parse(value: unknown): object }> = schemas.input;
     const handler = readHostingProviderOperationHandler(input.adapter, operation);
     if (!handler) throw new TypeError(`scm_hosting_operation_unavailable:${operation}`);
     const writes = operation === 'createPullRequest' || operation === 'createRepository';
-    const definition: AccountActionDefinition = {
+    const definition: HostingAccountActionDefinition = {
       title: operation,
       description: `Execute the hosting provider ${operation} operation.`,
       surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli', 'plugin'],
@@ -57,7 +61,7 @@ export function createHostingProviderOperationActions<const TOperations extends 
       inputSchema: schemas.input.jsonSchema,
       resultSchema: schemas.result.jsonSchema,
       async run(raw, context: PluginAccountActionContext) {
-        const operationInput = schemas.input.parse(raw);
+        const operationInput = operationInputSchema.parse(raw);
         const binding = await context.services.connectedAccounts.getBinding(input.purpose, { signal: context.signal });
         const materializeHeaders = async (provider: ScmHostingProviderRef, signal: AbortSignal) =>
           await context.services.connectedAccounts.materialize(input.purpose,
@@ -83,7 +87,8 @@ export function createHostingProviderOperationActions<const TOperations extends 
         } catch (error) {
           context.signal.throwIfAborted();
           if (isPluginError(error)) throw error;
-          const errorCode: unknown = error instanceof Error ? Reflect.get(error, 'errorCode') : undefined;
+          if (!(error instanceof Error)) throw error;
+          const errorCode: unknown = Reflect.get(error, 'errorCode');
           if (typeof errorCode !== 'string') throw error;
           const effectNotApplied: unknown = Reflect.get(error, 'effectNotApplied');
           const retryNotBeforeMs: unknown = Reflect.get(error, 'retryNotBeforeMs');
@@ -94,5 +99,5 @@ export function createHostingProviderOperationActions<const TOperations extends 
       },
     };
     return [localId, definition];
-  })) as Readonly<Record<Extract<TOperations[keyof TOperations], string>, AccountActionDefinition>>;
+  })) as Readonly<Record<Extract<TOperations[keyof TOperations], string>, HostingAccountActionDefinition>>;
 }

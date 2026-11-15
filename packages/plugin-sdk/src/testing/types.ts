@@ -166,6 +166,8 @@ export type PluginTestkitOptions = Readonly<{
 }>;
 
 export type PluginTestkitInvokeActionOptions = Readonly<{
+    /** Existing host-issued diagnostic identity, separate from independent Action identity. */
+    requestId?: string;
     /** Handler context only; direct invocation does not run production host admission policy. */
     surface?: PluginInvocationSurface;
     sessionId?: string;
