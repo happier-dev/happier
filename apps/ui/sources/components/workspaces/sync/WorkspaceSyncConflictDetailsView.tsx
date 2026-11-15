@@ -36,7 +36,7 @@ import { useWorkspaceSyncRelationshipSummaries, resolveWorkspaceSyncStatusScope,
 import { refreshWorkspaceSyncStatuses } from '@/sync/domains/sessionHandoff/workspaceSyncStatusStore';
 import { formatWorkspaceSyncRelationshipTitle, resolveWorkspaceSyncErrorTranslationKey, resolveWorkspaceSyncModeTranslationKey } from '@/sync/domains/sessionHandoff/workspaceSyncPresentation';
 import { useLocalDaemonControl } from '@/components/settings/machines/localControl/useLocalDaemonControl';
-import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
+import { openSessionAuthoringSeed } from '@/sync/ops/actions/openSessionAuthoringSeed';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
@@ -413,11 +413,12 @@ export const WorkspaceSyncConflictDetailsView = React.memo(function WorkspaceSyn
         if (!selected?.machineId || !selected.rootPath || !selected.serverId) return;
         const versions = currentInspection.versions.map((version) =>
             `${version.endpointWorkspaceRefIds.map(endpointLabel).join(' · ')} — ${entryLabel(version.entry)}`).join('\n');
-        seedAndOpenNewSession({
+        openSessionAuthoringSeed({
             seed: {
                 prompt: t('workspaceSync.review.askAgentPrompt', { path: selectedPath, versions }),
                 placement: { kind: 'exactTarget', serverId: selected.serverId, machineId: selected.machineId, directory: selected.rootPath },
             },
+            accountLifetime: accountBinding,
             scope: accountBinding.scope,
             isCurrent: () => accountBinding.isCurrent(),
             navigateToNewSession: ({ draftId, machineId, directory, spawnServerId, worktree }) => {

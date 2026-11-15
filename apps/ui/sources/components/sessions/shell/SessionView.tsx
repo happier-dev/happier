@@ -2520,11 +2520,9 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
                           actionLabel={t('common.continue')}
                           actionAccessibilityLabel={t('common.continue')}
                           onActionPress={() => { openNewSessionSourceContextNavigation({
-                              session,
                               sourceSessionId: sessionId,
                               forkPoint: { type: 'latest' },
                               serverId: sessionRouteServerId ?? null,
-                              machineId: null,
                               accountLifetime: sessionAccountLifetime,
                               navigateToNewSession: route => router.push(route),
                           }); }}

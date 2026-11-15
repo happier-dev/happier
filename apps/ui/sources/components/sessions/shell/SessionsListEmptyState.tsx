@@ -18,7 +18,7 @@ import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachabi
 import type { SessionGettingStartedDecisionKind } from '@/components/sessions/guidance/gettingStartedModel';
 import { Icon } from '@/components/ui/icons/Icon';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
-import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
+import { openSessionAuthoringSeed } from '@/sync/ops/actions/openSessionAuthoringSeed';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 
@@ -47,7 +47,7 @@ export function SessionsListEmptyState(props: SessionsListEmptyStateProps) {
         const serverId = String(activeServer.serverId ?? '').trim();
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!serverId || !lifetime) return;
-        seedAndOpenNewSession({
+        openSessionAuthoringSeed({
             seed: { placement: { kind: 'exactTarget', serverId, machineId } },
             scope: lifetime.scope,
             isCurrent: lifetime.isCurrent,

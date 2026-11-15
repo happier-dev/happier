@@ -1149,7 +1149,12 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
         } else if (directExternalFollowWrite) {
           findings.push({ ...location(node), code: 'direct_external_follow_write', operation: 'machineExternalSessionFollowPolicySet' });
         } else if (directSessionDraftOpen) {
-          findings.push({ ...location(node), code: 'direct_session_draft_open', operation: 'seedAndOpenNewSession' });
+          const submittedRecovery = ts.findAncestor(node, ancestor => ts.isCallExpression(ancestor)
+            && ts.isPropertyAccessExpression(ancestor.expression)
+            && ancestor.expression.name.text === 'presentConnectedAccountPoolFailure');
+          if (!submittedRecovery || !exclude('seedAndOpenNewSession:submittedPoolRecovery', location(node))) {
+            findings.push({ ...location(node), code: 'direct_session_draft_open', operation: 'seedAndOpenNewSession' });
+          }
         } else if (directOccurrenceWrite) {
           findings.push({ ...location(node), code: 'direct_occurrence_write', operation: rawOccurrenceWrite ? 'mutateAutomationOccurrence' : called });
         } else if (directProjectWrite) {

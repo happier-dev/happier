@@ -6,7 +6,6 @@ import { openNewSessionSourceContextNavigation } from '@/components/sessions/new
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import {
     resolveSessionForkStrategyAvailability,
@@ -104,31 +103,20 @@ export function openSessionForkStrategyFlow(params: OpenSessionForkStrategyFlowP
                 let account: LazyActionAccountContext | null = null;
                 try {
                     if (!params.serverId) throw new Error('Session Home is unavailable');
-                    const [{ captureLazyActionAccountContext }, { runWithServerRequestAuthorityForServerAccountScope },
-                        { readSessionSnapshotForAuthority }] = await Promise.all([
-                        import('@/sync/ops/actions/actionAccountContext'),
-                        import('@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope'),
-                        import('@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority'),
-                    ]);
+                    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
                     // Configure is a new gesture: its exact Home's current
-                    // credential owner admits the read and the resulting draft.
+                    // credential owner supplies the lifetime; the Action owns the source read.
                     account = await captureLazyActionAccountContext(params.serverId);
                     const lifetime = account.accountLifetime;
-                    const { session } = await runWithServerRequestAuthorityForServerAccountScope({
-                        scope: lifetime.scope, activeRequest: account.request,
-                    }, authority => readSessionSnapshotForAuthority({
-                        authority, sessionId: params.sessionId, isCurrent: lifetime.isCurrent,
-                    }));
-                    account.assertCurrent();
-                    const outcome = openNewSessionSourceContextNavigation({
-                        session, sourceSessionId: params.sessionId, forkPoint: params.forkPoint,
+                    const outcome = await openNewSessionSourceContextNavigation({
+                        sourceSessionId: params.sessionId, forkPoint: params.forkPoint,
                         serverId: account.serverId,
-                        machineId: readSessionOwnerMetadataView(session)?.machineId ?? null,
                         accountLifetime: lifetime,
                         restoredDraftText: params.restoredDraftText ?? null,
                         navigateToNewSession: params.navigateToNewSession,
                     });
-                    if (outcome.kind !== 'opened') Modal.alert(t('common.error'), t('common.unavailable'));
+                    // The shared authoring opener presents every refusal.
+                    if (outcome.kind !== 'opened') return;
                 } catch {
                     Modal.alert(t('common.error'), t('common.unavailable'));
                 } finally {

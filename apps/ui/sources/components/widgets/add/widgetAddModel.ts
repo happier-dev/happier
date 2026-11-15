@@ -78,7 +78,7 @@ export type WidgetAddAsk = Readonly<{
     /** The sentence it will draft ("Put something on this board that shows "). */
     draft: string;
     note: string;
-    onPick: () => void;
+    onPick: () => void | Promise<unknown>;
 }>;
 
 function matches(needle: string, entry: WidgetAddEntry): boolean {

@@ -9,7 +9,7 @@ import { usePhoneDestinationBack } from '@/components/ui/layout/usePageBackContr
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { saveFileBytes } from '@/sync/runtime/files/saveFileBytes';
-import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
+import { openSessionAuthoringSeed } from '@/sync/ops/actions/openSessionAuthoringSeed';
 import { NEW_BOT_SEED } from '@/components/sessions/bots/newBotDraft';
 import { resolveAgentExecutionTargetForPersistedSelection } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
 import { getSessionDraftSnapshot } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
@@ -67,7 +67,7 @@ export function BotTemplateRecipientBody({ reader, source, serverId }: Readonly<
                 bytes: decodeBase64(file.contentBase64), isCurrent: execution.isCurrent });
         } catch { if (execution.isCurrent()) await Modal.alert(t('common.error'), t('botTemplates.unavailable')); }
     }, [source, execution.executeValue, execution.isCurrent]);
-    const makeOwn = React.useCallback(() => {
+    const makeOwn = React.useCallback(async () => {
         if (!preview || !execution.binding) return;
         if (draftParams) { setEditing(true); return; }
         const draftId = uuidv5(JSON.stringify(['happier.bot-template-copy-draft.v1', source]), uuidv5.URL);
@@ -84,15 +84,15 @@ export function BotTemplateRecipientBody({ reader, source, serverId }: Readonly<
         // The template's suggested Agent is the copy's starting choice; the composer still says when it isn't ready here.
         const suggested = preview.release.content.suggestedAgent;
         const agentTarget = suggested ? resolveAgentExecutionTargetForPersistedSelection({ backendTarget: null, fallbackAgentId: suggested.agentId }) : null;
-        const outcome = seedAndOpenNewSession({
+        await openSessionAuthoringSeed({
             seed: { ...NEW_BOT_SEED, sessionName: preview.release.content.identity.name, ...(agentTarget ? { agentTarget } : {}),
                 initialSessionFacts: { ...NEW_BOT_SEED.initialSessionFacts,
                     ...(preview.release.content.identity.face ? { botFace: preview.release.content.identity.face } : {}) } },
             scope: execution.binding.scope, signal: execution.getSignal(), isCurrent: execution.isCurrent,
+            accountLifetime: execution.binding,
             createDraftId: () => draftId,
             navigateToNewSession: openDraft,
         });
-        if (outcome.kind !== 'opened') void Modal.alert(t('common.error'), t('botTemplates.unavailable'));
     }, [preview, source, draftParams, execution.binding, execution.getSignal, execution.isCurrent, serverId]);
     if (!preview) return <SurfaceStateCard testID="bot-template-recipient-load" kind={reader.failed ? 'error' : 'loading'}
         title={reader.failed ? t('botTemplates.unavailable') : t('common.loading')}

@@ -83,7 +83,9 @@ describe('ordinary authoring adapters', () => {
             navigation: useNewSessionHostNavigation(),
         }));
         try {
-            expect(routes).toEqual(['/session/session-x', { pathname: '/new', params: { draftId: outcome.draftId } }]);
+            expect(routes).toEqual(['/session/session-x', { pathname: '/new', params: {
+                draftId: outcome.draftId, draftServerId: scope.serverId, draftAccountId: scope.accountId,
+            } }]);
             expect(hook.getCurrent().navigation.embedded).toBe(false);
             expect(hook.getCurrent().params.draftId).toBe(outcome.draftId);
             const composer = createNewSessionComposerDocumentOwner({ scope, ref: { kind: 'newSession', instanceId: outcome.draftId } });
@@ -200,10 +202,11 @@ describe('ordinary authoring adapters', () => {
         expect(hook.getCurrent()?.visible).toBe(true);
         expect(readNewSessionDraftFromRepository({ scope, draftId: seededDraftId })).toMatchObject({ input: 'An admitted Action seed' });
 
+        getStorage().getState().applySessions([createSessionFixture({ id: 'source-session', serverId, metadata: { path: '/repo', host: 'dev', machineId: 'source-machine', flavor: 'codex' } })]);
         const fallback = vi.fn();
         await act(async () => {
-            const outcome = openNewSessionSourceContextNavigation({ session: createSessionFixture({ id: 'source-session' }),
-                sourceSessionId: 'source-session', forkPoint: { type: 'latest' }, serverId, machineId: 'source-machine',
+            const outcome = await openNewSessionSourceContextNavigation({
+                sourceSessionId: 'source-session', forkPoint: { type: 'latest' }, serverId,
                 restoredDraftText: 'Continue the source', navigateToNewSession: fallback });
             expect(outcome.kind).toBe('opened');
         });
@@ -232,7 +235,7 @@ describe('ordinary authoring adapters', () => {
         const scope = { serverId, accountId: 'account-a' };
         const hook = await renderHook(() => usePluginAuthoringSession({ serverId, machineId: 'admin-machine' }));
         const existingDraftCount = listNewSessionDraftProjections(scope).length;
-        hook.getCurrent()({ promptText: 'Edit this plugin', sessionDirectory: '/plugins/canonical-directory' });
+        await hook.getCurrent()({ promptText: 'Edit this plugin', sessionDirectory: '/plugins/canonical-directory' });
         expect(push).toHaveBeenCalledOnce();
         const route = push.mock.calls[0][0] as { params: { draftId: string } };
         expect(readNewSessionDraftFromRepository({ scope, draftId: route.params.draftId })).toMatchObject({
@@ -253,7 +256,7 @@ describe('ordinary authoring adapters', () => {
         // Resetting the in-memory repository does not discard durable drafts from earlier entries.
         const scopes = ['account-a', 'account-b'].map((accountId) => ({ serverId, accountId }));
         const draftsBefore = scopes.map((scope) => structuredClone(listNewSessionDraftProjections(scope)));
-        capturedOpen({ promptText: 'Late prepared plugin', sessionDirectory: '/plugins/prepared-for-a' });
+        await capturedOpen({ promptText: 'Late prepared plugin', sessionDirectory: '/plugins/prepared-for-a' });
         expect(push).not.toHaveBeenCalled();
         expect(scopes.map((scope) => listNewSessionDraftProjections(scope))).toEqual(draftsBefore);
     });
@@ -266,14 +269,14 @@ describe('ordinary authoring adapters', () => {
         await hook.rerender({ serverId, machineId: 'other-machine' });
         const scope = { serverId, accountId: 'account-a' };
         const draftsBefore = structuredClone(listNewSessionDraftProjections(scope));
-        capturedOpen('configureAcpBackend');
+        await capturedOpen('configureAcpBackend');
         expect(push).not.toHaveBeenCalled();
         expect(listNewSessionDraftProjections(scope)).toEqual(draftsBefore);
     });
 
     it('keeps Agent authoring editable on its selected machine with no Session before Send', async () => {
         const hook = await renderHook(() => useOpenAgentAuthoringSession({ serverId, machineId: 'agent-machine' }));
-        hook.getCurrent()('configureAcpBackend');
+        await hook.getCurrent()('configureAcpBackend');
         const route = push.mock.calls.at(-1)?.[0] as { params: { draftId: string } };
         expect(readNewSessionDraftFromRepository({ scope: { serverId, accountId: 'account-a' }, draftId: route.params.draftId }))
             .toMatchObject({ input: 'settingsAgents.authoring.configureAcpBackendPrompt',
@@ -351,7 +354,7 @@ describe('ordinary authoring adapters', () => {
                 value: { open: () => {}, buildCommands: () => [] },
             }, children),
         });
-        hook.getCurrent().handleCreateSessionFromWorkspaceScope({ serverId, machineId: 'workspace-machine', rootPath: '/repo' });
+        await hook.getCurrent().handleCreateSessionFromWorkspaceScope({ serverId, machineId: 'workspace-machine', rootPath: '/repo' });
         const route = push.mock.calls.at(-1)?.[0] as { params: { draftId: string; dataId?: string } };
         expect(route.params.dataId).toBeUndefined();
         expect(readNewSessionDraftFromRepository({ scope: { serverId, accountId: 'account-a' }, draftId: route.params.draftId }))
@@ -378,7 +381,7 @@ describe('ordinary authoring adapters', () => {
             }, children),
         });
         expect(getStorage().getState().settings.rememberLastProjectSessionSelections).toBe(false);
-        hook.getCurrent().handleCreateSessionFromWorkspaceScope({ serverId, machineId: 'workspace-machine', rootPath: '/agent/repo' },
+        await hook.getCurrent().handleCreateSessionFromWorkspaceScope({ serverId, machineId: 'workspace-machine', rootPath: '/agent/repo' },
             { seedSessionId: source.id });
         const route = push.mock.calls.at(-1)?.[0] as { params: { draftId: string; dataId?: string } };
         expect(route.params.draftId).toEqual(expect.any(String));

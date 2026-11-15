@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useNewSessionEntryRouter as useRouter } from '@/components/sessions/new/navigation/newSessionEntry';
 
-import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
+import { openSessionAuthoringSeed } from '@/sync/ops/actions/openSessionAuthoringSeed';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -22,7 +22,7 @@ import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountS
 export function usePluginAuthoringSession(params: Readonly<{
     serverId: string | null;
     machineId: string | null;
-}>): (request: Readonly<{ sessionDirectory: string; promptText: string }>) => void {
+}>) {
     const router = useRouter();
     const activeAccountScope = useActiveServerAccountScope();
     const { serverId, machineId } = params;
@@ -32,7 +32,7 @@ export function usePluginAuthoringSession(params: Readonly<{
         if (!activeAccountScope || !serverId || !machineId) return;
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime || !areServerAccountScopesEqual(lifetime.scope, activeAccountScope)) return;
-        seedAndOpenNewSession({
+        return openSessionAuthoringSeed({
             seed: {
                 prompt: request.promptText,
                 placement: {

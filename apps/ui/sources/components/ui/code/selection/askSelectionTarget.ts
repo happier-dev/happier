@@ -1,6 +1,6 @@
 import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { createInteractiveExecutionRunDraftDetailsTab } from '@/components/sessions/runs/launcher/executionRunLauncherModel';
-import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
+import { openSessionAuthoringSeed } from '@/sync/ops/actions/openSessionAuthoringSeed';
 import { appendMountedComposerDraft } from '@/sync/ops/actions/appendMountedComposerDraft';
 import { createUiExecutionRunActionDeps } from '@/sync/ops/actions/executionRunActionDeps';
 import { loadAccountSettings } from '@/sync/domains/state/accountSettingsPersistence';
@@ -18,7 +18,7 @@ export type AskSelectionTargetContext = Readonly<{
     accountLifetime?: ServerAccountScopeLifetime | null;
     withoutSessionTarget?: FilesAskWithoutSessionTarget;
     openDetailsTab: AppPaneScopeApi['openDetailsTab'];
-    navigateToNewSession: Parameters<typeof seedAndOpenNewSession>[0]['navigateToNewSession'];
+    navigateToNewSession: Parameters<typeof openSessionAuthoringSeed>[0]['navigateToNewSession'];
     onDetachedUnavailable?: (reason: string) => void;
 }>;
 
@@ -57,9 +57,9 @@ export async function askSelectionQuote(input: Readonly<{
             ...(!sessionTarget ? { detachedWorkspace: { machineId: workspaceScope.machineId, cwd: workspaceScope.rootPath } } : {}) }), { intent: 'pinned', start: true });
         return true;
     }
-    const result = seedAndOpenNewSession({ seed: { prompt: input.quote,
+    const result = await openSessionAuthoringSeed({ seed: { prompt: input.quote,
         placement: { kind: 'exactTarget', serverId: workspaceScope.serverId,
             machineId: workspaceScope.machineId, directory: workspaceScope.rootPath } },
-        scope: lifetime.scope, isCurrent: lifetime.isCurrent, navigateToNewSession: context.navigateToNewSession });
+        accountLifetime: lifetime, scope: lifetime.scope, isCurrent: lifetime.isCurrent, navigateToNewSession: context.navigateToNewSession });
     return result.kind === 'opened';
 }

@@ -5,7 +5,7 @@ import type { WidgetInstanceV1, WidgetSizeV1, WidgetSurfaceRefV1 } from '@happie
 import { useHomeHubLayout } from '@/components/hub/layout/useHomeHubLayout';
 import { useNewSessionEntryRouter } from '@/components/sessions/new/navigation/newSessionEntry';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
-import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
+import { openSessionAuthoringSeed } from '@/sync/ops/actions/openSessionAuthoringSeed';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { t } from '@/text';
@@ -40,13 +40,13 @@ export function buildHomeWidgetAddSections(input: Omit<AccountWidgetAddInput, 'l
  * request is drafted into a new Session through the one New Session seed owner and nothing is sent.
  * The agent then adds it with the same `widgets.item.add` this surface uses.
  */
-export function buildHomeWidgetAddAsk(input: Omit<Parameters<typeof seedAndOpenNewSession>[0], 'seed'>): WidgetAddAsk {
+export function buildHomeWidgetAddAsk(input: Omit<Parameters<typeof openSessionAuthoringSeed>[0], 'seed'>): WidgetAddAsk {
     const draft = t('widgetAdd.homeAskDraft');
     return {
         title: t('widgetAdd.askTitle'),
         draft,
         note: t('widgetAdd.askNote'),
-        onPick: () => { seedAndOpenNewSession({ ...input, seed: { prompt: draft } }); },
+        onPick: () => openSessionAuthoringSeed({ ...input, seed: { prompt: draft } }),
     };
 }
 

@@ -1,3 +1,5 @@
+import { buildNewSessionAuthoringDraftFromTempData, buildNewSessionTempDataFromAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
+import type { SessionAuthoringPresentation } from '@/components/sessions/new/newSessionSeedNavigation';
 import type { SessionAuthoringOpenResultV1 } from '@happier-dev/protocol/plugins/ui';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -17,7 +19,7 @@ import { captureLazyActionAccountContext, type LazyActionAccountContext } from '
 type AuthoringOpenArgs = Parameters<NonNullable<ActionExecutorDeps['sessionAuthoringOpen']>>[0];
 
 async function openSourceSessionDraft({ input, context }: AuthoringOpenArgs,
-    capturedAccount?: LazyActionAccountContext): Promise<SessionAuthoringOpenResultV1> {
+    capturedAccount?: LazyActionAccountContext, presentation?: SessionAuthoringPresentation): Promise<SessionAuthoringOpenResultV1> {
     if (!('sourceSession' in input)) return { kind: 'invalid', reason: 'seed_invalid' };
     const address = input.sourceSession;
     if (context.serverId && !areServerProfileIdentifiersEquivalent(context.serverId, address.serverId)) {
@@ -51,15 +53,24 @@ async function openSourceSessionDraft({ input, context }: AuthoringOpenArgs,
         const target = resolveMachineControlTargetForSessionFromState({ ...getStorage().getState(),
             sessions: { [session.id]: session }, sessionListRowsByServerId: {},
         }, { ...account.accountLifetime.scope, sessionId: session.id });
-        const configuration = buildNewSessionTempDataFromSessionConfiguration({ session,
+        let configuration = buildNewSessionTempDataFromSessionConfiguration({ session,
             machineId: target?.machineId ?? metadata.machineId ?? null,
             directoryOverride: target?.basePath ?? metadata.path ?? null });
+        if (input.seed?.directoryIntent?.kind === 'managed') {
+            configuration = { ...configuration, directory: '', directoryKind: 'managed' };
+        }
+        if (input.connectedServices !== undefined) {
+            configuration = buildNewSessionTempDataFromAuthoringDraft({
+                draft: { ...buildNewSessionAuthoringDraftFromTempData(configuration), connectedServices: input.connectedServices },
+                machineId: configuration.machineId ?? null,
+            });
+        }
         const machineId = configuration.machineId;
         const directory = configuration.directory;
         const outcome = await openOrdinaryNewSessionSeed({
-            seed: { placement: machineId
-                ? { kind: 'exactTarget', serverId: account.serverId, machineId, ...(directory ? { directory } : {}) }
-                : { kind: 'currentTarget', ...(directory ? { directory } : {}) } },
+            seed: { ...(machineId ? { placement: { kind: 'exactTarget', serverId: account.serverId, machineId, ...(directory ? { directory } : {}) } } : directory ? { placement: { kind: 'currentTarget', directory } } : {}), ...input.seed },
+            ...(input.replay ? { sourceContextHandoff: { sourceContext: { v: 1, kind: 'session_replay', sourceSessionId: address.sessionId, forkPoint: input.replay }, sourceContextServerId: address.serverId } } : {}),
+            ...(presentation ? { presentation } : {}),
             configurationDraft: buildNewSessionConfigurationDraft(configuration),
             scope: account.accountLifetime.scope, signal: context.signal, isCurrent: account.accountLifetime.isCurrent,
         });
@@ -77,10 +88,10 @@ async function openSourceSessionDraft({ input, context }: AuthoringOpenArgs,
 
 /** Presentation only: the ordinary composer retains sole ownership of edits and explicit Send. */
 export async function openSessionAuthoringDraft(args: AuthoringOpenArgs,
-    capturedAccount?: LazyActionAccountContext): Promise<SessionAuthoringOpenResultV1> {
+    capturedAccount?: LazyActionAccountContext, presentation?: SessionAuthoringPresentation): Promise<SessionAuthoringOpenResultV1> {
     const { input, context } = args;
-    if ('sourceSession' in input) return openSourceSessionDraft(args, capturedAccount);
-    const lifetime = captureActiveServerAccountScopeLifetime();
+    if ('sourceSession' in input) return openSourceSessionDraft(args, capturedAccount, presentation);
+    const lifetime = capturedAccount?.accountLifetime ?? captureActiveServerAccountScopeLifetime();
     if (!lifetime
         || (context.serverId && !areServerProfileIdentifiersEquivalent(context.serverId, lifetime.scope.serverId))
         || (context.runtimeAccountId && context.runtimeAccountId !== lifetime.scope.accountId)) {
@@ -89,6 +100,7 @@ export async function openSessionAuthoringDraft(args: AuthoringOpenArgs,
     const pluginId = context.actionCaller?.kind === 'plugin' ? context.actionCaller.pluginId : undefined;
     const outcome = await openOrdinaryNewSessionSeed({
         seed: input.seed,
+        ...(presentation ? { presentation } : {}),
         ...(pluginId ? { pluginId } : {}),
         scope: lifetime.scope,
         ...(context.signal ? { signal: context.signal } : {}),

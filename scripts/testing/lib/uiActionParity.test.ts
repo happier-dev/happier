@@ -372,6 +372,13 @@ test('a UI draft opener uses authoring admission while its Action terminal remai
   ]);
 });
 
+test('post-launch pool recovery is the sole internal draft-open exemption', () => {
+  const report = collectUiActionParity([{ filePath: 'apps/ui/sources/components/sessions/new/hooks/useCreateNewSession.ts',
+    content: "import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer'; current.presentConnectedAccountPoolFailure(result, () => seedAndOpenNewSession({ seed: {} })); seedAndOpenNewSession({ seed: {} });" }], [], []);
+  assert.deepEqual(report.findings.map(site => site.code), ['direct_session_draft_open']);
+  assert.equal(report.exclusions.length, 1);
+});
+
 test('occurrence transport imports and retained aliases cannot bypass Action admission', () => {
   const content = `import { mutateAutomationOccurrence as mutate } from '@/sync/api/automations/apiAutomations';
     import * as api from '@/sync/api/automations/apiAutomations';

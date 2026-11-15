@@ -42,10 +42,9 @@ import { NewSessionConnectedServicesSelectionContent } from '@/components/sessio
 import type { SessionRouteSources } from '@/components/sessions/new/components/useSessionRouteSourceSections';
 import { useTeamCredentialSelectionCoordinator } from '@/components/sessions/teamCredentials/useTeamCredentialSelectionCoordinator';
 import { buildConnectedServicesBindingsPayload } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
-import { buildNewSessionConfigurationDraft, buildNewSessionTempDataFromSessionConfiguration } from '@/components/sessions/authoring/draft/sessionConfigurationSeed';
+import { buildNewSessionTempDataFromSessionConfiguration } from '@/components/sessions/authoring/draft/sessionConfigurationSeed';
 import type { ExistingSessionAuthoringSnapshotSession } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
-import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
+import { openSessionAuthoringSeed } from '@/sync/ops/actions/openSessionAuthoringSeed';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import { captureActiveServerAccountScopeLifetime, selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
 import { resolveQualifiedConnectedServiceRegistryDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
@@ -572,7 +571,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         ? params.sessionConfiguration
         : null;
 
-    const startFreshUnderSelectedAccount = React.useCallback((serviceId: string, selectedBinding: ConnectedServicesServiceBinding) => {
+    const startFreshUnderSelectedAccount = React.useCallback(async (serviceId: string, selectedBinding: ConnectedServicesServiceBinding) => {
         const lifetime = binding ?? captureActiveServerAccountScopeLifetime();
         const source = freshSessionConfiguration;
         if (!lifetime?.isCurrent() || !source || source.id !== params.sessionId || !params.machineId) return;
@@ -589,15 +588,12 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             emitWhenAllNative: true,
         });
         if (!bindings) return;
-        const targetKey = buildBackendTargetKeyV2(configuration.agentTarget);
-        const outcome = seedAndOpenNewSession({
+        const outcome = await openSessionAuthoringSeed({
             seed: { placement: { kind: 'exactTarget', serverId: lifetime.scope.serverId, machineId: params.machineId,
                 ...(configuration.directory ? { directory: configuration.directory } : {}) } },
-            configurationDraft: buildNewSessionConfigurationDraft({ ...configuration,
-                backendNewSessionOptionStateByTargetKey: { ...configuration.backendNewSessionOptionStateByTargetKey,
-                    [targetKey]: { ...configuration.backendNewSessionOptionStateByTargetKey?.[targetKey], connectedServices: bindings } },
-            }),
-            scope: lifetime.scope, isCurrent: lifetime.isCurrent,
+            sourceSession: { serverId: lifetime.scope.serverId, sessionId: source.id },
+            connectedServices: bindings,
+            accountLifetime: lifetime, scope: lifetime.scope, isCurrent: lifetime.isCurrent,
             navigateToNewSession: ({ draftId }) => router.push({ pathname: '/new',
                 params: buildNewSessionLaunchRouteParams({ draftId, targetServerId: lifetime.scope.serverId }) }),
         });

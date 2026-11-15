@@ -30,6 +30,71 @@ afterEach(async () => {
 });
 
 describe('source Session authoring Action', () => {
+    it('does not seed when the requesting surface retires during Action admission', async () => {
+        const { openSessionAuthoringSeed } = await import('./openSessionAuthoringSeed');
+        let current = true;
+        const navigate = vi.fn();
+        const opening = openSessionAuthoringSeed({ seed: { prompt: 'Retired target' }, scope,
+            isCurrent: () => current, createDraftId: () => 'retired-surface', navigateToNewSession: navigate });
+        current = false;
+        expect(await opening).toMatchObject({ kind: 'stale' });
+        expect(readNewSessionDraftFromRepository({ scope, draftId: 'retired-surface' })).toBeNull();
+        expect(navigate).not.toHaveBeenCalled();
+    });
+
+    it('admits embedded presentation once and refuses a disabled open without seeding or navigation', async () => {
+        const { openSessionAuthoringSeed } = await import('./openSessionAuthoringSeed');
+        const navigate = vi.fn();
+        const input = { seed: { prompt: 'Embedded task' }, scope, isCurrent: () => true,
+            createDraftId: () => 'embedded-draft', navigateToNewSession: navigate };
+        const opened = await openSessionAuthoringSeed(input);
+        expect(opened.kind).toBe('opened');
+        expect(readNewSessionDraftFromRepository({ scope, draftId: 'embedded-draft' })?.input).toBe('Embedded task');
+        expect(navigate).toHaveBeenCalledOnce();
+        expect(navigation.push).not.toHaveBeenCalled();
+        await homes.setActionPolicy(scope.serverId, 'session.authoring.open', 'ui', 'off');
+        const refused = await openSessionAuthoringSeed({ ...input, createDraftId: () => 'refused-draft' });
+        expect(refused.kind).toBe('refused');
+        expect(readNewSessionDraftFromRepository({ scope, draftId: 'refused-draft' })).toBeNull();
+        expect(navigate).toHaveBeenCalledOnce();
+    });
+
+    it('retains editable configuration and replay intent through Action admission', async () => {
+        storage.getState().applySessions([createSessionFixture({ id: 'source', serverId: scope.serverId,
+            metadata: { path: '/repo', host: 'dev', machineId: 'machine', profileId: 'chosen-profile', flavor: 'codex' } })]);
+        const result = await createFrontDoorActionExecute()('session.authoring.open', {
+            sourceSession: { serverId: scope.serverId, sessionId: 'source' },
+            seed: { prompt: 'Restore this question' },
+            replay: { type: 'latest' },
+            connectedServices: { v: 2, bindingsByServiceId: {} },
+        }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: scope.serverId, expectedAccountId: scope.accountId });
+        expect(result.ok).toBe(true);
+        if (!result.ok) throw new Error(result.errorCode);
+        const opened = SessionAuthoringOpenResultV1Schema.parse(result.result);
+        expect(opened.kind).toBe('opened');
+        if (opened.kind !== 'opened') throw new Error('Draft did not open');
+        expect(readNewSessionDraftFromRepository({ scope, draftId: opened.draftId })).toMatchObject({
+            input: 'Restore this question', selectedProfileId: 'chosen-profile', selectedPath: '/repo',
+        });
+        const { buildNewSessionAuthoringDraftFromPersistedDraft } = await import('@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters');
+        const persisted = readNewSessionDraftFromRepository({ scope, draftId: opened.draftId });
+        if (!persisted) throw new Error('Missing admitted draft');
+        expect(buildNewSessionAuthoringDraftFromPersistedDraft(persisted).connectedServices).toEqual({ v: 2, bindingsByServiceId: {} });
+        expect(navigation.push).toHaveBeenLastCalledWith({ pathname: '/new', params: expect.objectContaining({ draftId: opened.draftId, dataId: expect.any(String) }) });
+        const managed = await createFrontDoorActionExecute()('session.authoring.open', {
+            sourceSession: { serverId: scope.serverId, sessionId: 'source' },
+            seed: { directoryIntent: { kind: 'managed' } },
+        }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: scope.serverId, expectedAccountId: scope.accountId });
+        expect(managed.ok).toBe(true);
+        if (!managed.ok) throw new Error(managed.errorCode);
+        const managedOutcome = SessionAuthoringOpenResultV1Schema.parse(managed.result);
+        expect(managedOutcome.kind).toBe('opened');
+        if (managedOutcome.kind !== 'opened') throw new Error('Managed draft did not open');
+        expect(readNewSessionDraftFromRepository({ scope, draftId: managedOutcome.draftId })).toMatchObject({
+            directoryKind: 'managed', selectedPath: null, selectedProfileId: 'chosen-profile',
+        });
+    });
+
     it('opens a rich promptless managed-folder draft and refuses other Homes, locked content and retired Accounts', async () => {
         const source = createSessionFixture({ id: 'source', serverId: scope.serverId, metadata: {
             path: '/private/source', host: 'dev', machineId: 'source-machine', flavor: 'codex',
@@ -85,6 +150,21 @@ describe('source Session authoring Action', () => {
         expect(readNewSessionDraftFromRepository({ scope: { serverId: sourceHome, accountId: 'source-account' }, draftId: opened.draftId }))
             .toMatchObject({ selectedPath: '/source-home', selectedMachineId: 'source-machine', selectedProfileId: 'source-profile' });
         expect(navigation.push).toHaveBeenLastCalledWith({ pathname: '/new', params: expect.objectContaining({ draftId: opened.draftId, draftServerId: sourceHome, draftAccountId: 'source-account' }) });
+        expect(storage.getState().profileScope).toEqual(scope);
+        const seeded = await createFrontDoorActionExecute()('session.authoring.open', {
+            seed: { prompt: 'Work in the source Home' },
+        }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+            serverId: sourceHome, expectedAccountId: 'source-account' });
+        expect(seeded.ok).toBe(true);
+        if (!seeded.ok) throw new Error(seeded.errorCode);
+        const seedOutcome = SessionAuthoringOpenResultV1Schema.parse(seeded.result);
+        expect(seedOutcome.kind).toBe('opened');
+        if (seedOutcome.kind !== 'opened') throw new Error('Source Home seed did not open');
+        expect(readNewSessionDraftFromRepository({ scope: { serverId: sourceHome, accountId: 'source-account' }, draftId: seedOutcome.draftId })?.input)
+            .toBe('Work in the source Home');
+        expect(navigation.push).toHaveBeenLastCalledWith({ pathname: '/new', params: expect.objectContaining({
+            draftId: seedOutcome.draftId, draftServerId: sourceHome, draftAccountId: 'source-account',
+        }) });
         expect(storage.getState().profileScope).toEqual(scope);
     });
 });

@@ -1,7 +1,7 @@
 import type { Router } from 'expo-router';
 
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
-import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
+import { openSessionAuthoringSeed } from '@/sync/ops/actions/openSessionAuthoringSeed';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { interceptNewSessionEntry } from '@/components/sessions/new/navigation/newSessionEntry';
 
@@ -35,12 +35,9 @@ export async function handleSourceControlBranchMenuSelect(input: Readonly<{
         input.closeMenu();
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime) return;
-        seedAndOpenNewSession({
+        await openSessionAuthoringSeed({
             seed: {
-                placement: input.machineTarget?.machineId
-                    ? { kind: 'exactTarget', serverId: input.targetServerId || lifetime.scope.serverId,
-                        machineId: input.machineTarget.machineId, ...(input.directoryFallback ? { directory: input.directoryFallback } : {}) }
-                    : { kind: 'currentTarget', ...(input.directoryFallback ? { directory: input.directoryFallback } : {}) },
+                ...(input.machineTarget?.machineId ? { placement: { kind: 'exactTarget' as const, serverId: input.targetServerId || lifetime.scope.serverId, machineId: input.machineTarget.machineId, ...(input.directoryFallback ? { directory: input.directoryFallback } : {}) } } : input.directoryFallback ? { placement: { kind: 'currentTarget' as const, directory: input.directoryFallback } } : {}),
                 checkoutIntent: 'createWorktree',
             },
             scope: lifetime.scope,

@@ -10,6 +10,7 @@ import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { readNewSessionDraftFromRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { deriveSessionIntentionalRestartSignals, resolveSessionIntentionalRestartRecoveryEvidenceAtMs, type SessionIntentionalRestartSourceEvent } from './sessionIntentionalRestartSignal';
@@ -526,16 +527,23 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
     });
 
     it('opens a fresh editable session under the selected account without retrying the unavailable resume', async () => {
-        const connection = await restoreServerAccountForTest({ serverUrl: 'http://auth-switch-fresh.example.test', accountId: 'account-a' });
+        const connection = await restoreServerAccountForTest({ serverUrl: 'http://auth-switch-fresh.example.test', accountId: 'account-a',
+            request: async url => {
+                const path = new URL(String(url)).pathname;
+                if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+                if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+                return null;
+            } });
         seedCodexProfile();
         storage.setState({ profileScope: { serverId: connection.home.id, accountId: 'account-a' },
             profile: AccountProfileSchema.parse({ ...profileDefaults, id: 'account-a', ...profileState.current }) });
-        const session = createSessionFixture({ id: 'fresh-source', metadata: {
+        const session = createSessionFixture({ id: 'fresh-source', serverId: connection.home.id, metadata: {
             path: '/workspace/checkout-service', host: 'test', machineId: 'machine-1',
             flavor: 'codex',
             backendTarget: { kind: 'backend', backendId: 'codex' },
             connectedServices: { v: 2, bindingsByServiceId: { [CODEX_SERVICE_KEY]: { source: 'native' } } },
         } });
+        storage.getState().applySessions([session]);
         setSessionConnectedServiceAuthBindingMock.mockResolvedValue({ ok: false,
             errorCode: 'provider_session_state_unavailable_for_resume', serviceId: CODEX_SERVICE_KEY,
             diagnostics: { uxDiagnostic: { code: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.providerSessionStateUnavailableForResume,
@@ -560,8 +568,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             });
             const buttons = modalAlertMock.mock.calls.at(-1)?.[2] as Array<{ text: string; onPress?: () => void }>;
             await act(async () => {
-                buttons.find(button => button.text === 'newSession.connectedServiceSwitchUnavailable.startFreshAction')?.onPress?.();
-                await Promise.resolve();
+                await buttons.find(button => button.text === 'newSession.connectedServiceSwitchUnavailable.startFreshAction')?.onPress?.();
             });
             expect(setSessionConnectedServiceAuthBindingMock).toHaveBeenCalledTimes(1);
             expect(modalConfirmMock).not.toHaveBeenCalled();

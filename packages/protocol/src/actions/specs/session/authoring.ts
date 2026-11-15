@@ -19,6 +19,8 @@ function createSessionAuthoringActionSpecs() {
     inputHints: { title: 'Open editable Session draft', fields: [
       { path: 'seed', title: 'New Session seed', widget: 'json' },
       { path: 'sourceSession', title: 'Source Session address', widget: 'json' },
+      { path: 'replay', title: 'Replay cutoff', widget: 'json' },
+      { path: 'connectedServices', title: 'Connected service selection', widget: 'json' },
     ] },
     examples: { voice: { argsExample: '{"seed":{"prompt":"Help me author this checkout."}}' } },
     inputSchema: SessionAuthoringOpenV1Schema,

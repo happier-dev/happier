@@ -4,10 +4,17 @@ import { admitProjectAuthoringOrigin } from '@/components/projects/detail/projec
 import type { NewSessionDraft } from '@/sync/domains/state/persistence';
 import type { ComposerDraftAppendContent } from '@/components/sessions/composer/admitComposerDraftItems';
 
+export type SessionAuthoringPresentation = Pick<Parameters<typeof import('./newSessionSeedComposer').seedAndOpenNewSession>[0], 'navigateToNewSession' | 'createDraftId'> & Readonly<{
+    /** The requesting surface can retire while Action admission waits. */
+    isCurrent?: () => boolean;
+}>;
+
 /** Page-host navigation adapter shared by semantic Host API and authoring Actions. */
 export async function openOrdinaryNewSessionSeed(params: Readonly<{
     seed: unknown;
     configurationDraft?: NewSessionDraft;
+    sourceContextHandoff?: Parameters<typeof import('./newSessionSeedComposer').seedAndOpenNewSession>[0]['sourceContextHandoff'];
+    presentation?: SessionAuthoringPresentation;
     /** Host-owned prepared media; never part of the public seed. */
     media?: ComposerDraftAppendContent;
     pluginId?: string;
@@ -25,22 +32,26 @@ export async function openOrdinaryNewSessionSeed(params: Readonly<{
         ]);
         const outcome = seedAndOpenNewSession({
             seed: params.seed,
+            ...(params.sourceContextHandoff ? { sourceContextHandoff: params.sourceContextHandoff } : {}),
+            ...(params.presentation?.createDraftId ? { createDraftId: params.presentation.createDraftId } : {}),
             ...(params.configurationDraft ? { configurationDraft: params.configurationDraft } : {}),
             ...(params.media ? { media: params.media } : {}),
             ...(params.pluginId ? { pluginId: params.pluginId } : {}),
             scope: params.scope,
             ...(params.signal ? { signal: params.signal } : {}),
-            isCurrent: params.isCurrent,
+            isCurrent: () => params.isCurrent() && params.presentation?.isCurrent?.() !== false,
             admitOrigin: origin => admitProjectAuthoringOrigin(origin, params.scope),
             navigateToNewSession: ({ dataId, draftId, worktree, spawnServerId, machineId, directory }) => {
+                if (params.presentation) {
+                    params.presentation.navigateToNewSession({ dataId, draftId, worktree, spawnServerId, machineId, directory });
+                    return;
+                }
                 const href = {
                     pathname: '/new',
                     params: {
                         draftId,
-                        ...(params.configurationDraft ? {
-                            draftServerId: params.scope.serverId,
-                            draftAccountId: params.scope.accountId,
-                        } : {}),
+                        draftServerId: params.scope.serverId,
+                        draftAccountId: params.scope.accountId,
                         ...(dataId === null ? {} : { dataId }),
                         ...(worktree === undefined ? {} : { worktree }),
                         ...(spawnServerId === undefined ? {} : { spawnServerId }),

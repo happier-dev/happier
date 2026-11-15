@@ -3,7 +3,7 @@ import { retryableLazy } from '@/components/ui/performance/retryableLazy';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useDetailsPaneAvailable } from '@/components/appShell/panes/details/detailsPaneAvailability';
 import { NewSessionEmbeddedHostProvider, mergeNewSessionHostParams, type NewSessionHostParams } from '@/components/sessions/new/navigation/newSessionHost';
-import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
+import { openSessionAuthoringSeed } from '@/sync/ops/actions/openSessionAuthoringSeed';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { matchWorkspaceRoutePatterns } from '@/components/appShell/workspace/workspaceRouteMatch';
 import { useWorkflowCardModal } from '../run/useWorkflowCardModal';
@@ -69,7 +69,7 @@ export function seedWorkflowAgentDraft(
 ): void {
     const lifetime = accountLifetime === undefined ? captureActiveServerAccountScopeLifetime() : accountLifetime;
     if (lifetime === null) return;
-    seedAndOpenNewSession({ seed, scope: lifetime.scope, isCurrent: lifetime.isCurrent,
+    openSessionAuthoringSeed({ seed, accountLifetime: lifetime, scope: lifetime.scope, isCurrent: lifetime.isCurrent,
         navigateToNewSession: ({ draftId }) => onDraft({ draftId, serverId: lifetime.scope.serverId, isCurrent: lifetime.isCurrent }) });
 }
 
@@ -102,7 +102,7 @@ export function useWorkflowAgentAuthoring(onSessionCreated?: (target: SessionTar
     return React.useCallback((seed: PluginUiNewSessionSeedV1 & Readonly<{ prompt: string }>) => {
         const lifetime = accountLifetime === undefined ? captureActiveServerAccountScopeLifetime() : accountLifetime;
         if (lifetime === null) return;
-        seedAndOpenNewSession({ seed, scope: lifetime.scope, isCurrent: lifetime.isCurrent,
+        openSessionAuthoringSeed({ seed, accountLifetime: lifetime, scope: lifetime.scope, isCurrent: lifetime.isCurrent,
             navigateToNewSession: ({ draftId }) => setEntry({ draftId, lifetime, onSessionCreated }) });
     }, [onSessionCreated, accountLifetime]);
 }

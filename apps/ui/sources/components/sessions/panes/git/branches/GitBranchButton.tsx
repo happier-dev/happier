@@ -16,7 +16,7 @@ import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
-import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
+import { openSessionAuthoringSeed } from '@/sync/ops/actions/openSessionAuthoringSeed';
 import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { useMountedShouldContinue } from '@/hooks/ui/useMountedShouldContinue';
 import { showSwitchBranchWithChangesDialog } from '@/components/workspaces/scm/branches/SwitchBranchWithChangesDialog';
@@ -123,11 +123,8 @@ export function GitBranchButton(props: GitBranchButtonProps): React.ReactElement
     const openNewSessionForDirectory = React.useCallback((directory: string, preparedLifetime?: ActiveServerAccountScopeLifetime) => {
         const lifetime = preparedLifetime ?? captureActiveServerAccountScopeLifetime();
         if (!lifetime) return;
-        seedAndOpenNewSession({
-            seed: { placement: machineTarget?.machineId
-                ? { kind: 'exactTarget', serverId: targetServerId || lifetime.scope.serverId,
-                    machineId: machineTarget.machineId, ...(directory ? { directory } : {}) }
-                : { kind: 'currentTarget', ...(directory ? { directory } : {}) } },
+        openSessionAuthoringSeed({
+            seed: { ...(machineTarget?.machineId ? { placement: { kind: 'exactTarget' as const, serverId: targetServerId || lifetime.scope.serverId, machineId: machineTarget.machineId, ...(directory ? { directory } : {}) } } : directory ? { placement: { kind: 'currentTarget' as const, directory } } : {}) },
             scope: lifetime.scope,
             isCurrent: () => lifetime.isCurrent() && isCurrentDraftTarget(),
             navigateToNewSession: ({ draftId }) => router.push({

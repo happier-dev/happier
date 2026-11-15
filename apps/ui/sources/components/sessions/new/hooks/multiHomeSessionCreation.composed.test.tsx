@@ -2611,11 +2611,17 @@ describe('multi-Home Session creation composition', () => {
         const bindingHook = await renderHook(() => useServerCredentialAccountScopeBindings([homeBScopeId]));
         await vi.waitFor(() => expect(bindingHook.getCurrent().get(homeBScopeId)?.scope)
             .toEqual({ serverId: homeBScopeId, accountId: 'account-b' }));
-        const outcome = openNewSessionSourceContextNavigation({
-            session: createSessionFixture({ id: 'replay-source', metadata: {
-                path: '/source/replay', host: 'home-b-machine', machineId: 'machine-b', flavor: 'codex',
-            } }),
-            sourceSessionId: 'replay-source', forkPoint: { type: 'latest' }, serverId: homeBScopeId, machineId: 'machine-b',
+        const source = createSessionFixture({ id: 'replay-source', serverId: homeBScopeId, metadata: {
+            path: '/source/replay', host: 'home-b-machine', machineId: 'machine-b', flavor: 'codex',
+        } });
+        const { createPlainSessionByIdResponseFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        sessionHttpBoundary = (rawUrl) => {
+            const url = new URL(rawUrl);
+            return url.origin === 'https://home-b.example.test' && url.pathname === '/v2/sessions/replay-source'
+                ? Response.json(createPlainSessionByIdResponseFixture(source)) : null;
+        };
+        const outcome = await openNewSessionSourceContextNavigation({
+            sourceSessionId: 'replay-source', forkPoint: { type: 'latest' }, serverId: homeBScopeId,
             accountLifetime: bindingHook.getCurrent().get(homeBScopeId),
             restoredDraftText: 'Continue this edited message',
             navigateToNewSession: route => { routeBoundary.params = { ...route.params }; },

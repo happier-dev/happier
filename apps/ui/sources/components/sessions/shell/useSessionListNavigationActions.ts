@@ -1,9 +1,9 @@
 import * as React from 'react';
 import { useNewSessionEntryRouter as useRouter } from '@/components/sessions/new/navigation/newSessionEntry';
 
-import { buildNewSessionTempDataFromSessionConfiguration, buildNewSessionConfigurationDraft } from '@/components/sessions/authoring/draft/sessionConfigurationSeed';
+import { buildNewSessionTempDataFromSessionConfiguration } from '@/components/sessions/authoring/draft/sessionConfigurationSeed';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
-import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
+import { openSessionAuthoringSeed } from '@/sync/ops/actions/openSessionAuthoringSeed';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { storage, useSetting } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -63,16 +63,12 @@ export function useSessionListNavigationActions(
                 const seedSession = rememberLastProjectSessionSelections
                     ? resolveSeedSession(options?.seedSessionId)
                     : null;
-                const configuration = seedSession
-                    ? buildNewSessionTempDataFromSessionConfiguration({ session: seedSession, machineId: target.machineId })
-                    : { machineId: target.machineId, directoryKind: 'managed' as const };
-                seedAndOpenNewSession({
-                    seed: { placement: { kind: 'exactTarget', serverId: target.serverId, machineId: target.machineId } },
-                    configurationDraft: buildNewSessionConfigurationDraft({ ...configuration, directory: '', directoryKind: 'managed' }),
+                return openSessionAuthoringSeed({
+                    seed: { placement: { kind: 'exactTarget', serverId: target.serverId, machineId: target.machineId }, directoryIntent: { kind: 'managed' } },
+                    ...(seedSession ? { sourceSession: { serverId: target.serverId, sessionId: seedSession.id } } : {}),
                     scope: lifetime.scope, isCurrent: lifetime.isCurrent,
                     navigateToNewSession: ({ draftId }) => router.push({ pathname: '/new', params: buildNewSessionLaunchRouteParams({ draftId }) }),
                 });
-                return;
             }
             const scopeHint: WorkspaceScopeHint = target;
             const seedSessionId = normalizeString(options?.seedSessionId);
@@ -91,16 +87,15 @@ export function useSessionListNavigationActions(
                     machineId: scopeHint.machineId,
                     directoryOverride: directory,
                 });
-                seedAndOpenNewSession({
+                return openSessionAuthoringSeed({
                     seed: { placement: { kind: 'exactTarget', serverId: scopeHint.serverId, machineId: scopeHint.machineId,
                         ...(configuration.directory ? { directory: configuration.directory } : {}) } },
-                    configurationDraft: buildNewSessionConfigurationDraft(configuration),
+                    sourceSession: { serverId: scopeHint.serverId, sessionId: seedSession.id },
                     scope: lifetime.scope, isCurrent: lifetime.isCurrent,
                     navigateToNewSession: ({ draftId }) => router.push({ pathname: '/new', params: buildNewSessionLaunchRouteParams({ draftId }) }),
                 });
-                return;
             }
-            seedAndOpenNewSession({
+            return openSessionAuthoringSeed({
                 seed: { placement: { kind: 'exactTarget', serverId: scopeHint.serverId,
                     machineId: scopeHint.machineId, ...(directory ? { directory } : {}) } },
                 scope: lifetime.scope,

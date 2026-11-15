@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useNewSessionEntryRouter as useRouter } from '@/components/sessions/new/navigation/newSessionEntry';
 
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
-import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
+import { openSessionAuthoringSeed } from '@/sync/ops/actions/openSessionAuthoringSeed';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
@@ -56,8 +56,8 @@ export function useOpenAgentAuthoringSession(target: Readonly<{ serverId: string
         if (!scope) return;
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime || !areServerAccountScopesEqual(lifetime.scope, scope)) return;
-        return runGuardedNavigation(() => {
-            seedAndOpenNewSession({
+        return runGuardedNavigation(async () => {
+            await openSessionAuthoringSeed({
                 seed: buildAgentAuthoringSessionSeed({ intent, target }),
                 scope,
                 isCurrent: () => mountedRef.current && lifetime.isCurrent()

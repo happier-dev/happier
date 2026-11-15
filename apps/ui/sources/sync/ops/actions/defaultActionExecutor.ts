@@ -708,6 +708,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
 }
 
   function buildDefaultActionExecutor(opts?: Readonly<{
+  /** Mounted draft destination; Action policy and draft settlement remain canonical. */
+  sessionAuthoringPresentation?: import('@/components/sessions/new/newSessionSeedNavigation').SessionAuthoringPresentation;
   /** One captured Voice editor intent; never serialized into Action input or approval. */
   voiceSettingsEdit?: import('@/components/settings/catalog/settingDeclarations').SettingsMutationServices['voiceSettingsEdit'];
   /** Mounted History delivery; the consumer retains Account binding and delete-wins ownership. */
@@ -2385,7 +2387,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     },
     uiCurrentContextAction: (request) => executeCurrentUiContextAction(request, { execute: executor.execute, context: request.context }),
     accountHomeContinuationAction: (request) => executeCurrentUiContextAction(request),
-    sessionAuthoringOpen: args => openSessionAuthoringDraft(args, accountContext ?? undefined),
+    sessionAuthoringOpen: args => openSessionAuthoringDraft(args, accountContext ?? undefined, opts?.sessionAuthoringPresentation),
     sessionSpaceMembershipSet: args => setSessionSpaceMembership(args, accountContext ?? undefined),
     invokeContributedAction: (request) => {
       // Nested plugin Actions retain their own exact declaration. Enter the

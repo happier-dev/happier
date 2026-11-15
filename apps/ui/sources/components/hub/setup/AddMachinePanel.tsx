@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { useNewSessionEntryRouter as useRouter } from '@/components/sessions/new/navigation/newSessionEntry';
 import { MachineAddForm } from '@/components/machines/add/MachineAddForm';
-import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
+import { openSessionAuthoringSeed } from '@/sync/ops/actions/openSessionAuthoringSeed';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
@@ -25,7 +25,7 @@ export const AddMachinePanel = React.memo(function AddMachinePanel(props: Readon
     const startSession = React.useCallback((machine: Readonly<{ machineId: string; serverId: string }>) => {
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime) return;
-        seedAndOpenNewSession({
+        openSessionAuthoringSeed({
             seed: { placement: { kind: 'exactTarget', serverId: machine.serverId, machineId: machine.machineId } },
             scope: lifetime.scope,
             isCurrent: lifetime.isCurrent,
