@@ -4,7 +4,10 @@ import type { LocalServicePreviewResourceV1 } from '@happier-dev/protocol/local/
 import { proxyLocalServicePreviewWebSocketUpgrade } from './websocketAdapter.js';
 import { createLocalServicePreviewUpgradeClient } from './upgradeClient.js';
 
-it('closes a refused upgrade without emitting an unhandled downstream socket error', async () => {
+it.each([
+    { tunnelFailure: 'eof', expectedReasonCode: 'upstream_response_invalid' },
+    { tunnelFailure: 'preview_target_unresolved', expectedReasonCode: 'upstream_stream_failed' },
+] as const)('closes a refused upgrade without emitting an unhandled downstream socket error ($tunnelFailure)', async ({ tunnelFailure, expectedReasonCode }) => {
     const preview: LocalServicePreviewResourceV1 = {
         previewId: 'preview_1', machineId: 'machine_1', owner: { kind: 'user', id: 'account_1' },
         target: { scheme: 'http', host: '127.0.0.1', port: 5173 }, initialPath: { pathname: '/', search: '' },
@@ -21,11 +24,17 @@ it('closes a refused upgrade without emitting an unhandled downstream socket err
             request: { path: '/hmr', search: '', headers: { upgrade: 'websocket', connection: 'Upgrade',
                 'sec-websocket-key': 'client-key', 'sec-websocket-version': '13' }, rawHeaders: [],
                 client: createLocalServicePreviewUpgradeClient(socket) },
-            // The remote tunnel closes before answering HTTP 101; the downstream reader has not started.
+            // Network stream boundary: EOF or the closeFromTunnel refusal reaches the real adapter before HTTP 101.
             openTunnel: async () => ({ tunnelId: 'tunnel', substreamId: 'closed-upgrade',
-                write() {}, endWrite() {}, async *read() {}, close() {}, abort() {} }),
+                write() {}, endWrite() {},
+                async *read() {
+                    if (tunnelFailure !== 'eof') {
+                        throw Object.assign(new Error(tunnelFailure), { reasonCode: tunnelFailure });
+                    }
+                },
+                close() {}, abort() {} }),
         });
-        expect(result).toEqual({ ok: false, reasonCode: 'upstream_response_invalid' });
+        expect(result).toEqual({ ok: false, reasonCode: expectedReasonCode });
         await closed;
         expect(socket.destroyed).toBe(true);
         expect(socketErrors).toEqual([]);

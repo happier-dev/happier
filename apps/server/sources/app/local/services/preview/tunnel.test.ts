@@ -7,8 +7,13 @@ import {
 } from "@happier-dev/protocol";
 import { describe, expect, it, vi } from "vitest";
 import tweetnacl from "tweetnacl";
+import { connect, type Socket } from "node:net";
+import { once } from "node:events";
+import { createServer } from "node:http";
 
 import { FEATURE_ENV_KEYS } from "@/app/features/catalog/featureEnvSchema";
+import { createLocalServicePreviewUpgradeClient } from "./upgradeClient";
+import { proxyLocalServicePreviewWebSocketUpgrade } from "./websocketAdapter";
 
 type PreviewTunnelModule = typeof import("./tunnel");
 
@@ -109,6 +114,72 @@ async function flushAsyncIteratorResume(): Promise<void> {
 }
 
 describe("local service preview PMS tunnel opener", () => {
+    it("survives repeated Machine close frames for an unresolved preview during a real socket upgrade", async () => {
+        const relay = createRelayHarness();
+        const { createLocalServicePreviewTunnelOpener } = await import("./tunnel");
+        const { peerMediationGrantSigningEnv } = await import("@/testkit/env");
+        const openTunnel = createLocalServicePreviewTunnelOpener({
+            env: { ...peerMediationGrantSigningEnv(), [FEATURE_ENV_KEYS.machinesTunnelServerRoutedEnabled]: "1",
+                [FEATURE_ENV_KEYS.machinesTunnelAllowedPorts]: "5173" },
+            resolvePreviewAccountId: () => "account_1", createRelayTransport: relay.createTransport,
+        });
+        const socketErrors: Error[] = [];
+        const server = createServer((_request, response) => response.end("healthy"));
+        const upgraded = new Promise<Readonly<{
+            pending: ReturnType<typeof proxyLocalServicePreviewWebSocketUpgrade>;
+            closed: Promise<void>;
+        }>>(resolve => server.once("upgrade", (request, socket) => {
+            // Observe an event that would otherwise terminate the server after HTTP removes its handler.
+            socket.on("error", error => socketErrors.push(error));
+            const closed = new Promise<void>(done => socket.once("close", () => done()));
+            const pending = proxyLocalServicePreviewWebSocketUpgrade({
+                preview,
+                request: { path: request.url ?? "/socket", search: "", headers: request.headers,
+                    rawHeaders: request.rawHeaders, client: createLocalServicePreviewUpgradeClient(socket) },
+                openTunnel,
+            });
+            resolve({ pending, closed });
+        }));
+        let client: Socket | undefined;
+        try {
+            server.listen(0, "127.0.0.1");
+            await once(server, "listening");
+            const address = server.address();
+            if (!address || typeof address === "string") throw new Error("Expected TCP server address");
+            client = connect(address.port, "127.0.0.1");
+            await once(client, "connect");
+            client.write("GET /socket HTTP/1.1\r\nHost: preview.example.test\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: client-key\r\nSec-WebSocket-Version: 13\r\n\r\n");
+            const { pending, closed } = await upgraded;
+            await flushAsyncIteratorResume();
+            const opening = relay.sent[0];
+            if (!opening || opening.v !== 1 || opening.frame.kind !== "open") throw new Error("Expected parent relay open");
+            const refusal: PeerTcpTunnelRelayEnvelope = {
+                v: 2, scopeUserId: "account_1", sender: { kind: "machine", machineId: preview.machineId },
+                recipient: { kind: "user", socketId: "server_preview_relay_test" },
+                encoding: PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
+                frame: encodePeerTcpTunnelBinaryFrameV2({ header: {
+                    version: 2, kind: "close", tunnelId: opening.frame.open.tunnelId,
+                    halfClose: false, reasonCode: "preview_target_unresolved", payloadLength: 0,
+                } }),
+            };
+            expect(() => { relay.receive(refusal); relay.receive(refusal); }).not.toThrow();
+            await expect(pending).resolves.toEqual({ ok: false, reasonCode: "upstream_stream_failed" });
+            await closed;
+            expect(socketErrors).toEqual([]);
+            expect(relay.close).toHaveBeenCalledTimes(1);
+            const health = await fetch(`http://127.0.0.1:${address.port}/health`);
+            expect(health.status).toBe(200);
+            expect(await health.text()).toBe("healthy");
+            const recovered = await openTunnel({ preview });
+            expect(recovered.tunnelId).not.toBe(opening.frame.open.tunnelId);
+            await recovered.close();
+        } finally {
+            client?.destroy();
+            server.closeAllConnections();
+            await new Promise<void>(resolve => server.close(() => resolve()));
+        }
+    });
+
     it("settles a server relay admission refusal instead of waiting for Machine bytes", async () => {
         const relay = createRelayHarness();
         const { createLocalServicePreviewTunnelOpener } = await import('./tunnel');
