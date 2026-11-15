@@ -38,7 +38,7 @@ export async function observeTriageSourceSessionLinks(
     const inputs = 'v' in input ? [input] : input;
     const selections = inputs.map(input => 'entries' in input ? input.entries : [input]).flat();
 
-    async function rebuild() {
+    async function rebuild(invalidateAfterRebuild: boolean) {
         selected?.abort();
         const controller = new AbortController();
         selected = controller;
@@ -79,7 +79,7 @@ export async function observeTriageSourceSessionLinks(
                             // A refused dependency is not an attached observer.
                             // Keep independent healthy corpus dependencies live;
                             // configuration/registry changes rebuild admission.
-                            selectedChanged();
+                            invalidateAfterRebuild = true;
                         }
                     }
                 }
@@ -90,10 +90,13 @@ export async function observeTriageSourceSessionLinks(
         }
         if (controller.signal.aborted || disposed) {
             await disposeSubscriptions(attached);
-        } else dependencies = attached;
+        } else {
+            dependencies = attached;
+            if (invalidateAfterRebuild) notify();
+        }
     }
-    function requestRebuild() {
-        const next = rebuild();
+    function requestRebuild(invalidateAfterRebuild = false) {
+        const next = rebuild(invalidateAfterRebuild);
         const completed = pendingRebuild;
         pendingRebuild = Promise.allSettled([completed, next]).then(results => {
             const rejected = results.find(result => result.status === 'rejected');
@@ -106,8 +109,9 @@ export async function observeTriageSourceSessionLinks(
     }
     const changed = () => {
         if (disposed) return;
-        notify();
-        void requestRebuild().then(notify).catch(notify);
+        // One dependency change requests one read, after its replacement watches
+        // are attached so that changes during that read remain observable.
+        void requestRebuild(true).catch(notify);
     };
     const configuration = instances.watch({ index: CORPUS_SOURCE_INSTANCES_INDEX_ID.byLifecycle,
         prefix: [CORPUS_SOURCE_INSTANCE_LIFECYCLE.active], order: 'asc' }, changed);

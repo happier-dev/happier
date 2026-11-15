@@ -55,7 +55,8 @@ describe('the composed relation dependency observer', () => {
                 } },
             },
         } as unknown as TriageDataActionContext;
-        const pending = observeTriageSourceSessionLinks({ v: 1, sessionId: 'selected-session' }, vi.fn(), context)
+        const invalidate = vi.fn();
+        const pending = observeTriageSourceSessionLinks({ v: 1, sessionId: 'selected-session' }, invalidate, context)
             .then(observer => ({ observer }), error => ({ error }));
         try {
             await vi.waitFor(() => expect(heldSignal).toBeDefined());
@@ -65,9 +66,12 @@ describe('the composed relation dependency observer', () => {
             const result = await pending;
             if ('error' in result) throw result.error;
             await vi.waitFor(() => expect(attachedRoles).toEqual([firstRole]));
+            invalidate.mockClear();
             role = nextRole;
             changed?.();
             await vi.waitFor(() => expect(attachedRoles).toEqual([firstRole, nextRole]));
+            // One changed registry fact requests one relation read, after its dependencies attach.
+            expect(invalidate).toHaveBeenCalledOnce();
             expect(disposedRoles).toEqual([firstRole]);
             expect(heldSignal?.aborted).toBe(false);
             await result.observer.dispose();
@@ -161,15 +165,19 @@ describe('the composed relation dependency observer', () => {
             configuredAtMs: 1, sourceQualifiedId: `${instance.instance.source.pluginId}/${instance.instance.source.localId}`, configured: instance }));
         const source = testkitReadOnlySourceSnapshot().contributions[0]!;
         let paired = true;
+        let registryChanged: (() => void) | undefined;
         const observeRole = vi.fn(async () => { throw new PluginError({ code: 'plugin_action_read_only_required', message: 'Read observation refused' }); });
         // Real ownership and selected persistence observation; only host registry/Action transports are supplied.
         const context = { surface: 'ui', caller: { kind: 'plugin', pluginId: 'happier.triage' }, signal: new AbortController().signal,
             services: { storage: { account: { collection: (definition: { id: string }) => definition.id === 'session-links'
                 ? watchableCollections.sessionLinks : watchableCollections.sourceInstances } },
-                targetedContributions: { observeForSelf: () => ({ readCurrent: async () => ({ contributions: [{ ...source,
-                    descriptor: { ...source.descriptor, sessionRelations: { kindIds: ['pull-request'] } },
-                    operations: { readSessionLinks: { role: 'read' }, ...(paired ? { linkSession: { role: 'write' } } : {}) },
-                }] }), dispose() {} }) },
+                targetedContributions: { observeForSelf: (_point: unknown, options: { onInvalidated: () => void }) => {
+                    registryChanged ??= options.onInvalidated;
+                    return { readCurrent: async () => ({ contributions: [{ ...source,
+                        descriptor: { ...source.descriptor, sessionRelations: { kindIds: ['pull-request'] } },
+                        operations: { readSessionLinks: { role: 'read' }, ...(paired ? { linkSession: { role: 'write' } } : {}) },
+                    }] }), dispose() {} };
+                } },
                 actions: { observeAdmittedTargetedOperation: observeRole },
             },
         } as unknown as TriageDataActionContext;
@@ -178,13 +186,17 @@ describe('the composed relation dependency observer', () => {
         expect(observeRole).toHaveBeenCalledOnce();
         expect(invalidate).toHaveBeenCalledOnce(); // A refused observer is not a successful subscription.
         invalidate.mockClear();
+        registryChanged?.();
+        await vi.waitFor(() => expect(observeRole).toHaveBeenCalledTimes(2));
+        expect(invalidate).toHaveBeenCalledOnce(); // Refusal and membership change share one read demand.
+        invalidate.mockClear();
         await linkEntryToSession({ collections, entryRef: testkitEntryRef({ kindId: 'issue' }), sessionId: 'selected-session',
             display: { locator: { v: 1, displayPath: 'Issue' }, scopeLabel: 'example/repository' }, nowMs: 1 });
         expect(invalidate).toHaveBeenCalledOnce();
         await observer.dispose();
         paired = false;
         const unpaired = await observeTriageSourceSessionLinks({ v: 1, sessionId: 'selected-session' }, invalidate, context);
-        expect(observeRole).toHaveBeenCalledOnce();
+        expect(observeRole).toHaveBeenCalledTimes(2);
         await unpaired.dispose();
     });
 
@@ -293,7 +305,7 @@ describe('the composed relation dependency observer', () => {
         // Configuration removal rebuilds membership while retaining the
         // admitted non-owned corpus slice for this Session.
         control.sourceInstances.tombstone('a'.repeat(43));
-        await vi.waitFor(() => expect(invalidate).toHaveBeenCalledTimes(3));
+        await vi.waitFor(() => expect(invalidate).toHaveBeenCalledTimes(2));
         const afterConfiguration = invalidate.mock.calls.length;
         await write('selected-session', '3');
         expect(invalidate).toHaveBeenCalledTimes(afterConfiguration + 1);
