@@ -49,7 +49,7 @@ export function createCrabboxProvider(options: Readonly<{
         // A native lease exists independently of guest readiness. Preserve
         // even a confirmed-ended lease so ordinary Inspect can show its loss.
         if (observed.leaseState === 'active' || observed.leaseState === 'pending' || observed.cleanup === 'confirmed') {
-          return { kind: 'bound', resource: { contributionRef, schemaVersion: 1, value: observed.resource } };
+          return { kind: 'bound', resource: { origin: 'created' as const,  contributionRef, schemaVersion: 1, value: observed.resource } };
         }
         return { ...pending(), ...(observed.nativeCause ? { nativeCause: observed.nativeCause } : {}) };
       } catch (error) { return projectMachineProvisionerActionFailure(error, () => {
@@ -72,7 +72,7 @@ export function createCrabboxProvider(options: Readonly<{
       const cause = result.nativeCause ? { nativeCause: result.nativeCause } : {};
       if (result.status === 'refused') return { kind: 'rejected', code: 'provider_unavailable', ...cause };
       const reference = { contributionRef, schemaVersion: 1, value: result.resource };
-      return result.status === 'allocated' ? { kind: 'bound', resource: reference }
+      return result.status === 'allocated' ? { kind: 'bound', resource: { ...reference, origin: 'created' as const } }
         : { kind: 'pending', nativeOperationRef: reference, ...cause };
     },
     async bootstrap(input: Readonly<{ resource: CrabboxResourceV1; credentialRef?: Readonly<{ kind: 'shared_resource'; resourceId: string }> }>): Promise<MachineProvisionerBootstrapCarrierV1> {

@@ -58,7 +58,7 @@ describe('prepare managed opaque preset acquire', () => {
       billing: { location: 'cloud' as const, stoppedBilling: 'billed' as const },
       retentionCapabilities: { supportedIntents: ['start', 'delete'] }, prerequisites: [],
       retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false } satisfies NonNullable<ManagedMachinePresetContentV1['reviewedFacts']>;
-    const nativeResult = { kind: 'bound' as const, resource: { contributionRef: base.v.launch.provider,
+    const nativeResult = { kind: 'bound' as const, resource: { origin: 'created' as const, contributionRef: base.v.launch.provider,
       schemaVersion: 1, value: { namespace: 'private-namespace', transport: 'private-transport' } } };
     const prepared = prepareManagedOpaquePresetReportV1({ machine, content: base, recipients: [], accountId: 'account',
       randomBytes: length => new Uint8Array(length).fill(3), opened: { ...base.v, reviewedFacts }, nativeResult });

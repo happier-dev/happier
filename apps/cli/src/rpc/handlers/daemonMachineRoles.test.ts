@@ -23,7 +23,7 @@ describe('machine roles Manage admission', () => {
     registerDaemonMachineRolesRpcHandlers(manager, { roles, target: () => identity });
     const request = (role: 'use' | 'manage', actorAccountId: string) => ({ method: `machine:${RPC_METHODS.MACHINES_ROLES_SET}`,
       params: { machineId: 'machine', expectedMetadataVersion: 1, expectedPolicy: { active: ['sessions', 'broker', 'intake', 'deployments', 'workspaces', 'relay', 'memory', 'voice', 'devices'] },
-        policy: { active: ['broker'] } },
+        policy: { active: ['broker'] }, isolation: { environment: 'managed-guest', provisionerId: 'acme.compute/vm' } },
       callerAuthority: 'present_user' as const,
       machineAdmission: { machineId: identity.machineId, installationId: identity.installationId,
         custodianAccountId: identity.custodianAccountId, actorAccountId, role, encryptionMode: 'plain' as const } });
@@ -32,6 +32,7 @@ describe('machine roles Manage admission', () => {
       expect(writes).toBe(0);
       expect(await manager.handleRequest(request('manage', 'owner'))).toMatchObject({ status: 'applied', policy: { active: ['broker'] } });
       expect(writes).toBe(1);
+      expect(metadata.isolationV1).toEqual({ environment: 'managed-guest', provisionerId: 'acme.compute/vm' });
       expect(roles.isActive('sessions')).toBe(false);
     } finally { roles.stop(); }
   });

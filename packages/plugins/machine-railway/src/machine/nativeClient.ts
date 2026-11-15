@@ -60,7 +60,7 @@ export function createRailwayNativeClient(request: typeof fetch, signal?: AbortS
   }
   function acquired(native: Native, managedId: string): Acquisition {
     const operation = { kind: 'acquire', environmentId: native.environmentId, sandboxId: native.id, managedId } as const;
-    if (native.status === 'RUNNING' && native.idleTimeoutMinutes === 0) return { kind: 'bound', resource: reference({ sandboxId: native.id, environmentId: native.environmentId, managedId }) };
+    if (native.status === 'RUNNING' && native.idleTimeoutMinutes === 0) return { kind: 'bound', resource: { ...reference({ sandboxId: native.id, environmentId: native.environmentId, managedId }), origin: 'created' as const } };
     if (native.status === 'CREATING') return pending(operation);
     if (native.status === 'DESTROYED') return { kind: 'rejected', code: 'provider_unavailable' };
     return unknown(native.id, native.status === 'FAILED' ? 'railway_sandbox_failed' : native.status === 'DESTROYING' ? 'railway_sandbox_destroying' : 'railway_sandbox_unavailable');

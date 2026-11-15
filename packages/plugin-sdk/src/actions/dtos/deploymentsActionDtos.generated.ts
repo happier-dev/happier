@@ -3567,12 +3567,13 @@ export type DeploymentsActionInputById = {
                 installationId: string;
             };
             resource: {
+                value: unknown;
                 contributionRef: {
                     pluginId: string;
                     localId: string;
                 };
                 schemaVersion: number;
-                value: unknown;
+                origin?: 'created' | undefined;
                 devcontainerObservation?: undefined | {
                     nativeResourceId: string;
                     user: string;

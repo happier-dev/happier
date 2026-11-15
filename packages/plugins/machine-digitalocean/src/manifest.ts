@@ -117,12 +117,12 @@ export const PLUGIN = definePlugin({
       async run(input, context) {
         let recoveryTag: string;
         if ('nativeOperation' in input) {
-          if ('dropletId' in input.nativeOperation) return { kind: 'bound' as const, resource: resourceRef(input.nativeOperation) };
+          if ('dropletId' in input.nativeOperation) return { kind: 'bound' as const, resource: { ...resourceRef(input.nativeOperation), origin: 'created' as const } };
           recoveryTag = input.nativeOperation.recoveryTag;
         } else recoveryTag = `happier-${input.correlation.managedId}`;
         try {
           const result = await (await accountRuntime(context)).recover(recoveryTag);
-          if (result.kind === 'bound') return { kind: 'bound' as const, resource: resourceRef(result.resource) };
+          if (result.kind === 'bound') return { kind: 'bound' as const, resource: { ...resourceRef(result.resource), origin: 'created' as const } };
           return { ...pending(recoveryTag), ...('nativeCause' in result && result.nativeCause ? { nativeCause: result.nativeCause } : {}) };
         } catch { /* An unavailable read neither proves absence nor authorizes another purchase. */ }
         return pending(recoveryTag);
@@ -147,7 +147,7 @@ export const PLUGIN = definePlugin({
         try { const guestHostKey = guestHostLease && input.guestHostPublicKey !== undefined
           ? { publicKey: input.guestHostPublicKey, privateKey: new TextDecoder().decode(guestHostLease.bytes) } : undefined;
         const result = await (await accountRuntime(context, guestHostKey)).acquire({ launch: input.launch, name: `happier-${input.managedId}`, recoveryTag: `happier-${input.managedId}`, bootstrapSshPublicKey: input.bootstrapPublicKey });
-        if (result.kind === 'bound') return { kind: 'bound' as const, resource: resourceRef(result.resource) };
+        if (result.kind === 'bound') return { kind: 'bound' as const, resource: { ...resourceRef(result.resource), origin: 'created' as const } };
         if (result.kind === 'unknown') return { ...pending(`happier-${input.managedId}`), ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}) };
         return { kind: 'rejected' as const, code: 'provider_unavailable' as const,
           ...('nativeCause' in result && result.nativeCause ? { nativeCause: result.nativeCause } : {}) }; }

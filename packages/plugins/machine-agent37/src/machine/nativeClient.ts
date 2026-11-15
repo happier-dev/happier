@@ -164,7 +164,7 @@ export function createAgent37NativeClient(request: typeof fetch, signal: AbortSi
         if (response.status === 401 || response.status === 403) return { kind: 'rejected', code: 'credential_unavailable' };
         if (response.status >= 400 && response.status < 500 && response.status !== 408) return { kind: 'rejected', code: 'provider_unavailable' };
         const native = identity.safeParse(await json(response));
-        return native.success ? { kind: 'bound', resource: reference({ instanceId: native.data.id, managedId, ...launch }),
+        return native.success ? { kind: 'bound', resource: { ...reference({ instanceId: native.data.id, managedId, ...launch }), origin: 'created' as const },
           ...(native.data.status === 'running' ? {} : { startPending: true as const }) } : unknown(operation);
       } catch (error) { return projectMachineProvisionerActionFailure(error, () => safeCode(error) === 'credential_unavailable' ? { kind: 'rejected', code: 'credential_unavailable' } : unknown(operation)); }
     },

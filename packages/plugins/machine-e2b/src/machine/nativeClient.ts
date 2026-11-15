@@ -85,7 +85,7 @@ export function createE2bNativeClient(request: typeof fetch, signal: AbortSignal
         next = response.headers.get('x-next-token');
       } while (next);
       if (matches.size !== 1) return unknown(operation);
-      return { kind: 'bound', resource: reference({ sandboxId: [...matches][0]!, managedId: operation.managedId, timeoutSeconds: operation.launch.timeoutSeconds }) };
+      return { kind: 'bound', resource: { ...reference({ sandboxId: [...matches][0]!, managedId: operation.managedId, timeoutSeconds: operation.launch.timeoutSeconds }), origin: 'created' as const } };
     } catch (error) { return projectE2bNativeFailure(error, () => unknown(operation)); }
   }
   async function inspect(resource: E2bResource): Promise<MachineProvisionerObservationV1> {
@@ -168,7 +168,7 @@ export function createE2bNativeClient(request: typeof fetch, signal: AbortSignal
         if (response.status === 401 || response.status === 403) return { kind: 'rejected', code: 'credential_unavailable' };
         if (response.status >= 400 && response.status < 500 && response.status !== 409 && response.status !== 422) return { kind: 'rejected', code: 'provider_unavailable' };
         const decoded = identitySchema.safeParse(await json(response));
-        return decoded.success ? { kind: 'bound', resource: reference({ sandboxId: decoded.data.sandboxID, managedId, timeoutSeconds: launch.timeoutSeconds }) } : pending(operation);
+        return decoded.success ? { kind: 'bound', resource: { ...reference({ sandboxId: decoded.data.sandboxID, managedId, timeoutSeconds: launch.timeoutSeconds }), origin: 'created' as const } } : pending(operation);
       } catch (error) { return projectE2bNativeFailure(error, () => safeCode(error) === 'credential_unavailable' ? { kind: 'rejected', code: 'credential_unavailable' } : pending(operation)); }
     },
     recover, inspect, exec, power, destroy,

@@ -65,7 +65,7 @@ export function createDockerSandboxesProvider(exec: Pick<ExecService, 'run'>, ex
       const started = await native.start(resource, signal);
       if (started.status !== 'start-accepted') return pending(resource, 'nativeCause' in started ? started.nativeCause : undefined);
       if (await native.power(resource, signal) !== 'running') return pending(resource);
-      return { kind: 'bound' as const, resource: { contributionRef, schemaVersion: 1, value: resource } };
+      return { kind: 'bound' as const, resource: { origin: 'created' as const,  contributionRef, schemaVersion: 1, value: resource } };
     },
     async reconcile(input: unknown) {
       const parsed = DOCKER_SANDBOXES_RECONCILIATION_SCHEMAS.input.parse(input);
@@ -78,7 +78,7 @@ export function createDockerSandboxesProvider(exec: Pick<ExecService, 'run'>, ex
       const observed = await native.inspect(resource, signal);
       if ('presence' in observed && observed.presence === 'absent') return { kind: 'rejected' as const, code: 'managed_not_found' as const };
       return 'presence' in observed && observed.presence === 'present'
-        ? { kind: 'bound' as const, resource: { contributionRef, schemaVersion: 1, value: resource } }
+        ? { kind: 'bound' as const, resource: { origin: 'created' as const,  contributionRef, schemaVersion: 1, value: resource } }
         : pending(resource);
     },
     async bootstrap(resource: DockerSandboxesResourceV1) {

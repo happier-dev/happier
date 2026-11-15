@@ -121,7 +121,7 @@ describe('Docker Sandboxes managed provisioner roles', () => {
   it('uses the durable managed row name for mountless acquire and native detached lifetime without claiming enrollment', async () => {
     const process = { run: vi.fn<ExecService['run']>(async request => result(0, request.args?.[0] === 'template' ? `${launch.templateId}\n` : request.args?.[0] === 'ls' ? inventory(resource.sandboxName) : '')) };
     const provisioner = nativeModule.createDockerSandboxesProvider(process, executable, 123);
-    expect(await provisioner.acquire(launch, 'managed-row-1')).toEqual({ kind: 'bound', resource: {
+    expect(await provisioner.acquire(launch, 'managed-row-1')).toEqual({ kind: 'bound', resource: { origin: 'created',
       contributionRef: { pluginId: 'happier.machine.docker-sandboxes', localId: 'docker-sandboxes' }, schemaVersion: 1, value: resource,
     } });
     expect(process.run.mock.calls.map(([request]) => request.args)).toEqual([
@@ -153,7 +153,7 @@ describe('Docker Sandboxes managed provisioner roles', () => {
 
   it('recovers the exact retained native name read-only after a dropped acquire response', async () => {
     const process = { run: vi.fn<ExecService['run']>(async () => result(0, inventory(resource.sandboxName))) };
-    expect(await nativeModule.createDockerSandboxesProvider(process, executable, 123).reconcile({ nativeOperation: resource })).toEqual({ kind: 'bound', resource: {
+    expect(await nativeModule.createDockerSandboxesProvider(process, executable, 123).reconcile({ nativeOperation: resource })).toEqual({ kind: 'bound', resource: { origin: 'created',
       contributionRef: { pluginId: 'happier.machine.docker-sandboxes', localId: 'docker-sandboxes' }, schemaVersion: 1, value: resource,
     } });
     expect(process.run.mock.calls.every(([request]) => request.args?.[0] === 'ls')).toBe(true);
@@ -169,7 +169,7 @@ describe('Docker Sandboxes managed provisioner roles', () => {
     const process = { run: vi.fn<ExecService['run']>(async () => result(0, inventory(resource.sandboxName))) };
     expect(await nativeModule.createDockerSandboxesProvider(process, executable, 123).reconcile({
       correlation: { managedId: 'managed-row-1', requestId: 'original-request', launch },
-    })).toEqual({ kind: 'bound', resource: {
+    })).toEqual({ kind: 'bound', resource: { origin: 'created',
       contributionRef: { pluginId: 'happier.machine.docker-sandboxes', localId: 'docker-sandboxes' }, schemaVersion: 1, value: resource,
     } });
     expect(process.run.mock.calls.every(([request]) => request.args?.[0] === 'ls')).toBe(true);

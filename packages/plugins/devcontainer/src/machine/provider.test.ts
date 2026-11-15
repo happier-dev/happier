@@ -336,7 +336,7 @@ describe('Devcontainer native roles', () => {
     expect(other.launch.configPath).not.toBe(launch.configPath);
     expect(JSON.parse(await readFile(launch.configPath, 'utf8'))).toMatchObject({ image: 'example:latest' });
     await rm(launch.configPath);
-    expect(await h.provider.acquire(launch, 'managed-a')).toMatchObject({ kind: 'bound', resource: { value: { containerId } } });
+    expect(await h.provider.acquire(launch, 'managed-a')).toMatchObject({ kind: 'bound', resource: { origin: 'created', value: { containerId } } });
     expect(await h.provider.acquire(launch, 'managed-b')).toMatchObject({ kind: 'bound', resource: { value: { containerId: 'b'.repeat(64) } } });
     expect(await native().provider.rebuild({ ...resource, ...launch }, launch.reviewedEffectDigest)).toMatchObject({ kind: 'bound',
       resource: { value: { configuration, containerId: 'b'.repeat(64) } } });
@@ -604,7 +604,7 @@ describe('Devcontainer native roles', () => {
 
   it('rebuilds the exact retained installation and returns replacement identity with retained bind and external volume facts', async () => {
     const { provider, requests } = native();
-    expect(await provider.rebuild(resource, launch.reviewedEffectDigest)).toEqual({ kind: 'bound', resource: {
+    expect(await provider.rebuild(resource, launch.reviewedEffectDigest)).toEqual({ kind: 'bound', resource: { origin: 'created',
       contributionRef: { pluginId: 'happier.devcontainer', localId: 'devcontainer' }, schemaVersion: 1,
       value: { ...resource, containerId: 'b'.repeat(64) },
       devcontainerObservation: { nativeResourceId: 'b'.repeat(64), user: resource.user,
@@ -630,7 +630,7 @@ describe('Devcontainer native roles', () => {
 
   it('uses native custom user/root and inspected bind/volume facts for the retained resource', async () => {
     const { provider, requests } = native();
-    expect(await provider.acquire(launch, 'managed-a')).toEqual({ kind: 'bound', resource: {
+    expect(await provider.acquire(launch, 'managed-a')).toEqual({ kind: 'bound', resource: { origin: 'created',
       contributionRef: { pluginId: 'happier.devcontainer', localId: 'devcontainer' }, schemaVersion: 1, value: resource,
       devcontainerObservation: { nativeResourceId: containerId, user: resource.user,
         workspaceFolder: resource.workspaceRoot, storage: resource.storage },

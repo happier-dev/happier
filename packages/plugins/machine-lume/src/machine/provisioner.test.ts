@@ -48,7 +48,7 @@ describe('Lume managed provisioner', () => {
   });
   it('binds the exact existing guest even while native provisioning is incomplete', async () => {
     const { provider } = setup([Response.json({ ...details, status: 'provisioning' })]);
-    expect(await provider.reconcile(resource)).toMatchObject({ kind: 'bound', resource: { value: resource } });
+    expect(await provider.reconcile(resource)).toMatchObject({ kind: 'bound', resource: { origin: 'created', value: resource } });
   });
 
   it('retains typed route unavailability when the native start HTTP reply is lost', async () => {
@@ -182,7 +182,7 @@ describe('Lume managed provisioner', () => {
     const { provider } = setup([Response.json({ version: '0.6.1' }), Response.json([{ name: 'home' }]),
       Response.json({ name: resource.vmName, image: 'macos:26' }), Response.json(details),
       Response.json(details), Response.json({}, { status: 202 })]);
-    expect(await provider.acquire(launch, managedId)).toEqual({ kind: 'bound', startPending: true, resource: {
+    expect(await provider.acquire(launch, managedId)).toEqual({ kind: 'bound', startPending: true, resource: { origin: 'created',
       contributionRef: { pluginId: 'happier.machine.lume', localId: 'lume' }, schemaVersion: 1, value: resource } });
   });
 

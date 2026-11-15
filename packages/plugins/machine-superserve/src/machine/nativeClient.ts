@@ -45,7 +45,7 @@ export function createSuperserveNativeClient(request: typeof fetch, signal?: Abo
     try {
       const native = identity((await http(API_ORIGIN + '/sandboxes', 'POST', { name: operation.name, from_template: launch.template,
         metadata: { 'happier-managed-id': managedId }, preview_access: 'private' })).value, operation);
-      return { kind: 'bound', resource: reference({ sandboxId: native.id, name: native.name, managedId }) };
+      return { kind: 'bound', resource: { ...reference({ sandboxId: native.id, name: native.name, managedId }), origin: 'created' as const } };
     } catch (error) { return projectMachineProvisionerActionFailure(error, () => {
       if (error instanceof NativeError && error.status !== undefined && error.status >= 400 && error.status < 500 && error.status !== 409) return { kind: 'rejected', code: error.code === 'credential_unavailable' ? 'credential_unavailable' : 'provider_unavailable' };
       // An interrupted POST may already have allocated paid resources. Recover by metadata, never repurchase.
@@ -58,7 +58,7 @@ export function createSuperserveNativeClient(request: typeof fetch, signal?: Abo
       const response = (await http(API_ORIGIN + '/sandboxes?' + new URLSearchParams({ 'metadata.happier-managed-id': operation.managedId }))).value;
       if (!Array.isArray(response) || response.length !== 1) return pending(operation);
       const native = identity(response[0], operation);
-      return { kind: 'bound', resource: reference({ sandboxId: native.id, name: native.name, managedId: operation.managedId }) };
+      return { kind: 'bound', resource: { ...reference({ sandboxId: native.id, name: native.name, managedId: operation.managedId }), origin: 'created' as const } };
     } catch (error) { return projectMachineProvisionerActionFailure(error, () => pending(operation)); }
   }
   async function inspect(input: SuperserveResource): Promise<MachineProvisionerObservationV1> {

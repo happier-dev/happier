@@ -53,7 +53,7 @@ export function createUpstashBoxNativeClient(request: typeof fetch, signal?: Abo
     try {
       const native = identity(await http(UPSTASH_BOX_API, 'POST', { ...launch, name: operation.name,
         labels: [label(managedId)], keep_alive: false }), operation);
-      return { kind: 'bound', resource: reference(resource(native, managedId)) };
+      return { kind: 'bound', resource: { ...reference(resource(native, managedId)), origin: 'created' as const } };
     } catch (error) { return projectMachineProvisionerActionFailure(error, () => {
       if (error instanceof NativeError && error.status !== undefined && error.status >= 400 && error.status < 500 && error.status !== 409) return { kind: 'rejected', code: error.code === 'credential_unavailable' ? 'credential_unavailable' : 'provider_unavailable' };
       // Create can allocate before the response is lost. Reconcile only the captured label, never POST again.
@@ -65,7 +65,7 @@ export function createUpstashBoxNativeClient(request: typeof fetch, signal?: Abo
     if (operation.kind !== 'acquire') return { kind: 'rejected', code: 'invalid_request' };
     try {
       const native = identity(await http(path(operation.name)), operation);
-      return { kind: 'bound', resource: reference(resource(native, operation.managedId)) };
+      return { kind: 'bound', resource: { ...reference(resource(native, operation.managedId)), origin: 'created' as const } };
     } catch (error) { return projectMachineProvisionerActionFailure(error, () => pending(operation)); }
   }
   async function inspect(input: UpstashBoxResource): Promise<MachineProvisionerObservationV1> {

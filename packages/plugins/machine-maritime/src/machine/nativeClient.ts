@@ -58,8 +58,8 @@ export function createMaritimeNativeClient(request: typeof fetch, signal: AbortS
   }
   function bound(value: unknown, operation: MaritimeOperation): Acquisition {
     const native = identity(value, operation.launch.kind, operation.managedId);
-    return { kind: 'bound', resource: reference({ machineId: native.id, managedId: operation.managedId,
-      kind: operation.launch.kind, ...(operation.launch.kind === 'agent-box' ? { alwaysOn: operation.launch.alwaysOn } : {}) }) };
+    return { kind: 'bound', resource: { ...reference({ machineId: native.id, managedId: operation.managedId,
+      kind: operation.launch.kind, ...(operation.launch.kind === 'agent-box' ? { alwaysOn: operation.launch.alwaysOn } : {}) }), origin: 'created' as const } };
   }
   function acquired(value: unknown, operation: MaritimeOperation): Acquisition {
     const native = identity(value, operation.launch.kind, operation.managedId);

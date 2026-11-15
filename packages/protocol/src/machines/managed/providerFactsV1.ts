@@ -175,6 +175,8 @@ export const SharedSavedSecretRefV1Schema = lazyDefinition(() => z.strictObject(
 export const ManagedResourceV1Schema = lazyDefinition(() => z.strictObject({
   contributionRef: asProtocolZod(PluginContributionIdentityV1Schema),
   schemaVersion: z.int().check(z.gt(0)), value: PluginJsonValueV2Schema,
+  /** Set only by the creating provider; retained with the bound resource through enrollment/recovery. */
+  origin: z.optional(z.literal('created')),
   devcontainerObservation: z.optional(DevcontainerNativeObservationV1Schema),
 }));
 /** Diagnostic context only; enrollment still owns actual Home reachability. */

@@ -43,7 +43,7 @@ export async function mutateMachineMetadataFieldV1<T>(
   mutation: Readonly<{ expectedMetadataVersion: number; expectedPolicy: T; policy: T; comparison: 'field' | 'revision' }>,
   port: MachineMetadataFieldPortV1,
   definition: MachineMetadataFieldDefinitionV1<T>,
-  options?: Readonly<{ signal?: AbortSignal }>,
+  options?: Readonly<{ signal?: AbortSignal; seed?: Readonly<{ field: string; value: unknown }> }>,
 ): Promise<MachineMetadataFieldMutationResultV1<T>> {
   if (options?.signal?.aborted) return { status: 'cancelled' as const };
   let snapshot = await readMachineMetadataSnapshotV1(port);
@@ -53,17 +53,20 @@ export async function mutateMachineMetadataFieldV1<T>(
     if (mutation.comparison === 'revision' && snapshot.metadataVersion !== mutation.expectedMetadataVersion) {
       return { status: 'conflict' as const, policy: current.policy, metadataVersion: snapshot.metadataVersion };
     }
-    if (definition.equal(current.policy, mutation.policy)) return {
+    const seed = options?.seed;
+    const seedMissing = seed !== undefined && snapshot.metadata[seed.field] === undefined;
+    if (definition.equal(current.policy, mutation.policy) && !seedMissing) return {
       status: definition.equal(current.policy, mutation.expectedPolicy) ? 'unchanged' as const : 'satisfied' as const,
       policy: current.policy, metadataVersion: snapshot.metadataVersion,
     };
-    if (!definition.equal(current.policy, mutation.expectedPolicy) || snapshot.metadataVersion < mutation.expectedMetadataVersion) {
+    if ((!definition.equal(current.policy, mutation.expectedPolicy) && !definition.equal(current.policy, mutation.policy)) || snapshot.metadataVersion < mutation.expectedMetadataVersion) {
       return { status: 'conflict' as const, policy: current.policy, metadataVersion: snapshot.metadataVersion };
     }
     if (options?.signal?.aborted) return { status: 'cancelled' as const };
     let answer: Awaited<ReturnType<MachineMetadataFieldPortV1['compareAndSwap']>>;
     try {
-      answer = await port.compareAndSwap({ metadata: { ...snapshot.metadata, [definition.field]: mutation.policy }, expectedMetadataVersion: snapshot.metadataVersion });
+      answer = await port.compareAndSwap({ metadata: { ...snapshot.metadata, [definition.field]: mutation.policy,
+        ...(seedMissing ? { [seed.field]: seed.value } : {}) }, expectedMetadataVersion: snapshot.metadataVersion });
     } catch { answer = { status: 'outcomeUnknown' }; }
     if (answer.status === 'conflict') {
       snapshot = { ...answer, status: 'ready' };
@@ -74,6 +77,7 @@ export async function mutateMachineMetadataFieldV1<T>(
     if (answer.status === 'applied') {
       const observed = readMachineMetadataFieldV1(answer.metadata, definition);
       return observed.status === 'ready' && definition.equal(observed.policy, mutation.policy)
+        && (!seed || answer.metadata[seed.field] !== undefined)
         ? { status: 'applied' as const, policy: observed.policy, metadataVersion: answer.metadataVersion }
         : { status: 'outcomeUnknown' as const };
     }
@@ -82,7 +86,8 @@ export async function mutateMachineMetadataFieldV1<T>(
     const observation = await readMachineMetadataSnapshotV1(port);
     if (observation.status === 'ready') {
       const observed = readMachineMetadataFieldV1(observation.metadata, definition);
-      if (observed.status === 'ready' && definition.equal(observed.policy, mutation.policy)) {
+      if (observed.status === 'ready' && definition.equal(observed.policy, mutation.policy)
+        && (!seed || observation.metadata[seed.field] !== undefined)) {
         return { status: 'satisfied' as const, policy: observed.policy, metadataVersion: observation.metadataVersion };
       }
     }

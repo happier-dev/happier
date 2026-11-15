@@ -48,12 +48,13 @@ export type PluginDevLoopActionInputById = {
             expectedAllocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
             responsibility: 'manual';
             expectedResource?: undefined | {
+                value: unknown;
                 contributionRef: {
                     pluginId: string;
                     localId: string;
                 };
                 schemaVersion: number;
-                value: unknown;
+                origin?: 'created' | undefined;
                 devcontainerObservation?: undefined | {
                     nativeResourceId: string;
                     user: string;
@@ -97,12 +98,13 @@ export type PluginDevLoopActionInputById = {
             expectedAllocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
             responsibility: 'manual';
             expectedResource?: undefined | {
+                value: unknown;
                 contributionRef: {
                     pluginId: string;
                     localId: string;
                 };
                 schemaVersion: number;
-                value: unknown;
+                origin?: 'created' | undefined;
                 devcontainerObservation?: undefined | {
                     nativeResourceId: string;
                     user: string;

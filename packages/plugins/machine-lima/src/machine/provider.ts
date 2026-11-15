@@ -274,7 +274,7 @@ export function createLimaProvider<TResult extends LimaCommandResult, TChannel =
           const started = await changeLimaPower({ executor, ...expected, intent: 'start' });
           if (started.status.toLowerCase() !== 'running') throw Object.assign(new Error('Lima startup is unconfirmed'), { code: 'lima_start_unconfirmed' });
         }
-        return { kind: 'bound' as const, resource: { contributionRef, schemaVersion: 1, value: expected } };
+        return { kind: 'bound' as const, resource: { origin: 'created' as const,  contributionRef, schemaVersion: 1, value: expected } };
       } catch (error) {
         return { kind: 'unknown' as const, recovery: { reference: `${expected.store}/${expected.instance}`, reason: refusalCode(error) },
           ...nativeFailure(error) };
@@ -296,7 +296,7 @@ export function createLimaProvider<TResult extends LimaCommandResult, TChannel =
       try {
         const { resource, native } = await inspectExact(expected);
         if (!native) return { kind: 'rejected' as const, code: 'managed_not_found' as const };
-        return { kind: 'bound' as const, resource: { contributionRef, schemaVersion: 1, value: resource } };
+        return { kind: 'bound' as const, resource: { origin: 'created' as const,  contributionRef, schemaVersion: 1, value: resource } };
       } catch (error) {
         return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const,
           recovery: { reference: `${expected.store}/${expected.instance}`, reason: refusalCode(error) } }));

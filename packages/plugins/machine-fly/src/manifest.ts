@@ -191,7 +191,7 @@ export const PLUGIN = definePlugin({
         if (result.kind === 'rejected') return { kind: 'rejected', code: result.reason === 'provider-unavailable' ? 'provider_unavailable' : 'invalid_request',
           ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}) };
         const reference = { contributionRef: { pluginId: PLUGIN_ID, localId: PROVISIONER_ID }, schemaVersion: 1 };
-        return result.kind === 'bound' ? { kind: 'bound', resource: { ...reference, value: result.resource } }
+        return result.kind === 'bound' ? { kind: 'bound', resource: { origin: 'created' as const,  ...reference, value: result.resource } }
           : { kind: 'pending', nativeOperationRef: { ...reference, value: { operation: result.operation, launch: input.launch } },
             ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}) };
       },
@@ -201,7 +201,7 @@ export const PLUGIN = definePlugin({
       async run(input, context) {
         let native: { operation: FlyAcquireOperationV1; launch: FlyLaunchV1 };
         if ('nativeOperation' in input) {
-          if ('machineId' in input.nativeOperation) return { kind: 'bound', resource: {
+          if ('machineId' in input.nativeOperation) return { kind: 'bound', resource: { origin: 'created' as const,
             contributionRef: { pluginId: PLUGIN_ID, localId: PROVISIONER_ID }, schemaVersion: 1, value: input.nativeOperation,
           } };
           native = input.nativeOperation;
@@ -220,7 +220,7 @@ export const PLUGIN = definePlugin({
         const { operation, launch } = native;
         const result = await runtime(context).recover(operation, launch, FLY_GUEST_BOOT);
         const reference = { contributionRef: { pluginId: PLUGIN_ID, localId: PROVISIONER_ID }, schemaVersion: 1 };
-        return result.kind === 'bound' ? { kind: 'bound', resource: { ...reference, value: result.resource } }
+        return result.kind === 'bound' ? { kind: 'bound', resource: { origin: 'created' as const,  ...reference, value: result.resource } }
           : { kind: 'pending', nativeOperationRef: { ...reference, value: native },
             ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}) };
       },

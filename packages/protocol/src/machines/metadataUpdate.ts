@@ -2,6 +2,23 @@ import { z } from '../zodRuntimePolicy.js';
 
 import { AnyClientUpgradeRequiredV1Schema } from '../clientCompatibility/upgradeRequiredV1.js';
 import { MachineEncodedWriteBasisV1Schema } from './machineContentKeyTransitionV1.js';
+import { parseQualifiedPluginContributionKey } from '../plugins/contributionIdentity.js';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
+
+/** Provider-authored creation provenance, recorded once on the enrolled Machine. */
+export const MachineIsolationV1Schema = z.strictObject({
+  environment: z.literal('managed-guest'),
+  provisionerId: z.string().check(z.refine(value => parseQualifiedPluginContributionKey(value) !== null)),
+});
+export type MachineIsolationV1 = z.infer<typeof MachineIsolationV1Schema>;
+const storedMachineIsolationV1Schema = createStoredReadSchema(MachineIsolationV1Schema);
+
+/** Absent or unreadable provenance never weakens a host's sandbox default. */
+export function readMachineIsolationV1(openedMetadata: unknown): MachineIsolationV1 | null {
+  if (!openedMetadata || typeof openedMetadata !== 'object' || Array.isArray(openedMetadata)) return null;
+  const parsed = storedMachineIsolationV1Schema.safeParse(Reflect.get(openedMetadata, 'isolationV1'));
+  return parsed.success ? parsed.data : null;
+}
 
 export const MachineUpdateMetadataRequestSchema = z.strictObject({
     ...MachineEncodedWriteBasisV1Schema.shape,

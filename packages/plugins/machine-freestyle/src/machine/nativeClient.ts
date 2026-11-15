@@ -64,7 +64,7 @@ export function createFreestyleNativeClient(request: typeof fetch, signal?: Abor
       const native = identity(await http(FREESTYLE_API + '/vms', 'POST', { ...launch, slug: operation.name,
         metadata: { 'happier-managed-id': managedId }, autoDeleteSeconds: -1, idleTimeoutSeconds: -1,
         firewall: { rules: [{ action: 'allow', source: {}, destination: { public: true } }] } }), operation);
-      return { kind: 'bound', resource: reference(resource(native, managedId)) };
+      return { kind: 'bound', resource: { ...reference(resource(native, managedId)), origin: 'created' as const } };
     } catch (error) { return projectMachineProvisionerActionFailure(error, () => {
       if (error instanceof NativeError && error.status !== undefined && error.status >= 400 && error.status < 500 && error.status !== 409) return { kind: 'rejected', code: error.code === 'credential_unavailable' ? 'credential_unavailable' : 'provider_unavailable' };
       // An interrupted create may already be paid; recovery reads the exact retained name, never creates.
@@ -75,7 +75,7 @@ export function createFreestyleNativeClient(request: typeof fetch, signal?: Abor
     const operation = FreestyleOperationSchema.parse(input);
     try {
       const native = identity(await http(path(operation.name)), operation);
-      return { kind: 'bound', resource: reference(resource(native, operation.managedId)) };
+      return { kind: 'bound', resource: { ...reference(resource(native, operation.managedId)), origin: 'created' as const } };
     } catch (error) { return projectMachineProvisionerActionFailure(error, () => pending(operation)); }
   }
   async function inspect(input: FreestyleResource): Promise<MachineProvisionerObservationV1> {

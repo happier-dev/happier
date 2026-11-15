@@ -321,7 +321,7 @@ describe('public digitalocean machine provisioner', () => {
       if (selected.kind !== 'ready') throw new Error('Expected an executable native selection');
       const result = exports.ROLE_SCHEMAS.acquireResult.parse(await runtime.handlers.get('acquire')!(
         { launch: selected.launch, managedId: 'cmvnxb7gn009mmcagisyszwlh', bootstrapPublicKey: 'ssh-ed25519 public' }, runtime.context));
-      expect(result).toEqual({ kind: 'bound', resource: {
+      expect(result).toEqual({ kind: 'bound', resource: { origin: 'created',
         contributionRef: { pluginId: 'happier.machine.digitalocean', localId: 'digitalocean' }, schemaVersion: 1, value: resource,
       } });
     }
@@ -459,7 +459,7 @@ describe('public digitalocean machine provisioner', () => {
       { nativeOperation: { recoveryTag: 'happier-pending-1' } }, runtime.context));
     expect(result).toEqual(cpuMatch
       ? { kind: 'pending', nativeOperationRef: { contributionRef: { pluginId: 'happier.machine.digitalocean', localId: 'digitalocean' }, schemaVersion: 1, value: { recoveryTag: 'happier-pending-1' } } }
-      : { kind: 'bound', resource: { contributionRef: { pluginId: 'happier.machine.digitalocean', localId: 'digitalocean' }, schemaVersion: 1, value: { dropletId: 43, ownedVolumeIds: [] } } });
+      : { kind: 'bound', resource: { origin: 'created', contributionRef: { pluginId: 'happier.machine.digitalocean', localId: 'digitalocean' }, schemaVersion: 1, value: { dropletId: 43, ownedVolumeIds: [] } } });
     expect(runtime.requests).toHaveLength(3);
     expect(runtime.requests.every(request => request.method === 'GET')).toBe(true);
   });

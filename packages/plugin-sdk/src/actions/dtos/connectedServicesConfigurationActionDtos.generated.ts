@@ -275,12 +275,13 @@ export type ConnectedServicesConfigurationActionInputById = {
             expectedAllocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
             responsibility: 'manual';
             expectedResource?: undefined | {
+                value: unknown;
                 contributionRef: {
                     pluginId: string;
                     localId: string;
                 };
                 schemaVersion: number;
-                value: unknown;
+                origin?: 'created' | undefined;
                 devcontainerObservation?: undefined | {
                     nativeResourceId: string;
                     user: string;
@@ -6118,12 +6119,13 @@ export type ConnectedServicesConfigurationActionResultById = {
                 installationId: string;
             };
             resource?: undefined | {
+                value: PluginJsonValueV2;
                 contributionRef: {
                     pluginId: string;
                     localId: string;
                 };
                 schemaVersion: number;
-                value: PluginJsonValueV2;
+                origin?: 'created' | undefined;
                 devcontainerObservation?: undefined | {
                     nativeResourceId: string;
                     user: string;

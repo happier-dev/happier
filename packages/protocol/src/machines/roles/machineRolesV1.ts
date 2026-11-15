@@ -8,6 +8,7 @@ import {
   type MachineMetadataFieldPortV1,
 } from '../machineMetadataFieldV1.js';
 import type { ManagedMachineEnrollmentIdentityV1 } from '../managed/enrollmentIdentityV1.js';
+import { MachineIsolationV1Schema } from '../metadataUpdate.js';
 
 /**
  * The nine built-in Machine roles. Machine core (identity, credentials,
@@ -73,6 +74,8 @@ export const MachineRolesMutationV1Schema = lazyZodSchema(() => z.strictObject({
   expectedPolicy: MachineRolesPolicyV1Schema,
   expectedMetadataVersion: z.number().check(z.int(), z.nonnegative()),
   policy: MachineRolesPolicyV1Schema,
+  /** Creation enrollment seeds this once in the same metadata CAS as default roles. */
+  isolation: z.optional(MachineIsolationV1Schema),
 }));
 export type MachineRolesMutationV1 = z.infer<typeof MachineRolesMutationV1Schema>;
 
@@ -111,7 +114,8 @@ export async function mutateMachineRolesV1(input: unknown, port: MachineMetadata
   options?: Readonly<{ signal?: AbortSignal }>): Promise<MachineRolesMutationResultV1> {
   const parsed = MachineRolesMutationV1Schema.safeParse(input);
   if (!parsed.success) return { status: 'invalid' };
-  return mutateMachineMetadataFieldV1({ ...parsed.data, comparison: 'field' }, port, machineRolesMetadataFieldV1, options);
+  return mutateMachineMetadataFieldV1({ ...parsed.data, comparison: 'field' }, port, machineRolesMetadataFieldV1,
+    { ...options, ...(parsed.data.isolation ? { seed: { field: 'isolationV1', value: parsed.data.isolation } } : {}) });
 }
 
 /**

@@ -169,7 +169,7 @@ export function createBoatPlugin(resolveSshBootstrap?: typeof resolveMachineProv
         }
         try {
           const result = await runtime(context).reconcileAcquire(operation);
-          if (result.kind === 'bound') return { kind: 'bound' as const, resource: resourceRef(result.resource) };
+          if (result.kind === 'bound') return { kind: 'bound' as const, resource: { ...resourceRef(result.resource), origin: 'created' as const } };
           if (result.kind === 'pending') return pending(result.operation, result.nativeCause);
           const cause = result.nativeCause ? { nativeCause: result.nativeCause } : {};
           if (result.kind === 'unknown') return { kind: 'unknown' as const, recovery: { reference: operation.idempotencyKey, reason: result.code }, ...cause };
@@ -215,7 +215,7 @@ export function createBoatPlugin(resolveSshBootstrap?: typeof resolveMachineProv
         if (!input.managedId) return { kind: 'rejected' as const, code: 'invalid_request' as const };
         try {
           const result = await runtime(context).acquire({ launch: input.launch, idempotencyKey: input.managedId });
-          if (result.kind === 'bound') return { kind: 'bound' as const, resource: resourceRef(result.resource) };
+          if (result.kind === 'bound') return { kind: 'bound' as const, resource: { ...resourceRef(result.resource), origin: 'created' as const } };
           if (result.kind === 'pending') return pending(result.operation, result.nativeCause);
           const cause = result.nativeCause ? { nativeCause: result.nativeCause } : {};
           if (result.kind === 'unknown') return { kind: 'unknown' as const, recovery: { reference: input.managedId, reason: result.code }, ...cause };

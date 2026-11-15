@@ -2076,6 +2076,7 @@ export type LocalServicesActionsActionResultById = {
                     };
                     schemaVersion: number;
                     value: PluginJsonValueV2;
+                    origin?: 'created' | undefined;
                     devcontainerObservation?: undefined | {
                         nativeResourceId: string;
                         user: string;

@@ -9,8 +9,8 @@ import { QualifiedConnectedAccountRefSchema } from '../../connect/qualifiedConne
 import { QualifiedConnectedAccountPurposeV1Schema } from '../../connect/connectedAccountPurposeIdentity.js';
 import { QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema, type ConnectedAccountActionFormSelectionV1 } from '../../connect/connectedAccountPurposeBindings.js';
 import { createManagedConfigurationFactsV1Schema } from './managedConfigurationV1.js';
-import { ManagedNativeOperationReferenceV1Schema, ManagedOpaquePresetObservationV1Schema, ManagedRecoveryHintV1Schema, ProviderObservationV1Schema, SharedSavedSecretRefV1Schema, SupportedNativeIntentSchema } from './providerFactsV1.js';
-import { DevcontainerChildProjectionV1Schema, DevcontainerNativeObservationV1Schema, deriveManagedDevcontainerChildProjectionV1, managedDevcontainerChildProjectionsEqualV1 } from './devcontainerV1.js';
+import { ManagedResourceV1Schema, ManagedNativeOperationReferenceV1Schema, ManagedOpaquePresetObservationV1Schema, ManagedRecoveryHintV1Schema, ProviderObservationV1Schema, SharedSavedSecretRefV1Schema, SupportedNativeIntentSchema } from './providerFactsV1.js';
+import { DevcontainerChildProjectionV1Schema, deriveManagedDevcontainerChildProjectionV1, managedDevcontainerChildProjectionsEqualV1 } from './devcontainerV1.js';
 import { MachineSetupV1Schema } from './machineSetupV1.js';
 import { ManagedMachineEnrollmentIdentityV1Schema } from './enrollmentIdentityV1.js';
 import { MachineInstallationPublicKeySchema } from '../identity/installationKeySchemas.js';
@@ -159,8 +159,7 @@ export function createManagedMachineV1BaseShape<Launch extends z.core.$ZodType, 
     bootstrapCredentialRef: z.optional(SharedSavedSecretRefV1Schema),
     /** Successful CLI installation on the retained resource; absence is unknown. */
     bootstrapInstalled: z.optional(z.literal(true)),
-    resource: z.optional(z.strictObject({ contributionRef: asProtocolZod(PluginContributionIdentityV1Schema), schemaVersion: z.int().check(z.gt(0)), value: native,
-      devcontainerObservation: z.optional(DevcontainerNativeObservationV1Schema) })),
+    resource: z.optional(z.strictObject({ ...ManagedResourceV1Schema.shape, value: native })),
     devcontainerChild: z.optional(DevcontainerChildProjectionV1Schema),
     enrolledMachineId: z.optional(id()), desired: SupportedNativeIntentSchema,
     desiredWhen: z.enum(['now', 'after-idle']), desiredAfterMs: z.optional(z.number().check(z.gt(0))),

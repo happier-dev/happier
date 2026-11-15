@@ -106,12 +106,12 @@ export const PLUGIN = definePlugin({
         let correlation: string;
         if ('nativeOperation' in input) {
           if ('serverId' in input.nativeOperation) return { kind: 'bound' as const,
-            resource: resourceRef({ serverId: input.nativeOperation.serverId, owned: input.nativeOperation.owned }) };
+            resource: { ...resourceRef({ serverId: input.nativeOperation.serverId, owned: input.nativeOperation.owned }), origin: 'created' as const } };
           correlation = input.nativeOperation.correlation;
         } else correlation = input.correlation.managedId;
         try {
           const result = await (await runtime(context)).recover(correlation);
-          if (result.kind === 'bound') return { kind: 'bound' as const, resource: resourceRef(result.resource) };
+          if (result.kind === 'bound') return { kind: 'bound' as const, resource: { ...resourceRef(result.resource), origin: 'created' as const } };
           if (result.kind === 'rejected') return result;
           return pending(correlation, result.nativeCause);
         } catch (error) { return projectMachineProvisionerActionFailure(error, () => pending(correlation, error instanceof HetznerNativeError ? error.nativeCause : undefined)); }
@@ -140,7 +140,7 @@ export const PLUGIN = definePlugin({
         try { const result = await (await runtime(context, guestHostCredential && {
           publicKey: guestHostCredential.publicKey, privateKey: new TextDecoder().decode(guestHostCredential.lease.bytes),
         })).acquire({ launch: input.launch, name: `happier-${input.managedId}`, correlation: input.managedId, bootstrapSshPublicKey: input.bootstrapPublicKey });
-        if (result.kind === 'bound') return { kind: 'bound' as const, resource: resourceRef(result.resource) };
+        if (result.kind === 'bound') return { kind: 'bound' as const, resource: { ...resourceRef(result.resource), origin: 'created' as const } };
         const nativeCause = 'nativeCause' in result ? result.nativeCause : undefined;
         return result.kind === 'rejected' ? { kind: 'rejected' as const, code: 'provider_unavailable' as const, ...(nativeCause ? { nativeCause } : {}) }
           : pending(input.managedId, nativeCause); }

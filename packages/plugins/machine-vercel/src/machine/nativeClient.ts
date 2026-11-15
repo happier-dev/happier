@@ -211,7 +211,7 @@ export function createVercelNativeClient(inputScope: VercelScope, request: typeo
     if (decoded.kind !== 'present') return pending(identity ? { ...operation.data, createdAt: identity.createdAt } : operation.data,
       created.kind === 'ok' ? undefined : created.nativeCause);
     // Capture paid identity even after cancellation; no bootstrap effect follows here.
-    return { kind: 'bound', resource: reference({ ...scope, name: operation.data.name, managedId, createdAt: decoded.value.sandbox.createdAt }) };
+    return { kind: 'bound', resource: { ...reference({ ...scope, name: operation.data.name, managedId, createdAt: decoded.value.sandbox.createdAt }), origin: 'created' as const } };
   }
   async function recover(input: VercelOperation): Promise<Acquisition> {
     const operation = VercelOperationSchema.parse(input);
@@ -219,8 +219,8 @@ export function createVercelNativeClient(inputScope: VercelScope, request: typeo
     const response = await readNamed(operation);
     const result = decodeNative(response, operation);
     const identity = returnedIdentity(response, operation);
-    return result.kind === 'present' ? { kind: 'bound', resource: reference({ ...scope, name: operation.name,
-      managedId: operation.managedId, createdAt: result.value.sandbox.createdAt }) }
+    return result.kind === 'present' ? { kind: 'bound', resource: { ...reference({ ...scope, name: operation.name,
+      managedId: operation.managedId, createdAt: result.value.sandbox.createdAt }), origin: 'created' as const } }
       : pending(identity ? { ...operation, createdAt: identity.createdAt } : operation,
         result.kind === 'absent' ? undefined : result.nativeCause);
   }

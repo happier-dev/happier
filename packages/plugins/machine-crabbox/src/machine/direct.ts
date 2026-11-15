@@ -107,7 +107,7 @@ export async function createCrabboxDirectProvider(context: PluginInvocationConte
             ...(launch.localContainerMemory ? ['--local-container-memory', launch.localContainerMemory] : [])]);
           if (!completed(result)) return pending(resource);
           const status = await observe(resource, run);
-          return { kind: 'bound', resource: reference({ ...resource, nativeInstanceId: status.serverId }) };
+          return { kind: 'bound', resource: { ...reference({ ...resource, nativeInstanceId: status.serverId }), origin: 'created' as const } };
         });
       } catch (error) { return projectMachineProvisionerActionFailure(error, () => submitted ? pending(resource) : { kind: 'rejected', code: 'credential_unavailable' }); }
     },
@@ -116,7 +116,7 @@ export async function createCrabboxDirectProvider(context: PluginInvocationConte
       try {
         return await withNative(resource, async run => {
           const status = await observe(resource, run);
-          return { kind: 'bound', resource: reference({ ...resource, nativeInstanceId: status.serverId }) };
+          return { kind: 'bound', resource: { ...reference({ ...resource, nativeInstanceId: status.serverId }), origin: 'created' as const } };
         });
       } catch (error) { return projectMachineProvisionerActionFailure(error, () => crabboxErrorCode(error) === 'resource_mismatch' ? { kind: 'rejected', code: 'resource_mismatch' } : pending(resource)); }
     },

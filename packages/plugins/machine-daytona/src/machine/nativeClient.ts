@@ -62,7 +62,7 @@ export function createDaytonaNativeClient(request: typeof fetch, signal?: AbortS
     try {
       const native = identity(await http(DAYTONA_API + '/sandbox', 'POST', { ...launch, name: operation.name,
         labels: { 'happier-managed-id': managedId }, autoStopInterval: 0, autoPauseInterval: 0, autoDeleteInterval: -1 }), operation);
-      return { kind: 'bound', resource: reference(resource(native, managedId)) };
+      return { kind: 'bound', resource: { ...reference(resource(native, managedId)), origin: 'created' as const } };
     } catch (error) { return projectMachineProvisionerActionFailure(error, () => {
       if (error instanceof NativeError && error.status !== undefined && error.status >= 400 && error.status < 500 && error.status !== 409) return { kind: 'rejected', code: error.code === 'credential_unavailable' ? 'credential_unavailable' : 'provider_unavailable' };
       // An interrupted create may already be paid; recovery reads the exact retained name, never creates.
@@ -74,7 +74,7 @@ export function createDaytonaNativeClient(request: typeof fetch, signal?: AbortS
     if (operation.kind !== 'acquire') return { kind: 'rejected', code: 'invalid_request' };
     try {
       const native = identity(await http(path(operation.name)), operation);
-      return { kind: 'bound', resource: reference(resource(native, operation.managedId)) };
+      return { kind: 'bound', resource: { ...reference(resource(native, operation.managedId)), origin: 'created' as const } };
     } catch (error) { return projectMachineProvisionerActionFailure(error, () => pending(operation)); }
   }
   async function inspect(input: DaytonaResource): Promise<MachineProvisionerObservationV1> {

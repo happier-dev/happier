@@ -1698,6 +1698,7 @@ export type OperationOutputActionResultById = {
                     };
                     schemaVersion: number;
                     value: PluginJsonValueV2;
+                    origin?: 'created' | undefined;
                     devcontainerObservation?: undefined | {
                         nativeResourceId: string;
                         user: string;
@@ -3750,6 +3751,7 @@ export type OperationOutputActionResultById = {
                     };
                     schemaVersion: number;
                     value: PluginJsonValueV2;
+                    origin?: 'created' | undefined;
                     devcontainerObservation?: undefined | {
                         nativeResourceId: string;
                         user: string;

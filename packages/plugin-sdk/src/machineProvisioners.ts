@@ -125,6 +125,7 @@ export type DevcontainerNativeObservationV1 = Readonly<{
   storage: Readonly<{ kind: 'bind'; hostPath: string; childPath: string }> | Readonly<{ kind: 'child'; childPath: string }>;
 }>;
 export type MachineProvisionerResourceV1<TValue = ProtocolJsonValue> = Readonly<{ contributionRef: PluginContributionRef; schemaVersion: number; value: TValue;
+  origin?: 'created';
   devcontainerObservation?: DevcontainerNativeObservationV1 }>;
 export type MachineProvisionerRefusalCodeV1 = Extract<AcquireResultV1, { kind: 'rejected' }>['code'];
 export type MachineProvisionerAcquireResultV1<TResource = ProtocolJsonValue, TNativeOperation = ProtocolJsonValue> = Readonly<{ kind: 'bound'; resource: MachineProvisionerResourceV1<TResource>; startPending?: true }> | Readonly<{ kind: 'pending'; nativeOperationRef: MachineProvisionerResourceV1<TNativeOperation>; nativeCause?: MachineProvisionerNativeCauseV1 }> | Readonly<{ kind: 'unknown'; recovery: Readonly<{ reference: string; reason: string; consoleUrl?: string }>; nativeCause?: MachineProvisionerNativeCauseV1 }> | Readonly<{ kind: 'rejected'; code: MachineProvisionerRefusalCodeV1; nativeCause?: MachineProvisionerNativeCauseV1 }>;

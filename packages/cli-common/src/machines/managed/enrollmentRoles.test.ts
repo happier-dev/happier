@@ -2,6 +2,7 @@ import { expect, it } from 'vitest';
 import { ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { applyManagedMachineEnrollmentRoles } from './enrollmentRoles.js';
 import { ManagedMachineControllerError } from './controllerErrors.js';
+import { mutateMachineRolesV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 
 const machine = ManagedMachineFullV1Schema.parse({ id: 'managed', homeId: 'home', custodianAccountId: 'owner',
     launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'VM', choices: {} },
@@ -9,6 +10,50 @@ const machine = ManagedMachineFullV1Schema.parse({ id: 'managed', homeId: 'home'
     allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
     retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, enrolledMachineId: 'guest',
     enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } });
+
+it.each([
+    { kind: 'sandbox', contributionRef: { pluginId: 'happier.devcontainer', localId: 'devcontainer' }, provisionerId: 'happier.devcontainer/devcontainer' },
+    { kind: 'personal', contributionRef: { pluginId: 'happier.machine.lume', localId: 'lume' }, provisionerId: 'happier.machine.lume/lume' },
+] as const)('seeds created $kind isolation with roles once and preserves an incumbent fact', async ({ kind, contributionRef, provisionerId }) => {
+    let metadata: Record<string, unknown> = { host: 'guest' };
+    let metadataVersion = 0;
+    const writes: Record<string, unknown>[] = [];
+    const port = {
+        read: async () => ({ status: 'ready' as const, metadata, metadataVersion }),
+        compareAndSwap: async (input: { metadata: Record<string, unknown>; expectedMetadataVersion: number }) => {
+            expect(input.expectedMetadataVersion).toBe(metadataVersion);
+            metadata = input.metadata;
+            writes.push(metadata);
+            return { status: 'applied' as const, metadata, metadataVersion: ++metadataVersion };
+        },
+    };
+    const enrolled = ManagedMachineFullV1Schema.parse({ ...machine, launch: { ...machine.launch, provider: contributionRef },
+        resource: { ...machine.resource!, contributionRef, origin: 'created' },
+        enrollmentIdentity: kind === 'sandbox' ? machine.enrollmentIdentity : { kind: 'existingUser', role: 'personal' } });
+    const warnings: string[] = [];
+    const seed = () => applyManagedMachineEnrollmentRoles({ machine: enrolled, warn: code => warnings.push(code),
+        // The daemon RPC owner consumes routing before invoking the metadata mutation.
+        dispatch: ({ serverId: _serverId, machineId: _machineId, ...mutation }) => mutateMachineRolesV1(mutation, port) });
+    await seed();
+    expect(metadata.isolationV1).toEqual({ environment: 'managed-guest', provisionerId });
+    expect(ManagedMachineFullV1Schema.parse(enrolled).resource?.origin).toBe('created');
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toHaveProperty('rolesV1');
+    await seed();
+    expect(writes).toHaveLength(1);
+    metadata = { ...metadata, isolationV1: { environment: 'managed-guest', provisionerId: 'other/guest' } };
+    await seed();
+    expect(metadata.isolationV1).toEqual({ environment: 'managed-guest', provisionerId: 'other/guest' });
+    expect(writes).toHaveLength(1);
+    expect(warnings).toEqual([]);
+});
+
+it.each(['personal', 'adopted'] as const)('does not label existing %s hosts isolated without created provenance', async role => {
+    const writes: unknown[] = [];
+    await applyManagedMachineEnrollmentRoles({ machine: { ...machine, enrollmentIdentity: { kind: 'existingUser', role } },
+        warn: code => { throw new Error(code); }, dispatch: async input => { writes.push(input); return { status: 'unavailable' }; } });
+    expect(writes).toEqual([]);
+});
 
 it.each(['applied', 'satisfied', 'unchanged'] as const)('accepts a confirmed sandbox roles seed (%s)', async status => {
     const warnings: string[] = [];

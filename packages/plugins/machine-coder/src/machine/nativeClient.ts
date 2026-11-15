@@ -91,7 +91,7 @@ export function createCoderClient(input: { request: (path: string, init?: Reques
     if (native.latest_build.status === 'deleted') return { kind: 'rejected', code: 'managed_not_found' };
     // Allocation is real even when an agent is disconnected or Start failed.
     // Bind only after native creation settles; the shared bootstrap owns guest IO.
-    if (!inProgress(native.latest_build.status)) return { kind: 'bound', resource: reference(resourceFor(retained, native)) };
+    if (!inProgress(native.latest_build.status)) return { kind: 'bound', resource: { ...reference(resourceFor(retained, native)), origin: 'created' as const } };
     return pending(retained);
   }
   async function recover(raw: unknown): Promise<Acquisition> {

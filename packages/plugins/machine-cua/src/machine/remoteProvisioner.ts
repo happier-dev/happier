@@ -43,7 +43,7 @@ export async function invokeCuaRemoteRole(role: CuaRemoteRole, input: unknown, c
         const operation = { launch, sandboxId: `${launch.cloud}:${name}` };
         try {
             const result = await byoc.create(launch, name, signal);
-            if (result.kind === 'bound') return { kind: 'bound', resource: reference(result.resource) };
+            if (result.kind === 'bound') return { kind: 'bound', resource: { ...reference(result.resource), origin: 'created' as const } };
             if (result.kind === 'unavailable') return { kind: 'rejected', code: 'provider_unavailable' };
             return pending(operation, result.nativeCause);
         } catch (error) { projectMachineProvisionerActionFailure(error, () => {}); /* Submission may have allocated. Lookup, never repurchase. */ }
@@ -53,7 +53,7 @@ export async function invokeCuaRemoteRole(role: CuaRemoteRole, input: unknown, c
         const operation = byocReconciliationOperation(input);
         try {
             const result = await byoc.recover(operation.launch, operation.sandboxId, signal);
-            if (result.kind === 'bound') return { kind: 'bound', resource: reference(result.resource) };
+            if (result.kind === 'bound') return { kind: 'bound', resource: { ...reference(result.resource), origin: 'created' as const } };
         } catch (error) { projectMachineProvisionerActionFailure(error, () => {}); /* Reads cannot release custody or establish no-effect failure. */ }
         return pending(operation);
     }

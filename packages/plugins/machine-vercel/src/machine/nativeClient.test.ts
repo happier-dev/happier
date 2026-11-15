@@ -443,7 +443,7 @@ describe('Vercel retained REST resource', () => {
     const pending = await client.acquire(launch, resource.managedId);
     expect(pending).toEqual({ kind: 'pending', nativeOperationRef: reference({ kind: 'acquire', name: resource.name, managedId: resource.managedId, ...scope }) });
     const operation = { kind: 'acquire' as const, name: resource.name, managedId: resource.managedId, ...scope };
-    expect(await client.recover(operation)).toEqual({ kind: 'bound', resource: reference(resource) });
+    expect(await client.recover(operation)).toEqual({ kind: 'bound', resource: { ...reference(resource), origin: 'created' } });
     expect(calls.filter(call => call.init?.method === 'POST')).toHaveLength(1);
     const create = calls.find(call => call.url.pathname === '/v4/sandboxes');
     expect(JSON.parse(String(create!.init!.body))).toMatchObject({ persistent: true, snapshotExpiration: 0,
@@ -471,7 +471,7 @@ describe('Vercel retained REST resource', () => {
     ready = true; createdAt = 9999;
     expect(await client.recover(stored.nativeOperationRef.value)).toEqual(pending);
     createdAt = resource.createdAt;
-    expect(await client.recover(stored.nativeOperationRef.value)).toEqual({ kind: 'bound', resource: reference(resource) });
+    expect(await client.recover(stored.nativeOperationRef.value)).toEqual({ kind: 'bound', resource: { ...reference(resource), origin: 'created' } });
     expect(calls.filter(call => call.init?.method === 'POST')).toHaveLength(1);
   });
   it('observes timed-out retained stop without waking or doing guest IO', async () => {

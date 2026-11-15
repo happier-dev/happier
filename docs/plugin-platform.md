@@ -3923,6 +3923,15 @@ Explicit enrollment identities remain intact. These are initial review defaults,
 not proof of observed guest capabilities or permission to skip bootstrap checks;
 provisioners do not choose identity from their id, transport or image label.
 
+Creation provenance is separate from enrollment identity. A provisioner that
+binds a resource it created returns `resource.origin: 'created'` on the canonical
+bound result; recovery of that acquisition retains it. Caller acquire inputs and
+adoption of existing hosts supply no origin. Enrollment carries this optional
+fact through retained resource content and seeds Machine `isolationV1` once with
+the default roles metadata write, including Lume's personal-user guests.
+Protocol `machines/metadataUpdate` owns `readMachineIsolationV1(openedMetadata)`;
+Session defaults consume that fact rather than inferring isolation from roles.
+
 In 0.3 development source, Machine role authors use the public SDK's canonical
 schemas and native-schema helpers. Packaged Actions retain portable JSON Schema
 snapshots. Admission accepts older result snapshots that omit optional properties,

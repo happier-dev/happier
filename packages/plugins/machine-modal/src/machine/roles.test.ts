@@ -245,7 +245,7 @@ describe('Modal public machine provisioner roles', () => {
     const { roles, client, sandbox } = boundary();
     vi.mocked(client.sandboxes.list).mockImplementation(async function* () { yield sandbox; });
     expect(await roles.reconcile({ nativeOperation: { appReference: launch.appReference, managedId: 'managed-retained' } }))
-      .toEqual({ kind: 'bound', resource: { contributionRef: MODAL_CONTRIBUTION_REF, schemaVersion: 1, value: resource } });
+      .toEqual({ kind: 'bound', resource: { origin: 'created', contributionRef: MODAL_CONTRIBUTION_REF, schemaVersion: 1, value: resource } });
     expect(client.apps.fromName).toHaveBeenCalledWith(launch.appReference, { createIfMissing: false });
     expect(client.sandboxes.list).toHaveBeenCalledWith({ appId: resource.appId, tags: { 'happier.managed-id': 'managed-retained' } });
     expect(client.sandboxes.create).not.toHaveBeenCalled();
@@ -255,7 +255,7 @@ describe('Modal public machine provisioner roles', () => {
     const { roles, client, sandbox } = boundary();
     vi.mocked(client.sandboxes.list).mockImplementation(async function* () { yield sandbox; });
     expect(await roles.reconcile({ correlation: { managedId: 'managed-retained', requestId: 'original-request', launch } }))
-      .toEqual({ kind: 'bound', resource: { contributionRef: MODAL_CONTRIBUTION_REF, schemaVersion: 1, value: resource } });
+      .toEqual({ kind: 'bound', resource: { origin: 'created', contributionRef: MODAL_CONTRIBUTION_REF, schemaVersion: 1, value: resource } });
     expect(client.sandboxes.create).not.toHaveBeenCalled();
   });
 
@@ -297,7 +297,7 @@ describe('Modal public machine provisioner roles', () => {
 
   it('binds reviewed finite allocation to the native resource and refuses lossy durations before purchase', async () => {
     const { roles, client } = boundary();
-    expect(await roles.acquire({ launch, managedId: 'managed-retained' })).toEqual({ kind: 'bound', resource: {
+    expect(await roles.acquire({ launch, managedId: 'managed-retained' })).toEqual({ kind: 'bound', resource: { origin: 'created',
       contributionRef: MODAL_CONTRIBUTION_REF, schemaVersion: 1, value: resource,
     } });
     expect(await roles.acquire({ launch: { ...launch, timeoutMs: 1001 } })).toEqual({ kind: 'rejected', code: 'invalid_request' });

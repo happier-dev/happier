@@ -22,6 +22,10 @@ export type MachineRolesActionInputById = {
             active: string[];
         };
         serverId?: string | undefined;
+        isolation?: undefined | {
+            environment: 'managed-guest';
+            provisionerId: string;
+        };
     };
 };
 export type MachineRolesActionResultById = {

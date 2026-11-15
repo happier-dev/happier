@@ -22,7 +22,7 @@ export function registerDaemonMachineRolesRpcHandlers(rpc: RpcHandlerRegistrar, 
       || !doesMachineRpcTargetMatchAdmission(request, admission, current)) {
       throw new RpcError('Machine roles require Machine Manage access', RPC_ERROR_CODES.FORBIDDEN);
     }
-    const { expectedPolicy, expectedMetadataVersion, policy } = request;
-    return options.roles.set({ expectedPolicy, expectedMetadataVersion, policy }, { signal: context?.signal });
+    const { serverId: _serverId, machineId: _machineId, ...mutation } = request;
+    return options.roles.set(mutation, { signal: context?.signal });
   });
 }

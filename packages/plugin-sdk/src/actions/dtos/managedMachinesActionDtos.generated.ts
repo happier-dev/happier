@@ -12958,12 +12958,13 @@ export type ManagedMachinesActionResultById = {
             };
             bootstrapInstalled?: true | undefined;
             resource?: undefined | {
+                value: PluginJsonValueV2;
                 contributionRef: {
                     pluginId: string;
                     localId: string;
                 };
                 schemaVersion: number;
-                value: PluginJsonValueV2;
+                origin?: 'created' | undefined;
                 devcontainerObservation?: undefined | {
                     nativeResourceId: string;
                     user: string;
@@ -13858,12 +13859,13 @@ export type ManagedMachinesActionResultById = {
         };
         bootstrapInstalled?: true | undefined;
         resource?: undefined | {
+            value: PluginJsonValueV2;
             contributionRef: {
                 pluginId: string;
                 localId: string;
             };
             schemaVersion: number;
-            value: PluginJsonValueV2;
+            origin?: 'created' | undefined;
             devcontainerObservation?: undefined | {
                 nativeResourceId: string;
                 user: string;
@@ -14789,12 +14791,13 @@ export type ManagedMachinesActionResultById = {
             };
             bootstrapInstalled?: true | undefined;
             resource?: undefined | {
+                value: PluginJsonValueV2;
                 contributionRef: {
                     pluginId: string;
                     localId: string;
                 };
                 schemaVersion: number;
-                value: PluginJsonValueV2;
+                origin?: 'created' | undefined;
                 devcontainerObservation?: undefined | {
                     nativeResourceId: string;
                     user: string;
@@ -15727,12 +15730,13 @@ export type ManagedMachinesActionResultById = {
             };
             bootstrapInstalled?: true | undefined;
             resource?: undefined | {
+                value: PluginJsonValueV2;
                 contributionRef: {
                     pluginId: string;
                     localId: string;
                 };
                 schemaVersion: number;
-                value: PluginJsonValueV2;
+                origin?: 'created' | undefined;
                 devcontainerObservation?: undefined | {
                     nativeResourceId: string;
                     user: string;
@@ -16635,12 +16639,13 @@ export type ManagedMachinesActionResultById = {
         };
         bootstrapInstalled?: true | undefined;
         resource?: undefined | {
+            value: PluginJsonValueV2;
             contributionRef: {
                 pluginId: string;
                 localId: string;
             };
             schemaVersion: number;
-            value: PluginJsonValueV2;
+            origin?: 'created' | undefined;
             devcontainerObservation?: undefined | {
                 nativeResourceId: string;
                 user: string;
@@ -26244,12 +26249,13 @@ export type ManagedMachinesActionResultById = {
         };
         bootstrapInstalled?: true | undefined;
         resource?: undefined | {
+            value: PluginJsonValueV2;
             contributionRef: {
                 pluginId: string;
                 localId: string;
             };
             schemaVersion: number;
-            value: PluginJsonValueV2;
+            origin?: 'created' | undefined;
             devcontainerObservation?: undefined | {
                 nativeResourceId: string;
                 user: string;
@@ -27216,12 +27222,13 @@ export type ManagedMachinesActionResultById = {
         };
         bootstrapInstalled?: true | undefined;
         resource?: undefined | {
+            value: PluginJsonValueV2;
             contributionRef: {
                 pluginId: string;
                 localId: string;
             };
             schemaVersion: number;
-            value: PluginJsonValueV2;
+            origin?: 'created' | undefined;
             devcontainerObservation?: undefined | {
                 nativeResourceId: string;
                 user: string;
@@ -28115,12 +28122,13 @@ export type ManagedMachinesActionResultById = {
         };
         bootstrapInstalled?: true | undefined;
         resource?: undefined | {
+            value: PluginJsonValueV2;
             contributionRef: {
                 pluginId: string;
                 localId: string;
             };
             schemaVersion: number;
-            value: PluginJsonValueV2;
+            origin?: 'created' | undefined;
             devcontainerObservation?: undefined | {
                 nativeResourceId: string;
                 user: string;

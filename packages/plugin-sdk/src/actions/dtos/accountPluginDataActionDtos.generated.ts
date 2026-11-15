@@ -12,12 +12,13 @@ export type AccountPluginDataActionInputById = {
             expectedAllocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
             responsibility: 'manual';
             expectedResource?: undefined | {
+                value: unknown;
                 contributionRef: {
                     pluginId: string;
                     localId: string;
                 };
                 schemaVersion: number;
-                value: unknown;
+                origin?: 'created' | undefined;
                 devcontainerObservation?: undefined | {
                     nativeResourceId: string;
                     user: string;
@@ -87,12 +88,13 @@ export type AccountPluginDataActionResultById = {
                     installationId: string;
                 };
                 resource?: undefined | {
+                    value: PluginJsonValueV2;
                     contributionRef: {
                         pluginId: string;
                         localId: string;
                     };
                     schemaVersion: number;
-                    value: PluginJsonValueV2;
+                    origin?: 'created' | undefined;
                     devcontainerObservation?: undefined | {
                         nativeResourceId: string;
                         user: string;
@@ -230,12 +232,13 @@ export type AccountPluginDataActionResultById = {
                 installationId: string;
             };
             resource?: undefined | {
+                value: PluginJsonValueV2;
                 contributionRef: {
                     pluginId: string;
                     localId: string;
                 };
                 schemaVersion: number;
-                value: PluginJsonValueV2;
+                origin?: 'created' | undefined;
                 devcontainerObservation?: undefined | {
                     nativeResourceId: string;
                     user: string;
