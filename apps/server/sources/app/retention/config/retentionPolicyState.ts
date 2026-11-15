@@ -1,3 +1,4 @@
+import { readRetentionDomainDefinitions } from './retentionDomains';
 import type { RetentionDomainPolicies, RetentionPolicy } from './retentionPolicyTypes';
 
 const KEEP_FOREVER_POLICY = Object.freeze({ mode: 'keep_forever' as const });
@@ -10,12 +11,19 @@ export function resolveEffectiveRetentionEnabled(policy: RetentionPolicy): boole
     return policy.enabled && hasFiniteRetentionDomains(policy);
 }
 
+/**
+ * With the global switch off, every domain keeps its records except those declared to run
+ * regardless (`runsWhenGlobalPolicyIsDisabled`), which keep their own policy.
+ */
 export function resolveEffectiveRetentionDomains(policy: RetentionPolicy): RetentionDomainPolicies {
     if (resolveEffectiveRetentionEnabled(policy)) {
         return policy.domains;
     }
 
     return Object.freeze(Object.fromEntries(
-        Object.keys(policy.domains).map((id) => [id, KEEP_FOREVER_POLICY]),
+        readRetentionDomainDefinitions().map((definition) => [
+            definition.id,
+            definition.runsWhenGlobalPolicyIsDisabled ? policy.domains[definition.id] : KEEP_FOREVER_POLICY,
+        ]),
     )) as RetentionDomainPolicies;
 }

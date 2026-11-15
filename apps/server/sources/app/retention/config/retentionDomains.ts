@@ -16,7 +16,11 @@ export type RetentionDomainPolicyConfig = Readonly<
 export type RetentionDomainDefinition = Readonly<{
     id: RetentionDomainId;
     policyConfig: RetentionDomainPolicyConfig;
-    /** Account-owned retention that remains active without an operator age policy. */
+    /**
+     * The domain's rule runs, with its own policy, even when the global switch is off: Account-owned
+     * retention, intrinsic expiry, or a default the owner ruled must hold out of the box. The
+     * operator still turns it off per domain (`keep_forever`).
+     */
     runsWhenGlobalPolicyIsDisabled?: true;
 }>;
 
@@ -48,7 +52,13 @@ const RETENTION_DOMAIN_DEFINITIONS = Object.freeze({
     voiceSessionLeases: { id: 'voiceSessionLeases', policyConfig: ageConfig('VOICE_SESSION_LEASES') },
     userFeedItems: { id: 'userFeedItems', policyConfig: ageConfig('USER_FEED_ITEMS') },
     sessionShareAccessLogs: { id: 'sessionShareAccessLogs', policyConfig: ageConfig('SESSION_SHARE_ACCESS_LOGS') },
-    publicShareAccessLogs: { id: 'publicShareAccessLogs', policyConfig: ageConfig('PUBLIC_SHARE_ACCESS_LOGS') },
+    // Owner ruling 2026-11-15 (Growth decisions final): access logs keep 90 days by default,
+    // whether or not the operator turned on automatic deletion for the other domains.
+    publicShareAccessLogs: {
+        id: 'publicShareAccessLogs',
+        policyConfig: ageConfig('PUBLIC_SHARE_ACCESS_LOGS', { mode: 'delete_older_than', days: 90 }),
+        runsWhenGlobalPolicyIsDisabled: true,
+    },
     terminalAuthRequests: { id: 'terminalAuthRequests', policyConfig: ageConfig('TERMINAL_AUTH_REQUESTS') },
     accountAuthRequests: { id: 'accountAuthRequests', policyConfig: ageConfig('ACCOUNT_AUTH_REQUESTS') },
     authPairingSessions: {

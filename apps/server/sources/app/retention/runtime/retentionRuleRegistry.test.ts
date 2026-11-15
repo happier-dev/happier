@@ -45,6 +45,7 @@ describe('retention/createRetentionRuleRegistry', () => {
             .filter((definition) => definition.runsWhenGlobalPolicyIsDisabled)
             .map((definition) => definition.id))
             .toEqual([
+                'publicShareAccessLogs',
                 'authPairingSessions',
                 'repeatKeys',
                 'automationRuns',

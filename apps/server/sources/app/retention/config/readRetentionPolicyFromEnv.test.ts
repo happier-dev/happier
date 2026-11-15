@@ -24,6 +24,15 @@ describe('retention/readRetentionPolicyFromEnv', () => {
         expect(readRetentionPolicyFromEnv({}).enabled).toBe(false);
     });
 
+    it('defaults public share access logs to 90 days, running even when automatic deletion is off', () => {
+        // Owner ruling 2026-11-15 (Growth decisions final).
+        expect(readRetentionPolicyFromEnv({}).domains.publicShareAccessLogs).toEqual({ mode: 'delete_older_than', days: 90 });
+        expect(RETENTION_DOMAIN_SERVER_CONFIG.find((entry) => entry.key === 'HAPPIER_SERVER_RETENTION__PUBLIC_SHARE_ACCESS_LOGS__MODE'))
+            .toMatchObject({ default: 'delete_older_than', description: expect.stringContaining('Runs even when automatic deletion is off.') });
+        expect(RETENTION_DOMAIN_SERVER_CONFIG.find((entry) => entry.key === 'HAPPIER_SERVER_RETENTION__PUBLIC_SHARE_ACCESS_LOGS__DAYS'))
+            .toMatchObject({ default: 90 });
+    });
+
     it('falls back to defaults when env is undefined', () => {
         const policy = readRetentionPolicyFromEnv(undefined as unknown as NodeJS.ProcessEnv);
 
