@@ -33,7 +33,7 @@ it.skipIf(process.platform !== 'linux')('provisions the first member home throug
     const memberParent = join(root, 'var/lib/happier');
     await mkdir(join(root, 'var/lib'), { recursive: true });
     const generated = buildAgentIsolationProvisioningSteps({ daemonUsername: 'happier', daemonPrimaryGroup: 'happier',
-        binaryPath: '/opt/happier/cli/current/happier', requesterIdentity: { homeServerIdentityId: 'home',
+        binaryPath: '/opt/happier/cli/current/happier', requesterIdentity: { kind: 'isolated', separationRequired: false, homeServerIdentityId: 'home',
             requester: { serverId: 'home', machineId: 'machine-a', installationId: 'installation', accountId: 'member' } } });
     const steps = generated.filter(step => [machineSetup.machineStateRootStep.id, 'member-homes', 'member-home-traversal'].includes(step.id))
         .map(step => 'path' in step ? { ...step, path: join(root, step.path) } : step);
@@ -226,6 +226,26 @@ describe('one operation-scoped sudo stdin hand-off', () => {
             expect(prepared).not.toBeNull();
             await prepared!();
             expect(launches).toEqual([{ executable: 'sudo', args: ['-n', '-u', 'root', '--', '/sbin/poweroff'] }]);
+        } else expect(prepared).toBeNull();
+    });
+    it.each(['none', 'ask', 'preauthorized'] as const)('uses existing root authority for preauthorized guest poweroff (%s)', async mode => {
+        const launches: Parameters<MachineElevationSpawn>[0][] = [];
+        const spawn: MachineElevationSpawn = launch => {
+            launches.push(launch);
+            return { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(),
+                settled: Promise.resolve({ code: 0, signal: null }), terminate: async () => {} };
+        };
+        const prepared = await prepareMachinePoweroff({
+            readPolicy: async () => mode === 'ask'
+                ? { version: 1 as const, mode, administratorUsername: 'operator' } : { version: 1 as const, mode },
+            observe: async () => ({ ...observation, daemonUid: 0, daemonUsername: 'root', daemonIdentity: 'root',
+                reasonCode: 'daemonRunningAsRoot', passwordlessSudoToRoot: 'unavailable' }), spawn,
+        });
+        expect(launches).toEqual([]);
+        if (mode === 'preauthorized') {
+            expect(prepared).not.toBeNull();
+            await prepared!();
+            expect(launches).toEqual([{ executable: '/sbin/poweroff', args: [] }]);
         } else expect(prepared).toBeNull();
     });
     it('reports successful native completion separately from an already-satisfied setup no-op', async () => {
@@ -506,6 +526,24 @@ describe('one operation-scoped sudo stdin hand-off', () => {
         expect(f.authentication).toEqual([]);
         expect(f.launches).toHaveLength(1);
         expect(f.launches[0]?.args).toContain('-n');
+    });
+
+    it('runs preauthorized setup directly as root when sudo is unavailable', async () => {
+        const f = nativeFixture();
+        const plan = await planFor(f, ['root-setup']);
+        const result = await runElevatedEffect({ machineId: 'machine-a', operationId: 'root-operation',
+            effect: { kind: 'setupOperation', plans: [{ plan }] } }, {
+            ...f.dependencies, installedCliArgs: ['--managed-runtime'],
+            readPolicy: async () => ({ version: 1, mode: 'preauthorized' }),
+            observe: async () => ({ ...observation, daemonUid: 0, daemonUsername: 'root', daemonIdentity: 'root',
+                reasonCode: 'daemonRunningAsRoot', passwordlessSudoToRoot: 'unavailable' }),
+        });
+        expect(result).toMatchObject({ outcome: 'applied' });
+        expect(f.mutations).toEqual(['root-setup']);
+        expect(f.authentication).toEqual([]);
+        expect(f.boundaryFailures).toEqual([]);
+        expect(f.launches).toEqual([{ executable: '/opt/happier/current/happier', installedCli: '/opt/happier/current/happier',
+            args: ['--managed-runtime', 'machine', 'effect-internal', '--operation-id=root-operation', '--installation-id=install-a'] }]);
     });
 
     it('settles cancelled attendance and a retired installation before launching sudo', async () => {

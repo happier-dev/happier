@@ -70,9 +70,10 @@ export type MachineElevationDependencies = MachineEffectCliInvocation & Readonly
     connectorSecretGrant?: MachineConnectorSecretGrantHostRequest;
 }>;
 
-function hasPromptlessElevation(policy: MachineAdminAccessV1, observation: MachineAdminAccessObservationV1): boolean {
-    return policy.mode === 'preauthorized' && observation.reasonCode !== 'platformUnsupported'
-        && observation.passwordlessSudoToRoot === 'allowed';
+function resolvePromptlessElevation(policy: MachineAdminAccessV1, observation: MachineAdminAccessObservationV1): 'root' | 'sudo' | null {
+    if (policy.mode !== 'preauthorized' || observation.reasonCode === 'platformUnsupported') return null;
+    if (observation.daemonUid === 0) return 'root';
+    return observation.passwordlessSudoToRoot === 'allowed' ? 'sudo' : null;
 }
 
 /** Retention consumes the same daemon policy/native privilege decision as ordinary elevation.
@@ -83,10 +84,13 @@ export async function prepareMachinePoweroff(dependencies: Pick<MachineElevation
     const policy = await dependencies.readPolicy();
     if (policy.mode !== 'preauthorized') return null;
     const observation = await dependencies.observe();
-    if (!hasPromptlessElevation(policy, observation)) return null;
+    const elevation = resolvePromptlessElevation(policy, observation);
+    if (!elevation) return null;
     return async () => {
         signal?.throwIfAborted();
-        const child = (dependencies.spawn ?? spawnElevation)({ executable: 'sudo', args: ['-n', '-u', 'root', '--', '/sbin/poweroff'] });
+        const child = (dependencies.spawn ?? spawnElevation)(elevation === 'root'
+            ? { executable: '/sbin/poweroff', args: [] }
+            : { executable: 'sudo', args: ['-n', '-u', 'root', '--', '/sbin/poweroff'] });
         child.stdin.end();
         child.stdout.resume();
         child.stderr.resume();
@@ -206,6 +210,7 @@ function managedPolicyRefusal(error: unknown): Extract<MachineElevatedResultV1, 
     if (error instanceof MachineSetupEffectError && error.failure) {
         return { outcome: 'not_applied', reasonCode: error.failure.kind, failure: error.failure };
     }
+    return undefined;
 }
 
 /** Only this exact admitted policy transition may use its previous authority. */
@@ -320,7 +325,8 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
         : refused('mode_none');
     const observation = transitionObservation ?? await dependencies.observe();
     if (observation.reasonCode === 'platformUnsupported') return refused('platform_unsupported');
-    if (policy.mode === 'preauthorized' && !hasPromptlessElevation(policy, observation)) return refused('not_preauthorized');
+    const elevation = resolvePromptlessElevation(policy, observation);
+    if (policy.mode === 'preauthorized' && !elevation) return refused('not_preauthorized');
     const ask = policy.mode === 'ask';
     if (ask) {
         if (!observation.daemonUsername) return nativeRefused(rememberNativeFailure('native_check_unavailable',
@@ -350,11 +356,14 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
     }
     let child: MachineElevationProcess;
     try {
-        child = (dependencies.spawn ?? spawnElevation)({ executable: 'sudo', installedCli: dependencies.installedCli, args: [
+        const args = [...(dependencies.installedCliArgs ?? []), 'machine', 'effect-internal', `--operation-id=${input.operationId}`,
+            `--installation-id=${dependencies.installationId}`];
+        child = (dependencies.spawn ?? spawnElevation)(elevation === 'root'
+            ? { executable: dependencies.installedCli, installedCli: dependencies.installedCli, args }
+            : { executable: 'sudo', installedCli: dependencies.installedCli, args: [
             ...(ask ? ['-k', '-S', '-p', '[happier-sudo-password:%p]\n', '-u', policy.administratorUsername, '--',
                 'sudo', '-k', '-S', '-p', '[happier-sudo-root-password:%p]\n', '-u', 'root', '--'] : ['-n', '-u', 'root', '--']),
-            dependencies.installedCli, ...(dependencies.installedCliArgs ?? []), 'machine', 'effect-internal', `--operation-id=${input.operationId}`,
-            `--installation-id=${dependencies.installationId}`,
+            dependencies.installedCli, ...args,
         ] });
     } catch (error) {
         password?.fill(0);
