@@ -503,12 +503,15 @@ export async function assertSessionCapabilityInTx(input: {
     sessionId: string;
     capability: SessionCapability;
     authentication: SessionAccessAuthentication;
+    /** This Session's row from the same transaction, read with `buildSessionAccessProjectionSelect(accountId)`. */
+    row?: SessionAccessProjectionRow;
 }): Promise<SessionCapabilityAssertion> {
     const decision = await resolveSessionAccessForOperation(input.tx, {
         accountId: input.accountId,
         sessionId: input.sessionId,
         authentication: input.authentication,
         capability: input.capability,
+        ...(input.row ? { row: input.row } : {}),
     });
     if (decision.status !== "allowed") return { ok: false, reason: decision.status };
     const access = decision.access;

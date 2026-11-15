@@ -839,24 +839,17 @@ async function readSessionMutationContextInTx(
 ): Promise<SessionMutationContextResult | SessionMutationContextTypedResult> {
     const contextSelect = { tag: true, encryptionMode: true, ...selectSessionActivityBadgeInputs() } as const;
     const input = { tx, accountId: params.actorUserId, sessionId: params.sessionId };
-    const readContext = () => tx.session.findUnique({ where: { id: params.sessionId }, select: contextSelect });
-    let session: NonNullable<Awaited<ReturnType<typeof readContext>>>;
-    let admitted: SessionCapabilityAssertion;
-    if (params.kind === "owner" && !params.admittedAccess) {
-        // The owner assertion projects access from this same Session read instead of reading the row again.
-        const row = await tx.session.findUnique({ where: { id: params.sessionId },
-            select: { ...buildSessionAccessProjectionSelect(params.actorUserId), ...contextSelect } });
-        if (!row) return { ok: false, error: "session-not-found" };
-        session = pickSelectedFields(row, contextSelect);
-        admitted = await assertSessionOwnerInTx({ ...input, row });
-    } else {
-        const row = await readContext();
-        if (!row) return { ok: false, error: "session-not-found" };
-        session = row;
-        admitted = params.kind === "capability"
-            ? await assertSessionCapabilityInTx({ ...input, capability: params.capability, authentication: params.authentication })
+    // One Session read (after the Session lock) serves the context, the access decision and the
+    // current recipients: the access projection already carries the recipient census's Session facts.
+    const row = await tx.session.findUnique({ where: { id: params.sessionId },
+        select: { ...buildSessionAccessProjectionSelect(params.actorUserId), ...contextSelect } });
+    if (!row) return { ok: false, error: "session-not-found" };
+    const session = pickSelectedFields(row, contextSelect);
+    const admitted: SessionCapabilityAssertion = params.kind === "owner" && !params.admittedAccess
+        ? await assertSessionOwnerInTx({ ...input, row })
+        : params.kind === "capability"
+            ? await assertSessionCapabilityInTx({ ...input, capability: params.capability, authentication: params.authentication, row })
             : params.admittedAccess ? { ok: true as const, access: params.admittedAccess } : { ok: false, reason: "unavailable" };
-    }
     if (!admitted.ok) return { ok: false, error: mapSessionMutationContextFailure(params, admitted.reason) };
     return {
         ok: true,
@@ -864,7 +857,7 @@ async function readSessionMutationContextInTx(
         access: admitted.access,
         sessionTag: session.tag,
         sessionEncryptionMode: session.encryptionMode === "plain" ? "plain" : "e2ee",
-        recipientAccountIds: await resolveCurrentSessionRecipientAccountIdsInTx(tx, { sessionId: params.sessionId }),
+        recipientAccountIds: await resolveCurrentSessionRecipientAccountIdsInTx(tx, { sessionId: params.sessionId, session: row }),
         sessionActivityBadgeInputs: toSessionActivityBadgeInputs(session),
     };
 }

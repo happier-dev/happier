@@ -19,8 +19,9 @@ import {
 } from "./socketRoomEmitter";
 import { buildSessionAccessProjectionSelect, resolveSessionAccessForOperation } from "@/app/session/access/sessionAccess";
 import type { Socket } from "socket.io";
+import type { Prisma } from "@prisma/client";
 import { readSessionAccessAuthenticationFromSocket } from "@/app/session/access/sessionAccessAuthentication";
-import { inTx } from "@/storage/inTx";
+import { inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
 import { captureReadSnapshot } from "@/storage/captureReadSnapshot";
 import type { SessionBroadcastContainer } from '@happier-dev/protocol/updates';
 import type { VerifiedApiTokenPrincipal } from "@/app/auth/auth";
@@ -683,17 +684,15 @@ class EventRouter {
             return deliveredCount;
         }
         if (params.sockets.length === 0) return 0;
-        const qualifiedSockets = await captureReadSnapshot(async tx => {
-            const row = await tx.session.findUnique({
-                where: { id: params.sessionId },
-                select: { ...buildSessionAccessProjectionSelect(params.accountId), metadataLayoutVersion: true },
-            });
+        const select = { ...buildSessionAccessProjectionSelect(params.accountId), metadataLayoutVersion: true } as const;
+        const decide = async (reader: Tx, row: Prisma.SessionGetPayload<{ select: typeof select }> | null) => {
             const qualified: { socket: S; isSessionOwner: boolean; metadataLayoutVersion: number }[] = [];
-            if (!row) return qualified;
+            const refused: S[] = [];
+            if (!row) return { qualified, refused };
             for (const socket of params.sockets) {
                 let decision: Awaited<ReturnType<typeof resolveSessionAccessForOperation>>;
                 try {
-                    decision = await resolveSessionAccessForOperation(tx, {
+                    decision = await resolveSessionAccessForOperation(reader, {
                         accountId: params.accountId,
                         sessionId: params.sessionId,
                         authentication: readSessionAccessAuthenticationFromSocket(socket),
@@ -704,14 +703,29 @@ class EventRouter {
                     continue;
                 }
                 if (decision.status !== "allowed" || !decision.access.capabilities.readTranscript) {
-                    withdrawSessionConsumption(socket, params.sessionId);
+                    refused.push(socket);
                     continue;
                 }
                 qualified.push({ socket, isSessionOwner: decision.access.level === "owner", metadataLayoutVersion: row.metadataLayoutVersion });
             }
-            return qualified;
-        });
-        return qualifiedSockets.filter(({ socket, isSessionOwner, metadataLayoutVersion }) =>
+            return { qualified, refused };
+        };
+        // Most deliveries are decided from the Session row alone, and one statement is its own
+        // snapshot: no transaction frame. A decision that reads anything more (a runtime principal,
+        // Team qualification, content disclosure) discards this pass, even if its reader swallowed
+        // the refusal, and the whole delivery is decided again inside one read snapshot.
+        let readBeyondRow = false;
+        const rowOnlyReader = new Proxy({}, { get() {
+            readBeyondRow = true;
+            throw new Error("Session delivery decision needs a read snapshot");
+        } }) as Tx;
+        const rowOnly = await decide(rowOnlyReader, await inReadSnapshot(tx => tx.session.findUnique({
+            where: { id: params.sessionId }, select,
+        }), { singleStatementRead: true }));
+        const decided = !readBeyondRow ? rowOnly : await captureReadSnapshot(async tx => decide(tx,
+            await tx.session.findUnique({ where: { id: params.sessionId }, select })));
+        for (const socket of decided.refused) withdrawSessionConsumption(socket, params.sessionId);
+        return decided.qualified.filter(({ socket, isSessionOwner, metadataLayoutVersion }) =>
             params.emit(socket, isSessionOwner, metadataLayoutVersion)).length;
     }
 

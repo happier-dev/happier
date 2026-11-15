@@ -9,6 +9,7 @@ import { listProviderDescriptorsInTx } from "@/app/auth/providers/identityProvid
 import { retireSessionConsumptionAfterAccessChange } from "@/app/api/socket/sessionConsumption";
 import { encryptString, initEncrypt } from "@/modules/encrypt";
 import { eventRouter } from "./connectionEventRouter";
+import { observePrismaRequests } from "@/testkit/observeSqliteRequests";
 import type { LocalSocketRoomEmitter } from "./socketRoomEmitter";
 
 describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("Session delivery fresh-admission SQL cost (PostgreSQL)", () => {
@@ -101,17 +102,42 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
             && /\bFROM\s+(?:"public"\.)?"Session"(?:\s|$)/.test(query));
     }
 
-    it("captures one delivery snapshot for 100 sockets while preserving denied authentication contexts", async () => {
+    it("decides a delivery for 100 sockets from one Session statement, with no transaction frame, while preserving denied authentication contexts", async () => {
         const f = await fixture();
-        await f.deliver();
+        // The transaction transport's statement log cannot see a read on the primary client: count requests too.
+        const requests: Array<{ model?: string; action: string }> = [];
+        const stop = observePrismaRequests(db, { before: request => { requests.push(request); } });
+        try { await f.deliver(); } finally { stop(); }
         expect(f.delivered).toEqual(f.sockets.map(socket => socket.id));
-        expect(f.committedAtEmit).toEqual(Array.from({ length: 100 }, () => 1));
-        const counts = { sessionSelects: sessionSelects().length,
+        const counts = { requests: requests.map(({ model, action }) => `${model}.${action}`),
+            sessionSelects: sessionSelects().length,
             transactions: statements.filter(({ query }) => /^BEGIN\b/.test(query)).length,
             controls: statements.filter(({ query }) => !/^SELECT\b/.test(query)).length };
         console.info("SESSION_DELIVERY_SQL_COST", JSON.stringify(counts));
-        expect(counts.transactions).toBe(1);
-        expect(counts.sessionSelects).toBe(1);
+        // One statement is its own snapshot: the row read needs no BEGIN/isolation/READ ONLY/timeout/COMMIT.
+        expect(counts).toEqual({ requests: ["Session.findUnique"], sessionSelects: 0, transactions: 0, controls: 0 });
+    });
+
+    it("refuses a guest from the row alone once its direct grant is withdrawn, with no snapshot", async () => {
+        const f = await fixture();
+        const guest = await db.account.create({ data: { encryptionMode: "plain" } });
+        accountIds.push(guest.id);
+        const grant = await db.sessionGrant.create({ data: { principalKind: "account", sessionId: f.session.id,
+            createdByAccountId: f.owner.id, accountId: guest.id, accessLevel: "view" } });
+        f.sockets.length = 0;
+        f.sockets.push({ id: "guest-ui", data: { userId: guest.id, clientType: "user-scoped", authAuthority: "present_user" } });
+        const deliverToGuest = async () => {
+            statements.length = 0;
+            f.delivered.length = 0;
+            await eventRouter.emitUpdate({ userId: guest.id,
+                payload: { id: "delivery", seq: 1, createdAt: 0, body: { t: "delete-session", sid: f.session.id } },
+                recipientFilter: { type: "all-interested-in-session", sessionId: f.session.id } });
+            return { delivered: [...f.delivered], transactions: statements.filter(({ query }) => /^BEGIN\b/.test(query)).length };
+        };
+        expect(await deliverToGuest()).toEqual({ delivered: ["guest-ui"], transactions: 0 });
+        // Withdrawal with no access-change push: the next durable delivery must refuse from its one row.
+        await db.sessionGrant.delete({ where: { id: grant.id } });
+        expect(await deliverToGuest()).toEqual({ delivered: [], transactions: 0 });
     });
 
     it("refuses another delivery after the Account is suspended", async () => {
@@ -128,8 +154,10 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
         await f.deliver();
         expect(f.delivered).toEqual(f.sockets.map(socket => socket.id));
         // The runtime verifier reads Session authority before checking activation,
-        // a distinct fact from the delivery projection.
+        // a distinct fact from the delivery projection. Its read moves the whole delivery into one
+        // snapshot (the row-only pass's single read runs on the primary client, outside this log).
         expect(sessionSelects()).toHaveLength(2);
+        expect(statements.filter(({ query }) => /^BEGIN\b/.test(query))).toHaveLength(1);
     });
 
     it("qualifies the authentication of each captured socket independently", async () => {
@@ -137,7 +165,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
         delete f.sockets[0]!.data.authAuthority;
         await f.deliver();
         expect(f.delivered).toEqual(f.sockets.slice(1).map(socket => socket.id));
-        expect(sessionSelects()).toHaveLength(1);
+        // An unreadable credential is refused by its own decision; the rest stay row-only (no snapshot).
+        expect(statements).toEqual([]);
     });
 
     describe.each([

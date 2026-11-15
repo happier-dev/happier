@@ -7,6 +7,8 @@ import { sessionUpdateHandler } from "@/app/api/socket/sessionUpdateHandler";
 import { eventRouter } from "@/app/events/eventRouter";
 import { createAuthenticatedFakeSocket, getSocketHandler } from "@/app/api/testkit/socketHarness";
 import { db } from "@/storage/db";
+import { createSessionMessage } from "@/app/session/sessionWriteService";
+import { readSessionAccessAuthenticationFromRequest } from "@/app/session/access/sessionAccessAuthentication";
 import { observePrismaRequests, observeSqliteRequests } from "@/testkit/observeSqliteRequests";
 
 type ObservedRequest = Readonly<{ model?: string; action: string; args: unknown; transactionId?: string }>;
@@ -121,8 +123,8 @@ export function transcriptObservationWriteCostContract(provider: "sqlite" | "pos
 
         const perLine = (count: number) => count / lines;
         const cost = {
-            // Publisher fence, owner context with its access projection, current recipients, plus the
-            // audience census (PostgreSQL) or the change row's Session link (SQLite).
+            // Publisher fence, one owner context read that also serves its access projection and current
+            // recipients, plus the audience census (PostgreSQL) or the change row's Session link (SQLite).
             sessionRowReads: perLine(inTransaction.filter(isSessionRowRead).length),
             sessionRowWrites: perLine(inTransaction.filter(isSessionRowWrite).length),
             audienceCensusReads: perLine(inTransaction.filter(isAudienceCensusRead).length),
@@ -134,8 +136,49 @@ export function transcriptObservationWriteCostContract(provider: "sqlite" | "pos
         // SQLite: the publisher fence's guarded update is its single-writer lock; PostgreSQL holds
         // the Session row lock from the audience fence. Either way only the sequence write follows.
         expect(cost).toEqual(provider === "sqlite"
-            ? { sessionRowReads: 4, sessionRowWrites: 2, audienceCensusReads: 0, postCommitRequests: 0 }
-            : { sessionRowReads: 4, sessionRowWrites: 1, audienceCensusReads: 1, postCommitRequests: 0 });
+            ? { sessionRowReads: 3, sessionRowWrites: 2, audienceCensusReads: 0, postCommitRequests: 0 }
+            : { sessionRowReads: 3, sessionRowWrites: 1, audienceCensusReads: 1, postCommitRequests: 0 });
+    });
+
+    it("decides an Account message write from one Session read after the audience census and still reaches every current recipient", async () => {
+        const owner = await db.account.create({ data: { publicKey: `pk-${randomUUID()}`, encryptionMode: "plain" }, select: { id: true } });
+        const viewer = await db.account.create({ data: { publicKey: `pk-${randomUUID()}`, encryptionMode: "plain" }, select: { id: true } });
+        const session = await db.session.create({
+            data: { accountId: owner.id, tag: `session-${randomUUID()}`, metadata: "{}", active: false, lastActiveAt: new Date("2026-11-07T07:00:00.000Z"),
+                runtimeActivityState: "unknown", runtimeActivityActiveCount: 0, runtimeActivityRevision: 0n },
+            select: { id: true },
+        });
+        await db.sessionGrant.create({ data: { principalKind: "account", sessionId: session.id, createdByAccountId: owner.id, accountId: viewer.id, accessLevel: "view" } });
+        const authentication = readSessionAccessAuthenticationFromRequest({ authAuthority: "present_user" });
+        const send = (localId: string) => createSessionMessage({ actorUserId: owner.id, inputAdmission: "authenticatedAccount", authentication,
+            sessionId: session.id, localId, content: { t: "encrypted", c: Buffer.from(localId).toString("base64") } });
+        for (let index = 0; index < 2; index++) expect(await send(`warm-${index}-${randomUUID()}`)).toMatchObject({ ok: true });
+        await new Promise(resolve => setTimeout(resolve, 300));
+
+        const lines = 4;
+        const inTransaction: ObservedRequest[] = [];
+        const observer = { before: (request: ObservedRequest) => { if (request.transactionId !== undefined) inTransaction.push(request); } };
+        const stop = provider === "sqlite" ? observeSqliteRequests(observer) : observePrismaRequests(db, observer);
+        const results = [];
+        try {
+            for (let index = 0; index < lines; index++) results.push(await send(`line-${index}-${randomUUID()}`));
+            await new Promise(resolve => setTimeout(resolve, 300));
+        } finally { stop(); }
+
+        // Fan-out is unchanged: both current recipients receive this write's change cursor.
+        for (const result of results) {
+            expect(result).toMatchObject({ ok: true, didWrite: true });
+            if (!result.ok) continue;
+            expect(result.recipientCursors.map(cursor => cursor.accountId).sort()).toEqual([owner.id, viewer.id].sort());
+        }
+        const cost = {
+            // One Session read serves the mutation context, the access decision and the current recipients.
+            // PostgreSQL adds the audience census; SQLite (no census) adds the change row's Session link
+            // and the read-state stamp's Session read.
+            sessionRowReads: inTransaction.filter(isSessionRowRead).length / lines,
+        };
+        console.info("ACCOUNT_MESSAGE_WRITE_COST", JSON.stringify({ provider, lines, ...cost, transactionRequests: inTransaction.length / lines }));
+        expect(cost).toEqual({ sessionRowReads: provider === "sqlite" ? 3 : 2 });
     });
 
     it("still evaluates remote alerts per line when a follower's policy selects streamed messages", async () => {

@@ -15,8 +15,17 @@ import {
   type SessionTranscriptPublicationFields,
 } from '@/app/session/sessionTranscriptPublicationPolicy';
 
+/** The Session facts the recipient census reads; an access projection row carries them. */
+export type CurrentSessionRecipientSessionRow = Readonly<SessionTranscriptPublicationFields & {
+  id: string;
+  accountId: string;
+  account: Readonly<{ status: string }>;
+}>;
+
 type CurrentSessionRecipientParams = Readonly<{
   sessionIds: readonly string[];
+  /** Rows of these Sessions this transaction already read (after its Session lock); not read again. */
+  sessions?: readonly CurrentSessionRecipientSessionRow[];
   /** Publication fences also cover grants that the pending write can expose. */
   includeUnpublishedGrants?: boolean;
   /** Account reactivation must wait behind a fence for its retained grant. */
@@ -54,14 +63,16 @@ async function resolveCurrentSessionRecipientsInTx(
     bindingsPerValue: 1,
     fixedBindings: 5,
   })) {
-    const sessions = await tx.session.findMany({
-      where: { id: { in: [...sessionIdChunk] } },
+    const known = params.sessions?.filter(session => sessionIdChunk.includes(session.id)) ?? [];
+    const unread = sessionIdChunk.filter(sessionId => !known.some(session => session.id === sessionId));
+    const sessions: readonly CurrentSessionRecipientSessionRow[] = unread.length === 0 ? known : [...known, ...await tx.session.findMany({
+      where: { id: { in: unread } },
       select: {
         id: true,
         ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
         account: { select: { status: true } },
       },
-    });
+    })];
     const shareableSessionIds: string[] = [];
     for (const session of sessions) {
       onPublicationRead?.(session);
@@ -176,12 +187,13 @@ export async function readCurrentSessionPublicationAudienceInTx(
 /** Access recipients are synchronization targets, never notification interest. */
 export async function resolveCurrentSessionRecipientAccountIdsInTx(
   tx: Tx,
-  params: Readonly<{ sessionId: string }>,
+  params: Readonly<{ sessionId: string; session?: CurrentSessionRecipientSessionRow }>,
 ): Promise<string[]> {
   if (!params.sessionId) return [];
   const recipients =
     await resolveCurrentSessionRecipientAccountIdsBySessionInTx(tx, {
       sessionIds: [params.sessionId],
+      ...(params.session ? { sessions: [params.session] } : {}),
     });
   return [...(recipients.get(params.sessionId) ?? [])];
 }
