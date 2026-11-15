@@ -1227,8 +1227,8 @@ Represent an unknown measurement explicitly before calling it.
 Use `formatHappierDataBytes(bytes, { kind, locale? })` from `/components` for
 byte amounts. `kind` is required: `storage` uses decimal steps of 1,000 for
 disk, files, scans and Trash; `memory` uses binary steps of 1,024 for RAM,
-processes, swap and ceilings. Both use the labels B, KB, MB, GB, TB and PB;
-memory labels are GB rather than GiB. Choose the kind from what the amount
+processes, swap and ceilings. Storage uses B, KB, MB, GB, TB and PB;
+memory uses B, KiB, MiB, GiB, TiB and PiB. Choose the kind from what the amount
 measures, not from the platform or its current magnitude.
 
 ```tsx
@@ -1236,7 +1236,7 @@ import { formatHappierDataBytes, formatHappierDataBytesParts }
   from '@happier-dev/plugin-ui/components';
 
 formatHappierDataBytes(1_000_000_000, { kind: 'storage', locale: 'en-US' }); // '1 GB'
-formatHappierDataBytes(1_073_741_824, { kind: 'memory', locale: 'en-US' }); // '1 GB'
+formatHappierDataBytes(1_073_741_824, { kind: 'memory', locale: 'en-US' }); // '1 GiB'
 formatHappierDataBytesParts(1_000_000_000, { kind: 'storage', locale: 'en-US' }); // { value: '1', unit: 'GB' }
 ```
 

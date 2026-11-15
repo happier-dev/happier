@@ -419,9 +419,9 @@ describe('retained vitals readings', () => {
     const zero = buildMachineMoreFromFacts({
       gpu: parseNvidiaVitalsGpu('GPU, 42, 0, 8192'),
     });
-    expect(unknown[0]?.detail).toContain('machineVitals.unmeasured / 8 GB');
+    expect(unknown[0]?.detail).toContain('machineVitals.unmeasured / 8 GiB');
     expect(unknown[0]?.detail).not.toContain('0 B');
-    expect(zero[0]?.detail).toContain('0 B / 8 GB');
+    expect(zero[0]?.detail).toContain('0 B / 8 GiB');
     expect(
       buildMachineMoreFromFacts({
         gpu: parseNvidiaVitalsGpu('GPU, 42, 0, N/A'),

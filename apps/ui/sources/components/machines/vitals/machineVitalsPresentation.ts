@@ -129,7 +129,7 @@ export function selectMachineVitalsOverviewView(
 
 // ── Bytes ────────────────────────────────────────────────────────────────────────────────────────────
 
-/** A byte figure split for the tile's big value and its quieter unit ("71" "GB"). */
+/** A byte figure split for the tile's big value and its quieter unit ("71" "GiB"). */
 export function machineBytesParts(bytes: number, kind: 'memory' | 'storage') {
   return formatHappierDataBytesParts(bytes, { kind });
 }

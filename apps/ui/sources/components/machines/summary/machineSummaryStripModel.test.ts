@@ -64,11 +64,11 @@ describe('the Machine summary value convention', () => {
     it('says CPU in use and memory and disk free, while meters fill by what is used', () => {
         const instruments = buildMachineSummaryInstruments(summary());
         expect(instruments.cpu.figure).toBe('12%');
-        expect(instruments.memory.figure).toBe('71 GB');
+        expect(instruments.memory.figure).toBe('71 GiB');
         expect(instruments.memory.used).toBeCloseTo(57 / 128);
         expect(instruments.disk.figure).toBe('442 GB');
         expect(instruments.disk.used).toBeCloseTo(582 / 994);
-        expect(instruments.memory.exact).toContain('71 GB');
+        expect(instruments.memory.exact).toContain('71 GiB');
     });
 
     it('shows nothing for a metric the machine did not measure, never zero', () => {

@@ -251,10 +251,10 @@ describe('figures', () => {
     });
     expect(
       formatMachinePartOfWhole(1.8 * GIB, 2 * GIB, 'memory', 'whole'),
-    ).toEqual({ part: '1.8', whole: '2 GB' });
+    ).toEqual({ part: '1.8', whole: '2 GiB' });
     expect(formatMachinePartOfWhole(0, 2 * GIB, 'memory', 'whole')).toEqual({
       part: '0 B',
-      whole: '2 GB',
+      whole: '2 GiB',
     });
   });
 });
