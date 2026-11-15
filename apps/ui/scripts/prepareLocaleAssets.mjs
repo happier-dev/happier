@@ -1,10 +1,13 @@
-import { createHash } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { dirname, join, relative, resolve } from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdir, readFile, readdir, rename, rm, unlink, writeFile } from 'node:fs/promises';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import { sourcePluginUiBuildOptions } from '../../../scripts/workspaces/sourcePluginUiBuildOptions.mjs';
-import { SOURCE_UI_ASSET_OUTPUT_PATHS } from './sourceUiAssetPaths.mjs';
+import { getStacksStorageRoot } from '../../stack/scripts/utils/paths/paths.mjs';
+import { withJsonOwnerFileLock } from '../../stack/scripts/utils/proc/jsonOwnerFileLock.mjs';
+import { isPidAlive } from '../../stack/scripts/utils/proc/pids.mjs';
+import { SOURCE_UI_ASSET_OUTPUT_PATHS, SOURCE_UI_ASSET_RECORD_FILENAME } from './sourceUiAssetPaths.mjs';
 
 async function writeChanged(path, contents) {
     if (await readFile(path, 'utf8').catch(error => { if (error.code !== 'ENOENT') throw error; }) === contents) return;
@@ -14,12 +17,125 @@ async function writeChanged(path, contents) {
     await rename(temporary, path);
 }
 
+// Retention (owner ruling 2026-11-15, growth fixes) keeps every bundle that the
+// published map, a source asset record (published or staged) or a live
+// preparation names. LOCALE-BUNDLES-1112 Incident 2: concurrent publishers each
+// deleted bundles the other had written but not yet published. A preparation
+// therefore names each bundle under the store lock before writing it, and
+// retirement reads every reference under the same lock. Metro's block list skips
+// `.tmp.` entries, so this bookkeeping never reaches a graph.
+const PREPARATIONS = '.tmp.locale-preparations';
+const BUNDLE_NAME = /^[a-f0-9]{64}\.locale\.bundle$/u;
+const withLocaleStore = (directory, action) =>
+    withJsonOwnerFileLock(action, { lockPath: join(directory, '.tmp.locale-retention.lock'), errorLabel: 'locale bundle store' });
+
+async function entries(path) {
+    return readdir(path, { withFileTypes: true }).catch(error => {
+        if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') throw error;
+        return [];
+    });
+}
+
+async function readJsonFile(path) {
+    const contents = await readFile(path, 'utf8').catch(error => {
+        if (error.code !== 'ENOENT') throw error;
+        return null;
+    });
+    return contents ? JSON.parse(contents) : null;
+}
+
+/** A preparation's bundles stay retained until its map or record names them. */
+export async function openLocalePreparation(directory) {
+    const marker = join(directory, PREPARATIONS, `${process.pid}-${randomUUID()}.json`);
+    const paths = [];
+    return {
+        retain: (assetPath, contents) => withLocaleStore(directory, async () => {
+            paths.push(assetPath);
+            await writeChanged(marker, JSON.stringify({ pid: process.pid, paths }));
+            await writeChanged(assetPath, contents);
+        }),
+        close: () => rm(marker, { force: true }),
+    };
+}
+
+// Source asset records sit beside Plugin UI inventories: the UI-owned ones under
+// .expo/hstack, each Stack's Expo inventory, their in-flight compiler stages and
+// explicit inventories. Content-addressed names make a basename match exact.
+async function recordedBundleNames(uiPackageDir) {
+    const names = new Set();
+    const read = async path => {
+        for (const assetPath of (await readJsonFile(path))?.assetPaths ?? []) names.add(basename(assetPath));
+    };
+    const inventoryParent = async parent => {
+        await read(join(parent, SOURCE_UI_ASSET_RECORD_FILENAME));
+        for (const entry of await entries(parent)) {
+            if (entry.isDirectory() && entry.name.startsWith('.happier-plugin-ui-stage-')) {
+                await read(join(parent, entry.name, 'inputs', SOURCE_UI_ASSET_RECORD_FILENAME));
+            }
+        }
+    };
+    const visit = async directory => {
+        for (const entry of await entries(directory)) {
+            const path = join(directory, entry.name);
+            if (entry.isDirectory() && entry.name !== 'locales' && entry.name !== 'artifacts') await visit(path);
+            else if (entry.name === SOURCE_UI_ASSET_RECORD_FILENAME) await read(path);
+        }
+    };
+    await visit(resolve(uiPackageDir, '.expo/hstack'));
+    await read(resolve(uiPackageDir, 'sources/sync/domains/plugins/availability', SOURCE_UI_ASSET_RECORD_FILENAME));
+    const inventory = process.env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY;
+    if (inventory) await inventoryParent(dirname(inventory));
+    const storage = getStacksStorageRoot();
+    for (const stack of await entries(storage)) {
+        if (!stack.isDirectory()) continue;
+        for (const instance of await entries(join(storage, stack.name, 'expo-dev'))) {
+            if (instance.isDirectory()) await inventoryParent(join(storage, stack.name, 'expo-dev', instance.name, 'plugin-ui'));
+        }
+    }
+    return names;
+}
+
+/** Retire bundles no published map, source asset record or live preparation names.
+ * Retention is maintenance: a failure is reported and never fails publication. */
+export async function retireLocaleBundles({ uiPackageDir, directory = resolve(uiPackageDir, '.expo/hstack/locales') }) {
+    return withLocaleStore(directory, async () => {
+        const mapPath = resolve(uiPackageDir, SOURCE_UI_ASSET_OUTPUT_PATHS.locales);
+        const map = await readFile(mapPath, 'utf8').catch(error => { if (error.code !== 'ENOENT') throw error; return ''; });
+        const retained = await recordedBundleNames(uiPackageDir);
+        for (const match of map.matchAll(/require\(("(?:[^"\\]|\\.)*\.locale\.bundle")\)/gu)) retained.add(basename(JSON.parse(match[1])));
+        for (const entry of await entries(join(directory, PREPARATIONS))) {
+            const marker = join(directory, PREPARATIONS, entry.name);
+            const preparation = await readJsonFile(marker).catch(() => null);
+            if (preparation && isPidAlive(preparation.pid)) for (const path of preparation.paths) retained.add(basename(path));
+            else await rm(marker, { force: true });
+        }
+        let retired = 0;
+        for (const entry of await entries(directory)) {
+            if (!entry.isFile() || !BUNDLE_NAME.test(entry.name) || retained.has(entry.name)) continue;
+            await unlink(join(directory, entry.name)).catch(error => { if (error.code !== 'ENOENT') throw error; });
+            retired++;
+        }
+        return { retained: retained.size, retired };
+    }).catch(error => {
+        console.error(`[source-ui] phase=locale-retention status=failed reason=${error.code ?? error.message}`);
+        return null;
+    });
+}
+
 /** Compile copy at the existing UI preparation boundary; Metro only registers its asset IDs. */
-export async function prepareLocaleAssets({ uiPackageDir,
+export async function prepareLocaleAssets(options = {}) {
+    if (options.preparation) return await compileLocaleAssets(options);
+    const preparation = await openLocalePreparation(options.outputDirectory ?? resolve(options.uiPackageDir, '.expo/hstack/locales'));
+    try { return await compileLocaleAssets({ ...options, preparation }); }
+    finally { await preparation.close(); }
+}
+
+async function compileLocaleAssets({ uiPackageDir,
     outputDirectory = resolve(uiPackageDir, '.expo/hstack/locales'),
     outputPath = resolve(uiPackageDir, SOURCE_UI_ASSET_OUTPUT_PATHS.locales),
     publicationPath = outputPath,
-} = {}) {
+    preparation,
+}) {
     const repoRoot = resolve(uiPackageDir, '../..');
     const languagePath = resolve(uiPackageDir, 'sources/text/_all.ts');
     const { SUPPORTED_LANGUAGE_CODES } = await import(pathToFileURL(languagePath).href);
@@ -47,14 +163,14 @@ export async function prepareLocaleAssets({ uiPackageDir,
         const source = result.outputFiles[0].text;
         const digest = createHash('sha256').update(source).digest('hex');
         const assetPath = join(outputDirectory, `${digest}.locale.bundle`);
-        await writeChanged(assetPath, source);
+        await preparation.retain(assetPath, source);
         assetPaths.push(assetPath);
         let specifier = relative(dirname(publicationPath), assetPath).replaceAll('\\', '/');
         if (!specifier.startsWith('.')) specifier = `./${specifier}`;
         assets.push(`    ${JSON.stringify(language)}: require(${JSON.stringify(specifier)}),`);
     }
     const contents = `// Generated by prepareLocaleAssets.mjs.\nexport const LOCALE_ASSETS = {\n${assets.join('\n')}\n};\n`;
-    // Keep content-addressed bundles: other publishers and loaded graphs can still reference them.
     await writeChanged(outputPath, contents);
+    if (outputPath === publicationPath) await retireLocaleBundles({ uiPackageDir, directory: outputDirectory });
     return { outputPath, assetPaths, inputPaths: [...inputPaths] };
 }

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { access, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { dirname, relative, resolve } from 'node:path';
+import { dirname, normalize, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readBuildInputIdentity } from '../../../scripts/workspaces/buildInputConvergence.mjs';
 import { readWorkspacePackages } from '../../../packages/cli-common/sourceRuntimeEntries.mjs';
@@ -34,9 +34,15 @@ async function writeChanged(path, contents) {
 export async function publishSourceUiAssets({ recordPath, outputPath = recordPath }) {
     const prepared = readSourceUiAssetsRecord(recordPath);
     if (!prepared) throw new Error(`Missing prepared UI assets: ${recordPath}`);
+    let localeMap;
     for (const { candidatePath, outputPath: publicationPath } of prepared.publications) {
         const contents = await readFile(candidatePath, 'utf8');
         await writeChanged(publicationPath, contents);
+        if (publicationPath.endsWith(normalize(SOURCE_UI_ASSET_OUTPUT_PATHS.locales))) localeMap = publicationPath;
+    }
+    if (localeMap) {
+        const { retireLocaleBundles } = await import('./prepareLocaleAssets.mjs');
+        await retireLocaleBundles({ uiPackageDir: resolve(dirname(localeMap), '../..') });
     }
     // A published record has no pending candidates. Keep the record shape
     // readable after in-place publication without retaining compiler scratch.
@@ -46,8 +52,16 @@ export async function publishSourceUiAssets({ recordPath, outputPath = recordPat
 }
 
 /** The existing UI compiler subprocess owns both source-driven asset families. */
-export async function prepareSourceUiAssets({ uiPackageDir, outputDir, recordPath, retainedRecordPath = recordPath,
-    deferPublication = false }) {
+export async function prepareSourceUiAssets(options) {
+    const { openLocalePreparation } = await import('./prepareLocaleAssets.mjs');
+    // Locale bundles stay retained by this preparation until its record names them.
+    const preparation = await openLocalePreparation(resolve(options.uiPackageDir, '.expo/hstack/locales'));
+    try { return await prepareSourceUiAssetsWith({ ...options, preparation }); }
+    finally { await preparation.close(); }
+}
+
+async function prepareSourceUiAssetsWith({ uiPackageDir, outputDir, recordPath, retainedRecordPath = recordPath,
+    deferPublication = false, preparation }) {
     const { prepareLocaleAssets } = await import('./prepareLocaleAssets.mjs');
     const { generateShikiGrammarAssets } = await import('./generateShikiGrammarAssets.mjs');
     const specs = [
@@ -82,7 +96,7 @@ export async function prepareSourceUiAssets({ uiPackageDir, outputDir, recordPat
             result = { ...previous, outputPath: candidatePath };
             reused = true;
         } else {
-            result = await generate({ uiPackageDir, outputPath: candidatePath, publicationPath });
+            result = await generate({ uiPackageDir, outputPath: candidatePath, publicationPath, preparation });
             compiled += 1;
         }
         const owners = new Set([uiPackageDir]);
