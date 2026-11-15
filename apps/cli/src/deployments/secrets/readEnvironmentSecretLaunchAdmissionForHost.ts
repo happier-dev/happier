@@ -27,18 +27,15 @@ import { createExternalActionMachineRpcExecution, projectExternalActionRequester
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import type { OwnServerSecretLaunchAdmission, OwnServerSecretLaunchAdmissionRequest } from '@/deployments/targets/ownServer/ownServerDeploymentHostRuntime';
-import type { ActionExecutorContext } from '@happier-dev/protocol';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { openMachineSecretGrant, sealMachineSecretGrant } from './machineSecretGrant';
+import { assertMachineConnectorSecretInvocationCurrent, type InstalledSecretContext } from './secretInvocationCurrentness';
+export { assertDeploymentSecretInvocationCurrent, assertMachineConnectorSecretInvocationCurrent } from './secretInvocationCurrentness';
 
 const refuse = (code: string, cause?: ActionExecuteFailure): never => {
     cause ??= code === 'invalid_action_output' ? deploymentOutputValidationFailure('deployments.secrets.admission', undefined) : undefined;
     throw Object.assign(new Error(cause?.error ?? code), { code, ...(cause ? { cause } : {}) });
 };
-type InstalledSecretContext = Pick<ActionExecutorContext, 'signal' | 'externalActionExecutionAuthorization'
-    | 'externalActionCredential' | 'rpcSessionAuthorization' | 'externalActionTarget' | 'originalActionEnvelope'> & Readonly<{
-    operationAcceptance?: Pick<NonNullable<ActionExecutorContext['operationAcceptance']>, 'operationId'>;
-}>;
 type HostSecretAdmissionRequest = Omit<OwnServerSecretLaunchAdmissionRequest, 'materialization'> & Readonly<{
     environmentUpdate?: true;
     materialization: OwnServerSecretLaunchAdmissionRequest['materialization']
@@ -49,20 +46,6 @@ type BindingPreparationAdmissionRequest = Omit<HostSecretAdmissionRequest, 'targ
     materialization: Extract<EnvironmentSecretLaunchAdmissionBodyV1['materialization'], { kind: 'bindings' }>;
     createRequestHeaders?: (body: unknown) => Promise<Readonly<Record<string, string>>>;
 }>;
-
-/** Requester custody for author preparation and protected Machine setup effects. */
-export async function assertDeploymentSecretInvocationCurrent(context: InstalledSecretContext, signal = context.signal): Promise<void> {
-    if (signal?.aborted) return refuse('cancelled');
-    const authorization = context.externalActionExecutionAuthorization;
-    if (authorization) {
-        if (!authorization.requesterAccountProjection) return refuseDeploymentAuthorization('requester_account_projection_missing');
-        if (!authorization.requesterHttpProjection) return refuseDeploymentAuthorization('requester_http_projection_missing');
-        if (!await authorization.requesterAccountProjection.isCurrent()) return refuseDeploymentAuthorization('requester_account_not_current');
-        if (!await authorization.requesterHttpProjection.isCurrent()) return refuseDeploymentAuthorization('requester_http_not_current');
-    }
-    if (!authorization && (context.externalActionCredential || context.rpcSessionAuthorization)) return refuseDeploymentAuthorization('requester_authorization_missing');
-    if (signal?.aborted) return refuse('cancelled');
-}
 
 /** Installed target read. Account credentials authenticate transport; only the installed key opens a grant. */
 export async function readEnvironmentSecretLaunchAdmissionForHost(input: OwnServerSecretLaunchAdmissionRequest): Promise<OwnServerSecretLaunchAdmission> {
@@ -322,8 +305,7 @@ async function createConnectorSecretTransportForHost(input: MachineConnectorSecr
         // Domain effects carry their accepted child to Home. Its active-job
         // lookup owns this request; local custody only observes cancellation.
         if (actionId !== 'deployments.domains.add' && actionId !== 'deployments.domains.remove') {
-            await assertDeploymentSecretInvocationCurrent(input.context, input.signal);
-            await input.assertCurrent();
+            await assertMachineConnectorSecretInvocationCurrent(input);
         }
         await custody.assertCurrent();
     } catch (error) { custody.release(); throw error; }

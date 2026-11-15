@@ -4,7 +4,7 @@ import { machineSecretGrantSubjectKey, MachineConnectorSecretGrantSubjectV1Schem
     type MachineConnectorSecretGrantSubjectV1, type MachineConnectorSecretGrantInputV1 } from '@happier-dev/deployment-protocol';
 import type { MachineRecipeStepV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { configuration } from '@/configuration';
-import { assertDeploymentSecretInvocationCurrent, materializeMachineConnectorSecretGrantForHost, machineConnectorSecretGrantPathForHost,
+import { assertMachineConnectorSecretInvocationCurrent, materializeMachineConnectorSecretGrantForHost, machineConnectorSecretGrantPathForHost,
     type MachineConnectorSecretGrantHostRequest } from '@/deployments/secrets/readEnvironmentSecretLaunchAdmissionForHost';
 
 /** Private stdin custody, separate from the reviewable request/plan and retained records. */
@@ -59,8 +59,7 @@ export function createMachineConnectorSecretGrantSession(input: Readonly<{
     const assertCurrent = async () => {
         admitted.signal.throwIfAborted();
         if (!await input.verifyCurrent()) return refuse();
-        await assertDeploymentSecretInvocationCurrent(admitted.context, admitted.signal);
-        await admitted.assertCurrent();
+        await assertMachineConnectorSecretInvocationCurrent(admitted);
         admitted.signal.throwIfAborted();
     };
     return { frame, signal: admitted.signal, assertCurrent,

@@ -40,6 +40,21 @@ describe('installed Environment secret launch reader', () => {
             installationId: 'installation', publicKey: encodeBase64(keys.publicKey, 'base64url'), privateKey: encodeBase64(keys.secretKey, 'base64url') });
     }
 
+    it('keeps author preparation unavailable when only signed HTTP authority is present', async () => {
+        const fixture = await createDeploymentChildRequesterHarness({ encryptionMode: 'plain' });
+        const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: fixture.root,
+            serverId: fixture.profileId, serverIdentityId: fixture.homeIdentityId, serverHttpBaseUrl: fixture.serverHttpBaseUrl,
+            target: fixture.root.binding.target, installationId: fixture.root.binding.installationId,
+            privateKey: fixture.controller.secretKey, rootAdmitted: true,
+            forwardedDeploymentChild: fixture.job, deploymentChildExecution: fixture.packet });
+        if (!authorization) throw new Error('Expected the admitted HTTP projection');
+        const reader = await import('./readEnvironmentSecretLaunchAdmissionForHost');
+        const failure = await reader.assertDeploymentSecretInvocationCurrent({ externalActionExecutionAuthorization: authorization })
+            .catch((error: unknown) => error);
+        expect(readDeploymentAuthorizationFailure(failure)).toMatchObject({ errorCode: 'action_forbidden',
+            error: 'action_forbidden (requester_account_projection_missing)' });
+    });
+
     it('signs only the exact service-keyed read-role acquisition without a deployment mutation', async () => {
         install();
         const reader = await import('./readEnvironmentSecretLaunchAdmissionForHost');
