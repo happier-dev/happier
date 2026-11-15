@@ -20,6 +20,28 @@ const item = {
 };
 
 describe('registry app admission', () => {
+  it('reprocesses explicit imported mapping corrections while retaining the original selected content pin', async () => {
+    const source: RegistrySourceDescriptorV1 = { id: 'apps', title: 'Apps', format: 'happier-catalog', kinds: ['app'],
+      url: 'https://catalog.example/apps.json', enabled: true, addedAt: 0, origin: { kind: 'user' }, removable: true };
+    const original = { ...descriptor, generatedSecrets: [{ ...descriptor.generatedSecrets[0], profile: { kind: 'author-code' } }] };
+    const host = createRegistryHostV1({ host: 'node', readSources: async () => [source], http: {
+      getJson: async () => ({ ok: true, fetchedAt: 1, value: { schemaVersion: 1, apps: [{ itemId: 'db', app: original }] } }),
+      getText: async () => { throw new Error('Unexpected text fetch'); }, getBytes: async () => { throw new Error('Unexpected binary fetch'); },
+    } });
+    const operand = { kind: 'app' as const, sourceId: 'apps', itemId: 'db' };
+    const before = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.read'].parse(await host.execute('registries.items.read', operand)).item;
+    expect(before.payload).toMatchObject({ state: 'needs_review', reviewSource: { document: JSON.stringify(original, null, 2) } });
+    const corrected = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.read'].parse(await host.execute('registries.items.read', {
+      ...operand, version: before.summary.version, appMappingCorrection: { document: JSON.stringify(descriptor) },
+    })).item;
+    expect(corrected.payload).toMatchObject({ state: 'ready', app: descriptor, ref: before.payload.kind === 'app' ? before.payload.ref : null });
+    expect(corrected.summary.version).toBe(before.summary.version);
+    const unresolved = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.read'].parse(await host.execute('registries.items.read', {
+      ...operand, appMappingCorrection: { document: JSON.stringify(original) },
+    })).item;
+    expect(unresolved.payload).toMatchObject({ state: 'needs_review' });
+  });
+
   it('keeps malformed descriptors and identifiable entry envelopes reviewable without withdrawing healthy siblings', async () => {
     const source: RegistrySourceDescriptorV1 = {
       id: 'apps', title: 'Apps', format: 'happier-catalog', kinds: ['app'], url: 'https://catalog.example/apps.json',

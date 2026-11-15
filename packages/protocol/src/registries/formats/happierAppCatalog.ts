@@ -18,7 +18,7 @@ const EntryV1Schema = lazyZodSchema(() => z.strictObject({ itemId: z.string().ch
 export type HappierAppCatalogV1 = z.infer<typeof HappierAppCatalogV1Schema>;
 type AppReadInputV1 = Readonly<{
   sourceId: string; fetchedAt: number; version?: string; ref?: RegistryContentRefV1;
-  packageContent?: RegistryPackagedSourceDescriptorV1['packageContent'];
+  packageContent?: RegistryPackagedSourceDescriptorV1['packageContent']; appMappingCorrection?: RegistryAppMappingV1;
 }>;
 
 function title(value: unknown, fallback: string): string {
@@ -109,7 +109,11 @@ export function latestHappierAppCatalogRefsV1(input: Pick<AppReadInputV1, 'sourc
 function readEntry(input: AppReadInputV1, itemId: string, value: unknown): RegistryItemV1 {
   const envelope = EntryV1Schema.safeParse(value);
   const descriptor = envelope.success ? envelope.data.app : undefined;
-  const app = DeploymentTemplateV1Schema.safeParse(descriptor);
+  let reviewed = descriptor;
+  if (input.appMappingCorrection) {
+    try { reviewed = JSON.parse(input.appMappingCorrection.document); } catch { reviewed = undefined; }
+  }
+  const app = DeploymentTemplateV1Schema.safeParse(reviewed);
   const metadata = { itemId, app: envelope.success ? descriptor
     : value && typeof value === 'object' && 'app' in value ? value.app : undefined };
   // The exact selected inert descriptor is the content, not unrelated entries or catalog order.
@@ -126,7 +130,8 @@ function readEntry(input: AppReadInputV1, itemId: string, value: unknown): Regis
     const issues = !envelope.success ? envelope.error.issues : !app.success ? app.error.issues : [];
     const diagnostics = issues.map(issue => ({ field: issue.path.map(String).join('.') || 'app', reason: issue.code }));
     return { summary: { ...summary(input.sourceId, metadata), version, problem: { code: 'needs_review', diagnostics } },
-      payload: { kind: 'app', state: 'needs_review', ref, diagnostics }, fetchedAt: input.fetchedAt };
+      payload: { kind: 'app', state: 'needs_review', ref, diagnostics, reviewSource: {
+        document: input.appMappingCorrection?.document ?? JSON.stringify(metadata.app ?? null, null, 2) } }, fetchedAt: input.fetchedAt };
   }
   return { summary: { ...summary(input.sourceId, metadata), version }, payload: { kind: 'app', state: 'ready', app: app.data, ref }, fetchedAt: input.fetchedAt };
 }
