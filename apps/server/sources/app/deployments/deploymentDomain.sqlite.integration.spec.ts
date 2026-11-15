@@ -13,6 +13,7 @@ import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createArtifact } from '@/app/artifacts/artifactWriteService';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
+import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
 import { registerDeploymentRoutes } from '@/app/api/routes/deployments/deploymentRoutes';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
@@ -21,6 +22,9 @@ import { projectDeploymentDomainHeader, projectDeploymentDomainMachineReferences
 import { loadDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
 import { DeploymentDomainCapturedPlacementsV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { deploymentDomainProviderObservationProofPayloadV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import { DeploymentDomainProviderResultV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainProviderResultV1';
+import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import * as vercelDomainPlugin from '../../../../../packages/plugins/deploy-vercel/src/index';
 
 describe('public Domain storage and native custody', () => {
     const serverId = `srv_${'d'.repeat(32)}`;
@@ -144,6 +148,75 @@ describe('public Domain storage and native custody', () => {
             expect(removal.domain).toMatchObject({ state: 'removing' });
             expect((await settle(removal.domain, 'removed')).json()).toMatchObject({ ok: true, domain: { deletedAtMs: expect.any(Number) } });
         });
+    });
+
+    it('settles a verified Vercel Add with its private provider observation through the Home transition', async () => {
+        const f = await fixture();
+        await db.deploymentTargetLink.update({ where: { id: f.target.id }, data: {
+            sourceKind: 'plugin', hostTargetId: null, pluginId: 'happier.deploy.vercel', contributionLocalId: 'runtime', targetKind: 'vercel' } });
+        const hostname = 'app.example.test';
+        const account = { service: { pluginId: 'happier.machine.vercel', localId: 'vercel-account' }, accountId: 'fixture' };
+        const kit = await createPluginTestkit({ manifest: vercelDomainPlugin.manifest, module: vercelDomainPlugin,
+            services: { http: createPluginHttpFixture({ async request(request) {
+                const body = new URL(request.url).pathname.endsWith('/config') ? { misconfigured: false }
+                    : { name: hostname, apexName: 'example.test', projectId: 'prj_exact',
+                        gitBranch: null, customEnvironmentId: null, verified: true };
+                return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify(body)) };
+            } }) } });
+        try {
+            await withAuthenticatedTestApp(app => { registerDeploymentRoutes(app); artifactsRoutes(app); }, async app => {
+                const input = { serverId, domainId: crypto.randomUUID(), environmentId: f.environment.id, expectedRevision: 1,
+                    targetLinkId: f.target.id, expectedTargetLinkRevision: 1, requestKey: crypto.randomUUID(),
+                    actionOperationId: crypto.randomUUID(), requestId: crypto.randomUUID(), provider: true, placements: [],
+                    ...await f.content('deployment-domain.v1') };
+                const headers = { 'x-test-user-id': f.owner.id };
+                const url = `/v1/deployments/environments/${f.environment.id}/domains`;
+                const added = await app.inject({ method: 'POST', url, headers, payload: input });
+                expect(added.statusCode, added.body).toBe(200);
+                const accepted = DeploymentDomainMutationResultV1Schema.parse(added.json());
+                if (!accepted.ok || !accepted.domain.providerPlacement) throw new Error('provider capture missing');
+                const providerObservation = DeploymentDomainProviderResultV1Schema.parse(await kit.invokeAction('domains-add', {
+                    v: 1, serverId, environmentId: f.environment.id, expectedRevision: accepted.revision,
+                    targetLinkId: f.target.id, expectedTargetLinkRevision: 1, credentialRef: account,
+                    credentialPrincipal: { kind: 'account', accountId: f.owner.id, purpose: {
+                        consumer: { pluginId: vercelDomainPlugin.manifest.id, localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' },
+                        target: { kind: 'account', account } },
+                    providerIdentity: { providerAccountId: 'team_exact', providerResourceId: 'prj_exact', providerEnvironment: 'production' },
+                    providerEnvironment: { kind: 'production' }, domainId: input.domainId, domain: { hostname },
+                }));
+                expect(providerObservation.state).toBe('active');
+                // Use the actual host Artifact preparation against the Home routes, not invented mutation bytes.
+                const cliStorePath = '../../../../cli/src/api/artifacts/accountArtifactStore';
+                const cliServerUrlPath = '../../../../cli/src/api/client/serverHttpBaseUrl';
+                const { createAccountArtifactStore } = await import(cliStorePath);
+                const { runWithServerHttpBaseUrl } = await import(cliServerUrlPath);
+                const baseUrl = await app.listen({ host: '127.0.0.1', port: 0 });
+                const prepared = await runWithServerHttpBaseUrl(baseUrl, async () => {
+                    const store = createAccountArtifactStore({ accountContent: { accountId: f.owner.id, encryption: null },
+                        getAccountEncryptionMode: async () => 'plain' });
+                    const resource = await store.readForUpdate(input.contentArtifactId, { prepareRecipients: false,
+                        includeSharedAudience: false, authorizationHeaders: async () => headers });
+                    if (!resource) throw new Error('Domain Artifact missing');
+                    return resource.prepareJsonUpdate({ header: resource.artifact.header,
+                        body: JSON.stringify({ hostname, target: { kind: 'provider' }, providerObservation }) });
+                });
+                if (!prepared.ok) throw new Error(prepared.errorCode);
+                const observation = { placement: accepted.domain.providerPlacement, state: 'active' as const,
+                    contentUpdate: { body: prepared.mutation.body,
+                        expectedBodyVersion: prepared.mutation.expectedBodyVersion, expectedHeaderVersion: prepared.mutation.expectedHeaderVersion,
+                        ...(prepared.mutation.kind === undefined ? {} : { kind: prepared.mutation.kind }),
+                        ...(prepared.mutation.provenance === undefined ? {} : { provenance: prepared.mutation.provenance }),
+                        ...(prepared.mutation.provenanceDataEncryptionKey === undefined ? {} : { provenanceDataEncryptionKey: prepared.mutation.provenanceDataEncryptionKey }) } };
+                const settled = await app.inject({ method: 'POST', url: `${url}/${input.domainId}/transitions`, headers,
+                    payload: { serverId, environmentId: f.environment.id, domainId: input.domainId, expectedDomainRevision: 1,
+                        observations: [], providerObservation: { ...observation, proof: signMachineInstallationProof({
+                            privateKey: f.key.secretKey, payload: deploymentDomainProviderObservationProofPayloadV1({
+                                expectedDomainRevision: 1, observation }) }) } } });
+                expect(settled.statusCode, settled.body).toBe(200);
+                expect(DeploymentDomainMutationResultV1Schema.parse(settled.json())).toMatchObject({ ok: true,
+                    domain: { state: 'active', revision: 2, contentBodyVersion: 2 } });
+            });
+        } finally { await kit.dispose(); }
     });
 
     it.each(['plain', 'e2ee'] as const)('captures retained provider Domains under the existing teardown admission in %s', async mode => {
