@@ -11,6 +11,7 @@ const stoppers = new Set<() => void>();
 let activeRun = 0;
 
 function setActive(next: string | null): void {
+  if (activeKey === next) return;
   activeKey = next;
   for (const listener of listeners) listener();
 }

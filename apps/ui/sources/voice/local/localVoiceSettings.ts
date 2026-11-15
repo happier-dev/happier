@@ -7,7 +7,7 @@ import {
   VoiceLocalSttSchema,
   type VoiceLocalSttProvider,
 } from '@/sync/domains/settings/voiceLocalSttSettings';
-import { VoiceLocalTtsSchema } from '@/sync/domains/settings/voiceLocalTtsSettings';
+import { isVoiceLocalTtsConfigured, VoiceLocalTtsSchema } from '@/sync/domains/settings/voiceLocalTtsSettings';
 import { normalizeTurnEndpointPolicy, type TurnEndpointPolicy } from '@/voice/input/TurnEndpointDetector';
 
 export type LocalVoiceSettingsInput = Readonly<Pick<Settings, 'voice'>>;
@@ -98,9 +98,9 @@ export function isVoiceBargeInEnabled(settings: LocalVoiceSettingsInput): boolea
 }
 
 /**
- * Whether per-message "read aloud" can speak. It follows the settings, not a live voice session:
+ * Whether per-message "read aloud" has configured TTS. It follows settings, not a live voice session:
  * a local voice provider must be selected and its TTS provider filled in. These are the same
- * conditions under which `speakWithLocalTtsProvider` would otherwise return without speaking.
+ * required-configuration check used by `speakWithLocalTtsProvider`; feature policy is separate.
  */
 export function isReadAloudAvailable(settings: LocalVoiceSettingsInput): boolean {
   const providerId = settings?.voice?.providerId;
@@ -108,14 +108,5 @@ export function isReadAloudAvailable(settings: LocalVoiceSettingsInput): boolean
 
   const { config } = resolveLocalVoiceAdapterSettings(settings);
   const parsed = VoiceLocalTtsSchema.safeParse(config?.tts ?? {});
-  if (!parsed.success) return false;
-  const tts = parsed.data;
-
-  if (tts.provider === 'openai_compat') return String(tts.openaiCompat.baseUrl ?? '').trim().length > 0;
-  if (tts.provider === 'google_cloud') {
-    // Same precedence as decrypting the secret: a non-blank plain value, else an encrypted one.
-    const apiKey = tts.googleCloud.apiKey;
-    return (apiKey?.value ?? '').trim().length > 0 || apiKey?.encryptedValue != null;
-  }
-  return true;
+  return parsed.success && isVoiceLocalTtsConfigured(parsed.data);
 }

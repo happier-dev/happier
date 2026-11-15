@@ -1,21 +1,23 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
+import { storage } from '@/sync/domains/state/storageStore';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { stopReadAloud } from '@/voice/local/readAloudState';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-// Boundaries only: device speech, the web audio unlock, the modal, the settings store and the
+// Boundaries only: device speech, HTTP, the web audio unlock, the modal and the
 // platform/theme/text shells. The button, readAloud and speakAssistantText are real.
 type SpeakOptions = { onDone?: () => void; onStopped?: () => void };
 const expoSpeech = vi.hoisted(() => ({
     speak: vi.fn<(text: string, options: SpeakOptions) => void>(),
     stop: vi.fn(),
 }));
-type ReactiveStore = ReturnType<typeof import('@/dev/testkit/mocks/storage').createReactiveStorageStoreMock>;
-const settingsStore = vi.hoisted(() => ({ current: null as ReactiveStore | null }));
 const modal = vi.hoisted(() => ({ spies: null as null | { alert: ReturnType<typeof vi.fn> } }));
 const primeWebAudioPlayback = vi.hoisted(() => vi.fn());
 
@@ -39,15 +41,8 @@ vi.mock('@/modal', async () => {
     modal.spies = mock.spies;
     return mock.module;
 });
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock, createReactiveStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
-    const store = createReactiveStorageStoreMock({ settings: { voice: voiceSettingsParse({ providerId: 'realtime_elevenlabs' }) } as never });
-    settingsStore.current = store;
-    return createStorageModuleMock({ importOriginal, overrides: { storage: store } });
-});
-
-function setVoice(voice: unknown): void {
-    settingsStore.current?.setState({ settings: { voice } as never });
+function setVoice(voice: ReturnType<typeof voiceSettingsParse>): void {
+    storage.setState(state => ({ settings: { ...state.settings, voice } }));
 }
 
 const localVoice = voiceSettingsParse({
@@ -56,15 +51,25 @@ const localVoice = voiceSettingsParse({
 });
 
 let utterances: SpeakOptions[] = [];
+const initialStorageState = storage.getState();
 
 describe('MessageSpeakButton', () => {
+    beforeEach(async () => {
+        storage.setState({ settings: { ...initialStorageState.settings, experiments: true, featureToggles: { voice: true } } });
+        vi.stubGlobal('fetch', vi.fn(async () => Response.json(createRootLayoutFeaturesResponse({ features: { voice: { enabled: true } } }))));
+        await getServerFeaturesSnapshot({ force: true });
+    });
+
     afterEach(() => {
-        setVoice(voiceSettingsParse({ providerId: 'realtime_elevenlabs' }));
+        standardCleanup();
+        stopReadAloud();
+        utterances.forEach(utterance => utterance.onStopped?.());
+        storage.setState(initialStorageState, true);
         utterances = [];
         expoSpeech.speak.mockReset();
         expoSpeech.stop.mockReset();
         primeWebAudioPlayback.mockReset();
-        standardCleanup();
+        vi.unstubAllGlobals();
     });
 
     function setup() {
@@ -83,6 +88,36 @@ describe('MessageSpeakButton', () => {
         const { MessageSpeakButton } = await import('./MessageSpeakButton');
         setup();
         const screen = await renderScreen(<MessageSpeakButton messageKey="m1" text="   " testID="speak" />);
+        expect(screen.findAllByType('Pressable')).toHaveLength(0);
+    });
+
+    it('hides when the canonical voice feature is disabled despite configured TTS', async () => {
+        const { MessageSpeakButton } = await import('./MessageSpeakButton');
+        setup();
+        storage.setState(state => ({ settings: { ...state.settings, featureToggles: { voice: false } } }));
+        const screen = await renderScreen(<MessageSpeakButton messageKey="m1" text="hello" testID="speak" />);
+        expect(screen.findAllByType('Pressable')).toHaveLength(0);
+    });
+
+    it.each(['off', 'feature'] as const)('stops playback when %s revokes voice availability', async (revoke) => {
+        const { MessageSpeakButton } = await import('./MessageSpeakButton');
+        setup();
+        const screen = await renderScreen(<MessageSpeakButton messageKey="m1" text="hello" testID="speak" />);
+        await act(async () => { screen.pressByTestId('speak'); });
+        await act(async () => {
+            if (revoke === 'off') setVoice(voiceSettingsParse({ providerId: 'off' }));
+            else storage.setState(state => ({ settings: { ...state.settings, featureToggles: { voice: false } } }));
+        });
+        expect(screen.findAllByType('Pressable')).toHaveLength(0);
+        expect(expoSpeech.stop).toHaveBeenCalledTimes(1);
+    });
+
+    it('hides when the server disables voice', async () => {
+        const { MessageSpeakButton } = await import('./MessageSpeakButton');
+        setup();
+        vi.stubGlobal('fetch', vi.fn(async () => Response.json(createRootLayoutFeaturesResponse({ features: { voice: { enabled: false } } }))));
+        await getServerFeaturesSnapshot({ force: true });
+        const screen = await renderScreen(<MessageSpeakButton messageKey="m1" text="hello" testID="speak" />);
         expect(screen.findAllByType('Pressable')).toHaveLength(0);
     });
 
@@ -116,7 +151,7 @@ describe('MessageSpeakButton', () => {
         await act(async () => { screen.pressByTestId('speak-1'); });
         await vi.waitFor(() => expect(screen.findByTestId('speak-1')?.props.accessibilityLabel).toBe('message.stopReadAloudA11y'));
         expect(screen.findByTestId('speak-2')?.props.accessibilityLabel).toBe('message.readAloudA11y');
-        utterances[0].onDone?.();
+        await act(async () => { utterances[0].onDone?.(); });
     });
 
     it('tells the user when the voice provider fails', async () => {

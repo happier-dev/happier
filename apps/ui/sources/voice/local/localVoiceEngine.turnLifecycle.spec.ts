@@ -12,10 +12,14 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { Encryption } from '@/sync/encryption/encryption';
 import { sync } from '@/sync/sync';
 import { patchLocalVoiceState } from './localVoiceState';
+import { toggleReadAloud } from './readAloud';
+import { getReadAloudActiveKey } from './readAloudState';
+import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 
 const nativeAudio = vi.hoisted(() => ({ record: vi.fn(), stop: vi.fn() }));
 const expoSpeechSpeak = vi.hoisted(() => vi.fn<(text: string, options?: { onDone?: () => void }) => void>());
-vi.mock('expo-speech', () => ({ speak: expoSpeechSpeak, stop: vi.fn(async () => {}) }));
+const expoSpeechStop = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock('expo-speech', () => ({ speak: expoSpeechSpeak, stop: expoSpeechStop }));
 vi.mock('expo-audio', () => ({
     RecordingPresets: { HIGH_QUALITY: { extension: '.m4a' } },
     AudioModule: {
@@ -122,7 +126,7 @@ describe('local voice engine turn lifecycle (direct session)', () => {
             }
             if (!url.endsWith('/v1/features')) throw new Error(`Unexpected HTTP request: ${url}`);
             return Response.json({
-                features: { sharing: { pendingQueueV2: { enabled: true }, pendingDeliveryState: { enabled: true } } },
+                features: { voice: { enabled: true }, sharing: { pendingQueueV2: { enabled: true }, pendingDeliveryState: { enabled: true } } },
                 capabilities: { compatibility: { pendingInput: { currentPendingInputProtocolVersion: 1 } },
                     session: { pendingInput: { protocolVersion: 1 } } },
             });
@@ -149,6 +153,7 @@ describe('local voice engine turn lifecycle (direct session)', () => {
         nativeAudio.record.mockClear();
         nativeAudio.stop.mockClear();
         expoSpeechSpeak.mockReset().mockImplementation((_text, options) => options?.onDone?.());
+        expoSpeechStop.mockClear();
         patchLocalVoiceState({ status: 'idle', sessionId: null, error: null });
         localVoiceEngine = await import('./localVoiceEngine');
     }, 180_000);
@@ -159,6 +164,25 @@ describe('local voice engine turn lifecycle (direct session)', () => {
         vi.unstubAllGlobals();
         Reflect.set(sync, 'encryption', initialEncryption);
         storage.setState(initialStorageState, true);
+    });
+
+    it('stops standalone message playback before starting the microphone', async () => {
+        configureDirectVoice({ autoSpeakReplies: true });
+        storage.setState(state => ({ settings: { ...state.settings, experiments: true, featureToggles: { voice: true } } }));
+        await getServerFeaturesSnapshot({ force: true });
+        let finish: (() => void) | undefined;
+        expoSpeechSpeak.mockImplementation((_text, options) => { finish = options?.onDone; });
+        const reading = toggleReadAloud({ key: 'message-1', text: 'Read this message', settings: storage.getState().settings });
+        try {
+            expect(getReadAloudActiveKey()).toBe('message-1');
+            await localVoiceEngine.toggleLocalVoiceTurn('s1');
+            expect(localVoiceEngine.getLocalVoiceState().status).toBe('recording');
+            expect(expoSpeechStop).toHaveBeenCalledTimes(1);
+            expect(getReadAloudActiveKey()).toBeNull();
+        } finally {
+            finish?.();
+            await reading;
+        }
     });
 
     it('speaks the final reply of the turn instead of thinking or interim text', async () => {

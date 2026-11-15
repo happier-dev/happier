@@ -1,4 +1,5 @@
 import { storage } from '@/sync/domains/state/storage';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 
 import { isReadAloudAvailable, type LocalVoiceSettingsInput } from './localVoiceSettings';
 
@@ -18,5 +19,6 @@ export function resolveReadAloudAvailable(settings: LocalVoiceSettingsInput): bo
 
 /** A boolean selector, so only a change in availability (not any voice preference) rerenders the reader. */
 export function useReadAloudAvailable(): boolean {
-  return storage((state) => resolveReadAloudAvailable(state.settings));
+  const voiceEnabled = useFeatureEnabled('voice', { scopeKind: 'runtime' });
+  return storage((state) => voiceEnabled && resolveReadAloudAvailable(state.settings));
 }

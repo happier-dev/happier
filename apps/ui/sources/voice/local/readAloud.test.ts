@@ -1,5 +1,5 @@
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 
@@ -16,11 +16,16 @@ import { localVoicePlaybackController } from '@/voice/runtime/VoicePlaybackContr
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 
 import { speakAssistantText } from '@/voice/output/speakAssistantText';
+import { storage } from '@/sync/domains/state/storageStore';
+import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 
 import { toggleReadAloud } from './readAloud';
 import { getReadAloudActiveKey, useIsReadingAloud } from './readAloudState';
 
 const settings = {
+    experiments: true,
+    featureToggles: { voice: true },
     voice: voiceSettingsParse({
         providerId: 'local_conversation',
         adapters: { local_conversation: { tts: { provider: 'device' } } },
@@ -29,14 +34,40 @@ const settings = {
 
 /** Utterances the device engine is currently "playing"; finishing one mirrors a real onDone. */
 let utterances: SpeakOptions[] = [];
+const initialStorageState = storage.getState();
 
 describe('toggleReadAloud', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        storage.setState({ settings: { ...initialStorageState.settings, ...settings } });
+        vi.stubGlobal('fetch', vi.fn(async () => Response.json(createRootLayoutFeaturesResponse({ features: { voice: { enabled: true } } }))));
+        await getServerFeaturesSnapshot({ force: true });
         utterances = [];
         expoSpeech.speak.mockReset();
         expoSpeech.speak.mockImplementation((_text, options) => { utterances.push(options); });
         // A real engine reports the stop asynchronously; tests decide when via `utterances`.
         expoSpeech.stop.mockReset();
+    });
+
+    afterEach(() => {
+        storage.setState(initialStorageState, true);
+        utterances.forEach(utterance => utterance.onStopped?.());
+        vi.unstubAllGlobals();
+    });
+
+    it('does not start speech when the canonical feature is disabled', async () => {
+        await toggleReadAloud({ key: 'm1', text: 'hello', settings: { ...settings, featureToggles: { voice: false } } });
+        expect(expoSpeech.speak).not.toHaveBeenCalled();
+        expect(getReadAloudActiveKey()).toBeNull();
+    });
+
+    it('stops when the server revokes voice without a mounted transcript button', async () => {
+        const reading = toggleReadAloud({ key: 'm1', text: 'hello', settings });
+        vi.stubGlobal('fetch', vi.fn(async () => Response.json(createRootLayoutFeaturesResponse({ features: { voice: { enabled: false } } }))));
+        await getServerFeaturesSnapshot({ force: true });
+        expect(expoSpeech.stop).toHaveBeenCalledTimes(1);
+        expect(getReadAloudActiveKey()).toBeNull();
+        utterances[0].onStopped?.();
+        await reading;
     });
 
     it('speaks the cleaned-up message and is active only while it plays', async () => {
@@ -102,6 +133,7 @@ describe('toggleReadAloud', () => {
         const pending = toggleReadAloud({ key: 'm1', text: 'hello', settings });
         localVoicePlaybackController.interrupt();
         expect(expoSpeech.stop).toHaveBeenCalledTimes(1);
+        expect(getReadAloudActiveKey()).toBeNull();
 
         utterances[0].onStopped?.();
         await pending;

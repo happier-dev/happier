@@ -35,6 +35,7 @@ import {
   resolveLocalVoiceAdapterSettings,
 } from './localVoiceSettings';
 import { sendVoiceTextTurn as sendVoiceTextTurnImpl } from './sendVoiceTextTurn';
+import { stopReadAloud } from './readAloudState';
 
 export type { LocalVoiceState, LocalVoiceStatus } from './localVoiceState';
 export { getLocalVoiceState, useLocalVoiceStatus, subscribeLocalVoiceState } from './localVoiceState';
@@ -200,13 +201,20 @@ async function stopAndSendRecordedTurn(sessionId: string): Promise<void> {
   );
 }
 
+async function startLocalVoiceInput(sessionId: string, provider: ReturnType<typeof resolveLocalSttProvider>): Promise<void> {
+  stopReadAloud();
+  if (provider === 'device') await deviceSttController.start(sessionId);
+  else if (provider === 'local_neural') await sherpaSttController.start(sessionId);
+  else await startRecording(sessionId);
+}
+
 async function stopDeviceSpeechRecognitionAndSend(sessionId: string): Promise<void> {
   patchLocalVoiceState({ status: 'transcribing', error: null });
 
   const text = await deviceSttController.stop(sessionId);
   if (!text) {
     if (deviceSttController.isHandsFreeSession(sessionId) && isHandsFreeSttEnabled(storage.getState().settings)) {
-      await deviceSttController.start(sessionId);
+      await startLocalVoiceInput(sessionId, 'device');
       return;
     }
     patchLocalVoiceState({ status: 'idle', sessionId, error: null });
@@ -226,7 +234,7 @@ async function stopDeviceSpeechRecognitionAndSend(sessionId: string): Promise<vo
   );
 
   if (deviceSttController.isHandsFreeSession(sessionId) && isHandsFreeSttEnabled(storage.getState().settings)) {
-    await deviceSttController.start(sessionId);
+    await startLocalVoiceInput(sessionId, 'device');
   }
 }
 
@@ -236,7 +244,7 @@ async function stopSherpaSpeechRecognitionAndSend(sessionId: string): Promise<vo
   const text = await sherpaSttController.stop(sessionId);
   if (!text) {
     if (sherpaSttController.isHandsFreeSession(sessionId) && isHandsFreeSttEnabled(storage.getState().settings)) {
-      await sherpaSttController.start(sessionId);
+      await startLocalVoiceInput(sessionId, 'local_neural');
       return;
     }
     patchLocalVoiceState({ status: 'idle', sessionId, error: null });
@@ -256,7 +264,7 @@ async function stopSherpaSpeechRecognitionAndSend(sessionId: string): Promise<vo
   );
 
   if (sherpaSttController.isHandsFreeSession(sessionId) && isHandsFreeSttEnabled(storage.getState().settings)) {
-    await sherpaSttController.start(sessionId);
+    await startLocalVoiceInput(sessionId, 'local_neural');
   }
 }
 
@@ -442,23 +450,9 @@ export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
     if (inFlight) {
       await inFlight.catch(() => {});
     }
-
-    const settings = storage.getState().settings as any;
-    const { config } = resolveLocalVoiceAdapterSettings(settings);
-    prewarmLocalVoiceAgentOnConnect({ settings, config });
-    const sttProvider = resolveLocalSttProvider(settings);
-    const useDeviceStt = sttProvider === 'device';
-    const useSherpaStt = sttProvider === 'local_neural';
-    deviceSttController.setHandsFreeSession(useDeviceStt && config?.handsFree?.enabled === true ? sessionId : null);
-    sherpaSttController.setHandsFreeSession(useSherpaStt && config?.handsFree?.enabled === true ? sessionId : null);
-    inFlight = (useDeviceStt ? deviceSttController.start(sessionId) : useSherpaStt ? sherpaSttController.start(sessionId) : startRecording(sessionId)).finally(() => {
-      inFlight = null;
-    });
-    await inFlight;
-    return;
   }
 
-  if (current.status === 'idle') {
+  if (current.status === 'idle' || current.status === 'speaking') {
     const settings = storage.getState().settings as any;
     const { config } = resolveLocalVoiceAdapterSettings(settings);
     prewarmLocalVoiceAgentOnConnect({ settings, config });
@@ -467,7 +461,7 @@ export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
     const useSherpaStt = sttProvider === 'local_neural';
     deviceSttController.setHandsFreeSession(useDeviceStt && config?.handsFree?.enabled === true ? sessionId : null);
     sherpaSttController.setHandsFreeSession(useSherpaStt && config?.handsFree?.enabled === true ? sessionId : null);
-    inFlight = (useDeviceStt ? deviceSttController.start(sessionId) : useSherpaStt ? sherpaSttController.start(sessionId) : startRecording(sessionId)).finally(() => {
+    inFlight = startLocalVoiceInput(sessionId, sttProvider).finally(() => {
       inFlight = null;
     });
     await inFlight;
