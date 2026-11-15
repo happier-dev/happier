@@ -371,14 +371,15 @@ export function WorkflowStepEditor(props: Readonly<{
                 </View>
             ) : null}
 
-            {/* A reader's footer fact ("Open conversation") shares the "Returns …" line (run-A_steps). */}
+            {/* A supplied footer fact shares the "Returns …" line: a reader's "Open conversation" (run-A_steps), and an
+                editable document's Test Run output, duration and Open details. */}
             <WorkflowStepDataEditor
                 draft={props.draft}
                 step={step}
                 editable={editable}
                 editing={props.selected === true}
                 onEdit={onSelect}
-                {...(!editable && props.slots?.footer ? { footerAccessory: props.slots.footer } : {})}
+                {...(props.slots?.footer ? { footerAccessory: props.slots.footer } : {})}
                 onChangeInput={props.onChangeInput}
                 onRemoveInput={props.onRemoveInput}
                 testIDPrefix={testIDPrefix}

@@ -844,6 +844,38 @@ describe('editor workflow composer', () => {
         expect(router.push).toHaveBeenLastCalledWith(`/workflows/runs/${startRequests()[0]!.runId}?invocationId=review&serverId=${encodeURIComponent(getStorage().getState().profileScope!.serverId)}`);
     });
 
+    it('carries the Test Run footer onto an editable agent step (REVIEW-2 R6)', async () => {
+        const definitionId = '8fab3a81-5e64-4000-8000-000000000002';
+        await seedSavedDefinition(definitionId);
+        runStart.mockImplementation(async (request) => ({ admission: 'created',
+            run: createWorkflowRunSummaryFixture({ id: request.runId, sourceArtifactId: definitionId }) }));
+        home.answer(appliedHome.serverId, storageRoute, { select: async input => {
+            if (!input || typeof input !== 'object' || !('operation' in input)) throw new Error('Expected a storage request');
+            const { operation, ...fields } = input as Record<string, unknown>;
+            if (operation === 'invocations.list') return { body: { invocations: [], parentRevision: 1,
+                keyCensus: runKeyCensus(String(fields.runId)), progressEnvelopesByInvocationId: {} } };
+            if (operation === 'run-key.census') return { body: runKeyCensus(String(fields.runId)) };
+            throw new Error(`Unexpected test-run storage request: ${String(operation)}`);
+        } });
+        const screen = await renderScreen(<AppPaneProvider><WorkflowEditorHostScreen source={{ kind: 'saved', definitionId }} /></AppPaneProvider>, {
+            createNodeMock: () => ({ measureInWindow: (receive: (x: number, y: number, width: number, height: number) => void) => receive(600, 100, 160, 40) }),
+        });
+        const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
+        const { WorkflowStepDataEditor } = await import('../editor/WorkflowStepDataEditor');
+        const changeWhere = screen.root.findByType(WorkflowEditorBody).props.onChangeProjectTarget;
+        if (!changeWhere) throw new Error('Expected the editor target control');
+        await act(async () => { changeWhere({ machineId: 'machine-1', directory: '/repo' }); });
+        const pageMenu = screen.root.findAll((node) => node.props?.testID === 'workflow-editor-menu' && Array.isArray(node.props.actions))[0];
+        const testRun = (pageMenu?.props.actions as ReadonlyArray<{ id: string; onSelect: () => void }> | undefined)?.find((action) => action.id === 'test-run');
+        await act(async () => { testRun!.onSelect(); });
+        await vi.waitFor(() => expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync('workflow-run-inputs-run');
+        expect(startRequests()).toHaveLength(1);
+        // An editable document's agent step gets the Test Run's output line (output, duration, Open details) too.
+        await vi.waitFor(() => expect(screen.root.findAllByType(WorkflowStepDataEditor)
+            .some((node) => node.props.editable === true && node.props.footerAccessory != null)).toBe(true));
+    });
+
     it('runs the reviewed saved draft with its granted Team without saving or substituting saved contents', async () => {
         appliedHome.serverUrl = 'https://workflow.example';
         appliedHome.serverId = (await addComposerHome('Workflow Home', appliedHome.serverUrl)).id;
