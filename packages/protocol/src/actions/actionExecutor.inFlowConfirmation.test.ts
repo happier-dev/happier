@@ -92,7 +92,11 @@ describe('one in-flow confirmation for the requested operation', () => {
         ...(variant === 'home' ? { serverId: 'other' } : {}),
         ...(variant === 'target' ? { externalActionTarget: { kind: 'machine', machineId: 'other' } } : {}),
         ...(variant === 'mcp' ? { surface: 'mcp' } : {}),
-        ...(variant === 'automation' ? { authority: 'account_automation' } : {}),
+        // What automationRunExecutor actually stamps (owner Q7): an automation is never a
+        // terminal person, even when it carries the same signed terminal binding.
+        ...(variant === 'automation' ? { surface: 'agent', authority: 'account_automation', actionCaller: {
+          kind: 'automationRun', runId: 'run-1', automationId: 'automation-1', cause: { kind: 'manual', invokedAt: 1 },
+        } } : {}),
       };
       expect(admitPresentUserConfirmationV1(actionId,
         variant === 'input' ? { ...input, machineId: 'other' } : input, changed)).toBeNull();
