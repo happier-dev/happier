@@ -1,20 +1,19 @@
+import { stat } from 'node:fs/promises';
 import type { ExecService, ResolvedSystemTool } from '@happier-dev/plugin-sdk/exec';
 const CLAUDE_CLI_HELP_COMMAND_ARGS = ['--help'] as const;
 const MIN_PREFLIGHT_MODELS_TIMEOUT_MS = 250;
 const PREFLIGHT_OUTPUT_MAX_BYTES = 256 * 1024;
-/** The answer is a property of the installed binary, so it only changes when that binary changes. */
-const CLAUDE_INSTALLED_SUPPORT_TTL_MS = 5 * 60_000;
-/** A failed probe answers `false` fail-closed, so it is re-checked far sooner than a real answer. */
-const CLAUDE_INSTALLED_SUPPORT_FAILURE_TTL_MS = 30_000;
 
 type ClaudeInstalledSupport = Readonly<{
     supportsEffort: boolean;
     supportsSystemPromptSnapshotOff: boolean;
     supportsStartupInstructions: boolean;
 }>;
-type ClaudeInstalledSupportCacheEntry = Readonly<{ expiresAtMs: number; support: ClaudeInstalledSupport }>;
-
-const claudeInstalledSupportByExecutablePath = new Map<string, ClaudeInstalledSupportCacheEntry>();
+/**
+ * The answer is a property of the installed binary: it is held per executable path until the
+ * binary's stat identity changes (an update or replacement). A failed probe is not held.
+ */
+const claudeInstalledSupportByExecutablePath = new Map<string, Readonly<{ binary: string; support: ClaudeInstalledSupport }>>();
 const claudeInstalledSupportProbesInFlight = new Map<string, Promise<ClaudeInstalledSupport>>();
 
 function readClaudeInstalledSupport(helpText: string): ClaudeInstalledSupport {
@@ -69,8 +68,8 @@ async function runClaudeHelpProbe(params: Readonly<{
  * Resolve launch-control support from the installed Claude CLI's own help output.
  *
  * Every Claude session and execution-run open needs this fact before it can launch, so the
- * `--help` spawn is both TTL-cached and de-duplicated while in flight, keyed on the resolved
- * binary path (the only input that can change the answer; `cwd` reaches it through resolution).
+ * `--help` spawn is held per installed binary (path + stat identity: the only input that can
+ * change the answer; `cwd` reaches it through resolution) and de-duplicated while in flight.
  * The in-flight half is load-bearing: a fan-out that opens N Claude runs at once would otherwise
  * have every caller pay the whole spawn before the first one could populate the cache.
  */
@@ -79,7 +78,6 @@ async function probeClaudeInstalledSupportRaw(params: Readonly<{
     cwd: string;
     timeoutMs: number;
     env?: Readonly<Record<string, string | undefined>>;
-    now?: () => number;
 }>): Promise<ClaudeInstalledSupport> {
     let resolved: ResolvedSystemTool;
     try {
@@ -93,9 +91,11 @@ async function probeClaudeInstalledSupportRaw(params: Readonly<{
     }
 
     const executablePath = resolved.executablePath;
-    const readNowMs = () => params.now?.() ?? Date.now();
-    const cached = claudeInstalledSupportByExecutablePath.get(executablePath);
-    if (cached && cached.expiresAtMs > readNowMs()) return cached.support;
+    const binary = await stat(executablePath)
+        .then((file) => `${file.size}:${file.mtimeMs}:${file.ino}`)
+        .catch(() => null);
+    const held = claudeInstalledSupportByExecutablePath.get(executablePath);
+    if (binary !== null && held?.binary === binary) return held.support;
 
     const inFlight = claudeInstalledSupportProbesInFlight.get(executablePath);
     if (inFlight) return await inFlight;
@@ -108,12 +108,11 @@ async function probeClaudeInstalledSupportRaw(params: Readonly<{
                 timeoutMs: params.timeoutMs,
                 ...(params.env ? { env: params.env } : {}),
             });
-            claudeInstalledSupportByExecutablePath.set(executablePath, {
-                support: outcome.support,
-                expiresAtMs: readNowMs() + (outcome.probeFailed
-                    ? CLAUDE_INSTALLED_SUPPORT_FAILURE_TTL_MS
-                    : CLAUDE_INSTALLED_SUPPORT_TTL_MS),
-            });
+            if (binary !== null && !outcome.probeFailed) {
+                claudeInstalledSupportByExecutablePath.set(executablePath, { binary, support: outcome.support });
+            } else {
+                claudeInstalledSupportByExecutablePath.delete(executablePath);
+            }
             return outcome.support;
         } finally {
             claudeInstalledSupportProbesInFlight.delete(executablePath);

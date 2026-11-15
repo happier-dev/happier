@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type {
     ExecService,
     PluginExecSpawnRequest,
@@ -51,6 +54,15 @@ function createExecRunFixture(params: Readonly<{
         agentCli: { checkReadiness: async () => { throw new Error('agent CLI readiness should not be used'); } },
     } satisfies ExecService;
     return { exec, runs };
+}
+
+/** The installed binary is the boundary whose stat identity keys the held help fact. */
+async function writeInstalledClaude(contents = '#!/bin/sh\n'): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-claude-help-'));
+    onTestFinished(async () => await rm(dir, { recursive: true, force: true }));
+    const path = join(dir, 'claude');
+    await writeFile(path, contents);
+    return path;
 }
 
 describe('probeClaudeSupportsEffortRaw', () => {
@@ -156,14 +168,12 @@ describe('probeClaudeSupportsEffortRaw', () => {
     it('collapses concurrent and repeated probes of one Claude CLI into a single spawn', async () => {
         const fixture = createExecRunFixture({
             stdout: '  --effort <level>',
-            executablePath: '/managed/shared/claude',
+            executablePath: await writeInstalledClaude(),
         });
-        const nowMs = 1_000;
         const probe = async () => await probeClaudeSupportsEffortRaw({
             exec: fixture.exec,
             cwd: '/workspace',
             timeoutMs: 2_500,
-            now: () => nowMs,
         });
 
         const concurrent = await Promise.all([probe(), probe(), probe(), probe(), probe()]);
@@ -174,21 +184,15 @@ describe('probeClaudeSupportsEffortRaw', () => {
         expect(fixture.runs).toHaveLength(1);
     });
 
-    it('scopes the probe cache to the resolved binary and re-probes once it expires', async () => {
-        let nowMs = 1_000;
-        const upgraded = createExecRunFixture({
-            stdout: '  --effort <level>',
-            executablePath: '/managed/scoped-new/claude',
-        });
-        const legacy = createExecRunFixture({
-            stdout: 'Claude Code help',
-            executablePath: '/managed/scoped-old/claude',
-        });
+    it('holds the help fact per installed binary until its stat identity changes, with no expiry', async () => {
+        const installed = await writeInstalledClaude();
+        const other = await writeInstalledClaude();
+        const upgraded = createExecRunFixture({ stdout: '  --effort <level>', executablePath: installed });
+        const legacy = createExecRunFixture({ stdout: 'Claude Code help', executablePath: other });
         const probe = async (fixture: { exec: ExecService }) => await probeClaudeSupportsEffortRaw({
             exec: fixture.exec,
             cwd: '/workspace',
             timeoutMs: 2_500,
-            now: () => nowMs,
         });
 
         await expect(probe(upgraded)).resolves.toBe(true);
@@ -196,7 +200,12 @@ describe('probeClaudeSupportsEffortRaw', () => {
         expect(upgraded.runs).toHaveLength(1);
         expect(legacy.runs).toHaveLength(1);
 
-        nowMs += 10 * 60_000;
+        await expect(probe(upgraded)).resolves.toBe(true);
+        expect(upgraded.runs).toHaveLength(1);
+
+        // Replacing the binary at the same path is observed once.
+        await writeFile(installed, '#!/bin/sh\n# updated\n');
+        await expect(probe(upgraded)).resolves.toBe(true);
         await expect(probe(upgraded)).resolves.toBe(true);
         expect(upgraded.runs).toHaveLength(2);
     });
