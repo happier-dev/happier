@@ -175,7 +175,7 @@ async function mountFiles(
       handlers: {
         executeAction: async ({ action, input, signal }) => {
           const localId = typeof action === 'string' ? action : action.localId;
-          if (localId.startsWith('ui/')) return await invokeSourcePanelFixtureAction(scope, localId, input, fixture.context, signal);
+          if (localId.startsWith('ui/')) return await invokeSourcePanelFixtureAction(scope, localId, input ?? null, fixture.context, signal);
           dispatched.push(localId);
           if (localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readOverview) {
             return GithubOverviewResultV1Schema.parse({
