@@ -86,3 +86,38 @@ describe.skipIf(process.platform !== 'linux')(
     });
   },
 );
+
+describe.skipIf(process.platform !== 'linux')(
+  'member Agent CLI launch is demanded at the effect, not at services construction (C54)',
+  () => {
+    it('builds daemon-side Codex services on a member Machine and refuses only a member CLI launch', async () => {
+      const { mkdtemp, rm } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+      const { createAdmittedPluginRuntimeFixture } = await import('@/plugins/testkit/admittedRuntime');
+      const happyHomeDir = await mkdtemp(join(tmpdir(), 'member-codex-services-'));
+      // The daemon's Machine-level context: member placement, no Session member.
+      const admitted = await createAdmittedPluginRuntimeFixture({ happyHomeDir, runtimeOptions: {
+        pluginIds: ['happier.agent.codex'],
+        agentIsolation: { managedHappierBinaryPath: '/opt/happier/cli/current/happier', read: () => machine },
+      } });
+      try {
+        await admitted.registry.activateContributionsOnDemand([{ pluginId: 'happier.agent.codex', family: 'agents', localId: 'codex' }]);
+        const occurrenceId = admitted.registry.readPluginOccurrenceId?.('happier.agent.codex');
+        if (!occurrenceId) throw new Error('Expected admitted Codex occurrence');
+        // Spawn-time terminal placement reads settings only; it must not need a member launch.
+        const services = await admitted.registry.createAgentInvocationServices({ pluginId: 'happier.agent.codex',
+          pluginVersion: '0.0.0', agentId: 'codex', occurrenceId, correlationId: 'c54-member-services',
+          cwd: happyHomeDir, signal: new AbortController().signal, isOccurrenceCurrent: () => true });
+        expect(services.availability('settings').status).toBe('available');
+        // Control: without an admitted member, the Codex CLI never runs as the daemon.
+        await expect(services.exec.systemTools.resolve({ toolId: 'codex-cli', purpose: 'Start Codex' }))
+          .rejects.toMatchObject({ code: 'agent_isolation_unavailable',
+            details: { phase: 'agent_invocation_services', reason: 'member_identity_absent' } });
+      } finally {
+        await admitted.dispose();
+        await rm(happyHomeDir, { recursive: true, force: true });
+      }
+    });
+  },
+);

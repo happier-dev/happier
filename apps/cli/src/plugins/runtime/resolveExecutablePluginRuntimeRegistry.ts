@@ -6395,7 +6395,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         if (nativeOperation) agentParams.auxiliaryNativeOperation!.retainCleanup(nativeOperation);
         const agentIsolation = nativeOperation?.agentIsolation ?? params?.agentIsolation;
         const agentSystemTools = createDeclaredAgentCliSystemToolService({
-            ...(!agentParams.agentCliLaunch ? { memberLaunch: readMemberAgentCliLaunchContext(agentIsolation, 'agent_invocation_services') } : {}),
+            ...(!agentParams.agentCliLaunch ? { readMemberLaunch: () => readMemberAgentCliLaunchContext(agentIsolation, 'agent_invocation_services') } : {}),
             agentId: agentParams.agentId,
             localAgentId: declaredAgentLocalId,
             binding: declaredAgent.catalogEntry?.agentCliSystemTool,
@@ -7541,7 +7541,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 registerGrant() {},
             });
             const systemTools = createDeclaredAgentCliSystemToolService({
-                ...(!agentParams.agentCliLaunch ? { memberLaunch: readMemberAgentCliLaunchContext(params?.agentIsolation, 'retained_runner_agent_services') } : {}),
+                ...(!agentParams.agentCliLaunch ? { readMemberLaunch: () => readMemberAgentCliLaunchContext(params?.agentIsolation, 'retained_runner_agent_services') } : {}),
                 agentId: binding.agentId,
                 localAgentId: binding.localAgentId,
                 binding: declaredAgent.catalog?.agentCliSystemTool,

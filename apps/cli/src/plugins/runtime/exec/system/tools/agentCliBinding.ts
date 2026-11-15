@@ -33,7 +33,9 @@ export function createDeclaredAgentCliSystemToolService<T extends ExecSystemTool
     agentCliLaunch?: BoundAgentCliLaunchSpec;
     definitions: readonly PluginExecSystemToolDefinition[];
     processEnv: NodeJS.ProcessEnv;
-    memberLaunch?: MemberAgentCliLaunchContext;
+    /** Read at the Agent CLI launch, never at services construction: settings-only
+     * daemon reads on a member Machine have no Session member to launch as. */
+    readMemberLaunch?: () => MemberAgentCliLaunchContext | undefined;
     delegate: T;
 }>): ExecSystemToolServiceV1 | T {
     if (params.agentCliLaunch && params.agentCliLaunch.localAgentId !== params.localAgentId) {
@@ -63,10 +65,19 @@ export function createDeclaredAgentCliSystemToolService<T extends ExecSystemTool
             message: `Agent '${params.agentId}' CLI runtime metadata is unavailable`,
         });
     }
-    return createAgentCliSystemToolService({
-        agentId: params.agentId, binding, definition,
-        runtimeSpec: params.runtimeSpec, processEnv: params.processEnv, delegate: params.delegate,
-        ...(params.memberLaunch ? { memberLaunch: params.memberLaunch } : {}),
+    const runtimeSpec = params.runtimeSpec;
+    const delegate = params.delegate;
+    const readMemberLaunch = params.readMemberLaunch;
+    const createService = (memberLaunch?: MemberAgentCliLaunchContext) => createAgentCliSystemToolService({
+        agentId: params.agentId, binding, definition, runtimeSpec, processEnv: params.processEnv, delegate,
+        ...(memberLaunch ? { memberLaunch } : {}),
+    });
+    if (!readMemberLaunch) return createService();
+    return Object.freeze({
+        async resolve(request: SystemToolResolveRequestV1): Promise<SystemToolLaunchGrantV1> {
+            if (request.toolId !== binding.toolId) return await delegate.resolve(request);
+            return await createService(readMemberLaunch()).resolve(request);
+        },
     });
 }
 
