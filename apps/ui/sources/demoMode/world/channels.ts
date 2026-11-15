@@ -27,7 +27,8 @@ export function buildDemoChannelsWorld(): Readonly<{
                 sourceCustody: { kind: 'development', registeredRootId: 'demo-world' } },
             points: [{ pointId: CONVERSATION_PROVIDERS_CONTRIBUTION_POINT_ID_V1, protocols: [{
                 protocol: { id: CONVERSATION_PROVIDERS_CONTRIBUTION_PROTOCOL_ID_V1, version: CONVERSATION_PROVIDERS_CONTRIBUTION_PROTOCOL_VERSION_V1 },
-                contributions: services.map(service => ({ contributor: { pluginId: service.pluginId, contributionId: `${service.id}-provider` },
+                contributions: services.map(service => ({ contributor: { pluginId: service.pluginId, contributionId: `${service.id}-provider`,
+                    occurrenceId: `demo-${service.id}`, sourceCustody: { kind: 'development', registeredRootId: 'demo-world' } },
                     protocol: { id: CONVERSATION_PROVIDERS_CONTRIBUTION_PROTOCOL_ID_V1, version: CONVERSATION_PROVIDERS_CONTRIBUTION_PROTOCOL_VERSION_V1 },
                     descriptor: { v: 1, displayName: service.label.split(' · ')[0] }, operations: [], surfaces: [] })),
             }] }],

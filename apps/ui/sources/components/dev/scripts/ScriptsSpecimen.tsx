@@ -268,6 +268,8 @@ function controller(frame: string): ProjectScriptsController {
   const noop = async () => {};
   return {
     accountId: 'specimen',
+    environmentBindings: { scope: null, bindings: undefined, available: false, status: 'unavailable',
+      pendingName: null, error: null, choose: noop, remove: noop },
     ready: true,
     client,
     add: noop,

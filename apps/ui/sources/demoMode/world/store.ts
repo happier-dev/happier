@@ -36,9 +36,12 @@ export function buildDemoStoreCuration(): RegistryCuration {
             { id: 'models', title: 'Your choice of models', items: ['openrouter', 'ollama', 'vercel'] },
         ],
     });
+    const layout: RegistryCuration['layout'] = {
+        hasValue: true, loading: false, error: null, status: null, sourceFailures: [], refresh: settled,
+    };
     return {
         items: [], pages: [], curation: [{ sourceId: 'demo-catalog', discovery }], sources: [],
-        loading: false, stale: false, sourceRevision: 'demo-catalog', error: null, status: null,
-        sourceFailures: [], hasNextPage: false, nextPage: settled, refresh: settled,
+        ...layout, layout, stale: false, sourceRevision: 'demo-catalog',
+        hasNextPage: false, nextPage: settled,
     };
 }

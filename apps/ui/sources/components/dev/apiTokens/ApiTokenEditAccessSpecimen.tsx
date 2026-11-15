@@ -1,8 +1,7 @@
 import * as React from 'react';
 import { API_TOKEN_FULL_GRANT_V1, type ApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
-import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 
-import type { ApiTokenSettingsController, ApiTokenSettingsState } from '@/components/settings/apiTokens/apiTokenSettingsController';
+import type { ApiTokenSettingsController, ApiTokenSettingsState, ApiTokenSettingsToken } from '@/components/settings/apiTokens/apiTokenSettingsController';
 import { showApiTokenEditAccessModal } from '@/components/settings/apiTokens/showApiTokenCreateModal';
 import { Modal } from '@/modal';
 
@@ -19,7 +18,7 @@ const DEPLOY_GRANT: ApiTokenGrantV1 = {
     deployApproval: 'automatic',
 };
 
-const TOKEN: AccountApiTokenSummaryV1 = {
+const TOKEN: ApiTokenSettingsToken = {
     tokenId: '5f0c2b9e-7a41-4c3d-9b8e-2d6f1a0c4e7b',
     label: 'Release pipeline',
     displayPrefix: 'hap_v1_5f0c2b9e',
@@ -51,7 +50,7 @@ function createSpecimenController(): ApiTokenSettingsController {
         setCreateDraft: () => {},
         resetCreateDraft: () => {},
         createToken: idle,
-        adoptCreatedToken: () => false,
+        adoptCreatedToken: async () => false,
         acknowledgeReveal: () => {},
         clearReveal: () => {},
         requestRevealDismiss: async () => true,

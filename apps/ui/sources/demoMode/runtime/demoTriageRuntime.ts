@@ -138,7 +138,7 @@ export function createDemoTriageRuntime(surface: SurfaceContext, options?: Reado
         }
         if (action === TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1 || action === TRIAGE_TASKS_LIST_ACTION_LOCAL_ID_V1) {
             return listTriageEntries(TriageListEntriesInputV1Schema.parse(input), {
-                sourceInstances: collections!.sourceInstances, readAdmittedSources: async () => admitted,
+                sourceInstances: collections!.sourceInstances, readSourceSnapshot: async () => ({ contributions: admitted }),
                 executeScan: async operation => {
                     const item = scans.get(operation);
                     if (item === undefined) throw new Error('Unknown demo scan handle');

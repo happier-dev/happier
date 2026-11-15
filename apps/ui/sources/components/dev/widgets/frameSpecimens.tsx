@@ -79,10 +79,8 @@ function Card(props: Readonly<{
             sessionId="specimen-session"
             item={item(props.id)}
             host={props.section ? 'companion' : 'details'}
-            primaryHost={null}
             density={props.density ?? 'full'}
             canEdit
-            executableCurrentness="not_executable"
             width="medium"
             heightBounds={{ min: 72, max: 360 }}
             {...(props.section ? { frame: 'section' as const } : {})}

@@ -56,7 +56,7 @@ export function BrowserAnnotateSpecimen() {
         pageLabel: 'Fieldnote — Checkout',
         element,
         onDocumentChange: setDocument,
-        onCommentChange: async (next) => setComment(next),
+        onCommentChange: async (next) => { setComment(next); return { ok: true }; },
         onAttach: async () => {
             setOpen(false);
             return { ok: true };

@@ -187,7 +187,7 @@ type HumanInputFixture = Readonly<{
     editable?: boolean;
 }>;
 
-const NO_INTERACTION = { dialog: null, fileChooser: null, downloads: [] } as const;
+const NO_INTERACTION: NonNullable<HumanInputFixture['interaction']> = { dialog: null, fileChooser: null, downloads: [] };
 
 function humanInput(fixture: HumanInputFixture): NonNullable<BrowserStreamedSurfaceRuntime['input']> {
     return {

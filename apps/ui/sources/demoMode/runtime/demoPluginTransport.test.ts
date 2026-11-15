@@ -24,8 +24,31 @@ import { createDemoTriageRuntime } from './demoTriageRuntime';
 import { TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1, TriageListEntriesResultV1Schema } from '../../../../../packages/plugins/triage/src/actions/listEntriesProtocol';
 import { TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1 } from '../../../../../packages/plugins/triage/src/actions/actionsCatalogProtocol';
 import { TRIAGE_DEFAULT_FIX_ACTION_ID_V1 } from '@happier-dev/triage-protocol/v1';
+import { createDemoPluginSessionTransport } from './demoPluginSessions';
+import { SESSION_OPEN_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 
 describe('demo plugin transport lifetime', () => {
+    it('opens a page detail through the mounted location owner and retains the current subpath', async () => {
+        enterDemoMode('demo-home');
+        const host = createDemoPluginTransport({ pluginId: 'happier.triage', surface: createPluginSurfaceContextFixture() });
+        try {
+            await expect(host.api.replacePageLocation('issues/ENG-42', { backLocation: '' }))
+                .resolves.toEqual({ subPath: 'issues/ENG-42' });
+            expect(host.pageLocation.readSubPath()).toBe('issues/ENG-42');
+        } finally { host.dispose(); exitDemoMode(); }
+    });
+    it('refuses unresolved Session selector intent without opening an invalid destination', async () => {
+        enterDemoMode('demo-home');
+        const host = createDemoPluginTransport({ pluginId: 'happier.triage', surface: createPluginSurfaceContextFixture() });
+        const opened: string[] = [];
+        const execute = createDemoPluginSessionTransport({ pluginId: 'happier.triage', attachmentTypeLabel: 'Issue',
+            lifetime: host.accountLifetime, openSession: async sessionId => { opened.push(sessionId); } });
+        try {
+            await expect(execute(SESSION_OPEN_ACTION_ID_V1, { sessionId: { selector: 'workers' } }))
+                .rejects.toMatchObject({ code: 'unavailable' });
+            expect(opened).toEqual([]);
+        } finally { host.dispose(); exitDemoMode(); }
+    });
     it('offers the configured Fix as a direct Session handoff while preserving its repository intent', async () => {
         enterDemoMode('demo-home');
         const runtime = createDemoTriageRuntime(createPluginSurfaceContextFixture({ accountEncryptionMode: 'plain' }));

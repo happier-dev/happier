@@ -38,7 +38,7 @@ export function createDemoPluginSessionTransport(input: Readonly<{
             ...(structured ? { meta: { [HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1]: structured } } : {}) }]);
         return localId;
     }
-    return async (action: string, value: JsonValue): Promise<unknown> => {
+    return async (action: string, value: JsonValue | undefined): Promise<unknown> => {
         if (!input.lifetime.isCurrent()) throw new PluginError({ code: 'stale_surface' });
         if (action === SESSION_SPAWN_NEW_ACTION_ID_V1) {
             const spawn = PLUGIN_ACTION_INPUT_SCHEMAS[SESSION_SPAWN_NEW_ACTION_ID_V1].parse(value);
@@ -64,18 +64,19 @@ export function createDemoPluginSessionTransport(input: Readonly<{
         }
         if (action === SESSION_MESSAGE_SEND_ACTION_ID_V1) {
             const request = PLUGIN_ACTION_INPUT_SCHEMAS[SESSION_MESSAGE_SEND_ACTION_ID_V1].parse(value);
-            if (!('message' in request)) throw new PluginError({ code: 'unavailable' });
+            if (!('message' in request) || typeof request.sessionId !== 'string') throw new PluginError({ code: 'unavailable' });
             const session = storage.getState().sessions[request.sessionId];
             if (session?.serverId !== input.lifetime.scope.serverId) throw new PluginError({ code: 'unavailable' });
             const key = JSON.stringify([request.sessionId, request.idempotencyKey]);
             const previous = deliveries.get(key);
             if (previous) return { status: 'alreadyAccepted', localId: previous };
-            const localId = acceptInput(request.sessionId, { text: request.message, attachments: request.attachments, structuredInput: request.structuredInput });
+            const localId = acceptInput(request.sessionId, { text: request.message, attachments: request.attachments });
             deliveries.set(key, localId);
             return { status: 'accepted', localId };
         }
         if (action === SESSION_OPEN_ACTION_ID_V1) {
             const request = PLUGIN_ACTION_INPUT_SCHEMAS[SESSION_OPEN_ACTION_ID_V1].parse(value);
+            if (typeof request.sessionId !== 'string') throw new PluginError({ code: 'unavailable' });
             await input.openSession(request.sessionId);
             return { ok: true };
         }

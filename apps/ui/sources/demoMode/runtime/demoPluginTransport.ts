@@ -7,6 +7,7 @@ import {
     type PluginUiSurfaceContextV1,
 } from '@happier-dev/protocol/plugins/ui';
 import { computeSha256HexDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 
 import { encodeBase64 } from '@/encryption/base64';
 import { createCanonicalPluginReactNativeHostApiAdapter } from '@/components/plugins/reactNative/hostApi';
@@ -26,7 +27,7 @@ export function createDemoPluginTransport(input: Readonly<{
     surface: SurfaceContext;
     /** Demo resources are always qualified; unqualified references are refused before this reader runs. */
     readResource?: (resource: PluginContributionRef) => unknown | Promise<unknown>;
-    executeAction?: (action: PluginReference, payload: JsonValue, options?: PluginCancellationOptions) => unknown | Promise<unknown>;
+    executeAction?: (action: PluginReference, payload: JsonValue | undefined, options?: PluginCancellationOptions) => unknown | Promise<unknown>;
 }>) {
     if (!isDemoModeActive()) throw new Error('A demo plugin transport requires an active demo world.');
     const demoHome = getDemoModeServerId();
@@ -46,6 +47,7 @@ export function createDemoPluginTransport(input: Readonly<{
     let subPath = '';
     const pageLocation = createPluginPageLocationOwner({ currentSubPath: () => subPath,
         routePathFor: path => path, replaceLocation: path => { subPath = path; }, isCurrent,
+        pushLocation: path => { subPath = path; },
         allowPreservingReplacement: true });
     const requestSurface = {
         pluginId: input.pluginId, contributionId: 'demo-stage', surfaceId: `demo-stage-${input.pluginId}`,
@@ -74,7 +76,7 @@ export function createDemoPluginTransport(input: Readonly<{
         handlers.readResource = async request => {
             const payload = request.payload;
             const resource = PluginUiResourceSubscriptionTargetV1Schema.parse(
-                payload !== null && typeof payload === 'object' && !Array.isArray(payload) ? payload.resource : undefined,
+                readRecord(payload).resource,
             );
             if (typeof resource === 'string' || !('localId' in resource)) throw new Error('Demo resources require a qualified reference.');
             const bytes = new TextEncoder().encode(JSON.stringify(PluginUiJsonValueV1Schema.parse(await readResource(resource))));
