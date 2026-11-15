@@ -126,7 +126,6 @@
   "plugins.triage.detailStory.runningSoFar.few": "現時点で {count} 件実行中",
   "plugins.triage.detailStory.runningSoFar.many": "現時点で {count} 件実行中",
   "plugins.triage.detailStory.runningSoFar.other": "現時点で {count} 件実行中",
-  "plugins.azureDevops.ui.changedFiles": "変更されたファイル",
   "plugins.azureDevops.ui.readFailed": "Azure DevOps はこの読み取りを完了できませんでした。",
   "plugins.azureDevops.ui.openValue": "{item} を開く",
   "plugins.azureDevops.ui.copyValue": "{item} をコピー",
@@ -139,7 +138,6 @@
   "plugins.azureDevops.ui.threadsShown": "{total} 件中 {shown} 件のスレッドを表示しています。",
   "plugins.azureDevops.ui.pendingPanels.description": "回答はリスト行ではなく、隣接するパネルに表示されます：",
   "plugins.azureDevops.ui.statusInformational.description": "上のポリシー評価で必須とされていない限り、ステータスは参考情報です。",
-  "plugins.azureDevops.ui.partial": "これまでに読み取ったものを表示しています",
   "plugins.azureDevops.ui.pagePositionUnsafe": "Azure DevOps から返された次ページの位置を安全に引き継げなかったため、読み取りをここで停止しました。",
   "plugins.azureDevops.ui.shortened": "一部の詳細が省略されました。",
   "plugins.azureDevops.ui.shortened.description": "Azure DevOpsのpull requestを開いて完全なテキストを読み取る",
@@ -330,5 +328,10 @@
   "plugins.azureDevops.auth.manual.title": "Azure DevOps 個人アクセス トークン",
   "plugins.azureDevops.settings.group": "Azure DevOps",
   "plugins.azureDevops.settings.sources": "PR と課題",
-  "plugins.azureDevops.settings.sources.subtitle": "PR と課題に表示する Azure DevOps アカウントとプロジェクトを選択します。"
+  "plugins.azureDevops.settings.sources.subtitle": "PR と課題に表示する Azure DevOps アカウントとプロジェクトを選択します。",
+  "plugins.triage.readPartial": "これまでに読み取ったものを表示しています",
+  "plugins.azureDevops.ui.files.added": "追加",
+  "plugins.azureDevops.ui.files.deleted": "削除",
+  "plugins.azureDevops.ui.files.renamed": "名前変更",
+  "plugins.azureDevops.ui.files.folder": "フォルダー"
 }

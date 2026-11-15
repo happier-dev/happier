@@ -157,5 +157,12 @@
   "plugins.triage.sourceWrite.comment.label": "Komentarz",
   "plugins.triage.sourceWrite.comment.placeholder": "Napisz komentarz",
   "plugins.triage.sourceWrite.comment.publish": "Opublikuj komentarz",
-  "plugins.triage.sourceWrite.comment.published": "Komentarz opublikowany"
+  "plugins.triage.sourceWrite.comment.published": "Komentarz opublikowany",
+  "plugins.triage.readPartial": "Pokażemy, co udało nam się odczytać do tej pory",
+  "plugins.linear.activity.commented": "Skomentowano",
+  "plugins.linear.activity.empty": "Brak komentarzy",
+  "plugins.linear.activity.label": "Komentarze do tego zgłoszenia Linear",
+  "plugins.linear.activity.empty.description": "Tutaj pojawiają się komentarze do tego zgłoszenia w Linear.",
+  "plugins.linear.activity.more": "Pokaż więcej komentarzy",
+  "plugins.linear.activity.refresh": "Odczytaj ponownie komentarze z Linear"
 }

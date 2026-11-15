@@ -126,7 +126,6 @@
   "plugins.triage.detailStory.runningSoFar.few": "{count} en curs de moment",
   "plugins.triage.detailStory.runningSoFar.many": "{count} en curs de moment",
   "plugins.triage.detailStory.runningSoFar.other": "{count} en curs de moment",
-  "plugins.azureDevops.ui.changedFiles": "Fitxers modificats",
   "plugins.azureDevops.ui.readFailed": "Azure DevOps no ha pogut completar aquesta lectura.",
   "plugins.azureDevops.ui.openValue": "Obre {item}",
   "plugins.azureDevops.ui.copyValue": "Copia {item}",
@@ -139,7 +138,6 @@
   "plugins.azureDevops.ui.threadsShown": "Fils mostrats: {shown} de {total}.",
   "plugins.azureDevops.ui.pendingPanels.description": "Les respostes són als plafons del costat, no a la fila de la llista:",
   "plugins.azureDevops.ui.statusInformational.description": "Un estat é informatiu tret que una avaluació de polítiques anterior el marqui com a obligatori.",
-  "plugins.azureDevops.ui.partial": "Mostrant el que s'ha llegit fins avui",
   "plugins.azureDevops.ui.pagePositionUnsafe": "Azure DevOps ha retornat una posició de la pàgina següent que no s'ha pogut conservar de manera segura; per això la lectura s'ha aturat aquí.",
   "plugins.azureDevops.ui.shortened": "Alguns detalls s'han abbreviat",
   "plugins.azureDevops.ui.shortened.description": "Obre la sol·licitud de pull en Azure DevOps per llegir el text complet.",
@@ -330,5 +328,10 @@
   "plugins.azureDevops.auth.manual.title": "Testimoni d’accés personal d’Azure DevOps",
   "plugins.azureDevops.settings.group": "Azure DevOps",
   "plugins.azureDevops.settings.sources": "PR i incidències",
-  "plugins.azureDevops.settings.sources.subtitle": "Tria els comptes i projectes d’Azure DevOps que es mostren a PR i incidències."
+  "plugins.azureDevops.settings.sources.subtitle": "Tria els comptes i projectes d’Azure DevOps que es mostren a PR i incidències.",
+  "plugins.triage.readPartial": "Mostrant el que s'ha llegit fins avui",
+  "plugins.azureDevops.ui.files.added": "Afegit",
+  "plugins.azureDevops.ui.files.deleted": "Suprimit",
+  "plugins.azureDevops.ui.files.renamed": "Canviat de nom",
+  "plugins.azureDevops.ui.files.folder": "Carpeta"
 }

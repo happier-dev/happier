@@ -126,7 +126,6 @@
   "plugins.triage.detailStory.runningSoFar.few": "Dotąd w toku: {count}",
   "plugins.triage.detailStory.runningSoFar.many": "Dotąd w toku: {count}",
   "plugins.triage.detailStory.runningSoFar.other": "Dotąd w toku: {count}",
-  "plugins.azureDevops.ui.changedFiles": "Zmienione pliki",
   "plugins.azureDevops.ui.readFailed": "Azure DevOps nie zdołał ukończyć odczytu.",
   "plugins.azureDevops.ui.openValue": "Otwórz {item}",
   "plugins.azureDevops.ui.copyValue": "Kopiuj {item}",
@@ -139,7 +138,6 @@
   "plugins.azureDevops.ui.threadsShown": "Wyświetlone wątki: {shown} z {total}.",
   "plugins.azureDevops.ui.pendingPanels.description": "Odpowiedzi znajdują się w sąsiednich panelach, a nie w wierszu listy:",
   "plugins.azureDevops.ui.statusInformational.description": "Status ma charakter informacyjny, chyba że powyższa ocena zasad oznacza go jako wymagany.",
-  "plugins.azureDevops.ui.partial": "Pokażemy, co udało nam się odczytać do tej pory",
   "plugins.azureDevops.ui.pagePositionUnsafe": "Azure DevOps zwrócił pozycję następnej strony, której nie można było bezpiecznie przenieść, dlatego odczyt został w tym miejscu zatrzymany.",
   "plugins.azureDevops.ui.shortened": "Niektóre szczegóły zostały skrócone",
   "plugins.azureDevops.ui.shortened.description": "Otwórz pull request w Azure DevOps, aby czytać pełny tekst",
@@ -330,5 +328,10 @@
   "plugins.azureDevops.auth.manual.title": "Osobisty token dostępu Azure DevOps",
   "plugins.azureDevops.settings.group": "Azure DevOps",
   "plugins.azureDevops.settings.sources": "PR-y i zgłoszenia",
-  "plugins.azureDevops.settings.sources.subtitle": "Wybierz konta i projekty Azure DevOps wyświetlane w sekcji PR-ów i zgłoszeń."
+  "plugins.azureDevops.settings.sources.subtitle": "Wybierz konta i projekty Azure DevOps wyświetlane w sekcji PR-ów i zgłoszeń.",
+  "plugins.triage.readPartial": "Pokażemy, co udało nam się odczytać do tej pory",
+  "plugins.azureDevops.ui.files.added": "Dodany",
+  "plugins.azureDevops.ui.files.deleted": "Usunięty",
+  "plugins.azureDevops.ui.files.renamed": "Zmieniono nazwę",
+  "plugins.azureDevops.ui.files.folder": "Folder"
 }

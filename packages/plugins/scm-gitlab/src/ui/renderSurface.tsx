@@ -41,7 +41,6 @@ import {
   Badge,
   Banner,
   Button,
-  DiffViewer,
   EmptyState,
   ErrorState,
   Item,
@@ -113,10 +112,14 @@ import {
 } from './detail/panelReaders.js';
 import type { GitlabPagedStateV1, GitlabReadStateV1 } from './detail/panelState.js';
 import {
+  TriageSourcePartialReadBanner,
   TriageActivityTimeline,
+  TriageChangedFileDiff,
   TriageChangedFilesList,
   TriageChangedFilesLoading,
+  indexTriageRawDiffFilesV1,
   type TriageChangedFileV1,
+  type TriageRawDiffFilesV1,
   TriageDetailChangeSummary,
   TriageDetailChecks,
   TriageDetailPanel,
@@ -174,18 +177,8 @@ function PageFailureBanner({
   state,
 }: Readonly<{ state: GitlabPagedStateV1<unknown> }>): React.ReactElement | null {
   const text = usePluginTranslation();
-  if (state.failure === null) return null;
-  return (
-    <Stack gap="small"><Banner
-      tone="warning"
-      title="Showing what was read so far"
-      titleKey="plugins.gitlab.ui.partial"
-      description={failureDescription(
-        state.failure,
-        text('plugins.gitlab.ui.readFailed', 'GitLab could not complete this read.'), text,
-      )}
-    /><TriageSourceReadFailureDetails failures={[state.failure]} /></Stack>
-  );
+  return <TriageSourcePartialReadBanner failure={state.failure}
+    readFailed={text('plugins.gitlab.ui.readFailed', 'GitLab could not complete this read.')} />;
 }
 
 /**
@@ -781,9 +774,6 @@ function changedFileSubtitle(
 /** A GitLab file as the shared Files frame reads it, keeping the GitLab row its diff lookup needs. */
 type GitlabFilesRowV1 = TriageChangedFileV1 & Readonly<{ gitlab: GitlabProjectedChangedFileRowV1 }>;
 
-/** One file's part of the merge request's diff, and whether the diff stopped inside it. */
-type GitlabFileDiffV1 = Readonly<{ diff: string; shortened: boolean }>;
-
 /**
  * The merge request's one diff read, shared by every open file: the first file opened reads it, and each file shows
  * its own part. A file past the end of a shortened diff says the rest is on GitLab.
@@ -791,20 +781,15 @@ type GitlabFileDiffV1 = Readonly<{ diff: string; shortened: boolean }>;
 type GitlabFilesDiffV1 = Readonly<{
   state: GitlabRawDiffStateV1;
   load: () => void;
-  files: ReadonlyMap<string, GitlabFileDiffV1>;
+  files: TriageRawDiffFilesV1 | null;
 }>;
 
 const GitlabFilesDiffContext = React.createContext<GitlabFilesDiffV1 | null>(null);
 
-function splitGitlabDiffByFile(state: GitlabRawDiffStateV1): ReadonlyMap<string, GitlabFileDiffV1> {
-  const files = new Map<string, GitlabFileDiffV1>();
-  if (state.kind !== 'ready') return files;
-  const blocks = splitUnifiedDiffByFile(state.text);
-  blocks.forEach((diff, index) => {
-    const part = { diff, shortened: state.truncated && index === blocks.length - 1 };
-    for (const path of parseScmPatchPaths(diff)) if (!files.has(path)) files.set(path, part);
-  });
-  return files;
+function splitGitlabDiffByFile(state: GitlabRawDiffStateV1): TriageRawDiffFilesV1 | null {
+  if (state.kind !== 'ready') return null;
+  return indexTriageRawDiffFilesV1(
+    splitUnifiedDiffByFile(state.text).map((diff) => ({ diff, paths: parseScmPatchPaths(diff) })), state.truncated);
 }
 
 function GitlabFileBody({ row }: Readonly<{ row: GitlabFilesRowV1 }>): React.ReactElement {
@@ -814,10 +799,7 @@ function GitlabFileBody({ row }: Readonly<{ row: GitlabFilesRowV1 }>): React.Rea
   const load = diff?.load;
   // Opening a file is the request for the diff; every later file reuses that one read.
   React.useEffect(() => { if (kind === 'idle') load?.(); }, [kind, load]);
-  if (diff === null || diff.state.kind === 'idle' || diff.state.kind === 'loading') {
-    return <LoadingState title="Reading this file's diff from GitLab…" titleKey="plugins.gitlab.ui.readingFileDiff" />;
-  }
-  if (diff.state.kind === 'unavailable') {
+  if (diff?.state.kind === 'unavailable') {
     return <Stack gap="small">
       <ErrorState layout="line" title="This file's diff is unavailable" titleKey="plugins.gitlab.ui.fileDiffUnavailable"
         description={failureDescription(diff.state.failure,
@@ -825,17 +807,15 @@ function GitlabFileBody({ row }: Readonly<{ row: GitlabFilesRowV1 }>): React.Rea
       <TriageSourceReadFailureDetails failures={[diff.state.failure]} />
     </Stack>;
   }
-  const part = diff.files.get(row.path)
-    ?? (row.gitlab.previousPath === undefined ? undefined : diff.files.get(row.gitlab.previousPath));
-  const shortened = part === undefined ? diff.state.truncated : part.shortened;
-  return <Stack gap="small">
-    {shortened
-      ? <Text value={text('plugins.gitlab.ui.fileDiffShortened', 'This diff is too long to show here. The rest is on GitLab.')} />
-      : null}
-    {part !== undefined
-      ? <DiffViewer unifiedDiff={part.diff} filePath={row.path} label={row.path} />
-      : shortened ? null : <Text value={text('plugins.gitlab.ui.fileDiffNone', 'GitLab has no diff for this file.')} />}
-  </Stack>;
+  if (diff === null || diff.files === null) {
+    return <LoadingState title="Reading this file's diff from GitLab…" titleKey="plugins.gitlab.ui.readingFileDiff" />;
+  }
+  return <TriageChangedFileDiff path={row.path} diff={diff.files}
+    {...(row.gitlab.previousPath === undefined ? {} : { previousPath: row.gitlab.previousPath })}
+    labels={{
+      shortened: text('plugins.gitlab.ui.fileDiffShortened', 'This diff is too long to show here. The rest is on GitLab.'),
+      none: text('plugins.gitlab.ui.fileDiffNone', 'GitLab has no diff for this file.'),
+    }} />;
 }
 
 /** A file GitLab says is too large has no diff to open; every other file opens onto its part of the diff. */

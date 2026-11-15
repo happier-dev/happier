@@ -157,5 +157,12 @@
   "plugins.triage.sourceWrite.comment.label": "留言",
   "plugins.triage.sourceWrite.comment.placeholder": "撰寫留言",
   "plugins.triage.sourceWrite.comment.publish": "發布留言",
-  "plugins.triage.sourceWrite.comment.published": "留言已發布"
+  "plugins.triage.sourceWrite.comment.published": "留言已發布",
+  "plugins.triage.readPartial": "顯示到目前為止已讀取的內容",
+  "plugins.linear.activity.commented": "已留言",
+  "plugins.linear.activity.empty": "還沒有回應",
+  "plugins.linear.activity.label": "此 Linear 議題的留言",
+  "plugins.linear.activity.empty.description": "此議題在 Linear 中的留言會顯示在這裡。",
+  "plugins.linear.activity.more": "顯示更多留言",
+  "plugins.linear.activity.refresh": "從 Linear 重新讀取留言"
 }

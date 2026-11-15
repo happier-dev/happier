@@ -126,7 +126,6 @@
   "plugins.triage.detailStory.runningSoFar.few": "bisher {count} laufen",
   "plugins.triage.detailStory.runningSoFar.many": "bisher {count} laufen",
   "plugins.triage.detailStory.runningSoFar.other": "bisher {count} laufen",
-  "plugins.azureDevops.ui.changedFiles": "Geänderte Dateien",
   "plugins.azureDevops.ui.readFailed": "Azure DevOps konnte diesen Lesevorgang nicht abschließen.",
   "plugins.azureDevops.ui.openValue": "{item} öffnen",
   "plugins.azureDevops.ui.copyValue": "{item} kopieren",
@@ -139,7 +138,6 @@
   "plugins.azureDevops.ui.threadsShown": "{shown} von {total} Threads angezeigt.",
   "plugins.azureDevops.ui.pendingPanels.description": "Wird in den Bereichen neben diesem beantwortet, nicht in der Listenzeile:",
   "plugins.azureDevops.ui.statusInformational.description": "Ein Status dient zur Information, sofern ihn keine Richtlinienauswertung oben als erforderlich kennzeichnet.",
-  "plugins.azureDevops.ui.partial": "Bisher gelesene Inhalte werden angezeigt",
   "plugins.azureDevops.ui.pagePositionUnsafe": "Azure DevOps hat eine Position für die nächste Seite zurückgegeben, die nicht sicher übernommen werden konnte. Deshalb wurde der Abruf hier beendet.",
   "plugins.azureDevops.ui.shortened": "Einige Details wurden gekürzt",
   "plugins.azureDevops.ui.shortened.description": "Öffne den Pull Request in Azure DevOps, um den vollständigen Text zu lesen.",
@@ -330,5 +328,10 @@
   "plugins.azureDevops.auth.manual.title": "Persönliches Azure DevOps-Zugriffstoken",
   "plugins.azureDevops.settings.group": "Azure DevOps",
   "plugins.azureDevops.settings.sources": "PRs & Tickets",
-  "plugins.azureDevops.settings.sources.subtitle": "Wähle aus, welche Azure-DevOps-Konten und -Projekte unter PRs & Tickets angezeigt werden."
+  "plugins.azureDevops.settings.sources.subtitle": "Wähle aus, welche Azure-DevOps-Konten und -Projekte unter PRs & Tickets angezeigt werden.",
+  "plugins.triage.readPartial": "Bisher gelesene Inhalte werden angezeigt",
+  "plugins.azureDevops.ui.files.added": "Hinzugefügt",
+  "plugins.azureDevops.ui.files.deleted": "Gelöscht",
+  "plugins.azureDevops.ui.files.renamed": "Umbenannt",
+  "plugins.azureDevops.ui.files.folder": "Ordner"
 }

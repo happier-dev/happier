@@ -126,6 +126,16 @@ async function openFiles(detail: PluginUiTestkit): Promise<void> {
   });
 }
 
+const FILES_LIST = 'ul[aria-label="Files this Azure DevOps pull-request iteration changes"]';
+
+/** A file row of the shared Files frame; its path is drawn middle-ellipsized, so it is read from the list's text. */
+async function expectFile(path: string): Promise<void> {
+  for (let turn = 0; turn < 20 && !(document.querySelector(FILES_LIST)?.textContent ?? '').includes(path); turn += 1) {
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+  }
+  expect(document.querySelector(FILES_LIST)?.textContent ?? '').toContain(path);
+}
+
 async function pressShowMore(detail: PluginUiTestkit): Promise<void> {
   await act(async () => {
     await detail.press(await detail.getByRole('button', { name: 'Show more files' }));
@@ -279,6 +289,41 @@ describe('the mounted Azure DevOps Files walk after a refused page', () => {
       await expect(detail.queryByText(chrome)).resolves.toBeUndefined();
     }
   });
+  it('draws the iteration through the shared Files rows, and a refused page through the shared partial read', async () => {
+    changesAnswers = [
+      {
+        kind: 'iterationChanges',
+        iterationId: 2,
+        rows: [
+          { path: '/src/added.ts', changeType: 'add', isFolder: false },
+          { path: '/src/edited.ts', changeType: 'edit', isFolder: false },
+        ],
+        omittedRowCount: 0,
+        projectionTruncated: false,
+        nextSkip: 30,
+        nextTop: 30,
+      } as unknown as JsonValue,
+      PAGE_REFUSED,
+    ];
+    const detail = await mountDetail();
+    await openFiles(detail);
+    await expectFile('/src/added.ts');
+    const list = document.querySelector(FILES_LIST);
+    expect(list).not.toBeNull();
+    // Azure's change type reads as a word, not its enum; a plain edit needs none. The tab counts the files.
+    expect(list!.textContent).toContain('Added');
+    expect(list!.textContent).not.toMatch(/\bedit\b/);
+    expect(document.body.textContent).not.toContain('Changed files');
+    // Each file keeps the shared row menu (Copy, Open), not a bare copy glyph.
+    expect(list!.querySelectorAll('[aria-label="More actions"]')).toHaveLength(2);
+
+    await pressShowMore(detail);
+    await expect(detail.getByText('Showing what was read so far')).resolves.toBeDefined();
+    // The shared partial read carries the diagnostics every forge shows.
+    await expect(detail.getByText('Details')).resolves.toBeDefined();
+    await expectFile('/src/added.ts');
+  });
+
   it('asks Azure again for the position it refused', async () => {
     changesAnswers = [
       changesPage('/src/first.ts', { nextSkip: 30, nextTop: 30 }),
@@ -287,11 +332,11 @@ describe('the mounted Azure DevOps Files walk after a refused page', () => {
     ];
     const detail = await mountDetail();
     await openFiles(detail);
-    await expect(detail.getByText('/src/first.ts')).resolves.toBeDefined();
+    await expectFile('/src/first.ts');
 
     await pressShowMore(detail);
     // Kept, not blanked: the failure sits beside the file already read.
-    await expect(detail.getByText('/src/first.ts')).resolves.toBeDefined();
+    await expectFile('/src/first.ts');
     expect(changeInputs).toHaveLength(2);
 
     await pressShowMore(detail);
@@ -300,7 +345,7 @@ describe('the mounted Azure DevOps Files walk after a refused page', () => {
     // reach it rather than being swallowed by the non-advancing guard.
     expect(changeInputs).toHaveLength(3);
     expect(changeInputs[2]).toMatchObject({ iterationId: 2, skip: 30, top: 30 });
-    await expect(detail.getByText('/src/second.ts')).resolves.toBeDefined();
+    await expectFile('/src/second.ts');
   });
 
   it('still stops a position Azure served once and then advertised again', async () => {
@@ -312,7 +357,7 @@ describe('the mounted Azure DevOps Files walk after a refused page', () => {
     await openFiles(detail);
     await pressShowMore(detail);
 
-    await expect(detail.getByText('/src/second.ts')).resolves.toBeDefined();
+    await expectFile('/src/second.ts');
     expect(changeInputs).toHaveLength(2);
     // That position DID answer. Re-following it is the loop the walk refuses,
     // and releasing failed positions must not release a consumed one: the walk

@@ -139,7 +139,6 @@
   "plugins.bitbucket.ui.pendingPanels.description": "回答はリスト行ではなく、隣接するパネルに表示されます：",
   "plugins.bitbucket.ui.activityCollection.description": "Bitbucket は承認、更新、コメントを1つのコレクションで提供するため、ここにそのすべてを表示します。",
   "plugins.bitbucket.ui.buildsTruncated.description": "Bitbucket にはこのページに収まらない数のビルドステータスがあるため、合計は表示しません。",
-  "plugins.bitbucket.ui.partial": "これまでに読み取ったものを表示しています",
   "plugins.bitbucket.ui.shortened": "一部の詳細が省略されました。",
   "plugins.bitbucket.ui.shortened.description": "Bitbucketのpull requestを開いて完全なテキストを読み取る",
   "plugins.bitbucket.ui.noFacts": "プロジェクトされた事実はありません。",
@@ -183,9 +182,6 @@
   "plugins.bitbucket.ui.diffUnavailable": "差分を利用できません",
   "plugins.bitbucket.ui.diffTooLarge": "差分が大きすぎるため Bitbucket から返せません",
   "plugins.bitbucket.ui.diffTooLarge.description": "プルリクエストは利用できます。完全な差分は Bitbucket で開いてください。",
-  "plugins.bitbucket.ui.rawDiffShortened": "生の差分が短縮されました",
-  "plugins.bitbucket.ui.rawDiffShortened.description": "返された先頭部分は Happier のアクション結果の上限内です。",
-  "plugins.bitbucket.ui.changedFiles": "変更されたファイル",
   "plugins.bitbucket.ui.showMoreFiles": "変更されたファイルをさらに表示",
   "plugins.bitbucket.ui.rereadDiff": "Bitbucket から差分を再読み込み",
   "plugins.bitbucket.ui.showMoreActivity": "アクティビティをさらに表示",
@@ -288,5 +284,14 @@
   "plugins.bitbucket.ui.mutations.reviewReply.publish": "返信を投稿",
   "plugins.bitbucket.settings.group": "Bitbucket Cloud",
   "plugins.bitbucket.settings.sources": "PR と課題",
-  "plugins.bitbucket.settings.sources.subtitle": "PR と課題に表示する Bitbucket Cloud アカウントとワークスペースを選択します。"
+  "plugins.bitbucket.settings.sources.subtitle": "PR と課題に表示する Bitbucket Cloud アカウントとワークスペースを選択します。",
+  "plugins.triage.readPartial": "これまでに読み取ったものを表示しています",
+  "plugins.bitbucket.ui.files.added": "追加",
+  "plugins.bitbucket.ui.files.deleted": "削除",
+  "plugins.bitbucket.ui.files.renamed": "名前変更",
+  "plugins.bitbucket.ui.filesLabel": "この pull request が変更するファイル",
+  "plugins.bitbucket.ui.noFiles": "変更されたファイルがありません",
+  "plugins.bitbucket.ui.noFiles.description": "Bitbucket はこの pull request がファイルを変更していないと報告しています。",
+  "plugins.bitbucket.ui.fileDiffNone": "Bitbucket にこのファイルの差分はありません。",
+  "plugins.bitbucket.ui.fileDiffShortened": "この差分は長すぎるため、ここには表示できません。残りは Bitbucket にあります。"
 }

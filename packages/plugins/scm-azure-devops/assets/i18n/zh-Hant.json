@@ -126,7 +126,6 @@
   "plugins.triage.detailStory.runningSoFar.few": "目前 {count} 項進行中",
   "plugins.triage.detailStory.runningSoFar.many": "目前 {count} 項進行中",
   "plugins.triage.detailStory.runningSoFar.other": "目前 {count} 項進行中",
-  "plugins.azureDevops.ui.changedFiles": "已變更檔案",
   "plugins.azureDevops.ui.readFailed": "Azure DevOps 無法完成此次讀取。",
   "plugins.azureDevops.ui.openValue": "開啟 {item}",
   "plugins.azureDevops.ui.copyValue": "複製 {item}",
@@ -139,7 +138,6 @@
   "plugins.azureDevops.ui.threadsShown": "已顯示 {total} 個討論串中的 {shown} 個。",
   "plugins.azureDevops.ui.pendingPanels.description": "答案位於旁邊的面板中，而不是清單列中：",
   "plugins.azureDevops.ui.statusInformational.description": "狀態僅供參考，除非上方的策略評估將其標記為必要。",
-  "plugins.azureDevops.ui.partial": "顯示到目前為止已讀取的內容",
   "plugins.azureDevops.ui.pagePositionUnsafe": "Azure DevOps 傳回的下一頁位置無法安全延續，因此讀取已在此停止。",
   "plugins.azureDevops.ui.shortened": "一些細節被簡化了",
   "plugins.azureDevops.ui.shortened.description": "打開 Azure DevOps 中的拉取請求以讀取完整文本。",
@@ -330,5 +328,10 @@
   "plugins.azureDevops.auth.manual.title": "Azure DevOps 個人存取權杖",
   "plugins.azureDevops.settings.group": "Azure DevOps",
   "plugins.azureDevops.settings.sources": "PR 與問題",
-  "plugins.azureDevops.settings.sources.subtitle": "選擇要在 PR 與問題中顯示的 Azure DevOps 帳戶和專案。"
+  "plugins.azureDevops.settings.sources.subtitle": "選擇要在 PR 與問題中顯示的 Azure DevOps 帳戶和專案。",
+  "plugins.triage.readPartial": "顯示到目前為止已讀取的內容",
+  "plugins.azureDevops.ui.files.added": "已新增",
+  "plugins.azureDevops.ui.files.deleted": "已刪除",
+  "plugins.azureDevops.ui.files.renamed": "已重新命名",
+  "plugins.azureDevops.ui.files.folder": "資料夾"
 }

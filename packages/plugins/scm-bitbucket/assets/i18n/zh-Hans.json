@@ -139,7 +139,6 @@
   "plugins.bitbucket.ui.pendingPanels.description": "答案位于旁边的面板中，而不是列表行中：",
   "plugins.bitbucket.ui.activityCollection.description": "Bitbucket 在同一个集合中提供审批、更新和评论，因此这里显示了全部内容。",
   "plugins.bitbucket.ui.buildsTruncated.description": "Bitbucket 的构建状态超出此页容量，因此不显示总数。",
-  "plugins.bitbucket.ui.partial": "已显示已读取的内容",
   "plugins.bitbucket.ui.shortened": "一些细节被缩短",
   "plugins.bitbucket.ui.shortened.description": "在Bitbucket中打开拉取请求以读取完整文本。",
   "plugins.bitbucket.ui.noFacts": "没有预测的事实",
@@ -183,9 +182,6 @@
   "plugins.bitbucket.ui.diffUnavailable": "差异不可用",
   "plugins.bitbucket.ui.diffTooLarge": "差异过大，Bitbucket 无法返回",
   "plugins.bitbucket.ui.diffTooLarge.description": "拉取请求仍可用；请在 Bitbucket 中打开以查看完整差异。",
-  "plugins.bitbucket.ui.rawDiffShortened": "原始差异已缩短",
-  "plugins.bitbucket.ui.rawDiffShortened.description": "返回的前缀符合 Happier 操作结果限制。",
-  "plugins.bitbucket.ui.changedFiles": "已更改文件",
   "plugins.bitbucket.ui.showMoreFiles": "显示更多已更改文件",
   "plugins.bitbucket.ui.rereadDiff": "从 Bitbucket 重新读取差异",
   "plugins.bitbucket.ui.showMoreActivity": "显示更多活动",
@@ -288,5 +284,14 @@
   "plugins.bitbucket.ui.mutations.reviewReply.publish": "发布回复",
   "plugins.bitbucket.settings.group": "Bitbucket Cloud",
   "plugins.bitbucket.settings.sources": "PR 和问题",
-  "plugins.bitbucket.settings.sources.subtitle": "选择要在 PR 和问题中显示的 Bitbucket Cloud 帐户和工作区。"
+  "plugins.bitbucket.settings.sources.subtitle": "选择要在 PR 和问题中显示的 Bitbucket Cloud 帐户和工作区。",
+  "plugins.triage.readPartial": "已显示已读取的内容",
+  "plugins.bitbucket.ui.files.added": "新增",
+  "plugins.bitbucket.ui.files.deleted": "已删除",
+  "plugins.bitbucket.ui.files.renamed": "已重命名",
+  "plugins.bitbucket.ui.filesLabel": "这个 pull request 更改的文件",
+  "plugins.bitbucket.ui.noFiles": "没有更改的文件",
+  "plugins.bitbucket.ui.noFiles.description": "Bitbucket 报告这个 pull request 没有更改任何文件。",
+  "plugins.bitbucket.ui.fileDiffNone": "Bitbucket 没有此文件的差异。",
+  "plugins.bitbucket.ui.fileDiffShortened": "此差异过长，无法在此显示。其余内容在 Bitbucket 上。"
 }

@@ -139,7 +139,6 @@
   "plugins.bitbucket.ui.pendingPanels.description": "Odpowiedzi znajdują się w sąsiednich panelach, a nie w wierszu listy:",
   "plugins.bitbucket.ui.activityCollection.description": "Bitbucket udostępnia zatwierdzenia, aktualizacje i komentarze w jednej kolekcji, dlatego pokazano tu wszystkie wpisy.",
   "plugins.bitbucket.ui.buildsTruncated.description": "Bitbucket ma więcej stanów kompilacji, niż mieści ta strona, dlatego nie pokazano ich łącznej liczby.",
-  "plugins.bitbucket.ui.partial": "Pokażemy, co udało nam się odczytać do tej pory",
   "plugins.bitbucket.ui.shortened": "Niektóre szczegóły zostały skrócone",
   "plugins.bitbucket.ui.shortened.description": "Otwórz pull request w Bitbucket, aby czytać pełny tekst",
   "plugins.bitbucket.ui.noFacts": "Brak przewidzianych faktów",
@@ -183,9 +182,6 @@
   "plugins.bitbucket.ui.diffUnavailable": "Różnice są niedostępne",
   "plugins.bitbucket.ui.diffTooLarge": "Różnice są zbyt duże, aby Bitbucket mógł je zwrócić",
   "plugins.bitbucket.ui.diffTooLarge.description": "Pull request jest nadal dostępny; otwórz go w Bitbucket, aby zobaczyć pełne różnice.",
-  "plugins.bitbucket.ui.rawDiffShortened": "Surowe różnice zostały skrócone",
-  "plugins.bitbucket.ui.rawDiffShortened.description": "Zwrócony początek mieści się w granicy wyniku działania Happier.",
-  "plugins.bitbucket.ui.changedFiles": "Zmienione pliki",
   "plugins.bitbucket.ui.showMoreFiles": "Pokaż więcej zmienionych plików",
   "plugins.bitbucket.ui.rereadDiff": "Odczytaj ponownie różnice z Bitbucket",
   "plugins.bitbucket.ui.showMoreActivity": "Pokaż więcej aktywności",
@@ -288,5 +284,14 @@
   "plugins.bitbucket.ui.mutations.reviewReply.publish": "Wyślij odpowiedź",
   "plugins.bitbucket.settings.group": "Bitbucket Cloud",
   "plugins.bitbucket.settings.sources": "PR-y i zgłoszenia",
-  "plugins.bitbucket.settings.sources.subtitle": "Wybierz konta i obszary robocze Bitbucket Cloud wyświetlane w sekcji PR-ów i zgłoszeń."
+  "plugins.bitbucket.settings.sources.subtitle": "Wybierz konta i obszary robocze Bitbucket Cloud wyświetlane w sekcji PR-ów i zgłoszeń.",
+  "plugins.triage.readPartial": "Pokażemy, co udało nam się odczytać do tej pory",
+  "plugins.bitbucket.ui.files.added": "Dodany",
+  "plugins.bitbucket.ui.files.deleted": "Usunięty",
+  "plugins.bitbucket.ui.files.renamed": "Zmieniono nazwę",
+  "plugins.bitbucket.ui.filesLabel": "Pliki, które ten pull request zmienia",
+  "plugins.bitbucket.ui.noFiles": "Nie ma zmienionych plików",
+  "plugins.bitbucket.ui.noFiles.description": "Bitbucket informuje, że ten pull request nie zmienia żadnych plików.",
+  "plugins.bitbucket.ui.fileDiffNone": "Bitbucket nie ma diffu dla tego pliku.",
+  "plugins.bitbucket.ui.fileDiffShortened": "Ten diff jest za długi, by go tu pokazać. Reszta jest w Bitbucketie."
 }

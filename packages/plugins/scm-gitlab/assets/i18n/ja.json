@@ -140,7 +140,6 @@
   "plugins.gitlab.ui.pendingPanels.description": "回答はリスト行ではなく、隣接するパネルに表示されます：",
   "plugins.gitlab.ui.pipelineJobsUnavailable.description": "GitLab が最新パイプラインのジョブ別内訳を返さなかったため、ジョブ数は表示されません。",
   "plugins.gitlab.ui.approvalRulesUnavailable.description": "承認ルールは GitLab の有料プラン機能で、このデプロイでは利用できません。上の承認状態は完全です。",
-  "plugins.gitlab.ui.partial": "これまでに読み取ったものを表示しています",
   "plugins.gitlab.ui.noFacts": "プロジェクトされた事実はありません。",
   "plugins.gitlab.ui.noFacts.description": "この観察は表示できる GitLab の事実を持ちません。",
   "plugins.gitlab.ui.facts": "GitLab",
@@ -379,5 +378,6 @@
   "plugins.gitlab.settings.group": "GitLab",
   "plugins.gitlab.settings.sources": "PR と課題",
   "plugins.gitlab.settings.sources.subtitle": "PR と課題に表示する GitLab アカウントとプロジェクトを選択します。",
-  "plugins.gitlab.ui.mutations.failure.code": "コード"
+  "plugins.gitlab.ui.mutations.failure.code": "コード",
+  "plugins.triage.readPartial": "これまでに読み取ったものを表示しています"
 }

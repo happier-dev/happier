@@ -126,7 +126,6 @@
   "plugins.triage.detailStory.runningSoFar.few": "{count} running so far",
   "plugins.triage.detailStory.runningSoFar.many": "{count} running so far",
   "plugins.triage.detailStory.runningSoFar.other": "{count} running so far",
-  "plugins.azureDevops.ui.changedFiles": "Changed files",
   "plugins.azureDevops.ui.readFailed": "Azure DevOps could not complete this read.",
   "plugins.azureDevops.ui.openValue": "Open {item}",
   "plugins.azureDevops.ui.copyValue": "Copy {item}",
@@ -139,7 +138,6 @@
   "plugins.azureDevops.ui.threadsShown": "{shown} of {total} thread(s) shown.",
   "plugins.azureDevops.ui.pendingPanels.description": "Answered in the panels beside this one, not on the list row:",
   "plugins.azureDevops.ui.statusInformational.description": "A status is informational unless a policy evaluation above marks it required.",
-  "plugins.azureDevops.ui.partial": "Showing what was read so far",
   "plugins.azureDevops.ui.pagePositionUnsafe": "Azure DevOps returned a next-page position that could not be carried safely, so this walk stopped here.",
   "plugins.azureDevops.ui.shortened": "Some details were shortened",
   "plugins.azureDevops.ui.shortened.description": "Open the pull request in Azure DevOps to read the complete text.",
@@ -330,5 +328,10 @@
   "plugins.azureDevops.auth.manual.title": "Azure DevOps personal access token",
   "plugins.azureDevops.settings.group": "Azure DevOps",
   "plugins.azureDevops.settings.sources": "PRs & Issues",
-  "plugins.azureDevops.settings.sources.subtitle": "Choose which Azure DevOps accounts and projects appear in PRs & Issues."
+  "plugins.azureDevops.settings.sources.subtitle": "Choose which Azure DevOps accounts and projects appear in PRs & Issues.",
+  "plugins.triage.readPartial": "Showing what was read so far",
+  "plugins.azureDevops.ui.files.added": "Added",
+  "plugins.azureDevops.ui.files.deleted": "Deleted",
+  "plugins.azureDevops.ui.files.renamed": "Renamed",
+  "plugins.azureDevops.ui.files.folder": "Folder"
 }

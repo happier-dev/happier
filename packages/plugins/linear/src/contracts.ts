@@ -116,7 +116,10 @@ export const LinearDetailInputSchema = defineProtocolObject({
   ]), after: id.optional(),
 }, { policy: 'closed' });
 export type LinearDetailInput = ReturnType<typeof LinearDetailInputSchema.parse>;
-export const LinearDetailEntrySchema = defineProtocolObject({ id, title: text, body: text.optional() }, { policy: 'closed' });
+// A comment also names who wrote it and when, so Activity can place it on the shared timeline.
+export const LinearDetailEntrySchema = defineProtocolObject({
+  id, title: text, body: text.optional(), author: text.optional(), atMs: defineProtocolNumber({ integer: true }).optional(),
+}, { policy: 'closed' });
 export const LinearDetailResultSchema = defineProtocolUnion([
   defineProtocolObject({
     kind: defineProtocolLiteral('ready'), entries: defineProtocolArray(LinearDetailEntrySchema),

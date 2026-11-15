@@ -149,7 +149,6 @@
   "plugins.github.ui.pendingPanels.description": "答案位于旁边的面板中，而不是列表行中：",
   "plugins.github.ui.commentsShortened.description": "部分评论已缩短。请在 GitHub 上打开该条目以阅读完整内容。",
   "plugins.github.ui.commentNoText": "此评论不包含文字。",
-  "plugins.github.ui.partial": "已显示已读取的内容",
   "plugins.github.ui.noFacts": "没有预测的事实",
   "plugins.github.ui.noFacts.description": "这个观察没有可显示的 GitHub 事实。",
   "plugins.github.ui.facts": "GitHub",
@@ -1166,5 +1165,6 @@
   "plugins.github.ui.preview.prUpdated": "PR 已更新",
   "plugins.github.ui.preview.prUpdating": "正在更新 PR…",
   "plugins.github.ui.preview.retryPrUpdate": "重试 PR 更新",
-  "plugins.github.releases.published.refreshWarning": "已发布。无法刷新最新的发布详情。请重新打开此发布以刷新。({code})"
+  "plugins.github.releases.published.refreshWarning": "已发布。无法刷新最新的发布详情。请重新打开此发布以刷新。({code})",
+  "plugins.triage.readPartial": "已显示已读取的内容"
 }

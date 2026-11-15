@@ -149,7 +149,6 @@
   "plugins.github.ui.pendingPanels.description": "Answered in the panels beside this one, not on the list row:",
   "plugins.github.ui.commentsShortened.description": "Some comments were shortened. Open the entry on GitHub to read them in full.",
   "plugins.github.ui.commentNoText": "This comment carries no text.",
-  "plugins.github.ui.partial": "Showing what was read so far",
   "plugins.github.ui.noFacts": "No projected facts",
   "plugins.github.ui.noFacts.description": "This observation carried no displayable GitHub facts.",
   "plugins.github.ui.facts": "GitHub",
@@ -1166,5 +1165,6 @@
   "plugins.github.ui.preview.prUpdated": "PR updated",
   "plugins.github.ui.preview.prUpdating": "Updating PR…",
   "plugins.github.ui.preview.retryPrUpdate": "Retry PR update",
-  "plugins.github.releases.published.refreshWarning": "Published. The latest release details could not be refreshed. Open the release again to refresh. ({code})"
+  "plugins.github.releases.published.refreshWarning": "Published. The latest release details could not be refreshed. Open the release again to refresh. ({code})",
+  "plugins.triage.readPartial": "Showing what was read so far"
 }

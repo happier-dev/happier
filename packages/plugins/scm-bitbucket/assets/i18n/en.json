@@ -139,7 +139,6 @@
   "plugins.bitbucket.ui.pendingPanels.description": "Answered in the panels beside this one, not on the list row:",
   "plugins.bitbucket.ui.activityCollection.description": "Bitbucket serves approvals, updates and comments from one collection, so this is all of them.",
   "plugins.bitbucket.ui.buildsTruncated.description": "Bitbucket has more build statuses than this page holds, so no totals are shown for them.",
-  "plugins.bitbucket.ui.partial": "Showing what was read so far",
   "plugins.bitbucket.ui.shortened": "Some details were shortened",
   "plugins.bitbucket.ui.shortened.description": "Open the pull request in Bitbucket to read the complete text.",
   "plugins.bitbucket.ui.noFacts": "No projected facts",
@@ -183,9 +182,6 @@
   "plugins.bitbucket.ui.diffUnavailable": "The diff is unavailable",
   "plugins.bitbucket.ui.diffTooLarge": "This diff is too large for Bitbucket to return",
   "plugins.bitbucket.ui.diffTooLarge.description": "The pull request remains available; open it in Bitbucket for the full diff.",
-  "plugins.bitbucket.ui.rawDiffShortened": "The raw diff was shortened",
-  "plugins.bitbucket.ui.rawDiffShortened.description": "The returned prefix fits Happier's Action-result boundary.",
-  "plugins.bitbucket.ui.changedFiles": "Changed files",
   "plugins.bitbucket.ui.showMoreFiles": "Show more changed files",
   "plugins.bitbucket.ui.rereadDiff": "Re-read this diff from Bitbucket",
   "plugins.bitbucket.ui.showMoreActivity": "Show more activity",
@@ -288,5 +284,14 @@
   "plugins.bitbucket.ui.mutations.reviewReply.publish": "Post reply",
   "plugins.bitbucket.settings.group": "Bitbucket Cloud",
   "plugins.bitbucket.settings.sources": "PRs & Issues",
-  "plugins.bitbucket.settings.sources.subtitle": "Choose which Bitbucket Cloud accounts and workspaces appear in PRs & Issues."
+  "plugins.bitbucket.settings.sources.subtitle": "Choose which Bitbucket Cloud accounts and workspaces appear in PRs & Issues.",
+  "plugins.triage.readPartial": "Showing what was read so far",
+  "plugins.bitbucket.ui.files.added": "Added",
+  "plugins.bitbucket.ui.files.deleted": "Deleted",
+  "plugins.bitbucket.ui.files.renamed": "Renamed",
+  "plugins.bitbucket.ui.filesLabel": "Files this pull request changes",
+  "plugins.bitbucket.ui.noFiles": "No changed files",
+  "plugins.bitbucket.ui.noFiles.description": "Bitbucket reports that this pull request changes no files.",
+  "plugins.bitbucket.ui.fileDiffNone": "Bitbucket has no diff for this file.",
+  "plugins.bitbucket.ui.fileDiffShortened": "This diff is too long to show here. The rest is on Bitbucket."
 }

@@ -140,7 +140,6 @@
   "plugins.gitlab.ui.pendingPanels.description": "Las respuestas están en los paneles contiguos, no en la fila de la lista:",
   "plugins.gitlab.ui.pipelineJobsUnavailable.description": "GitLab no devolvió el desglose por tarea de la canalización más reciente, por lo que no se muestra el número de tareas.",
   "plugins.gitlab.ui.approvalRulesUnavailable.description": "Las reglas de aprobación son una función de pago de GitLab y no están disponibles en este despliegue. El estado de aprobación anterior está completo.",
-  "plugins.gitlab.ui.partial": "Mostrando lo leído hasta ahora",
   "plugins.gitlab.ui.noFacts": "No hay hechos proyectados",
   "plugins.gitlab.ui.noFacts.description": "Esta observación no lleva ninguna información de GitLab para mostrar.",
   "plugins.gitlab.ui.facts": "GitLab",
@@ -379,5 +378,6 @@
   "plugins.gitlab.settings.group": "GitLab",
   "plugins.gitlab.settings.sources": "PR e incidencias",
   "plugins.gitlab.settings.sources.subtitle": "Elige qué cuentas y proyectos de GitLab aparecen en PR e incidencias.",
-  "plugins.gitlab.ui.mutations.failure.code": "Código"
+  "plugins.gitlab.ui.mutations.failure.code": "Código",
+  "plugins.triage.readPartial": "Mostrando lo leído hasta ahora"
 }

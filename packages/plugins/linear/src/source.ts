@@ -343,7 +343,11 @@ export async function readLinearDetail(input: unknown, context: LinearSourceCont
       if (parsed.section === 'comments') {
         if (typeof row.body !== 'string' || typeof row.createdAt !== 'string') throw linearFailure('responseInvalid');
         const user = row.user === null ? undefined : record(row.user).name;
-        return [{ id: row.id, title: `${typeof user === 'string' ? user : 'Linear'} · ${row.createdAt}`, body: row.body }];
+        const atMs = Date.parse(row.createdAt);
+        return [{
+          id: row.id, title: typeof user === 'string' ? user : 'Linear', body: row.body,
+          ...(typeof user === 'string' ? { author: user } : {}), ...(Number.isFinite(atMs) ? { atMs } : {}),
+        }];
       }
       if (typeof row.name !== 'string') throw linearFailure('responseInvalid');
       return [{ id: row.id, title: row.name, ...(parsed.section === 'transitions' && typeof row.type === 'string' ? { body: row.type } : {}) }];

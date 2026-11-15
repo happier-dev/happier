@@ -149,7 +149,6 @@
   "plugins.github.ui.pendingPanels.description": "回答はリスト行ではなく、隣接するパネルに表示されます：",
   "plugins.github.ui.commentsShortened.description": "一部のコメントは短縮されています。全文を読むには GitHub でエントリを開いてください。",
   "plugins.github.ui.commentNoText": "このコメントにはテキストがありません。",
-  "plugins.github.ui.partial": "これまでに読み取ったものを表示しています",
   "plugins.github.ui.noFacts": "プロジェクトされた事実はありません。",
   "plugins.github.ui.noFacts.description": "この観察は表示できる GitHub の事実を持ちません。",
   "plugins.github.ui.facts": "GitHub",
@@ -1166,5 +1165,6 @@
   "plugins.github.ui.preview.prUpdated": "PRを更新しました",
   "plugins.github.ui.preview.prUpdating": "PRを更新中…",
   "plugins.github.ui.preview.retryPrUpdate": "PRの更新を再試行",
-  "plugins.github.releases.published.refreshWarning": "公開しました。最新のリリース詳細を更新できませんでした。リリースを開き直して更新してください。({code})"
+  "plugins.github.releases.published.refreshWarning": "公開しました。最新のリリース詳細を更新できませんでした。リリースを開き直して更新してください。({code})",
+  "plugins.triage.readPartial": "これまでに読み取ったものを表示しています"
 }

@@ -149,7 +149,6 @@
   "plugins.github.ui.pendingPanels.description": "Odpowiedzi znajdują się w sąsiednich panelach, a nie w wierszu listy:",
   "plugins.github.ui.commentsShortened.description": "Niektóre komentarze zostały skrócone. Otwórz wpis w GitHub, aby przeczytać je w całości.",
   "plugins.github.ui.commentNoText": "Ten komentarz nie zawiera tekstu.",
-  "plugins.github.ui.partial": "Pokażemy, co udało nam się odczytać do tej pory",
   "plugins.github.ui.noFacts": "Brak przewidzianych faktów",
   "plugins.github.ui.noFacts.description": "Ta obserwacja nie zawiera wyświetlanego informacji GitHub.",
   "plugins.github.ui.facts": "GitHub",
@@ -1166,5 +1165,6 @@
   "plugins.github.ui.preview.prUpdated": "PR zaktualizowany",
   "plugins.github.ui.preview.prUpdating": "Aktualizowanie PR…",
   "plugins.github.ui.preview.retryPrUpdate": "Ponów aktualizację PR",
-  "plugins.github.releases.published.refreshWarning": "Opublikowano. Nie udało się odświeżyć szczegółów wydania. Otwórz wydanie ponownie, aby je odświeżyć. ({code})"
+  "plugins.github.releases.published.refreshWarning": "Opublikowano. Nie udało się odświeżyć szczegółów wydania. Otwórz wydanie ponownie, aby je odświeżyć. ({code})",
+  "plugins.triage.readPartial": "Pokażemy, co udało nam się odczytać do tej pory"
 }

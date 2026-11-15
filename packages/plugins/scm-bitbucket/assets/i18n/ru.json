@@ -139,7 +139,6 @@
   "plugins.bitbucket.ui.pendingPanels.description": "Ответы находятся в соседних панелях, а не в строке списка:",
   "plugins.bitbucket.ui.activityCollection.description": "Bitbucket возвращает одобрения, обновления и комментарии в одной коллекции, поэтому здесь показаны все записи.",
   "plugins.bitbucket.ui.buildsTruncated.description": "В Bitbucket больше статусов сборки, чем вмещает эта страница, поэтому общие числа не показаны.",
-  "plugins.bitbucket.ui.partial": "Показано, что было прочитано",
   "plugins.bitbucket.ui.shortened": "Некоторые детали были сокращены",
   "plugins.bitbucket.ui.shortened.description": "Откройте этот запрос в Bitbucket, чтобы прочитать полный текст.",
   "plugins.bitbucket.ui.noFacts": "Нет предполагаемых фактов",
@@ -183,9 +182,6 @@
   "plugins.bitbucket.ui.diffUnavailable": "Различия недоступны",
   "plugins.bitbucket.ui.diffTooLarge": "Различия слишком велики для ответа Bitbucket",
   "plugins.bitbucket.ui.diffTooLarge.description": "Пул-реквест доступен; откройте его в Bitbucket, чтобы увидеть все различия.",
-  "plugins.bitbucket.ui.rawDiffShortened": "Необработанные различия сокращены",
-  "plugins.bitbucket.ui.rawDiffShortened.description": "Возвращённый фрагмент помещается в границы результата действия Happier.",
-  "plugins.bitbucket.ui.changedFiles": "Изменённые файлы",
   "plugins.bitbucket.ui.showMoreFiles": "Показать ещё изменённые файлы",
   "plugins.bitbucket.ui.rereadDiff": "Повторно прочитать различия из Bitbucket",
   "plugins.bitbucket.ui.showMoreActivity": "Показать ещё активность",
@@ -288,5 +284,14 @@
   "plugins.bitbucket.ui.mutations.reviewReply.publish": "Отправить ответ",
   "plugins.bitbucket.settings.group": "Bitbucket Cloud",
   "plugins.bitbucket.settings.sources": "PR и задачи",
-  "plugins.bitbucket.settings.sources.subtitle": "Выберите учетные записи и рабочие пространства Bitbucket Cloud, которые будут отображаться в разделе PR и задач."
+  "plugins.bitbucket.settings.sources.subtitle": "Выберите учетные записи и рабочие пространства Bitbucket Cloud, которые будут отображаться в разделе PR и задач.",
+  "plugins.triage.readPartial": "Показано, что было прочитано",
+  "plugins.bitbucket.ui.files.added": "Добавлен",
+  "plugins.bitbucket.ui.files.deleted": "Удалён",
+  "plugins.bitbucket.ui.files.renamed": "Переименован",
+  "plugins.bitbucket.ui.filesLabel": "Файлы, измененные этим запросом на слияние",
+  "plugins.bitbucket.ui.noFiles": "Нет измененных файлов",
+  "plugins.bitbucket.ui.noFiles.description": "Bitbucket сообщает, что этот запрос на слияние не изменяет никаких файлов.",
+  "plugins.bitbucket.ui.fileDiffNone": "У Bitbucket нет diff для этого файла.",
+  "plugins.bitbucket.ui.fileDiffShortened": "Этот diff слишком длинный, чтобы показать его здесь. Остальное — на Bitbucket."
 }

@@ -140,7 +140,6 @@
   "plugins.gitlab.ui.pendingPanels.description": "Answered in the panels beside this one, not on the list row:",
   "plugins.gitlab.ui.pipelineJobsUnavailable.description": "GitLab did not return a per-job breakdown for the newest pipeline, so no job counts are shown.",
   "plugins.gitlab.ui.approvalRulesUnavailable.description": "Approval rules are a paid GitLab tier feature and are not available on this deployment. The approval state above is complete.",
-  "plugins.gitlab.ui.partial": "Showing what was read so far",
   "plugins.gitlab.ui.noFacts": "No projected facts",
   "plugins.gitlab.ui.noFacts.description": "This observation carried no displayable GitLab facts.",
   "plugins.gitlab.ui.facts": "GitLab",
@@ -379,5 +378,6 @@
   "plugins.gitlab.settings.group": "GitLab",
   "plugins.gitlab.settings.sources": "PRs & Issues",
   "plugins.gitlab.settings.sources.subtitle": "Choose which GitLab accounts and projects appear in PRs & Issues.",
-  "plugins.gitlab.ui.mutations.failure.code": "Code"
+  "plugins.gitlab.ui.mutations.failure.code": "Code",
+  "plugins.triage.readPartial": "Showing what was read so far"
 }

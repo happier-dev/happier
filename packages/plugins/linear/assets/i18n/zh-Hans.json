@@ -157,5 +157,12 @@
   "plugins.triage.sourceWrite.comment.label": "评论",
   "plugins.triage.sourceWrite.comment.placeholder": "写评论",
   "plugins.triage.sourceWrite.comment.publish": "发布评论",
-  "plugins.triage.sourceWrite.comment.published": "评论已发布"
+  "plugins.triage.sourceWrite.comment.published": "评论已发布",
+  "plugins.triage.readPartial": "已显示已读取的内容",
+  "plugins.linear.activity.commented": "已评论",
+  "plugins.linear.activity.empty": "还没有评论",
+  "plugins.linear.activity.label": "此 Linear 问题的评论",
+  "plugins.linear.activity.empty.description": "此问题在 Linear 中的评论会显示在这里。",
+  "plugins.linear.activity.more": "显示更多评论",
+  "plugins.linear.activity.refresh": "从 Linear 重新读取评论"
 }

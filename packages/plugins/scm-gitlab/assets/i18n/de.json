@@ -140,7 +140,6 @@
   "plugins.gitlab.ui.pendingPanels.description": "Die Antworten stehen in den angrenzenden Bereichen, nicht in der Listenzeile:",
   "plugins.gitlab.ui.pipelineJobsUnavailable.description": "GitLab hat für die neueste Pipeline keine Aufschlüsselung nach Jobs zurückgegeben. Daher werden keine Job-Anzahlen angezeigt.",
   "plugins.gitlab.ui.approvalRulesUnavailable.description": "Freigaberegeln sind eine kostenpflichtige GitLab-Funktion und in dieser Installation nicht verfügbar. Der oben gezeigte Freigabestatus ist vollständig.",
-  "plugins.gitlab.ui.partial": "Bisher gelesene Daten werden angezeigt",
   "plugins.gitlab.ui.noFacts": "Keine dargestellten Fakten",
   "plugins.gitlab.ui.noFacts.description": "Diese Beobachtung enthielt keine darstellbaren GitLab-Fakten.",
   "plugins.gitlab.ui.facts": "GitLab",
@@ -379,5 +378,6 @@
   "plugins.gitlab.settings.group": "GitLab",
   "plugins.gitlab.settings.sources": "PRs & Tickets",
   "plugins.gitlab.settings.sources.subtitle": "Wähle aus, welche GitLab-Konten und -Projekte unter PRs & Tickets angezeigt werden.",
-  "plugins.gitlab.ui.mutations.failure.code": "Code"
+  "plugins.gitlab.ui.mutations.failure.code": "Code",
+  "plugins.triage.readPartial": "Bisher gelesene Daten werden angezeigt"
 }

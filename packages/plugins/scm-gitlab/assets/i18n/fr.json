@@ -140,7 +140,6 @@
   "plugins.gitlab.ui.pendingPanels.description": "Les réponses figurent dans les panneaux voisins, pas dans la ligne de la liste :",
   "plugins.gitlab.ui.pipelineJobsUnavailable.description": "GitLab n’a pas renvoyé le détail des tâches du pipeline le plus récent ; aucun nombre de tâches n’est donc affiché.",
   "plugins.gitlab.ui.approvalRulesUnavailable.description": "Les règles d’approbation sont une fonctionnalité payante de GitLab et ne sont pas disponibles sur ce déploiement. L’état d’approbation ci-dessus est complet.",
-  "plugins.gitlab.ui.partial": "Affiche ce qui a été lu jusqu'à présent",
   "plugins.gitlab.ui.noFacts": "Aucun faits projectés",
   "plugins.gitlab.ui.noFacts.description": "Cette observation ne comporte pas de faits GitLab affichables",
   "plugins.gitlab.ui.facts": "GitLab",
@@ -379,5 +378,6 @@
   "plugins.gitlab.settings.group": "GitLab",
   "plugins.gitlab.settings.sources": "PR et tickets",
   "plugins.gitlab.settings.sources.subtitle": "Choisis les comptes et projets GitLab affichés dans PR et tickets.",
-  "plugins.gitlab.ui.mutations.failure.code": "Code"
+  "plugins.gitlab.ui.mutations.failure.code": "Code",
+  "plugins.triage.readPartial": "Affiche ce qui a été lu jusqu'à présent"
 }

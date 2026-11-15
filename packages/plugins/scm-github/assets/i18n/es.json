@@ -149,7 +149,6 @@
   "plugins.github.ui.pendingPanels.description": "Las respuestas están en los paneles contiguos, no en la fila de la lista:",
   "plugins.github.ui.commentsShortened.description": "Algunos comentarios se han acortado. Abre la entrada en GitHub para leerlos completos.",
   "plugins.github.ui.commentNoText": "Este comentario no contiene texto.",
-  "plugins.github.ui.partial": "Mostrando lo leído hasta ahora",
   "plugins.github.ui.noFacts": "No hay hechos proyectados",
   "plugins.github.ui.noFacts.description": "Esta observación no lleva ninguna información de GitHub para mostrar.",
   "plugins.github.ui.facts": "GitHub",
@@ -1166,5 +1165,6 @@
   "plugins.github.ui.preview.prUpdated": "PR actualizada",
   "plugins.github.ui.preview.prUpdating": "Actualizando la PR…",
   "plugins.github.ui.preview.retryPrUpdate": "Reintentar actualización de la PR",
-  "plugins.github.releases.published.refreshWarning": "Publicado. No se pudieron actualizar los detalles de la versión. Vuelve a abrirla para actualizarlos. ({code})"
+  "plugins.github.releases.published.refreshWarning": "Publicado. No se pudieron actualizar los detalles de la versión. Vuelve a abrirla para actualizarlos. ({code})",
+  "plugins.triage.readPartial": "Mostrando lo leído hasta ahora"
 }

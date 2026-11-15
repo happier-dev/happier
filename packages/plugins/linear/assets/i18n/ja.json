@@ -157,5 +157,12 @@
   "plugins.triage.sourceWrite.comment.label": "コメント",
   "plugins.triage.sourceWrite.comment.placeholder": "コメントを書く",
   "plugins.triage.sourceWrite.comment.publish": "コメントを投稿",
-  "plugins.triage.sourceWrite.comment.published": "コメントを投稿しました"
+  "plugins.triage.sourceWrite.comment.published": "コメントを投稿しました",
+  "plugins.triage.readPartial": "これまでに読み取ったものを表示しています",
+  "plugins.linear.activity.commented": "コメント",
+  "plugins.linear.activity.empty": "まだコメントがありません",
+  "plugins.linear.activity.label": "この Linear issue のコメント",
+  "plugins.linear.activity.empty.description": "Linear のこの issue へのコメントがここに表示されます。",
+  "plugins.linear.activity.more": "さらにコメントを表示",
+  "plugins.linear.activity.refresh": "Linear からコメントを再読み込み"
 }

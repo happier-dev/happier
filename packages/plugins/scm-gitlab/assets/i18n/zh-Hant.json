@@ -140,7 +140,6 @@
   "plugins.gitlab.ui.pendingPanels.description": "答案位於旁邊的面板中，而不是清單列中：",
   "plugins.gitlab.ui.pipelineJobsUnavailable.description": "GitLab 未回傳最新流水線的逐作業明細，因此不顯示作業數量。",
   "plugins.gitlab.ui.approvalRulesUnavailable.description": "核准規則是 GitLab 付費版功能，此部署不可用。上方的核准狀態是完整的。",
-  "plugins.gitlab.ui.partial": "顯示到目前為止已讀取的內容",
   "plugins.gitlab.ui.noFacts": "沒有預測的事實",
   "plugins.gitlab.ui.noFacts.description": "這個觀察沒有顯示 GitLab 的事實。",
   "plugins.gitlab.ui.facts": "GitLab",
@@ -379,5 +378,6 @@
   "plugins.gitlab.settings.group": "GitLab",
   "plugins.gitlab.settings.sources": "PR 與問題",
   "plugins.gitlab.settings.sources.subtitle": "選擇要在 PR 與問題中顯示的 GitLab 帳戶和專案。",
-  "plugins.gitlab.ui.mutations.failure.code": "錯誤代碼"
+  "plugins.gitlab.ui.mutations.failure.code": "錯誤代碼",
+  "plugins.triage.readPartial": "顯示到目前為止已讀取的內容"
 }

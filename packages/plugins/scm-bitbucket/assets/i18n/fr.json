@@ -139,7 +139,6 @@
   "plugins.bitbucket.ui.pendingPanels.description": "Les réponses figurent dans les panneaux voisins, pas dans la ligne de la liste :",
   "plugins.bitbucket.ui.activityCollection.description": "Bitbucket fournit les approbations, mises à jour et commentaires dans une seule collection ; ils sont donc tous affichés ici.",
   "plugins.bitbucket.ui.buildsTruncated.description": "Bitbucket contient plus d’états de build que cette page ne peut en afficher ; aucun total n’est donc indiqué.",
-  "plugins.bitbucket.ui.partial": "Affiche ce qui a été lu jusqu'à présent",
   "plugins.bitbucket.ui.shortened": "Certains détails ont été raccourcis",
   "plugins.bitbucket.ui.shortened.description": "Ouvre la demande de fusion dans Bitbucket pour lire le texte complet.",
   "plugins.bitbucket.ui.noFacts": "Aucun faits projectés",
@@ -183,9 +182,6 @@
   "plugins.bitbucket.ui.diffUnavailable": "Les différences sont indisponibles",
   "plugins.bitbucket.ui.diffTooLarge": "Les différences sont trop volumineuses pour être renvoyées par Bitbucket",
   "plugins.bitbucket.ui.diffTooLarge.description": "La demande reste disponible ; ouvre-la dans Bitbucket pour voir toutes les différences.",
-  "plugins.bitbucket.ui.rawDiffShortened": "Les différences brutes ont été raccourcies",
-  "plugins.bitbucket.ui.rawDiffShortened.description": "Le préfixe renvoyé respecte la limite de résultat d’action de Happier.",
-  "plugins.bitbucket.ui.changedFiles": "Fichiers modifiés",
   "plugins.bitbucket.ui.showMoreFiles": "Afficher plus de fichiers modifiés",
   "plugins.bitbucket.ui.rereadDiff": "Relire les différences depuis Bitbucket",
   "plugins.bitbucket.ui.showMoreActivity": "Afficher plus d’activité",
@@ -288,5 +284,14 @@
   "plugins.bitbucket.ui.mutations.reviewReply.publish": "Publier la réponse",
   "plugins.bitbucket.settings.group": "Bitbucket Cloud",
   "plugins.bitbucket.settings.sources": "PR et tickets",
-  "plugins.bitbucket.settings.sources.subtitle": "Choisis les comptes et espaces de travail Bitbucket Cloud affichés dans PR et tickets."
+  "plugins.bitbucket.settings.sources.subtitle": "Choisis les comptes et espaces de travail Bitbucket Cloud affichés dans PR et tickets.",
+  "plugins.triage.readPartial": "Affiche ce qui a été lu jusqu'à présent",
+  "plugins.bitbucket.ui.files.added": "Ajouté",
+  "plugins.bitbucket.ui.files.deleted": "Supprimé",
+  "plugins.bitbucket.ui.files.renamed": "Renommé",
+  "plugins.bitbucket.ui.filesLabel": "Fichiers modifiés par cette demande de fusion",
+  "plugins.bitbucket.ui.noFiles": "Aucun fichier modifié",
+  "plugins.bitbucket.ui.noFiles.description": "Bitbucket indique que cette demande de fusion ne modifie aucun fichier",
+  "plugins.bitbucket.ui.fileDiffNone": "Bitbucket n’a pas de diff pour ce fichier.",
+  "plugins.bitbucket.ui.fileDiffShortened": "Ce diff est trop long pour être affiché ici. La suite est sur Bitbucket."
 }

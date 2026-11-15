@@ -140,7 +140,6 @@
   "plugins.gitlab.ui.pendingPanels.description": "Les respostes són als plafons del costat, no a la fila de la llista:",
   "plugins.gitlab.ui.pipelineJobsUnavailable.description": "GitLab no ha retornat el desglossament per tasca del pipeline més recent, per això no se’n mostra el recompte.",
   "plugins.gitlab.ui.approvalRulesUnavailable.description": "Les regles d’aprovació són una funció de pagament de GitLab i no estan disponibles en aquest desplegament. L’estat d’aprovació anterior és complet.",
-  "plugins.gitlab.ui.partial": "Mostrant el que s'ha llegit fins avui",
   "plugins.gitlab.ui.noFacts": "No hi ha cap feit proyectat",
   "plugins.gitlab.ui.noFacts.description": "Aquesta observació no porta cap fàcts del GitLab visible.",
   "plugins.gitlab.ui.facts": "GitLab",
@@ -379,5 +378,6 @@
   "plugins.gitlab.settings.group": "GitLab",
   "plugins.gitlab.settings.sources": "PR i incidències",
   "plugins.gitlab.settings.sources.subtitle": "Tria els comptes i projectes de GitLab que es mostren a PR i incidències.",
-  "plugins.gitlab.ui.mutations.failure.code": "Codi"
+  "plugins.gitlab.ui.mutations.failure.code": "Codi",
+  "plugins.triage.readPartial": "Mostrant el que s'ha llegit fins avui"
 }

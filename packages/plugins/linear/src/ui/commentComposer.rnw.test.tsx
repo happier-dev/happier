@@ -92,7 +92,9 @@ it('keeps Linear Comments mapped to Activity under the single outer page Tabs wi
         executeAction: async ({ input }) => {
           const { section } = input as { section: string };
           sections.push(section);
-          return { kind: 'ready', entries: [{ id: section, title: section === 'comments' ? 'Linear conversation' : 'Linear description' }] };
+          return { kind: 'ready', entries: [section === 'comments'
+            ? { id: section, title: 'Mara', author: 'Mara', atMs: 1_760_000_600_000, body: 'Linear conversation' }
+            : { id: section, title: 'Linear description' }] };
         },
       },
     });
@@ -211,6 +213,38 @@ async function press(
   });
 }
 
+describe('the Linear Activity', () => {
+  it('draws comments on the shared Activity timeline: the author, what they did and their words, oldest first', async () => {
+    let fixture!: PluginUiTestkit;
+    await act(async () => {
+      fixture = await createPluginUiTestkit({
+        identity: { instanceId: 'linear-activity', mountNonce: 'linear-activity' },
+        authorPlugin: { id: LINEAR_PLUGIN_ID, version: '0.0.0' },
+        surface: renderSurface,
+        surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+        launchInput: { ...INPUT, panelScrollOwner: 'list' } as unknown as JsonValue,
+        handlers: {
+          executeAction: async () => ({ kind: 'ready', entries: [
+            { id: 'comment-2', title: 'Jonas', author: 'Jonas', atMs: 1_760_000_500_000, body: 'Also on Safari.' },
+            { id: 'comment-1', title: 'Mara', author: 'Mara', atMs: 1_760_000_400_000, body: 'Can we keep the flag?' },
+          ] }),
+        },
+      });
+    });
+    mounted.push(fixture);
+    await expect(fixture.getByText('Can we keep the flag?')).resolves.toBeDefined();
+    const timeline = document.querySelector('[aria-label="Comments on this Linear issue"]');
+    expect(timeline).not.toBeNull();
+    const content = timeline!.textContent ?? '';
+    expect(content).toContain('Mara');
+    expect(content).toContain('Commented');
+    // One reading order for every source: the earlier remark leads.
+    expect(content.indexOf('Can we keep the flag?')).toBeLessThan(content.indexOf('Also on Safari.'));
+    // The provider's raw instant is not the heading.
+    expect(document.body.textContent).not.toContain('2026-');
+  });
+});
+
 describe('the Linear comment composer', () => {
   it('publishes the typed comment once through the comment Action, clears the draft and rereads the comments', async () => {
     const page = await mountComments(({ operationName }) => {
@@ -258,6 +292,9 @@ describe('the Linear comment composer', () => {
       '',
     );
     await vi.waitFor(() => expect(page.reads()).toBe(2));
+    // The reread replaces the comments it read before; it never appends them a second time.
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+    expect(document.body.textContent?.match(/Earlier note/g) ?? []).toHaveLength(1);
   });
 
   it('keeps the draft and withholds publishing after an unconfirmed comment', async () => {

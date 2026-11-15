@@ -149,7 +149,6 @@
   "plugins.github.ui.pendingPanels.description": "答案位於旁邊的面板中，而不是清單列中：",
   "plugins.github.ui.commentsShortened.description": "部分留言已縮短。請在 GitHub 上開啟該條目以閱讀完整內容。",
   "plugins.github.ui.commentNoText": "此留言不包含文字。",
-  "plugins.github.ui.partial": "顯示到目前為止已讀取的內容",
   "plugins.github.ui.noFacts": "沒有預測的事實",
   "plugins.github.ui.noFacts.description": "這個觀察沒有顯示 GitHub 的事實。",
   "plugins.github.ui.facts": "GitHub",
@@ -1166,5 +1165,6 @@
   "plugins.github.ui.preview.prUpdated": "PR 已更新",
   "plugins.github.ui.preview.prUpdating": "正在更新 PR…",
   "plugins.github.ui.preview.retryPrUpdate": "重試 PR 更新",
-  "plugins.github.releases.published.refreshWarning": "已發佈。無法重新整理最新的發佈詳細資料。請重新開啟此發佈以重新整理。({code})"
+  "plugins.github.releases.published.refreshWarning": "已發佈。無法重新整理最新的發佈詳細資料。請重新開啟此發佈以重新整理。({code})",
+  "plugins.triage.readPartial": "顯示到目前為止已讀取的內容"
 }

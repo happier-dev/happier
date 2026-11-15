@@ -23,13 +23,14 @@
 
 import * as React from 'react';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
+import { splitUnifiedDiffByFile } from '@happier-dev/protocol/diff/splitUnifiedDiffByFile';
+import { parseScmPatchPaths } from '@happier-dev/protocol/scm';
 import {
   Action,
   Badge,
   Banner,
   Button,
   Divider,
-  DiffViewer,
   EmptyState,
   ErrorState,
   Item,
@@ -39,7 +40,6 @@ import {
   Metadata,
   Row,
   Screen,
-  ScrollArea,
   Stack,
   Status,
   Tabs,
@@ -47,6 +47,7 @@ import {
   defineUiSurface,
   usePluginTranslation,
   useSurfaceContext,
+  useTabPanelActivity,
   type MetadataEntry,
 } from '@happier-dev/plugin-ui';
 import {
@@ -78,6 +79,13 @@ import {
 } from '../triage/source/detail.js';
 
 import {
+  TriageSourcePartialReadBanner,
+  TriageChangedFileDiff,
+  TriageChangedFilesList,
+  TriageChangedFilesLoading,
+  indexTriageRawDiffFilesV1,
+  type TriageChangedFileV1,
+  type TriageRawDiffFilesV1,
   TriageSourceReadFailureDetails,
   TriageActivityTimeline,
   TriageDetailPanel,
@@ -122,18 +130,8 @@ function PageFailureBanner({
   state,
 }: Readonly<{ state: BitbucketPagedStateV1<unknown> }>): React.ReactElement | null {
   const text = usePluginTranslation();
-  if (state.failure === null) return null;
-  return (
-    <><Banner
-      tone="warning"
-      title="Showing what was read so far"
-      titleKey="plugins.bitbucket.ui.partial"
-      description={failureDescription(
-        state.failure,
-        text('plugins.bitbucket.ui.readFailed', 'Bitbucket could not complete this read.'), text,
-      )}
-    /><TriageSourceReadFailureDetails failures={[state.failure]} /></>
-  );
+  return <TriageSourcePartialReadBanner failure={state.failure}
+    readFailed={text('plugins.bitbucket.ui.readFailed', 'Bitbucket could not complete this read.')} />;
 }
 
 /** The footer every paged panel shares: what was read, and how to ask for more. */
@@ -316,17 +314,8 @@ function OverviewPanel({
       <TriageDetailStory kind={withWrites ? undefined : 'ask'}
         changes={withWrites ? null : <BitbucketStoryChanges input={input} />}
         checks={withWrites ? null : <BitbucketStoryChecks input={input} />}>
-        {controller.failure === null ? null : (
-          <Banner
-            tone="warning"
-            title={text('plugins.bitbucket.ui.partial', 'Showing what was read so far')}
-            description={failureDescription(
-              controller.failure,
-              text('plugins.bitbucket.ui.overviewRefreshFailed', 'Bitbucket could not refresh this overview.'), text,
-            )}
-          />
-        )}
-        <TriageSourceReadFailureDetails failures={[controller.failure]} />
+        <TriageSourcePartialReadBanner failure={controller.failure}
+          readFailed={text('plugins.bitbucket.ui.overviewRefreshFailed', 'Bitbucket could not refresh this overview.')} />
         {!(overview.projectionTruncated || overviewResult?.descriptionTruncated) ? null : (
           <Banner
             tone="neutral"
@@ -405,17 +394,69 @@ function OverviewPanel({
 
 /* ------------------------------------------------------------------------ Diff */
 
+/** What Bitbucket's diffstat status says about a file, in words; a plain modification needs none. */
+function diffstatNote(text: ReturnType<typeof usePluginTranslation>, row: BitbucketProjectedDiffstatRowV1): string | undefined {
+  switch (row.status) {
+    case 'modified': return undefined;
+    case 'added': return text('plugins.bitbucket.ui.files.added', 'Added');
+    case 'removed': return text('plugins.bitbucket.ui.files.deleted', 'Deleted');
+    case 'renamed': return text('plugins.bitbucket.ui.files.renamed', 'Renamed');
+    // A status this build does not know is shown as Bitbucket names it rather than hidden.
+    default: return row.status;
+  }
+}
+
+/** The pull request's own diff page, at this file. */
+function bitbucketFileWebUrl(pullRequestUrl: string | undefined, path: string): string | undefined {
+  return pullRequestUrl === undefined ? undefined : `${pullRequestUrl.replace(/\/+$/, '')}/diff#chg-${encodeURI(path)}`;
+}
+
+/** The Diff read's raw text, as each open file reads its own part of it. */
+const BitbucketFilesDiffContext = React.createContext<TriageRawDiffFilesV1 | null>(null);
+
+function BitbucketFileBody({ path }: Readonly<{ path: string }>): React.ReactElement | null {
+  const text = usePluginTranslation();
+  const diff = React.useContext(BitbucketFilesDiffContext);
+  if (diff === null) return null;
+  return <TriageChangedFileDiff path={path} diff={diff} labels={{
+    shortened: text('plugins.bitbucket.ui.fileDiffShortened', 'This diff is too long to show here. The rest is on Bitbucket.'),
+    none: text('plugins.bitbucket.ui.fileDiffNone', 'Bitbucket has no diff for this file.'),
+  }} />;
+}
+
+const renderBitbucketFileBody = (row: TriageChangedFileV1): React.ReactNode => <BitbucketFileBody path={row.path} />;
+
 function DiffPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement {
   const text = usePluginTranslation();
-  const { locale } = useSurfaceContext();
   const controller = useBitbucketDiff(input);
-  const { state } = controller;
+  const { state, raw } = controller;
+  const { active } = useTabPanelActivity();
+  const [focusPath, setFocusPath] = React.useState<string | null>(null);
   // The page's one refresh re-reads this diff; the panel draws no refresh of its own.
   useTriagePageRefresh(controller.refresh);
+  // Leaving Files closes its open file.
+  React.useEffect(() => { if (!active) setFocusPath(null); }, [active]);
   const loadMore = useTriageSourcePanelPagingV1('files', text('plugins.bitbucket.ui.showMoreFiles', 'Show more changed files'),
     state.canLoadMore, state.pending, controller.loadMore);
+  // The diffstat and the raw diff arrive in one read: a file opens onto its part of that text, never a second read.
+  const files = React.useMemo(() => raw?.kind !== 'available' ? null : indexTriageRawDiffFilesV1(
+    splitUnifiedDiffByFile(raw.text).map((diff) => ({ diff, paths: parseScmPatchPaths(diff) })), raw.truncated), [raw]);
+  const pullRequestUrl = input.observation.locator.webUrl;
+  const sections = React.useMemo(() => [{ key: 'files', title: '', data: state.rows.map((row) => {
+    const note = diffstatNote(text, row);
+    const webUrl = bitbucketFileWebUrl(pullRequestUrl, row.path);
+    return {
+      path: row.path,
+      lines: { additions: row.linesAdded, deletions: row.linesRemoved },
+      diffAvailable: files !== null,
+      ...(note === undefined ? {} : { note }),
+      ...(webUrl === undefined ? {} : { webUrl }),
+    };
+  }) }], [state.rows, text, pullRequestUrl, files]);
+
   if (state.kind === 'idle' || state.kind === 'loading') {
-    return <LoadingState title="Reading this diff from Bitbucket" titleKey="plugins.bitbucket.ui.readingDiff" />;
+    return <TriageChangedFilesLoading title="Reading this diff from Bitbucket" titleKey="plugins.bitbucket.ui.readingDiff"
+      progress={false} />;
   }
   if (state.kind === 'unavailable') {
     return (
@@ -429,68 +470,55 @@ function DiffPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): 
       /><TriageSourceReadFailureDetails failures={[state.failure]} /></>
     );
   }
-  const changedFiles = (
-    <>
-      <Metadata
-        // The count is the section's own fact (lab c7 Files), not an engineering line under the rows.
-        title={`${text('plugins.bitbucket.ui.changedFiles', 'Changed files')} · ${new Intl.NumberFormat(locale).format(state.rows.length)}`}
-        entries={state.rows.map((row: BitbucketProjectedDiffstatRowV1) => ({
-          label: row.path,
-          value: `${row.status} · +${String(row.linesAdded)} −${String(row.linesRemoved)}`,
-        }))}
-      />
-      <PagedFooter
-        state={state}
-        loadMoreTitle="Show more changed files"
-        loadMoreTitleKey="plugins.bitbucket.ui.showMoreFiles"
-        onLoadMore={loadMore}
-      />
-    </>
+  const header = (
+    <Stack gap="small">
+      <PageFailureBanner state={state} />
+      {raw?.kind !== 'tooLarge' ? null : (
+        <Banner
+          tone="warning"
+          title="This diff is too large for Bitbucket to return"
+          titleKey="plugins.bitbucket.ui.diffTooLarge"
+          description="The pull request remains available; open it in Bitbucket for the full diff."
+          descriptionKey="plugins.bitbucket.ui.diffTooLarge.description"
+        />
+      )}
+    </Stack>
   );
-  const raw = controller.raw;
-  if (raw?.kind === 'available') {
-    // The diff is this panel's one scroller (QB-55/81; the frame only bounds a Files panel). Lab c7 Files: the
-    // changed files, then the diff; they read above its first line and scroll inside the diff's own list.
+  if (state.rows.length === 0) {
     return (
-      <DiffViewer
-        fill
-        unifiedDiff={raw.text}
-        label={text('plugins.bitbucket.ui.tabs.diff', 'Diff')}
-        testID="bitbucket-pull-request-diff"
-        leadingContent={(
-          <Stack gap="large">
-            <PageFailureBanner state={state} />
-            {changedFiles}
-            {raw.truncated ? (
-              <Banner
-                tone="neutral"
-                title="The raw diff was shortened"
-                titleKey="plugins.bitbucket.ui.rawDiffShortened"
-                description="The returned prefix fits Happier's Action-result boundary."
-                descriptionKey="plugins.bitbucket.ui.rawDiffShortened.description"
-              />
-            ) : null}
-          </Stack>
-        )}
-      />
+      <Stack gap="large">
+        {header}
+        <EmptyState
+          title="No changed files"
+          titleKey="plugins.bitbucket.ui.noFiles"
+          description="Bitbucket reports that this pull request changes no files."
+          descriptionKey="plugins.bitbucket.ui.noFiles.description"
+        />
+      </Stack>
     );
   }
   return (
-    <ScrollArea>
-      <Stack gap="large">
-        <PageFailureBanner state={state} />
-        {raw?.kind !== 'tooLarge' ? null : (
-          <Banner
-            tone="warning"
-            title="This diff is too large for Bitbucket to return"
-            titleKey="plugins.bitbucket.ui.diffTooLarge"
-            description="The pull request remains available; open it in Bitbucket for the full diff."
-            descriptionKey="plugins.bitbucket.ui.diffTooLarge.description"
+    <BitbucketFilesDiffContext.Provider value={files}>
+      <TriageChangedFilesList
+        accessibilityLabel="Files this pull request changes"
+        accessibilityLabelKey="plugins.bitbucket.ui.filesLabel"
+        sections={sections}
+        focusPath={focusPath}
+        onFocusPath={setFocusPath}
+        active={active}
+        viewed={null}
+        renderBody={renderBitbucketFileBody}
+        header={header}
+        endContent={(
+          <PagedFooter
+            state={state}
+            loadMoreTitle="Show more changed files"
+            loadMoreTitleKey="plugins.bitbucket.ui.showMoreFiles"
+            onLoadMore={loadMore}
           />
         )}
-        {changedFiles}
-      </Stack>
-    </ScrollArea>
+      />
+    </BitbucketFilesDiffContext.Provider>
   );
 }
 

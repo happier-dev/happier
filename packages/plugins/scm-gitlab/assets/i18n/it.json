@@ -140,7 +140,6 @@
   "plugins.gitlab.ui.pendingPanels.description": "Le risposte si trovano nei pannelli adiacenti, non nella riga dell’elenco:",
   "plugins.gitlab.ui.pipelineJobsUnavailable.description": "GitLab non ha restituito la suddivisione per processo della pipeline più recente, quindi il numero dei processi non viene mostrato.",
   "plugins.gitlab.ui.approvalRulesUnavailable.description": "Le regole di approvazione sono una funzionalità a pagamento di GitLab e non sono disponibili in questa distribuzione. Lo stato di approvazione sopra è completo.",
-  "plugins.gitlab.ui.partial": "Mostrando ciò che è stato letto finora",
   "plugins.gitlab.ui.noFacts": "Nessun fato proiettato",
   "plugins.gitlab.ui.noFacts.description": "Questa osservazione non contiene informazioni visualizzabili da GitLab.",
   "plugins.gitlab.ui.facts": "GitLab",
@@ -379,5 +378,6 @@
   "plugins.gitlab.settings.group": "GitLab",
   "plugins.gitlab.settings.sources": "PR e segnalazioni",
   "plugins.gitlab.settings.sources.subtitle": "Scegli gli account e i progetti GitLab da mostrare in PR e segnalazioni.",
-  "plugins.gitlab.ui.mutations.failure.code": "Codice"
+  "plugins.gitlab.ui.mutations.failure.code": "Codice",
+  "plugins.triage.readPartial": "Mostrando ciò che è stato letto finora"
 }

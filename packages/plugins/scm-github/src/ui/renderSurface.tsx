@@ -109,6 +109,7 @@ import type { GithubReadFailureV1 } from './detail/readBoundary.js';
 import { useGithubFileViewedSource } from './detail/filesViewed.js';
 import type { GithubCheckActionsTargetV1 } from '../triage/checks.js';
 import {
+  TriageSourcePartialReadBanner,
   completeTriagePostMutationIfNeeded,
   TriageDetailInstance,
   TriageDetailPanel,
@@ -326,21 +327,8 @@ function PageFailureBanner({
   state,
 }: Readonly<{ state: GithubPagedStateV1<unknown> }>): React.ReactElement | null {
   const text = usePluginTranslation();
-  if (state.failure === null) return null;
-  return (
-    <Stack gap="small">
-    <Banner
-      tone="warning"
-      title="Showing what was read so far"
-      titleKey="plugins.github.ui.partial"
-      description={failureDescription(
-        state.failure,
-        text('plugins.github.ui.readFailed', 'GitHub could not complete this read.'), text,
-      )}
-    />
-    <GithubReadFailureDetails failures={[state.failure]} />
-    </Stack>
-  );
+  return <TriageSourcePartialReadBanner failure={state.failure}
+    readFailed={text('plugins.github.ui.readFailed', 'GitHub could not complete this read.')} />;
 }
 
 /**

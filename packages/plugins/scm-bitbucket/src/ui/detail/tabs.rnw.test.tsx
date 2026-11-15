@@ -83,6 +83,18 @@ afterEach(async () => {
   for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
 
+const FILES_LIST = 'ul[aria-label="Files this pull request changes"]';
+const filesText = (): string => document.querySelector(FILES_LIST)?.textContent ?? '';
+
+/** A file row of the shared Files frame; its path is drawn middle-ellipsized, so it is read from the list's text. */
+async function expectFile(path: string): Promise<void> {
+  for (let turn = 0; turn < 20 && !filesText().includes(path); turn += 1) {
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+  }
+  expect(filesText()).toContain(path);
+}
+
+
 describe('the mounted Bitbucket pull-request detail tablist', () => {
   it.each([true, false])('retries cold Activity failures on page Refresh without claiming emptiness (both failed: %s)', async bothFailed => {
     const reads = new Map<string, number>();
@@ -117,7 +129,7 @@ describe('the mounted Bitbucket pull-request detail tablist', () => {
     await expect(detail.getByText('The diff is unavailable')).resolves.toBeDefined();
     expect(reads).toBe(1);
     await detail.press(await detail.getByRole('button', { name: 'Refresh page' }));
-    await expect(detail.getByText('recovered.ts')).resolves.toBeDefined();
+    await expectFile('recovered.ts');
     await expect(detail.queryByText('The diff is unavailable')).resolves.toBeUndefined();
     expect(reads).toBe(2);
   });
@@ -236,30 +248,59 @@ describe('the mounted Bitbucket pull-request detail tablist', () => {
       .resolves.toBeDefined();
   });
 
-  it('renders both raw diff content and diffstat from the live Diff action', async () => {
-    const detail = await mountDetail(FIXTURE.detailInput as unknown as JsonValue, {
-      [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.readDiff]: {
+  it('draws the diffstat through the shared Files rows, each file opening onto its part of the one raw diff', async () => {
+    const raw = [
+      'diff --git a/src/provider.ts b/src/provider.ts',
+      '--- a/src/provider.ts',
+      '+++ b/src/provider.ts',
+      '@@ -1 +1,2 @@',
+      '-providerBefore',
+      '+providerAfter',
+      '+providerAdded',
+      'diff --git a/src/new.ts b/src/new.ts',
+      'new file mode 100644',
+      '--- /dev/null',
+      '+++ b/src/new.ts',
+      '@@ -0,0 +1 @@',
+      '+newAfter',
+    ].join('\n');
+    let reads = 0;
+    const detail = await mountDetail(FIXTURE.detailInput as unknown as JsonValue, {}, (localId) => {
+      if (localId !== BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.readDiff) return undefined;
+      reads += 1;
+      return {
         kind: 'diff',
-        files: [{ path: 'src/provider.ts', status: 'modified', linesAdded: 2, linesRemoved: 1 }],
+        files: [
+          { path: 'src/provider.ts', status: 'modified', linesAdded: 2, linesRemoved: 1 },
+          { path: 'src/new.ts', status: 'added', linesAdded: 1, linesRemoved: 0 },
+        ],
         omittedRowCount: 0,
         projectionTruncated: false,
-        raw: { kind: 'available', text: 'diff --git a/src/provider.ts b/src/provider.ts', truncated: false },
-      } as unknown as JsonValue,
+        raw: { kind: 'available', text: raw, truncated: false },
+      } as unknown as JsonValue;
     });
 
     await detail.press(await detail.getByRole('tab', { name: 'Diff' }));
-    await expect(detail.getByText('src/provider.ts')).resolves.toBeDefined();
-    await expect(detail.getByText('diff --git a/src/provider.ts b/src/provider.ts'))
-      .resolves.toBeDefined();
-    // The count is the section's own fact; the page's one refresh re-reads this panel, so it draws no refresh.
-    await expect(detail.getByText('Changed files · 1')).resolves.toBeDefined();
-    await expect(detail.queryByText('1 changed file(s) read.')).resolves.toBeUndefined();
-    await expect(detail.queryByRole('button', { name: 'Re-read this diff from Bitbucket' })).resolves.toBeUndefined();
-    // One scroller (QB-55/81): the changed files lead and scroll inside the diff's own list (lab c7 Files order).
-    const diff = document.querySelector('[data-testid="bitbucket-pull-request-diff"]');
-    expect(diff?.textContent).toContain('Changed files');
-    const text = diff?.textContent ?? '';
-    expect(text.indexOf('src/provider.ts')).toBeLessThan(text.indexOf('diff --git'));
+    const list = document.querySelector(FILES_LIST);
+    expect(list).not.toBeNull();
+    const content = list!.textContent ?? '';
+    expect(content).toContain('src/provider.ts');
+    expect(content).toContain('+2');
+    // Bitbucket's status reads as a word, not its enum; a plain modification needs none. The tab counts the files.
+    expect(content).toContain('Added');
+    expect(content).not.toContain('modified');
+    expect(document.body.textContent).not.toContain('Changed files');
+    expect(list!.querySelectorAll('[aria-label="More actions"]')).toHaveLength(2);
+    // The diff is not dumped under the rows: a file opens onto its own part.
+    expect(document.body.textContent).not.toContain('providerAfter');
+
+    const file = (await detail.queryAllByRole('button')).find(button => button.name?.startsWith('src/provider.ts'));
+    expect(file).toBeDefined();
+    await act(async () => { await detail.press(file!); });
+    expect(document.body.textContent).toContain('providerAfter');
+    expect(document.body.textContent).not.toContain('newAfter');
+    // The open file reads the diff already read with the diffstat; there is no second provider read.
+    expect(reads).toBe(1);
   });
 
   it('keeps the native Overview description through a failed refresh and retained revisit', async () => {
@@ -305,13 +346,14 @@ describe('the mounted Bitbucket pull-request detail tablist', () => {
     });
     await detail.press(await detail.getByRole('tab', { name: 'Diff' }));
     await detail.press(await detail.getByRole('button', { name: 'Show more changed files' }));
-    await expect(detail.getByText('src/page-2.ts')).resolves.toBeDefined();
+    await expectFile('src/page-2.ts');
     await detail.press(await detail.getByRole('tab', { name: 'Activity' }));
     await detail.press(await detail.getByRole('tab', { name: 'Diff' }));
     expect(reads).toBe(2);
-    await expect(detail.getByText('src/page-1.ts')).resolves.toBeDefined();
-    await expect(detail.getByText('src/page-2.ts')).resolves.toBeDefined();
-    await expect(detail.getByText('diff --git a/retained.ts b/retained.ts')).resolves.toBeDefined();
+    await expectFile('src/page-1.ts');
+    await expectFile('src/page-2.ts');
+    // The retained raw diff still backs the rows: each file opens in place without another read.
+    expect((await detail.queryAllByRole('button')).some(button => button.name?.startsWith('src/page-1.ts'))).toBe(true);
   });
 
   it('abandons an inactive Diff page and allows that same position on return', async () => {
@@ -341,11 +383,11 @@ describe('the mounted Bitbucket pull-request detail tablist', () => {
     expect(pendingSignal?.aborted).toBe(true);
     await detail.press(await detail.getByRole('tab', { name: 'Diff' }));
     expect(reads).toBe(2);
-    await expect(detail.getByText('settled.ts')).resolves.toBeDefined();
+    await expectFile('settled.ts');
     await detail.press(await detail.getByRole('button', { name: 'Show more changed files' }));
-    await expect(detail.getByText('retried.ts')).resolves.toBeDefined();
+    await expectFile('retried.ts');
     await act(async () => { finishPending?.(page('obsolete.ts')); });
-    await expect(detail.queryByText('obsolete.ts')).resolves.toBeUndefined();
+    expect(filesText()).not.toContain('obsolete.ts');
     expect(reads).toBe(3);
   });
 

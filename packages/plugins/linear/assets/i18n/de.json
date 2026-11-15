@@ -157,5 +157,12 @@
   "plugins.triage.sourceWrite.comment.label": "Kommentar",
   "plugins.triage.sourceWrite.comment.placeholder": "Kommentar schreiben",
   "plugins.triage.sourceWrite.comment.publish": "Kommentar veröffentlichen",
-  "plugins.triage.sourceWrite.comment.published": "Kommentar veröffentlicht"
+  "plugins.triage.sourceWrite.comment.published": "Kommentar veröffentlicht",
+  "plugins.triage.readPartial": "Bisher gelesene Inhalte werden angezeigt",
+  "plugins.linear.activity.commented": "Kommentiert",
+  "plugins.linear.activity.empty": "Noch keine Kommentare",
+  "plugins.linear.activity.label": "Kommentare zu diesem Linear-Issue",
+  "plugins.linear.activity.empty.description": "Kommentare zu diesem Issue in Linear erscheinen hier.",
+  "plugins.linear.activity.more": "Weitere Kommentare anzeigen",
+  "plugins.linear.activity.refresh": "Kommentare erneut aus Linear lesen"
 }

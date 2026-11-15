@@ -265,6 +265,17 @@ afterEach(async () => {
   for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
 
+
+const FILES_LIST = 'ul[aria-label="Files this Azure DevOps pull-request iteration changes"]';
+
+/** A file row of the shared Files frame; its path is drawn middle-ellipsized, so it is read from the list's text. */
+async function expectFile(path: string): Promise<void> {
+  for (let turn = 0; turn < 20 && !(document.querySelector(FILES_LIST)?.textContent ?? '').includes(path); turn += 1) {
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+  }
+  expect(document.querySelector(FILES_LIST)?.textContent ?? '').toContain(path);
+}
+
 describe('the mounted Azure DevOps pull-request writes', () => {
   it('publishes direct page Items and changes real provider panels through saved top order and the phone host', async () => {
     readResults = {
@@ -285,7 +296,7 @@ describe('the mounted Azure DevOps pull-request writes', () => {
     } })); });
     expect((await fixture.getAllByRole('tab')).map(tab => tab.name)).toEqual(['Files', 'Overview', 'Policies']);
     await act(async () => { await fixture.press(await fixture.getByRole('tab', { name: 'Files' })); });
-    await expect(fixture.getByText('/src/retained.ts')).resolves.toBeDefined();
+    await expectFile('/src/retained.ts');
     expect(ids()).not.toContain(AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readPolicies);
     await act(async () => { await fixture.updateSurface(createSurfaceContextFixture({ platform: 'ios', page: { columnVisible: true,
       navigation: { pageKind, presentation: 'bottom', tabIds: [], request: 'policies' },
@@ -834,7 +845,7 @@ describe('the mounted Azure DevOps detail read presentation', () => {
     }));
 
     await expect(detail.queryByText('approved · required')).resolves.toBeDefined();
-    await expect(detail.queryByText('Showing the last details Azure DevOps returned'))
+    await expect(detail.queryByText('Showing what was read so far'))
       .resolves.toBeDefined();
   });
 
@@ -846,11 +857,11 @@ describe('the mounted Azure DevOps detail read presentation', () => {
     };
     const detail = await mountDetail();
     await detail.press(await detail.getByRole('tab', { name: 'Files' }));
-    await expect(detail.queryByText('/src/retained.ts')).resolves.toBeDefined();
+    await expectFile('/src/retained.ts');
     await detail.press(await detail.getByRole('tab', { name: 'Policies' }));
     await detail.press(await detail.getByRole('tab', { name: 'Files' }));
 
-    await expect(detail.queryByText('/src/retained.ts')).resolves.toBeDefined();
+    await expectFile('/src/retained.ts');
     expect(recorded.filter(({ action }) => (
       (action as Readonly<{ localId?: string }>).localId
         === AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.listIterationChanges

@@ -273,6 +273,21 @@ describe('Linear source through provider HTTP', () => {
     });
   });
 
+  it('reads each comment with its author and instant, for the Activity timeline', async () => {
+    const h = host(({ operationName }) => operationName === 'LinearViewer' ? { viewer: { id: 'viewer-1' } } : {
+      issue: { ...issue, comments: page([
+        { id: 'comment-1', body: 'Shipping today', createdAt: '2026-10-02T09:30:00.000Z', user: { name: 'Mara' } },
+        { id: 'comment-2', body: 'From an integration', createdAt: '2026-10-03T10:00:00.000Z', user: null },
+      ]) },
+    });
+    expect(await readLinearDetail({ v: 1, instance, localRef, section: 'comments' }, h.context)).toMatchObject({
+      kind: 'ready', entries: [
+        { id: 'comment-1', author: 'Mara', atMs: Date.parse('2026-10-02T09:30:00.000Z'), body: 'Shipping today' },
+        { id: 'comment-2', atMs: Date.parse('2026-10-03T10:00:00.000Z'), body: 'From an integration' },
+      ],
+    });
+  });
+
   it.each([1, 2])('preserves the native workflow without opting into quick completion (%s completed states)', async (doneStates) => {
     const h = host(({ operationName, query }) => {
       if (operationName === 'LinearViewer') return { viewer: { id: 'viewer-1' } };

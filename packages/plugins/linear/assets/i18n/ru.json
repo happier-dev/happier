@@ -157,5 +157,12 @@
   "plugins.triage.sourceWrite.comment.label": "Комментарий",
   "plugins.triage.sourceWrite.comment.placeholder": "Напишите комментарий",
   "plugins.triage.sourceWrite.comment.publish": "Опубликовать комментарий",
-  "plugins.triage.sourceWrite.comment.published": "Комментарий опубликован"
+  "plugins.triage.sourceWrite.comment.published": "Комментарий опубликован",
+  "plugins.triage.readPartial": "Показано, что было прочитано",
+  "plugins.linear.activity.commented": "Оставлен комментарий",
+  "plugins.linear.activity.empty": "Комментариев еще нет",
+  "plugins.linear.activity.label": "Комментарии к этой задаче Linear",
+  "plugins.linear.activity.empty.description": "Здесь появляются комментарии к этой задаче в Linear.",
+  "plugins.linear.activity.more": "Показать больше комментариев",
+  "plugins.linear.activity.refresh": "Перечитать комментарии из Linear"
 }

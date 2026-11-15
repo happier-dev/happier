@@ -149,7 +149,6 @@
   "plugins.github.ui.pendingPanels.description": "Les respostes són als plafons del costat, no a la fila de la llista:",
   "plugins.github.ui.commentsShortened.description": "Alguns comentaris s’han escurçat. Obre l’entrada a GitHub per llegir-los sencers.",
   "plugins.github.ui.commentNoText": "Aquest comentari no conté text.",
-  "plugins.github.ui.partial": "Mostrant el que s'ha llegit fins avui",
   "plugins.github.ui.noFacts": "No hi ha cap feit proyectat",
   "plugins.github.ui.noFacts.description": "Aquesta observació no porta cap fàcts del GitHub visible.",
   "plugins.github.ui.facts": "GitHub",
@@ -1166,5 +1165,6 @@
   "plugins.github.ui.preview.prUpdated": "PR actualitzada",
   "plugins.github.ui.preview.prUpdating": "S’està actualitzant la PR…",
   "plugins.github.ui.preview.retryPrUpdate": "Torna a provar d’actualitzar la PR",
-  "plugins.github.releases.published.refreshWarning": "Publicat. No s’han pogut actualitzar els detalls de la versió. Torna a obrir-la per actualitzar-los. ({code})"
+  "plugins.github.releases.published.refreshWarning": "Publicat. No s’han pogut actualitzar els detalls de la versió. Torna a obrir-la per actualitzar-los. ({code})",
+  "plugins.triage.readPartial": "Mostrant el que s'ha llegit fins avui"
 }

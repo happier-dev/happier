@@ -157,5 +157,12 @@
   "plugins.triage.sourceWrite.comment.label": "Comentari",
   "plugins.triage.sourceWrite.comment.placeholder": "Escriu un comentari",
   "plugins.triage.sourceWrite.comment.publish": "Publica el comentari",
-  "plugins.triage.sourceWrite.comment.published": "Comentari publicat"
+  "plugins.triage.sourceWrite.comment.published": "Comentari publicat",
+  "plugins.triage.readPartial": "Mostrant el que s'ha llegit fins avui",
+  "plugins.linear.activity.commented": "Ha comentat",
+  "plugins.linear.activity.empty": "No hi ha comentaris encara",
+  "plugins.linear.activity.label": "Comentaris d’aquesta incidència de Linear",
+  "plugins.linear.activity.empty.description": "Aquí apareixen els comentaris d’aquesta incidència a Linear.",
+  "plugins.linear.activity.more": "Mostra més comentaris",
+  "plugins.linear.activity.refresh": "Torna a llegir els comentaris de Linear"
 }

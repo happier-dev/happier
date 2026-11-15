@@ -126,7 +126,6 @@
   "plugins.triage.detailStory.runningSoFar.few": "{count} em andamento até agora",
   "plugins.triage.detailStory.runningSoFar.many": "{count} em andamento até agora",
   "plugins.triage.detailStory.runningSoFar.other": "{count} em andamento até agora",
-  "plugins.azureDevops.ui.changedFiles": "Ficheiros alterados",
   "plugins.azureDevops.ui.readFailed": "O Azure DevOps não conseguiu concluir esta leitura.",
   "plugins.azureDevops.ui.openValue": "Abrir {item}",
   "plugins.azureDevops.ui.copyValue": "Copiar {item}",
@@ -139,7 +138,6 @@
   "plugins.azureDevops.ui.threadsShown": "Tópicos exibidos: {shown} de {total}.",
   "plugins.azureDevops.ui.pendingPanels.description": "As respostas estão nos painéis ao lado, não na linha da lista:",
   "plugins.azureDevops.ui.statusInformational.description": "Um estado é informativo, a menos que uma avaliação de política acima o marque como obrigatório.",
-  "plugins.azureDevops.ui.partial": "Mostrando o que foi lido até agora",
   "plugins.azureDevops.ui.pagePositionUnsafe": "O Azure DevOps devolveu uma posição para a página seguinte que não pôde ser mantida com segurança, por isso a leitura foi interrompida aqui.",
   "plugins.azureDevops.ui.shortened": "Alguns detalhes foram abreviados",
   "plugins.azureDevops.ui.shortened.description": "Abra a solicitação de fusão no Azure DevOps para ler o texto completo.",
@@ -330,5 +328,10 @@
   "plugins.azureDevops.auth.manual.title": "Token de acesso pessoal do Azure DevOps",
   "plugins.azureDevops.settings.group": "Azure DevOps",
   "plugins.azureDevops.settings.sources": "PRs e problemas",
-  "plugins.azureDevops.settings.sources.subtitle": "Escolha as contas e os projetos Azure DevOps apresentados em PRs e problemas."
+  "plugins.azureDevops.settings.sources.subtitle": "Escolha as contas e os projetos Azure DevOps apresentados em PRs e problemas.",
+  "plugins.triage.readPartial": "Mostrando o que foi lido até agora",
+  "plugins.azureDevops.ui.files.added": "Adicionado",
+  "plugins.azureDevops.ui.files.deleted": "Eliminado",
+  "plugins.azureDevops.ui.files.renamed": "Renomeado",
+  "plugins.azureDevops.ui.files.folder": "Pasta"
 }

@@ -4,6 +4,7 @@ import type {
   ScmFileViewedSource,
 } from '@happier-dev/plugin-sdk/scm';
 import {
+  DiffViewer,
   List,
   LoadingState,
   Stack,
@@ -296,5 +297,64 @@ export function TriageChangedFilesList<TRow extends TriageChangedFileV1>(
         />
       )}
     />
+  );
+}
+
+/** One file's part of a change's raw diff, and whether the diff stopped inside it. */
+export type TriageChangedFileDiffPartV1 = Readonly<{ diff: string; shortened: boolean }>;
+
+/** A change's one raw diff, as its open files read it: each file's part by path, and whether the source shortened it. */
+export type TriageRawDiffFilesV1 = Readonly<{
+  truncated: boolean;
+  files: ReadonlyMap<string, TriageChangedFileDiffPartV1>;
+}>;
+
+/**
+ * A change's raw diff indexed by file, for sources that read the whole diff once (GitLab, Bitbucket). The source cuts
+ * the diff into its files' blocks with the canonical splitter and names each block's paths; a block is found under
+ * every path it names (old and new), the first block winning, and when the source shortened the diff, the last block
+ * is the one it stopped inside.
+ */
+export function indexTriageRawDiffFilesV1(
+  blocks: readonly Readonly<{ diff: string; paths: readonly string[] }>[],
+  truncated: boolean,
+): TriageRawDiffFilesV1 {
+  const files = new Map<string, TriageChangedFileDiffPartV1>();
+  blocks.forEach((block, index) => {
+    const part = { diff: block.diff, shortened: truncated && index === blocks.length - 1 };
+    for (const path of block.paths) if (!files.has(path)) files.set(path, part);
+  });
+  return { truncated, files };
+}
+
+/**
+ * An open file's body from a raw diff the source has read: that file's part, a line when the diff stopped inside or
+ * before it, and a line when the diff has no part for it. The source words both lines (they name the provider).
+ */
+export function TriageChangedFileDiff({
+  path,
+  previousPath,
+  diff,
+  labels,
+}: Readonly<{
+  path: string;
+  /** The file's path before a rename, which the diff may name instead. */
+  previousPath?: string;
+  diff: TriageRawDiffFilesV1;
+  labels: Readonly<{ shortened: string; none: string }>;
+}>): React.ReactElement {
+  const part =
+    diff.files.get(path) ??
+    (previousPath === undefined ? undefined : diff.files.get(previousPath));
+  const shortened = part === undefined ? diff.truncated : part.shortened;
+  return (
+    <Stack gap="small">
+      {shortened ? <Text value={labels.shortened} /> : null}
+      {part !== undefined ? (
+        <DiffViewer unifiedDiff={part.diff} filePath={path} label={path} />
+      ) : shortened ? null : (
+        <Text value={labels.none} />
+      )}
+    </Stack>
   );
 }

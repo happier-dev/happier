@@ -54,11 +54,15 @@ import {
   defineUiSurface,
   usePluginTranslation,
   useSurfaceContext,
+  useTabPanelActivity,
   type MetadataEntry,
   type PluginTranslate,
 } from '@happier-dev/plugin-ui';
 import {
+  TriageSourcePartialReadBanner,
   TriageActivityTimeline,
+  TriageChangedFilesList,
+  TriageChangedFilesLoading,
   TriageDetailInstance,
   TriageDetailPanel,
   TriageDetailStory,
@@ -126,23 +130,12 @@ function PageFailureBanner({
   state,
 }: Readonly<{ state: AzurePagedStateV1<unknown> }>): React.ReactElement | null {
   const text = usePluginTranslation();
-  if (state.failure === null && state.incomplete === null) return null;
-  return (
-    <Banner
-      tone="warning"
-      title="Showing what was read so far"
-      titleKey="plugins.azureDevops.ui.partial"
-      description={state.failure === null
-        ? text(
-          'plugins.azureDevops.ui.pagePositionUnsafe',
-          'Azure DevOps returned a next-page position that could not be carried safely, so this walk stopped here.',
-        )
-        : failureDescription(
-          state.failure,
-          text('plugins.azureDevops.ui.readFailed', 'Azure DevOps could not complete this read.'), text,
-        )}
-    />
-  );
+  return <TriageSourcePartialReadBanner failure={state.failure}
+    incomplete={state.incomplete === null ? null : text(
+      'plugins.azureDevops.ui.pagePositionUnsafe',
+      'Azure DevOps returned a next-page position that could not be carried safely, so this walk stopped here.',
+    )}
+    readFailed={text('plugins.azureDevops.ui.readFailed', 'Azure DevOps could not complete this read.')} />;
 }
 
 function SettledReadEvidence({
@@ -157,17 +150,8 @@ function SettledReadEvidence({
   if (state.kind !== 'ready') return null;
   return (
     <Stack gap="small">
-      {state.failure === null ? null : (
-        <Banner
-          tone="warning"
-          title="Showing the last details Azure DevOps returned"
-          titleKey="plugins.azureDevops.ui.partial"
-          description={failureDescription(
-            state.failure,
-            text('plugins.azureDevops.ui.readFailed', 'Azure DevOps could not complete this read.'), text,
-          )}
-        />
-      )}
+      <TriageSourcePartialReadBanner failure={state.failure}
+        readFailed={text('plugins.azureDevops.ui.readFailed', 'Azure DevOps could not complete this read.')} />
       {state.value.omittedRowCount === 0 ? null : (
         <Text
           variant="micro"
@@ -328,7 +312,10 @@ function AzureStoryChanges({ input, iterations, onRefreshIterations }: Readonly<
   const { state } = controller;
   // Azure's iteration changes carry a change type, never line counts: the shared step lists
   // the files with Azure's own word for each change and says the counts are not reported.
-  const rows = React.useMemo(() => state.rows.map((row) => ({ path: row.path, note: changedFileSubtitle(row) })), [state.rows]);
+  const rows = React.useMemo(() => state.rows.map((row) => {
+    const note = changedFileNote(text, row);
+    return { path: row.path, ...(note === undefined ? {} : { note }) };
+  }), [state.rows, text]);
   return <TriageDetailChangeSummary rows={state.kind === 'ready' ? rows : []}
     more={state.canLoadMore || state.incomplete !== null}>
     {state.kind === 'idle' || state.kind === 'loading' ? <LoadingState title="Reading changed files" titleKey="plugins.azureDevops.ui.readingFiles" />
@@ -476,9 +463,32 @@ function OverviewPanel({
 
 /* ----------------------------------------------------------------------- Files */
 
-function changedFileSubtitle(row: AzureProjectedChangedFileRowV1): string {
-  return row.isFolder ? `${row.changeType} (folder)` : row.changeType;
+/** What Azure's change type says about a file, in words; a plain edit needs none. An unfamiliar type is shown as Azure names it. */
+function changedFileNote(text: PluginTranslate, row: AzureProjectedChangedFileRowV1): string | undefined {
+  const types = row.changeType.split(',').map((type) => type.trim());
+  const change = types.includes('add') ? text('plugins.azureDevops.ui.files.added', 'Added')
+    : types.includes('delete') ? text('plugins.azureDevops.ui.files.deleted', 'Deleted')
+      : types.includes('rename') ? text('plugins.azureDevops.ui.files.renamed', 'Renamed')
+        : types.every((type) => type === 'edit') ? undefined : row.changeType;
+  const folder = row.isFolder ? text('plugins.azureDevops.ui.files.folder', 'Folder') : undefined;
+  return [change, folder].filter(Boolean).join(' · ') || undefined;
 }
+
+/** The pull request's own Files page, opened at this file. */
+function azureFileWebUrl(pullRequestUrl: string | undefined, path: string): string | undefined {
+  if (pullRequestUrl === undefined) return undefined;
+  try {
+    const url = new URL(pullRequestUrl);
+    url.searchParams.set('_a', 'files');
+    url.searchParams.set('path', path);
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+const NO_FILE_BODY = (): React.ReactNode => null;
+const NO_FOCUS = (): void => {};
 
 function FilesPanel({
   input,
@@ -495,17 +505,31 @@ function FilesPanel({
     : undefined;
   const controller = useAzureIterationChanges(input, currentIterationId);
   const { state } = controller;
+  const { active } = useTabPanelActivity();
   const loadMore = useTriageSourcePanelPagingV1('files', 'Show more files',
     state.canLoadMore, state.pending, controller.loadMore);
-  const { locale } = useSurfaceContext();
+  const pullRequestUrl = input.observation.locator.webUrl;
   // The page's one refresh re-reads the iterations and these files; the panel draws no refresh of its own.
   useTriagePageRefresh(() => { onRefreshIterations(); controller.refresh(); });
+  // Azure lists an iteration's files without their diffs, so its rows carry what changed and open nothing in place.
+  const sections = React.useMemo(() => [{ key: 'files', title: '', data: state.rows.map((row) => {
+    const note = changedFileNote(text, row);
+    const webUrl = azureFileWebUrl(pullRequestUrl, row.path);
+    return {
+      path: row.path,
+      diffAvailable: false,
+      ...(note === undefined ? {} : { note }),
+      ...(webUrl === undefined ? {} : { webUrl }),
+    };
+  }) }], [state.rows, text, pullRequestUrl]);
 
   if (iterations.kind === 'loading') {
-    return <LoadingState title="Reading the iterations from Azure DevOps" titleKey="plugins.azureDevops.ui.readingIterations" />;
+    return <TriageChangedFilesLoading title="Reading the iterations from Azure DevOps" titleKey="plugins.azureDevops.ui.readingIterations"
+      progress={false} />;
   }
   if (state.kind === 'idle' || state.kind === 'loading') {
-    return <LoadingState title="Reading the changed files from Azure DevOps" titleKey="plugins.azureDevops.ui.readingFiles" />;
+    return <TriageChangedFilesLoading title="Reading the changed files from Azure DevOps" titleKey="plugins.azureDevops.ui.readingFiles"
+      progress={false} />;
   }
   if (state.kind === 'unavailable') {
     return (
@@ -520,59 +544,52 @@ function FilesPanel({
     );
   }
 
-  return (
-    <List
-      accessibilityLabel="Files this Azure DevOps pull-request iteration changes"
-      accessibilityLabelKey="plugins.azureDevops.ui.filesLabel"
-      items={state.rows}
-      keyForItem={(row) => row.path}
-      header={(
-        <Stack gap="small">
-          <Text variant="label" value={`${text('plugins.azureDevops.ui.changedFiles', 'Changed files')} · ${new Intl.NumberFormat(locale).format(state.rows.length)}`} />
-          <PageFailureBanner state={state} />
-          <SettledReadEvidence state={iterations} />
-          <Text
-            variant="micro"
-            tone="neutral"
-            valueKey={currentIterationId === undefined
-              ? 'plugins.azureDevops.ui.noComparisonIteration'
-              : 'plugins.azureDevops.ui.comparingIteration'}
-            fallback={currentIterationId === undefined
-              ? 'No iteration to compare against.'
-              : "Comparing iteration {iteration} against the pull request's base."}
-            values={{ iteration: currentIterationId ?? '' }}
-          />
-        </Stack>
-      )}
-      empty={(
+  const header = (
+    <Stack gap="small">
+      <PageFailureBanner state={state} />
+      <SettledReadEvidence state={iterations} />
+      <Text
+        variant="micro"
+        tone="neutral"
+        valueKey={currentIterationId === undefined
+          ? 'plugins.azureDevops.ui.noComparisonIteration'
+          : 'plugins.azureDevops.ui.comparingIteration'}
+        fallback={currentIterationId === undefined
+          ? 'No iteration to compare against.'
+          : "Comparing iteration {iteration} against the pull request's base."}
+        values={{ iteration: currentIterationId ?? '' }}
+      />
+    </Stack>
+  );
+  if (state.rows.length === 0) {
+    return (
+      <Stack gap="large">
+        {header}
         <EmptyState
           title="No changed files"
           titleKey="plugins.azureDevops.ui.noFiles"
           description="Azure DevOps reports that this iteration changes no files."
           descriptionKey="plugins.azureDevops.ui.noFiles.description"
         />
-      )}
-      footer={(
+      </Stack>
+    );
+  }
+  return (
+    <TriageChangedFilesList
+      accessibilityLabel="Files this Azure DevOps pull-request iteration changes"
+      accessibilityLabelKey="plugins.azureDevops.ui.filesLabel"
+      sections={sections}
+      focusPath={null}
+      onFocusPath={NO_FOCUS}
+      active={active}
+      viewed={null}
+      renderBody={NO_FILE_BODY}
+      header={header}
+      endContent={(
         <PagedFooter
           state={state}
           loadMoreTitle="Show more files"
           onLoadMore={loadMore}
-        />
-      )}
-      renderItem={(row) => (
-        <Item
-          title={row.path}
-          subtitle={changedFileSubtitle(row)}
-          accessoryOutsidePressable
-          accessory={(
-            <Action.Copy
-              value={row.path}
-              variant="plain"
-              accessibilityLabel={text('plugins.azureDevops.ui.copyValue', 'Copy {item}', {
-                item: row.path,
-              })}
-            />
-          )}
         />
       )}
     />

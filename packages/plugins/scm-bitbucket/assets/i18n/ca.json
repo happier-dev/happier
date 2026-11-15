@@ -139,7 +139,6 @@
   "plugins.bitbucket.ui.pendingPanels.description": "Les respostes són als plafons del costat, no a la fila de la llista:",
   "plugins.bitbucket.ui.activityCollection.description": "Bitbucket proporciona aprovacions, actualitzacions i comentaris en una sola col·lecció, de manera que aquí es mostren tots.",
   "plugins.bitbucket.ui.buildsTruncated.description": "Bitbucket té més estats de compilació dels que caben en aquesta pàgina, per això no se’n mostren els totals.",
-  "plugins.bitbucket.ui.partial": "Mostrant el que s'ha llegit fins avui",
   "plugins.bitbucket.ui.shortened": "Alguns detalls s'han abbreviat",
   "plugins.bitbucket.ui.shortened.description": "Obre la sol·licitud de pull en Bitbucket per llegir el text complet.",
   "plugins.bitbucket.ui.noFacts": "No hi ha cap feit proyectat",
@@ -183,9 +182,6 @@
   "plugins.bitbucket.ui.diffUnavailable": "Les diferències no estan disponibles",
   "plugins.bitbucket.ui.diffTooLarge": "Les diferències són massa grans perquè Bitbucket les retorni",
   "plugins.bitbucket.ui.diffTooLarge.description": "La sol·licitud continua disponible; obriu-la a Bitbucket per veure totes les diferències.",
-  "plugins.bitbucket.ui.rawDiffShortened": "Les diferències en brut s’han escurçat",
-  "plugins.bitbucket.ui.rawDiffShortened.description": "El prefix retornat respecta el límit del resultat d’acció de Happier.",
-  "plugins.bitbucket.ui.changedFiles": "Fitxers modificats",
   "plugins.bitbucket.ui.showMoreFiles": "Mostra més fitxers modificats",
   "plugins.bitbucket.ui.rereadDiff": "Torna a llegir les diferències de Bitbucket",
   "plugins.bitbucket.ui.showMoreActivity": "Mostra més activitat",
@@ -288,5 +284,14 @@
   "plugins.bitbucket.ui.mutations.reviewReply.publish": "Publica la resposta",
   "plugins.bitbucket.settings.group": "Bitbucket Cloud",
   "plugins.bitbucket.settings.sources": "PR i incidències",
-  "plugins.bitbucket.settings.sources.subtitle": "Tria els comptes i espais de treball de Bitbucket Cloud que es mostren a PR i incidències."
+  "plugins.bitbucket.settings.sources.subtitle": "Tria els comptes i espais de treball de Bitbucket Cloud que es mostren a PR i incidències.",
+  "plugins.triage.readPartial": "Mostrant el que s'ha llegit fins avui",
+  "plugins.bitbucket.ui.files.added": "Afegit",
+  "plugins.bitbucket.ui.files.deleted": "Suprimit",
+  "plugins.bitbucket.ui.files.renamed": "Canviat de nom",
+  "plugins.bitbucket.ui.filesLabel": "Fitxers que aquesta petició de pujada modifica",
+  "plugins.bitbucket.ui.noFiles": "No hi ha fitxers modificats",
+  "plugins.bitbucket.ui.noFiles.description": "Bitbucket informa que aquesta petició de pujada no modifica cap fitxer.",
+  "plugins.bitbucket.ui.fileDiffNone": "Bitbucket no té diff per a aquest fitxer.",
+  "plugins.bitbucket.ui.fileDiffShortened": "Aquest diff és massa llarg per mostrar-lo aquí. La resta és a Bitbucket."
 }

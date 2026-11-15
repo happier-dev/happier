@@ -140,7 +140,6 @@
   "plugins.gitlab.ui.pendingPanels.description": "Ответы находятся в соседних панелях, а не в строке списка:",
   "plugins.gitlab.ui.pipelineJobsUnavailable.description": "GitLab не вернул разбивку по заданиям для новейшего конвейера, поэтому число заданий не показано.",
   "plugins.gitlab.ui.approvalRulesUnavailable.description": "Правила одобрения доступны только в платных тарифах GitLab и недоступны в этом развертывании. Статус одобрения выше полон.",
-  "plugins.gitlab.ui.partial": "Показано, что было прочитано",
   "plugins.gitlab.ui.noFacts": "Нет предполагаемых фактов",
   "plugins.gitlab.ui.noFacts.description": "Эта наблюдение не содержит отображаемых фактов GitLab.",
   "plugins.gitlab.ui.facts": "GitLab",
@@ -379,5 +378,6 @@
   "plugins.gitlab.settings.group": "GitLab",
   "plugins.gitlab.settings.sources": "PR и задачи",
   "plugins.gitlab.settings.sources.subtitle": "Выберите учетные записи и проекты GitLab, которые будут отображаться в разделе PR и задач.",
-  "plugins.gitlab.ui.mutations.failure.code": "Код"
+  "plugins.gitlab.ui.mutations.failure.code": "Код",
+  "plugins.triage.readPartial": "Показано, что было прочитано"
 }

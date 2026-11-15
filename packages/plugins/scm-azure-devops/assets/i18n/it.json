@@ -126,7 +126,6 @@
   "plugins.triage.detailStory.runningSoFar.few": "{count} in corso finora",
   "plugins.triage.detailStory.runningSoFar.many": "{count} in corso finora",
   "plugins.triage.detailStory.runningSoFar.other": "{count} in corso finora",
-  "plugins.azureDevops.ui.changedFiles": "File modificati",
   "plugins.azureDevops.ui.readFailed": "Azure DevOps non ha potuto completare questa lettura.",
   "plugins.azureDevops.ui.openValue": "Apri {item}",
   "plugins.azureDevops.ui.copyValue": "Copia {item}",
@@ -139,7 +138,6 @@
   "plugins.azureDevops.ui.threadsShown": "Discussioni mostrate: {shown} di {total}.",
   "plugins.azureDevops.ui.pendingPanels.description": "Le risposte si trovano nei pannelli adiacenti, non nella riga dell’elenco:",
   "plugins.azureDevops.ui.statusInformational.description": "Uno stato è informativo, a meno che una valutazione dei criteri precedente non lo indichi come obbligatorio.",
-  "plugins.azureDevops.ui.partial": "Mostrando ciò che è stato letto finora",
   "plugins.azureDevops.ui.pagePositionUnsafe": "Azure DevOps ha restituito una posizione per la pagina successiva che non poteva essere mantenuta in modo sicuro, quindi la lettura si è fermata qui.",
   "plugins.azureDevops.ui.shortened": "Alcuni dettagli sono stati abbreviati",
   "plugins.azureDevops.ui.shortened.description": "Apri la richiesta di pull in Azure DevOps per leggere il testo completo.",
@@ -330,5 +328,10 @@
   "plugins.azureDevops.auth.manual.title": "Token di accesso personale Azure DevOps",
   "plugins.azureDevops.settings.group": "Azure DevOps",
   "plugins.azureDevops.settings.sources": "PR e segnalazioni",
-  "plugins.azureDevops.settings.sources.subtitle": "Scegli gli account e i progetti Azure DevOps da mostrare in PR e segnalazioni."
+  "plugins.azureDevops.settings.sources.subtitle": "Scegli gli account e i progetti Azure DevOps da mostrare in PR e segnalazioni.",
+  "plugins.triage.readPartial": "Mostrando ciò che è stato letto finora",
+  "plugins.azureDevops.ui.files.added": "Aggiunto",
+  "plugins.azureDevops.ui.files.deleted": "Eliminato",
+  "plugins.azureDevops.ui.files.renamed": "Rinominato",
+  "plugins.azureDevops.ui.files.folder": "Cartella"
 }

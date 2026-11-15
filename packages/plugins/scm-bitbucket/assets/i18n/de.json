@@ -139,7 +139,6 @@
   "plugins.bitbucket.ui.pendingPanels.description": "Die Antworten stehen in den angrenzenden Bereichen, nicht in der Listenzeile:",
   "plugins.bitbucket.ui.activityCollection.description": "Bitbucket stellt Freigaben, Aktualisierungen und Kommentare in einer gemeinsamen Sammlung bereit. Daher werden sie hier alle angezeigt.",
   "plugins.bitbucket.ui.buildsTruncated.description": "Bitbucket hat mehr Build-Status, als auf diese Seite passen. Daher werden keine Gesamtzahlen angezeigt.",
-  "plugins.bitbucket.ui.partial": "Bisher gelesene Daten werden angezeigt",
   "plugins.bitbucket.ui.shortened": "Einige Details wurden gekürzt",
   "plugins.bitbucket.ui.shortened.description": "Öffne den Pull Request in Bitbucket, um den vollständigen Text zu lesen.",
   "plugins.bitbucket.ui.noFacts": "Keine dargestellten Fakten",
@@ -183,9 +182,6 @@
   "plugins.bitbucket.ui.diffUnavailable": "Der Diff ist nicht verfügbar",
   "plugins.bitbucket.ui.diffTooLarge": "Dieser Diff ist zu groß, um von Bitbucket zurückgegeben zu werden",
   "plugins.bitbucket.ui.diffTooLarge.description": "Der Pull Request bleibt verfügbar. Öffne ihn in Bitbucket, um den vollständigen Diff zu sehen.",
-  "plugins.bitbucket.ui.rawDiffShortened": "Der Roh-Diff wurde gekürzt",
-  "plugins.bitbucket.ui.rawDiffShortened.description": "Das zurückgegebene Präfix passt in die Ergebnisgrenze der Happier-Action.",
-  "plugins.bitbucket.ui.changedFiles": "Geänderte Dateien",
   "plugins.bitbucket.ui.showMoreFiles": "Weitere geänderte Dateien anzeigen",
   "plugins.bitbucket.ui.rereadDiff": "Diesen Diff erneut aus Bitbucket lesen",
   "plugins.bitbucket.ui.showMoreActivity": "Weitere Aktivität anzeigen",
@@ -288,5 +284,14 @@
   "plugins.bitbucket.ui.mutations.reviewReply.publish": "Antwort veröffentlichen",
   "plugins.bitbucket.settings.group": "Bitbucket Cloud",
   "plugins.bitbucket.settings.sources": "PRs & Tickets",
-  "plugins.bitbucket.settings.sources.subtitle": "Wähle aus, welche Bitbucket-Cloud-Konten und -Workspaces unter PRs & Tickets angezeigt werden."
+  "plugins.bitbucket.settings.sources.subtitle": "Wähle aus, welche Bitbucket-Cloud-Konten und -Workspaces unter PRs & Tickets angezeigt werden.",
+  "plugins.triage.readPartial": "Bisher gelesene Daten werden angezeigt",
+  "plugins.bitbucket.ui.files.added": "Hinzugefügt",
+  "plugins.bitbucket.ui.files.deleted": "Gelöscht",
+  "plugins.bitbucket.ui.files.renamed": "Umbenannt",
+  "plugins.bitbucket.ui.filesLabel": "Von diesem Pull Request geänderte Dateien",
+  "plugins.bitbucket.ui.noFiles": "Keine geänderten Dateien",
+  "plugins.bitbucket.ui.noFiles.description": "Laut Bitbucket ändert dieser Pull Request keine Dateien.",
+  "plugins.bitbucket.ui.fileDiffNone": "Bitbucket hat keinen Diff für diese Datei.",
+  "plugins.bitbucket.ui.fileDiffShortened": "Dieser Diff ist zu lang, um ihn hier zu zeigen. Der Rest ist auf Bitbucket."
 }

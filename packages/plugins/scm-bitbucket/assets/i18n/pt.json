@@ -139,7 +139,6 @@
   "plugins.bitbucket.ui.pendingPanels.description": "As respostas estão nos painéis ao lado, não na linha da lista:",
   "plugins.bitbucket.ui.activityCollection.description": "O Bitbucket fornece aprovações, atualizações e comentários numa única coleção, portanto todos estão apresentados aqui.",
   "plugins.bitbucket.ui.buildsTruncated.description": "O Bitbucket tem mais estados de compilação do que esta página comporta, portanto os totais não são apresentados.",
-  "plugins.bitbucket.ui.partial": "Mostrando o que foi lido até agora",
   "plugins.bitbucket.ui.shortened": "Alguns detalhes foram abreviados",
   "plugins.bitbucket.ui.shortened.description": "Abra a solicitação de fusão no Bitbucket para ler o texto completo.",
   "plugins.bitbucket.ui.noFacts": "Nenhum fato projetado",
@@ -183,9 +182,6 @@
   "plugins.bitbucket.ui.diffUnavailable": "As diferenças não estão disponíveis",
   "plugins.bitbucket.ui.diffTooLarge": "As diferenças são demasiado grandes para o Bitbucket devolver",
   "plugins.bitbucket.ui.diffTooLarge.description": "O pedido continua disponível; abra-o no Bitbucket para ver todas as diferenças.",
-  "plugins.bitbucket.ui.rawDiffShortened": "As diferenças em bruto foram abreviadas",
-  "plugins.bitbucket.ui.rawDiffShortened.description": "O prefixo devolvido respeita o limite de resultado da ação do Happier.",
-  "plugins.bitbucket.ui.changedFiles": "Ficheiros alterados",
   "plugins.bitbucket.ui.showMoreFiles": "Mostrar mais ficheiros alterados",
   "plugins.bitbucket.ui.rereadDiff": "Voltar a ler as diferenças no Bitbucket",
   "plugins.bitbucket.ui.showMoreActivity": "Mostrar mais atividade",
@@ -288,5 +284,14 @@
   "plugins.bitbucket.ui.mutations.reviewReply.publish": "Publicar resposta",
   "plugins.bitbucket.settings.group": "Bitbucket Cloud",
   "plugins.bitbucket.settings.sources": "PRs e problemas",
-  "plugins.bitbucket.settings.sources.subtitle": "Escolha as contas e os espaços de trabalho Bitbucket Cloud apresentados em PRs e problemas."
+  "plugins.bitbucket.settings.sources.subtitle": "Escolha as contas e os espaços de trabalho Bitbucket Cloud apresentados em PRs e problemas.",
+  "plugins.triage.readPartial": "Mostrando o que foi lido até agora",
+  "plugins.bitbucket.ui.files.added": "Adicionado",
+  "plugins.bitbucket.ui.files.deleted": "Eliminado",
+  "plugins.bitbucket.ui.files.renamed": "Renomeado",
+  "plugins.bitbucket.ui.filesLabel": "Arquivos alterados nesta solicitação de pull",
+  "plugins.bitbucket.ui.noFiles": "Nenhum arquivo alterado",
+  "plugins.bitbucket.ui.noFiles.description": "O Bitbucket relata que esta solicitação de pull não altera nenhum arquivo.",
+  "plugins.bitbucket.ui.fileDiffNone": "O Bitbucket não tem diff para este arquivo.",
+  "plugins.bitbucket.ui.fileDiffShortened": "Este diff é longo demais para mostrar aqui. O restante está no Bitbucket."
 }

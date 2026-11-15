@@ -157,5 +157,12 @@
   "plugins.triage.sourceWrite.comment.label": "Comentário",
   "plugins.triage.sourceWrite.comment.placeholder": "Escreva um comentário",
   "plugins.triage.sourceWrite.comment.publish": "Publicar comentário",
-  "plugins.triage.sourceWrite.comment.published": "Comentário publicado"
+  "plugins.triage.sourceWrite.comment.published": "Comentário publicado",
+  "plugins.triage.readPartial": "Mostrando o que foi lido até agora",
+  "plugins.linear.activity.commented": "Comentou",
+  "plugins.linear.activity.empty": "Nenhum comentário ainda",
+  "plugins.linear.activity.label": "Comentários desta issue do Linear",
+  "plugins.linear.activity.empty.description": "Os comentários desta issue no Linear aparecem aqui.",
+  "plugins.linear.activity.more": "Mostrar mais comentários",
+  "plugins.linear.activity.refresh": "Ler novamente os comentários do Linear"
 }

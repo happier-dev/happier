@@ -149,7 +149,6 @@
   "plugins.github.ui.pendingPanels.description": "Die Antworten finden Sie in den angrenzenden Bereichen, nicht in der Listenzeile:",
   "plugins.github.ui.commentsShortened.description": "Einige Kommentare wurden gekürzt. Öffnen Sie den Eintrag auf GitHub, um sie vollständig zu lesen.",
   "plugins.github.ui.commentNoText": "Dieser Kommentar enthält keinen Text.",
-  "plugins.github.ui.partial": "Bisher gelesene Inhalte werden angezeigt",
   "plugins.github.ui.noFacts": "Keine dargestellten Fakten",
   "plugins.github.ui.noFacts.description": "Diese Beobachtung enthielt keine darstellbaren GitHub-Fakten.",
   "plugins.github.ui.facts": "GitHub",
@@ -1166,5 +1165,6 @@
   "plugins.github.ui.preview.prUpdated": "PR aktualisiert",
   "plugins.github.ui.preview.prUpdating": "PR wird aktualisiert…",
   "plugins.github.ui.preview.retryPrUpdate": "PR-Aktualisierung erneut versuchen",
-  "plugins.github.releases.published.refreshWarning": "Veröffentlicht. Die neuesten Release-Details konnten nicht aktualisiert werden. Öffne das Release erneut, um sie zu aktualisieren. ({code})"
+  "plugins.github.releases.published.refreshWarning": "Veröffentlicht. Die neuesten Release-Details konnten nicht aktualisiert werden. Öffne das Release erneut, um sie zu aktualisieren. ({code})",
+  "plugins.triage.readPartial": "Bisher gelesene Inhalte werden angezeigt"
 }

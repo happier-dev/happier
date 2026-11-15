@@ -73,7 +73,8 @@ export const LINEAR_PLUGIN = definePlugin({
         kinds: [{ id: 'issue', workflowSubject: 'issue', displayName: 'Issue', pluralDisplayName: 'Issues', task: true,
           taskCapabilities: { completedScan: true, createFields: LINEAR_CREATE_FIELDS, editFields: LINEAR_EDIT_FIELDS },
           detailTabs: [
-            { kind: 'shared', id: 'overview' }, { kind: 'shared', id: 'activity' },
+            // Activity is the shared timeline, which owns the panel's one scroller.
+            { kind: 'shared', id: 'overview' }, { kind: 'shared', id: 'activity', scrollOwner: 'list' },
             ...LINEAR_DETAIL_SECTIONS.filter((section) => section !== 'overview' && section !== 'comments').map((section) => ({
               kind: 'source' as const, id: section, title: LINEAR_DETAIL_TITLES[section], titleKey: `plugins.linear.detail.${section}`,
             })),

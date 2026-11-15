@@ -149,7 +149,6 @@
   "plugins.github.ui.pendingPanels.description": "Le risposte si trovano nei pannelli adiacenti, non nella riga dell’elenco:",
   "plugins.github.ui.commentsShortened.description": "Alcuni commenti sono stati abbreviati. Apri la voce su GitHub per leggerli per intero.",
   "plugins.github.ui.commentNoText": "Questo commento non contiene testo.",
-  "plugins.github.ui.partial": "Mostrando ciò che è stato letto finora",
   "plugins.github.ui.noFacts": "Nessun fato proiettato",
   "plugins.github.ui.noFacts.description": "Questa osservazione non contiene informazioni visualizzabili da GitHub.",
   "plugins.github.ui.facts": "GitHub",
@@ -1166,5 +1165,6 @@
   "plugins.github.ui.preview.prUpdated": "PR aggiornata",
   "plugins.github.ui.preview.prUpdating": "Aggiornamento della PR…",
   "plugins.github.ui.preview.retryPrUpdate": "Riprova l’aggiornamento della PR",
-  "plugins.github.releases.published.refreshWarning": "Pubblicato. Impossibile aggiornare i dettagli della versione. Riapri la versione per aggiornarli. ({code})"
+  "plugins.github.releases.published.refreshWarning": "Pubblicato. Impossibile aggiornare i dettagli della versione. Riapri la versione per aggiornarli. ({code})",
+  "plugins.triage.readPartial": "Mostrando ciò che è stato letto finora"
 }

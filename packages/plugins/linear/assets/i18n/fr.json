@@ -157,5 +157,12 @@
   "plugins.triage.sourceWrite.comment.label": "Commentaire",
   "plugins.triage.sourceWrite.comment.placeholder": "Écrire un commentaire",
   "plugins.triage.sourceWrite.comment.publish": "Publier le commentaire",
-  "plugins.triage.sourceWrite.comment.published": "Commentaire publié"
+  "plugins.triage.sourceWrite.comment.published": "Commentaire publié",
+  "plugins.triage.readPartial": "Affiche ce qui a été lu jusqu'à présent",
+  "plugins.linear.activity.commented": "Commenté",
+  "plugins.linear.activity.empty": "Aucun commentaire encore",
+  "plugins.linear.activity.label": "Commentaires sur ce ticket Linear",
+  "plugins.linear.activity.empty.description": "Les commentaires de ce ticket dans Linear apparaissent ici.",
+  "plugins.linear.activity.more": "Afficher plus de commentaires",
+  "plugins.linear.activity.refresh": "Relire les commentaires depuis Linear"
 }

@@ -149,7 +149,6 @@
   "plugins.github.ui.pendingPanels.description": "Ответы находятся в соседних панелях, а не в строке списка:",
   "plugins.github.ui.commentsShortened.description": "Некоторые комментарии сокращены. Откройте запись на GitHub, чтобы прочитать их полностью.",
   "plugins.github.ui.commentNoText": "В этом комментарии нет текста.",
-  "plugins.github.ui.partial": "Показано, что было прочитано",
   "plugins.github.ui.noFacts": "Нет предполагаемых фактов",
   "plugins.github.ui.noFacts.description": "Эта наблюдение не содержит отображаемых фактов GitHub.",
   "plugins.github.ui.facts": "GitHub",
@@ -1166,5 +1165,6 @@
   "plugins.github.ui.preview.prUpdated": "PR обновлён",
   "plugins.github.ui.preview.prUpdating": "Обновление PR…",
   "plugins.github.ui.preview.retryPrUpdate": "Повторить обновление PR",
-  "plugins.github.releases.published.refreshWarning": "Опубликовано. Не удалось обновить сведения о релизе. Откройте релиз снова, чтобы обновить их. ({code})"
+  "plugins.github.releases.published.refreshWarning": "Опубликовано. Не удалось обновить сведения о релизе. Откройте релиз снова, чтобы обновить их. ({code})",
+  "plugins.triage.readPartial": "Показано, что было прочитано"
 }

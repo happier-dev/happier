@@ -140,7 +140,6 @@
   "plugins.gitlab.ui.pendingPanels.description": "Odpowiedzi znajdują się w sąsiednich panelach, a nie w wierszu listy:",
   "plugins.gitlab.ui.pipelineJobsUnavailable.description": "GitLab nie zwrócił podziału na zadania dla najnowszego potoku, dlatego liczba zadań nie jest wyświetlana.",
   "plugins.gitlab.ui.approvalRulesUnavailable.description": "Reguły zatwierdzania są funkcją płatnego planu GitLab i nie są dostępne w tym wdrożeniu. Powyższy stan zatwierdzenia jest kompletny.",
-  "plugins.gitlab.ui.partial": "Pokażemy, co udało nam się odczytać do tej pory",
   "plugins.gitlab.ui.noFacts": "Brak przewidzianych faktów",
   "plugins.gitlab.ui.noFacts.description": "Ta obserwacja nie zawiera wyświetlanego informacji GitLab.",
   "plugins.gitlab.ui.facts": "GitLab",
@@ -379,5 +378,6 @@
   "plugins.gitlab.settings.group": "GitLab",
   "plugins.gitlab.settings.sources": "PR-y i zgłoszenia",
   "plugins.gitlab.settings.sources.subtitle": "Wybierz konta i projekty GitLab wyświetlane w sekcji PR-ów i zgłoszeń.",
-  "plugins.gitlab.ui.mutations.failure.code": "Kod"
+  "plugins.gitlab.ui.mutations.failure.code": "Kod",
+  "plugins.triage.readPartial": "Pokażemy, co udało nam się odczytać do tej pory"
 }

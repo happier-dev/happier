@@ -33,7 +33,7 @@ export {
 export { TriageActivityAgentProvider, TriageActivityAgentTail, useTriagePageRefresh, type TriageActivityAgentV1 } from './ui/activityAgent.js';
 export { TriageDetailInstance, TriageDetailPageScrollProvider, TriageDetailPanel, triageDetailPanelOwnsScrollerV1, useTriageDetailRequest } from './ui/detailPanel.js';
 export { TriageStatusRow, type TriageStatusRowProps } from './ui/statusRow.js';
-export { TriageSourceReadFailureDetails } from './ui/readFailure.js';
+export { TriageSourcePartialReadBanner, TriageSourceReadFailureDetails } from './ui/readFailure.js';
 export {
   TriageDetailStory,
   TriageDetailChangeSummary,
@@ -48,12 +48,16 @@ export {
   type TriageDetailTrendV1,
 } from './ui/detailStory.js';
 export {
+  TriageChangedFileDiff,
   TriageChangedFilesList,
   TriageChangedFilesLoading,
   TriageChangedFilesProgress,
+  indexTriageRawDiffFilesV1,
   useTriageViewedFileCount,
+  type TriageChangedFileDiffPartV1,
   type TriageChangedFilesSectionV1,
   type TriageChangedFilesViewedV1,
+  type TriageRawDiffFilesV1,
 } from './ui/changedFilesList.js';
 export {
   summarizeTriageChangesV1,

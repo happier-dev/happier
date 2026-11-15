@@ -126,7 +126,6 @@
   "plugins.triage.detailStory.runningSoFar.few": "{count} en cours pour l’instant",
   "plugins.triage.detailStory.runningSoFar.many": "{count} en cours pour l’instant",
   "plugins.triage.detailStory.runningSoFar.other": "{count} en cours pour l’instant",
-  "plugins.azureDevops.ui.changedFiles": "Fichiers modifiés",
   "plugins.azureDevops.ui.readFailed": "Azure DevOps n’a pas pu terminer cette lecture.",
   "plugins.azureDevops.ui.openValue": "Ouvrir {item}",
   "plugins.azureDevops.ui.copyValue": "Copier {item}",
@@ -139,7 +138,6 @@
   "plugins.azureDevops.ui.threadsShown": "Fils affichés : {shown} sur {total}.",
   "plugins.azureDevops.ui.pendingPanels.description": "Les réponses figurent dans les panneaux voisins, pas dans la ligne de la liste :",
   "plugins.azureDevops.ui.statusInformational.description": "Un statut est informatif, sauf si une évaluation de stratégie ci-dessus le marque comme obligatoire.",
-  "plugins.azureDevops.ui.partial": "Affiche ce qui a été lu jusqu'à présent",
   "plugins.azureDevops.ui.pagePositionUnsafe": "Azure DevOps a renvoyé une position de page suivante qui ne pouvait pas être conservée de façon sûre. La lecture s'est donc arrêtée ici.",
   "plugins.azureDevops.ui.shortened": "Certains détails ont été raccourcis",
   "plugins.azureDevops.ui.shortened.description": "Ouvre la demande de fusion dans Azure DevOps pour lire le texte complet.",
@@ -330,5 +328,10 @@
   "plugins.azureDevops.auth.manual.title": "Jeton d’accès personnel Azure DevOps",
   "plugins.azureDevops.settings.group": "Azure DevOps",
   "plugins.azureDevops.settings.sources": "PR et tickets",
-  "plugins.azureDevops.settings.sources.subtitle": "Choisis les comptes et projets Azure DevOps affichés dans PR et tickets."
+  "plugins.azureDevops.settings.sources.subtitle": "Choisis les comptes et projets Azure DevOps affichés dans PR et tickets.",
+  "plugins.triage.readPartial": "Affiche ce qui a été lu jusqu'à présent",
+  "plugins.azureDevops.ui.files.added": "Ajouté",
+  "plugins.azureDevops.ui.files.deleted": "Supprimé",
+  "plugins.azureDevops.ui.files.renamed": "Renommé",
+  "plugins.azureDevops.ui.files.folder": "Dossier"
 }
