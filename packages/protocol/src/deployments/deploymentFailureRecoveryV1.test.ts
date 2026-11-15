@@ -35,6 +35,7 @@ const reachableFailures = [
     ['deployment_build_input_missing', 'source'],
     ['deployment_execution_format_error', 'source'],
     ['deployment_source_unavailable', 'source'],
+    ['needsGitAccess', 'settings'],
     ['required_fact_unavailable', 'history'],
     ['template_domain_route_required', 'domains'],
     ['template_domain_required', 'domains'],

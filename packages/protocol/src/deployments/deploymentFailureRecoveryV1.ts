@@ -138,6 +138,7 @@ const recoveries = {
     template_needs_review: recovery('This app template needs review before it can be installed. Review the reported unsupported settings or choose another app.', 'store', 'Review app requirements'),
     template_resource_conflict: recovery('The template conflicts with existing deployment files or resources. Review the differences before applying it.', 'source', 'Resolve resource conflict'),
     template_service_conflict: recovery('The template would replace an existing service. Review the service changes and choose what to keep.', 'source', 'Resolve service conflict'),
+    needsGitAccess: recovery('The platform cannot read this repository yet. Give its Git app access to the repository, then check the linked target again in Environment Settings.', 'settings', 'Check repository access'),
     provider_scope_already_linked: recovery('This platform project is already linked to an Environment. Open the existing link or choose another platform project.', 'settings', 'Review platform links'),
     provider_response_invalid: recovery('The platform returned a response Happier could not read. Check the connected account and reload the platform choices.', 'connectedAccounts', 'Check platform account'),
     provider_unavailable: recovery('The deployment platform is unavailable. Check its connection before loading the target again.', 'connectedAccounts', 'Check platform connection'),

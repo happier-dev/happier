@@ -390,6 +390,26 @@ describe('deployment role host admission', () => {
         expect(JSON.stringify(failure)).not.toContain('private-provider-body');
     });
 
+    it('admits a draft Check (Inspect before its Environment exists) on its own credential without an Environment read', async () => {
+        // Live shape: COR4B-VERCEL-1115 inspect-input.json and the draft Environment Check (ui-49) carry no
+        // environmentId; reading an absent Environment surfaced as a $ZodError "home_unreachable".
+        const fixture = createDeploymentTargetRoleAdmissionFixture('inspect');
+        const { environmentId: _environment, expectedRevision: _revision, targetLinkId: _link,
+            expectedTargetLinkRevision: _linkRevision, ...draft } = fixture.input;
+        const input = { ...draft, credentialPrincipal: { ...draft.credentialPrincipal,
+            purpose: fixture.request.purposeAuthorization!.purpose } };
+        await expect(admitDeploymentTargetRoleForHost({ ...fixture.request, input }, fixture.host))
+            .resolves.toMatchObject({ role: 'inspect' });
+        expect(fixture.state.reads).toBe(0);
+        // A draft Check never spends another consumer's purpose, and only Inspect runs without an Environment.
+        await expect(admitDeploymentTargetRoleForHost({ ...fixture.request, input: draft }, fixture.host))
+            .rejects.toMatchObject({ code: 'deployment_access_denied' });
+        await expect(admitDeploymentTargetRoleForHost({ ...fixture.request, input,
+            bindings: [{ ...fixture.request.bindings[0]!, role: 'link' }] }, fixture.host))
+            .rejects.toMatchObject({ code: 'deployment_access_denied' });
+        expect(fixture.state.reads).toBe(0);
+    });
+
     it('admits a saved profile for the same Home and refuses a foreign Home before reading', async () => {
         const fixture = createDeploymentTargetRoleAdmissionFixture('inspect');
         const host = { ...fixture.host, serverId: 'srv_deployment_home' };

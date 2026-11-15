@@ -89,7 +89,7 @@ export type DeploymentTargetRoleAdmissionForHost = Readonly<{
     workloadControl?: MachineNativeEffectOperation;
     /** Actual effect custody selected once at ordinary daemon role admission. */
     executionEnvironment?: Readonly<{ phase: 'runtime'; machineId: string; installationId: string }>;
-}> | Readonly<{ input: DeploymentTargetRoleInputV1; role: 'branches.delete' | 'domains.add' | 'domains.remove' | 'domains.verify' | 'variables.read' | 'variables.sync'; environment?: never; receipt?: never; executionEnvironment?: never; workloadControl?: never }>;
+}> | Readonly<{ input: DeploymentTargetRoleInputV1; role: 'inspect' | 'branches.delete' | 'domains.add' | 'domains.remove' | 'domains.verify' | 'variables.read' | 'variables.sync'; environment?: never; receipt?: never; executionEnvironment?: never; workloadControl?: never }>;
 function roleName(role: string): role is DeploymentTargetRoleV1 {
     return has(DeploymentTargetRoleInputSchemasV1, role);
 }
@@ -195,6 +195,15 @@ export async function admitDeploymentTargetRoleForHost(request: DeploymentTarget
         return refuse('deployment_access_denied', 'deployment.target.admission.purpose_authorization');
     }
     if (!await isServerProfileHomeIdentity(input.serverId, host.serverId)) return refuse('server_scope_mismatch');
+    if (!input.environmentId) {
+        // A draft Check inspects the caller's own provider resource before any Environment exists
+        // (DeploymentTargetPreparationBaseV1). Its own credential principal and the Action's declared
+        // purpose, admitted above, are the whole authority; every other role needs its Environment.
+        if (matched.every(entry => entry.binding.role === 'inspect') && isDeepStrictEqual(principal.purpose, authorization.purpose)) {
+            return { input: DeploymentTargetRoleInputSchemasV1.inspect.parse(input), role: 'inspect' };
+        }
+        return refuse('deployment_access_denied', 'deployment.target.admission.environment_read');
+    }
     const detail = await host.readEnvironment({ environmentId: input.environmentId,
         ...(input.targetLinkId ? { targetLinkId: input.targetLinkId } : {}), context: request.context });
     const environment = detail.environment;

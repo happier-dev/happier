@@ -6,6 +6,7 @@ import { readDeploymentReceiptFailureCodeV1 } from '@happier-dev/protocol/deploy
 import { deploymentAuthorizationFailure, readDeploymentAuthorizationFailure } from './deploymentAuthorizationFailure';
 import { projectHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizationHttpFailure';
 import { deploymentOutputValidationFailure } from './outputValidation';
+import { projectDeploymentException } from './deploymentFailure';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import axios from '@/api/client/credentialAxios';
 import { readHttpStatus } from '@/api/client/httpStatusError';
@@ -75,6 +76,15 @@ const domainOperationUnavailable = (requiredFact: 'operationAcceptance' | 'reque
 };
 const transportRefusal = (error: unknown): ActionExecuteFailure | null => readHttpStatus(error) === 431
   ? { ...failure('request_headers_too_large'), details: { httpStatus: 431 } } : null;
+/** Marks a throw from the Home transport itself; only that proves the Home could not be reached. */
+class HomeTransportFailure extends Error {
+  constructor(readonly transport: unknown) { super('home_transport_failed', { cause: transport }); }
+}
+const homeTransportFailure = (error: unknown): never => { throw new HomeTransportFailure(error); };
+/** home_unreachable only for a proven Home transport failure; every other throw keeps its own typed cause. */
+const homeRequestFailure = (error: unknown, context: ActionExecutorContext): ActionExecuteFailure => error instanceof HomeTransportFailure
+  ? { ...failure('home_unreachable'), failureCause: normalizeActionExecutorThrownError(error.transport, 'deployment.home.request').failureCause }
+  : projectDeploymentException(error, { signal: context.signal, phase: 'deployment.home.request' });
 /** Admitted local or original-requester invalidations, not serialized operands or an ACL cache. */
 export type CliDeploymentEnvironmentAccessObserve = (input: Readonly<{ serverId: string }>, context: ActionExecutorContext,
   listener: (event: RequesterEnvironmentAccessObservation) => void,
@@ -142,9 +152,9 @@ export function createCliDeploymentActionDeps(params: Readonly<{
       context.signal?.addEventListener('abort', retire, { once: true });
       context.signal?.throwIfAborted();
       return { dispose };
-    } catch {
+    } catch (error) {
       await dispose();
-      return failure(context.signal?.aborted ? 'cancelled' : 'admission_unavailable');
+      return projectDeploymentException(error, { signal: context.signal, phase: 'deployment.environment_access.observe' });
     }
   };
   const readEnvironmentAccess: CliDeploymentEnvironmentAccessRead = async (input, context, effectActionId) => {
@@ -167,7 +177,8 @@ export function createCliDeploymentActionDeps(params: Readonly<{
       if (!headers) return deploymentAuthorizationFailure('home_request_headers_refused');
       context.signal?.throwIfAborted();
       const response = await axios.request<unknown>({ method: 'POST', url: `${params.serverHttpBaseUrl}${path}`,
-        headers, data: body, ...(context.signal ? { signal: context.signal } : {}), validateStatus: () => true });
+        headers, data: body, ...(context.signal ? { signal: context.signal } : {}), validateStatus: () => true })
+        .catch(homeTransportFailure);
       context.signal?.throwIfAborted();
       const changed = await params.admitAccount(input.serverId, context);
       if (changed) return changed;
@@ -186,8 +197,9 @@ export function createCliDeploymentActionDeps(params: Readonly<{
       }
       return parsed.data;
     } catch (error) {
+      const thrown = error instanceof HomeTransportFailure ? error.transport : error;
       return context.signal?.aborted ? failure('cancelled')
-        : transportRefusal(error) ?? localAdmissionFailure(error) ?? failure('home_unreachable');
+        : transportRefusal(thrown) ?? localAdmissionFailure(thrown) ?? homeRequestFailure(error, context);
     }
   };
   function request(actionId: DeploymentTransportActionIdV1, input: DeploymentActionInputV1,
@@ -365,7 +377,7 @@ export function createCliDeploymentActionDeps(params: Readonly<{
       context.onTransportIssued?.();
       const response = await axios.request<unknown>({ url: `${params.serverHttpBaseUrl}${path}`,
         method, headers, ...(body === undefined ? {} : { data: body }),
-        ...(context.signal ? { signal: context.signal } : {}), validateStatus: () => true });
+        ...(context.signal ? { signal: context.signal } : {}), validateStatus: () => true }).catch(homeTransportFailure);
       const rollback = readHomeDomainConfirmedRollbackV1(response.status, response.data);
       if (providerVariables && rollback) return withProviderEffect(failure(rollback.code));
       if (rollback) return { ok: false, errorCode: rollback.code, error: rollback.code, effectAttempted: false,
@@ -393,8 +405,9 @@ export function createCliDeploymentActionDeps(params: Readonly<{
       return actionId === 'deployments.bindings.set' && 'ok' in parsed.data && parsed.data.ok && preparedBindingArtifact
         ? { ...parsed.data, preparedArtifact: preparedBindingArtifact,
           ...(providerVariables ? { providerVariables: normalizeProviderVariables(providerVariables, true) } : {}) } : parsed.data;
-    } catch (error) {
+    } catch (caught) {
       if (providerVariables) return withProviderEffect(failure(context.signal?.aborted ? 'cancelled' : 'outcome_unknown'));
+      const error = caught instanceof HomeTransportFailure ? caught.transport : caught;
       // HTTP rejected these headers before routing, including for mutations.
       if (!context.signal?.aborted) {
         const refused = transportRefusal(error);
@@ -407,9 +420,11 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         if (denied) return denied;
       }
       const outcome = classifyHomeDomainHttpMutationFailureV1({ error, issued, aborted: context.signal?.aborted === true });
-      return { ...failure(outcome === 'cancelled' ? 'cancelled' : method !== 'GET' && outcome === 'outcome_unknown'
-        ? 'outcome_unknown' : context.signal?.aborted ? 'cancelled' : 'home_unreachable'),
-        failureCause: normalizeActionExecutorThrownError(error, 'deployment.home.request').failureCause };
+      if (outcome === 'cancelled' || context.signal?.aborted || method !== 'GET' && outcome === 'outcome_unknown') {
+        return { ...failure(outcome === 'cancelled' || context.signal?.aborted ? 'cancelled' : 'outcome_unknown'),
+          failureCause: normalizeActionExecutorThrownError(error, 'deployment.home.request').failureCause };
+      }
+      return homeRequestFailure(caught, context);
     }
   }
   return { readEnvironmentAccess, observeEnvironmentAccessChanges, resolveEnvironmentApprovalScope: args => {
@@ -456,7 +471,10 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         : actionId === 'deployments.rollback'
           ? params.dispatchReceipt({ actionId, input: DeploymentRollbackInputV1Schema.parse(input), receipt, context })
           : params.dispatchReceipt({ actionId, input: DeploymentDeployInputV1Schema.parse(input), receipt, context }));
-    if ('errorCode' in settled || !('ok' in settled) || !settled.ok) return settled;
+    // A refused dispatch names its recovery for every caller, as a settled failed receipt already does.
+    if ('errorCode' in settled) return settled.details === undefined || isRecord(settled.details) && !('remedy' in settled.details)
+      ? { ...settled, details: projectDeploymentFailureRecoveryV1(isRecord(settled.details) ? settled.details : {}, settled.errorCode) } : settled;
+    if (!('ok' in settled) || !settled.ok) return settled;
     if (!('deploymentId' in settled)) return settled;
     const settledFailureCode = readDeploymentReceiptFailureCodeV1(settled.state);
     if (settledFailureCode) {

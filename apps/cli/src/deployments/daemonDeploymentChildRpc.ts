@@ -1,4 +1,7 @@
 import { deploymentAuthorizationFailure, refuseDeploymentAuthorization } from './deploymentAuthorizationFailure';
+import { projectDeploymentException } from './deploymentFailure';
+import { classifyHomeDomainHttpMutationFailureV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentChildRpcV1Schema, readDeploymentChildRpcV1 } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
 import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
@@ -56,6 +59,7 @@ export function registerDaemonDeploymentChildRpcHandler(registrar: RpcHandlerReg
             reviewedChild: packet.externalActionExecution.reviewedChild,
             effectActionId: packet.externalActionExecution.effectActionId, method: RPC_METHODS.DAEMON_DEPLOYMENT_CHILD, params: job })) return deploymentAuthorizationFailure('child_root_derivation_refused');
         let admissionRefusal = 'action_forbidden';
+        let admissionFailure: ActionExecuteFailure | undefined;
         // The admitted requester owner performs the one Home verification.
         // Preserve its refusal instead of re-running that same request here.
         const requesterRuntime = await host.resolveRequesterRuntime({ ...ingress, async verifyMachineAdmissionCurrent() {
@@ -63,12 +67,18 @@ export function registerDaemonDeploymentChildRpcHandler(registrar: RpcHandlerReg
                 const current = await ingress.verifyMachineAdmissionCurrent!();
                 if (!current) admissionRefusal = 'deployment_child_admission_revoked';
                 return current;
-            } catch {
+            } catch (error) {
+                // Only the Home transport owner's proven no-dispatch makes this an outage; any other
+                // throw keeps its own typed cause through the one deployment classifier.
                 admissionRefusal = ingress.signal.aborted ? 'cancelled' : 'home_unreachable';
+                if (!ingress.signal.aborted && classifyHomeDomainHttpMutationFailureV1({ error, issued: true, aborted: false }) !== 'not_dispatched') {
+                    admissionFailure = projectDeploymentException(error, { phase: 'deployment.child.admission_current' });
+                }
                 return false;
             }
         } });
         if (ingress.signal.aborted) return failure('cancelled');
+        if (!requesterRuntime && admissionFailure) return admissionFailure;
         if (!requesterRuntime) return admissionRefusal === 'action_forbidden'
             ? deploymentAuthorizationFailure('requester_runtime_unavailable') : failure(admissionRefusal);
         if (requesterRuntime.accountId !== authority.binding.accountId) return deploymentAuthorizationFailure('requester_account_mismatch');

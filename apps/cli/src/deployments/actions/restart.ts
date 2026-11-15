@@ -2,6 +2,7 @@ import type { ActionExecutorContext, ActionExecuteFailure, DeploymentRestartInpu
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { withMachineServiceControlTarget } from '@/daemon/local/services/launch/machineServiceTarget';
 import { controlNativeServiceForHost } from '@/daemon/local/services/launch/nativeServiceControl';
+import { projectDeploymentException } from '../deploymentFailure';
 
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
 
@@ -30,8 +31,8 @@ export function createDeploymentRestartActionForHost(host: Readonly<{
                     context, ...(context.signal ? { signal: context.signal } : {}) });
             });
         } catch (error) {
-            const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'deployment_unavailable';
-            return failure(context.signal?.aborted ? 'cancelled' : code);
+            // A typed native throw keeps its code, reason and cause; the one deployment classifier decides.
+            return projectDeploymentException(error, { signal: context.signal, phase: 'deployment.restart' });
         }
     };
 }

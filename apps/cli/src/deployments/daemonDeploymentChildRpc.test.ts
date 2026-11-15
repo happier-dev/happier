@@ -516,6 +516,11 @@ describe('installed deployment child ingress', () => {
             await expect(handler(fixture.job, { ...ingress, verifyMachineAdmissionCurrent: async () => {
                 throw Object.assign(new Error('Home unavailable'), { code: 'ECONNREFUSED' });
             } })).resolves.toMatchObject({ ok: false, errorCode: 'home_unreachable' });
+            // A local throw is not a Home outage (CAUSE-DROP-HUNT D10): it keeps its own cause.
+            await expect(handler(fixture.job, { ...ingress, verifyMachineAdmissionCurrent: async () => {
+                throw new TypeError('admission projection failed');
+            } })).resolves.toMatchObject({ ok: false, errorCode: 'action_failed',
+                failureCause: { phase: 'deployment.child.admission_current', errorClass: 'TypeError' } });
             const stopped = new AbortController();
             stopped.abort();
             await expect(handler(fixture.job, { ...ingress, signal: stopped.signal }))

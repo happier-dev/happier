@@ -615,3 +615,43 @@ it('returns canonical teardown detach without native admission or receipt dispat
         dispatchReceipt: async () => { throw new Error('Plain detach must not fabricate a receipt'); } });
     expect(await deps.deploymentAction!('deployments.teardown', input, {})).toEqual(detached);
 });
+
+it('types a local contract failure before transport and keeps home_unreachable for a proven Home transport failure', async () => {
+    // Live: COR4B-VERCEL-1115 inspect-agent.json — an Environment read without environmentId threw a $ZodError
+    // before any request and was reported as home_unreachable ("reconnect to the Home").
+    const requests = vi.spyOn(axios, 'request').mockRejectedValue(Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }));
+    const deps = createCliDeploymentActionDeps({ serverHttpBaseUrl: 'https://home.test', admitAccount: async () => null,
+        resolveRequestHeaders: async () => ({}), async dispatchReceipt() { throw new Error('A read cannot dispatch'); } });
+    const contract = await deps.deploymentAction!('deployments.environments.get',
+        { serverId: 'home', environmentId: undefined } as unknown as { serverId: string; environmentId: string }, {});
+    expect(contract).toMatchObject({ ok: false, errorCode: 'invalid_action_output',
+        failureCause: { phase: 'deployment.home.request', errorClass: '$ZodError' } });
+    expect(requests).not.toHaveBeenCalled();
+    await expect(deps.deploymentAction!('deployments.environments.get', { serverId: 'home', environmentId: 'environment' }, {}))
+        .resolves.toMatchObject({ ok: false, errorCode: 'home_unreachable' });
+    const access = vi.spyOn(axios, 'request').mockImplementation(async () => { throw new TypeError('local projection failed'); });
+    await expect(deps.readEnvironmentAccess({ serverId: 'home', environmentIds: ['environment'] }, {}, 'deployments.environments.get'))
+        .resolves.toMatchObject({ ok: false, errorCode: 'home_unreachable' });
+    access.mockRestore();
+    const headersFailed = createCliDeploymentActionDeps({ serverHttpBaseUrl: 'https://home.test', admitAccount: async () => null,
+        resolveRequestHeaders: async () => { throw new TypeError('header projection failed'); },
+        async dispatchReceipt() { throw new Error('A read cannot dispatch'); } });
+    await expect(headersFailed.readEnvironmentAccess({ serverId: 'home', environmentIds: ['environment'] }, {}, 'deployments.environments.get'))
+        .resolves.toMatchObject({ ok: false, errorCode: 'action_failed', failureCause: { phase: 'deployment.home.request', errorClass: 'TypeError' } });
+});
+
+it('gives a refused provider dispatch the recovery a person or agent can act on', async () => {
+    // Live: COR4B-VERCEL-1115 deploy-agent-1.json returned a bare code with no remedy.
+    const receipt = { ok: true as const, environmentId: 'environment', revision: 2,
+        deploymentId: 'receipt', deploymentRevision: 1, state: 'queued' as const };
+    vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: receipt });
+    const deps = createCliDeploymentActionDeps({ serverHttpBaseUrl: 'https://home.test', admitAccount: async () => null,
+        resolveRequestHeaders: () => ({}), dispatchReceipt: async () => ({ ok: false, errorCode: 'needsGitAccess', error: 'needsGitAccess' }) });
+    await expect(deps.deploymentAction!('deployments.deploy', {
+        serverId: 'home', environmentId: 'environment', targetLinkId: 'runtime', expectedRevision: 1,
+        expectedTargetLinkRevision: 1, requestKey: 'original-deploy', contentArtifactId: 'candidate',
+        contentHeaderVersion: 1, contentBodyVersion: 1,
+    }, { operationAcceptance: { operationId: 'operation', accept() {} } })).resolves.toMatchObject({ ok: false,
+        errorCode: 'needsGitAccess', details: { requiredFact: 'deploymentActionResult',
+            remedy: expect.stringContaining('access to the repository') } });
+});
