@@ -3681,6 +3681,33 @@ describe('managed Machine detail', () => {
             && node.props.title === t('managedMachines.creation.homeNotGuestReachable')).length).toBeGreaterThan(0);
         await screen.unmount();
     });
+    it.each([
+        { kind: 'retryInstallation', enrolled: false, online: false, stale: false,
+            title: () => t('managedMachines.creation.install'), action: () => t('managedMachines.creation.retryInstall') },
+        { kind: 'update', enrolled: true, online: true, stale: true,
+            title: () => t('machineDetailPage.recovery.updateAvailable'), action: () => t('common.update') },
+        { kind: 'restartDaemon', enrolled: true, online: false, stale: false,
+            title: () => t('machineDetailPage.recovery.daemonDown'), action: () => t('machineDetailPage.recovery.restartDaemon') },
+    ] as const)('names the $kind recovery on its one attention row with one action', async ({ enrolled, online, stale, title, action }) => {
+        const machine: ManagedMachineFullV1 = { id: 'recovery-managed', homeId: 'recovery-home', custodianAccountId: 'owner',
+            launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Build box', choices: {} },
+            controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
+            resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: { resourceId: 'existing' } },
+            ...(enrolled ? { enrolledMachineId: 'guest', observation: { observedAt: 4, availability: 'present' as const, power: 'running' as const,
+                storage: 'retained' as const } } : {}),
+            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+        const pressed: string[] = [];
+        const screen = await renderScreen(<ManagedCreationProgress machine={machine} guestPayloadStale={stale}
+            {...(enrolled ? { enrolledMachine: { machineId: 'guest', installationId: 'guest-installation', online, serviceManaged: true } } : {})}
+            handlers={{ reinstall: () => pressed.push('recovery') }} />);
+        const rows = screen.tree.findAll(node => node.props?.testID === 'managed-machine.installation' && typeof node.props.title === 'string');
+        expect(rows.map(row => row.props.title)).toEqual([title()]);
+        const buttons = screen.tree.findAllByType(RoundButton).filter(button => button.props.testID === 'managed-machine.installation-retry');
+        expect(buttons.map(button => button.props.title)).toEqual([action()]);
+        await act(async () => buttons[0]!.props.onPress());
+        expect(pressed).toEqual(['recovery']);
+        await screen.unmount();
+    });
     it('shows only the observed installer stage and offers retry only for an explicit failed installation task', async () => {
         const machine: ManagedMachineFullV1 = { id: 'installer-managed', homeId: 'installer-home', custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Installing guest', choices: {} },

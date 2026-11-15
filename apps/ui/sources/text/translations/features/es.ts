@@ -6428,6 +6428,12 @@ const machineDetailPageTranslations = { es: translated({
             offline: 'Sin conexión',
             cliVersionFact: ({ version }) => `CLI ${version}`,
             replacedByFact: ({ machine }) => `Sustituida por ${machine}`,
+            /** One recovery per state on the Machine page: the row says what is wrong, the button what fixes it. */
+            recovery: {
+                restartDaemon: "Reiniciar el servicio en segundo plano",
+                daemonDown: "Happier no responde",
+                updateAvailable: "Hay una versión más reciente de Happier",
+            },
             unavailableTitle: 'Esta máquina no puede iniciar sesiones ahora mismo',
             startAction: 'Iniciar sesión',
             startUnavailable: {

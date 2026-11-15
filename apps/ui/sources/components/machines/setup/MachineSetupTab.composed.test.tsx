@@ -37,6 +37,7 @@ import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 
 // Metro's lazy module loader is the boundary here; the real Action front door still executes.
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOriginal) => {
@@ -143,6 +144,44 @@ it('explains the saved App address prerequisite before Apply and reveals the dec
   expect(harness.requests.some(request => request.path === '/v1/actions/machines.setup.apply')).toBe(false);
 });
 
+it('leads a missing App address to the attached preset\'s setup editor instead of only retrying the check', async () => {
+  const home = await harness.addHome({ name: 'Build', serverUrl: 'https://preset-address-editor.example',
+    serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });
+  const serverId = resolveServerProfileScopeIdForIdentifier(home);
+  const key = 'SERVICE_URL_REDISINSIGHT_5540';
+  const templateRef = { sourceId: 'apps', itemId: 'redisinsight', version: '1', ref: { kind: 'content' as const, digest: `sha256:${'a'.repeat(64)}` } };
+  const app = (name: string, domainBindings?: readonly { templateDomainId: string; hostname: string }[]) => ({ kind: 'app' as const, definition: {
+    name, project: { kind: 'create' as const }, definition: { from: 'catalogApp' as const, templateRef }, bindings: [],
+    ...(domainBindings ? { domainBindings } : {}) } });
+  // The daemon's published attachment list names the attached presets; the Account catalog holds their saved Apps.
+  const bound = { ...preset('bound', 'Bound tools'), setup: { items: [app('Bound', [{ templateDomainId: key, hostname: 'redis.example.com' }])] } };
+  const missing = { ...preset('redis-tools', 'Redis tools'), setup: { items: [app('RedisInsight')] } };
+  await publishManagedDevbox(serverId, undefined, { setup: { version: 1, desiredRevision: 3, status: 'drifted', recipes: [],
+    attachedPresets: [bound, missing].map(entry => ({ kind: 'accountPreset' as const, presetId: entry.id, presetRevision: entry.revision })) } });
+  harness.answer(home, '/v1/machines/devbox', { body: { machine: createPlainMachineRowFixture({ id: 'devbox', accountId: 'owner' }) } });
+  harness.answer(home, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [presetWire(bound), presetWire(missing)] } });
+  const failure = { ok: false as const, effectAttempted: false, errorCode: 'template_domain_required',
+    error: `template_domain_required: ${JSON.stringify(key)}`, details: { key } };
+  harness.answer(home, '/v1/actions/machines.setup.plan', { select: input => {
+    const envelope = ExternalActionRequestEnvelopeV1Schema.parse(input);
+    return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'machines.setup.plan',
+      requestId: envelope.requestId, execution: failure }) };
+  } });
+  const { MachineSetupTab } = await import('./MachineSetupTab');
+  const { t } = await import('@/text');
+  const screen = await renderScreen(<MachineSetupTab serverId={serverId} machineId="devbox" machineName="devbox" online
+    params={{ id: 'setup' }} setParams={vi.fn()} />);
+  onTestFinished(() => screen.unmount());
+  await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props?.testID === 'machine-setup-error'
+    && node.props.action?.label === t('machinePresets.editSetup')).length).toBeGreaterThan(0));
+  const plansBefore = harness.requests.filter(request => request.path === '/v1/actions/machines.setup.plan').length;
+  const card = screen.tree.findAll(node => node.props?.testID === 'machine-setup-error' && node.props.action)[0]!;
+  await act(async () => { await card.props.action.onPress(); });
+  expect(routerHandle.current?.spies.push.mock.calls.at(-1)?.[0])
+    .toBe(`/settings/machines/presets/redis-tools?serverId=${encodeURIComponent(serverId)}&edit=true`);
+  expect(harness.requests.filter(request => request.path === '/v1/actions/machines.setup.plan')).toHaveLength(plansBefore);
+});
+
 it('opens an opaque saved setup source from the exact plan projection without fetching a current preset', async () => {
   const home = await harness.addHome({ name: 'Opaque setup', serverUrl: 'https://opaque-setup.example',
     serverIdentityId: 'srv_opaque_setup', accountId: 'owner', currentAccount: true });
@@ -210,12 +249,12 @@ beforeEach(async () => {
 afterEach(() => standardCleanup());
 
 // The Machine page owns this already-hydrated inventory before rendering a tab.
-async function publishManagedDevbox(serverId: string, role?: 'use') {
+async function publishManagedDevbox(serverId: string, role?: 'use', daemonState?: Machine['daemonState']) {
   const { storage } = await import('@/sync/domains/state/storage');
   const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
   const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
   const scope = { serverId, accountId: 'owner' };
-  const machine = createMachineFixture({ id: 'devbox', isShared: role !== undefined, activeAt: Date.now(),
+  const machine = createMachineFixture({ id: 'devbox', isShared: role !== undefined, activeAt: Date.now(), ...(daemonState ? { daemonState } : {}),
     ...(role ? { access: { role, resourceMode: 'plain' as const, accessState: 'ready' as const, custodian: { accountId: 'owner', displayName: 'Owner' } } } : {}) });
   await act(async () => {
     storage.setState({ settingsScope: scope });

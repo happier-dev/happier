@@ -18,7 +18,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { t } from '@/text';
 import { ManagedMachineStateRow, type ManagedLifecycleHandlers } from './ManagedMachineStateRow';
 import { nativeIdentityLines } from './managedMachineDisplay';
-import { canRetryManagedInstallation, currentManagedCreationOperation, describeManagedInstallationFailure, isManagedCreationStateRowVisible, managedCreationSetup, managedCreationState, readManagedInstallationPrompt, type ManagedCreationContext } from './managedCreationPresentation';
+import { currentManagedCreationOperation, resolveManagedInstallationRecovery, describeManagedInstallationFailure, isManagedCreationStateRowVisible, managedCreationSetup, managedCreationState, readManagedInstallationPrompt, type ManagedCreationContext } from './managedCreationPresentation';
 import { describeManagedLifecycleState, type ManagedLifecycleState } from './managedLifecyclePresentation';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { isManagedMachineBootstrapIncomplete } from '@/sync/domains/actionOperations/managedMachineOperation';
@@ -67,8 +67,14 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
     const showStateRow = isManagedCreationStateRowVisible(machine, state, { offersStart: Boolean(props.handlers?.start) });
     const operation = currentManagedCreationOperation(machine, props.operation, props);
     const status = operation ? resolveActionOperationStatus(operation.snapshot, operation.observation) : null;
-    const canRetryInstallation = canRetryManagedInstallation(machine, props.operation, props);
-    const installationActionLabel = props.guestPayloadStale ? t('common.update') : t('managedMachines.creation.retryInstall');
+    // The recovery owner names the one next step: a failed install retries, a stale guest updates, a running guest whose
+    // Happier went quiet restarts its background service. Each says what is wrong on its row and what fixes it on the button.
+    const recoveryKind = resolveManagedInstallationRecovery(machine, props.operation, props);
+    const canRetryInstallation = recoveryKind !== null;
+    const installationActionLabel = recoveryKind === 'update' ? t('common.update')
+        : recoveryKind === 'restartDaemon' ? t('machineDetailPage.recovery.restartDaemon') : t('managedMachines.creation.retryInstall');
+    const recoveryLine = recoveryKind === 'update' ? t('machineDetailPage.recovery.updateAvailable')
+        : recoveryKind === 'restartDaemon' ? t('machineDetailPage.recovery.daemonDown') : null;
     const prompt = readManagedInstallationPrompt(operation);
     const trustPrompt = prompt?.kind === 'ssh.trustHost' || prompt?.kind === 'ssh.replaceHostKey' ? prompt : null;
     // A host key is asked in the one trust sheet (lab af-ssh Kp), never inline: the row names the question and opens it.
@@ -168,10 +174,12 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
                 {failedOperation ? <FailedInstallationCard operation={failedOperation} title={failure.title} detail={failure.detail}
                     action={failureAction} /> : <SurfaceStateCard kind="error" size="details" layout="inline" title={failure.title}
                     diagnosticCode={failure.detail} testID="managed-machine.installation-error" action={failureAction} />}
-            </SectionContentRow> : <Item title={name} subtitle={prompt ? promptMessage : heldAsk ? t('approvals.waitingForYou')
+            </SectionContentRow> : <Item title={installationRetryOnly && recoveryLine ? recoveryLine : name}
+                subtitle={installationRetryOnly && recoveryLine ? undefined : prompt ? promptMessage : heldAsk ? t('approvals.waitingForYou')
                 : status ? describeActionOperationStatusLabel(status.label) : lifecycle.line}
                 mode="info" showChevron={false} testID="managed-machine.installation" subtitleLines={prompt ? 0 : undefined}
-                accessoryLayout={prompt && props.answerPrompt ? 'adaptive' : undefined}
+                // A recovery button can be long ("Restart background service"): on a phone it moves beneath its line.
+                accessoryLayout={prompt && props.answerPrompt || installationRetryOnly ? 'adaptive' : undefined}
                 subtitleLeading={!prompt && !heldAsk && status?.tone === 'active' ? <ActivitySpinner size="small"
                     accessibilityElementsHidden importantForAccessibility="no" /> : undefined}
                 rightElement={heldAsk && props.reviewApproval ? <RoundButton title={t('approvals.review')} display="secondary" size="small"
@@ -200,8 +208,8 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
                 {...(asOfOnStateRow ? { asOf: asOfOnStateRow } : {})}
                 ended={machine.allocation === 'confirmed-absent'} testID="managed-machine.progress" />
             {/* Without an operation to report, the install is a step of this same resource, not a second copy of its row. */}
-            {installationRetryOnly && !failure ? <Item title={t('managedMachines.creation.install')} mode="info" showChevron={false}
-                testID="managed-machine.installation" rightElement={installationRetry} /> : null}
+            {installationRetryOnly && !failure ? <Item title={recoveryLine ?? t('managedMachines.creation.install')} mode="info" showChevron={false}
+                testID="managed-machine.installation" accessoryLayout="adaptive" rightElement={installationRetry} /> : null}
             {mayBill && machine.allocation !== 'confirmed-absent' && (machine.allocation === 'may-exist' || machine.cleanup) ? <Item title={t('managedMachines.creation.mayBill')}
                 mode="info" showChevron={false} titleLines={0} testID="managed-machine.possible-cost" /> : null}
             {asOfOnStateRow ? null : observationRow}

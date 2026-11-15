@@ -38,6 +38,12 @@ export const english = {
         offline: 'Offline',
         cliVersionFact: ({ version }: { version: string }) => `CLI ${version}`,
         replacedByFact: ({ machine }: { machine: string }) => `Replaced by ${machine}`,
+        /** One recovery per state on the Machine page: the row says what is wrong, the button what fixes it. */
+        recovery: {
+            restartDaemon: "Restart background service",
+            daemonDown: "Happier isn’t responding",
+            updateAvailable: "A newer Happier is ready",
+        },
         unavailableTitle: "This machine can't start sessions right now",
         startAction: 'Start session',
         startUnavailable: {

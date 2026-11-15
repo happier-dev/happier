@@ -6423,6 +6423,12 @@ const machineDetailPageTranslations = { ja: translated({
             offline: 'オフライン',
             cliVersionFact: ({ version }) => `CLI ${version}`,
             replacedByFact: ({ machine }) => `${machine} に置き換え済み`,
+            /** One recovery per state on the Machine page: the row says what is wrong, the button what fixes it. */
+            recovery: {
+                restartDaemon: "バックグラウンドサービスを再起動",
+                daemonDown: "Happier が応答していません",
+                updateAvailable: "新しい Happier を利用できます",
+            },
             unavailableTitle: 'このマシンは現在セッションを開始できません',
             startAction: 'セッションを開始',
             startUnavailable: {

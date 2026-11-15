@@ -6455,6 +6455,12 @@ const machineDetailPageTranslations = { ru: translated({
             offline: 'Не в сети',
             cliVersionFact: ({ version }) => `CLI ${version}`,
             replacedByFact: ({ machine }) => `Заменена на ${machine}`,
+            /** One recovery per state on the Machine page: the row says what is wrong, the button what fixes it. */
+            recovery: {
+                restartDaemon: "Перезапустить фоновую службу",
+                daemonDown: "Happier не отвечает",
+                updateAvailable: "Доступна более новая версия Happier",
+            },
             unavailableTitle: 'Эта машина сейчас не может запускать сессии',
             startAction: 'Запустить сессию',
             startUnavailable: {

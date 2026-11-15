@@ -6418,6 +6418,12 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
             offline: '离线',
             cliVersionFact: ({ version }) => `CLI ${version}`,
             replacedByFact: ({ machine }) => `已被 ${machine} 替换`,
+            /** One recovery per state on the Machine page: the row says what is wrong, the button what fixes it. */
+            recovery: {
+                restartDaemon: "重启后台服务",
+                daemonDown: "Happier 没有响应",
+                updateAvailable: "有更新的 Happier 可用",
+            },
             unavailableTitle: '这台机器目前无法启动会话',
             startAction: '启动会话',
             startUnavailable: {

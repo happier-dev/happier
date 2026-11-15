@@ -214,9 +214,11 @@ export function resolveManagedInstallationRecovery(machine: ManagedMachineReadSn
     // A newer inspect or power receipt must not hide an unfinished installation.
     if (snapshot.actionId !== 'machines.managed.acquire'
         && snapshot.actionId !== 'machines.managed.bootstrap.retry') return recovery;
-    return operation.observation === 'available' && !operation.isUnavailableProjection
-        && (snapshot.state === 'failed' || snapshot.state === 'succeeded' && (context.guestPayloadStale === true || recovery === 'restartDaemon'))
-        && snapshot.domainRef?.kind === 'managedMachine' && snapshot.domainRef.id === machine.id ? recovery : null;
+    if (operation.observation !== 'available' || operation.isUnavailableProjection
+        || snapshot.domainRef?.kind !== 'managedMachine' || snapshot.domainRef.id !== machine.id) return null;
+    // A failed install of this resource is retried even once it enrolled (a boot step after enrollment can fail).
+    if (snapshot.state === 'failed') return recovery ?? 'retryInstallation';
+    return snapshot.state === 'succeeded' && (context.guestPayloadStale === true || recovery === 'restartDaemon') ? recovery : null;
 }
 
 export function canRetryManagedInstallation(machine: ManagedMachineReadSnapshotV1, operation?: ActionOperationProjection | null,

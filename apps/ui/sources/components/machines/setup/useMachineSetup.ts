@@ -7,7 +7,7 @@ import {
 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachineSetupPresetChoice } from '@/components/settings/machines/managed/machineSetupPresetChoices';
 import type { MachinePresetItemV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
-import type { MachineSetupSourceEntryV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
+import type { MachineSetupPresetReferenceV1, MachineSetupSourceEntryV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { createActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
@@ -442,6 +442,23 @@ export type MachineSetupRecipeRow = Readonly<{
 const NO_RECIPES: readonly MachineSetupRecipeRow[] = Object.freeze([]);
 const sameRef = (a: SetupItem['selection']['ref'], b: SetupItem['selection']['ref']) =>
     a.pluginId === b.pluginId && a.recipeId === b.recipeId && a.revision === b.revision;
+
+/**
+ * The one attached saved preset whose catalog App still lacks the address a Plan refused for (`template_domain_required`
+ * names only the template's address key): the Machine's published attachment list, read against the Account's presets.
+ * Null when none or several match, so the caller keeps its Retry instead of guessing.
+ */
+export function findMachineSetupPresetMissingAddress(
+    attached: readonly MachineSetupPresetReferenceV1[] | undefined,
+    presets: readonly MachineSetupPresetChoice[],
+    addressKey: string,
+): string | null {
+    const attachedIds = new Set((attached ?? []).flatMap(ref => ref.kind === 'accountPreset' ? [ref.presetId] : []));
+    const matches = presets.flatMap(preset => !('kind' in preset) && attachedIds.has(preset.id)
+        && (preset.setup.items ?? []).some(item => item.kind === 'app' && item.definition.definition.from === 'catalogApp'
+            && !item.definition.domainBindings?.some(binding => binding.templateDomainId === addressKey)) ? [preset.id] : []);
+    return matches.length === 1 ? matches[0]! : null;
+}
 
 /** The apps in locally opened sources, in their original Plan order. */
 export function readMachineSetupApps(sources: readonly MachineSetupOpenedSourceV1[]) {

@@ -75,7 +75,8 @@ import { describeManagedActionFailureDiagnostic } from './managedNativeFailurePr
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { describeManagedLifecycleState, resolveManagedNativeEndState } from './managedLifecyclePresentation';
 import { answerManagedCreationEstablish } from './managedCreationPrompt';
-import { buildManagedInstallationRetryInput, managedCreationState, canRetryManagedInstallation, currentManagedCreationOperation, describeManagedCreation, isManagedCreationCanceledBeforeMade, isManagedMachineResourceAbsent, managedCreationSetup, managedReceiptPowerIntents, readManagedInstallationPrompt, isManagedGuestPayloadStale, type ManagedCreationContext } from './managedCreationPresentation';
+import { useMachineRecovery } from '@/hooks/machine/useMachineRecovery';
+import { buildManagedInstallationRetryInput, managedCreationState, currentManagedCreationOperation, describeManagedCreation, isManagedCreationCanceledBeforeMade, isManagedMachineResourceAbsent, managedCreationSetup, managedReceiptPowerIntents, readManagedInstallationPrompt, isManagedGuestPayloadStale, type ManagedCreationContext } from './managedCreationPresentation';
 import { useManagedMachineActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
 import { publishActionOperationObservation, reconcileActionOperationsOnce } from '@/sync/domains/actionOperations/actionOperationRuntime';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
@@ -731,6 +732,10 @@ function ManagedMachineFullSections(props: FullSectionProps) {
         ...(controller && controllerPresence && typeof controllerName === 'string' ? { controller: { name: controllerName, online: controllerPresence.online } } : {}),
         asleepWake: resolveManagedAsleepWake({ wakeOnAcceptedMessage: policy.wakeOnAcceptedMessage, availability: wakeAvailability,
             controllerName: controllerName ?? null }) };
+    // One recovery for a Machine that needs attention (retry, update or restart), decided by the recovery owner from the
+    // facts this page already holds; the press runs through this page's dispatch for its pending, approval and failure.
+    const recovery = useMachineRecovery({ managed: machine, online: creationContext.enrolledMachine?.online ?? null,
+        guestPayloadStale, operation, providerAvailable: creationContext.providerAvailable, execute: props.executeAction });
     // Asleep with its disk kept, Start is the next step: it moves to the state row that opens the page, the same action
     // and the same offer, so it is one press from where the person looks on every width.
     const startAction = allReceiptActions.find(action => action.testID === 'managed-machine.start' && !action.disabled);
@@ -895,8 +900,8 @@ function ManagedMachineFullSections(props: FullSectionProps) {
                 ...(creationContext.providerAvailable === false ? { reinstall: () => router.push({ pathname: SETTINGS_ROUTES.plugins,
                     params: { serverId: props.serverId, ...(machine.controller ? { machineId: machine.controller.machineId } : {}) } }) } : {}),
             } : {}),
-            ...(canRecoverCreation && (!machine.controller || currentControllerAvailable || creatorScoped && machine.controllerAccess) && canRetryManagedInstallation(machine, operation, creationContext) ? {
-                reinstall: () => fireAndForget(run('machines.managed.bootstrap.retry', buildManagedInstallationRetryInput(machine)), { tag: 'ManagedMachineSections.retryInstall' }),
+            ...(canRecoverCreation && (!machine.controller || currentControllerAvailable || creatorScoped && machine.controllerAccess) && recovery.kind !== 'unavailable' ? {
+                reinstall: () => fireAndForget(run(recovery.actionId, buildManagedInstallationRetryInput(machine)), { tag: 'ManagedMachineSections.retryInstall' }),
             } : {}) }} />
         {/* Ended (lab m-life): the record says what went and what stays; nothing is left to check or read. */}
         {resourceConfirmedAbsent && machine.resource ? <ItemGroup testID="managed-machine.ended-record" surface="none"

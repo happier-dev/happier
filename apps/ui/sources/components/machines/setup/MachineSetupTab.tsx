@@ -53,6 +53,7 @@ import { t } from '@/text';
 
 import {
   readMachineSetupApps,
+  findMachineSetupPresetMissingAddress,
   readOpenedMachineSetupSources,
   readMachineSetupRecipes,
   type MachineSetupOpenedSourceV1,
@@ -271,6 +272,7 @@ function MachineSetupRoot(
         drifted={drifted}
         editable={editable}
         localize={localize}
+        presets={presetList}
       />
       {firstLoad ? (
         <PageLoadingRows testID="machine-setup-loading" />
@@ -504,9 +506,11 @@ function MachineSetupAttention(
     drifted: number;
     editable: boolean;
     localize: (pluginId: string, value: unknown) => string;
+    presets: readonly MachineSetupPresetChoice[];
   }>,
 ) {
   const { setup, localize } = props;
+  const router = useRouter();
   const operations = React.useMemo(
     () => (setup.operation ? [setup.operation] : []),
     [setup.operation],
@@ -561,6 +565,12 @@ function MachineSetupAttention(
       error: setup.failure.code,
     };
     const presented = presentActionFailureOutcome(failure);
+    // A saved App with no address can't be fixed by checking again: its preset's setup editor holds the address field.
+    const details = setup.failure.failure?.details;
+    const addressKey = setup.failure.code === 'template_domain_required' && details && typeof details === 'object'
+      && 'key' in details && typeof details.key === 'string' ? details.key : null;
+    const addressPresetId = addressKey && props.editable
+      ? findMachineSetupPresetMissingAddress(setup.observation?.attachedPresets, props.presets, addressKey) : null;
     const title =
       setup.failure.during === 'check'
         ? t('machinePresets.setup.review.planFailed', {
@@ -583,7 +593,10 @@ function MachineSetupAttention(
           reason={presented.reason ?? undefined}
           diagnosticCode={presented.code ?? setup.failure.code}
           diagnosticDetail={presented.technicalDetails.map(line => `${line.label}: ${line.value}`).join('\n')}
-          action={{
+          action={addressPresetId ? {
+            label: t('machinePresets.editSetup'),
+            onPress: () => router.push(`${machinePresetCollectionHref({ serverId: props.serverId, presetId: addressPresetId })}&edit=true` as never),
+          } : {
             label: t('common.retry'),
             onPress: () => {
               void setup.check();

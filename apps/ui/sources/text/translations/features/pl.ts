@@ -6446,6 +6446,12 @@ const machineDetailPageTranslations = { pl: translated({
             offline: 'Offline',
             cliVersionFact: ({ version }) => `CLI ${version}`,
             replacedByFact: ({ machine }) => `Zastąpiona przez ${machine}`,
+            /** One recovery per state on the Machine page: the row says what is wrong, the button what fixes it. */
+            recovery: {
+                restartDaemon: "Uruchom ponownie usługę w tle",
+                daemonDown: "Happier nie odpowiada",
+                updateAvailable: "Nowsza wersja Happier jest gotowa",
+            },
             unavailableTitle: 'Ta maszyna nie może teraz uruchamiać sesji',
             startAction: 'Uruchom sesję',
             startUnavailable: {

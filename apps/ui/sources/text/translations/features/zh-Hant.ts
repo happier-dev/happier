@@ -6417,6 +6417,12 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
             offline: '離線',
             cliVersionFact: ({ version }) => `CLI ${version}`,
             replacedByFact: ({ machine }) => `已由 ${machine} 取代`,
+            /** One recovery per state on the Machine page: the row says what is wrong, the button what fixes it. */
+            recovery: {
+                restartDaemon: "重新啟動背景服務",
+                daemonDown: "Happier 沒有回應",
+                updateAvailable: "有較新的 Happier 可用",
+            },
             unavailableTitle: '這台機器目前無法啟動工作階段',
             startAction: '啟動工作階段',
             startUnavailable: {
