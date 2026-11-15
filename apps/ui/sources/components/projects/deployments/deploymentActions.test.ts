@@ -74,6 +74,39 @@ describe('deployment UI Action callbacks', () => {
     });
     afterEach(() => standardCleanup());
 
+    it('continues the controller Domain removal review with the exact reviewed request once', async () => {
+        const serverId = await homes.addHome({ name: 'Domain remove', serverUrl: 'https://domain-remove.test',
+            serverIdentityId: `srv_${'e'.repeat(32)}`, accountId: 'owner', currentAccount: true });
+        const environment = createDeploymentEnvironmentHeaderV1({ serverId });
+        const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'owner' },
+            isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        homes.answer(serverId, `GET /v1/deployments/environments/${environment.id}`, {
+            body: { ok: true, environment, targetLinks: [] },
+        });
+        const requests: unknown[] = [];
+        let removed = 0;
+        await answerExternalActionAccountForHome(homes, serverId, { machineId: environment.controllerMachineId,
+            actionId: 'deployments.domains.remove', tokenEpoch: 0, failure: carriedReview, execute: (raw, context) => {
+                requests.push(raw);
+                if (context.invocation.presentUserConfirmation?.reviewDigest !== REVIEW_DIGEST)
+                    return refusing(raw, 'Remove the provider Domain');
+                removed++;
+                return DeploymentActionOutputSchemasV1['deployments.domains.remove'].parse({ ok: true,
+                    environmentId: environment.id, revision: environment.revision + 1, domain: {
+                        v: 1, id: 'domain', environmentId: environment.id, targetLinkId: 'target', revision: 3,
+                        state: 'removing', contentArtifactId: 'domain-content', contentHeaderVersion: 1, contentBodyVersion: 1,
+                        createdByAccountId: 'owner', createdAtMs: 1, updatedAtMs: 2, deletedAtMs: 2,
+                    } });
+            } });
+        await expect(createDeploymentActions(lifetime).removeDomain({ environmentId: environment.id,
+            expectedRevision: environment.revision, domainId: 'domain', expectedDomainRevision: 2,
+        })).resolves.toMatchObject({ ok: true });
+        expect(requests).toHaveLength(2);
+        expect(requests[1]).toEqual(requests[0]);
+        expect(removed).toBe(1);
+        expect(nativeReview.shown).toHaveLength(1);
+    });
+
     it('sends the selected DNS placement through the reviewed Domain Action without authoring record values', async () => {
         const serverId = await homes.addHome({ name: 'Domain DNS', serverUrl: 'https://domain-dns.test',
             serverIdentityId: `srv_${'d'.repeat(32)}`, accountId: 'owner', currentAccount: true });

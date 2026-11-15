@@ -251,13 +251,14 @@ export function isDeploymentReadAdmissionActionIdV1(value: string): value is
   return isDeploymentReadActionIdV1(value) || isProjectReadinessActionIdV1(value);
 }
 
-/** Account-placed roots whose admission and effect belong to the installed controller. */
+/** Roots whose admission and effect belong to the installed controller, including Account-placed setup. */
 export function isDeploymentAccountMachineTransportActionIdV1(value: string): value is
   typeof DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 | typeof DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
-  | typeof DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 | 'deployments.targets.link' | 'deployments.health.current' {
+  | typeof DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 | 'deployments.targets.link' | 'deployments.health.current'
+  | DeploymentDomainChildActionIdV1 | typeof DEPLOYMENT_DOMAIN_DNS_CREATE_ACTION_ID_V1 | typeof DEPLOYMENT_DOMAIN_DNS_VERIFY_ACTION_ID_V1 {
   return value === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 || value === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
     || value === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 || isDeploymentTargetLinkActionIdV1(value)
-    || value === 'deployments.health.current';
+    || value === 'deployments.health.current' || isDeploymentDomainChildActionIdV1(value) || isDeploymentDomainDnsActionIdV1(value);
 }
 
 /** Account-placed deployment roots dispatched through their installed controller, in addition to spec-native Machine Actions. */
