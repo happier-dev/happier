@@ -6,6 +6,18 @@ import { retainShallow } from '@/sync/domains/state/structuralSharing';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 
 import { isAutomationSessionCandidate, isAutomationSessionCandidateVisible } from '@/sync/domains/automations/isAutomationSessionCandidate';
+
+/**
+ * What the Session is offered for. `continue` (a step or prompt runs in it) needs its Agent to accept
+ * automation; `listen` (a trigger's lifecycle source) only needs a visible, unarchived Session of this
+ * Account, which is all the lifecycle admission owner checks.
+ */
+export type WorkflowSessionOptionPurpose = 'continue' | 'listen';
+type SessionCandidate = Parameters<typeof isAutomationSessionCandidate>[0];
+function admitsSessionOption(purpose: WorkflowSessionOptionPurpose, session: SessionCandidate,
+    accountSettings?: Parameters<typeof isAutomationSessionCandidate>[1]): boolean {
+    return purpose === 'listen' ? isAutomationSessionCandidateVisible(session) : isAutomationSessionCandidate(session, accountSettings);
+}
 import { getStorage, useSetting } from '@/sync/domains/state/storage';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { WorkflowExistingSessionOption } from '@/sync/domains/workflows/workflowAuthoring';
@@ -138,7 +150,7 @@ function createSessionOption(source: Parameters<typeof getSessionName>[0], serve
         contextLabel: formatSessionWorkContext(parts) };
 }
 
-function createOptionsSelector(serverId: string | null, machineId: string | null) {
+function createOptionsSelector(serverId: string | null, machineId: string | null, purpose: WorkflowSessionOptionPurpose) {
     let previous = NO_SESSION_OPTIONS;
     let environmentInputs: readonly unknown[] | null = null;
     let optionsById = new Map<string, WorkflowExistingSessionOption>();
@@ -157,7 +169,7 @@ function createOptionsSelector(serverId: string | null, machineId: string | null
             let option: WorkflowExistingSessionOption | null = null;
             if (session && isSessionVisible({ sessionId: id, serverId: session.serverId })
                 && (serverId === null || areServerProfileIdentifiersEquivalent(session.serverId, serverId))
-                && isAutomationSessionCandidate(session, policy)) {
+                && admitsSessionOption(purpose, session, policy)) {
                 const sessionMachineId = resolveDisplayMachineIdForSessionFromState({
                     state, serverId: session.serverId, sessionId: id, metadata: session.metadata,
                 });
@@ -192,8 +204,11 @@ export function useWorkflowExistingSessionOptions(params: Readonly<{
     machineId: string | null;
     /** Demand for the full chooser/drop projection; visible recorded labels use the exact Session reader. */
     enabled?: boolean;
+    /** Defaults to `continue`. */
+    purpose?: WorkflowSessionOptionPurpose;
 }>): WorkflowSessionOptionsState {
     const { serverId, machineId } = params;
+    const purpose = params.purpose ?? 'continue';
     const enabled = params.enabled !== false;
     const isSessionVisible = useSessionRecordingVisibility(enabled);
     const { binding, resolution } = useServerCredentialAccountScopeBinding(serverId);
@@ -248,7 +263,7 @@ export function useWorkflowExistingSessionOptions(params: Readonly<{
         binding: typeof binding;
         options: readonly WorkflowExistingSessionOption[];
     }> & AcquisitionStatus>({ binding: null, options: NO_OPTIONS, acquisition: null, status: 'ready' });
-    const snapshotAcquisition = React.useMemo(() => ({}), [acquisition, unopenedRows, policy]);
+    const snapshotAcquisition = React.useMemo(() => ({}), [acquisition, unopenedRows, policy, purpose]);
     React.useEffect(() => {
         // Offer admitted pages while the inventory continues. Ordinary bootstrap
         // rows may still lack owner facts; only their missing-detail fallback
@@ -301,7 +316,7 @@ export function useWorkflowExistingSessionOptions(params: Readonly<{
                     });
                     if (!metadata) { missingIds.push(row.id); continue; }
                     let option: WorkflowExistingSessionOption | undefined;
-                    if (isAutomationSessionCandidate({ ...row, ownerMetadataView: metadata }, accountSettings)) {
+                    if (admitsSessionOption(purpose, { ...row, ownerMetadataView: metadata }, accountSettings)) {
                         const sessionMachineId = resolveDisplayMachineIdForSessionFromState({ state: getStorage().getState(),
                             serverId: binding.scope.serverId, sessionId: row.id, metadata });
                         if (sessionMachineId) option = createSessionOption(row, binding.scope.serverId, row.id, sessionMachineId);
@@ -336,7 +351,7 @@ export function useWorkflowExistingSessionOptions(params: Readonly<{
                             if (!result.ok) failed = true;
                             else {
                                 const session = result.snapshot.session;
-                                if (isAutomationSessionCandidate(session, accountSettings)) {
+                                if (admitsSessionOption(purpose, session, accountSettings)) {
                                     const sessionMachineId = resolveDisplayMachineIdForSessionFromState({ state: getStorage().getState(),
                                         serverId: binding.scope.serverId, sessionId, metadata: readSessionOwnerMetadataView(session) });
                                     if (sessionMachineId) option = createSessionOption(session, binding.scope.serverId, sessionId, sessionMachineId);
@@ -357,14 +372,14 @@ export function useWorkflowExistingSessionOptions(params: Readonly<{
             if (!controller.signal.aborted && binding.isCurrent()) setUnopened(previous => ({ ...previous, acquisition: snapshotAcquisition, status: 'error' }));
         });
         return () => { controller.abort(); retirement.dispose(); };
-    }, [snapshotAcquisition, binding, enabled, inventoryReadStarted, inventoryStatus, unopenedRows, policy]);
+    }, [snapshotAcquisition, binding, enabled, inventoryReadStarted, inventoryStatus, unopenedRows, policy, purpose]);
     const unopenedStatus = unopened.acquisition === snapshotAcquisition ? unopened.status : 'loading';
     // Every Session the canonical candidacy owner can continue, on any Machine
     // of this server: the drop target needs them to state *why* a Session on
     // another Machine is refused (07 J19), while the picker offers only the
     // Where Machine's.
     const language = usePreferredLanguage();
-    const selector = React.useMemo(() => createOptionsSelector(serverId, machineId), [enabled, serverId, machineId, isSessionVisible, language, policy]);
+    const selector = React.useMemo(() => createOptionsSelector(serverId, machineId, purpose), [enabled, serverId, machineId, purpose, isSessionVisible, language, policy]);
     const selectHydrated = React.useCallback((state: StorageState, previous?: StorageState) => enabled ? selector(state, language, policy, isSessionVisible, previous) : selectNoOptions(),
         [enabled, isSessionVisible, language, policy, selector]);
     const hydrated = useSessionProjection(selectHydrated, enabled);

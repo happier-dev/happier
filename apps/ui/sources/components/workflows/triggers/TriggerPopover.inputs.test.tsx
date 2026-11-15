@@ -95,6 +95,8 @@ const { TriggerPopover, FieldSelect } = await import('./TriggerPopover');
 const { WorkflowTriggerSection } = await import('./WorkflowTriggerSection');
 const { WorkflowDefinitionV1Schema} = await import('@happier-dev/protocol/workflows/workflowV1');
 type ExistingTriggerSubmit = Extract<React.ComponentProps<typeof TriggerPopover>, { creatingSession?: false }>['onSubmit'];
+const DAILY_TRIGGER = { kind: 'schedule' as const, enabled: true,
+    schedule: { kind: 'cron' as const, scheduleExpr: '0 9 * * *', everyMs: null, timezone: 'Europe/Zurich' } };
 
 describe('Run a workflow trigger inputs', () => {
     it('saves one local date/time or a relative delay as one absolute occurrence and reopens it unchanged', async () => {
@@ -392,7 +394,7 @@ describe('Run a workflow trigger inputs', () => {
         await screen.pressByTestIdAsync('new-event-validity-submit');
         expect(submit).not.toHaveBeenCalled();
     });
-    it('opens an exact saved Event row for editing its private source instead of leaving it informational', async () => {
+    it('edits an exact saved Event row in place in the When it runs card and turns it off there', async () => {
         const { WorkflowTriggerSetV1Schema} = await import('@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1');
         const set = WorkflowTriggerSetV1Schema.parse({ automationId: 'event-set', revision: 7, enabled: true,
             health: 'available', triggers: [{ id: 'event-row', revision: 3, enabled: true,
@@ -404,16 +406,37 @@ describe('Run a workflow trigger inputs', () => {
         const screen = await renderScreen(<WorkflowTriggerSection testIDPrefix="event-workflow" set={set}
             draft={{ adds: [], updates: {}, removes: [] }} onChangeDraft={change} status="ready" onRetry={vi.fn()}
             stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />);
-        await screen.pressByTestIdAsync('event-workflow-trigger:saved:event-row');
-        expect(screen.findByTestId('event-workflow-trigger-popover-configure-event')).toBeTruthy();
-        expect(screen.findByTestId('event-workflow-trigger-popover-submit')?.props.disabled).toBe(false);
-        await screen.pressByTestIdAsync('event-workflow-trigger-popover-submit');
-        expect(change).toHaveBeenCalledWith({ adds: [], updates: { 'event-row': { enabled: true } }, removes: [] });
-
-        await act(async () => { screen.findByTestId('event-workflow-trigger:saved:event-row-switch')!.props.onValueChange(false); });
+        // No popover: the Event's own rows sit in the card, with its edit entry.
+        expect(screen.findByTestId('event-workflow-trigger-popover')).toBeNull();
+        expect(screen.findByTestId('event-workflow-trigger:saved:event-row-configure-event')).toBeTruthy();
+        await screen.pressByTestIdAsync('event-workflow-trigger:saved:event-row-toggle');
         expect(change).toHaveBeenCalledWith({ adds: [], updates: { 'event-row': { enabled: false } }, removes: [] });
+        await screen.pressByTestIdAsync('event-workflow-trigger:saved:event-row-remove');
+        expect(change).toHaveBeenLastCalledWith({ adds: [], updates: {}, removes: ['event-row'] });
     });
-    it('draws no Loading line while a saved workflow\'s Team grants load, so the popover keeps its size (07 §7)', async () => {
+    it('starts with "Only when you run it"; a schedule joins the draft at once, a session event waits for its Session', async () => {
+        const change = vi.fn();
+        const screen = await renderScreen(<WorkflowTriggerSection testIDPrefix="starts-workflow" set={null}
+            draft={{ adds: [], updates: {}, removes: [] }} onChangeDraft={change} status="ready" onRetry={vi.fn()}
+            stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />);
+        const starts = () => screen.findAll(node => node.props.testID === 'starts-workflow-triggers-manual-starts'
+            && typeof node.props.onSelect === 'function')[0]!;
+        expect(starts().props.selectedId).toBe('manual');
+        await act(async () => { starts().props.onSelect('sessionEvent'); });
+        expect(change).not.toHaveBeenCalled();
+        expect(screen.getTextContent()).toContain('workflows.triggers.card.incomplete');
+        await screen.unmount();
+
+        const scheduled = await renderScreen(<WorkflowTriggerSection testIDPrefix="starts-workflow" set={null}
+            draft={{ adds: [], updates: {}, removes: [] }} onChangeDraft={change} status="ready" onRetry={vi.fn()}
+            stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />);
+        await act(async () => { scheduled.findAll(node => node.props.testID === 'starts-workflow-triggers-manual-starts'
+            && typeof node.props.onSelect === 'function')[0]!.props.onSelect('schedule'); });
+        expect(change).toHaveBeenCalledTimes(1);
+        expect(change.mock.calls[0]?.[0].adds).toMatchObject([{ trigger: { kind: 'schedule', enabled: true,
+            schedule: { kind: 'cron', scheduleExpr: '0 9 * * *' } } }]);
+    });
+    it('draws no Loading line while a saved workflow\'s Team grants load, so the card keeps its size (07 §7)', async () => {
         const { createWorkflowDefinitionFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
         const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
         const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
@@ -430,13 +453,13 @@ describe('Run a workflow trigger inputs', () => {
         const definition = createWorkflowDefinitionFixture({});
         const screen = await renderScreen(<WorkflowTriggerSection testIDPrefix="grants-workflow" set={null}
             workflowDefinitionId="saved-workflow"
-            draft={{ adds: [], updates: {}, removes: [] }} onChangeDraft={vi.fn()} status="ready" onRetry={vi.fn()}
+            draft={{ adds: [{ clientId: 'daily', trigger: DAILY_TRIGGER }], updates: {}, removes: [] }} onChangeDraft={vi.fn()}
+            status="ready" onRetry={vi.fn()}
             stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={definition.inputs} {...{ definition }} />);
-        await screen.pressByTestIdAsync('grants-workflow-triggers-add');
         await vi.waitFor(() => expect(grantsRequested).toBe(true));
         expect(screen.getTextContent()).not.toContain('common.loading');
     });
-    it.each([false, true])('only offers Roles for used roles and preserves the editor on Back: used=%s', async (used) => {
+    it.each([false, true])('only offers Roles for used roles and keeps the trigger rows while they are open: used=%s', async (used) => {
         const { createWorkflowDefinitionFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
         const { PromptLibraryRowsListResponseV1Schema, sealPromptLibraryContentV1 } = await import('@happier-dev/protocol/prompts/library/promptLibraryRowsV1');
         const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
@@ -451,14 +474,14 @@ describe('Run a workflow trigger inputs', () => {
             credentials: { token: createAccountTokenForTests('account-a', { currentAccount: true }) } });
         onTestFinished(() => connection.dispose());
         const definition = createWorkflowDefinitionFixture({
-            defaults: used ? { engine: { role: 'portable_builder' } } : {},
+            defaults: used ? { roleId: 'portable_builder' } : {},
             roles: [{ roleId: 'portable_builder', name: 'Builder', instructions: 'Build carefully', runsAs: { kind: 'session' } }],
             inputs: [{ name: 'release', valueType: 'string', required: false }],
         });
         const screen = await renderScreen(<WorkflowTriggerSection testIDPrefix="roles-workflow" set={null}
-            draft={{ adds: [], updates: {}, removes: [] }} onChangeDraft={vi.fn()} status="ready" onRetry={vi.fn()}
+            draft={{ adds: [{ clientId: 'daily', trigger: DAILY_TRIGGER }], updates: {}, removes: [] }} onChangeDraft={vi.fn()}
+            status="ready" onRetry={vi.fn()}
             stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={definition.inputs} {...{ definition }} />);
-        await screen.pressByTestIdAsync('roles-workflow-triggers-add');
         const roles = screen.findByTestId('roles-workflow-trigger-roles');
         if (!used) {
             expect(roles).toBeNull();
@@ -466,16 +489,10 @@ describe('Run a workflow trigger inputs', () => {
         }
         expect(roles).not.toBeNull();
         const mainText = screen.getTextContent();
-        expect(mainText.indexOf('workflows.triggers.editor.roles')).toBeLessThan(mainText.indexOf('release'));
-        await act(async () => { screen.findByProps({ accessibilityLabel: 'workflows.triggers.popover.at', value: '09:00' })
-            .props.onChangeText('10:00'); });
-        await act(async () => { screen.findByProps({ accessibilityLabel: 'workflows.triggers.popover.at', value: '10:00' })
-            .props.onBlur(); });
+        expect(mainText.indexOf('workflows.triggers.editor.roles')).toBeLessThan(mainText.indexOf('workflows.triggers.card.anotherWay'));
         await screen.pressByTestIdAsync('roles-workflow-trigger-roles');
         await vi.waitFor(() => expect(screen.findByTestId('roles-workflow-trigger-roles-role-portable_builder-target:background_run')).not.toBeNull());
-        expect(screen.findByTestId('roles-workflow-trigger-popover-submit')).toBeNull();
-        await screen.pressByTestIdAsync('roles-workflow-trigger-popover-back');
-        expect(screen.findByProps({ accessibilityLabel: 'workflows.triggers.popover.at', value: '10:00' })).toBeTruthy();
+        expect(screen.findByProps({ accessibilityLabel: 'workflows.triggers.popover.at', value: '09:00' })).toBeTruthy();
         expect(screen.findByTestId('roles-workflow-trigger-input-release')).not.toBeNull();
     });
     it('turns off a newly authored Event row without discarding its configured source', async () => {
@@ -489,9 +506,7 @@ describe('Run a workflow trigger inputs', () => {
         const screen = await renderScreen(<WorkflowTriggerSection testIDPrefix="event-workflow" set={null}
             draft={{ adds: [{ clientId: 'event-draft', trigger }], updates: {}, removes: [] }} onChangeDraft={change}
             status="ready" onRetry={vi.fn()} stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />);
-        await screen.pressByTestIdAsync('event-workflow-trigger:new:event-draft');
-        expect(screen.findByTestId('event-workflow-trigger-popover-toggle')).toBeNull();
-        await act(async () => { screen.findByTestId('event-workflow-trigger:new:event-draft-switch')!.props.onValueChange(false); });
+        await screen.pressByTestIdAsync('event-workflow-trigger:new:event-draft-toggle');
         expect(change).toHaveBeenCalledWith({ adds: [{ clientId: 'event-draft', trigger: { ...trigger, enabled: false } }],
             updates: {}, removes: [] });
     });

@@ -209,6 +209,23 @@ describe('Workflow existing Session options', () => {
         } finally { await hook.unmount(); storage.setState(previous); }
     });
 
+    it('offers a Session whose Agent cannot be continued as a lifecycle source to listen to', async () => {
+        const previous = storage.getState();
+        const session = createSessionFixture({ id: 'listen-option', serverId: 'home-a', metadata: {
+            ...createSessionFixture().metadata!, flavor: 'claude', claudeSessionId: 'resume-id',
+            claudeTranscriptPath: '/tmp/transcript.jsonl', machineId: 'machine-a', path: '/repo', name: 'Listen',
+        } });
+        storage.setState(state => ({ isDataReady: true, sessions: { [session.id]: session }, sessionListRowsByServerId: {},
+            settings: { ...state.settings, backendEnabledByTargetKey: { ...state.settings.backendEnabledByTargetKey,
+                'agent:happier.agent.claude/claude': false } } }));
+        const continuing = await renderHook(() => useWorkflowExistingSessionOptions({ serverId: 'home-a', machineId: null }));
+        const listening = await renderHook(() => useWorkflowExistingSessionOptions({ serverId: 'home-a', machineId: null, purpose: 'listen' }));
+        try {
+            expect(continuing.getCurrent().existingSessions).toEqual([]);
+            expect(listening.getCurrent().existingSessions.map(option => option.sessionId)).toEqual(['listen-option']);
+        } finally { await continuing.unmount(); await listening.unmount(); storage.setState(previous); }
+    });
+
     it('refreshes translated fallback names when the ready locale changes without Session facts changing', async () => {
         const previous = storage.getState();
         const previousLanguage = getPreferredLanguage();

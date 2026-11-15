@@ -1092,7 +1092,7 @@ function RunsInRows(props: Readonly<{
  * when this device knows it, never as an empty "Choose…". It is called unavailable only on evidence
  * (deleted here, or a settled read that no longer offers it); an unloaded Session is not a missing one.
  */
-function useStoredSessionItem(params: Readonly<{ sessionId: string; serverId: string | null; offered: boolean; settled: boolean }>): DropdownMenuItem | null {
+export function useStoredSessionItem(params: Readonly<{ sessionId: string; serverId: string | null; offered: boolean; settled: boolean }>): DropdownMenuItem | null {
     const nameSource = useSessionDisplayNameSource(params.sessionId, params.serverId);
     const isSessionVisible = useSessionRecordingVisibility();
     const visible = isSessionVisible({ sessionId: params.sessionId, serverId: params.serverId });
