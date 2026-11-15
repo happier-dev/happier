@@ -1906,7 +1906,30 @@ export type ExecutionRunControlActionInputById = {
                         nativeChoices?: null | undefined | {
                             requirementId: string;
                             source: string;
-                            choices: unknown;
+                            choices: {
+                                id: string;
+                                label: string;
+                                decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
+                                scope: 'localPersistent' | 'once' | 'session';
+                                response: {
+                                    approved: boolean;
+                                    reason?: string | undefined;
+                                    answeringClientCategory?: 'android' | 'desktop' | 'ios' | 'web' | undefined;
+                                    mode?: 'acceptEdits' | 'bypassPermissions' | 'default' | 'plan' | 'read-only' | undefined;
+                                    allowedTools?: string[] | undefined;
+                                    decision?: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied' | undefined;
+                                    execPolicyAmendment?: undefined | {
+                                        command: string[];
+                                    };
+                                    updatedPermissions?: unknown;
+                                };
+                                rulePreview?: string | undefined;
+                                allowsFeedback?: boolean | undefined;
+                                followUp?: undefined | {
+                                    actionId: string;
+                                    input: unknown;
+                                };
+                            }[];
                             origin?: undefined | {
                                 sessionId: string;
                                 subagentId?: string | undefined;
@@ -2634,7 +2657,7 @@ export type ExecutionRunControlActionResultById = {
                             nativeChoices?: null | undefined | {
                                 requirementId: string;
                                 source: string;
-                                choices: readonly Readonly<{
+                                choices: {
                                     id: string;
                                     label: string;
                                     decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -2657,7 +2680,7 @@ export type ExecutionRunControlActionResultById = {
                                         actionId: string;
                                         input: JsonValue;
                                     };
-                                }>[];
+                                }[];
                                 origin?: undefined | {
                                     sessionId: string;
                                     subagentId?: string | undefined;
@@ -3444,7 +3467,7 @@ export type ExecutionRunControlActionResultById = {
                             nativeChoices?: null | undefined | {
                                 requirementId: string;
                                 source: string;
-                                choices: readonly Readonly<{
+                                choices: {
                                     id: string;
                                     label: string;
                                     decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -3467,7 +3490,7 @@ export type ExecutionRunControlActionResultById = {
                                         actionId: string;
                                         input: JsonValue;
                                     };
-                                }>[];
+                                }[];
                                 origin?: undefined | {
                                     sessionId: string;
                                     subagentId?: string | undefined;
@@ -4253,7 +4276,7 @@ export type ExecutionRunControlActionResultById = {
                             nativeChoices?: null | undefined | {
                                 requirementId: string;
                                 source: string;
-                                choices: readonly Readonly<{
+                                choices: {
                                     id: string;
                                     label: string;
                                     decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -4276,7 +4299,7 @@ export type ExecutionRunControlActionResultById = {
                                         actionId: string;
                                         input: JsonValue;
                                     };
-                                }>[];
+                                }[];
                                 origin?: undefined | {
                                     sessionId: string;
                                     subagentId?: string | undefined;
@@ -5063,7 +5086,7 @@ export type ExecutionRunControlActionResultById = {
                             nativeChoices?: null | undefined | {
                                 requirementId: string;
                                 source: string;
-                                choices: readonly Readonly<{
+                                choices: {
                                     id: string;
                                     label: string;
                                     decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -5086,7 +5109,7 @@ export type ExecutionRunControlActionResultById = {
                                         actionId: string;
                                         input: JsonValue;
                                     };
-                                }>[];
+                                }[];
                                 origin?: undefined | {
                                     sessionId: string;
                                     subagentId?: string | undefined;
@@ -5925,7 +5948,7 @@ export type ExecutionRunControlActionResultById = {
                     nativeChoices?: null | undefined | {
                         requirementId: string;
                         source: string;
-                        choices: readonly Readonly<{
+                        choices: {
                             id: string;
                             label: string;
                             decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -5948,7 +5971,7 @@ export type ExecutionRunControlActionResultById = {
                                 actionId: string;
                                 input: JsonValue;
                             };
-                        }>[];
+                        }[];
                         origin?: undefined | {
                             sessionId: string;
                             subagentId?: string | undefined;
@@ -6613,7 +6636,7 @@ export type ExecutionRunControlActionResultById = {
                     nativeChoices?: null | undefined | {
                         requirementId: string;
                         source: string;
-                        choices: readonly Readonly<{
+                        choices: {
                             id: string;
                             label: string;
                             decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -6636,7 +6659,7 @@ export type ExecutionRunControlActionResultById = {
                                 actionId: string;
                                 input: JsonValue;
                             };
-                        }>[];
+                        }[];
                         origin?: undefined | {
                             sessionId: string;
                             subagentId?: string | undefined;
@@ -7658,7 +7681,7 @@ export type ExecutionRunControlActionResultById = {
                         nativeChoices?: null | undefined | {
                             requirementId: string;
                             source: string;
-                            choices: readonly Readonly<{
+                            choices: {
                                 id: string;
                                 label: string;
                                 decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -7681,7 +7704,7 @@ export type ExecutionRunControlActionResultById = {
                                     actionId: string;
                                     input: JsonValue;
                                 };
-                            }>[];
+                            }[];
                             origin?: undefined | {
                                 sessionId: string;
                                 subagentId?: string | undefined;
@@ -8468,7 +8491,7 @@ export type ExecutionRunControlActionResultById = {
                         nativeChoices?: null | undefined | {
                             requirementId: string;
                             source: string;
-                            choices: readonly Readonly<{
+                            choices: {
                                 id: string;
                                 label: string;
                                 decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -8491,7 +8514,7 @@ export type ExecutionRunControlActionResultById = {
                                     actionId: string;
                                     input: JsonValue;
                                 };
-                            }>[];
+                            }[];
                             origin?: undefined | {
                                 sessionId: string;
                                 subagentId?: string | undefined;
@@ -9277,7 +9300,7 @@ export type ExecutionRunControlActionResultById = {
                         nativeChoices?: null | undefined | {
                             requirementId: string;
                             source: string;
-                            choices: readonly Readonly<{
+                            choices: {
                                 id: string;
                                 label: string;
                                 decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -9300,7 +9323,7 @@ export type ExecutionRunControlActionResultById = {
                                     actionId: string;
                                     input: JsonValue;
                                 };
-                            }>[];
+                            }[];
                             origin?: undefined | {
                                 sessionId: string;
                                 subagentId?: string | undefined;
@@ -10087,7 +10110,7 @@ export type ExecutionRunControlActionResultById = {
                         nativeChoices?: null | undefined | {
                             requirementId: string;
                             source: string;
-                            choices: readonly Readonly<{
+                            choices: {
                                 id: string;
                                 label: string;
                                 decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -10110,7 +10133,7 @@ export type ExecutionRunControlActionResultById = {
                                     actionId: string;
                                     input: JsonValue;
                                 };
-                            }>[];
+                            }[];
                             origin?: undefined | {
                                 sessionId: string;
                                 subagentId?: string | undefined;

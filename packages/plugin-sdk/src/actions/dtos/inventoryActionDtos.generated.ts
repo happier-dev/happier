@@ -55,16 +55,6 @@ export type InventoryActionInputById = {
                     };
                 }> | undefined;
             };
-            sessionConfigOptionOverrides?: undefined | {
-                [x: string]: unknown;
-                v: 1;
-                updatedAt: number;
-                overrides: Record<string, {
-                    [x: string]: unknown;
-                    updatedAt: number;
-                    value: boolean | null | number | string;
-                }>;
-            };
         };
         agentId?: string | undefined;
         backendTargetKey?: string | undefined;

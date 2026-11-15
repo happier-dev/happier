@@ -326,8 +326,13 @@ export type DiscoveryActionResultById = {
             approval?: undefined | {
                 result: 'none' | 'optional' | 'required';
                 profile?: undefined | {
-                    status: 'available' | 'missing';
+                    status: 'available';
                     requestedId: string;
+                    effectiveId: string;
+                } | {
+                    status: 'missing';
+                    requestedId: string;
+                    effectiveId: 'builtin:read-propose';
                 };
                 flow?: 'blocking' | 'deferred' | undefined;
             };
@@ -488,8 +493,13 @@ export type DiscoveryActionResultById = {
             approval?: undefined | {
                 result: 'none' | 'optional' | 'required';
                 profile?: undefined | {
-                    status: 'available' | 'missing';
+                    status: 'available';
                     requestedId: string;
+                    effectiveId: string;
+                } | {
+                    status: 'missing';
+                    requestedId: string;
+                    effectiveId: 'builtin:read-propose';
                 };
                 flow?: 'blocking' | 'deferred' | undefined;
             };
@@ -4318,11 +4328,11 @@ export type DiscoveryActionResultById = {
                             providerConnectionId: string;
                             modelId: string;
                         };
-                        descriptor: Readonly<{
+                        descriptor: {
                             id: string;
                             name: string;
                             costTier?: 'low' | 'premium' | 'standard' | undefined;
-                            aliases?: readonly string[] | undefined;
+                            aliases?: string[] | undefined;
                             description?: string | undefined;
                             contextWindowTokens?: number | undefined;
                             inlineCompletion?: undefined | {
@@ -4345,28 +4355,28 @@ export type DiscoveryActionResultById = {
                                 maxOutputTokens?: number | undefined;
                             };
                             extendedContextModelId?: string | undefined;
-                            modelOptions?: readonly Readonly<{
+                            modelOptions?: undefined | {
                                 id: string;
                                 name: string;
-                                description?: string | undefined;
                                 type: string;
                                 currentValue: string;
-                                options?: readonly Readonly<{
+                                description?: string | undefined;
+                                options?: undefined | {
                                     value: string;
                                     name: string;
                                     description?: string | undefined;
-                                }>[] | undefined;
-                                overridesWhenOn?: Readonly<{
-                                    optionIds: readonly string[];
+                                }[];
+                                overridesWhenOn?: undefined | {
+                                    optionIds: string[];
                                     forcedValue?: string | undefined;
-                                }> | undefined;
-                            }>[] | undefined;
-                            capabilities?: Readonly<{
+                                };
+                            }[];
+                            capabilities?: undefined | {
                                 toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                                 reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                                 structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                            }> | undefined;
-                        }>;
+                            };
+                        };
                         sources: {
                             manual: boolean;
                             static: boolean;
@@ -4535,11 +4545,11 @@ export type DiscoveryActionResultById = {
                             catalogSourceKey: string;
                         };
                         requestPolicySupport?: undefined | {
-                            descriptor: Readonly<{
+                            descriptor: {
                                 id: string;
                                 name: string;
                                 costTier?: 'low' | 'premium' | 'standard' | undefined;
-                                aliases?: readonly string[] | undefined;
+                                aliases?: string[] | undefined;
                                 description?: string | undefined;
                                 contextWindowTokens?: number | undefined;
                                 inlineCompletion?: undefined | {
@@ -4562,28 +4572,28 @@ export type DiscoveryActionResultById = {
                                     maxOutputTokens?: number | undefined;
                                 };
                                 extendedContextModelId?: string | undefined;
-                                modelOptions?: readonly Readonly<{
+                                modelOptions?: undefined | {
                                     id: string;
                                     name: string;
-                                    description?: string | undefined;
                                     type: string;
                                     currentValue: string;
-                                    options?: readonly Readonly<{
+                                    description?: string | undefined;
+                                    options?: undefined | {
                                         value: string;
                                         name: string;
                                         description?: string | undefined;
-                                    }>[] | undefined;
-                                    overridesWhenOn?: Readonly<{
-                                        optionIds: readonly string[];
+                                    }[];
+                                    overridesWhenOn?: undefined | {
+                                        optionIds: string[];
                                         forcedValue?: string | undefined;
-                                    }> | undefined;
-                                }>[] | undefined;
-                                capabilities?: Readonly<{
+                                    };
+                                }[];
+                                capabilities?: undefined | {
                                     toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                                     reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                                     structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                                }> | undefined;
-                            }>;
+                                };
+                            };
                             application: {
                                 implementationIdentity: {
                                     pluginId: string;
@@ -4811,11 +4821,11 @@ export type DiscoveryActionResultById = {
                                 providerTicket: string;
                             };
                         };
-                        descriptor: Readonly<{
+                        descriptor: {
                             id: string;
                             name: string;
                             costTier?: 'low' | 'premium' | 'standard' | undefined;
-                            aliases?: readonly string[] | undefined;
+                            aliases?: string[] | undefined;
                             description?: string | undefined;
                             contextWindowTokens?: number | undefined;
                             inlineCompletion?: undefined | {
@@ -4838,28 +4848,28 @@ export type DiscoveryActionResultById = {
                                 maxOutputTokens?: number | undefined;
                             };
                             extendedContextModelId?: string | undefined;
-                            modelOptions?: readonly Readonly<{
+                            modelOptions?: undefined | {
                                 id: string;
                                 name: string;
-                                description?: string | undefined;
                                 type: string;
                                 currentValue: string;
-                                options?: readonly Readonly<{
+                                description?: string | undefined;
+                                options?: undefined | {
                                     value: string;
                                     name: string;
                                     description?: string | undefined;
-                                }>[] | undefined;
-                                overridesWhenOn?: Readonly<{
-                                    optionIds: readonly string[];
+                                }[];
+                                overridesWhenOn?: undefined | {
+                                    optionIds: string[];
                                     forcedValue?: string | undefined;
-                                }> | undefined;
-                            }>[] | undefined;
-                            capabilities?: Readonly<{
+                                };
+                            }[];
+                            capabilities?: undefined | {
                                 toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                                 reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                                 structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                            }> | undefined;
-                        }>;
+                            };
+                        };
                         application: {
                             implementationIdentity: {
                                 pluginId: string;

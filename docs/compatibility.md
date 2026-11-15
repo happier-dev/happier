@@ -80,8 +80,12 @@ rather than treating invalid policy as Directly. The optional provisioner
 `sessionPlacement` declaration remains closed, including its existing predicate
 grammar, and is not safely ignorable by placement consumers. SDK and host
 declarations move together under the unpublished development direct cut. The
-scoped clean `../0.2` frontier at
-`c680de922e4475b7dfbaeedcd63a8af7d985d3c3` has neither seam; reverse development
+optional provisioner `preparation` declaration and its build/inspect/destroy
+role schemas follow the same cut: older strict readers reject the declaration;
+the SDK and host publish the canonical qualified-reference contracts together.
+This contract declaration does not supply the preset operation's effect custody.
+The scoped clean `../0.2` frontier at
+`c680de922e4475b7dfbaeedcd63a8af7d985d3c3` has none of these declarations; reverse development
 SDK writes remain unsupported. Package SemVer and the existing author-contract
 epoch are separate; this addition introduces no new epoch or migration.
 

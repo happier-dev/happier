@@ -1150,9 +1150,7 @@ export type SessionControlActionInputById = {
     readonly "session.permission_mode.set": {
         sessionId: string;
         permissionMode: unknown;
-        applyTiming?: 'immediate' | 'next_prompt' | undefined;
-    } & {
-        clientId?: string | undefined;
+        applyTiming?: 'immediate' | undefined;
     };
     readonly "session.model.set": {
         [x: string]: unknown;
@@ -3083,7 +3081,7 @@ export type SessionControlActionResultById = {
             nativeChoices?: undefined | {
                 requirementId: string;
                 source: string;
-                choices: readonly Readonly<{
+                choices: {
                     id: string;
                     label: string;
                     decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -3106,7 +3104,7 @@ export type SessionControlActionResultById = {
                         actionId: string;
                         input: JsonValue;
                     };
-                }>[];
+                }[];
                 origin?: undefined | {
                     sessionId: string;
                     subagentId?: string | undefined;
@@ -3770,7 +3768,7 @@ export type SessionControlActionResultById = {
                         nativeChoices?: undefined | {
                             requirementId: string;
                             source: string;
-                            choices: readonly Readonly<{
+                            choices: {
                                 id: string;
                                 label: string;
                                 decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -3793,7 +3791,7 @@ export type SessionControlActionResultById = {
                                     actionId: string;
                                     input: JsonValue;
                                 };
-                            }>[];
+                            }[];
                             origin?: undefined | {
                                 sessionId: string;
                                 subagentId?: string | undefined;

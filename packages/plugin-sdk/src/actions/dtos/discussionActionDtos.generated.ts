@@ -2198,7 +2198,6 @@ export type DiscussionActionResultById = {
                                 updatedAtMs: number;
                             }>;
                             workspaceWrites?: 'allow' | 'deny' | undefined;
-                            nativeSandbox?: 'off' | 'on' | undefined;
                             providerSessionResume?: undefined | {
                                 kind: 'provider_session.v1';
                                 providerSessionId: string;
@@ -2507,7 +2506,6 @@ export type DiscussionActionResultById = {
                                 updatedAtMs: number;
                             }>;
                             workspaceWrites?: 'allow' | 'deny' | undefined;
-                            nativeSandbox?: 'off' | 'on' | undefined;
                             providerSessionResume?: undefined | {
                                 kind: 'provider_session.v1';
                                 providerSessionId: string;
@@ -8734,7 +8732,6 @@ export type DiscussionActionResultById = {
                         updatedAtMs: number;
                     }>;
                     workspaceWrites?: 'allow' | 'deny' | undefined;
-                    nativeSandbox?: 'off' | 'on' | undefined;
                     providerSessionResume?: undefined | {
                         kind: 'provider_session.v1';
                         providerSessionId: string;
@@ -8998,7 +8995,6 @@ export type DiscussionActionResultById = {
                             updatedAtMs: number;
                         }>;
                         workspaceWrites?: 'allow' | 'deny' | undefined;
-                        nativeSandbox?: 'off' | 'on' | undefined;
                         providerSessionResume?: undefined | {
                             kind: 'provider_session.v1';
                             providerSessionId: string;
@@ -9501,7 +9497,6 @@ export type DiscussionActionResultById = {
                         updatedAtMs: number;
                     }>;
                     workspaceWrites?: 'allow' | 'deny' | undefined;
-                    nativeSandbox?: 'off' | 'on' | undefined;
                     providerSessionResume?: undefined | {
                         kind: 'provider_session.v1';
                         providerSessionId: string;

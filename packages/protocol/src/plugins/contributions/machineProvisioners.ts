@@ -3,12 +3,12 @@ import { z } from '../../zodRuntimePolicy.js';
 import { HomeApplicationOriginV1Schema } from '../../auth/accountDirectory.js';
 import { isNormalizedPluginJsonSchema, isRecursivelyClosedPluginJsonSchemaV2 as isClosedSchema } from './jsonSchema.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
-import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
+import { jsonSchemaContainsReference, zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
 import * as mini from '../../zodRuntimePolicy.js';
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES } from '../../actions/externalActionLimits.js';
 import { asProtocolZod, projectZodProtocolSchema } from '../actions/internalProtocolZodAdapter.js';
-import { PluginContributionIdentityV1Schema, PluginContributionLocalIdSchema } from '../contributionIdentity.js';
+import { PluginContributionIdentityV1Schema, PluginContributionLocalIdSchema, type PluginContributionIdentityV1 } from '../contributionIdentity.js';
 import { PluginActionIconV2Schema, type PluginActionContributionV2 } from '../actions/v2.js';
 import { expandDeclaredInputAlternatives, resolveDeclaredInputLeaves } from '../actions/inputSchemaTraversal.js';
 import { InputPathSchema, InputPredicateSchema, evaluateInputPredicate, readInputPath, readInputPredicatePaths } from '../../inputs/inputPredicates.js';
@@ -21,17 +21,22 @@ import { QualifiedConnectedAccountPurposeV1Schema } from '../../connect/connecte
 import { QualifiedConnectedAccountRefSchema } from '../../connect/qualifiedConnectedAccountPersistence.js';
 import { ManagedControllerV1Schema } from '../../machines/managed/managedMachineV1.js';
 import { DevcontainerEffectReviewV1Schema } from '../../machines/managed/devcontainerV1.js';
+import { ManagedGuestCliBuildInputV1Schema as managedGuestCliBuildInputSchema,
+  ManagedMachinePresetPreparationBuildInputV1Schema as managedPresetPreparationBuildInputSchema } from '../../machines/managed/managedMachinePresetPreparationBuildInputV1.js';
+export type { ManagedGuestCliBuildInputV1, ManagedMachinePresetPreparationBuildInputV1 } from '../../machines/managed/managedMachinePresetPreparationBuildInputV1.js';
 import { BillingCapabilitiesV1Schema, RetentionCapabilitiesV1Schema, ProviderPriceV1Schema,
   ManagedPrerequisiteV1Schema, ManagedLocalResourceFactsV1Schema, ProviderNativeOptionFactsV1Schema, MachineProvisionerNativeCauseV1Schema } from '../../machines/managed/providerFactsV1.js';
 export type { MachineProvisionerNativeCauseV1 } from '../../machines/managed/providerFactsV1.js';
-import { AcquireResultV1Schema, ManagedNativeOperationReferenceV1Schema, ManagedResourceV1Schema, ManagedRecoveryHintV1Schema, ManagedBootstrapCarrierV1Schema, ProviderObservationV1Schema, SharedSavedSecretRefV1Schema, type AcquireResultV1 } from '../../machines/managed/providerFactsV1.js';
+import { AcquireResultV1Schema, ManagedNativeOperationReferenceV1Schema, ManagedResourceV1Schema, ManagedRecoveryHintV1Schema, ManagedBootstrapCarrierV1Schema, ProviderObservationV1Schema, SharedSavedSecretRefV1Schema, type AcquireResultV1, type ManagedNativeOperationReferenceV1 } from '../../machines/managed/providerFactsV1.js';
 import { MachineProvisionerSizeV1Schema as sizeSchema, MACHINE_PROVISIONER_SIZE_DIMENSIONS_V1, type MachineProvisionerSizeDimensionV1, type MachineProvisionerSizeV1 } from '../../machines/managed/providerFactsV1.js';
 export { MACHINE_PROVISIONER_SIZE_DIMENSIONS_V1, type MachineProvisionerSizeDimensionV1, type MachineProvisionerSizeV1 } from '../../machines/managed/providerFactsV1.js';
-import { createProtocolComposableSchema, ProtocolValidationError, defineProtocolObject, defineProtocolString, defineProtocolNumber, defineProtocolArray, defineProtocolLiteral, defineProtocolUnion, defineProtocolJsonValue, normalizePluginJsonSchema, pluginJsonValuesEqual, type ProtocolComposableSchema, type ProtocolJsonValue } from '../actions/protocolComposableSchema.js';
+import { createProtocolComposableSchema, ProtocolValidationError, defineProtocolObject, defineProtocolString, defineProtocolNumber, defineProtocolArray, defineProtocolLiteral, defineProtocolUnion, defineProtocolJsonValue, embedProtocolJsonSchema, normalizePluginJsonSchema, pluginJsonValuesEqual, type ProtocolComposableSchema, type ProtocolJsonValue, type ProtocolSchemaSafeParseResult } from '../actions/protocolComposableSchema.js';
+import * as preparationSchemas from './machineProvisionerPreparationSchemas.js';
+export * from './machineProvisionerPreparationSchemas.js';
 
-export const MACHINE_PROVISIONER_EFFECT_ROLES_V1 = ['acquire', 'bootstrap', 'exec', 'putFile', 'stream', 'power', 'destroy', 'rebuild', 'resize', 'snapshot', 'nativeCredentialApply', 'renew'] as const;
+export const MACHINE_PROVISIONER_EFFECT_ROLES_V1 = ['acquire', 'bootstrap', 'exec', 'putFile', 'stream', 'power', 'destroy', 'rebuild', 'resize', 'snapshot', 'nativeCredentialApply', 'renew', 'preparationBuild', 'preparationDestroy'] as const;
 export type MachineProvisionerEffectRoleV1 = typeof MACHINE_PROVISIONER_EFFECT_ROLES_V1[number];
-export type MachineProvisionerRoleV1 = 'check' | 'options' | 'inspect' | 'reconcile' | 'cleanup' | MachineProvisionerEffectRoleV1;
+export type MachineProvisionerRoleV1 = 'check' | 'options' | 'inspect' | 'reconcile' | 'cleanup' | 'preparationInspect' | MachineProvisionerEffectRoleV1;
 
 const strictPortableSchema = lazyZodSchema(() => PluginJsonSchemaV2Schema.check(z.superRefine((value, context) => {
   try {
@@ -137,6 +142,11 @@ export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.stri
   credentialPurposeRequirements: z.optional(z.array(z.strictObject({ purpose: local(), optionalWhen: InputPredicateSchema }))),
   reconciliation: z.optional(z.strictObject({ nativeOperationSchema: strictPortableSchema, action: local(), cleanup: z.optional(local()),
     continueAcquire: z.optional(z.literal(true)) })),
+  preparation: z.optional(z.strictObject({
+    inputSchema: strictPortableSchema, artifactSchema: strictPortableSchema, nativeOperationSchema: strictPortableSchema,
+    artifactLaunchPath: InputPathSchema,
+    actions: z.strictObject({ build: local(), inspect: local(), destroy: local() }),
+  })),
 }).check(z.superRefine((descriptor, context) => {
   if (descriptor.sessionPlacement?.when && readInputPredicatePaths(descriptor.sessionPlacement.when)
     .some(path => !resolveDeclaredInputLeaves(descriptor.launchSchema, path)?.length)) {
@@ -156,6 +166,9 @@ export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.stri
   if (descriptor.resourceIdPath !== undefined && !resolveDeclaredInputLeaves(descriptor.resourceSchema, descriptor.resourceIdPath)
     ?.every(leaf => leaf.type === 'string' || leaf.type === 'integer' || leaf.type === 'number')) {
     context.addIssue({ code: 'custom', path: ['resourceIdPath'], message: 'A native resource id path must name a text or number field of every resource arm.' });
+  }
+  if (descriptor.preparation && !resolveDeclaredInputLeaves(descriptor.preparation.artifactSchema, descriptor.preparation.artifactLaunchPath)?.length) {
+    context.addIssue({ code: 'custom', path: ['preparation', 'artifactLaunchPath'], message: 'Prepared launch paths require declared artifact fields.' });
   }
   if (descriptor.bootstrapCredential?.kind === 'native-token' && !descriptor.bootstrapTransport) {
     context.addIssue({ code: 'custom', path: ['bootstrapTransport'], message: 'Native bootstrap tokens require native exec and file transport.' });
@@ -240,7 +253,22 @@ export function readMachineProvisionerActionRolesV1(descriptor: MachineProvision
     ...(descriptor.reconciliation ? [{ role: 'reconcile' as const, action: descriptor.reconciliation.action }] : []),
     ...(descriptor.reconciliation?.cleanup ? [{ role: 'cleanup' as const, action: descriptor.reconciliation.cleanup }] : []),
     ...(descriptor.nativeCredentialDelivery ? [{ role: 'nativeCredentialApply' as const, action: descriptor.nativeCredentialDelivery.apply }] : []),
+    ...(descriptor.preparation ? [
+      { role: 'preparationBuild' as const, action: descriptor.preparation.actions.build },
+      { role: 'preparationInspect' as const, action: descriptor.preparation.actions.inspect },
+      { role: 'preparationDestroy' as const, action: descriptor.preparation.actions.destroy },
+    ] : []),
   ]);
+}
+
+/** The reference graph and role admission use the same declaration address. */
+export function readMachineProvisionerActionRolePathV1(descriptor: MachineProvisionerContributionV1, role: MachineProvisionerRoleV1): readonly string[] {
+  if (role === 'preparationBuild') return ['preparation', 'actions', 'build'];
+  if (role === 'preparationInspect') return ['preparation', 'actions', 'inspect'];
+  if (role === 'preparationDestroy') return ['preparation', 'actions', 'destroy'];
+  if (role === 'nativeCredentialApply') return ['nativeCredentialDelivery', 'apply'];
+  if (role === 'reconcile' || role === 'cleanup') return ['reconciliation', role === 'cleanup' ? 'cleanup' : 'action'];
+  return [descriptor.actions[role as keyof typeof descriptor.actions] ? 'actions' : 'bootstrapTransport', role];
 }
 
 export function validateMachineProvisionerContributionsV1(value: Readonly<{ machineProvisioners: readonly MachineProvisionerContributionV1[]; actions: readonly PluginActionContributionV2[] }>, context: z.core.$RefinementCtx): void {
@@ -250,9 +278,7 @@ export function validateMachineProvisionerContributionsV1(value: Readonly<{ mach
     seen.add(descriptor.id);
     for (const binding of readMachineProvisionerActionRolesV1(descriptor)) {
       const action = value.actions.find(candidate => candidate.id === binding.action);
-      const path = ['machineProvisioners', index, ...(binding.role === 'nativeCredentialApply' ? ['nativeCredentialDelivery', 'apply']
-        : binding.role === 'reconcile' || binding.role === 'cleanup' ? ['reconciliation', binding.role === 'cleanup' ? 'cleanup' : 'action']
-        : [descriptor.actions[binding.role as keyof typeof descriptor.actions] ? 'actions' : 'bootstrapTransport', binding.role])];
+      const path = ['machineProvisioners', index, ...readMachineProvisionerActionRolePathV1(descriptor, binding.role)];
       if (!action || action.execution.target !== 'daemon' && action.execution.target !== 'account') {
         context.addIssue({ code: 'custom', path, message: 'Machine provisioner roles require a declared same-plugin Account or daemon Action.' });
         continue;
@@ -280,7 +306,7 @@ export function validateMachineProvisionerContributionsV1(value: Readonly<{ mach
         context.addIssue({ code: 'custom', path, message: 'Provisioner role results must use their canonical declared contract.' });
       }
       if (!isClosedSchema(action.inputSchema)) context.addIssue({ code: 'custom', path, message: 'Provisioner role input schemas must be closed.' });
-      if (['check', 'options', 'inspect', 'reconcile', 'cleanup'].includes(binding.role) && action.dangerLevel !== 'safe') context.addIssue({ code: 'custom', path, message: 'Read-only provisioner roles must be safe.' });
+      if (['check', 'options', 'inspect', 'reconcile', 'cleanup', 'preparationInspect'].includes(binding.role) && action.dangerLevel !== 'safe') context.addIssue({ code: 'custom', path, message: 'Read-only provisioner roles must be safe.' });
     }
     if (descriptor.nativeDurationInput) {
       const binding = descriptor.nativeDurationInput;
@@ -559,6 +585,54 @@ export type MachineProvisionersListResultV1 = z.infer<typeof MachineProvisioners
 function projectRoleSchema<T>(schema: z.core.$ZodType<T>): ProtocolComposableSchema<T, T> {
   return projectZodProtocolSchema(schema);
 }
+export const ManagedGuestCliBuildInputV1Schema = projectRoleSchema(lazyDefinition(() => managedGuestCliBuildInputSchema));
+export const ManagedMachinePresetPreparationBuildInputV1Schema = projectRoleSchema(lazyDefinition(() => managedPresetPreparationBuildInputSchema));
+const preparationReferenceProtocolSchema = projectRoleSchema(ManagedNativeOperationReferenceV1Schema);
+
+function preparationContractFailure(path: readonly string[], message: string): Readonly<{ success: false; error: ProtocolValidationError }> {
+  return { success: false, error: new ProtocolValidationError([{ code: 'custom', path, message }]) };
+}
+
+/** Contextual validation at the selected provisioner's plugin contract boundary. */
+export function readMachineProvisionerPreparationReferenceV1(input: Readonly<{
+  provisioner: PluginContributionIdentityV1;
+  descriptor: MachineProvisionerContributionV1;
+  reference: unknown;
+  kind: 'artifact' | 'nativeOperation';
+}>): ProtocolSchemaSafeParseResult<ManagedNativeOperationReferenceV1> {
+  const declaration = input.descriptor.preparation;
+  if (!declaration || input.provisioner.localId !== input.descriptor.id) {
+    return preparationContractFailure(['contributionRef'], 'Preparation requires the selected provisioner declaration.');
+  }
+  const reference = preparationReferenceProtocolSchema.safeParse(input.reference);
+  if (!reference.success) return reference;
+  if (reference.data.contributionRef.pluginId !== input.provisioner.pluginId
+    || reference.data.contributionRef.localId !== input.provisioner.localId
+    || reference.data.schemaVersion !== input.descriptor.schemaVersion) {
+    return preparationContractFailure(['contributionRef'], 'Prepared references must belong to the selected provisioner and schema version.');
+  }
+  const nativeSchema = input.kind === 'artifact' ? declaration.artifactSchema : declaration.nativeOperationSchema;
+  if (!compilePluginJsonSchema(nativeSchema)(reference.data.value)) {
+    return preparationContractFailure(['value'], 'Prepared references must match their declared native schema.');
+  }
+  return reference;
+}
+
+/** A provider returns complete launch choices; the preset owner never merges or infers native fields. */
+export function readMachineProvisionerPreparedLaunchV1(input: Readonly<{
+  provisioner: PluginContributionIdentityV1;
+  descriptor: MachineProvisionerContributionV1;
+  artifact: unknown;
+}>): ProtocolSchemaSafeParseResult<ProtocolJsonValue> {
+  const artifact = readMachineProvisionerPreparationReferenceV1({ ...input, reference: input.artifact, kind: 'artifact' });
+  if (!artifact.success) return artifact;
+  const launch = readInputPath(artifact.data.value, input.descriptor.preparation!.artifactLaunchPath);
+  if (launch === undefined || !compilePluginJsonSchema(input.descriptor.launchSchema)(launch)) {
+    return preparationContractFailure(['value', input.descriptor.preparation!.artifactLaunchPath], 'Prepared artifacts must contain complete declared launch choices.');
+  }
+  // Traversal selects a child of the reference's already validated JSON value.
+  return { success: true, data: launch as ProtocolJsonValue };
+}
 export const MachineProvisionerCheckInputV1Schema = defineProtocolObject({}, { policy: 'closed' });
 export const MachineProvisionerNativeCauseProtocolV1Schema = projectRoleSchema(MachineProvisionerNativeCauseV1Schema);
 export const MachineProvisionerCheckResultProtocolV1Schema = projectRoleSchema(MachineProvisionerCheckResultV1Schema);
@@ -673,8 +747,31 @@ function acquireResultProjection(resource: PluginJsonSchemaV2, nativeOperation?:
     return { ...variant, properties: { ...variant.properties, [key]: { ...envelope, properties: { ...envelope.properties, value: nestedProjection(declared) } } } };
   }) };
 }
+function preparationRoleProjection(descriptor: MachineProvisionerContributionV1, schema: PluginJsonSchemaV2): PluginJsonSchemaV2 {
+  const declaration = descriptor.preparation!;
+  function embed(native: PluginJsonSchemaV2, path: readonly (string | number)[]) {
+    const projection = nestedProjection(native);
+    return jsonSchemaContainsReference(projection) ? embedProtocolJsonSchema(projection, path) : projection;
+  }
+  function project(node: PluginJsonSchemaV2, path: readonly (string | number)[]): PluginJsonSchemaV2 {
+    if (node.anyOf) return { ...node, anyOf: node.anyOf.map((arm, index) => project(arm, [...path, 'anyOf', index])) };
+    if (!node.properties) return node;
+    return { ...node, properties: Object.fromEntries(Object.entries(node.properties).map(([key, property]) => {
+      const propertyPath = [...path, 'properties', key];
+      if (key === 'input') return [key, embed(declaration.inputSchema, propertyPath)];
+      const native = key === 'artifact' ? declaration.artifactSchema
+        : key === 'nativeOperation' || key === 'nativeOperationRef' ? declaration.nativeOperationSchema : undefined;
+      return [key, native ? { ...property, properties: { ...property.properties,
+        value: embed(native, [...propertyPath, 'properties', 'value']) } } : property];
+    })) };
+  }
+  return project(schema, []);
+}
 function machineProvisionerRoleResultProjection(descriptor: MachineProvisionerContributionV1, role: MachineProvisionerRoleV1): PluginJsonSchemaV2 {
   switch (role) {
+    case 'preparationBuild': return preparationRoleProjection(descriptor, preparationSchemas.MachineProvisionerPreparationBuildResultV1Schema.jsonSchema);
+    case 'preparationInspect': return preparationRoleProjection(descriptor, preparationSchemas.MachineProvisionerPreparationInspectResultV1Schema.jsonSchema);
+    case 'preparationDestroy': return preparationRoleProjection(descriptor, preparationSchemas.MachineProvisionerPreparationDestroyResultV1Schema.jsonSchema);
     case 'check': return MachineProvisionerCheckResultProtocolV1Schema.jsonSchema;
     case 'options': return MachineProvisionerOptionsResultProtocolV1Schema.jsonSchema;
     case 'acquire': case 'reconcile': return acquireResultProjection(descriptor.resourceSchema, descriptor.reconciliation?.nativeOperationSchema);
@@ -713,6 +810,9 @@ function genericReconciliationRoleSchemas() {
     resource: MachineProvisionerCheckInputV1Schema, nativeOperation: MachineProvisionerCheckInputV1Schema });
 }
 function machineProvisionerRoleInputProjection(descriptor: MachineProvisionerContributionV1, role: MachineProvisionerRoleV1): PluginJsonSchemaV2 | undefined {
+  if (role === 'preparationBuild') return preparationRoleProjection(descriptor, preparationSchemas.MachineProvisionerPreparationBuildInputV1Schema.jsonSchema);
+  if (role === 'preparationInspect') return preparationRoleProjection(descriptor, preparationSchemas.MachineProvisionerPreparationInspectInputV1Schema.jsonSchema);
+  if (role === 'preparationDestroy') return preparationRoleProjection(descriptor, preparationSchemas.MachineProvisionerPreparationDestroyInputV1Schema.jsonSchema);
   // Options deliberately owns its provider-declared query, not a universal wrapper.
   if (role === 'options') return undefined;
   if (role === 'nativeCredentialApply') return nativeCredentialApplyInputProjection(descriptor.resourceSchema);

@@ -19,6 +19,160 @@ import { PluginManifestV2Schema } from '../manifest/v2.js';
 import { PluginContributesV2Schema } from './v2.js';
 import { compilePluginJsonSchema } from '../actions/jsonSchemaValidation.js';
 import { ManagedControllerIntentReportV1Schema, ManagedControllerReportV1Schema } from '../../machines/managed/actionsV1.js';
+import { PLUGIN_CONTRIBUTION_CATALOG_V2 } from './catalog.js';
+
+it('admits optional preparation declarations and resolves their three same-plugin roles', () => {
+  const descriptor = nativeDurationManifest().contributes.machineProvisioners[0]!;
+  const native = defineProtocolObject({ name: defineProtocolString() }, { policy: 'closed' }).jsonSchema;
+  const preparation = { inputSchema: native, artifactSchema: native, nativeOperationSchema: native, artifactLaunchPath: 'name',
+    actions: { build: 'prepare-build', inspect: 'prepare-inspect', destroy: 'prepare-destroy' } };
+  const parsed = provisioners.MachineProvisionerContributionV1Schema.safeParse({ ...descriptor, preparation });
+  expect(parsed.success).toBe(true);
+  if (!parsed.success) return;
+  expect(provisioners.readMachineProvisionerActionRolesV1(parsed.data)).toEqual(expect.arrayContaining([
+    { role: 'preparationBuild', action: 'prepare-build' },
+    { role: 'preparationInspect', action: 'prepare-inspect' },
+    { role: 'preparationDestroy', action: 'prepare-destroy' },
+  ]));
+  expect(provisioners.MachineProvisionerContributionV1Schema.safeParse({ ...descriptor,
+    preparation: { ...preparation, inputSchema: { type: 'object' } } }).success).toBe(false);
+});
+
+it('validates preparation payloads and retains native identity for every uncertain result', () => {
+  const input = defineProtocolObject({ dockerfileContent: defineProtocolString() }, { policy: 'closed' });
+  const artifact = defineProtocolObject({ id: defineProtocolString() }, { policy: 'closed' });
+  const nativeOperation = defineProtocolObject({ name: defineProtocolString() }, { policy: 'closed' });
+  const roles = provisioners.defineMachineProvisionerPreparationSchemas({ input, artifact, nativeOperation });
+  const reference = { contributionRef: { pluginId: 'test.preparation', localId: 'guest' }, schemaVersion: 1 };
+  const artifactRef = { ...reference, value: { id: 'snapshot-1' } };
+  const nativeOperationRef = { ...reference, value: { name: 'build-1' } };
+  const cases = [
+    [roles.buildInput, [{ operationId: 'operation-1', input: { dockerfileContent: 'FROM scratch' } }]],
+    [roles.inspectInput, [{ nativeOperation: nativeOperationRef },
+      { operationId: 'operation-1', input: { dockerfileContent: 'FROM scratch' } }]],
+    [roles.destroyInput, [{ artifact: artifactRef }, { nativeOperation: nativeOperationRef },
+      { artifact: artifactRef, nativeOperation: nativeOperationRef }]],
+    [roles.buildResult, [{ kind: 'ready', artifact: artifactRef }, { kind: 'pending', nativeOperationRef },
+      { kind: 'refused', code: 'provider_refused', status: { key: 'preparation.refused', fallback: 'Refused {scope}', params: { scope: 'build' } } },
+      { kind: 'unknown', code: 'post_lost', nativeOperationRef }]],
+    [roles.inspectResult, [{ kind: 'ready', artifact: artifactRef }, { kind: 'pending', nativeOperationRef },
+      { kind: 'failed', code: 'build_failed', nativeOperationRef }, { kind: 'absent' },
+      { kind: 'unknown', code: 'get_lost', nativeOperationRef }]],
+    [roles.destroyResult, [{ kind: 'confirmed' }, { kind: 'pending', nativeOperationRef },
+      { kind: 'refused', code: 'wrong_organization' }, { kind: 'unknown', code: 'delete_lost', nativeOperationRef }]],
+  ] as const;
+  for (const [schema, values] of cases) {
+    const validate = compilePluginJsonSchema(schema.jsonSchema);
+    for (const value of values) {
+      expect(schema.parse(value)).toEqual(value);
+      expect(validate(value)).toBe(true);
+      expect(schema.safeParse({ ...value, vendorErrorReason: 'private log' }).success).toBe(false);
+      expect(validate({ ...value, vendorErrorReason: 'private log' })).toBe(false);
+    }
+  }
+  for (const schema of [roles.buildResult, roles.inspectResult, roles.destroyResult]) {
+    expect(schema.safeParse({ kind: 'unknown', code: 'lost' }).success).toBe(false);
+    expect(compilePluginJsonSchema(schema.jsonSchema)({ kind: 'unknown', code: 'lost' })).toBe(false);
+  }
+  for (const schema of [roles.buildResult, roles.destroyResult]) {
+    expect(schema.safeParse({ kind: 'refused', code: 'provider_refused', status: 403 }).success).toBe(false);
+    expect(compilePluginJsonSchema(schema.jsonSchema)({ kind: 'refused', code: 'provider_refused', status: 403 })).toBe(false);
+  }
+  for (const value of [{}, { artifact: { ...artifactRef, schemaVersion: 0 } },
+    { artifact: { ...artifactRef, contributionRef: { pluginId: 'bad/id', localId: 'guest' } } },
+    { nativeOperation: { ...nativeOperationRef, value: { id: 'wrong-native-shape' } } }]) {
+    expect(roles.destroyInput.safeParse(value).success).toBe(false);
+    expect(compilePluginJsonSchema(roles.destroyInput.jsonSchema)(value)).toBe(false);
+  }
+  expect(roles.buildInput.safeParse({ operationId: 'op', input: { dockerfileContent: 'FROM scratch', credential: 'forbidden' } }).success).toBe(false);
+  expect(roles.buildResult.safeParse({ kind: 'ready', artifact: nativeOperationRef }).success).toBe(false);
+});
+
+it('admits preparation Actions only with canonical schemas, existing local references and a safe inspect role', () => {
+  const manifest = nativeDurationManifest();
+  const nativeValue = defineProtocolObject({ name: defineProtocolString() }, { policy: 'closed' });
+  // Portable provider declarations may use document-local references. Embedding
+  // a role must keep those references scoped to the declared native value.
+  const native = createProtocolComposableSchema<{ name: string }, { name: string }>({ type: 'object',
+    properties: { name: { $ref: '#/definitions/name' } }, required: ['name'], additionalProperties: false,
+    definitions: { name: { type: 'string' } },
+  }, value => nativeValue.safeParse(value));
+  const roles = provisioners.defineMachineProvisionerPreparationSchemas({ input: native, artifact: native, nativeOperation: native });
+  const descriptor = manifest.contributes.machineProvisioners[0]!;
+  const preparation = { inputSchema: native.jsonSchema, artifactSchema: native.jsonSchema, nativeOperationSchema: native.jsonSchema, artifactLaunchPath: 'name',
+    actions: { build: 'prepare-build', inspect: 'prepare-inspect', destroy: 'prepare-destroy' } };
+  const action = manifest.contributes.actions[0]!;
+  const prepared = { ...manifest, contributes: { ...manifest.contributes,
+    machineProvisioners: [{ ...descriptor, preparation }], actions: [...manifest.contributes.actions,
+      { ...action, id: 'prepare-build', inputSchema: roles.buildInput.jsonSchema, resultSchema: roles.buildResult.jsonSchema },
+      { ...action, id: 'prepare-inspect', inputSchema: roles.inspectInput.jsonSchema, resultSchema: roles.inspectResult.jsonSchema },
+      { ...action, id: 'prepare-destroy', inputSchema: roles.destroyInput.jsonSchema, resultSchema: roles.destroyResult.jsonSchema },
+    ] } };
+  const admitted = PluginManifestV2Schema.parse(prepared);
+  const ref = { contributionRef: { pluginId: manifest.id, localId: descriptor.id }, schemaVersion: 1, value: { name: 'build-1' } };
+  for (const [schema, value] of [
+    [roles.buildInput, { operationId: 'operation-1', input: { name: 'build-1' } }],
+    [roles.buildResult, { kind: 'unknown', code: 'post_lost', nativeOperationRef: ref }],
+    [roles.inspectInput, { nativeOperation: ref }],
+    [roles.inspectResult, { kind: 'ready', artifact: ref }],
+    [roles.destroyInput, { artifact: ref }],
+    [roles.destroyResult, { kind: 'pending', nativeOperationRef: ref }],
+  ] as const) {
+    expect(compilePluginJsonSchema(schema.jsonSchema)(value)).toBe(true);
+  }
+  const family = PLUGIN_CONTRIBUTION_CATALOG_V2.find(entry => entry.manifestKey === 'machineProvisioners');
+  expect(family?.extractReferences(admitted.contributes.machineProvisioners![0]!).filter(reference =>
+    typeof reference.reference === 'string' && reference.reference.startsWith('prepare-'))).toEqual([
+    { targetFamily: 'actions', reference: 'prepare-build', path: ['preparation', 'actions', 'build'], allowQualifiedCrossPlugin: false },
+    { targetFamily: 'actions', reference: 'prepare-inspect', path: ['preparation', 'actions', 'inspect'], allowQualifiedCrossPlugin: false },
+    { targetFamily: 'actions', reference: 'prepare-destroy', path: ['preparation', 'actions', 'destroy'], allowQualifiedCrossPlugin: false },
+  ]);
+  expect(provisioners.isManagedProvisionerOperationActionForRootV1('machines.managed.acquire',
+    { pluginId: manifest.id, localId: 'prepare-build' }, admitted)).toBe(true);
+  expect(provisioners.isManagedProvisionerOperationActionForRootV1('machines.managed.acquire',
+    { pluginId: 'test.other-provider', localId: 'prepare-build' }, admitted)).toBe(false);
+  for (const actions of [prepared.contributes.actions.filter(candidate => candidate.id !== 'prepare-build'),
+    prepared.contributes.actions.map(candidate => candidate.id === 'prepare-inspect' ? { ...candidate, dangerLevel: 'destructive' } : candidate),
+    prepared.contributes.actions.map(candidate => candidate.id === 'prepare-build' ? { ...candidate, resultSchema: native.jsonSchema } : candidate)]) {
+    expect(PluginManifestV2Schema.safeParse({ ...prepared, contributes: { ...prepared.contributes, actions } }).success).toBe(false);
+  }
+  expect(provisioners.readMachineProvisionerActionRolesV1(descriptor).some(binding => binding.role.startsWith('preparation'))).toBe(false);
+});
+
+it('admits a preparation artifact path to complete launch choices and rejects undeclared mapping paths', () => {
+  const descriptor = nativeDurationManifest().contributes.machineProvisioners[0]!;
+  const launch = defineProtocolObject({ timeoutMs: defineProtocolNumber({ integer: true }) }, { policy: 'closed' });
+  const artifact = defineProtocolObject({ launch, id: defineProtocolString() }, { policy: 'closed' });
+  const preparation = { inputSchema: launch.jsonSchema, artifactSchema: artifact.jsonSchema,
+    nativeOperationSchema: launch.jsonSchema, artifactLaunchPath: 'launch',
+    actions: { build: 'prepare-build', inspect: 'prepare-inspect', destroy: 'prepare-destroy' } };
+  expect(provisioners.MachineProvisionerContributionV1Schema.safeParse({ ...descriptor, preparation }).success).toBe(true);
+  expect(provisioners.MachineProvisionerContributionV1Schema.safeParse({ ...descriptor,
+    preparation: { ...preparation, artifactLaunchPath: 'missing.path' } }).success).toBe(false);
+  const selected = { pluginId: 'test.preparation', localId: descriptor.id };
+  const parsed = provisioners.MachineProvisionerContributionV1Schema.parse({ ...descriptor, preparation });
+  const reference = { contributionRef: selected, schemaVersion: descriptor.schemaVersion,
+    value: { id: 'snapshot-1', launch: { timeoutMs: 60000 } } };
+  expect(provisioners.readMachineProvisionerPreparedLaunchV1({ provisioner: selected, descriptor: parsed, artifact: reference }))
+    .toEqual({ success: true, data: { timeoutMs: 60000 } });
+  for (const invalid of [
+    { ...reference, contributionRef: { ...selected, pluginId: 'test.other' } },
+    { ...reference, contributionRef: { ...selected, localId: 'other' } },
+    { ...reference, schemaVersion: descriptor.schemaVersion + 1 },
+    { ...reference, value: { id: 42, launch: { timeoutMs: 60000 } } },
+    { ...reference, value: { id: 'snapshot-1', launch: { timeoutMs: 0 } } },
+    { ...reference, value: { id: 'snapshot-1', launch: {} } },
+  ]) {
+    expect(provisioners.readMachineProvisionerPreparedLaunchV1({ provisioner: selected, descriptor: parsed, artifact: invalid }).success).toBe(false);
+  }
+  const nativeOperation = { contributionRef: selected, schemaVersion: descriptor.schemaVersion, value: { timeoutMs: 60000 } };
+  expect(provisioners.readMachineProvisionerPreparationReferenceV1({ provisioner: selected, descriptor: parsed,
+    reference: nativeOperation, kind: 'nativeOperation' }).success).toBe(true);
+  expect(provisioners.readMachineProvisionerPreparationReferenceV1({ provisioner: selected, descriptor: parsed,
+    reference: { ...nativeOperation, contributionRef: { ...selected, pluginId: 'test.other' } }, kind: 'nativeOperation' }).success).toBe(false);
+  expect(provisioners.readMachineProvisionerPreparationReferenceV1({ provisioner: selected, descriptor: parsed,
+    reference: { ...nativeOperation, value: { timeoutMs: 'invalid' } }, kind: 'nativeOperation' }).success).toBe(false);
+});
 
 it('resolves declared local launch variants independently of billing and native transport', () => {
   const descriptor = nativeDurationManifest().contributes.machineProvisioners[0]!;

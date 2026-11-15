@@ -462,11 +462,11 @@ export type ProvidersActionInputById = {
                         providerTicket: string;
                     };
                 };
-                descriptor: Readonly<{
+                descriptor: {
                     id: string;
                     name: string;
                     costTier?: 'low' | 'premium' | 'standard' | undefined;
-                    aliases?: readonly string[] | undefined;
+                    aliases?: string[] | undefined;
                     description?: string | undefined;
                     contextWindowTokens?: number | undefined;
                     inlineCompletion?: undefined | {
@@ -489,28 +489,28 @@ export type ProvidersActionInputById = {
                         maxOutputTokens?: number | undefined;
                     };
                     extendedContextModelId?: string | undefined;
-                    modelOptions?: readonly Readonly<{
+                    modelOptions?: undefined | {
                         id: string;
                         name: string;
-                        description?: string | undefined;
                         type: string;
                         currentValue: string;
-                        options?: readonly Readonly<{
+                        description?: string | undefined;
+                        options?: undefined | {
                             value: string;
                             name: string;
                             description?: string | undefined;
-                        }>[] | undefined;
-                        overridesWhenOn?: Readonly<{
-                            optionIds: readonly string[];
+                        }[];
+                        overridesWhenOn?: undefined | {
+                            optionIds: string[];
                             forcedValue?: string | undefined;
-                        }> | undefined;
-                    }>[] | undefined;
-                    capabilities?: Readonly<{
+                        };
+                    }[];
+                    capabilities?: undefined | {
                         toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                    }> | undefined;
-                }>;
+                    };
+                };
                 application: {
                     implementationIdentity: {
                         pluginId: string;
@@ -863,11 +863,11 @@ export type ProvidersActionInputById = {
                         providerTicket: string;
                     };
                 };
-                descriptor: Readonly<{
+                descriptor: {
                     id: string;
                     name: string;
                     costTier?: 'low' | 'premium' | 'standard' | undefined;
-                    aliases?: readonly string[] | undefined;
+                    aliases?: string[] | undefined;
                     description?: string | undefined;
                     contextWindowTokens?: number | undefined;
                     inlineCompletion?: undefined | {
@@ -890,28 +890,28 @@ export type ProvidersActionInputById = {
                         maxOutputTokens?: number | undefined;
                     };
                     extendedContextModelId?: string | undefined;
-                    modelOptions?: readonly Readonly<{
+                    modelOptions?: undefined | {
                         id: string;
                         name: string;
-                        description?: string | undefined;
                         type: string;
                         currentValue: string;
-                        options?: readonly Readonly<{
+                        description?: string | undefined;
+                        options?: undefined | {
                             value: string;
                             name: string;
                             description?: string | undefined;
-                        }>[] | undefined;
-                        overridesWhenOn?: Readonly<{
-                            optionIds: readonly string[];
+                        }[];
+                        overridesWhenOn?: undefined | {
+                            optionIds: string[];
                             forcedValue?: string | undefined;
-                        }> | undefined;
-                    }>[] | undefined;
-                    capabilities?: Readonly<{
+                        };
+                    }[];
+                    capabilities?: undefined | {
                         toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                    }> | undefined;
-                }>;
+                    };
+                };
                 application: {
                     implementationIdentity: {
                         pluginId: string;
@@ -1374,11 +1374,11 @@ export type ProvidersActionInputById = {
                 connectionRole: 'default' | 'named';
                 connectionDisplayNameMode: 'automatic' | 'custom';
             };
-            model?: Readonly<{
+            model?: undefined | {
                 id: string;
                 name: string;
                 costTier?: 'low' | 'premium' | 'standard' | undefined;
-                aliases?: readonly string[] | undefined;
+                aliases?: string[] | undefined;
                 description?: string | undefined;
                 contextWindowTokens?: number | undefined;
                 inlineCompletion?: undefined | {
@@ -1401,28 +1401,28 @@ export type ProvidersActionInputById = {
                     maxOutputTokens?: number | undefined;
                 };
                 extendedContextModelId?: string | undefined;
-                modelOptions?: readonly Readonly<{
+                modelOptions?: undefined | {
                     id: string;
                     name: string;
-                    description?: string | undefined;
                     type: string;
                     currentValue: string;
-                    options?: readonly Readonly<{
+                    description?: string | undefined;
+                    options?: undefined | {
                         value: string;
                         name: string;
                         description?: string | undefined;
-                    }>[] | undefined;
-                    overridesWhenOn?: Readonly<{
-                        optionIds: readonly string[];
+                    }[];
+                    overridesWhenOn?: undefined | {
+                        optionIds: string[];
                         forcedValue?: string | undefined;
-                    }> | undefined;
-                }>[] | undefined;
-                capabilities?: Readonly<{
+                    };
+                }[];
+                capabilities?: undefined | {
                     toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                     reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                     structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                }> | undefined;
-            }> | undefined;
+                };
+            };
             managedPurposeBindings?: unknown;
             adapterBindingKey?: string | undefined;
             runtimeBindingBasis?: undefined | {
@@ -1709,11 +1709,11 @@ export type ProvidersActionInputById = {
                                 };
                             };
                             endpointTemplateIds?: string[] | undefined;
-                            staticModels?: Readonly<{
+                            staticModels?: undefined | {
                                 id: string;
                                 name: string;
                                 costTier?: 'low' | 'premium' | 'standard' | undefined;
-                                aliases?: readonly string[] | undefined;
+                                aliases?: string[] | undefined;
                                 description?: string | undefined;
                                 contextWindowTokens?: number | undefined;
                                 inlineCompletion?: undefined | {
@@ -1736,28 +1736,28 @@ export type ProvidersActionInputById = {
                                     maxOutputTokens?: number | undefined;
                                 };
                                 extendedContextModelId?: string | undefined;
-                                modelOptions?: readonly Readonly<{
+                                modelOptions?: undefined | {
                                     id: string;
                                     name: string;
-                                    description?: string | undefined;
                                     type: string;
                                     currentValue: string;
-                                    options?: readonly Readonly<{
+                                    description?: string | undefined;
+                                    options?: undefined | {
                                         value: string;
                                         name: string;
                                         description?: string | undefined;
-                                    }>[] | undefined;
-                                    overridesWhenOn?: Readonly<{
-                                        optionIds: readonly string[];
+                                    }[];
+                                    overridesWhenOn?: undefined | {
+                                        optionIds: string[];
                                         forcedValue?: string | undefined;
-                                    }> | undefined;
-                                }>[] | undefined;
-                                capabilities?: Readonly<{
+                                    };
+                                }[];
+                                capabilities?: undefined | {
                                     toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                                     reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                                     structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                                }> | undefined;
-                            }>[] | undefined;
+                                };
+                            }[];
                             catalogObservation?: undefined | {
                                 agent: {
                                     pluginId: string;
@@ -5363,11 +5363,11 @@ export type ProvidersActionResultById = {
             stale: boolean;
             loadState: 'loaded' | 'unknown' | 'unloaded';
             visibility: 'hidden_all_agents' | 'visible';
-            descriptor?: Readonly<{
+            descriptor?: undefined | {
                 id: string;
                 name: string;
                 costTier?: 'low' | 'premium' | 'standard' | undefined;
-                aliases?: readonly string[] | undefined;
+                aliases?: string[] | undefined;
                 description?: string | undefined;
                 contextWindowTokens?: number | undefined;
                 inlineCompletion?: undefined | {
@@ -5390,28 +5390,28 @@ export type ProvidersActionResultById = {
                     maxOutputTokens?: number | undefined;
                 };
                 extendedContextModelId?: string | undefined;
-                modelOptions?: readonly Readonly<{
+                modelOptions?: undefined | {
                     id: string;
                     name: string;
-                    description?: string | undefined;
                     type: string;
                     currentValue: string;
-                    options?: readonly Readonly<{
+                    description?: string | undefined;
+                    options?: undefined | {
                         value: string;
                         name: string;
                         description?: string | undefined;
-                    }>[] | undefined;
-                    overridesWhenOn?: Readonly<{
-                        optionIds: readonly string[];
+                    }[];
+                    overridesWhenOn?: undefined | {
+                        optionIds: string[];
                         forcedValue?: string | undefined;
-                    }> | undefined;
-                }>[] | undefined;
-                capabilities?: Readonly<{
+                    };
+                }[];
+                capabilities?: undefined | {
                     toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                     reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                     structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                }> | undefined;
-            }> | undefined;
+                };
+            };
             name?: string | undefined;
         }[];
         catalogObserved?: boolean | undefined;
@@ -5424,11 +5424,11 @@ export type ProvidersActionResultById = {
                 stale: boolean;
                 loadState: 'loaded' | 'unknown' | 'unloaded';
                 visibility: 'hidden_all_agents' | 'visible';
-                descriptor?: Readonly<{
+                descriptor?: undefined | {
                     id: string;
                     name: string;
                     costTier?: 'low' | 'premium' | 'standard' | undefined;
-                    aliases?: readonly string[] | undefined;
+                    aliases?: string[] | undefined;
                     description?: string | undefined;
                     contextWindowTokens?: number | undefined;
                     inlineCompletion?: undefined | {
@@ -5451,28 +5451,28 @@ export type ProvidersActionResultById = {
                         maxOutputTokens?: number | undefined;
                     };
                     extendedContextModelId?: string | undefined;
-                    modelOptions?: readonly Readonly<{
+                    modelOptions?: undefined | {
                         id: string;
                         name: string;
-                        description?: string | undefined;
                         type: string;
                         currentValue: string;
-                        options?: readonly Readonly<{
+                        description?: string | undefined;
+                        options?: undefined | {
                             value: string;
                             name: string;
                             description?: string | undefined;
-                        }>[] | undefined;
-                        overridesWhenOn?: Readonly<{
-                            optionIds: readonly string[];
+                        }[];
+                        overridesWhenOn?: undefined | {
+                            optionIds: string[];
                             forcedValue?: string | undefined;
-                        }> | undefined;
-                    }>[] | undefined;
-                    capabilities?: Readonly<{
+                        };
+                    }[];
+                    capabilities?: undefined | {
                         toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                    }> | undefined;
-                }> | undefined;
+                    };
+                };
                 name?: string | undefined;
             }[];
         }[];
@@ -5576,11 +5576,11 @@ export type ProvidersActionResultById = {
                     providerConnectionId: string;
                     modelId: string;
                 };
-                descriptor: Readonly<{
+                descriptor: {
                     id: string;
                     name: string;
                     costTier?: 'low' | 'premium' | 'standard' | undefined;
-                    aliases?: readonly string[] | undefined;
+                    aliases?: string[] | undefined;
                     description?: string | undefined;
                     contextWindowTokens?: number | undefined;
                     inlineCompletion?: undefined | {
@@ -5603,28 +5603,28 @@ export type ProvidersActionResultById = {
                         maxOutputTokens?: number | undefined;
                     };
                     extendedContextModelId?: string | undefined;
-                    modelOptions?: readonly Readonly<{
+                    modelOptions?: undefined | {
                         id: string;
                         name: string;
-                        description?: string | undefined;
                         type: string;
                         currentValue: string;
-                        options?: readonly Readonly<{
+                        description?: string | undefined;
+                        options?: undefined | {
                             value: string;
                             name: string;
                             description?: string | undefined;
-                        }>[] | undefined;
-                        overridesWhenOn?: Readonly<{
-                            optionIds: readonly string[];
+                        }[];
+                        overridesWhenOn?: undefined | {
+                            optionIds: string[];
                             forcedValue?: string | undefined;
-                        }> | undefined;
-                    }>[] | undefined;
-                    capabilities?: Readonly<{
+                        };
+                    }[];
+                    capabilities?: undefined | {
                         toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                    }> | undefined;
-                }>;
+                    };
+                };
                 sources: {
                     manual: boolean;
                     static: boolean;
@@ -5793,11 +5793,11 @@ export type ProvidersActionResultById = {
                     catalogSourceKey: string;
                 };
                 requestPolicySupport?: undefined | {
-                    descriptor: Readonly<{
+                    descriptor: {
                         id: string;
                         name: string;
                         costTier?: 'low' | 'premium' | 'standard' | undefined;
-                        aliases?: readonly string[] | undefined;
+                        aliases?: string[] | undefined;
                         description?: string | undefined;
                         contextWindowTokens?: number | undefined;
                         inlineCompletion?: undefined | {
@@ -5820,28 +5820,28 @@ export type ProvidersActionResultById = {
                             maxOutputTokens?: number | undefined;
                         };
                         extendedContextModelId?: string | undefined;
-                        modelOptions?: readonly Readonly<{
+                        modelOptions?: undefined | {
                             id: string;
                             name: string;
-                            description?: string | undefined;
                             type: string;
                             currentValue: string;
-                            options?: readonly Readonly<{
+                            description?: string | undefined;
+                            options?: undefined | {
                                 value: string;
                                 name: string;
                                 description?: string | undefined;
-                            }>[] | undefined;
-                            overridesWhenOn?: Readonly<{
-                                optionIds: readonly string[];
+                            }[];
+                            overridesWhenOn?: undefined | {
+                                optionIds: string[];
                                 forcedValue?: string | undefined;
-                            }> | undefined;
-                        }>[] | undefined;
-                        capabilities?: Readonly<{
+                            };
+                        }[];
+                        capabilities?: undefined | {
                             toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                             reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                             structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                        }> | undefined;
-                    }>;
+                        };
+                    };
                     application: {
                         implementationIdentity: {
                             pluginId: string;
@@ -6069,11 +6069,11 @@ export type ProvidersActionResultById = {
                         providerTicket: string;
                     };
                 };
-                descriptor: Readonly<{
+                descriptor: {
                     id: string;
                     name: string;
                     costTier?: 'low' | 'premium' | 'standard' | undefined;
-                    aliases?: readonly string[] | undefined;
+                    aliases?: string[] | undefined;
                     description?: string | undefined;
                     contextWindowTokens?: number | undefined;
                     inlineCompletion?: undefined | {
@@ -6096,28 +6096,28 @@ export type ProvidersActionResultById = {
                         maxOutputTokens?: number | undefined;
                     };
                     extendedContextModelId?: string | undefined;
-                    modelOptions?: readonly Readonly<{
+                    modelOptions?: undefined | {
                         id: string;
                         name: string;
-                        description?: string | undefined;
                         type: string;
                         currentValue: string;
-                        options?: readonly Readonly<{
+                        description?: string | undefined;
+                        options?: undefined | {
                             value: string;
                             name: string;
                             description?: string | undefined;
-                        }>[] | undefined;
-                        overridesWhenOn?: Readonly<{
-                            optionIds: readonly string[];
+                        }[];
+                        overridesWhenOn?: undefined | {
+                            optionIds: string[];
                             forcedValue?: string | undefined;
-                        }> | undefined;
-                    }>[] | undefined;
-                    capabilities?: Readonly<{
+                        };
+                    }[];
+                    capabilities?: undefined | {
                         toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                    }> | undefined;
-                }>;
+                    };
+                };
                 application: {
                     implementationIdentity: {
                         pluginId: string;
@@ -6540,11 +6540,11 @@ export type ProvidersActionResultById = {
                     providerConnectionId: string;
                     modelId: string;
                 };
-                descriptor: Readonly<{
+                descriptor: {
                     id: string;
                     name: string;
                     costTier?: 'low' | 'premium' | 'standard' | undefined;
-                    aliases?: readonly string[] | undefined;
+                    aliases?: string[] | undefined;
                     description?: string | undefined;
                     contextWindowTokens?: number | undefined;
                     inlineCompletion?: undefined | {
@@ -6567,28 +6567,28 @@ export type ProvidersActionResultById = {
                         maxOutputTokens?: number | undefined;
                     };
                     extendedContextModelId?: string | undefined;
-                    modelOptions?: readonly Readonly<{
+                    modelOptions?: undefined | {
                         id: string;
                         name: string;
-                        description?: string | undefined;
                         type: string;
                         currentValue: string;
-                        options?: readonly Readonly<{
+                        description?: string | undefined;
+                        options?: undefined | {
                             value: string;
                             name: string;
                             description?: string | undefined;
-                        }>[] | undefined;
-                        overridesWhenOn?: Readonly<{
-                            optionIds: readonly string[];
+                        }[];
+                        overridesWhenOn?: undefined | {
+                            optionIds: string[];
                             forcedValue?: string | undefined;
-                        }> | undefined;
-                    }>[] | undefined;
-                    capabilities?: Readonly<{
+                        };
+                    }[];
+                    capabilities?: undefined | {
                         toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                    }> | undefined;
-                }>;
+                    };
+                };
                 sources: {
                     manual: boolean;
                     static: boolean;
@@ -6757,11 +6757,11 @@ export type ProvidersActionResultById = {
                     catalogSourceKey: string;
                 };
                 requestPolicySupport?: undefined | {
-                    descriptor: Readonly<{
+                    descriptor: {
                         id: string;
                         name: string;
                         costTier?: 'low' | 'premium' | 'standard' | undefined;
-                        aliases?: readonly string[] | undefined;
+                        aliases?: string[] | undefined;
                         description?: string | undefined;
                         contextWindowTokens?: number | undefined;
                         inlineCompletion?: undefined | {
@@ -6784,28 +6784,28 @@ export type ProvidersActionResultById = {
                             maxOutputTokens?: number | undefined;
                         };
                         extendedContextModelId?: string | undefined;
-                        modelOptions?: readonly Readonly<{
+                        modelOptions?: undefined | {
                             id: string;
                             name: string;
-                            description?: string | undefined;
                             type: string;
                             currentValue: string;
-                            options?: readonly Readonly<{
+                            description?: string | undefined;
+                            options?: undefined | {
                                 value: string;
                                 name: string;
                                 description?: string | undefined;
-                            }>[] | undefined;
-                            overridesWhenOn?: Readonly<{
-                                optionIds: readonly string[];
+                            }[];
+                            overridesWhenOn?: undefined | {
+                                optionIds: string[];
                                 forcedValue?: string | undefined;
-                            }> | undefined;
-                        }>[] | undefined;
-                        capabilities?: Readonly<{
+                            };
+                        }[];
+                        capabilities?: undefined | {
                             toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                             reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                             structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                        }> | undefined;
-                    }>;
+                        };
+                    };
                     application: {
                         implementationIdentity: {
                             pluginId: string;
@@ -7033,11 +7033,11 @@ export type ProvidersActionResultById = {
                         providerTicket: string;
                     };
                 };
-                descriptor: Readonly<{
+                descriptor: {
                     id: string;
                     name: string;
                     costTier?: 'low' | 'premium' | 'standard' | undefined;
-                    aliases?: readonly string[] | undefined;
+                    aliases?: string[] | undefined;
                     description?: string | undefined;
                     contextWindowTokens?: number | undefined;
                     inlineCompletion?: undefined | {
@@ -7060,28 +7060,28 @@ export type ProvidersActionResultById = {
                         maxOutputTokens?: number | undefined;
                     };
                     extendedContextModelId?: string | undefined;
-                    modelOptions?: readonly Readonly<{
+                    modelOptions?: undefined | {
                         id: string;
                         name: string;
-                        description?: string | undefined;
                         type: string;
                         currentValue: string;
-                        options?: readonly Readonly<{
+                        description?: string | undefined;
+                        options?: undefined | {
                             value: string;
                             name: string;
                             description?: string | undefined;
-                        }>[] | undefined;
-                        overridesWhenOn?: Readonly<{
-                            optionIds: readonly string[];
+                        }[];
+                        overridesWhenOn?: undefined | {
+                            optionIds: string[];
                             forcedValue?: string | undefined;
-                        }> | undefined;
-                    }>[] | undefined;
-                    capabilities?: Readonly<{
+                        };
+                    }[];
+                    capabilities?: undefined | {
                         toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                    }> | undefined;
-                }>;
+                    };
+                };
                 application: {
                     implementationIdentity: {
                         pluginId: string;
@@ -7380,11 +7380,11 @@ export type ProvidersActionResultById = {
             stale: boolean;
             loadState: 'loaded' | 'unknown' | 'unloaded';
             visibility: 'hidden_all_agents' | 'visible';
-            descriptor?: Readonly<{
+            descriptor?: undefined | {
                 id: string;
                 name: string;
                 costTier?: 'low' | 'premium' | 'standard' | undefined;
-                aliases?: readonly string[] | undefined;
+                aliases?: string[] | undefined;
                 description?: string | undefined;
                 contextWindowTokens?: number | undefined;
                 inlineCompletion?: undefined | {
@@ -7407,28 +7407,28 @@ export type ProvidersActionResultById = {
                     maxOutputTokens?: number | undefined;
                 };
                 extendedContextModelId?: string | undefined;
-                modelOptions?: readonly Readonly<{
+                modelOptions?: undefined | {
                     id: string;
                     name: string;
-                    description?: string | undefined;
                     type: string;
                     currentValue: string;
-                    options?: readonly Readonly<{
+                    description?: string | undefined;
+                    options?: undefined | {
                         value: string;
                         name: string;
                         description?: string | undefined;
-                    }>[] | undefined;
-                    overridesWhenOn?: Readonly<{
-                        optionIds: readonly string[];
+                    }[];
+                    overridesWhenOn?: undefined | {
+                        optionIds: string[];
                         forcedValue?: string | undefined;
-                    }> | undefined;
-                }>[] | undefined;
-                capabilities?: Readonly<{
+                    };
+                }[];
+                capabilities?: undefined | {
                     toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                     reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                     structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                }> | undefined;
-            }> | undefined;
+                };
+            };
             name?: string | undefined;
         }[];
         catalogObserved?: boolean | undefined;
@@ -7441,11 +7441,11 @@ export type ProvidersActionResultById = {
                 stale: boolean;
                 loadState: 'loaded' | 'unknown' | 'unloaded';
                 visibility: 'hidden_all_agents' | 'visible';
-                descriptor?: Readonly<{
+                descriptor?: undefined | {
                     id: string;
                     name: string;
                     costTier?: 'low' | 'premium' | 'standard' | undefined;
-                    aliases?: readonly string[] | undefined;
+                    aliases?: string[] | undefined;
                     description?: string | undefined;
                     contextWindowTokens?: number | undefined;
                     inlineCompletion?: undefined | {
@@ -7468,28 +7468,28 @@ export type ProvidersActionResultById = {
                         maxOutputTokens?: number | undefined;
                     };
                     extendedContextModelId?: string | undefined;
-                    modelOptions?: readonly Readonly<{
+                    modelOptions?: undefined | {
                         id: string;
                         name: string;
-                        description?: string | undefined;
                         type: string;
                         currentValue: string;
-                        options?: readonly Readonly<{
+                        description?: string | undefined;
+                        options?: undefined | {
                             value: string;
                             name: string;
                             description?: string | undefined;
-                        }>[] | undefined;
-                        overridesWhenOn?: Readonly<{
-                            optionIds: readonly string[];
+                        }[];
+                        overridesWhenOn?: undefined | {
+                            optionIds: string[];
                             forcedValue?: string | undefined;
-                        }> | undefined;
-                    }>[] | undefined;
-                    capabilities?: Readonly<{
+                        };
+                    }[];
+                    capabilities?: undefined | {
                         toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                    }> | undefined;
-                }> | undefined;
+                    };
+                };
                 name?: string | undefined;
             }[];
         }[];
@@ -7869,39 +7869,39 @@ export type ProvidersActionResultById = {
         status: 'not_supported';
     } | {
         status: 'success';
-        models: Readonly<{
+        models: {
             id: string;
             name?: string | undefined;
             contextWindowTokens?: number | undefined;
-            modelOptions?: readonly Readonly<{
+            modelOptions?: undefined | {
                 id: string;
                 name: string;
-                description?: string | undefined;
                 type: string;
                 currentValue: string;
-                options?: readonly Readonly<{
+                description?: string | undefined;
+                options?: undefined | {
                     value: string;
                     name: string;
                     description?: string | undefined;
-                }>[] | undefined;
-                overridesWhenOn?: Readonly<{
-                    optionIds: readonly string[];
+                }[];
+                overridesWhenOn?: undefined | {
+                    optionIds: string[];
                     forcedValue?: string | undefined;
-                }> | undefined;
-            }>[] | undefined;
-            capabilities?: Readonly<{
+                };
+            }[];
+            capabilities?: undefined | {
                 toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                 reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                 structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-            }> | undefined;
-            connectedAccountPurposes?: readonly {
+            };
+            connectedAccountPurposes?: undefined | {
                 consumer: {
                     pluginId: string;
                     localId: string;
                 };
                 purpose: string;
-            }[] | undefined;
-        }>[];
+            }[];
+        }[];
         requestFingerprint: string;
     };
     readonly "providers.usage.refresh": {

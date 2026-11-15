@@ -1722,11 +1722,11 @@ export type TeamsActionResultById = {
     readonly "teams.credentials.requestPolicySupport.get": {
         status: 'available';
         models: {
-            descriptor: Readonly<{
+            descriptor: {
                 id: string;
                 name: string;
                 costTier?: 'low' | 'premium' | 'standard' | undefined;
-                aliases?: readonly string[] | undefined;
+                aliases?: string[] | undefined;
                 description?: string | undefined;
                 contextWindowTokens?: number | undefined;
                 inlineCompletion?: undefined | {
@@ -1749,28 +1749,28 @@ export type TeamsActionResultById = {
                     maxOutputTokens?: number | undefined;
                 };
                 extendedContextModelId?: string | undefined;
-                modelOptions?: readonly Readonly<{
+                modelOptions?: undefined | {
                     id: string;
                     name: string;
-                    description?: string | undefined;
                     type: string;
                     currentValue: string;
-                    options?: readonly Readonly<{
+                    description?: string | undefined;
+                    options?: undefined | {
                         value: string;
                         name: string;
                         description?: string | undefined;
-                    }>[] | undefined;
-                    overridesWhenOn?: Readonly<{
-                        optionIds: readonly string[];
+                    }[];
+                    overridesWhenOn?: undefined | {
+                        optionIds: string[];
                         forcedValue?: string | undefined;
-                    }> | undefined;
-                }>[] | undefined;
-                capabilities?: Readonly<{
+                    };
+                }[];
+                capabilities?: undefined | {
                     toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                     reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                     structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                }> | undefined;
-            }>;
+                };
+            };
             application: {
                 implementationIdentity: {
                     pluginId: string;
@@ -2203,11 +2203,11 @@ export type TeamsActionResultById = {
                         providerTicket: string;
                     };
                 };
-                descriptor: Readonly<{
+                descriptor: {
                     id: string;
                     name: string;
                     costTier?: 'low' | 'premium' | 'standard' | undefined;
-                    aliases?: readonly string[] | undefined;
+                    aliases?: string[] | undefined;
                     description?: string | undefined;
                     contextWindowTokens?: number | undefined;
                     inlineCompletion?: undefined | {
@@ -2230,28 +2230,28 @@ export type TeamsActionResultById = {
                         maxOutputTokens?: number | undefined;
                     };
                     extendedContextModelId?: string | undefined;
-                    modelOptions?: readonly Readonly<{
+                    modelOptions?: undefined | {
                         id: string;
                         name: string;
-                        description?: string | undefined;
                         type: string;
                         currentValue: string;
-                        options?: readonly Readonly<{
+                        description?: string | undefined;
+                        options?: undefined | {
                             value: string;
                             name: string;
                             description?: string | undefined;
-                        }>[] | undefined;
-                        overridesWhenOn?: Readonly<{
-                            optionIds: readonly string[];
+                        }[];
+                        overridesWhenOn?: undefined | {
+                            optionIds: string[];
                             forcedValue?: string | undefined;
-                        }> | undefined;
-                    }>[] | undefined;
-                    capabilities?: Readonly<{
+                        };
+                    }[];
+                    capabilities?: undefined | {
                         toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                    }> | undefined;
-                }>;
+                    };
+                };
                 application: {
                     implementationIdentity: {
                         pluginId: string;
@@ -2512,11 +2512,11 @@ export type TeamsActionResultById = {
                         providerTicket: string;
                     };
                 };
-                descriptor: Readonly<{
+                descriptor: {
                     id: string;
                     name: string;
                     costTier?: 'low' | 'premium' | 'standard' | undefined;
-                    aliases?: readonly string[] | undefined;
+                    aliases?: string[] | undefined;
                     description?: string | undefined;
                     contextWindowTokens?: number | undefined;
                     inlineCompletion?: undefined | {
@@ -2539,28 +2539,28 @@ export type TeamsActionResultById = {
                         maxOutputTokens?: number | undefined;
                     };
                     extendedContextModelId?: string | undefined;
-                    modelOptions?: readonly Readonly<{
+                    modelOptions?: undefined | {
                         id: string;
                         name: string;
-                        description?: string | undefined;
                         type: string;
                         currentValue: string;
-                        options?: readonly Readonly<{
+                        description?: string | undefined;
+                        options?: undefined | {
                             value: string;
                             name: string;
                             description?: string | undefined;
-                        }>[] | undefined;
-                        overridesWhenOn?: Readonly<{
-                            optionIds: readonly string[];
+                        }[];
+                        overridesWhenOn?: undefined | {
+                            optionIds: string[];
                             forcedValue?: string | undefined;
-                        }> | undefined;
-                    }>[] | undefined;
-                    capabilities?: Readonly<{
+                        };
+                    }[];
+                    capabilities?: undefined | {
                         toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                    }> | undefined;
-                }>;
+                    };
+                };
                 application: {
                     implementationIdentity: {
                         pluginId: string;

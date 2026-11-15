@@ -388,6 +388,10 @@ export type MachineAgentIsolationActionResultById = {
                         enabled: boolean;
                         running: boolean;
                     };
+                    restore?: undefined | {
+                        capturedAt: string;
+                        commands: string[];
+                    };
                 };
             };
         };
@@ -538,6 +542,10 @@ export type MachineAgentIsolationActionResultById = {
                         present: boolean;
                         enabled: boolean;
                         running: boolean;
+                    };
+                    restore?: undefined | {
+                        capturedAt: string;
+                        commands: string[];
                     };
                 };
             };

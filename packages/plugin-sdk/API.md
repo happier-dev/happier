@@ -1895,6 +1895,18 @@
 | `./machine-provisioners` | `MachineProvisionerOptionsResultV1Schema` | value | any |
 | `./machine-provisioners` | `MachineProvisionerPowerResultV1` | type | any |
 | `./machine-provisioners` | `MachineProvisionerPowerResultV1Schema` | value | any |
+| `./machine-provisioners` | `MachineProvisionerPreparationBuildInputV1` | type | any |
+| `./machine-provisioners` | `MachineProvisionerPreparationBuildInputV1Schema` | value | any |
+| `./machine-provisioners` | `MachineProvisionerPreparationBuildResultV1` | type | any |
+| `./machine-provisioners` | `MachineProvisionerPreparationBuildResultV1Schema` | value | any |
+| `./machine-provisioners` | `MachineProvisionerPreparationDestroyInputV1` | type | any |
+| `./machine-provisioners` | `MachineProvisionerPreparationDestroyInputV1Schema` | value | any |
+| `./machine-provisioners` | `MachineProvisionerPreparationDestroyResultV1` | type | any |
+| `./machine-provisioners` | `MachineProvisionerPreparationDestroyResultV1Schema` | value | any |
+| `./machine-provisioners` | `MachineProvisionerPreparationInspectInputV1` | type | any |
+| `./machine-provisioners` | `MachineProvisionerPreparationInspectInputV1Schema` | value | any |
+| `./machine-provisioners` | `MachineProvisionerPreparationInspectResultV1` | type | any |
+| `./machine-provisioners` | `MachineProvisionerPreparationInspectResultV1Schema` | value | any |
 | `./machine-provisioners` | `MachineProvisionerPriceV1` | type | any |
 | `./machine-provisioners` | `MachineProvisionerProcessConfigV1` | type | any |
 | `./machine-provisioners` | `MachineProvisionerPutFileResultV1Schema` | value | any |
@@ -1914,7 +1926,11 @@
 | `./machine-provisioners` | `MachineProvisionerSnapshotResultV1` | type | any |
 | `./machine-provisioners` | `MachineProvisionerSnapshotResultV1Schema` | value | any |
 | `./machine-provisioners` | `MachineProvisionerStoredReaderV1` | type | any |
+| `./machine-provisioners` | `ManagedGuestCliBuildInputV1` | type | any |
+| `./machine-provisioners` | `ManagedGuestCliBuildInputV1Schema` | value | any |
 | `./machine-provisioners` | `ManagedMachineAllocationPresentationV1` | type | any |
+| `./machine-provisioners` | `ManagedMachinePresetPreparationBuildInputV1` | type | any |
+| `./machine-provisioners` | `ManagedMachinePresetPreparationBuildInputV1Schema` | value | any |
 | `./machine-provisioners` | `assertMachineProvisionerGuestCommandSucceeded` | value | any |
 | `./machine-provisioners` | `buildMachineProvisionerCloudInit` | value | any |
 | `./machine-provisioners` | `buildMachineProvisionerDaemonStartScript` | value | any |
@@ -1926,6 +1942,7 @@
 | `./machine-provisioners` | `createMachineProvisionerApiKeyAccount` | value | any |
 | `./machine-provisioners` | `createMachineProvisionerFetch` | value | any |
 | `./machine-provisioners` | `createMachineProvisionerMaterializedFetch` | value | any |
+| `./machine-provisioners` | `defineMachineProvisionerPreparationSchemas` | value | any |
 | `./machine-provisioners` | `defineMachineProvisionerReconciliationSchemas` | value | any |
 | `./machine-provisioners` | `defineMachineProvisionerSchemas` | value | any |
 | `./machine-provisioners` | `managedMachineResizeRequiresRestartV1` | value | any |
@@ -3319,7 +3336,7 @@
 | `./testing` | `createPluginActionHandlerUnavailableFixture` | value | any |
 | `./testing` | `createPluginClientTestkit` | value | daemon |
 | `./testing` | `createPluginHttpFixture` | value | daemon |
-| `./testing` | `createPluginTestkit` | value | any |
+| `./testing` | `createPluginTestkit` | value | daemon |
 | `./testing` | `createPluginUiActionControlTestHost` | value | any |
 | `./testing` | `createPluginUiTestkit` | value | daemon |
 | `./testing` | `createSurfaceContextFixture` | value | any |

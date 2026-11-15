@@ -33,7 +33,7 @@ import { PluginClientExecutionReferenceV1Schema, type PluginClientExecutionPlatf
 import type { VoiceProviderContribution } from './voiceProviders.js';
 import { isBundledProviderCatalogParserV1 } from '../../providers/catalog/descriptorV1.js';
 import { parseQualifiedPluginContributionKey } from '../contributionIdentity.js';
-import { readMachineProvisionerActionRolesV1, type MachineProvisionerContributionV1 } from './machineProvisioners.js';
+import { readMachineProvisionerActionRolesV1, readMachineProvisionerActionRolePathV1, type MachineProvisionerContributionV1 } from './machineProvisioners.js';
 import { readAccessProviderActionRolesV1, type AccessProviderContributionV1 } from './accessProviders.js';
 export * from './accessProviders.js';
 import { readDeploymentTargetReferenceRolesV1, type DeploymentTargetContributionV1 } from './deploymentTargets.js';
@@ -363,8 +363,7 @@ function extractNestedReferences(family: string, value: Readonly<Record<string, 
   if (family === 'machineProvisioners') {
     return readMachineProvisionerActionRolesV1(value as MachineProvisionerContributionV1).map(binding => ({
       targetFamily: 'actions', reference: binding.action,
-      path: binding.role === 'reconcile' ? ['reconciliation', 'action']
-        : [binding.role === 'exec' || binding.role === 'putFile' ? 'bootstrapTransport' : 'actions', binding.role],
+      path: readMachineProvisionerActionRolePathV1(value as MachineProvisionerContributionV1, binding.role),
       allowQualifiedCrossPlugin: false,
     }));
   }

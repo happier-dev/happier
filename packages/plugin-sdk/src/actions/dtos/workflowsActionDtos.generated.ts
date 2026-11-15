@@ -800,7 +800,7 @@ export type WorkflowsActionInputById = {
                 };
             })[] | undefined;
             permissionModeUpdatedAt?: number | undefined;
-            environmentVariables?: Record<string, string> | undefined;
+            launchEnvironment?: unknown;
             providerSessionResume?: undefined | {
                 kind: 'provider_session.v1';
                 providerSessionId: string;
@@ -1096,7 +1096,7 @@ export type WorkflowsActionInputById = {
                 };
             })[] | undefined;
             permissionModeUpdatedAt?: number | undefined;
-            environmentVariables?: Record<string, string> | undefined;
+            launchEnvironment?: unknown;
             providerSessionResume?: undefined | {
                 kind: 'provider_session.v1';
                 providerSessionId: string;
@@ -3017,7 +3017,10 @@ type WorkflowsActionDefinition1 = Readonly<{
             };
         })[] | undefined;
         permissionModeUpdatedAt?: number | undefined;
-        environmentVariables?: Record<string, string> | undefined;
+        launchEnvironment?: undefined | {
+            values: Record<string, string>;
+            unset: string[];
+        };
         providerSessionResume?: undefined | {
             kind: 'provider_session.v1';
             providerSessionId: string;
@@ -3094,6 +3097,29 @@ type WorkflowsActionDefinition1 = Readonly<{
         };
         roleId?: string | undefined;
         engine?: undefined | {
+            agentTarget: {
+                kind: 'agent';
+                identity: {
+                    pluginId: string;
+                    localId: string;
+                };
+                definitionId?: string | undefined;
+            };
+            modelSelection?: null | undefined | {
+                v: 1;
+                ref: {
+                    agentTargetKey: string;
+                    providerConnectionId: null;
+                    modelId: string;
+                } | {
+                    agentTargetKey: string;
+                    providerConnectionId: string;
+                    modelId: string;
+                };
+                updatedAt: number;
+            };
+            effort?: string | undefined;
+        } | {
             kind: 'input';
             name: string;
             path?: (number | string)[] | undefined;
@@ -3101,6 +3127,8 @@ type WorkflowsActionDefinition1 = Readonly<{
             kind: 'item';
             field: 'value';
             path?: (number | string)[] | undefined;
+        } | {
+            role: string;
         };
         participant?: undefined | {
             kind: 'input';
@@ -3403,7 +3431,10 @@ export type WorkflowsActionResultById = {
                     };
                 })[] | undefined;
                 permissionModeUpdatedAt?: number | undefined;
-                environmentVariables?: Record<string, string> | undefined;
+                launchEnvironment?: undefined | {
+                    values: Record<string, string>;
+                    unset: string[];
+                };
                 providerSessionResume?: undefined | {
                     kind: 'provider_session.v1';
                     providerSessionId: string;
@@ -3480,6 +3511,29 @@ export type WorkflowsActionResultById = {
                 };
                 roleId?: string | undefined;
                 engine?: undefined | {
+                    agentTarget: {
+                        kind: 'agent';
+                        identity: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        definitionId?: string | undefined;
+                    };
+                    modelSelection?: null | undefined | {
+                        v: 1;
+                        ref: {
+                            agentTargetKey: string;
+                            providerConnectionId: null;
+                            modelId: string;
+                        } | {
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        };
+                        updatedAt: number;
+                    };
+                    effort?: string | undefined;
+                } | {
                     kind: 'input';
                     name: string;
                     path?: (number | string)[] | undefined;
@@ -3487,6 +3541,8 @@ export type WorkflowsActionResultById = {
                     kind: 'item';
                     field: 'value';
                     path?: (number | string)[] | undefined;
+                } | {
+                    role: string;
                 };
                 participant?: undefined | {
                     kind: 'input';
@@ -4539,7 +4595,6 @@ export type WorkflowsActionResultById = {
                                 updatedAtMs: number;
                             }>;
                             workspaceWrites?: 'allow' | 'deny' | undefined;
-                            nativeSandbox?: 'off' | 'on' | undefined;
                             providerSessionResume?: undefined | {
                                 kind: 'provider_session.v1';
                                 providerSessionId: string;
@@ -4890,7 +4945,6 @@ export type WorkflowsActionResultById = {
                                         updatedAtMs: number;
                                     }>;
                                     workspaceWrites?: 'allow' | 'deny' | undefined;
-                                    nativeSandbox?: 'off' | 'on' | undefined;
                                     providerSessionResume?: undefined | {
                                         kind: 'provider_session.v1';
                                         providerSessionId: string;
@@ -5114,7 +5168,6 @@ export type WorkflowsActionResultById = {
                                         updatedAtMs: number;
                                     }>;
                                     workspaceWrites?: 'allow' | 'deny' | undefined;
-                                    nativeSandbox?: 'off' | 'on' | undefined;
                                     providerSessionResume?: undefined | {
                                         kind: 'provider_session.v1';
                                         providerSessionId: string;
@@ -5524,7 +5577,10 @@ export type WorkflowsActionResultById = {
                         };
                     })[] | undefined;
                     permissionModeUpdatedAt?: number | undefined;
-                    environmentVariables?: Record<string, string> | undefined;
+                    launchEnvironment?: undefined | {
+                        values: Record<string, string>;
+                        unset: string[];
+                    };
                     providerSessionResume?: undefined | {
                         kind: 'provider_session.v1';
                         providerSessionId: string;
@@ -5601,6 +5657,29 @@ export type WorkflowsActionResultById = {
                     };
                     roleId?: string | undefined;
                     engine?: undefined | {
+                        agentTarget: {
+                            kind: 'agent';
+                            identity: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            definitionId?: string | undefined;
+                        };
+                        modelSelection?: null | undefined | {
+                            v: 1;
+                            ref: {
+                                agentTargetKey: string;
+                                providerConnectionId: null;
+                                modelId: string;
+                            } | {
+                                agentTargetKey: string;
+                                providerConnectionId: string;
+                                modelId: string;
+                            };
+                            updatedAt: number;
+                        };
+                        effort?: string | undefined;
+                    } | {
                         kind: 'input';
                         name: string;
                         path?: (number | string)[] | undefined;
@@ -5608,6 +5687,8 @@ export type WorkflowsActionResultById = {
                         kind: 'item';
                         field: 'value';
                         path?: (number | string)[] | undefined;
+                    } | {
+                        role: string;
                     };
                     participant?: undefined | {
                         kind: 'input';
@@ -5931,7 +6012,6 @@ export type WorkflowsActionResultById = {
                                 updatedAtMs: number;
                             }>;
                             workspaceWrites?: 'allow' | 'deny' | undefined;
-                            nativeSandbox?: 'off' | 'on' | undefined;
                             providerSessionResume?: undefined | {
                                 kind: 'provider_session.v1';
                                 providerSessionId: string;
@@ -6282,7 +6362,6 @@ export type WorkflowsActionResultById = {
                                         updatedAtMs: number;
                                     }>;
                                     workspaceWrites?: 'allow' | 'deny' | undefined;
-                                    nativeSandbox?: 'off' | 'on' | undefined;
                                     providerSessionResume?: undefined | {
                                         kind: 'provider_session.v1';
                                         providerSessionId: string;
@@ -6506,7 +6585,6 @@ export type WorkflowsActionResultById = {
                                         updatedAtMs: number;
                                     }>;
                                     workspaceWrites?: 'allow' | 'deny' | undefined;
-                                    nativeSandbox?: 'off' | 'on' | undefined;
                                     providerSessionResume?: undefined | {
                                         kind: 'provider_session.v1';
                                         providerSessionId: string;
@@ -6916,7 +6994,10 @@ export type WorkflowsActionResultById = {
                         };
                     })[] | undefined;
                     permissionModeUpdatedAt?: number | undefined;
-                    environmentVariables?: Record<string, string> | undefined;
+                    launchEnvironment?: undefined | {
+                        values: Record<string, string>;
+                        unset: string[];
+                    };
                     providerSessionResume?: undefined | {
                         kind: 'provider_session.v1';
                         providerSessionId: string;
@@ -6993,6 +7074,29 @@ export type WorkflowsActionResultById = {
                     };
                     roleId?: string | undefined;
                     engine?: undefined | {
+                        agentTarget: {
+                            kind: 'agent';
+                            identity: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            definitionId?: string | undefined;
+                        };
+                        modelSelection?: null | undefined | {
+                            v: 1;
+                            ref: {
+                                agentTargetKey: string;
+                                providerConnectionId: null;
+                                modelId: string;
+                            } | {
+                                agentTargetKey: string;
+                                providerConnectionId: string;
+                                modelId: string;
+                            };
+                            updatedAt: number;
+                        };
+                        effort?: string | undefined;
+                    } | {
                         kind: 'input';
                         name: string;
                         path?: (number | string)[] | undefined;
@@ -7000,6 +7104,8 @@ export type WorkflowsActionResultById = {
                         kind: 'item';
                         field: 'value';
                         path?: (number | string)[] | undefined;
+                    } | {
+                        role: string;
                     };
                     participant?: undefined | {
                         kind: 'input';
@@ -7377,7 +7483,10 @@ export type WorkflowsActionResultById = {
                     };
                 })[] | undefined;
                 permissionModeUpdatedAt?: number | undefined;
-                environmentVariables?: Record<string, string> | undefined;
+                launchEnvironment?: undefined | {
+                    values: Record<string, string>;
+                    unset: string[];
+                };
                 providerSessionResume?: undefined | {
                     kind: 'provider_session.v1';
                     providerSessionId: string;
@@ -7454,6 +7563,29 @@ export type WorkflowsActionResultById = {
                 };
                 roleId?: string | undefined;
                 engine?: undefined | {
+                    agentTarget: {
+                        kind: 'agent';
+                        identity: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        definitionId?: string | undefined;
+                    };
+                    modelSelection?: null | undefined | {
+                        v: 1;
+                        ref: {
+                            agentTargetKey: string;
+                            providerConnectionId: null;
+                            modelId: string;
+                        } | {
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        };
+                        updatedAt: number;
+                    };
+                    effort?: string | undefined;
+                } | {
                     kind: 'input';
                     name: string;
                     path?: (number | string)[] | undefined;
@@ -7461,6 +7593,8 @@ export type WorkflowsActionResultById = {
                     kind: 'item';
                     field: 'value';
                     path?: (number | string)[] | undefined;
+                } | {
+                    role: string;
                 };
                 participant?: undefined | {
                     kind: 'input';
@@ -12118,7 +12252,7 @@ export type WorkflowsActionResultById = {
                     };
                 };
             };
-            contentUnavailableReason: 'invalid_body' | 'invalid_header' | 'missing_body' | 'not_found' | 'revision_mismatch';
+            contentUnavailableReason: 'history_not_readable' | 'invalid_body' | 'invalid_header' | 'missing_body' | 'not_found' | 'revision_mismatch';
             previewSteps?: string[] | undefined;
             excerpt?: string | undefined;
             ownerAccountId?: string | undefined;
@@ -12625,7 +12759,10 @@ export type WorkflowsActionResultById = {
                     };
                 })[] | undefined;
                 permissionModeUpdatedAt?: number | undefined;
-                environmentVariables?: Record<string, string> | undefined;
+                launchEnvironment?: undefined | {
+                    values: Record<string, string>;
+                    unset: string[];
+                };
                 providerSessionResume?: undefined | {
                     kind: 'provider_session.v1';
                     providerSessionId: string;
@@ -12702,6 +12839,29 @@ export type WorkflowsActionResultById = {
                 };
                 roleId?: string | undefined;
                 engine?: undefined | {
+                    agentTarget: {
+                        kind: 'agent';
+                        identity: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        definitionId?: string | undefined;
+                    };
+                    modelSelection?: null | undefined | {
+                        v: 1;
+                        ref: {
+                            agentTargetKey: string;
+                            providerConnectionId: null;
+                            modelId: string;
+                        } | {
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        };
+                        updatedAt: number;
+                    };
+                    effort?: string | undefined;
+                } | {
                     kind: 'input';
                     name: string;
                     path?: (number | string)[] | undefined;
@@ -12709,6 +12869,8 @@ export type WorkflowsActionResultById = {
                     kind: 'item';
                     field: 'value';
                     path?: (number | string)[] | undefined;
+                } | {
+                    role: string;
                 };
                 participant?: undefined | {
                     kind: 'input';
@@ -13071,7 +13233,10 @@ export type WorkflowsActionResultById = {
                     };
                 })[] | undefined;
                 permissionModeUpdatedAt?: number | undefined;
-                environmentVariables?: Record<string, string> | undefined;
+                launchEnvironment?: undefined | {
+                    values: Record<string, string>;
+                    unset: string[];
+                };
                 providerSessionResume?: undefined | {
                     kind: 'provider_session.v1';
                     providerSessionId: string;
@@ -13148,6 +13313,29 @@ export type WorkflowsActionResultById = {
                 };
                 roleId?: string | undefined;
                 engine?: undefined | {
+                    agentTarget: {
+                        kind: 'agent';
+                        identity: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        definitionId?: string | undefined;
+                    };
+                    modelSelection?: null | undefined | {
+                        v: 1;
+                        ref: {
+                            agentTargetKey: string;
+                            providerConnectionId: null;
+                            modelId: string;
+                        } | {
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        };
+                        updatedAt: number;
+                    };
+                    effort?: string | undefined;
+                } | {
                     kind: 'input';
                     name: string;
                     path?: (number | string)[] | undefined;
@@ -13155,6 +13343,8 @@ export type WorkflowsActionResultById = {
                     kind: 'item';
                     field: 'value';
                     path?: (number | string)[] | undefined;
+                } | {
+                    role: string;
                 };
                 participant?: undefined | {
                     kind: 'input';
@@ -13320,7 +13510,6 @@ export type WorkflowsActionResultById = {
                             updatedAtMs: number;
                         }>;
                         workspaceWrites?: 'allow' | 'deny' | undefined;
-                        nativeSandbox?: 'off' | 'on' | undefined;
                         providerSessionResume?: undefined | {
                             kind: 'provider_session.v1';
                             providerSessionId: string;
@@ -14039,7 +14228,10 @@ export type WorkflowsActionResultById = {
                             };
                         })[] | undefined;
                         permissionModeUpdatedAt?: number | undefined;
-                        environmentVariables?: Record<string, string> | undefined;
+                        launchEnvironment?: undefined | {
+                            values: Record<string, string>;
+                            unset: string[];
+                        };
                         providerSessionResume?: undefined | {
                             kind: 'provider_session.v1';
                             providerSessionId: string;
@@ -14116,6 +14308,29 @@ export type WorkflowsActionResultById = {
                         };
                         roleId?: string | undefined;
                         engine?: undefined | {
+                            agentTarget: {
+                                kind: 'agent';
+                                identity: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                definitionId?: string | undefined;
+                            };
+                            modelSelection?: null | undefined | {
+                                v: 1;
+                                ref: {
+                                    agentTargetKey: string;
+                                    providerConnectionId: null;
+                                    modelId: string;
+                                } | {
+                                    agentTargetKey: string;
+                                    providerConnectionId: string;
+                                    modelId: string;
+                                };
+                                updatedAt: number;
+                            };
+                            effort?: string | undefined;
+                        } | {
                             kind: 'input';
                             name: string;
                             path?: (number | string)[] | undefined;
@@ -14123,6 +14338,8 @@ export type WorkflowsActionResultById = {
                             kind: 'item';
                             field: 'value';
                             path?: (number | string)[] | undefined;
+                        } | {
+                            role: string;
                         };
                         participant?: undefined | {
                             kind: 'input';
@@ -14943,7 +15160,10 @@ export type WorkflowsActionResultById = {
                             };
                         })[] | undefined;
                         permissionModeUpdatedAt?: number | undefined;
-                        environmentVariables?: Record<string, string> | undefined;
+                        launchEnvironment?: undefined | {
+                            values: Record<string, string>;
+                            unset: string[];
+                        };
                         providerSessionResume?: undefined | {
                             kind: 'provider_session.v1';
                             providerSessionId: string;
@@ -15020,6 +15240,29 @@ export type WorkflowsActionResultById = {
                         };
                         roleId?: string | undefined;
                         engine?: undefined | {
+                            agentTarget: {
+                                kind: 'agent';
+                                identity: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                definitionId?: string | undefined;
+                            };
+                            modelSelection?: null | undefined | {
+                                v: 1;
+                                ref: {
+                                    agentTargetKey: string;
+                                    providerConnectionId: null;
+                                    modelId: string;
+                                } | {
+                                    agentTargetKey: string;
+                                    providerConnectionId: string;
+                                    modelId: string;
+                                };
+                                updatedAt: number;
+                            };
+                            effort?: string | undefined;
+                        } | {
                             kind: 'input';
                             name: string;
                             path?: (number | string)[] | undefined;
@@ -15027,6 +15270,8 @@ export type WorkflowsActionResultById = {
                             kind: 'item';
                             field: 'value';
                             path?: (number | string)[] | undefined;
+                        } | {
+                            role: string;
                         };
                         participant?: undefined | {
                             kind: 'input';
@@ -15704,7 +15949,10 @@ export type WorkflowsActionResultById = {
                             };
                         })[] | undefined;
                         permissionModeUpdatedAt?: number | undefined;
-                        environmentVariables?: Record<string, string> | undefined;
+                        launchEnvironment?: undefined | {
+                            values: Record<string, string>;
+                            unset: string[];
+                        };
                         providerSessionResume?: undefined | {
                             kind: 'provider_session.v1';
                             providerSessionId: string;
@@ -15781,6 +16029,29 @@ export type WorkflowsActionResultById = {
                         };
                         roleId?: string | undefined;
                         engine?: undefined | {
+                            agentTarget: {
+                                kind: 'agent';
+                                identity: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                definitionId?: string | undefined;
+                            };
+                            modelSelection?: null | undefined | {
+                                v: 1;
+                                ref: {
+                                    agentTargetKey: string;
+                                    providerConnectionId: null;
+                                    modelId: string;
+                                } | {
+                                    agentTargetKey: string;
+                                    providerConnectionId: string;
+                                    modelId: string;
+                                };
+                                updatedAt: number;
+                            };
+                            effort?: string | undefined;
+                        } | {
                             kind: 'input';
                             name: string;
                             path?: (number | string)[] | undefined;
@@ -15788,6 +16059,8 @@ export type WorkflowsActionResultById = {
                             kind: 'item';
                             field: 'value';
                             path?: (number | string)[] | undefined;
+                        } | {
+                            role: string;
                         };
                         participant?: undefined | {
                             kind: 'input';
@@ -16469,7 +16742,10 @@ export type WorkflowsActionResultById = {
                             };
                         })[] | undefined;
                         permissionModeUpdatedAt?: number | undefined;
-                        environmentVariables?: Record<string, string> | undefined;
+                        launchEnvironment?: undefined | {
+                            values: Record<string, string>;
+                            unset: string[];
+                        };
                         providerSessionResume?: undefined | {
                             kind: 'provider_session.v1';
                             providerSessionId: string;
@@ -16546,6 +16822,29 @@ export type WorkflowsActionResultById = {
                         };
                         roleId?: string | undefined;
                         engine?: undefined | {
+                            agentTarget: {
+                                kind: 'agent';
+                                identity: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                definitionId?: string | undefined;
+                            };
+                            modelSelection?: null | undefined | {
+                                v: 1;
+                                ref: {
+                                    agentTargetKey: string;
+                                    providerConnectionId: null;
+                                    modelId: string;
+                                } | {
+                                    agentTargetKey: string;
+                                    providerConnectionId: string;
+                                    modelId: string;
+                                };
+                                updatedAt: number;
+                            };
+                            effort?: string | undefined;
+                        } | {
                             kind: 'input';
                             name: string;
                             path?: (number | string)[] | undefined;
@@ -16553,6 +16852,8 @@ export type WorkflowsActionResultById = {
                             kind: 'item';
                             field: 'value';
                             path?: (number | string)[] | undefined;
+                        } | {
+                            role: string;
                         };
                         participant?: undefined | {
                             kind: 'input';
@@ -17392,7 +17693,10 @@ export type WorkflowsActionResultById = {
                             };
                         })[] | undefined;
                         permissionModeUpdatedAt?: number | undefined;
-                        environmentVariables?: Record<string, string> | undefined;
+                        launchEnvironment?: undefined | {
+                            values: Record<string, string>;
+                            unset: string[];
+                        };
                         providerSessionResume?: undefined | {
                             kind: 'provider_session.v1';
                             providerSessionId: string;
@@ -17469,6 +17773,29 @@ export type WorkflowsActionResultById = {
                         };
                         roleId?: string | undefined;
                         engine?: undefined | {
+                            agentTarget: {
+                                kind: 'agent';
+                                identity: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                definitionId?: string | undefined;
+                            };
+                            modelSelection?: null | undefined | {
+                                v: 1;
+                                ref: {
+                                    agentTargetKey: string;
+                                    providerConnectionId: null;
+                                    modelId: string;
+                                } | {
+                                    agentTargetKey: string;
+                                    providerConnectionId: string;
+                                    modelId: string;
+                                };
+                                updatedAt: number;
+                            };
+                            effort?: string | undefined;
+                        } | {
                             kind: 'input';
                             name: string;
                             path?: (number | string)[] | undefined;
@@ -17476,6 +17803,8 @@ export type WorkflowsActionResultById = {
                             kind: 'item';
                             field: 'value';
                             path?: (number | string)[] | undefined;
+                        } | {
+                            role: string;
                         };
                         participant?: undefined | {
                             kind: 'input';
@@ -18311,7 +18640,10 @@ export type WorkflowsActionResultById = {
                             };
                         })[] | undefined;
                         permissionModeUpdatedAt?: number | undefined;
-                        environmentVariables?: Record<string, string> | undefined;
+                        launchEnvironment?: undefined | {
+                            values: Record<string, string>;
+                            unset: string[];
+                        };
                         providerSessionResume?: undefined | {
                             kind: 'provider_session.v1';
                             providerSessionId: string;
@@ -18388,6 +18720,29 @@ export type WorkflowsActionResultById = {
                         };
                         roleId?: string | undefined;
                         engine?: undefined | {
+                            agentTarget: {
+                                kind: 'agent';
+                                identity: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                definitionId?: string | undefined;
+                            };
+                            modelSelection?: null | undefined | {
+                                v: 1;
+                                ref: {
+                                    agentTargetKey: string;
+                                    providerConnectionId: null;
+                                    modelId: string;
+                                } | {
+                                    agentTargetKey: string;
+                                    providerConnectionId: string;
+                                    modelId: string;
+                                };
+                                updatedAt: number;
+                            };
+                            effort?: string | undefined;
+                        } | {
                             kind: 'input';
                             name: string;
                             path?: (number | string)[] | undefined;
@@ -18395,6 +18750,8 @@ export type WorkflowsActionResultById = {
                             kind: 'item';
                             field: 'value';
                             path?: (number | string)[] | undefined;
+                        } | {
+                            role: string;
                         };
                         participant?: undefined | {
                             kind: 'input';
@@ -19072,7 +19429,10 @@ export type WorkflowsActionResultById = {
                             };
                         })[] | undefined;
                         permissionModeUpdatedAt?: number | undefined;
-                        environmentVariables?: Record<string, string> | undefined;
+                        launchEnvironment?: undefined | {
+                            values: Record<string, string>;
+                            unset: string[];
+                        };
                         providerSessionResume?: undefined | {
                             kind: 'provider_session.v1';
                             providerSessionId: string;
@@ -19149,6 +19509,29 @@ export type WorkflowsActionResultById = {
                         };
                         roleId?: string | undefined;
                         engine?: undefined | {
+                            agentTarget: {
+                                kind: 'agent';
+                                identity: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                definitionId?: string | undefined;
+                            };
+                            modelSelection?: null | undefined | {
+                                v: 1;
+                                ref: {
+                                    agentTargetKey: string;
+                                    providerConnectionId: null;
+                                    modelId: string;
+                                } | {
+                                    agentTargetKey: string;
+                                    providerConnectionId: string;
+                                    modelId: string;
+                                };
+                                updatedAt: number;
+                            };
+                            effort?: string | undefined;
+                        } | {
                             kind: 'input';
                             name: string;
                             path?: (number | string)[] | undefined;
@@ -19156,6 +19539,8 @@ export type WorkflowsActionResultById = {
                             kind: 'item';
                             field: 'value';
                             path?: (number | string)[] | undefined;
+                        } | {
+                            role: string;
                         };
                         participant?: undefined | {
                             kind: 'input';
@@ -19833,7 +20218,10 @@ export type WorkflowsActionResultById = {
                             };
                         })[] | undefined;
                         permissionModeUpdatedAt?: number | undefined;
-                        environmentVariables?: Record<string, string> | undefined;
+                        launchEnvironment?: undefined | {
+                            values: Record<string, string>;
+                            unset: string[];
+                        };
                         providerSessionResume?: undefined | {
                             kind: 'provider_session.v1';
                             providerSessionId: string;
@@ -19910,6 +20298,29 @@ export type WorkflowsActionResultById = {
                         };
                         roleId?: string | undefined;
                         engine?: undefined | {
+                            agentTarget: {
+                                kind: 'agent';
+                                identity: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                definitionId?: string | undefined;
+                            };
+                            modelSelection?: null | undefined | {
+                                v: 1;
+                                ref: {
+                                    agentTargetKey: string;
+                                    providerConnectionId: null;
+                                    modelId: string;
+                                } | {
+                                    agentTargetKey: string;
+                                    providerConnectionId: string;
+                                    modelId: string;
+                                };
+                                updatedAt: number;
+                            };
+                            effort?: string | undefined;
+                        } | {
                             kind: 'input';
                             name: string;
                             path?: (number | string)[] | undefined;
@@ -19917,6 +20328,8 @@ export type WorkflowsActionResultById = {
                             kind: 'item';
                             field: 'value';
                             path?: (number | string)[] | undefined;
+                        } | {
+                            role: string;
                         };
                         participant?: undefined | {
                             kind: 'input';
@@ -20284,7 +20697,10 @@ type WorkflowsActionDefinition2 = Readonly<{
             };
         })[] | undefined;
         permissionModeUpdatedAt?: number | undefined;
-        environmentVariables?: Record<string, string> | undefined;
+        launchEnvironment?: undefined | {
+            values: Record<string, string>;
+            unset: string[];
+        };
         providerSessionResume?: undefined | {
             kind: 'provider_session.v1';
             providerSessionId: string;
@@ -20361,6 +20777,29 @@ type WorkflowsActionDefinition2 = Readonly<{
         };
         roleId?: string | undefined;
         engine?: undefined | {
+            agentTarget: {
+                kind: 'agent';
+                identity: {
+                    pluginId: string;
+                    localId: string;
+                };
+                definitionId?: string | undefined;
+            };
+            modelSelection?: null | undefined | {
+                v: 1;
+                ref: {
+                    agentTargetKey: string;
+                    providerConnectionId: null;
+                    modelId: string;
+                } | {
+                    agentTargetKey: string;
+                    providerConnectionId: string;
+                    modelId: string;
+                };
+                updatedAt: number;
+            };
+            effort?: string | undefined;
+        } | {
             kind: 'input';
             name: string;
             path?: (number | string)[] | undefined;
@@ -20368,6 +20807,8 @@ type WorkflowsActionDefinition2 = Readonly<{
             kind: 'item';
             field: 'value';
             path?: (number | string)[] | undefined;
+        } | {
+            role: string;
         };
         participant?: undefined | {
             kind: 'input';
@@ -20634,7 +21075,10 @@ type WorkflowsActionSelection1 = {
         };
     })[] | undefined;
     permissionModeUpdatedAt?: number | undefined;
-    environmentVariables?: Record<string, string> | undefined;
+    launchEnvironment?: undefined | {
+        values: Record<string, string>;
+        unset: string[];
+    };
     providerSessionResume?: undefined | {
         kind: 'provider_session.v1';
         providerSessionId: string;

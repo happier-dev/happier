@@ -138,6 +138,10 @@ export type MachineAdminAccessActionResultById = {
                         enabled: boolean;
                         running: boolean;
                     };
+                    restore?: undefined | {
+                        capturedAt: string;
+                        commands: string[];
+                    };
                 };
             };
         } | {
@@ -176,6 +180,10 @@ export type MachineAdminAccessActionResultById = {
                         present: boolean;
                         enabled: boolean;
                         running: boolean;
+                    };
+                    restore?: undefined | {
+                        capturedAt: string;
+                        commands: string[];
                     };
                 };
             };

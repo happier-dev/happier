@@ -27,6 +27,7 @@ export type MachineProvisionerContributionV1 = Readonly<{
   platforms: readonly ('darwin' | 'linux' | 'win32')[];
   /** Qualified whole browser API/bootstrap path; absence does not qualify browser acquisition. */
   browserReachable?: boolean;
+  sessionPlacement?: canonical.MachineProvisionerContributionV1['sessionPlacement'];
   prerequisites: readonly Readonly<{ kind: 'managedDependency' | 'systemTool'; id: string | PluginContributionRef }>[];
   billing: Readonly<{ location: 'local' | 'cloud' | 'unknown'; stoppedBilling: 'billed' | 'not-billed' | 'unknown'; storageCharges?: readonly MachineProvisionerPriceV1[] }>;
   retention: Readonly<{ supportedIntents: readonly MachineProvisionerNativeIntentV1[]; guestLocalStop?: canonical.MachineProvisionerContributionV1['retention']['guestLocalStop']; finiteOnly?: boolean; deletionNotices?: readonly MachineProvisionerDeletionNoticeV1[]; nativeExpiry?: Readonly<{ kind: 'unused'; afterMs: number }> | Readonly<{ kind: 'deadline'; at: number }> }>;
@@ -44,11 +45,29 @@ export type MachineProvisionerContributionV1 = Readonly<{
   /** Qualified native launch variants that do not require a declared purpose. */
   credentialPurposeRequirements?: readonly Readonly<{ purpose: string; optionalWhen: InputPredicate }>[];
   reconciliation?: Readonly<{ nativeOperationSchema: PluginJsonSchema; action: string; cleanup?: string; continueAcquire?: true }>;
+  preparation?: canonical.MachineProvisionerContributionV1['preparation'];
 }>;
 export type MachineProvisionerNativeIntentV1 = 'start' | 'stop' | 'suspend' | 'resume' | 'delete' | 'rebuild';
 export type MachineProvisionerPriceV1 = Readonly<{ label?: PluginLocalizedStringV2; amount: string; currency: string; unit: string; source: string; observedAt: number }>;
 export type MachineProvisionerAuthorDefinitionV1 = Omit<MachineProvisionerContributionV1, 'id'>;
 export type MachineProvisionerNativeCauseV1 = canonical.MachineProvisionerNativeCauseV1;
+export type ManagedGuestCliBuildInputV1 = canonical.ManagedGuestCliBuildInputV1;
+export type ManagedMachinePresetPreparationBuildInputV1 = canonical.ManagedMachinePresetPreparationBuildInputV1;
+export const ManagedGuestCliBuildInputV1Schema: ProtocolComposableSchema<ManagedGuestCliBuildInputV1> = /* @__PURE__ */ projectProtocolValue(canonical.ManagedGuestCliBuildInputV1Schema);
+export const ManagedMachinePresetPreparationBuildInputV1Schema: ProtocolComposableSchema<ManagedMachinePresetPreparationBuildInputV1> = /* @__PURE__ */ projectProtocolValue(canonical.ManagedMachinePresetPreparationBuildInputV1Schema);
+export type MachineProvisionerPreparationBuildInputV1 = canonical.MachineProvisionerPreparationBuildInputV1;
+export type MachineProvisionerPreparationBuildResultV1 = canonical.MachineProvisionerPreparationBuildResultV1;
+export type MachineProvisionerPreparationInspectInputV1 = canonical.MachineProvisionerPreparationInspectInputV1;
+export type MachineProvisionerPreparationInspectResultV1 = canonical.MachineProvisionerPreparationInspectResultV1;
+export type MachineProvisionerPreparationDestroyInputV1 = canonical.MachineProvisionerPreparationDestroyInputV1;
+export type MachineProvisionerPreparationDestroyResultV1 = canonical.MachineProvisionerPreparationDestroyResultV1;
+export const defineMachineProvisionerPreparationSchemas: typeof canonical.defineMachineProvisionerPreparationSchemas = /* @__PURE__ */ projectProtocolValue(canonical.defineMachineProvisionerPreparationSchemas);
+export const MachineProvisionerPreparationBuildInputV1Schema: ProtocolComposableSchema<MachineProvisionerPreparationBuildInputV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerPreparationBuildInputV1Schema);
+export const MachineProvisionerPreparationBuildResultV1Schema: ProtocolComposableSchema<MachineProvisionerPreparationBuildResultV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerPreparationBuildResultV1Schema);
+export const MachineProvisionerPreparationInspectInputV1Schema: ProtocolComposableSchema<MachineProvisionerPreparationInspectInputV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerPreparationInspectInputV1Schema);
+export const MachineProvisionerPreparationInspectResultV1Schema: ProtocolComposableSchema<MachineProvisionerPreparationInspectResultV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerPreparationInspectResultV1Schema);
+export const MachineProvisionerPreparationDestroyInputV1Schema: ProtocolComposableSchema<MachineProvisionerPreparationDestroyInputV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerPreparationDestroyInputV1Schema);
+export const MachineProvisionerPreparationDestroyResultV1Schema: ProtocolComposableSchema<MachineProvisionerPreparationDestroyResultV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerPreparationDestroyResultV1Schema);
 export type MachineProvisionerSizeV1 = canonical.MachineProvisionerSizeV1;
 export type MachineProvisionerSizeDimensionV1 = canonical.MachineProvisionerSizeDimensionV1;
 export type MachineProvisionerResizeResultV1 = canonical.MachineProvisionerResizeResultV1;

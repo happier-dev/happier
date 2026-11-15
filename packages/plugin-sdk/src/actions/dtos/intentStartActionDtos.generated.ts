@@ -72,7 +72,6 @@ export type IntentStartActionInputById = {
         target?: undefined | {
             kind: 'detached';
         };
-        previousRoundContext?: unknown;
         permissionMode?: unknown;
         retentionPolicy?: 'ephemeral' | 'resumable' | undefined;
         runClass?: 'bounded' | 'long_lived' | undefined;

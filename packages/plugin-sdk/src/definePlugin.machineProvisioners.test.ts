@@ -1,11 +1,42 @@
 import { describe, expect, it } from 'vitest';
-import { machineProvisionerAuthorFixture, createMachineProvisionerRepairAuthorFixture, prepareMachineProvisionerAuthorStoredReaders, machineProvisionerAuthorOptions, machineProvisionerAuthorRefusedOptions, projectMachineProvisionerAuthorSelection } from '../fixtures/authoring-inference/machineProvisioners.js';
+import { machineProvisionerAuthorFixture, createMachineProvisionerRepairAuthorFixture, createMachineProvisionerPreparationAuthorFixture, createMachinePresetPreparationInputAuthorFixture, prepareMachineProvisionerAuthorStoredReaders, machineProvisionerAuthorOptions, machineProvisionerAuthorRefusedOptions, projectMachineProvisionerAuthorSelection } from '../fixtures/authoring-inference/machineProvisioners.js';
 import { parsePluginManifest } from './manifest.js';
 import { createPluginTestkit } from './testing/host.js';
 import { MachineProvisionerOptionsResultV1Schema } from './machineProvisioners.js';
 import type { JsonValue } from './identity.js';
 
 describe('public machine provisioner authoring', () => {
+  it('passes the complete validated launch and supplier CLI input through the public builder contract', async () => {
+    const author = createMachinePresetPreparationInputAuthorFixture();
+    const testkit = await createPluginTestkit({ manifest: author.manifest, module: author });
+    const launch = { provider: { pluginId: 'examples.machine-provisioner', localId: 'guest' }, schemaVersion: 1,
+      choices: { image: 'linux', size: 'small', region: 'hel1' } };
+    const cli = { identity: 'home-payload:fixture', versionId: 'fixture', binaryPath: '/opt/happier/happier',
+      installScript: 'install selected payload', files: [{ path: 'payload.tar.gz', contentsBase64: 'cGF5bG9hZA==' }] };
+    try {
+      await expect(testkit.invokeAction('build', { launch, cli })).resolves.toEqual(cli);
+      await expect(testkit.invokeAction('build', { launch: { ...launch, credentials: { secret: 'selector' } }, cli })).rejects.toThrow();
+      await expect(testkit.invokeAction('build', { launch, cli: { ...cli, files: [{ path: 'payload.tar.gz' }] } })).rejects.toThrow();
+    } finally { await testkit.dispose(); }
+  });
+  it('retains an unknown preparation identity and resolves it through the public inspect and cleanup roles', async () => {
+    const author = createMachineProvisionerPreparationAuthorFixture();
+    const testkit = await createPluginTestkit({ manifest: author.manifest, module: author });
+    const contributionRef = { pluginId: author.manifest.id, localId: 'guest' };
+    try {
+      await expect(testkit.invokeAction('prepare-build', { operationId: 'retained-build', input: { name: 'guest' } }))
+        .resolves.toEqual({ kind: 'unknown', code: 'native_reply_lost', nativeOperationRef: {
+          contributionRef, schemaVersion: 1, value: { claimId: 'retained-build' },
+        } });
+      await expect(testkit.invokeAction('prepare-inspect', { nativeOperation: { contributionRef, schemaVersion: 1, value: { claimId: 'retained-build' } } }))
+        .resolves.toEqual({ kind: 'ready', artifact: { contributionRef, schemaVersion: 1, value: { launch: { name: 'retained-build' } } } });
+      await expect(testkit.invokeAction('prepare-inspect', { operationId: 'retained-build', input: { name: 'guest' } }))
+        .resolves.toEqual({ kind: 'ready', artifact: { contributionRef, schemaVersion: 1, value: { launch: { name: 'retained-build' } } } });
+      await expect(testkit.invokeAction('prepare-destroy', { artifact: { contributionRef, schemaVersion: 1, value: { launch: { name: 'retained-build' } } } }))
+        .resolves.toEqual({ kind: 'confirmed' });
+      await expect(testkit.invokeAction('prepare-destroy', {})).rejects.toThrow();
+    } finally { await testkit.dispose(); }
+  });
   it('preserves native power results and recovers an unknown outcome by inspecting the same resource', async () => {
     const testkit = await createPluginTestkit({ manifest: machineProvisionerAuthorFixture.manifest, module: machineProvisionerAuthorFixture });
     try {

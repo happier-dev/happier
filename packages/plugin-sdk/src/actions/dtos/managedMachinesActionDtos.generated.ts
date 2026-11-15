@@ -1854,7 +1854,10 @@ export type ManagedMachinesActionInputById = {
                                 };
                             })[] | undefined;
                             permissionModeUpdatedAt?: number | undefined;
-                            environmentVariables?: Record<string, string> | undefined;
+                            launchEnvironment?: undefined | {
+                                values: Record<string, string>;
+                                unset: string[];
+                            };
                             providerSessionResume?: undefined | {
                                 kind: 'provider_session.v1';
                                 providerSessionId: string;
@@ -1931,6 +1934,29 @@ export type ManagedMachinesActionInputById = {
                             };
                             roleId?: string | undefined;
                             engine?: undefined | {
+                                agentTarget: {
+                                    kind: 'agent';
+                                    identity: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    definitionId?: string | undefined;
+                                };
+                                modelSelection?: null | undefined | {
+                                    v: 1;
+                                    ref: {
+                                        agentTargetKey: string;
+                                        providerConnectionId: null;
+                                        modelId: string;
+                                    } | {
+                                        agentTargetKey: string;
+                                        providerConnectionId: string;
+                                        modelId: string;
+                                    };
+                                    updatedAt: number;
+                                };
+                                effort?: string | undefined;
+                            } | {
                                 kind: 'input';
                                 name: string;
                                 path?: (number | string)[] | undefined;
@@ -1938,6 +1964,8 @@ export type ManagedMachinesActionInputById = {
                                 kind: 'item';
                                 field: 'value';
                                 path?: (number | string)[] | undefined;
+                            } | {
+                                role: string;
                             };
                             participant?: undefined | {
                                 kind: 'input';
@@ -2316,6 +2344,11 @@ export type ManagedMachinesActionInputById = {
                     params?: Record<string, number | string> | undefined;
                 };
                 browserReachable?: boolean | undefined;
+                sessionPlacement?: undefined | {
+                    kind: 'controller-local' | 'remote';
+                    when?: unknown;
+                    supportsAgentNativeSandbox?: boolean | undefined;
+                };
                 resize?: undefined | {
                     cpuCores: {
                         kind: 'supported';
@@ -2395,6 +2428,17 @@ export type ManagedMachinesActionInputById = {
                     action: string;
                     cleanup?: string | undefined;
                     continueAcquire?: true | undefined;
+                };
+                preparation?: undefined | {
+                    inputSchema: unknown;
+                    artifactSchema: unknown;
+                    nativeOperationSchema: unknown;
+                    artifactLaunchPath: string;
+                    actions: {
+                        build: string;
+                        inspect: string;
+                        destroy: string;
+                    };
                 };
             };
             prices?: undefined | {
@@ -4166,7 +4210,10 @@ export type ManagedMachinesActionInputById = {
                                 };
                             })[] | undefined;
                             permissionModeUpdatedAt?: number | undefined;
-                            environmentVariables?: Record<string, string> | undefined;
+                            launchEnvironment?: undefined | {
+                                values: Record<string, string>;
+                                unset: string[];
+                            };
                             providerSessionResume?: undefined | {
                                 kind: 'provider_session.v1';
                                 providerSessionId: string;
@@ -4243,6 +4290,29 @@ export type ManagedMachinesActionInputById = {
                             };
                             roleId?: string | undefined;
                             engine?: undefined | {
+                                agentTarget: {
+                                    kind: 'agent';
+                                    identity: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    definitionId?: string | undefined;
+                                };
+                                modelSelection?: null | undefined | {
+                                    v: 1;
+                                    ref: {
+                                        agentTargetKey: string;
+                                        providerConnectionId: null;
+                                        modelId: string;
+                                    } | {
+                                        agentTargetKey: string;
+                                        providerConnectionId: string;
+                                        modelId: string;
+                                    };
+                                    updatedAt: number;
+                                };
+                                effort?: string | undefined;
+                            } | {
                                 kind: 'input';
                                 name: string;
                                 path?: (number | string)[] | undefined;
@@ -4250,6 +4320,8 @@ export type ManagedMachinesActionInputById = {
                                 kind: 'item';
                                 field: 'value';
                                 path?: (number | string)[] | undefined;
+                            } | {
+                                role: string;
                             };
                             participant?: undefined | {
                                 kind: 'input';
@@ -11281,6 +11353,11 @@ export type ManagedMachinesActionResultById = {
                     params?: Record<string, number | string> | undefined;
                 };
                 browserReachable?: boolean | undefined;
+                sessionPlacement?: undefined | {
+                    kind: 'controller-local' | 'remote';
+                    when?: InputPredicate | undefined;
+                    supportsAgentNativeSandbox?: boolean | undefined;
+                };
                 resize?: undefined | {
                     cpuCores: {
                         kind: 'supported';
@@ -11361,6 +11438,17 @@ export type ManagedMachinesActionResultById = {
                     cleanup?: string | undefined;
                     continueAcquire?: true | undefined;
                 };
+                preparation?: undefined | {
+                    inputSchema: PluginJsonSchemaV2;
+                    artifactSchema: PluginJsonSchemaV2;
+                    nativeOperationSchema: PluginJsonSchemaV2;
+                    artifactLaunchPath: string;
+                    actions: {
+                        build: string;
+                        inspect: string;
+                        destroy: string;
+                    };
+                };
             };
             credentialPurposes?: undefined | {
                 purpose: {
@@ -11377,24 +11465,6 @@ export type ManagedMachinesActionResultById = {
                             localId: string;
                         };
                         accountId: string;
-                    } | {
-                        teamId: string;
-                        selection: {
-                            source: 'team_resource';
-                            resourceId: string;
-                            deliveryMode: 'brokered';
-                        } | {
-                            source: 'team_resource';
-                            resourceId: string;
-                            deliveryMode: 'direct';
-                            disclosedMember: {
-                                service: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                accountId: string;
-                            };
-                        };
                     };
                     label: string;
                 }[];
@@ -12746,6 +12816,11 @@ export type ManagedMachinesActionResultById = {
                         params?: Record<string, number | string> | undefined;
                     };
                     browserReachable?: boolean | undefined;
+                    sessionPlacement?: undefined | {
+                        kind: 'controller-local' | 'remote';
+                        when?: InputPredicate | undefined;
+                        supportsAgentNativeSandbox?: boolean | undefined;
+                    };
                     resize?: undefined | {
                         cpuCores: {
                             kind: 'supported';
@@ -12825,6 +12900,17 @@ export type ManagedMachinesActionResultById = {
                         action: string;
                         cleanup?: string | undefined;
                         continueAcquire?: true | undefined;
+                    };
+                    preparation?: undefined | {
+                        inputSchema: PluginJsonSchemaV2;
+                        artifactSchema: PluginJsonSchemaV2;
+                        nativeOperationSchema: PluginJsonSchemaV2;
+                        artifactLaunchPath: string;
+                        actions: {
+                            build: string;
+                            inspect: string;
+                            destroy: string;
+                        };
                     };
                 };
                 prices?: undefined | {
@@ -13647,6 +13733,11 @@ export type ManagedMachinesActionResultById = {
                     params?: Record<string, number | string> | undefined;
                 };
                 browserReachable?: boolean | undefined;
+                sessionPlacement?: undefined | {
+                    kind: 'controller-local' | 'remote';
+                    when?: InputPredicate | undefined;
+                    supportsAgentNativeSandbox?: boolean | undefined;
+                };
                 resize?: undefined | {
                     cpuCores: {
                         kind: 'supported';
@@ -13726,6 +13817,17 @@ export type ManagedMachinesActionResultById = {
                     action: string;
                     cleanup?: string | undefined;
                     continueAcquire?: true | undefined;
+                };
+                preparation?: undefined | {
+                    inputSchema: PluginJsonSchemaV2;
+                    artifactSchema: PluginJsonSchemaV2;
+                    nativeOperationSchema: PluginJsonSchemaV2;
+                    artifactLaunchPath: string;
+                    actions: {
+                        build: string;
+                        inspect: string;
+                        destroy: string;
+                    };
                 };
             };
             prices?: undefined | {
@@ -14579,6 +14681,11 @@ export type ManagedMachinesActionResultById = {
                         params?: Record<string, number | string> | undefined;
                     };
                     browserReachable?: boolean | undefined;
+                    sessionPlacement?: undefined | {
+                        kind: 'controller-local' | 'remote';
+                        when?: InputPredicate | undefined;
+                        supportsAgentNativeSandbox?: boolean | undefined;
+                    };
                     resize?: undefined | {
                         cpuCores: {
                             kind: 'supported';
@@ -14658,6 +14765,17 @@ export type ManagedMachinesActionResultById = {
                         action: string;
                         cleanup?: string | undefined;
                         continueAcquire?: true | undefined;
+                    };
+                    preparation?: undefined | {
+                        inputSchema: PluginJsonSchemaV2;
+                        artifactSchema: PluginJsonSchemaV2;
+                        nativeOperationSchema: PluginJsonSchemaV2;
+                        artifactLaunchPath: string;
+                        actions: {
+                            build: string;
+                            inspect: string;
+                            destroy: string;
+                        };
                     };
                 };
                 prices?: undefined | {
@@ -15518,6 +15636,11 @@ export type ManagedMachinesActionResultById = {
                         params?: Record<string, number | string> | undefined;
                     };
                     browserReachable?: boolean | undefined;
+                    sessionPlacement?: undefined | {
+                        kind: 'controller-local' | 'remote';
+                        when?: InputPredicate | undefined;
+                        supportsAgentNativeSandbox?: boolean | undefined;
+                    };
                     resize?: undefined | {
                         cpuCores: {
                             kind: 'supported';
@@ -15597,6 +15720,17 @@ export type ManagedMachinesActionResultById = {
                         action: string;
                         cleanup?: string | undefined;
                         continueAcquire?: true | undefined;
+                    };
+                    preparation?: undefined | {
+                        inputSchema: PluginJsonSchemaV2;
+                        artifactSchema: PluginJsonSchemaV2;
+                        nativeOperationSchema: PluginJsonSchemaV2;
+                        artifactLaunchPath: string;
+                        actions: {
+                            build: string;
+                            inspect: string;
+                            destroy: string;
+                        };
                     };
                 };
                 prices?: undefined | {
@@ -16427,6 +16561,11 @@ export type ManagedMachinesActionResultById = {
                     params?: Record<string, number | string> | undefined;
                 };
                 browserReachable?: boolean | undefined;
+                sessionPlacement?: undefined | {
+                    kind: 'controller-local' | 'remote';
+                    when?: InputPredicate | undefined;
+                    supportsAgentNativeSandbox?: boolean | undefined;
+                };
                 resize?: undefined | {
                     cpuCores: {
                         kind: 'supported';
@@ -16506,6 +16645,17 @@ export type ManagedMachinesActionResultById = {
                     action: string;
                     cleanup?: string | undefined;
                     continueAcquire?: true | undefined;
+                };
+                preparation?: undefined | {
+                    inputSchema: PluginJsonSchemaV2;
+                    artifactSchema: PluginJsonSchemaV2;
+                    nativeOperationSchema: PluginJsonSchemaV2;
+                    artifactLaunchPath: string;
+                    actions: {
+                        build: string;
+                        inspect: string;
+                        destroy: string;
+                    };
                 };
             };
             prices?: undefined | {
@@ -26039,6 +26189,11 @@ export type ManagedMachinesActionResultById = {
                     params?: Record<string, number | string> | undefined;
                 };
                 browserReachable?: boolean | undefined;
+                sessionPlacement?: undefined | {
+                    kind: 'controller-local' | 'remote';
+                    when?: InputPredicate | undefined;
+                    supportsAgentNativeSandbox?: boolean | undefined;
+                };
                 resize?: undefined | {
                     cpuCores: {
                         kind: 'supported';
@@ -26118,6 +26273,17 @@ export type ManagedMachinesActionResultById = {
                     action: string;
                     cleanup?: string | undefined;
                     continueAcquire?: true | undefined;
+                };
+                preparation?: undefined | {
+                    inputSchema: PluginJsonSchemaV2;
+                    artifactSchema: PluginJsonSchemaV2;
+                    nativeOperationSchema: PluginJsonSchemaV2;
+                    artifactLaunchPath: string;
+                    actions: {
+                        build: string;
+                        inspect: string;
+                        destroy: string;
+                    };
                 };
             };
             prices?: undefined | {
@@ -27012,6 +27178,11 @@ export type ManagedMachinesActionResultById = {
                     params?: Record<string, number | string> | undefined;
                 };
                 browserReachable?: boolean | undefined;
+                sessionPlacement?: undefined | {
+                    kind: 'controller-local' | 'remote';
+                    when?: InputPredicate | undefined;
+                    supportsAgentNativeSandbox?: boolean | undefined;
+                };
                 resize?: undefined | {
                     cpuCores: {
                         kind: 'supported';
@@ -27091,6 +27262,17 @@ export type ManagedMachinesActionResultById = {
                     action: string;
                     cleanup?: string | undefined;
                     continueAcquire?: true | undefined;
+                };
+                preparation?: undefined | {
+                    inputSchema: PluginJsonSchemaV2;
+                    artifactSchema: PluginJsonSchemaV2;
+                    nativeOperationSchema: PluginJsonSchemaV2;
+                    artifactLaunchPath: string;
+                    actions: {
+                        build: string;
+                        inspect: string;
+                        destroy: string;
+                    };
                 };
             };
             prices?: undefined | {
@@ -27912,6 +28094,11 @@ export type ManagedMachinesActionResultById = {
                     params?: Record<string, number | string> | undefined;
                 };
                 browserReachable?: boolean | undefined;
+                sessionPlacement?: undefined | {
+                    kind: 'controller-local' | 'remote';
+                    when?: InputPredicate | undefined;
+                    supportsAgentNativeSandbox?: boolean | undefined;
+                };
                 resize?: undefined | {
                     cpuCores: {
                         kind: 'supported';
@@ -27991,6 +28178,17 @@ export type ManagedMachinesActionResultById = {
                     action: string;
                     cleanup?: string | undefined;
                     continueAcquire?: true | undefined;
+                };
+                preparation?: undefined | {
+                    inputSchema: PluginJsonSchemaV2;
+                    artifactSchema: PluginJsonSchemaV2;
+                    nativeOperationSchema: PluginJsonSchemaV2;
+                    artifactLaunchPath: string;
+                    actions: {
+                        build: string;
+                        inspect: string;
+                        destroy: string;
+                    };
                 };
             };
             prices?: undefined | {

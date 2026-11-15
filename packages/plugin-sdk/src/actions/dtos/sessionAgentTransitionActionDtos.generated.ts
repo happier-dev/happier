@@ -23,25 +23,6 @@ export type SessionAgentTransitionActionInputById = {
                 }>;
             };
         };
-    } | {
-        sessionId: string;
-        selections: {
-            v: 1;
-            agentId: string;
-            modelId?: string | undefined;
-            providerConnectionId?: null | string | undefined;
-            acpSessionModeId?: null | string | undefined;
-            sessionConfigOptionOverrides?: undefined | {
-                [x: string]: unknown;
-                v: 1;
-                updatedAt: number;
-                overrides: Record<string, {
-                    [x: string]: unknown;
-                    updatedAt: number;
-                    value: boolean | null | number | string;
-                }>;
-            };
-        }[];
     };
     readonly "session.agent.transition": {
         input: {
@@ -81,21 +62,6 @@ export type SessionAgentTransitionActionResultById = {
             type: 'unavailable';
             reason: 'operation_unavailable' | 'target_unavailable' | 'unsupported_session';
         };
-    } | {
-        status: 'batch';
-        inspections: ({
-            status: 'answered';
-            inspection: {
-                type: 'available';
-                protocolVersion: 1;
-                sameSessionTransition: boolean;
-            } | {
-                type: 'unavailable';
-                reason: 'operation_unavailable' | 'target_unavailable' | 'unsupported_session';
-            };
-        } | {
-            status: 'indeterminate';
-        })[];
     } | {
         status: 'indeterminate';
     };

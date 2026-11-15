@@ -511,7 +511,7 @@ export type SessionFollowActionResultById = {
                         nativeChoices?: null | undefined | {
                             requirementId: string;
                             source: string;
-                            choices: readonly Readonly<{
+                            choices: {
                                 id: string;
                                 label: string;
                                 decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -534,7 +534,7 @@ export type SessionFollowActionResultById = {
                                     actionId: string;
                                     input: JsonValue;
                                 };
-                            }>[];
+                            }[];
                             origin?: undefined | {
                                 sessionId: string;
                                 subagentId?: string | undefined;
@@ -962,7 +962,7 @@ export type SessionFollowActionResultById = {
                         nativeChoices?: null | undefined | {
                             requirementId: string;
                             source: string;
-                            choices: readonly Readonly<{
+                            choices: {
                                 id: string;
                                 label: string;
                                 decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -985,7 +985,7 @@ export type SessionFollowActionResultById = {
                                     actionId: string;
                                     input: JsonValue;
                                 };
-                            }>[];
+                            }[];
                             origin?: undefined | {
                                 sessionId: string;
                                 subagentId?: string | undefined;
@@ -1293,7 +1293,7 @@ export type SessionFollowActionResultById = {
                         nativeChoices?: null | undefined | {
                             requirementId: string;
                             source: string;
-                            choices: readonly Readonly<{
+                            choices: {
                                 id: string;
                                 label: string;
                                 decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -1316,7 +1316,7 @@ export type SessionFollowActionResultById = {
                                     actionId: string;
                                     input: JsonValue;
                                 };
-                            }>[];
+                            }[];
                             origin?: undefined | {
                                 sessionId: string;
                                 subagentId?: string | undefined;

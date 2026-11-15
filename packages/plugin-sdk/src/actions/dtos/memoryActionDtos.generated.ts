@@ -929,74 +929,9 @@ export type MemoryActionResultById = {
         hints: {
             [x: string]: unknown;
             enabled: boolean;
-            summarizerRunner: {
-                v: 1;
-                mode: 'auto';
-                sessionConfigOptionOverrides?: undefined | {
-                    [x: string]: unknown;
-                    v: 1;
-                    updatedAt: number;
-                    overrides: Record<string, {
-                        [x: string]: unknown;
-                        updatedAt: number;
-                        value: boolean | null | number | string;
-                    }>;
-                };
-                permissionMode?: 'full' | 'no_tools' | 'read_only' | 'workspace_write' | undefined;
-            } | {
-                v: 1;
-                modelSelection: {
-                    agentTargetKey: string;
-                    providerConnectionId: null;
-                    modelId: string;
-                } | {
-                    agentTargetKey: string;
-                    providerConnectionId: string;
-                    modelId: string;
-                };
-                connectedServices?: null | undefined | {
-                    v: 2;
-                    bindingsByServiceId: Record<string, {
-                        source: 'connected';
-                        selection: 'group';
-                        groupId: string;
-                        profileId?: string | undefined;
-                        appliedProfileId?: string | undefined;
-                    } | {
-                        source: 'connected';
-                        selection: 'profile';
-                        profileId: string;
-                    } | {
-                        source: 'native';
-                    } | {
-                        source: 'team_resource';
-                        resourceId: string;
-                        deliveryMode: 'brokered';
-                    } | {
-                        source: 'team_resource';
-                        resourceId: string;
-                        deliveryMode: 'direct';
-                        disclosedMember: {
-                            service: {
-                                pluginId: string;
-                                localId: string;
-                            };
-                            accountId: string;
-                        };
-                    }>;
-                };
-                sessionConfigOptionOverrides?: undefined | {
-                    [x: string]: unknown;
-                    v: 1;
-                    updatedAt: number;
-                    overrides: Record<string, {
-                        [x: string]: unknown;
-                        updatedAt: number;
-                        value: boolean | null | number | string;
-                    }>;
-                };
-                permissionMode?: 'full' | 'no_tools' | 'read_only' | 'workspace_write' | undefined;
-            };
+            summarizerBackendId: string;
+            summarizerModelId: string;
+            summarizerPermissionMode: 'no_tools' | 'read_only';
             windowSizeMessages: number;
             targetShardMessages: number;
             minShardMessages: number;
@@ -1125,74 +1060,9 @@ export type MemoryActionResultById = {
         hints: {
             [x: string]: unknown;
             enabled: boolean;
-            summarizerRunner: {
-                v: 1;
-                mode: 'auto';
-                sessionConfigOptionOverrides?: undefined | {
-                    [x: string]: unknown;
-                    v: 1;
-                    updatedAt: number;
-                    overrides: Record<string, {
-                        [x: string]: unknown;
-                        updatedAt: number;
-                        value: boolean | null | number | string;
-                    }>;
-                };
-                permissionMode?: 'full' | 'no_tools' | 'read_only' | 'workspace_write' | undefined;
-            } | {
-                v: 1;
-                modelSelection: {
-                    agentTargetKey: string;
-                    providerConnectionId: null;
-                    modelId: string;
-                } | {
-                    agentTargetKey: string;
-                    providerConnectionId: string;
-                    modelId: string;
-                };
-                connectedServices?: null | undefined | {
-                    v: 2;
-                    bindingsByServiceId: Record<string, {
-                        source: 'connected';
-                        selection: 'group';
-                        groupId: string;
-                        profileId?: string | undefined;
-                        appliedProfileId?: string | undefined;
-                    } | {
-                        source: 'connected';
-                        selection: 'profile';
-                        profileId: string;
-                    } | {
-                        source: 'native';
-                    } | {
-                        source: 'team_resource';
-                        resourceId: string;
-                        deliveryMode: 'brokered';
-                    } | {
-                        source: 'team_resource';
-                        resourceId: string;
-                        deliveryMode: 'direct';
-                        disclosedMember: {
-                            service: {
-                                pluginId: string;
-                                localId: string;
-                            };
-                            accountId: string;
-                        };
-                    }>;
-                };
-                sessionConfigOptionOverrides?: undefined | {
-                    [x: string]: unknown;
-                    v: 1;
-                    updatedAt: number;
-                    overrides: Record<string, {
-                        [x: string]: unknown;
-                        updatedAt: number;
-                        value: boolean | null | number | string;
-                    }>;
-                };
-                permissionMode?: 'full' | 'no_tools' | 'read_only' | 'workspace_write' | undefined;
-            };
+            summarizerBackendId: string;
+            summarizerModelId: string;
+            summarizerPermissionMode: 'no_tools' | 'read_only';
             windowSizeMessages: number;
             targetShardMessages: number;
             minShardMessages: number;

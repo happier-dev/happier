@@ -256,7 +256,7 @@ export type WorkflowAuthoringActionInputById = {
                 };
             })[] | undefined;
             permissionModeUpdatedAt?: number | undefined;
-            environmentVariables?: Record<string, string> | undefined;
+            launchEnvironment?: unknown;
             providerSessionResume?: undefined | {
                 kind: 'provider_session.v1';
                 providerSessionId: string;
@@ -552,7 +552,7 @@ export type WorkflowAuthoringActionInputById = {
                 };
             })[] | undefined;
             permissionModeUpdatedAt?: number | undefined;
-            environmentVariables?: Record<string, string> | undefined;
+            launchEnvironment?: unknown;
             providerSessionResume?: undefined | {
                 kind: 'provider_session.v1';
                 providerSessionId: string;

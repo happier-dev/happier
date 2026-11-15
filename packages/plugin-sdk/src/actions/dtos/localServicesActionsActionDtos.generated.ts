@@ -478,25 +478,6 @@ export type LocalServicesActionsActionResultById = {
             title: string;
             createdAt: number;
             cancellation: 'supported' | 'unsupported';
-            actor?: null | undefined | {
-                actorKind: 'agent';
-                sessionId: string;
-                onBehalfOf?: undefined | {
-                    serverId: string;
-                    accountId: string;
-                };
-            } | {
-                actorKind: 'person';
-                accountId: string;
-            } | {
-                actorKind: 'workflow';
-                runId: string;
-                automationId?: string | undefined;
-                onBehalfOf?: undefined | {
-                    serverId: string;
-                    accountId: string;
-                };
-            };
             requestId?: string | undefined;
             startedAt?: number | undefined;
             settledAt?: number | undefined;
@@ -894,7 +875,6 @@ export type LocalServicesActionsActionResultById = {
                             isCrossRepository?: boolean | undefined;
                             headSha?: null | string | undefined;
                             baseSha?: null | string | undefined;
-                            mergeCommitSha?: string | undefined;
                             createdAtMs?: number | undefined;
                             closedAtMs?: number | undefined;
                             mergedAtMs?: number | undefined;
@@ -940,7 +920,6 @@ export type LocalServicesActionsActionResultById = {
                             isCrossRepository?: boolean | undefined;
                             headSha?: null | string | undefined;
                             baseSha?: null | string | undefined;
-                            mergeCommitSha?: string | undefined;
                             createdAtMs?: number | undefined;
                             closedAtMs?: number | undefined;
                             mergedAtMs?: number | undefined;
@@ -1692,6 +1671,7 @@ export type LocalServicesActionsActionResultById = {
                                     kind: 'script';
                                     scriptName: string;
                                 };
+                                providerResourceOrigin?: 'created' | undefined;
                                 sourceMethod?: 'gitIntegration' | 'upload' | undefined;
                                 repositoryAccess?: undefined | {
                                     status: 'needsGitAccess';
@@ -1861,6 +1841,10 @@ export type LocalServicesActionsActionResultById = {
                             enabled: boolean;
                             running: boolean;
                         };
+                        restore?: undefined | {
+                            capturedAt: string;
+                            commands: string[];
+                        };
                     };
                     restoration?: undefined | {
                         status: 'verified';
@@ -1882,6 +1866,10 @@ export type LocalServicesActionsActionResultById = {
                                 present: boolean;
                                 enabled: boolean;
                                 running: boolean;
+                            };
+                            restore?: undefined | {
+                                capturedAt: string;
+                                commands: string[];
                             };
                         };
                     };

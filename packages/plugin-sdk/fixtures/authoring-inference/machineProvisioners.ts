@@ -1,6 +1,7 @@
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { defineProtocolObject, defineProtocolString, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
 import { classifyManagedMachineAllocationV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import * as machineProvisioners from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 import { defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, prepareMachineProvisionerStoredSchemas, projectMachineProvisionerSelectionV1, MachineProvisionerCheckResultV1Schema, MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerNativeExecResultV1Schema, MachineProvisionerPutFileResultV1Schema, MachineProvisionerOptionsResultV1Schema, type MachineProvisionerOptionsResultV1, type MachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type {
@@ -31,6 +32,18 @@ export async function observeMachineProvisionerAuthorInventory(host: Pick<Plugin
 const roles = defineMachineProvisionerSchemas({ launch: native, resource: native });
 const nativeOperation = defineProtocolObject({ claimId: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' });
 const reconciliation = defineMachineProvisionerReconciliationSchemas({ launch: native, resource: native, nativeOperation });
+/** A native builder receives the validated launch and the supplier's portable CLI input. */
+export function createMachinePresetPreparationInputAuthorFixture() {
+  return definePlugin({
+    id: 'examples.machine-preparation-input', version: '1.0.0',
+    actions: { build: {
+      title: 'Build prepared guest', execution: { target: 'daemon' }, surfaces: ['plugin'], dangerLevel: 'safe',
+      inputSchema: machineProvisioners.ManagedMachinePresetPreparationBuildInputV1Schema,
+      resultSchema: machineProvisioners.ManagedGuestCliBuildInputV1Schema,
+      run: async input => input.cli,
+    } },
+  });
+}
 export type MachineProvisionerAuthorAcquireInput = Parameters<typeof roles.acquireInput.parse>[0];
 export type MachineProvisionerAuthorBootstrapInput = Parameters<typeof roles.bootstrapInput.parse>[0];
 export const prepareMachineProvisionerAuthorStoredReaders = () => prepareMachineProvisionerStoredSchemas({ launch: native, resource: native, nativeOperation });
@@ -65,9 +78,13 @@ export const machineProvisionerAuthorRefusedOptions = {
     code: 'native_guest_unavailable', status: { key: 'guest.unavailable', fallback: 'Choose another guest.' }, fieldPath: 'name',
   } },
 } satisfies MachineProvisionerOptionsResultV1;
-function createAuthorFixture(repairNeeded = false) {
+function createAuthorFixture(repairNeeded = false, includePreparation = false) {
   let repaired = !repairNeeded;
   const repairInput = defineProtocolObject({ machineName: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' });
+  const preparationArtifact = defineProtocolObject({ launch: native }, { policy: 'closed' });
+  const preparation = machineProvisioners.defineMachineProvisionerPreparationSchemas({
+    input: native, artifact: preparationArtifact, nativeOperation,
+  });
   return definePlugin({
     id: 'examples.machine-provisioner', version: '1.0.0',
     machineProvisioners: { guest: {
@@ -80,15 +97,37 @@ function createAuthorFixture(repairNeeded = false) {
       credentialPurposeRequirements: [{ purpose: 'native-connection', optionalWhen: { op: 'eq', path: 'name', value: 'local' } }],
       // Supported controller OS; the selected image declares the guest OS.
       platforms: ['linux'], prerequisites: [{ kind: 'managedDependency', id: 'fixture-tool' }],
+      sessionPlacement: { kind: 'controller-local', supportsAgentNativeSandbox: true,
+        when: { op: 'eq', path: 'name', value: 'local' } },
       billing: { location: 'local', stoppedBilling: 'not-billed' }, retention: { supportedIntents: ['start', 'stop', 'delete'], finiteOnly: true },
       actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
       bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file' },
       reconciliation: { nativeOperationSchema: nativeOperation.jsonSchema, action: 'reconcile' },
+      ...(includePreparation ? { preparation: {
+        inputSchema: native.jsonSchema, artifactSchema: preparationArtifact.jsonSchema, nativeOperationSchema: nativeOperation.jsonSchema,
+        artifactLaunchPath: 'launch',
+        actions: { build: 'prepare-build', inspect: 'prepare-inspect', destroy: 'prepare-destroy' },
+      } } : {}),
     } },
     resources: { 'linux-preview': { kind: 'asset', path: 'assets/linux.png', contentType: 'image/png' } },
     managedDependencies: { 'fixture-tool': { title: 'Fixture setup', executable: 'fixture-tool',
       sources: [{ kind: 'system', executableNames: ['fixture-tool'], versionArguments: ['--version'] }] } },
     actions: {
+      // Actions exist independently; only the optional descriptor assigns their provider roles.
+      'prepare-build': { title: 'Prepare', execution: { target: 'daemon' as const }, surfaces: ['plugin' as const], dangerLevel: 'safe' as const,
+        inputSchema: preparation.buildInput, resultSchema: preparation.buildResult,
+        run: async (input: ProtocolSchemaOutput<typeof preparation.buildInput>) => ({ kind: 'unknown' as const, code: 'native_reply_lost', nativeOperationRef: {
+          contributionRef: { pluginId: 'examples.machine-provisioner', localId: 'guest' }, schemaVersion: 1, value: { claimId: input.operationId },
+        } }) },
+      'prepare-inspect': { title: 'Inspect preparation', execution: { target: 'daemon' as const }, surfaces: ['plugin' as const], dangerLevel: 'safe' as const,
+        inputSchema: preparation.inspectInput, resultSchema: preparation.inspectResult,
+        run: async (input: ProtocolSchemaOutput<typeof preparation.inspectInput>) => ({ kind: 'ready' as const, artifact: {
+          contributionRef: { pluginId: 'examples.machine-provisioner', localId: 'guest' }, schemaVersion: 1,
+          value: { launch: { name: 'nativeOperation' in input ? input.nativeOperation.value.claimId : input.operationId } },
+        } }) },
+      'prepare-destroy': { title: 'Delete preparation', execution: { target: 'daemon' as const }, surfaces: ['plugin' as const], dangerLevel: 'safe' as const,
+        inputSchema: preparation.destroyInput, resultSchema: preparation.destroyResult,
+        run: async () => ({ kind: 'confirmed' as const }) },
       options: { title: 'Native options', execution: { target: 'daemon' }, surfaces: ['plugin'], dangerLevel: 'safe',
         inputSchema: roles.checkInput, resultSchema: MachineProvisionerOptionsResultV1Schema, run: async () => machineProvisionerAuthorOptions },
       check: { title: 'Check', execution: { target: 'daemon' }, surfaces: ['plugin'], dangerLevel: 'safe',
@@ -149,3 +188,4 @@ function createAuthorFixture(repairNeeded = false) {
 }
 export const machineProvisionerAuthorFixture = createAuthorFixture();
 export const createMachineProvisionerRepairAuthorFixture = () => createAuthorFixture(true);
+export const createMachineProvisionerPreparationAuthorFixture = () => createAuthorFixture(false, true);

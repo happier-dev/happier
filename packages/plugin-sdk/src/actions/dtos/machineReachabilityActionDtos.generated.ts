@@ -3677,6 +3677,10 @@ export type MachineReachabilityActionResultById = {
                 enabled: boolean;
                 running: boolean;
             };
+            restore?: undefined | {
+                capturedAt: string;
+                commands: string[];
+            };
         };
     };
 };

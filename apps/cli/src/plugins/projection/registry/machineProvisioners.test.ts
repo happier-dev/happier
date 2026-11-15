@@ -7,8 +7,41 @@ import { buildPluginProjectionV2 } from './projection/v2';
 import { createLoadedMachineProvisionerFixture } from './machineProvisioners.testkit';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { readDeclaredConnectedAccountResourcePurposeV1, readDeclaredConnectedAccountPurposeV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeSelectionV1';
+import { defineMachineProvisionerPreparationSchemas, MachineProvisionerCheckInputV1Schema,
+    MachineProvisionerContributionV1Schema, readMachineProvisionerActionRolesV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { readResolvedActionContribution } from './actions';
+import { defineProtocolObject } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 
 describe('machine provisioner projection', () => {
+    it('projects optional preparation under the provisioner occurrence and resolves each declared Action in that plugin', () => {
+        const pluginId = 'com.acme.preparation';
+        const loaded = createLoadedMachineProvisionerFixture(pluginId);
+        const native = MachineProvisionerCheckInputV1Schema;
+        const artifact = defineProtocolObject({ launch: native }, { policy: 'closed' });
+        const schemas = defineMachineProvisionerPreparationSchemas({ input: native, artifact, nativeOperation: native });
+        const preparation = { inputSchema: native.jsonSchema, artifactSchema: artifact.jsonSchema, nativeOperationSchema: native.jsonSchema, artifactLaunchPath: 'launch',
+            actions: { build: 'prepare-build', inspect: 'prepare-inspect', destroy: 'prepare-destroy' } };
+        const action = loaded.manifest.contributes.actions[0]!;
+        const manifest = normalizePluginManifestV2({ ...loaded.manifest, contributes: { ...loaded.manifest.contributes,
+            machineProvisioners: loaded.manifest.contributes.machineProvisioners.map(descriptor => ({ ...descriptor, preparation })),
+            actions: [...loaded.manifest.contributes.actions,
+                { ...action, id: 'prepare-build', inputSchema: schemas.buildInput.jsonSchema, resultSchema: schemas.buildResult.jsonSchema },
+                { ...action, id: 'prepare-inspect', inputSchema: schemas.inspectInput.jsonSchema, resultSchema: schemas.inspectResult.jsonSchema },
+                { ...action, id: 'prepare-destroy', inputSchema: schemas.destroyInput.jsonSchema, resultSchema: schemas.destroyResult.jsonSchema },
+            ],
+        } });
+        const occurrenceId = createPluginRuntimeOccurrenceId(pluginId);
+        const registry = createResolvedContributionRegistry({ ...projectLoadedPluginContributes({
+            loadResult: { loadedPlugins: [{ ...loaded, manifest }], diagnosticsByPluginId: {} }, provenance: 'external',
+        }), occurrenceIdsByPluginId: { [pluginId]: occurrenceId } });
+        const projection = PluginProjectionV2Schema.parse(buildPluginProjectionV2({ registry, generation: 1 }));
+        const entry = projection.familiesById.machineProvisioners?.entriesById[`${pluginId}/guest`];
+        expect(entry).toMatchObject({ occurrenceId, definition: { preparation } });
+        const descriptor = MachineProvisionerContributionV1Schema.parse(entry?.definition);
+        for (const { action: localId } of readMachineProvisionerActionRolesV1(descriptor)) {
+            expect(readResolvedActionContribution(registry, { pluginId, localId })).toMatchObject({ pluginId, definition: { id: localId } });
+        }
+    });
     it('projects the acquire Action credential purposes under the provisioner identity without inventing a Resource', () => {
         const pluginId = 'com.acme.cloud';
         const loaded = createLoadedMachineProvisionerFixture(pluginId);
