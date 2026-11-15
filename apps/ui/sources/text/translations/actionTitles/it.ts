@@ -336,7 +336,7 @@ export const it = {
     peerMediation_observability_unsubscribe: "Annulla la sottoscrizione all'osservabilità della mediazione tra peer",
     devices_simulator_list: "Elenca i dispositivi del simulatore",
     devices_simulator_stream_keyframe: "Richiedi un fotogramma chiave dello streaming del simulatore",
-    devices_simulator_stream_snapshot: "Richiedi un'istantanea dello streaming del simulatore",
+    devices_simulator_stream_snapshot: 'Aggiorna frame',
     devices_simulator_stream_quality_set: "Imposta la qualità dello streaming del simulatore",
     devices_simulator_stream_fps_set: "Imposta la frequenza dei fotogrammi del simulatore",
     devices_simulator_stream_scale_set: "Imposta la scala dello streaming del simulatore",

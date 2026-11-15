@@ -336,7 +336,7 @@ export const pl = {
     peerMediation_observability_unsubscribe: "Anuluj subskrypcję monitorowania pośrednictwa między urządzeniami",
     devices_simulator_list: "Wyświetl urządzenia symulatora",
     devices_simulator_stream_keyframe: "Zażądaj klatki kluczowej strumienia symulatora",
-    devices_simulator_stream_snapshot: "Zażądaj migawki strumienia symulatora",
+    devices_simulator_stream_snapshot: 'Odśwież klatkę',
     devices_simulator_stream_quality_set: "Ustaw jakość strumienia symulatora",
     devices_simulator_stream_fps_set: "Ustaw liczbę klatek strumienia symulatora",
     devices_simulator_stream_scale_set: "Ustaw skalę strumienia symulatora",

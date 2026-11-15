@@ -17,7 +17,6 @@ import { decodeBase64 } from '@/encryption/base64';
 import { projectSimulatorPreviewAvailability } from './availability';
 import type { SimulatorPreviewState } from './store';
 import {
-    simulatorPreviewInputControlKinds,
     type SimulatorPreviewAvailability,
     type SimulatorPreviewControls,
     type SimulatorPreviewDiagnostic,
@@ -180,7 +179,7 @@ function selectControls(input: Readonly<{
         canSetFps: canWatch && streamControls?.setFps === true,
         canSetScale: canWatch && streamControls?.setScale === true,
         supportedInputKinds: inputSupported
-            ? input.resource.capture.supportedInputKinds ?? simulatorPreviewInputControlKinds
+            ? input.resource.capture.supportedInputKinds ?? []
             : [],
     };
 }

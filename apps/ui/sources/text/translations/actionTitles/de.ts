@@ -336,7 +336,7 @@ export const de = {
     peerMediation_observability_unsubscribe: "Diagnose der Peer-Vermittlung abbestellen",
     devices_simulator_list: "Simulatorgeräte auflisten",
     devices_simulator_stream_keyframe: "Schlüsselbild des Simulatorstreams anfordern",
-    devices_simulator_stream_snapshot: "Momentaufnahme des Simulatorstreams anfordern",
+    devices_simulator_stream_snapshot: 'Bild aktualisieren',
     devices_simulator_stream_quality_set: "Qualität des Simulatorstreams festlegen",
     devices_simulator_stream_fps_set: "Bildrate des Simulatorstreams festlegen",
     devices_simulator_stream_scale_set: "Skalierung des Simulatorstreams festlegen",

@@ -102,13 +102,3 @@ export type SimulatorPreviewSelectionInput = Readonly<{
 export type SimulatorPreviewSelectionHookInput = Omit<SimulatorPreviewSelectionInput, 'nowMs'> & Readonly<{
     nowMs?: () => number;
 }>;
-
-export const simulatorPreviewInputControlKinds: readonly MachineLiveStreamControlSidebandV1['kind'][] = [
-    'tap',
-    'long_press',
-    'swipe',
-    'drag',
-    'keyboard_text',
-    'keyboard_key',
-    'hardware_button',
-];

@@ -336,7 +336,7 @@ export const ru = {
     peerMediation_observability_unsubscribe: "Отписаться от наблюдения за посредничеством между устройствами",
     devices_simulator_list: "Показать устройства симулятора",
     devices_simulator_stream_keyframe: "Запросить ключевой кадр трансляции симулятора",
-    devices_simulator_stream_snapshot: "Запросить снимок трансляции симулятора",
+    devices_simulator_stream_snapshot: 'Обновить кадр',
     devices_simulator_stream_quality_set: "Задать качество трансляции симулятора",
     devices_simulator_stream_fps_set: "Задать частоту кадров трансляции симулятора",
     devices_simulator_stream_scale_set: "Задать масштаб трансляции симулятора",

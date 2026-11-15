@@ -336,7 +336,7 @@ export const ja = {
     peerMediation_observability_unsubscribe: "ピア仲介の監視情報の購読を解除",
     devices_simulator_list: "シミュレーターデバイスの一覧を表示",
     devices_simulator_stream_keyframe: "シミュレーターストリームのキーフレームをリクエスト",
-    devices_simulator_stream_snapshot: "シミュレーターストリームのスナップショットをリクエスト",
+    devices_simulator_stream_snapshot: 'フレームを更新',
     devices_simulator_stream_quality_set: "シミュレーターストリームの画質を設定",
     devices_simulator_stream_fps_set: "シミュレーターストリームのフレームレートを設定",
     devices_simulator_stream_scale_set: "シミュレーターストリームの表示倍率を設定",

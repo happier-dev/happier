@@ -9,7 +9,7 @@ vi.mock('@/text', async () => {
 });
 
 describe('SimulatorToolbar', () => {
-    it('renders primary controls as icon buttons with product labels instead of text-pill jargon', async () => {
+    it('offers one frame refresh and names the exact bandwidth preset actions', async () => {
         const mod = await import('./SimulatorToolbar').catch((error: unknown) => ({ importError: error }));
 
         expect(mod).toHaveProperty('SimulatorToolbar');
@@ -59,11 +59,12 @@ describe('SimulatorToolbar', () => {
         expect(screen.findByTestId('simulator-toolbar-overflow')).toBeTruthy();
         expect(screen.findByTestId('simulator-toolbar-quality')).toBeTruthy();
         expect(screen.getTextContent()).not.toContain('streamPlayer.actions.requestKeyframe');
-        expect(screen.getTextContent()).not.toContain('simulatorPreview.toolbar.fps');
-        expect(screen.getTextContent()).not.toContain('simulatorPreview.toolbar.scale');
+        expect(screen.findByTestId('simulator-toolbar-request-snapshot')).toBeNull();
+        expect(screen.getTextContent()).toContain('simulatorPreview.toolbar.fps');
+        expect(screen.getTextContent()).toContain('simulatorPreview.toolbar.scale');
     });
 
-    it('routes lease, snapshot, keyframe, quality, orientation, and button actions through props', async () => {
+    it.each([true, false])('routes one refresh through the backed operation with keyframe support=%s', async (canRequestKeyframe) => {
         const mod = await import('./SimulatorToolbar').catch((error: unknown) => ({ importError: error }));
 
         expect(mod).toHaveProperty('SimulatorToolbar');
@@ -99,7 +100,7 @@ describe('SimulatorToolbar', () => {
                     controls: {
                         canWatch: true,
                         canControl: true,
-                        canRequestKeyframe: true,
+                        canRequestKeyframe,
                         canRequestSnapshot: true,
                         canSetQuality: true,
                         canSetFps: true,
@@ -113,7 +114,6 @@ describe('SimulatorToolbar', () => {
         );
 
         screen.pressByTestId('simulator-toolbar-request-keyframe');
-        screen.pressByTestId('simulator-toolbar-request-snapshot');
         screen.pressByTestId('simulator-toolbar-lower-quality');
         screen.pressByTestId('simulator-toolbar-set-fps');
         screen.pressByTestId('simulator-toolbar-set-scale');
@@ -129,8 +129,8 @@ describe('SimulatorToolbar', () => {
 
         expect(actions.releaseLease).toHaveBeenCalledTimes(1);
         expect(actions.renewLease).toHaveBeenCalledTimes(1);
-        expect(actions.requestKeyframe).toHaveBeenCalledTimes(1);
-        expect(actions.requestSnapshot).toHaveBeenCalledTimes(1);
+        expect(actions.requestKeyframe).toHaveBeenCalledTimes(canRequestKeyframe ? 1 : 0);
+        expect(actions.requestSnapshot).toHaveBeenCalledTimes(canRequestKeyframe ? 0 : 1);
         expect(actions.lowerQuality).toHaveBeenCalledTimes(1);
         expect(actions.setFps).toHaveBeenCalledTimes(1);
         expect(actions.setScale).toHaveBeenCalledTimes(1);
@@ -238,7 +238,7 @@ describe('SimulatorToolbar', () => {
         expect(screen.findByTestId('simulator-toolbar-set-scale')).toBeNull();
     });
 
-    it('renders backed keyframe and snapshot as transient-disabled when the stream is not watchable', async () => {
+    it('keeps frame refresh disabled when the stream is not watchable', async () => {
         const mod = await import('./SimulatorToolbar').catch((error: unknown) => ({ importError: error }));
 
         expect(mod).toHaveProperty('SimulatorToolbar');
@@ -277,9 +277,8 @@ describe('SimulatorToolbar', () => {
         // Backed-but-transiently-blocked: the control stays VISIBLE (the resource
         // backs it) but disabled-with-reason because the viewer cannot watch yet.
         expect(screen.findByTestId('simulator-toolbar-request-keyframe')?.props.disabled).toBe(true);
-        expect(screen.findByTestId('simulator-toolbar-request-snapshot')?.props.disabled).toBe(true);
+        expect(screen.findByTestId('simulator-toolbar-request-snapshot')).toBeNull();
         screen.pressByTestId('simulator-toolbar-request-keyframe');
-        screen.pressByTestId('simulator-toolbar-request-snapshot');
         expect(actions.requestKeyframe).not.toHaveBeenCalled();
         expect(actions.requestSnapshot).not.toHaveBeenCalled();
     });

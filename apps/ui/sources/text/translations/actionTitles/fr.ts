@@ -336,7 +336,7 @@ export const fr = {
     peerMediation_observability_unsubscribe: "Se désabonner de l’observabilité de la médiation entre pairs",
     devices_simulator_list: "Lister les appareils du simulateur",
     devices_simulator_stream_keyframe: "Demander une image clé du flux du simulateur",
-    devices_simulator_stream_snapshot: "Demander une capture du flux du simulateur",
+    devices_simulator_stream_snapshot: 'Rafraîchir l’image',
     devices_simulator_stream_quality_set: "Définir la qualité du flux du simulateur",
     devices_simulator_stream_fps_set: "Définir la fréquence d’images du flux du simulateur",
     devices_simulator_stream_scale_set: "Définir l’échelle du flux du simulateur",

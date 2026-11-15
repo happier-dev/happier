@@ -336,7 +336,7 @@ export const zhHant = {
     peerMediation_observability_unsubscribe: "取消訂閱對等協調觀測資料",
     devices_simulator_list: "列出模擬器裝置",
     devices_simulator_stream_keyframe: "要求模擬器串流關鍵影格",
-    devices_simulator_stream_snapshot: "要求模擬器串流快照",
+    devices_simulator_stream_snapshot: '重新整理影格',
     devices_simulator_stream_quality_set: "設定模擬器串流品質",
     devices_simulator_stream_fps_set: "設定模擬器串流影格率",
     devices_simulator_stream_scale_set: "設定模擬器串流縮放比例",

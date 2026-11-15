@@ -336,7 +336,7 @@ export const ca = {
     peerMediation_observability_unsubscribe: "Cancel·la la subscripció a l'observabilitat de la mediació entre parells",
     devices_simulator_list: "Llista els dispositius del simulador",
     devices_simulator_stream_keyframe: "Sol·licita un fotograma clau de la transmissió del simulador",
-    devices_simulator_stream_snapshot: "Sol·licita una captura de la transmissió del simulador",
+    devices_simulator_stream_snapshot: 'Actualitza el fotograma',
     devices_simulator_stream_quality_set: "Defineix la qualitat de la transmissió del simulador",
     devices_simulator_stream_fps_set: "Defineix els fotogrames per segon de la transmissió del simulador",
     devices_simulator_stream_scale_set: "Defineix l'escala de la transmissió del simulador",

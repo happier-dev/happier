@@ -336,7 +336,7 @@ export const pt = {
     peerMediation_observability_unsubscribe: "Cancelar assinatura da observabilidade da mediação entre pares",
     devices_simulator_list: "Listar dispositivos do simulador",
     devices_simulator_stream_keyframe: "Solicitar quadro-chave da transmissão do simulador",
-    devices_simulator_stream_snapshot: "Solicitar captura da transmissão do simulador",
+    devices_simulator_stream_snapshot: 'Atualizar quadro',
     devices_simulator_stream_quality_set: "Definir qualidade da transmissão do simulador",
     devices_simulator_stream_fps_set: "Definir taxa de quadros da transmissão do simulador",
     devices_simulator_stream_scale_set: "Definir escala da transmissão do simulador",

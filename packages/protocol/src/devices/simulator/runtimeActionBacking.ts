@@ -82,7 +82,8 @@ export const RESOURCE_GATED_SIMULATOR_RUNTIME_ACTION_IDS_V1: ReadonlySet<Simulat
  * signals (this producer can adjust fps / scale), not distinct sinks: the daemon folds the
  * `fps.set`/`scale.set` SCALAR runtime actions into a single `set_quality` sideband
  * (`actions/qualityScalarTranslator.ts`; fps → `maxFramesPerSecond`, scale → `maxWidth`/`maxHeight`).
- * Plus `request_keyframe` (`requestKeyframe`) and the held-frame `snapshot`. Per-resource
+ * Plus `request_keyframe` (`requestKeyframe`) and the legacy `snapshot` frame-refresh alias. Neither
+ * returns an image or saved screenshot; both acknowledge dispatch. Per-resource
  * advertisement still gates actual visibility, so platforms without the producer (iOS today)
  * advertise none and the normalizer forces their bits false regardless of this gate.
  */

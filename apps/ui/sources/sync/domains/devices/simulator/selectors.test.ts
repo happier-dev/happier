@@ -19,6 +19,7 @@ const availableResource: SimulatorDeviceResourceV1 = {
         sourceId: 'source_1',
         supportedCodecs: ['image.mjpeg'],
         inputMode: 'exclusive',
+        supportedInputKinds: ['tap', 'swipe', 'keyboard_text', 'hardware_button'],
         streamControls: {
             requestKeyframe: false,
             snapshot: false,
@@ -55,6 +56,17 @@ function avccFrame(): MachineLiveStreamFrameV1 & { codecId: 'h264.avcc' } {
 }
 
 describe('simulator preview selectors', () => {
+    it('does not invent supported input when the producer omits its input capabilities', async () => {
+        const { selectSimulatorPreviewViewModel } = await import('./selectors');
+        const resource: SimulatorDeviceResourceV1 = {
+            ...availableResource,
+            capture: { ...availableResource.capture, supportedInputKinds: undefined },
+        };
+        const viewModel = selectSimulatorPreviewViewModel({ resources: [resource], viewerId: 'viewer_1' });
+
+        expect(viewModel.controls.supportedInputKinds).toEqual([]);
+    });
+
     it('returns a single empty view model when no simulator resources are available', async () => {
         const mod = await import('./selectors').catch((error: unknown) => ({ importError: error }));
 

@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import type { MachineLiveStreamControlSidebandV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
 
 import { IconButton, type IconButtonIconName } from '@/components/ui/buttons/IconButton';
+import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import {
     MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS,
     Popover,
@@ -59,6 +60,10 @@ export function SimulatorToolbar(props: Readonly<{
 }>): React.ReactElement {
     const canControl = props.viewModel.controls.canControl;
     const canWatch = props.viewModel.controls.canWatch;
+    const canRefreshFrame = props.viewModel.controls.canRequestKeyframe || props.viewModel.controls.canRequestSnapshot;
+    const refreshFrame = props.viewModel.controls.canRequestKeyframe
+        ? props.actions.requestKeyframe
+        : props.actions.requestSnapshot;
     const showAcquire = props.viewModel.lease.state === 'available';
     const showRelease = props.viewModel.lease.state === 'held-by-me';
     const showOrientation = canControl && supportsInput(props.viewModel, 'orientation');
@@ -88,22 +93,13 @@ export function SimulatorToolbar(props: Readonly<{
                 ) : null}
             </View>
             <View testID={`${props.testID}-stream`} style={simulatorStreamStyles.toolbarGroup}>
-                {props.viewModel.controls.canRequestKeyframe ? (
+                {canRefreshFrame ? (
                     <ToolbarIconButton
                         iconName="arrow-clockwise"
                         disabled={!canWatch}
                         label={t('simulatorPreview.toolbar.refreshFrame')}
-                        onPress={canWatch ? props.actions.requestKeyframe : undefined}
+                        onPress={canWatch ? refreshFrame : undefined}
                         testID={`${props.testID}-request-keyframe`}
-                    />
-                ) : null}
-                {props.viewModel.controls.canRequestSnapshot ? (
-                    <ToolbarIconButton
-                        iconName="camera"
-                        disabled={!canWatch}
-                        label={t('simulatorPreview.toolbar.snapshot')}
-                        onPress={canWatch ? props.actions.requestSnapshot : undefined}
-                        testID={`${props.testID}-request-snapshot`}
                     />
                 ) : null}
                 {showQuality ? (
@@ -119,8 +115,7 @@ export function SimulatorToolbar(props: Readonly<{
                             />
                         ) : null}
                         {props.viewModel.controls.canSetFps ? (
-                            <ToolbarIconButton
-                                iconName="speedometer"
+                            <ToolbarButton
                                 disabled={!canWatch}
                                 label={t('simulatorPreview.toolbar.fps')}
                                 onPress={canWatch ? props.actions.setFps : undefined}
@@ -128,8 +123,7 @@ export function SimulatorToolbar(props: Readonly<{
                             />
                         ) : null}
                         {props.viewModel.controls.canSetScale ? (
-                            <ToolbarIconButton
-                                iconName="resize"
+                            <ToolbarButton
                                 disabled={!canWatch}
                                 label={t('simulatorPreview.toolbar.scale')}
                                 onPress={canWatch ? props.actions.setScale : undefined}

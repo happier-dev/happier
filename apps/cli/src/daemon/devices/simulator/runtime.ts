@@ -292,8 +292,8 @@ export function createSimulatorPreviewDaemonRuntime(
             return unavailableResult(event, 'simulator_stream_control_dispatch_unavailable');
         }
 
-        // snapshot.request has no sideband control payload; it reads the held decoded keyframe. The
-        // quality/keyframe RPCs carry a typed control we forward verbatim to the live session.
+        // The legacy snapshot request asks for a fresh keyframe and acknowledges dispatch; it
+        // returns no image or saved screenshot. Quality/keyframe RPCs forward their typed control.
         const control: MachineLiveStreamControlSidebandV1 = event.type === 'simulator.snapshot.request'
             ? {
                 v: 1,

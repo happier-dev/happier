@@ -161,6 +161,8 @@ export const simulatorStreamStyles = StyleSheet.create((theme) => ({
     },
     toolbarQualityGroup: {
         flexDirection: 'row',
+        flexWrap: 'wrap',
+        flexShrink: 1,
         alignItems: 'center',
         gap: theme.space.s6,
         borderWidth: 1,

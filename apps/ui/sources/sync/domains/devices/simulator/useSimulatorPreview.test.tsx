@@ -14,6 +14,7 @@ const availableResource: SimulatorDeviceResourceV1 = {
         sourceId: 'source_1',
         supportedCodecs: ['image.mjpeg'],
         inputMode: 'exclusive',
+        supportedInputKinds: ['hardware_button'],
         streamControls: {
             requestKeyframe: false,
             snapshot: false,
@@ -31,6 +32,7 @@ const producerControlledResource: SimulatorDeviceResourceV1 = {
         sourceId: 'source_1',
         supportedCodecs: ['image.mjpeg'],
         inputMode: 'exclusive',
+        supportedInputKinds: ['hardware_button'],
         streamControls: {
             requestKeyframe: true,
             snapshot: true,

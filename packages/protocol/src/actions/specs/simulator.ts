@@ -37,7 +37,7 @@ function simulatorEventWithControlKindSchema<
 export const SIMULATOR_RUNTIME_ACTION_TITLES: Readonly<Partial<Record<RuntimeActionIdV1, string>>> = Object.freeze({
   'devices.simulator.list': 'List simulator devices',
   'devices.simulator.stream.keyframe': 'Request simulator stream keyframe',
-  'devices.simulator.stream.snapshot': 'Request simulator stream snapshot',
+  'devices.simulator.stream.snapshot': 'Refresh simulator frame',
   'devices.simulator.stream.quality.set': 'Set simulator stream quality',
   'devices.simulator.stream.fps.set': 'Set simulator stream frame rate',
   'devices.simulator.stream.scale.set': 'Set simulator stream scale',
@@ -106,7 +106,7 @@ export const SIMULATOR_RUNTIME_ACTION_OUTPUT_SCHEMAS = Object.freeze({
 export const SIMULATOR_RUNTIME_ACTION_DESCRIPTIONS: Readonly<Partial<Record<RuntimeActionIdV1, string>>> = Object.freeze({
   'devices.simulator.list': 'See the phone and tablet simulators available on a machine.',
   'devices.simulator.stream.keyframe': 'Ask the simulator preview for a fresh full picture when it looks broken.',
-  'devices.simulator.stream.snapshot': 'Take a still picture of what the simulator shows now.',
+  'devices.simulator.stream.snapshot': 'Request a fresh simulator preview frame. Returns an acknowledgement, not an image or saved screenshot.',
   'devices.simulator.stream.quality.set': 'Choose how sharp the simulator preview is. Sharper uses more data.',
   'devices.simulator.stream.fps.set': 'Choose how smooth the simulator preview is. Smoother uses more data.',
   'devices.simulator.stream.scale.set': 'Choose how large the simulator preview is sent.',
@@ -121,7 +121,7 @@ export const SIMULATOR_RUNTIME_ACTION_DESCRIPTIONS: Readonly<Partial<Record<Runt
   'devices.simulator.input.orientation': 'Turn the simulator to portrait or landscape.',
   'devices.simulator.input.pinch': 'Pinch on the simulator screen to zoom.',
   'devices.simulator.input.rotate': 'Rotate with two fingers on the simulator screen.',
-  'devices.simulator.sideband.request': 'Ask the simulator for information beside the picture, such as its logs or what is on screen.',
+  'devices.simulator.sideband.request': 'Request capture health for the simulator preview. Other diagnostic kinds are unavailable.',
 });
 
 export const SIMULATOR_RUNTIME_ACTION_SPEC_FAMILY = Object.freeze({

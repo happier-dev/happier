@@ -344,7 +344,7 @@ const en = {
         peerMediation_observability_unsubscribe: "Unsubscribe from peer mediation observability",
         devices_simulator_list: "List simulator devices",
         devices_simulator_stream_keyframe: "Request simulator stream keyframe",
-        devices_simulator_stream_snapshot: "Request simulator stream snapshot",
+        devices_simulator_stream_snapshot: "Refresh frame",
         devices_simulator_stream_quality_set: "Set simulator stream quality",
         devices_simulator_stream_fps_set: "Set simulator stream frame rate",
         devices_simulator_stream_scale_set: "Set simulator stream scale",

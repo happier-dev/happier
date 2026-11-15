@@ -336,7 +336,7 @@ export const zhHans = {
     peerMediation_observability_unsubscribe: "取消订阅对等中介可观测性信息",
     devices_simulator_list: "列出模拟器设备",
     devices_simulator_stream_keyframe: "请求模拟器流关键帧",
-    devices_simulator_stream_snapshot: "请求模拟器流快照",
+    devices_simulator_stream_snapshot: '刷新帧',
     devices_simulator_stream_quality_set: "设置模拟器流画质",
     devices_simulator_stream_fps_set: "设置模拟器流帧率",
     devices_simulator_stream_scale_set: "设置模拟器流缩放比例",
