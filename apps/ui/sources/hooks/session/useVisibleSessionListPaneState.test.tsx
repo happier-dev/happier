@@ -59,6 +59,9 @@ vi.mock('./useVisibleSessionListViewState', () => ({
     },
 }));
 
+// Collect the owner graph before any case's deadline starts: a cold transform on a loaded host outlasts one case.
+await import('./useVisibleSessionListPaneState');
+
 describe('useVisibleSessionListPaneState', () => {
     afterEach(() => {
         standardCleanup();
@@ -217,5 +220,59 @@ describe('useVisibleSessionListPaneState', () => {
         expect(hook.getCurrent().filterResult).toEqual({ matchedCount: 0, coverage: 'unavailable' });
         expect(hook.getCurrent().showLoading).toBe(false);
         expect(hook.getCurrent().showEmptyState).toBe(false);
+    });
+
+    it('keeps a settled empty library while the same unnarrowed query re-resolves or retries with no rows (QA-NATIVE F9)', async () => {
+        const homeState = (phase: 'ready' | 'loading' | 'offline', applied: string | null) => ({
+            requestedQueryKey: 'query', appliedQueryKey: applied, addresses: [],
+            nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
+            phase, freshnessAt: applied ? 1 : null, failureReason: null, failureCode: null,
+            homeObservation: { phase, lastSuccessAt: applied ? 1 : null },
+        });
+        sessionListPaneState.visibleIndex = [];
+        sessionListPaneState.summary = { sessionsReady: true, sessionCount: 0 };
+        sessionListPaneState.query = { active: true, statesByServerId: { 'home-a': homeState('ready', 'query') }, coverageComplete: true };
+        const options = { filterControlsRequired: false, queryHomes: [{ serverId: 'home-a', queryKey: 'query', query: {} as never }] };
+
+        const { useVisibleSessionListPaneState } = await import('./useVisibleSessionListPaneState');
+        const hook = await renderHook(() => useVisibleSessionListPaneState('all', options));
+        await flushHookEffects();
+        expect(hook.getCurrent().showEmptyState).toBe(true);
+
+        // The query revalidates (and a Home drops out for a moment): still no rows, so Home stays Home.
+        sessionListPaneState.query = { active: true, statesByServerId: { 'home-a': homeState('loading', null) }, coverageComplete: false };
+        await hook.rerender();
+        expect(hook.getCurrent().showEmptyState).toBe(true);
+        sessionListPaneState.query = { active: true, statesByServerId: { 'home-a': homeState('offline', null) }, coverageComplete: false };
+        await hook.rerender();
+        expect(hook.getCurrent().showEmptyState).toBe(true);
+
+        // A row arrives: the list shows at once.
+        sessionListPaneState.visibleIndex = [{ type: 'session', sessionId: 'session-1', serverId: 'home-a', serverName: 'Home A' }];
+        await hook.rerender();
+        expect(hook.getCurrent().showEmptyState).toBe(false);
+    });
+
+    it('starts from the retained settled empty library when the pane is presented again (QA-NATIVE F9)', async () => {
+        sessionListPaneState.visibleIndex = [];
+        sessionListPaneState.summary = { sessionsReady: true, sessionCount: 0 };
+        sessionListPaneState.query = {
+            active: true,
+            statesByServerId: { 'home-a': {
+                requestedQueryKey: 'query', appliedQueryKey: null, addresses: [],
+                nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
+                phase: 'loading', freshnessAt: null, failureReason: null, failureCode: null,
+                homeObservation: { phase: 'loading', lastSuccessAt: null },
+            } },
+            coverageComplete: false,
+        };
+        const { useVisibleSessionListPaneState } = await import('./useVisibleSessionListPaneState');
+        const hook = await renderHook(() => useVisibleSessionListPaneState('all', {
+            filterControlsRequired: false,
+            retainedEmptyState: true,
+            queryHomes: [{ serverId: 'home-a', queryKey: 'query', query: {} as never }],
+        }));
+        await flushHookEffects();
+        expect(hook.getCurrent().showEmptyState).toBe(true);
     });
 });

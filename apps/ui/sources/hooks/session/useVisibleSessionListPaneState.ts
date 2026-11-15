@@ -39,6 +39,8 @@ export type VisibleSessionListPaneStateOptions = Readonly<{
     pathname?: string;
     retainedPathname?: string | null;
     retainedVisibleSessionListIndex?: ReadonlyArray<SessionListIndexItem> | null;
+    /** The empty-library decision this pane last settled on, retained while it was covered. */
+    retainedEmptyState?: boolean;
     sessionListSurfaceDataActive?: boolean;
     attentionInteractionHeld?: boolean;
     supplementalNeedsYouSessionKeys?: ReadonlySet<string>;
@@ -124,6 +126,18 @@ export function useVisibleSessionListPaneState(
         return localFilterResult.coverage === coverage ? localFilterResult : { ...localFilterResult, coverage };
     }, [localFilterResult, queryPresentation]);
 
+    // An empty library is decided when the result settles: no query, or a ready, complete one. While the same
+    // unnarrowed query re-resolves or retries and still has no rows, the pane keeps that settled decision instead
+    // of trading Home for an empty list on every revalidation (QA-NATIVE F9: on an empty Account the phone tab
+    // flipped Home → list → Home, and Back from Settings crashed Android mid-flip). Rows or narrowing decide at once.
+    const emptyDecided = summary.sessionsReady && visibleSessionCount === 0 && (!queryActive
+        || options.filterControlsRequired === false && queryPresentation?.kind === 'ready' && queryPresentation.complete);
+    const emptySettles = !queryActive || queryPresentation?.kind === 'ready' && queryPresentation.complete
+        || visibleSessionCount > 0 || options.filterControlsRequired !== false;
+    const [settledEmpty, setSettledEmpty] = React.useState(() => emptySettles ? emptyDecided : options.retainedEmptyState ?? emptyDecided);
+    if (emptySettles && settledEmpty !== emptyDecided) setSettledEmpty(emptyDecided);
+    const showEmptyState = emptySettles ? emptyDecided : settledEmpty;
+
     return React.useMemo(() => ({
         summary,
         visibleSessionListIndex,
@@ -138,11 +152,11 @@ export function useVisibleSessionListPaneState(
         // filters, and virtualizer identity survive query changes.
         showLoading: !queryActive && !summary.sessionsReady,
         // A complete, unnarrowed query zero is also an empty library. Pending,
-        // incomplete and narrowed results keep the list and its recovery controls.
-        showEmptyState: summary.sessionsReady && visibleSessionCount === 0 && (!queryActive
-            || options.filterControlsRequired === false && queryPresentation?.kind === 'ready' && queryPresentation.complete),
+        // incomplete and narrowed results keep the list and its recovery controls,
+        // unless this pane already settled as an empty library (above).
+        showEmptyState,
         query,
         queryPresentation,
         workflowRunWindow,
-    }), [conditionValueCounts, filterResult, filterMatchedEntityIds, filterAttentionSupplementEntityIds, folderFeatureEnabledServerIds, hasHiddenInactiveSessions, options.filterControlsRequired, query, queryActive, queryPresentation, summary, visibleSessionCount, visibleSessionListIndex, workflowRunWindow]);
+    }), [conditionValueCounts, filterResult, filterMatchedEntityIds, filterAttentionSupplementEntityIds, folderFeatureEnabledServerIds, hasHiddenInactiveSessions, query, queryActive, queryPresentation, showEmptyState, summary, visibleSessionListIndex, workflowRunWindow]);
 }

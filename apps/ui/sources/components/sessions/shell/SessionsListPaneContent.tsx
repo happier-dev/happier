@@ -115,6 +115,7 @@ function ActiveSessionsListPaneStateSubscriber(props: SessionsListPaneContentPro
     storageKind: SessionListStorageFilter;
     retainedPathname?: string | null;
     retainedVisibleSessionListIndex?: VisibleSessionListPaneState['visibleSessionListIndex'];
+    retainedEmptyState?: boolean;
     surfaceOwnership: SessionListSurfaceOwnership;
     filterController: SessionListViewFilterController;
     onPaneState: (paneState: VisibleSessionListPaneState) => void;
@@ -125,6 +126,7 @@ function ActiveSessionsListPaneStateSubscriber(props: SessionsListPaneContentPro
         pathname: props.pathname,
         retainedPathname: props.retainedPathname,
         retainedVisibleSessionListIndex: props.retainedVisibleSessionListIndex,
+        retainedEmptyState: props.retainedEmptyState,
         sessionListSurfaceDataActive: true,
         attentionInteractionHeld: props.surfaceOwnership.interactive && attentionInteractionHeld,
     });
@@ -340,6 +342,7 @@ export const SessionsListPaneContent = React.memo((props: SessionsListPaneConten
                     storageKind={storageKind}
                     retainedPathname={retainedPaneState?.surfaceRoutePathname ?? null}
                     retainedVisibleSessionListIndex={retainedPaneState?.paneState.visibleSessionListIndex ?? null}
+                    retainedEmptyState={retainedPaneState?.paneState.showEmptyState}
                     surfaceOwnership={surfaceOwnership}
                     filterController={filterController}
                     onPaneState={handlePaneState}

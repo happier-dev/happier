@@ -7,7 +7,7 @@ import type { SessionListViewFilterController } from './search/useSessionListVie
 /** The list and non-list consumers share the filter, paging and shelf producer. */
 export function useSessionListPaneProjection(storageKind: SessionListStorageFilter,
     controller: SessionListViewFilterController,
-    options: Pick<VisibleSessionListPaneStateOptions, 'pathname' | 'retainedPathname' | 'retainedVisibleSessionListIndex'
+    options: Pick<VisibleSessionListPaneStateOptions, 'pathname' | 'retainedPathname' | 'retainedVisibleSessionListIndex' | 'retainedEmptyState'
         | 'sessionListSurfaceDataActive' | 'attentionInteractionHeld'> = {}) {
     const layout = useSessionListLayoutChoice();
     return useVisibleSessionListPaneState(storageKind, {
