@@ -9,6 +9,7 @@ import {
     CollectionList,
     CollectionListGroupLabel,
     CollectionNavigationRow,
+    CollectionRows,
 } from '@/components/ui/lists/collection/CollectionList';
 import { t } from '@/text';
 
@@ -138,7 +139,8 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
                         testID={`settings-sidebar.section.${node.id}`}
                         title={readSettingsPageTitle(node)}
                     />
-                    {navChildren.map((child) => renderTreeNode(child, level))}
+                    {/* The section's rows, open children included, in the order they are drawn: the one list-row rule runs between them. */}
+                    <CollectionRows>{navChildren.map((child) => renderTreeNode(child, level))}</CollectionRows>
                 </React.Fragment>
             );
         }

@@ -91,13 +91,14 @@ describe('ProjectsTree section render locality', () => {
         expect(item('project-0').props.tabIndex).toBe(-1);
     });
 
-    it('updates only old/new selected Projects and dispatches the latest open handler without repainting sections', async () => {
+    it('updates only old/new selected Projects and the ones above them, and dispatches the latest open handler without repainting sections', async () => {
         const { screen, renders, Census, expandedKeys } = await mountCensus();
+        // The Project above the open row repaints too: its last row's list-row rule steps aside for the open row's fill.
         await screen.update(<Census expandedKeys={expandedKeys} openRefId="checkout-27" />);
-        expect([...renders]).toEqual([['project-27', 1]]);
+        expect([...renders.keys()].sort()).toEqual(['project-26', 'project-27']);
         renders.clear();
         await screen.update(<Census expandedKeys={expandedKeys} openRefId="checkout-28" />);
-        expect([...renders.keys()].sort()).toEqual(['project-27', 'project-28']);
+        expect([...renders.keys()].sort()).toEqual(['project-26', 'project-27', 'project-28']);
         renders.clear();
         const onOpen = vi.fn();
         await screen.update(<Census expandedKeys={expandedKeys} openRefId="checkout-28" onOpen={onOpen} />);

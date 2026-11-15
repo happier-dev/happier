@@ -36,10 +36,13 @@ export function CollectionRowContent(
     }),
     [theme.colors.surface.elevated, theme.colors.surface.hover],
   );
+  // The one list-row rule's ink; the row draws it only while its list says another row follows.
+  const separator = React.useMemo(() => ({ color: theme.colors.border.subtle }), [theme.colors.border.subtle]);
   return (
     <HappierCollectionRowContent
       {...props}
       fills={fills}
+      separator={separator}
     />
   );
 }

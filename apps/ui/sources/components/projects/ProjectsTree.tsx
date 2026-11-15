@@ -10,7 +10,7 @@ import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { DeploymentTreeRow } from './deployments/rows/DeploymentEnvironmentRow';
 import { ProjectsTreeRowAttention } from './ProjectsTreeRowAttention';
-import { CollectionListGroupLabel, CollectionNavigationRow } from '@/components/ui/lists/collection/CollectionList';
+import { CollectionListGroupLabel, CollectionNavigationRow, CollectionRowOrder } from '@/components/ui/lists/collection/CollectionList';
 import { useCollectionTreeKeyboard } from '@/components/ui/lists/collection/useCollectionTreeKeyboard';
 import {
     ITEM_ROW_WITH_SUBTITLE_PADDING_VERTICAL_PX,
@@ -112,13 +112,19 @@ type ProjectsTreeProps = Readonly<{
  * them all.
  */
 type ProjectsTreeItem =
-    | Readonly<{ kind: 'project'; key: string; rows: readonly ProjectsTreeRow[] }>
+    | Readonly<{ kind: 'project'; key: string; rows: readonly ProjectsTreeRow[]; after: ProjectsTreeRunAfter }>
     | Readonly<{ kind: 'savedLabel'; key: string; count: number }>
     | Readonly<{ kind: 'saved'; key: string; item: ProjectsTreeSavedItem }>
     | Readonly<{ kind: 'hiddenHead'; key: string }>
     | Readonly<{ kind: 'hidden'; key: string; item: ProjectsTreeHiddenItem }>;
 
 const projectsTreeItemKey = (item: ProjectsTreeItem) => item.key;
+
+/** What follows a Project's rows: another Project (the one list-row rule runs under its last row), and whether it is the open one. */
+type ProjectsTreeRunAfter = Readonly<{ followed: boolean; nextSelected: boolean }>;
+const RUN_ENDS: ProjectsTreeRunAfter = Object.freeze({ followed: false, nextSelected: false });
+const RUN_FOLLOWED: ProjectsTreeRunAfter = Object.freeze({ followed: true, nextSelected: false });
+const RUN_BEFORE_SELECTED: ProjectsTreeRunAfter = Object.freeze({ followed: true, nextSelected: true });
 
 /**
  * The Projects column's tree (plan 10 §2/§8, lab p-projects TREE/HIDE/HIDDEN): Projects, their
@@ -160,7 +166,12 @@ function useProjectsTreeItems(props: ProjectsTreeProps, onRevealIndex?: (index: 
     }), [testID, keyboard.getRowPropsForActiveKey, props.renderRowMenu, props.hrefForRef, openRef, toggle, openHref]);
     const { saved, hidden } = props;
     const items = React.useMemo((): ProjectsTreeItem[] => {
-        const next: ProjectsTreeItem[] = projectRuns(props.rows).map((run) => ({ kind: 'project', key: `project:${run[0]!.key}`, rows: run }));
+        const runs = projectRuns(props.rows);
+        const next: ProjectsTreeItem[] = runs.map((run, index) => {
+            const following = runs[index + 1];
+            const after = following === undefined ? RUN_ENDS : following[0]!.selected ? RUN_BEFORE_SELECTED : RUN_FOLLOWED;
+            return { kind: 'project', key: `project:${run[0]!.key}`, rows: run, after };
+        });
         if (saved && saved.items.length > 0) {
             next.push({ kind: 'savedLabel', key: 'saved', count: saved.items.length });
             for (const item of saved.items) next.push({ kind: 'saved', key: `saved:${item.key}`, item });
@@ -179,10 +190,10 @@ function useProjectsTreeItems(props: ProjectsTreeProps, onRevealIndex?: (index: 
         switch (item.kind) {
             case 'project':
                 return live
-                    ? <ProjectsTreeLiveSection rows={item.rows} live={live} rowList={rowListProps}
+                    ? <ProjectsTreeLiveSection rows={item.rows} after={item.after} live={live} rowList={rowListProps}
                         activeKey={item.rows.some(row => row.key === activeKey) ? activeKey : null}
                         position={positionOf(item.rows[0]!.key)} />
-                    : <ProjectsTreeRowList rows={item.rows} activeKey={activeKey} {...rowListProps} />;
+                    : <ProjectsTreeRowList rows={item.rows} after={item.after} activeKey={activeKey} {...rowListProps} />;
             case 'savedLabel':
                 // Drawn for the eye; each saved row says it is not open in its own name, so the tree owns only items.
                 return <View aria-hidden><CollectionListGroupLabel testID={`${testID}-saved`} title={t('projects.identity.savedNotOpen')} count={item.count} /></View>;
@@ -329,11 +340,9 @@ type ProjectsTreeRowListProps = Readonly<{
  * mark keeps the column's text edge, a checkout steps in by one mark, and only a row with something to
  * disclose carries its chevron, at its end beside the count (owner 11-08).
  */
-function ProjectsTreeRowList(props: ProjectsTreeRowListProps & Readonly<{ rows: readonly ProjectsTreeRow[]; activeKey: string | null }>) {
+function ProjectsTreeRowList(props: ProjectsTreeRowListProps & Readonly<{ rows: readonly ProjectsTreeRow[]; after: ProjectsTreeRunAfter; activeKey: string | null }>) {
     const { theme } = useUnistyles();
-    return (
-        <>
-            {props.rows.map((row) => {
+    const renderRow = (row: ProjectsTreeRow) => {
                 const target = projectsTreeRowOpenTarget(row);
                 // An Environment and what it runs: the one Environment row (UI refinements ruling 2026-11-15 08:57Z),
                 // shared with the Services column; the tree keeps its structure, selection, keyboard and where a press goes.
@@ -383,6 +392,18 @@ function ProjectsTreeRowList(props: ProjectsTreeRowListProps & Readonly<{ rows: 
                         onPress={() => openProjectsTreeRow(row, props.onOpenRef, props.onToggle, props.onOpenHref)}
                     />
                 );
+    };
+    // The one list-row rule runs between the tree's rows, into the next Project's, never beside the open row.
+    return (
+        <>
+            {props.rows.map((row, index) => {
+                const next = props.rows[index + 1];
+                return (
+                    <CollectionRowOrder key={row.key} followed={next !== undefined || props.after.followed}
+                        precedesSelected={next === undefined ? props.after.nextSelected : next.selected}>
+                        {renderRow(row)}
+                    </CollectionRowOrder>
+                );
             })}
         </>
     );
@@ -407,6 +428,7 @@ const ProjectsTreeLiveSection = React.memo(function ProjectsTreeLiveSection(prop
     rows: readonly ProjectsTreeRow[];
     live: ProjectsTreeLiveCheckouts;
     rowList: ProjectsTreeRowListProps;
+    after: ProjectsTreeRunAfter;
     activeKey: string | null;
     /** The Project's place among the Projects: its row announces it, so a shift redraws this section. */
     position: Readonly<{ positionInSet: number; setSize: number }> | null;
@@ -425,9 +447,10 @@ const ProjectsTreeLiveSection = React.memo(function ProjectsTreeLiveSection(prop
             environmentChildren: live.environmentChildren,
         })
         : props.rows, [project, facts, live.openRefId, live.openEnvironmentId, live.expandedKeys, live.collapsedKeys, live.environmentChildren, props.rows]);
-    return <ProjectsTreeRowList rows={rows} activeKey={props.activeKey} {...props.rowList} />;
+    return <ProjectsTreeRowList rows={rows} after={props.after} activeKey={props.activeKey} {...props.rowList} />;
 }, (previous, next) => {
     if (previous.rowList !== next.rowList || previous.activeKey !== next.activeKey || previous.live.source !== next.live.source) return false;
+    if (previous.after !== next.after) return false;
     if (previous.position?.positionInSet !== next.position?.positionInSet || previous.position?.setSize !== next.position?.setSize) return false;
     const key = next.rows[0]!.key;
     const project = next.live.projectsByKey.get(key);

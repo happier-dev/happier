@@ -27,7 +27,7 @@ import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { useHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
-import { CollectionList, CollectionListGroupLabel, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
+import { CollectionList, CollectionListGroupLabel, CollectionRowOrder, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { PaneSectionHeader } from '@/components/ui/lists/PaneSectionHeader';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { ITEM_SUBTITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
@@ -461,7 +461,14 @@ function DiscussionsListReady(props: Readonly<{
         column, filters, projection.items, searched, searching, view.bound]);
 
     const activeCount = active.nextCursor === null && active.items.length > 0 ? active.items.length : undefined;
-    const renderItem = React.useCallback(({ item }: Readonly<{ item: DiscussionListItem }>) => {
+    const renderItem = React.useCallback(({ item, index }: Readonly<{ item: DiscussionListItem; index: number }>) => {
+        const next = items[index + 1];
+        const nextDiscussionId = next?.kind === 'human_discussion' || next?.kind === 'archived_discussion' ? next.discussion.id : null;
+        const ordered = (row: React.ReactElement) => (
+            <CollectionRowOrder followed={nextDiscussionId !== null} precedesSelected={nextDiscussionId !== null && nextDiscussionId === activeDiscussionKey}>
+                {row}
+            </CollectionRowOrder>
+        );
         switch (item.kind) {
             case 'human_section':
                 return (
@@ -483,7 +490,7 @@ function DiscussionsListReady(props: Readonly<{
             case 'recency_group':
                 return <CollectionListGroupLabel testID={`discussions-column-group-${item.group}`} title={recencyGroupTitle(item.group)} />;
             case 'human_discussion':
-                return (
+                return ordered(
                     <DiscussionRow
                         discussion={item.discussion}
                         viewerAccountId={viewerAccountId}
@@ -564,14 +571,14 @@ function DiscussionsListReady(props: Readonly<{
                     </Pressable>
                 );
             case 'archived_discussion':
-                return <DiscussionRow discussion={item.discussion} viewerAccountId={viewerAccountId} geometry={column ? 'column' : 'pane'}
+                return ordered(<DiscussionRow discussion={item.discussion} viewerAccountId={viewerAccountId} geometry={column ? 'column' : 'pane'}
                     serverId={props.address.serverId} approvalArtifactId={attention.get(item.discussion.id)?.approvalArtifactIds[0]}
                     statusWords={statusWords} presented={presented}
                     attentionReason={attention.get(item.discussion.id)?.attentionReason ?? null}
                     attentionType={attention.get(item.discussion.id)?.attentionType ?? null}
                         word={attention.get(item.discussion.id)?.word}
                     agentName={attention.get(item.discussion.id)?.agentName}
-                    selected={activeDiscussionKey === item.discussion.id} onOpenDiscussion={openDiscussion} />;
+                    selected={activeDiscussionKey === item.discussion.id} onOpenDiscussion={openDiscussion} />);
             case 'archived_loading':
                 return <View style={styles.center}><ActivitySpinner size="small" /></View>;
             case 'search_more':
@@ -602,7 +609,7 @@ function DiscussionsListReady(props: Readonly<{
             case 'archived_load_more':
                 return <Pressable testID="session-discussion-archived-load-more" style={styles.more} accessibilityRole="button" onPress={() => void loadMoreList('archived')}><Text style={styles.moreText}>{t('session.collaboration.discussion.loadMore')}</Text></Pressable>;
         }
-    }, [active.errorCode, active.items.length, active.status, activeCount, activeDiscussionKey, archived.errorCode, attention, archived.status, archivedExpanded, column, loadMoreList, openDiscussion, openNewDiscussion, presented, props.address.serverId, props.surface, refreshList, retryActive, statusWords, theme.colors.text.tertiary, toggleArchived, viewerAccountId]);
+    }, [active.errorCode, active.items.length, active.status, activeCount, activeDiscussionKey, archived.errorCode, attention, archived.status, archivedExpanded, column, items, loadMoreList, openDiscussion, openNewDiscussion, presented, props.address.serverId, props.surface, refreshList, retryActive, statusWords, theme.colors.text.tertiary, toggleArchived, viewerAccountId]);
 
     // Nothing retained and nothing readable: the whole list is one pane state.
     if (!column && active.items.length === 0 && active.status === 'locked') {

@@ -79,7 +79,18 @@ import {
     useHappierCollectionListRow,
     useHappierMaterialColorResolver,
     HAPPIER_ROW_TITLE_META_GAP_PX,
+    HappierListRowFollowedContext,
+    HappierListRowPrecedesSelectedContext,
+    HappierListRowRule,
+    resolveHappierListRowRuleShown,
 } from '@happier-dev/plugin-ui/presentation';
+
+/** A row's own leading padding, when its style states one (a collection column row's gutter and indent). */
+function readLeadingPadding(style: StyleProp<ViewStyle>): number | null {
+    const flat = RNStyleSheet.flatten(style) as ViewStyle | undefined;
+    const value = flat?.paddingLeft ?? flat?.paddingStart ?? flat?.paddingHorizontal ?? flat?.padding;
+    return typeof value === 'number' ? value : null;
+}
 
 /** A title that carries a search match is the content of its row, so it wraps to this many lines rather than clipping the match. */
 const HIGHLIGHTED_TITLE_MAX_LINES = 2;
@@ -1560,7 +1571,22 @@ export const Item = React.memo<ItemProps>((props) => {
             : (hasLeading ? (iconBoxSize ?? resolvedIconBoxSize) + resolvedIconMarginRight : 0),
         framed: pageSheet?.framed,
     });
-    const dividerNode = sharedItemBehavior.dividerVisible ? (
+    const rowFollowed = React.useContext(HappierListRowFollowedContext);
+    const rowPrecedesSelected = React.useContext(HappierListRowPrecedesSelectedContext);
+    // A column row's rule: the one list-row rule, drawn while its list owner says another row follows, from the row's
+    // text column (its own leading padding, then its glyph column), never over its own fill.
+    const columnRuleShown = inCollectionColumn && resolveHappierListRowRuleShown({
+        followed: rowFollowed,
+        selected: selected === true,
+        precedesSelected: rowPrecedesSelected,
+        hovered: isHovered,
+    });
+    const columnRuleStartPx = columnRuleShown
+        ? (readLeadingPadding(style) ?? ITEM_ROW_PADDING_HORIZONTAL[resolvedIconDensity])
+            + (hasLeading ? (iconBoxSize ?? resolvedIconBoxSize) + resolvedIconMarginRight : 0)
+        : 0;
+    const columnRule = columnRuleShown ? <HappierListRowRule startPx={columnRuleStartPx} color={theme.colors.border.subtle} /> : null;
+    const dividerNode = columnRule ?? (sharedItemBehavior.dividerVisible ? (
         <HappierDivider
             color={flatDividerColor ?? theme.colors.border.default}
             style={[
@@ -1573,7 +1599,7 @@ export const Item = React.memo<ItemProps>((props) => {
                 }
             ]}
         />
-    ) : null;
+    ) : null);
     
     const renderPrimitiveText = React.useCallback((params: Readonly<{
         value: string | number;

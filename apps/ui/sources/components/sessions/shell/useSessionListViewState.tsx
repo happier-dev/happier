@@ -1,3 +1,4 @@
+import { CollectionRowOrder } from '@/components/ui/lists/collection/CollectionList';
 import {
     normalizeSessionAddress,
     sessionAddressKey as audienceSessionAddressKey,
@@ -2311,8 +2312,11 @@ export function useSessionListViewStateFromPaneState(
             const id = buildSessionListIndexNodeId(item);
             const adjacency = item.type === 'workflow_run' ? resolveSessionListRowViewModelAdjacency(renderedListItems, index) : null;
             const isGroupTail = adjacency ? adjacency.isLast || adjacency.isSingle : undefined;
+            const nextItem = renderedListItems[index + 1];
+            const followed = item.type !== 'header' && nextItem !== undefined && nextItem.type !== 'header' ? true : undefined;
             const cached = previous.get(id);
-            if (cached && areSessionListIndexItemsEqual(cached.item, item) && cached.node.isGroupTail === isGroupTail) {
+            if (cached && areSessionListIndexItemsEqual(cached.item, item) && cached.node.isGroupTail === isGroupTail
+                && cached.node.followed === followed) {
                 next.set(id, cached);
                 nodes.push(cached.node);
             } else {
@@ -2323,6 +2327,7 @@ export function useSessionListViewStateFromPaneState(
                         kind: item.type,
                         ...(item.type === 'header' ? { headerKind: item.headerKind } : {}),
                         isGroupTail,
+                        ...(followed ? { followed } : {}),
                     },
                 };
                 next.set(id, entry);
@@ -2337,6 +2342,8 @@ export function useSessionListViewStateFromPaneState(
         return { nodes: output, visibleEntityCount: visibleEntityIds.size };
     }, [renderedListItems, showSessionSections]);
     const virtualizedNodes = virtualizedProjection.nodes;
+    const virtualizedNodesRef = React.useRef(virtualizedNodes);
+    virtualizedNodesRef.current = virtualizedNodes;
 
     const nodeIds = React.useMemo(() => (
         virtualizedNodes.map((node) => node.id)
@@ -2493,13 +2500,27 @@ export function useSessionListViewStateFromPaneState(
         workspaceLabelsSignature,
     ]);
 
+    const selectedSessionKeyRef = React.useRef({ sessionId: selectedSessionId, serverId: selectedSessionServerId });
+    selectedSessionKeyRef.current = { sessionId: selectedSessionId, serverId: selectedSessionServerId };
     const renderVirtualizedItem = React.useCallback((params: { item: SessionListVirtualizedNode; index: number }) => {
         if (params.item.kind === 'supporting_sections') return null;
         const item = nodeByIdRef.current.get(params.item.id) ?? listItemsRef.current[params.index] ?? null;
         if (!item) return null;
         if (item.type === 'header') return renderHeaderItemRef.current(item, item === listItemsRef.current[0], firstInSectionHeadersRef.current.has(item));
-        if (item.type === 'workflow_run') return renderWorkflowRunItemRef.current(item);
-        return renderSessionItemRef.current(item);
+        // The one list-row rule (owner 2026-11-15): under a row another row of its section follows, never beside the
+        // selected Session. Selection reaches mounted cells through `extraData`.
+        const followed = params.item.followed === true;
+        const nodes = virtualizedNodesRef.current;
+        const nextNode = followed ? nodes[params.index + 1]?.kind === 'supporting_sections' ? nodes[params.index + 2] : nodes[params.index + 1] : undefined;
+        const next = nextNode ? nodeByIdRef.current.get(nextNode.id) : undefined;
+        const selectedKey = selectedSessionKeyRef.current;
+        const precedesSelected = next?.type === 'session' && next.sessionId === selectedKey.sessionId
+            && (selectedKey.serverId === null || next.serverId === selectedKey.serverId);
+        return (
+            <CollectionRowOrder followed={followed} precedesSelected={precedesSelected}>
+                {item.type === 'workflow_run' ? renderWorkflowRunItemRef.current(item) : renderSessionItemRef.current(item)}
+            </CollectionRowOrder>
+        );
     }, []);
     const handleTreeViewportLayout = React.useCallback((event: { nativeEvent?: { layout?: { y?: number; height?: number } } }) => {
         rowInteractions.handleTreeListLayout(event);

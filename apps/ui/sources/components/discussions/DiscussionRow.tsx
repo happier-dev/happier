@@ -18,7 +18,7 @@ import { AvatarStack } from '@/components/ui/avatar/AvatarStack';
 import { classifyAccountActorLabelV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
 import { Item } from '@/components/ui/lists/Item';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
-import { CollectionNavigationRow, CollectionRows, useCollectionPhonePageRows, collectionListStyles, useCollectionRowSelectedOnPlaneFill } from '@/components/ui/lists/collection/CollectionList';
+import { collectionListStyles, useCollectionRowSelectedOnPlaneFill } from '@/components/ui/lists/collection/CollectionList';
 import { HAPPIER_COLLECTION_ROW_METRICS, resolveHappierCollectionListRowPadding } from '@happier-dev/plugin-ui/presentation';
 import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
 import { ITEM_SUBTITLE_TEXT_METRICS, ITEM_TITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
@@ -244,7 +244,6 @@ export const DiscussionRow = React.memo(function DiscussionRow(props: Readonly<{
     const workStatus = resolveWorkStatusTone({ kind: 'discussion', facts: props });
     const { theme } = useUnistyles();
     const selectedFill = useCollectionRowSelectedOnPlaneFill();
-    const phonePage = useCollectionPhonePageRows();
     const requestRef = React.useMemo<CollectionRequestRef | null>(() => props.serverId && props.approvalArtifactId
         ? { kind: 'approval', serverId: props.serverId, artifactId: props.approvalArtifactId } : null,
     [props.approvalArtifactId, props.serverId]);
@@ -338,21 +337,6 @@ export const DiscussionRow = React.memo(function DiscussionRow(props: Readonly<{
                 {statusControl ? statusControl
                     : relativeTime ? <Text style={styles.time}>{relativeTime}</Text> : null}
             </View>;
-    if (phonePage) return <CollectionRows><CollectionNavigationRow
-        testID={`session-discussion-row-${discussion.id}`}
-        title={title}
-        subtitle={secondLine}
-        selected={selected}
-        icon={mark}
-        unread={unread}
-        rightElement={trailing}
-        rightElementOutsidePressable={requestRef !== null}
-        onPress={() => props.onOpenDiscussion(discussion.id, discussion.title)}
-        accessibilityLabel={buildDiscussionRowAccessibilityLabel({ title,
-            subtitle: statusGlyph?.word ? [statusGlyph.word] : [],
-            unreadCount: discussion.unreadCount, unreadMentionCount: mentioned ? discussion.unreadMentionCount : 0,
-            relativeTime, labels: rowLabels })}
-    /></CollectionRows>;
     return (
         <Item
             rowRole="item"

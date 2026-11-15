@@ -703,6 +703,13 @@ live in the page-presentation owners in code.
   section that indexes entities (all services, all machines, usage accounts) lies flat on the page
   (`ItemGroup surface="none"`) with the same text-inset dividers; it gains no card, finish, lip or
   shadow. Dashboards and heroes do not gain cards either.
+- **One list-row rule, in every list and column, at every width** (owner 2026-11-15). Rows of a list,
+  a sidebar or a column, Sessions included, are parted by a faint hairline in the divider ink that
+  starts at the row's text column and runs to its trailing edge. None stands above a section title
+  or after a section's last row, and none touches a filled row: a selected row draws neither its
+  own line nor the one above it, a hovered row hides its own. The list that knows the order decides
+  where it falls; rows never draw their own copy. On a phone, browse lists lie flat on the page with
+  this rule, never one card per list or per item.
 - **One row, one decision, one control.**
   - A switch for on/off.
   - A segmented control for two to four short choices, all visible. A short ordinal scale (reasoning
@@ -848,7 +855,7 @@ live in the page-presentation owners in code.
      Found, Needs you), with or without a brand: a bare mark in the 32 leading box when supplied,
      the name (`label`), an optional quiet kind word (`meta`, tertiary; mixed-kind lists only),
      and one description line (`body`, secondary; two on a phone). A speaking status leads line 2
-     as its word, never a pill. No dividers or sheet; use
+     as its word, never a pill. No sheet; rows part by the one list-row rule; use
      `HAPPIER_COLLECTION_LIST_METRICS.catalogRow` (60 minimum, rows 2 apart, shared row radius).
      A quiet count sits at the end of line 1; only a fix or action sits at the row's end.
      In a column (a Settings rail, a phone's collection page) the same described row keeps its

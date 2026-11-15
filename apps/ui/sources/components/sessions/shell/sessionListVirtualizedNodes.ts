@@ -7,6 +7,8 @@ export type SessionListVirtualizedNode = Readonly<{
     headerKind?: Extract<SessionListIndexItem, { type: 'header' }>['headerKind'];
     rowViewModel?: SessionListRowViewModel | null;
     isGroupTail?: boolean;
+    /** A row another row of its section follows (not a header): it draws the one list-row rule under it. */
+    followed?: boolean;
 }>;
 
 /** A measured presentation cell, never a Session or a selectable entity. */

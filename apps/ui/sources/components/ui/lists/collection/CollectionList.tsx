@@ -24,13 +24,15 @@ import {
     happierFocusRingStyle,
     resolveHappierFocusRingVisible,
     useHappierMaterialColorResolver,
+    HappierListRowFollowedContext,
+    HappierListRowPrecedesSelectedContext,
 } from '@happier-dev/plugin-ui/presentation';
 
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import type { IconName } from '@/components/ui/icons/iconRegistry.generated';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { flattenItemGroupElementChildren } from '@/components/ui/lists/ItemGroup.dividers';
 import { useHeaderControlMetrics, type HeaderControlMetrics } from '@/components/ui/icons/iconButtonGlyphSize';
 import { Item, type ItemProps } from '@/components/ui/lists/Item';
 import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
@@ -304,8 +306,8 @@ export const CollectionList = React.memo(function CollectionList(props: Omit<Hap
     phonePage?: Readonly<{
         backTestID: string;
         /**
-         * The kind's mark each row leads with on the phone page (owner 11-11): there the list is the screen's body, so its
-         * rows take the page row anatomy (inset card, mark, title, muted line, chevron) instead of the column's chip.
+         * The kind's mark each row leads with on the phone page when the row has none of its own (owner 11-11); the rows
+         * keep the one content-row anatomy, flat on the page (owner 2026-11-15).
          */
         rowMark?: IconName;
     }> | null;
@@ -315,7 +317,9 @@ export const CollectionList = React.memo(function CollectionList(props: Omit<Hap
      */
     create?: PageCreateAction | null;
 }>) {
-    const { surface, toolsInsetPx, phonePage, create, headerAction, ...listProps } = props;
+    const { surface, toolsInsetPx, phonePage, create, headerAction, children, ...listRest } = props;
+    // The column states its own rows' order, so each draws the one list-row rule (owner 2026-11-15).
+    const listProps = { ...listRest, children: orderCollectionColumnRows(children) };
     const largeTitle = useNavigationLeavesLargeTitle();
     const pageToolsInsetPx = React.useContext(CollectionPageToolsInsetContext);
     const resolvedToolsInsetPx = toolsInsetPx ?? pageToolsInsetPx;
@@ -376,12 +380,59 @@ export function useCollectionPhonePageRows(): boolean {
 }
 
 /**
- * A list's rows: on a phone main screen, one inset card (the page row anatomy, as Projects and Artifacts draw);
- * in a column, the rows themselves on the plane.
+ * A run of a list's rows, flat on the plane or the phone page (owner 2026-11-15: no card per list): it states their
+ * order, so each row draws the one list-row rule under it while another row follows, and none beside the selected one.
  */
 export function CollectionRows(props: Readonly<{ children: React.ReactNode }>) {
-    const pageRows = React.useContext(CollectionPhonePageRowsContext);
-    return pageRows ? <ItemGroup>{props.children}</ItemGroup> : <>{props.children}</>;
+    const rows = flattenItemGroupElementChildren(props.children);
+    return (
+        <>
+            {rows.map((row, index) => {
+                const next = rows[index + 1];
+                return (
+                    <CollectionRowOrder key={row.key ?? index} followed={next !== undefined}
+                        precedesSelected={(next?.props as { selected?: unknown } | undefined)?.selected === true}>
+                        {row}
+                    </CollectionRowOrder>
+                );
+            })}
+        </>
+    );
+}
+
+/**
+ * A column's own rows, written as its direct children between its group labels: each consecutive run of
+ * `CollectionNavigationRow`s is ordered as `CollectionRows` orders its rows. A component that wraps its rows states
+ * their order itself (`CollectionRows`, `CollectionRowOrder`).
+ */
+function orderCollectionColumnRows(children: React.ReactNode): React.ReactNode {
+    const nodes = flattenItemGroupElementChildren(children);
+    if (!nodes.some(node => node.type === CollectionNavigationRow)) return children;
+    return nodes.map((node, index) => {
+        if (node.type !== CollectionNavigationRow) return node;
+        const next = nodes[index + 1];
+        const nextRow = next?.type === CollectionNavigationRow ? next : undefined;
+        return (
+            <CollectionRowOrder key={node.key ?? index} followed={nextRow !== undefined}
+                precedesSelected={(nextRow?.props as { selected?: unknown } | undefined)?.selected === true}>
+                {node}
+            </CollectionRowOrder>
+        );
+    });
+}
+
+/**
+ * A row's place in its list, for a list that renders its rows itself (a virtualized column): whether another row of
+ * its section follows, and whether that row is the selected one. Rows read it to draw the one list-row rule.
+ */
+export function CollectionRowOrder(props: Readonly<{ followed: boolean; precedesSelected: boolean; children: React.ReactNode }>) {
+    return (
+        <HappierListRowFollowedContext.Provider value={props.followed}>
+            <HappierListRowPrecedesSelectedContext.Provider value={props.precedesSelected}>
+                {props.children}
+            </HappierListRowPrecedesSelectedContext.Provider>
+        </HappierListRowFollowedContext.Provider>
+    );
 }
 
 /** A whole phone page's line under the status bar: its Back on a pushed page; the main-screen head lends the bar its "+". */
@@ -501,50 +552,17 @@ export type CollectionNavigationRowProps = Readonly<{
     rightElement?: React.ReactNode;
     /** An independently actionable request stays outside row navigation. */
     rightElementOutsidePressable?: boolean;
-    /** Handed down by the page card (`CollectionRows` on a phone main screen) between its rows. */
-    showDivider?: boolean;
     onPress: () => void;
 }>;
 
 export const CollectionNavigationRow = React.memo(function CollectionNavigationRow(props: CollectionNavigationRowProps) {
     const pageRows = React.useContext(CollectionPhonePageRowsContext);
-    if (pageRows) return <CollectionPageRow {...props} mark={pageRows.mark} />;
-    return <CollectionColumnRow {...props} />;
-});
-
-/**
- * A row of a phone main screen's body: the page row anatomy (owner 11-11) — the kind's mark (or the row's own), the
- * title, its one muted line of real facts, and a chevron saying it opens. Selection and trees stay with the column.
- */
-function CollectionPageRow(props: CollectionNavigationRowProps & Readonly<{ mark: IconName }>) {
     const { theme } = useUnistyles();
-    const row = (
-        <Item
-            testID={props.testID}
-            title={props.title}
-            titleLines={1}
-            titleStyle={props.unread ? styles.navigationRowTitleSelected : undefined}
-            subtitle={props.subtitle}
-            subtitleLeading={props.needsYouStatus ? <WorkStatusRowMark status={props.needsYouStatus} testIDSuffix={props.testID} /> : props.subtitleLeading}
-            titleAccessory={props.titleAccessory}
-            titleQualifier={props.titleQualifier}
-            subtitleStyle={props.subtitleMono ? styles.monoSubtitle : undefined}
-            icon={props.icon ?? <Icon name={props.mark} size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
-            accessibilityLabel={props.subtitle ? [props.accessibilityLabel ?? props.title, props.subtitle].join('. ') : props.accessibilityLabel}
-            detail={props.status ? undefined : props.detail}
-            rightElement={props.status ?? props.rightElement}
-            rightElementOutsidePressable={props.rightElementOutsidePressable}
-            // The status slot only draws; it is part of the row's press (its name says the state).
-            rightElementPassive={Boolean(props.status)}
-            dimmed={props.dimmed === true}
-            showChevron
-            keepChevronWithRightElement
-            showDivider={props.showDivider}
-            onPress={props.onPress}
-        />
-    );
-    return props.href ? <WorkspaceDestinationRow href={props.href}>{actions => React.cloneElement(row, { onLongPress: actions.openMenu })}</WorkspaceDestinationRow> : row;
-}
+    // A phone main screen's body draws the same row as the column (owner 2026-11-15: one content-row anatomy on every
+    // phone collection), led by the kind's mark when the row has none of its own.
+    const icon = pageRows && !props.icon ? <Icon name={pageRows.mark} size={ICON_SIZE.md} color={theme.colors.text.secondary} /> : props.icon;
+    return <CollectionColumnRow {...props} icon={icon} />;
+});
 
 const CollectionColumnRow = React.memo(function CollectionColumnRow(props: CollectionNavigationRowProps) {
     const { theme } = useUnistyles();

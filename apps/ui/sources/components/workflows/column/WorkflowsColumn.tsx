@@ -9,7 +9,7 @@ import { SessionsList } from '@/components/sessions/shell/SessionsList';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { CollectionList, CollectionListGroupLabel, CollectionNavigationRow, CollectionSkeletonRows, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
+import { CollectionList, CollectionListGroupLabel, CollectionNavigationRow, CollectionRowOrder, CollectionRows, CollectionSkeletonRows, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/navigationTitleChrome';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
@@ -260,8 +260,10 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
             accessibilitySemantics="alert" /></View> : null}
         {empty && !firstLoad && !libraryFailed && !accountFailed ? <EmptyState testID="workflows-column:library:empty"
             layout="line" title={t('workflows.destination.libraryEmpty')} /> : null}
-        {visibleLibraryRows.map((row, index) => <ColumnRowWindow key={row.key} id={row.key} index={index}
-            pinned={'definition' in row ? selectedDefinitionId === row.definition.definitionId : params.trigger === row.accountTrigger.automationId}>
+        {visibleLibraryRows.map((row, index) => <CollectionRowOrder key={row.key} followed={index < visibleLibraryRows.length - 1}
+            precedesSelected={libraryRowSelected(visibleLibraryRows[index + 1], selectedDefinitionId, params.trigger)}>
+        <ColumnRowWindow id={row.key} index={index}
+            pinned={libraryRowSelected(row, selectedDefinitionId, params.trigger)}>
             {'definition' in row ? (
                 <ColumnDefinitionRow definition={row.definition} summary={row.lastRunSummary}
                     selected={selectedDefinitionId === row.definition.definitionId}
@@ -269,7 +271,7 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
             ) : (
                 <ColumnAccountWorkflowEntry row={row} editor={accountEditor} deepLink={params.trigger === row.accountTrigger.automationId} />
             )}
-        </ColumnRowWindow>)}
+        </ColumnRowWindow></CollectionRowOrder>)}
         {accountFailed ? <View style={styles.stale}>
             <SurfaceFreshnessLine testID="workflows-column:library:account-failed" tone="warning"
                 reason={t('workflows.triggers.section.accountLoadFailed')}
@@ -281,27 +283,33 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
         {split.sharedWithYou.length > 0 ? <>
             <CollectionListGroupLabel testID="workflows-column:group:sharedWithYou" title={t('workflows.destination.sections.sharedWithYou')} countPlacement="title"
                 count={split.sharedWithYou.length} />
-            {split.sharedWithYou.map((definition, index) => <ColumnRowWindow key={definition.definitionId} id={definition.definitionId}
+            {split.sharedWithYou.map((definition, index) => <CollectionRowOrder key={definition.definitionId}
+                followed={index < split.sharedWithYou.length - 1}
+                precedesSelected={split.sharedWithYou[index + 1]?.definitionId === selectedDefinitionId}>
+            <ColumnRowWindow id={definition.definitionId}
                 index={visibleLibraryRows.length + index} pinned={selectedDefinitionId === definition.definitionId}>
                 <CollectionNavigationRow
                     href={`/workflows/${encodeURIComponent(definition.definitionId)}`} testID={`workflows-column:shared:${definition.definitionId}`}
                     title={formatWorkflowDefinitionLibraryTitle(definition)} selected={selectedDefinitionId === definition.definitionId}
                     {...(definition.contentStatus === 'unavailable' ? { subtitle: formatWorkflowDefinitionContentUnavailableReason(definition.contentUnavailableReason) } : {})}
                     onPress={() => router.push(`/workflows/${encodeURIComponent(definition.definitionId)}` as never)} />
-            </ColumnRowWindow>)}
+            </ColumnRowWindow></CollectionRowOrder>)}
         </> : null}
         <ColumnBuiltins selectedDefinitionId={selectedDefinitionId} isVisible={isVisible} />
         {split.fromPlugins.length > 0 ? <>
             <CollectionListGroupLabel testID="workflows-column:group:fromPlugins" title={t('workflows.plugins.fromPlugins')} countPlacement="title"
                 count={split.fromPlugins.length} />
-            {split.fromPlugins.map((workflow, index) => <ColumnRowWindow key={workflow.workflow} id={workflow.workflow}
+            {split.fromPlugins.map((workflow, index) => <CollectionRowOrder key={workflow.workflow}
+                followed={index < split.fromPlugins.length - 1}
+                precedesSelected={split.fromPlugins[index + 1]?.workflow === selectedDefinitionId}>
+            <ColumnRowWindow id={workflow.workflow}
                 index={visibleLibraryRows.length + split.sharedWithYou.length + index} pinned={selectedDefinitionId === workflow.workflow}>
                 <CollectionNavigationRow
                     rowRole="item"
                     href={`/workflows/${encodeURIComponent(workflow.workflow)}`} testID={`workflows-column:plugin:${workflow.workflow}`}
                     title={workflow.title} selected={selectedDefinitionId === workflow.workflow}
                     onPress={() => router.push(`/workflows/${encodeURIComponent(workflow.workflow)}` as never)} />
-            </ColumnRowWindow>)}
+            </ColumnRowWindow></CollectionRowOrder>)}
         </> : null}
     </>;
 });
@@ -413,13 +421,15 @@ function ColumnBuiltins(props: Readonly<{ selectedDefinitionId: string | null; i
     if (entries.length === 0) return null;
     return <>
         <CollectionListGroupLabel testID="workflows-column:group:builtin" title={t('workflows.page.blocks.builtin')} countPlacement="title" count={entries.length} />
-        {entries.map((entry) => {
-            const href = createWorkflowDefinitionRoute(entry.id);
-            return <CollectionNavigationRow key={entry.id} href={href} testID={`workflows-column:builtin:${entry.id}`}
-                rowRole="item"
-                title={tLoose(entry.titleKey)} icon={<WorkflowBuiltinMark icon={entry.icon} />} selected={props.selectedDefinitionId === entry.id}
-                onPress={() => router.push(href as never)} />;
-        })}
+        <CollectionRows>
+            {entries.map((entry) => {
+                const href = createWorkflowDefinitionRoute(entry.id);
+                return <CollectionNavigationRow key={entry.id} href={href} testID={`workflows-column:builtin:${entry.id}`}
+                    rowRole="item"
+                    title={tLoose(entry.titleKey)} icon={<WorkflowBuiltinMark icon={entry.icon} />} selected={props.selectedDefinitionId === entry.id}
+                    onPress={() => router.push(href as never)} />;
+            })}
+        </CollectionRows>
     </>;
 }
 
@@ -446,3 +456,13 @@ const styles = StyleSheet.create((theme) => ({
     stale: { paddingHorizontal: HAPPIER_COLLECTION_LIST_METRICS.rowInset, paddingTop: theme.space.s4 },
     // A column section's state is the one in-list state line, on the rows' content edge.
 }));
+
+/** Whether a Library row is the open one: its definition's page, or the account workflow a deep link opened. */
+function libraryRowSelected(
+    row: Readonly<{ definition: Readonly<{ definitionId: string }> }> | Readonly<{ accountTrigger: Readonly<{ automationId: string }> }> | undefined,
+    selectedDefinitionId: string | null,
+    trigger: unknown,
+): boolean {
+    if (row === undefined) return false;
+    return 'definition' in row ? selectedDefinitionId === row.definition.definitionId : trigger === row.accountTrigger.automationId;
+}

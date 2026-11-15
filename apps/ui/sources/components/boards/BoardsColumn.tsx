@@ -28,7 +28,7 @@ import { BoardReadState } from './BoardReadState';
  */
 
 /** A board's row while it has a source: its live line, with the collection's trouble dot while it needs you. */
-const LiveBoardRow = React.memo(function LiveBoardRow(props: Readonly<{ board: WorkBoardV1; selected: boolean; showDivider?: boolean; onPress: () => void }>) {
+const LiveBoardRow = React.memo(function LiveBoardRow(props: Readonly<{ board: WorkBoardV1; selected: boolean; onPress: () => void }>) {
     const summary = useBoardLiveSummary(props.board);
     const line = describeBoardSummaryLine(summary);
     return (
@@ -41,17 +41,16 @@ const LiveBoardRow = React.memo(function LiveBoardRow(props: Readonly<{ board: W
                 ? <View testID={`boards-column:board:${props.board.id}:need-you`} style={collectionListStyles.troubleDot} />
                 : undefined}
             selected={props.selected}
-            showDivider={props.showDivider}
             onPress={props.onPress}
         />
     );
 });
 
-const BoardRow = React.memo(function BoardRow(props: Readonly<{ summary: WorkBoardArtifactSummaryV1; board: WorkBoardV1 | null; selected: boolean; showDivider?: boolean }>) {
+const BoardRow = React.memo(function BoardRow(props: Readonly<{ summary: WorkBoardArtifactSummaryV1; board: WorkBoardV1 | null; selected: boolean }>) {
     const router = useRouter();
     const { board, summary } = props;
     const onPress = React.useCallback(() => router.push(createBoardRoute(summary.id) as never), [summary.id, router]);
-    if (board && hasWorkBoardContent(board)) return <LiveBoardRow board={board} selected={props.selected} showDivider={props.showDivider} onPress={onPress} />;
+    if (board && hasWorkBoardContent(board)) return <LiveBoardRow board={board} selected={props.selected} onPress={onPress} />;
     return (
         <CollectionNavigationRow
             testID={`boards-column:board:${summary.id}`}
@@ -60,7 +59,6 @@ const BoardRow = React.memo(function BoardRow(props: Readonly<{ summary: WorkBoa
             // Unread, the row says what its saved layout holds; read and empty, that it is hand-picked and empty.
             subtitle={board ? `${t('boards.meta.handPicked')} · ${t('boards.meta.empty')}` : describeBoardSummaryCounts(summary.counts, summary.source.sections)}
             selected={props.selected}
-            showDivider={props.showDivider}
             onPress={onPress}
         />
     );

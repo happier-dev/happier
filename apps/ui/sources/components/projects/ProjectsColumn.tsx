@@ -10,6 +10,7 @@ import {
     CollectionList,
     collectionListStyles,
     CollectionNavigationRow,
+    CollectionRows,
 } from '@/components/ui/lists/collection/CollectionList';
 import { t } from '@/text';
 
@@ -158,18 +159,20 @@ export const ProjectsColumn = React.memo(function ProjectsColumn() {
 
     const columnHead = (
         <>
-            {placed.destinations.map((destination) => (
-                <CollectionNavigationRow
-                    rowRole="item"
-                    key={destination.id}
-                    href={destination.activation === 'navigate' ? destination.routePath : null}
-                    testID={destinationRowTestId(destination)}
-                    title={destination.title}
-                    icon={<Icon name={destination.icon} />}
-                    selected={destination.id === placed.currentId}
-                    onPress={() => placed.activate(destination)}
-                />
-            ))}
+            <CollectionRows>
+                {placed.destinations.map((destination) => (
+                    <CollectionNavigationRow
+                        rowRole="item"
+                        key={destination.id}
+                        href={destination.activation === 'navigate' ? destination.routePath : null}
+                        testID={destinationRowTestId(destination)}
+                        title={destination.title}
+                        icon={<Icon name={destination.icon} />}
+                        selected={destination.id === placed.currentId}
+                        onPress={() => placed.activate(destination)}
+                    />
+                ))}
+            </CollectionRows>
             {/* Rows not confirmed yet: quiet rows while they load, one line with Retry when the read failed. No Projects
                 yet: the page beside the column says so with its Add (F4), so the column stays quiet. */}
             {model.rowsUnconfirmed && isProjectRowsPending(model.rowsUnconfirmed) ? (

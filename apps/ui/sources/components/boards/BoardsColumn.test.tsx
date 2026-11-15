@@ -194,7 +194,7 @@ describe('BoardsColumn collection search', () => {
         expect(await selectedRows('plane')).toHaveLength(1);
     });
 
-    it('draws the phone main screen\'s boards as page rows (card, mark, line, chevron) and the column\'s as navigation rows (owner 11-11)', async () => {
+    it('draws the phone main screen\'s boards as the column\'s own rows, flat with the kind\'s mark (owner 2026-11-15: one row anatomy, no card)', async () => {
         route.pathname = '/boards';
         const boardRows = async (surface: 'page' | 'plane') => {
             const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><BoardsColumn surface={surface} /></InjectedAuthProvider>);
@@ -208,8 +208,9 @@ describe('BoardsColumn collection search', () => {
         };
         deviceState.type = 'phone';
         const page = await boardRows('page');
-        expect(page.grouped).toBe(true);
-        expect(page.row.props.showChevron).toBe(true);
+        // No card around the list and no chevron on its content rows; the row leads with the kind's mark.
+        expect(page.grouped).toBe(false);
+        expect(page.row.props.showChevron).toBe(false);
         expect(page.row.props.icon).toBeTruthy();
         deviceState.type = 'tablet';
         const column = await boardRows('plane');
