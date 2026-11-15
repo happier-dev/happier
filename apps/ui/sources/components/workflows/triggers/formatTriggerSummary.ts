@@ -12,7 +12,7 @@ import { createPluginLocalizedTextResolver, type PluginLocalizedTextResolver } f
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { joinList } from '@/utils/text/joinList';
 
-import { formatCalendarDate, formatClockTime, formatMonthName, parseCalendarSchedule, readOnceScheduleState } from './triggerSchedule';
+import { formatCalendarDate, formatClockTime, formatMonthName, parseCalendarSchedule, readOnceScheduleState, formatOnceScheduleStateLabel } from './triggerSchedule';
 
 function scheduledRunTimeUnits(nextRunAt: number, nowMs: number) {
     const next = new Date(nextRunAt);
@@ -224,21 +224,21 @@ export function formatTriggerSummary(trigger: TriggerSummarySource, context?: Tr
  */
 export function formatTriggerSetSummary(
     triggers: readonly (TriggerSummarySource & Readonly<{ enabled?: boolean; remainingOccurrences?: number | null }>)[],
-    /** The set's last Run state, when its owner has read it: a spent one-time schedule says Done or Missed from it. */
+    /** The set's last Run state, when its owner has read it: a spent one-time schedule says Completed or Missed from it. */
     lastRunState?: string | null,
 ): string {
     const [first, ...rest] = triggers;
     if (first === undefined) return t('workflows.triggers.summary.manual');
     // A trigger that won't fire says so first, as its row does ("Off · Every day at 2:00 AM"); a spent
-    // one-time schedule says how it ended ("Done · Once at …"), a pending one keeps its due time.
+    // one-time schedule says how it ended ("Completed · Once at …"), a pending one keeps its due time.
     // A collection row never shows a raw expression: a cron that can't be said reads "On a schedule" there.
     const when = first.kind === 'schedule' && first.schedule?.kind === 'cron'
         && formatCronSentence(first.schedule.scheduleExpr ?? '') === null
         ? t('workflows.triggers.summary.schedule')
         : formatTriggerSummary(first);
     const once = readOnceScheduleState(first, lastRunState);
-    const state = once === 'done' ? t('common.done') : once === 'missed' ? t('workflows.runState.missed')
-        : first.enabled === false ? t('workflows.triggers.row.off') : null;
+    const state = formatOnceScheduleStateLabel(once)
+        ?? (first.enabled === false ? t('workflows.triggers.row.off') : null);
     const summary = state === null ? when : [state, when].join(' · ');
     return rest.length === 0 ? summary : t('workflows.triggers.summary.more', { first: summary, count: rest.length });
 }

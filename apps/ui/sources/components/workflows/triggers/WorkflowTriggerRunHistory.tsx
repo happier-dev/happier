@@ -10,7 +10,7 @@ import { WorkflowRunWindowRow } from '../library/WorkflowRunWindowRow';
 import { Item } from '@/components/ui/lists/Item';
 import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
 import { formatNextScheduledRun, formatNextScheduledRunAccessibilityLabel, readNextScheduledRunRefreshAtMs } from './formatTriggerSummary';
-import { readOnceScheduleState, type OnceScheduleSource } from './triggerSchedule';
+import { readOnceScheduleState, formatOnceScheduleStateLabel, type OnceScheduleSource } from './triggerSchedule';
 
 import { useReportTriggerHistoryRuns } from './SessionTriggerHistoryScope';
 import { AutomationHistoryGapRecoveryAction } from '@/components/automations/screens/AutomationHistoryGapRecoveryAction';
@@ -28,7 +28,7 @@ export const WorkflowTriggerRunHistory = React.memo(function WorkflowTriggerRunH
     triggerName?: string;
     /** Exact saved scheduler occurrence for this trigger, absent on older summaries. */
     nextRunAt?: number | null;
-    /** The saved trigger: a spent one-time schedule heads its History with Done, or Missed from its Run. */
+    /** The saved trigger: a spent one-time schedule heads its History with Completed, or Missed from its Run. */
     trigger?: OnceScheduleSource;
 }>) {
     const read = useWorkflowRunWindow(`trigger:${props.triggerId}`, { accountLifetime: props.accountLifetime });
@@ -51,7 +51,7 @@ export const WorkflowTriggerRunHistory = React.memo(function WorkflowTriggerRunH
         {nextRunAt !== null ? <Item title={formatNextScheduledRun(nextRunAt, true, nowMs)} mode="info"
             accessibilityLabel={formatNextScheduledRunAccessibilityLabel(nextRunAt, true, nowMs)} /> : null}
         {once === 'done' || once === 'missed' ? <Item testID={`session-work-trigger-history:${props.automationId}-once`} mode="info"
-            title={once === 'done' ? t('common.done') : t('workflows.runState.missed')} /> : null}
+            title={formatOnceScheduleStateLabel(once)!} /> : null}
         {read.status === 'failed' ? <SurfaceFreshnessLine
             tone="warning" reason={t('workflows.destination.history.loadFailedTitle')}
             action={{ label: t('workflows.retry'), onPress: read.retry }} /> : null}

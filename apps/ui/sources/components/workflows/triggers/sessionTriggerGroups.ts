@@ -6,7 +6,7 @@ import { workflowTriggerDisplayNameV1 } from '@happier-dev/protocol/workflows/wo
 import { t } from '@/text';
 
 import type { TriggerRowOutcome } from './TriggerRow';
-import { isSpentOnceSchedule, readOnceScheduleState } from './triggerSchedule';
+import { isSpentOnceSchedule, readOnceScheduleState, formatOnceScheduleStateLabel } from './triggerSchedule';
 import { resolveTriggerEventGroup, type TriggerEventGroup } from './triggerEventGroups';
 import { formatTriggerSetSummary, formatNextScheduledRun, formatNextScheduledRunAccessibilityLabel, formatTriggerLastOutcome, type ScheduledRunQualifierTime } from './formatTriggerSummary';
 import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
@@ -143,9 +143,9 @@ export function projectSessionTriggerGroups(params: Readonly<{
                 ...(set.sourceSavedAt === undefined ? {} : { sourceSavedAt: set.sourceSavedAt }),
                 ...(legacy ? { legacy: true, qualifier: legacy.qualifier,
                     ...(legacy.qualifierTime ? { qualifierTime: legacy.qualifierTime } : {}) } : trigger.kind === 'schedule' ? {
-                    // A spent one-time schedule is Done; Missed is its Run's own state, which the outcome already says.
+                    // A spent one-time schedule is Completed; Missed is its Run's own state, which the outcome already says.
                     ...(readOnceScheduleState(trigger, lastRun?.state) === 'missed' ? {} : isSpentOnceSchedule(trigger) ? {
-                        qualifier: t('common.done'), qualifierAccessibilityLabel: t('common.done'),
+                        qualifier: formatOnceScheduleStateLabel('done')!, qualifierAccessibilityLabel: formatOnceScheduleStateLabel('done')!,
                     } : {
                         qualifier: formatNextScheduledRun(trigger.nextRunAt, set.enabled && trigger.enabled),
                         qualifierAccessibilityLabel: formatNextScheduledRunAccessibilityLabel(trigger.nextRunAt, set.enabled && trigger.enabled),

@@ -36,7 +36,8 @@ describe('formatAutomationTriggerLabel', () => {
             schedule: { kind: 'once', scheduledAt: new Date(2030, 10, 11, 9, 15).getTime() } });
         if (trigger.kind !== 'schedule') throw new Error('Expected a schedule trigger');
         expect(formatAutomationTriggerLabel(trigger)).toContain('2030');
-        expect(formatAutomationTriggerStatusLabel(trigger)).toBe(t('common.done'));
+        // 07 §2.3: Completed is the settled status vocabulary on every trigger surface.
+        expect(formatAutomationTriggerStatusLabel(trigger)).toBe(t('workflows.runState.succeeded'));
         expect(formatAutomationTriggerStatusLabel({ ...trigger, enabled: false, remainingOccurrences: 1 })).toBe(t('automations.detail.status.paused'));
         expect(formatAutomationRunStateLabel({ state: 'missed' })).toBe(t('automations.detail.runMeta.state.missed'));
     });

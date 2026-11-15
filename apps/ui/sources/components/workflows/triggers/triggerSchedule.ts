@@ -1,4 +1,4 @@
-import { getPreferredLanguage } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { resolveHappierFutureLocalDateTime, type HappierLocalDateTimeDraft } from '@happier-dev/plugin-ui/presentation';
 
@@ -14,13 +14,19 @@ export function isSpentOnceSchedule(trigger: OnceScheduleSource): boolean {
 
 /**
  * A one-time schedule's state: pending until the scheduler consumes its occurrence, then Missed when
- * that occurrence's Run says so (the admission owner's typed `missed` state), otherwise Done. `null`
+ * that occurrence's Run says so (the admission owner's typed `missed` state), otherwise Completed. `null`
  * for any other trigger. The UI never infers Missed from the clock.
  */
 export function readOnceScheduleState(trigger: OnceScheduleSource, lastRunState?: string | null): 'pending' | 'done' | 'missed' | null {
     if (trigger.kind !== 'schedule' || trigger.schedule?.kind !== 'once') return null;
     if (!isSpentOnceSchedule(trigger)) return 'pending';
     return lastRunState === 'missed' ? 'missed' : 'done';
+}
+
+/** All trigger surfaces share the settled status vocabulary (07 §2.3). */
+export function formatOnceScheduleStateLabel(state: ReturnType<typeof readOnceScheduleState>): string | null {
+    return state === 'done' ? t('workflows.runState.succeeded')
+        : state === 'missed' ? t('workflows.runState.missed') : null;
 }
 
 /** Resolve relative text only at the trigger editor's confirmation boundary, never on a timer. */

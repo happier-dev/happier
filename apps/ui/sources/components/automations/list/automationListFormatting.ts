@@ -12,7 +12,7 @@ import type {
 } from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
 import { hasTranslation, t, tLoose, type TranslationKey } from '@/text';
 import { formatTriggerSummary } from '@/components/workflows/triggers/formatTriggerSummary';
-import { isSpentOnceSchedule } from '@/components/workflows/triggers/triggerSchedule';
+import { formatOnceScheduleStateLabel, readOnceScheduleState } from '@/components/workflows/triggers/triggerSchedule';
 import type { AutomationV3RunListItem } from '@happier-dev/protocol/automations/automationApiV3';
 import { describeWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 
@@ -91,7 +91,8 @@ export function formatAutomationTriggerStatusLabel(
     trigger: AutomationTriggerListItem,
     automationEnabled = true,
 ): string {
-    if (isSpentOnceSchedule(trigger)) return t('common.done');
+    const onceLabel = formatOnceScheduleStateLabel(readOnceScheduleState(trigger));
+    if (onceLabel !== null) return onceLabel;
     if (trigger.kind === 'sessionLifecycle' || trigger.kind === 'runLifecycle') {
         return t(AUTOMATION_SESSION_LIFECYCLE_STATUS_KEYS[trigger.status.state]);
     }
