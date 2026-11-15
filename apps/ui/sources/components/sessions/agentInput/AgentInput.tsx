@@ -1804,7 +1804,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         }
         if (props.sessionId) {
             stopTyping();
-            if (!keepFocusAfterSend) inputRef.current?.blur();
+            // Clicking Send can move focus to the button before this handler runs.
+            // Restore it during the send gesture, never from a later background update.
+            if (keepFocusAfterSend) inputRef.current?.focus();
+            else inputRef.current?.blur();
         }
         messageHistory.reset();
         setHistoryFlicksArmed(false);

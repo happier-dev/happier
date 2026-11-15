@@ -488,18 +488,31 @@ test.describe('ui e2e: session composer draft continuity', () => {
         let releaseResponse!: () => void;
         const mayRespond = new Promise<void>((resolve) => { releaseResponse = resolve; });
         let didIntercept = false;
-        await page.route(`**/v2/sessions/${sessionA.id}/messages`, async (route) => {
+        const sendPath = `/v2/sessions/${sessionA.id}/messages`;
+        await page.route(`**${sendPath}`, async (route) => {
             didIntercept = true;
             const response = await route.fetch();
             await mayRespond;
             await route.fulfill({ response });
         });
         await send.click();
+        await expect(reopened).toBeFocused();
         await expect.poll(() => didIntercept, { timeout: 30_000 }).toBe(true);
         await reopened.fill(newer);
+        await reopened.press('Tab');
+        await expect(reopened).not.toBeFocused();
+        const focusedElsewhere = await page.locator(':focus').elementHandle();
+        if (!focusedElsewhere) throw new Error('Expected another control to receive focus');
+        const sendResponse = page.waitForResponse((response) => (
+            new URL(response.url()).pathname === sendPath
+                && response.request().method() === 'POST'
+        ));
         releaseResponse();
+        expect((await sendResponse).ok()).toBe(true);
+        await expect(send).toBeEnabled({ timeout: 60_000 });
         await expect(reopened).toHaveValue(newer, { timeout: 60_000 });
-        await page.unroute(`**/v2/sessions/${sessionA.id}/messages`);
+        expect(await focusedElsewhere.evaluate((element) => document.activeElement === element)).toBe(true);
+        await page.unroute(`**${sendPath}`);
     });
 
     test('converges an existing-session clear across two contexts without lifecycle resurrection', async ({ page, browser }) => {
