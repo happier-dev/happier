@@ -26,6 +26,8 @@ import {
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { removeMachineAccessGrantInTx, resolveMachineAdmission, setMachineAccessGrantInTx } from '@/app/machines/machineAccess';
+import { revokeMachineInTx } from '@/app/machines/machineMutations';
+import { eventRouter } from '@/app/events/eventRouter';
 import { createAccountTokenForTests, createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { enableAuthentication } from '@/app/api/utils/enableAuthentication';
 import { registerPeerMediationGrantRoutes } from '@/app/api/routes/machines/peer/mediation/registerPeerMediationGrantRoutes';
@@ -148,7 +150,12 @@ describe('Live stream current Machine admission (real SQLite)', () => {
             }, verifyViewerSocketOwnership });
             const delivered: unknown[] = [];
             const sourceControls: unknown[] = [];
+            let admissionReads = 0;
             machineLiveStreamRelayHandler(owner.id, source as unknown as Parameters<typeof machineLiveStreamRelayHandler>[1], {
+                readMachineAdmission: (machineId) => {
+                    admissionReads += 1;
+                    return resolveMachineAdmission({ actorAccountId: owner.id, machineId });
+                },
                 io: { to: (room: string) => ({ emit: (_event: string, value: unknown) => {
                     if (room === viewer.id) delivered.push(value);
                     else sourceControls.push(value);
@@ -221,6 +228,16 @@ describe('Live stream current Machine admission (real SQLite)', () => {
                     return;
                 }
                 expect(frame).toBeDefined();
+                if (path === 'owner-session-browser') {
+                    // V1 own-Machine: START is the one Machine admission; later frames
+                    // consume the admitted state and never re-read the permission graph.
+                    expect(admissionReads).toBe(1);
+                    for (let sequence = 2; sequence <= 6; sequence += 1) await send({ ...envelope, message: { kind: 'frame', frame: {
+                        v: 1, streamId, sequence, timestampMs: Date.now(), codecId: 'image.mjpeg', payloadKind: 'image_keyframe',
+                        payloadEncoding: 'binary_base64', payload: { t: 'plain', v: 'AQID' }, payloadSizeBytes: 3,
+                    } } });
+                    expect(admissionReads).toBe(1);
+                }
                 if (encryptedSessionBrowser) expect(frame).toMatchObject({ message: { kind: 'frame', frame: {
                     payload: { t: 'encrypted', c: 'AQID' },
                 } } });
@@ -374,7 +391,7 @@ describe('Live stream current Machine admission (real SQLite)', () => {
         }
     });
 
-    it.each(['revoke', 'installation-replacement', 'recipient-replacement-before-new-start'] as const)('keeps frame delivery current across %s', async (transition) => {
+    it.each(['revoke', 'target-revoke', 'installation-replacement', 'recipient-replacement-before-new-start'] as const)('keeps frame delivery current across %s', async (transition) => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const createMachine = async () => {
             const installationId = randomUUID();
@@ -396,6 +413,7 @@ describe('Live stream current Machine admission (real SQLite)', () => {
         const key = tweetnacl.sign.keyPair();
         const caps = { maxBitrateBps: 64_000, maxFramesPerSecond: 12, maxFrameBytes: 32_000, maxDurationMs: 60_000, maxTotalBytes: 1000 };
         let streamId = randomUUID();
+        let admissionReads = 0;
         const payload = {
             v: 1 as const, grantId: randomUUID(), accountId: owner.id, sourceMachineId: source.id, targetMachineId: target.id,
             flowKind: 'live_stream' as const, routeKind: 'server_relay' as const, streamId, streamFamily: 'screen',
@@ -423,7 +441,10 @@ describe('Live stream current Machine admission (real SQLite)', () => {
                 const account = await db.account.findUnique({ where: { id: owner.id }, select: { encryptionMode: true } });
                 return account?.encryptionMode === 'plain' || account?.encryptionMode === 'e2ee' ? account.encryptionMode : null;
             },
-            readMachineAdmission: (machineId) => resolveMachineAdmission({ actorAccountId: owner.id, machineId }),
+            readMachineAdmission: (machineId) => {
+                admissionReads += 1;
+                return resolveMachineAdmission({ actorAccountId: owner.id, machineId });
+            },
         });
         const send = getSocketHandler(socket, MACHINE_LIVE_STREAM_SOCKET_EVENT);
         const envelope = { v: 1, sourceMachineId: source.id, targetMachineId: target.id } as const;
@@ -444,6 +465,12 @@ describe('Live stream current Machine admission (real SQLite)', () => {
             } } });
             await send(frame(1));
             expect(forwarded).toContainEqual(expect.objectContaining({ message: expect.objectContaining({ kind: 'frame' }) }));
+            // Distinct source and target: START reads each Machine once; frames and
+            // ACKs after admission perform no further permission reads.
+            expect(admissionReads).toBe(2);
+            for (let sequence = 2; sequence <= 5; sequence += 1) await send(frame(sequence));
+            await send({ ...envelope, message: { kind: 'control', control: { v: 1, streamId, kind: 'ack', nextSequence: 6 } } });
+            expect(admissionReads).toBe(2);
             if (transition === 'recipient-replacement-before-new-start') {
                 await send({ ...envelope, message: { kind: 'control', control: { v: 1, streamId, kind: 'stop', reasonCode: 'test' } } });
                 const installationId = randomUUID();
@@ -455,13 +482,20 @@ describe('Live stream current Machine admission (real SQLite)', () => {
                 await send(frame(1));
                 expect(deliveredFrames).toEqual([installationId]);
                 return;
-            } else if (transition === 'revoke') {
-                await db.machine.update({ where: { id: source.id }, data: { revokedAt: new Date() } });
-            } else {
-                await db.machine.update({ where: { id: source.id }, data: { installationId: randomUUID() } });
             }
+            // Withdrawal reaches the open stream through the canonical committed
+            // access-loss producer, not through a per-frame permission read.
+            const withdrawn = transition === 'target-revoke' ? target.id : source.id;
+            if (transition === 'installation-replacement') {
+                await db.machine.update({ where: { id: source.id }, data: { installationId: randomUUID() } });
+                eventRouter.disconnectMachineAndSessionSockets({ accountId: owner.id, machineId: source.id, sessionBindings: [] });
+            } else {
+                expect(await inTx(tx => revokeMachineInTx(tx, { accountId: owner.id, machineId: withdrawn }))).toMatchObject({ ok: true });
+            }
+            expect(forwarded).toContainEqual(expect.objectContaining({ message: { kind: 'control',
+                control: expect.objectContaining({ kind: 'stop', streamId, reasonCode: 'machine_unavailable' }) } }));
             forwarded.length = 0;
-            await send(frame(2));
+            await send(frame(6));
             expect(forwarded).not.toContainEqual(expect.objectContaining({ message: expect.objectContaining({ kind: 'frame' }) }));
         } finally {
             await getSocketHandler(socket, 'disconnect')();

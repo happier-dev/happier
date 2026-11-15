@@ -874,13 +874,19 @@ export function machineLiveStreamRelayHandler(
     };
 
     // The source connection owns its relay states. Guest access loss does not disconnect
-    // the custodian's Machine socket, so consume the existing local/cluster withdrawal.
+    // the custodian's Machine socket, and a distinct V1 target's revocation or installation
+    // replacement does not disconnect the source, so consume the existing local/cluster withdrawal.
     const releaseMachineAccessLoss = readMachineId(socket) ? eventRouter.onMachineAccessLoss(input => {
         for (const streamKey of socketStreamKeys) {
             const state = streamStateByKey.get(streamKey);
-            if (!state || state.startRequest.authorization?.payload.v !== 2
-                || state.startRequest.authorization.payload.sessionBrowserAccess
-                || state.sourceMachineId !== input.machineId || readViewerAccountId(state) !== input.accountId) continue;
+            if (!state) continue;
+            const payload = state.startRequest.authorization?.payload;
+            const withdrawn = payload?.v === 2
+                ? !payload.sessionBrowserAccess && state.sourceMachineId === input.machineId
+                    && readViewerAccountId(state) === input.accountId
+                : state.userId === input.accountId
+                    && (state.sourceMachineId === input.machineId || state.targetMachineId === input.machineId);
+            if (!withdrawn) continue;
             const envelope = createStateStopControlEnvelope(state, 'machine_unavailable');
             emitToConsumer({ io: ctx.io, userId: state.userId, sourceMachineId: state.sourceMachineId,
                 targetMachineId: state.targetMachineId, viewerSocketId: state.viewerSocketId, envelope });
@@ -961,19 +967,9 @@ export function machineLiveStreamRelayHandler(
                     ? 'target_machine_ack_required' : 'target_machine_control_required');
                 return;
             }
-            // V2 consumes the exact personal-source admission and installed source socket.
-            // Machine revocation disconnects the source; guest access loss closes the state above.
-            // V1 keeps its existing current-Machine admission contract.
-            if (state && state.startRequest.authorization?.payload.v !== 2
-                && !(await readCurrentInstallations(state.sourceMachineId, state.targetMachineId, state))) {
-                const stop = createStateStopControlEnvelope(state, 'machine_unavailable');
-                emitToConsumer({ io: ctx.io, userId, sourceMachineId: state.sourceMachineId,
-                    targetMachineId: state.targetMachineId, viewerSocketId: state.viewerSocketId, envelope: stop });
-                emitToMachine({ io: ctx.io, machineId: state.sourceMachineId, envelope: stop });
-                closeStreamWithObservability({ streamKey, kind: 'flow.errored', reasonCode: 'machine_unavailable' });
-                emitError(socket, 'machine_unavailable');
-                return;
-            }
+            // START is the one Machine admission for both V1 and V2. Later envelopes consume
+            // the admitted state and its bound installation sockets; withdrawal reaches an open
+            // stream through the committed access-loss producer handled by this source socket.
         }
 
         if (envelope.message.kind === 'start') {
