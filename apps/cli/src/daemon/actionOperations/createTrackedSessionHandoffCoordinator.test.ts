@@ -849,11 +849,77 @@ describe('createTrackedSessionHandoffCoordinator', () => {
       ok: false,
       errorCode: 'workspace_sync_update_required',
     });
-    expect(callMachine).toHaveBeenCalledTimes(3);
+    // An older TARGET has no workspace capture; its copy keeps today's placement.
+    expect(callMachine).toHaveBeenCalledTimes(4);
     expect(callMachine).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      machineId: 'target-1',
+      method: RPC_METHODS.DAEMON_SESSION_HANDOFF_WORKSPACE_CAPTURE_V3,
+    }));
+    expect(callMachine).toHaveBeenNthCalledWith(2, expect.objectContaining({
       machineId: 'target-1',
       method: RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3,
     }));
+  });
+
+  it.each(['member', 'machine_manage_required'] as const)('consumes the TARGET workspace capture decision before any workspace effect (%s)', async decision => {
+    const policyInput = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+    const action = { kind: 'copy_once' as const,
+      contentPolicy: { ...policyInput, policyDigest: computeWorkspaceSyncPolicyDigest(policyInput) } };
+    const prepared = { kind: 'copy_once' as const, operationId: 'operation-1', action };
+    const workspaceSyncAdapter = {
+      prepareBetween: vi.fn(async () => { throw new Error('Unexpected workspace route preparation'); }),
+      prepare: vi.fn(async () => prepared),
+      finalize: vi.fn(async () => prepared),
+      commit: vi.fn(async () => prepared),
+      abort: vi.fn(async () => undefined),
+    };
+    const captures: unknown[] = [];
+    // The TARGET daemon is the network boundary; the coordinator, transport
+    // wrapping and the workspace input it builds stay real.
+    const callMachine = vi.fn(async (input: MachineCallInput) => {
+      if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_WORKSPACE_CAPTURE_V3) {
+        const request = input.request as { input: { release?: true } };
+        captures.push(request.input);
+        if (request.input.release) return { ok: true, capture: 'released' };
+        return decision === 'member'
+          ? { ok: true, capture: 'member', sourceWorkspaceRefId: 'source-ref',
+            targetRootPath: '/members/member-a/workspace', targetWorkspaceRefId: 'workspace' }
+          : { ok: false, errorCode: 'machine_manage_required', error: 'Writing outside your own folder needs Manage access to this Machine' };
+      }
+      throw Object.assign(new Error('RPC method not available'), { rpcErrorCode: 'RPC_METHOD_NOT_AVAILABLE' });
+    });
+    const start = vi.fn(async () => ({ ok: true as const, result: { handoffId: 'handoff-1', targetPath: '/members/member-a/workspace',
+      endpointCandidates: [], status: { handoffId: 'handoff-1', sessionId: 'session-1', sourceMachineId: 'source-1',
+        targetMachineId: 'target-1', status: 'in_progress', phase: 'preparing', transportStrategy: 'server_routed_stream',
+        recoveryActions: [] } } }));
+    const coordinate = createTrackedSessionHandoffCoordinator({
+      expectedAccountServerId: 'server-1',
+      readCredentials: async () => ({ token: 'token', encryption: null }),
+      resolveSource: async () => ({ ok: true, sourceMachineId: 'source-1', sourceRootPath: '/source/workspace', sessionStorageMode: 'persisted' }),
+      callMachine,
+      workspaceSyncAdapter,
+    });
+
+    const result = await coordinate({ operationId: 'operation-1', actionInput: { sessionId: 'session-1', targetMachineId: 'target-1',
+      targetPath: '/members/member-a/workspace', accountServerId: 'server-1', workspaceAction: action },
+      start, signal: new AbortController().signal, publishOwnerUpdate: vi.fn() });
+
+    expect(captures[0]).toMatchObject({ sessionId: 'session-1', sourceMachineId: 'source-1', targetMachineId: 'target-1',
+      operationId: 'operation-1', accountServerId: 'server-1', sourceRootPath: '/source/workspace',
+      targetPath: '/members/member-a/workspace', workspaceAction: action });
+    if (decision === 'machine_manage_required') {
+      expect(result).toMatchObject({ ok: false, errorCode: 'machine_manage_required' });
+      expect(workspaceSyncAdapter.prepare).not.toHaveBeenCalled();
+      expect(start).not.toHaveBeenCalled();
+      expect(captures).toHaveLength(1);
+      return;
+    }
+    expect(workspaceSyncAdapter.prepare).toHaveBeenCalledWith(expect.objectContaining({ operationId: 'operation-1',
+      sourceWorkspaceRefId: 'source-ref', targetWorkspaceRefId: 'workspace', targetRootPath: '/members/member-a/workspace' }));
+    // The SOURCE's terminal state releases this operation's capture, here after a failed target prepare.
+    expect(result).toMatchObject({ ok: false, errorCode: 'workspace_sync_update_required' });
+    expect(captures.at(-1)).toMatchObject({ operationId: 'operation-1', release: true });
+    expect(captures).toHaveLength(2);
   });
 
   it('routes the accepted handoff through the existing source and target daemon primitives', async () => {
@@ -861,6 +927,8 @@ describe('createTrackedSessionHandoffCoordinator', () => {
     let statusGets = 0;
     const callMachine = vi.fn(async (input: MachineCallInput) => {
       calls.push(input);
+      // This TARGET is the requester's own: the workspace copy keeps native placement.
+      if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_WORKSPACE_CAPTURE_V3) return { ok: true, capture: 'not_required' };
       if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3) {
         return { ok: false, errorCode: 'not_found', error: 'pending' };
       }
@@ -1090,6 +1158,7 @@ describe('createTrackedSessionHandoffCoordinator', () => {
       handoffTargetReplacementApprovalReceiptId: 'approval-receipt-1',
     });
     expect(calls.map(({ machineId, method }) => [machineId, method])).toEqual([
+      ['target-1', RPC_METHODS.DAEMON_SESSION_HANDOFF_WORKSPACE_CAPTURE_V3],
       ['target-1', RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3],
       ['target-1', RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3],
       ['target-1', RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3],
@@ -1099,13 +1168,13 @@ describe('createTrackedSessionHandoffCoordinator', () => {
       ['target-1', RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT_V3],
       ['source-1', RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT_V3],
     ]);
-    expect((calls[4]!.request as { sessionId?: string }).sessionId).toBe('session-1');
-    expect(calls[0]!.request).toEqual(expect.objectContaining({
+    expect((calls[5]!.request as { sessionId?: string }).sessionId).toBe('session-1');
+    expect(calls[1]!.request).toEqual(expect.objectContaining({
       targetPath: '/target/workspace/packages/app',
       workspaceRootPath: '/target/workspace',
       workspaceSessionRelativeCwd: 'packages/app',
     }));
-    expect(calls[4]!.timeoutMs).toBe(5 * 60_000);
+    expect(calls[5]!.timeoutMs).toBe(5 * 60_000);
     expect(refreshProjectSnapshot).not.toHaveBeenCalled();
     expect(prepareCreate).toHaveBeenCalledTimes(1);
     expect(prepareCreate).toHaveBeenCalledWith(expect.objectContaining({

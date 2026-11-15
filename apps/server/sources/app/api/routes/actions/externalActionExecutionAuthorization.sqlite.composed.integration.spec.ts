@@ -10410,6 +10410,15 @@ describe("external Action execution authorization", () => {
             expect(await preflightRpc(RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3)).not.toBeNull();
             expect(await preflightRpc(RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3, destinationKeys.secretKey)).toBeNull();
             expect(await preflightRpc(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3)).toBeNull();
+            // The TARGET workspace capture is the family's one effectful phase. Home binds
+            // the phase inside its private carrier and admits it on the TARGET only.
+            const captureCarrier = { kind: 'requester_session_handoff_workspace_capture_v1', input: { ...admission,
+                operationId: root.binding.requestId, targetPath: '/workspace/project' } };
+            expect((await issuePreflight({ ...preflightBody, envelope: { ...preflightBody.envelope,
+                input: captureCarrier } })).statusCode).toBe(200);
+            expect((await issuePreflight({ ...preflightBody, envelope: { ...preflightBody.envelope,
+                input: { ...captureCarrier, input: { ...captureCarrier.input, sessionId: 'another-session' } } } })).statusCode).toBe(403);
+            expect(await preflightRpc(RPC_METHODS.DAEMON_SESSION_HANDOFF_WORKSPACE_CAPTURE_V3)).not.toBeNull();
             const preflightHttp = (method: string, path: string, body?: unknown, privateKey = fixture.keyPair.secretKey) =>
                 verifyExternalActionDomainExecutionRequest({ authorizationToken: preflight.token, effectActionId: 'session.handoff',
                     encodedTarget: encodeExternalActionResolvedTargetV1(preflight.binding.target), method, path, body,

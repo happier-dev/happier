@@ -1,8 +1,9 @@
 import { SessionHandoffCapabilityV3Schema, SessionHandoffExistingStateCheckResponseV3Schema,
   type SessionHandoffExistingStateCheckRequestV3 } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
-import { SessionRequesterHandoffPreflightBootstrapRpcRequestV1Schema } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { SessionRequesterHandoffPreflightBootstrapRpcRequestV1Schema, SessionRequesterHandoffWorkspaceCaptureRpcRequestV1Schema } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import type { SessionHandoffWorkspaceCaptureRequestV3 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { createRpcCallError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
+import { createRpcCallError, isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
 
 import { prepareExternalActionHandoffPreflightAuthorization, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -16,11 +17,16 @@ type MachineCall = typeof callMachineRpc;
 type PreflightMachineRpcInput = Readonly<{
   credentials: StoredCredentials;
   machineId: string;
-  method: typeof RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET | typeof RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3;
-  request: SessionHandoffExistingStateCheckRequestV3;
   context?: RpcActionExecutorContext;
   signal?: AbortSignal;
-}>;
+}> & (Readonly<{
+  method: typeof RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET | typeof RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3;
+  request: SessionHandoffExistingStateCheckRequestV3;
+}> | Readonly<{
+  /** Pre-start TARGET workspace capture; the TARGET decides whether it applies. */
+  method: typeof RPC_METHODS.DAEMON_SESSION_HANDOFF_WORKSPACE_CAPTURE_V3;
+  request: SessionHandoffWorkspaceCaptureRequestV3;
+}>);
 
 const updateRequired = (): Failure => ({ ok: false, errorCode: 'handoff_existing_state_update_required',
   error: 'Existing session state requires a newer daemon. Turn session data transfer on.' });
@@ -43,11 +49,14 @@ export function createSessionHandoffPreflightMachineRpc(deps: Readonly<{
       if (requester && !await requester.isCurrent()) return unavailable();
       const root = input.context?.externalActionExecutionAuthorization;
       if (input.context?.callerInputAuthorization && !root) return unavailable();
+      const requesterBootstrap = { v: 1, disposition: 'ordinary_requester', credentials: encodeStoredCredentials(input.credentials) } as const;
       const request = input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3
         ? SessionRequesterHandoffPreflightBootstrapRpcRequestV1Schema.parse({
-            kind: 'requester_session_handoff_preflight_bootstrap_v1', input: input.request,
-            requesterBootstrap: { v: 1, disposition: 'ordinary_requester', credentials: encodeStoredCredentials(input.credentials) },
-          }) : input.request;
+            kind: 'requester_session_handoff_preflight_bootstrap_v1', input: input.request, requesterBootstrap,
+          }) : input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_WORKSPACE_CAPTURE_V3
+          ? SessionRequesterHandoffWorkspaceCaptureRpcRequestV1Schema.parse({
+              kind: 'requester_session_handoff_workspace_capture_v1', input: input.request, requesterBootstrap,
+            }) : input.request;
       let externalAction: Parameters<MachineCall>[0]['externalAction'];
       if (root) {
         const boundary = deps.authorization;
@@ -57,7 +66,7 @@ export function createSessionHandoffPreflightMachineRpc(deps: Readonly<{
           || admission.sourceMachineId !== input.request.sourceMachineId || admission.targetMachineId !== input.request.targetMachineId
           || signer.machineId !== admission.sourceMachineId || signer.installationId !== admission.sourceInstallationId
           || ![admission.sourceMachineId, admission.targetMachineId].includes(input.machineId)
-          || input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3 && input.machineId !== admission.targetMachineId) return unavailable();
+          || input.method !== RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET && input.machineId !== admission.targetMachineId) return unavailable();
         const child = await prepareExternalActionHandoffPreflightAuthorization({ authorization: root, input: request,
           machineId: input.machineId, sourceMachineId: signer.machineId, sourceInstallationId: signer.installationId,
           privateKey: signer.privateKey, serverHttpBaseUrl: boundary.serverHttpBaseUrl,
@@ -87,6 +96,10 @@ export function createSessionHandoffPreflightMachineRpc(deps: Readonly<{
         }
         return result;
       } catch (error) {
+        // A TARGET without capture also has no capture-required ingress rule;
+        // its Sync phases keep their existing placement there.
+        if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_WORKSPACE_CAPTURE_V3
+          && (isRpcMethodNotFoundError(error) || isRpcMethodNotAvailableError(error))) return { ok: true, capture: 'not_required' };
         if (isRpcMethodNotFoundError(error)) return updateRequired();
         throw error;
       }

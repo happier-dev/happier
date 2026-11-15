@@ -24,7 +24,8 @@ import { isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/man
 import { ACTION_OPERATION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/operations/v1';
 import { SessionRequesterBootstrapRpcRequestV1Schema, sealSessionRequesterBootstrapRpcRequestV1,
   SessionRequesterHandoffBootstrapRpcRequestV1Schema, sealSessionRequesterHandoffBootstrapRpcRequestV1,
-  SessionRequesterHandoffPreflightBootstrapRpcRequestV1Schema, sealSessionRequesterHandoffPreflightBootstrapRpcRequestV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+  SessionRequesterHandoffPreflightBootstrapRpcRequestV1Schema, sealSessionRequesterHandoffPreflightBootstrapRpcRequestV1,
+  SessionRequesterHandoffWorkspaceCaptureRpcRequestV1Schema, sealSessionRequesterHandoffWorkspaceCaptureRpcRequestV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { projectRequesterSessionCredentialDisclosure } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { SessionSpawnNewInputV2Schema, projectSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { SessionSpawnNewResultV1Schema, SessionSpawnNewActionResultV1Schema, readSessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
@@ -593,13 +594,19 @@ export async function callExactMachineRpc(params: Readonly<{
       let request = params.prepareRequest ? params.prepareRequest() : params.request;
       if (request && typeof request === 'object' && 'kind' in request
         && (request.kind === 'requester_session_bootstrap_v1' || request.kind === 'requester_session_handoff_bootstrap_v1'
-          || request.kind === 'requester_session_handoff_preflight_bootstrap_v1')) {
+          || request.kind === 'requester_session_handoff_preflight_bootstrap_v1'
+          || request.kind === 'requester_session_handoff_workspace_capture_v1')) {
         const privateRequest = request.kind === 'requester_session_bootstrap_v1'
           ? SessionRequesterBootstrapRpcRequestV1Schema.parse(request) : request.kind === 'requester_session_handoff_bootstrap_v1'
-            ? SessionRequesterHandoffBootstrapRpcRequestV1Schema.parse(request) : SessionRequesterHandoffPreflightBootstrapRpcRequestV1Schema.parse(request);
+            ? SessionRequesterHandoffBootstrapRpcRequestV1Schema.parse(request)
+            : request.kind === 'requester_session_handoff_workspace_capture_v1'
+              ? SessionRequesterHandoffWorkspaceCaptureRpcRequestV1Schema.parse(request)
+              : SessionRequesterHandoffPreflightBootstrapRpcRequestV1Schema.parse(request);
         const expectedMethod = privateRequest.kind === 'requester_session_bootstrap_v1'
           ? RPC_METHODS.SESSION_SPAWN_NEW : privateRequest.kind === 'requester_session_handoff_bootstrap_v1'
-            ? RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3 : RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3;
+            ? RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3
+            : privateRequest.kind === 'requester_session_handoff_workspace_capture_v1'
+              ? RPC_METHODS.DAEMON_SESSION_HANDOFF_WORKSPACE_CAPTURE_V3 : RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3;
         const targetMachineId = privateRequest.kind === 'requester_session_bootstrap_v1'
           ? privateRequest.input.executionTarget.machineId : privateRequest.input.targetMachineId;
         if (params.method !== expectedMethod || targetMachineId !== machineId) throw new MachineRpcTargetNotCurrentError(machineId, 'private_target_mismatch');
@@ -607,6 +614,7 @@ export async function callExactMachineRpc(params: Readonly<{
         if ('kind' in bootstrap) {
           if (bootstrap.installationId !== machineTarget.installationId) throw new MachineRpcTargetNotCurrentError(machineId, 'installation_mismatch');
         } else if (privateRequest.kind === 'requester_session_handoff_preflight_bootstrap_v1'
+          || privateRequest.kind === 'requester_session_handoff_workspace_capture_v1'
           || machineCodec.mode === 'plain' && (bootstrap.credentials.secret || bootstrap.credentials.encryption)) {
           const installationId = machineTarget.installationId;
           const encodedKey = machineTarget.installationPublicKey;
@@ -619,7 +627,9 @@ export async function callExactMachineRpc(params: Readonly<{
             ? sealSessionRequesterBootstrapRpcRequestV1({ ...sealing, request: { ...privateRequest, requesterBootstrap: bootstrap } })
             : privateRequest.kind === 'requester_session_handoff_bootstrap_v1'
               ? sealSessionRequesterHandoffBootstrapRpcRequestV1({ ...sealing, request: { ...privateRequest, requesterBootstrap: bootstrap } })
-              : sealSessionRequesterHandoffPreflightBootstrapRpcRequestV1({ ...sealing, request: { ...privateRequest, requesterBootstrap: bootstrap } });
+              : privateRequest.kind === 'requester_session_handoff_workspace_capture_v1'
+                ? sealSessionRequesterHandoffWorkspaceCaptureRpcRequestV1({ ...sealing, request: { ...privateRequest, requesterBootstrap: bootstrap } })
+                : sealSessionRequesterHandoffPreflightBootstrapRpcRequestV1({ ...sealing, request: { ...privateRequest, requesterBootstrap: bootstrap } });
         }
       }
       await connect();
@@ -641,7 +651,8 @@ export async function callExactMachineRpc(params: Readonly<{
           const hasPrivateBootstrap = request && typeof request === 'object'
             && (Reflect.get(request, 'kind') === 'requester_session_bootstrap_v1'
               || Reflect.get(request, 'kind') === 'requester_session_handoff_bootstrap_v1'
-              || Reflect.get(request, 'kind') === 'requester_session_handoff_preflight_bootstrap_v1');
+              || Reflect.get(request, 'kind') === 'requester_session_handoff_preflight_bootstrap_v1'
+              || Reflect.get(request, 'kind') === 'requester_session_handoff_workspace_capture_v1');
           if (deploymentArchive) await assertDeploymentArchiveChildCurrentForHost({ context: externalAction!.context,
             machineId: deploymentArchive.job.machineId, installationId: externalAction!.installationId });
           if (seal && transportAuthorization && !hasPrivateBootstrap && !deploymentArchive) {

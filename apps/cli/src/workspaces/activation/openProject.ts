@@ -1,6 +1,5 @@
 import { selectHostRequesterExecutionIdentity, isHostRequesterUnrestrictedOwner } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { readRequesterAccountActionContext, type RetainedRequesterAccountCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
-import { createWorkspaceSyncRelationshipCredentialCustody } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { configuration } from '@/configuration';
 import type { preparePrivateProjectOpenCheckout, PrivateProjectCheckoutOpenRuntime } from './privateProjectOpenCheckout';
 import { randomUUID } from 'node:crypto';
@@ -375,26 +374,19 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         const checkout = privateCheckout;
         const custody = retainedRequesterCustody;
         privateSyncOperationId = sync.request.operationId;
-        await sync.adapter.preparePrivateExecution!({ input: { ...sync.request,
-          action: input.materialization.workspaceAction,
-          targetRootPath: checkout.prepared.rootPath, signal: context.signal }, context, snapshot, credentials,
-          executionIdentity, accountRowsCustody: { serverId: runtime.serverId,
+        const { retainPrivateSyncCapture } = await import('./privateProjectOpenCheckout');
+        await retainPrivateSyncCapture({ adapter: sync.adapter, checkout, context, snapshot, credentials, executionIdentity,
+          syncInput: { ...sync.request, action: input.materialization.workspaceAction,
+            targetRootPath: checkout.prepared.rootPath, signal: context.signal },
+          accountRowsCustody: { serverId: runtime.serverId,
             accountId: admission.actorAccountId, serverHttpBaseUrl: runtime.serverHttpBaseUrl, isCurrent: custody.isCurrent },
+          relationshipCustody: { happyHomeDir: configuration.happyHomeDir, homeServerIdentityId: runtime.serverId,
+            machineAdmission: { custodianAccountId: admission.custodianAccountId, role: admission.role } },
           assertTransferCurrent: async () => {
             if (!await custody.isCurrent()) throw Object.assign(new Error('Requester Account custody is unavailable'),
               { code: 'requester_authority_unavailable' });
           },
-          createNativeSync: ({ configuration, network }) => checkout.startSync(configuration, network),
-          retainRelationship: async relationshipId => {
-            await createWorkspaceSyncRelationshipCredentialCustody({ happyHomeDir: configuration.happyHomeDir,
-              relationshipId, attribution: executionIdentity.requester, credentials, executionIdentity,
-              homeServerIdentityId: runtime.serverId,
-              machineAdmission: { custodianAccountId: admission.custodianAccountId, role: admission.role } });
-            // The bound capture owns its member even when graph publication
-            // succeeds but its acknowledgement is lost.
-            checkout.retainForRelationship();
-            relationshipRetained = true;
-          },
+          onRelationshipRetained: () => { relationshipRetained = true; },
           release: async () => {
             // A finite copy remains Open-owned through native checkout readback.
             // A bound relationship owns the same native lifetime thereafter.

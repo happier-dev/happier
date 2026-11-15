@@ -15,6 +15,10 @@ import { preparePrivateProjectCheckout, admitPrivateProjectCheckoutDestination, 
 import { prepareWorkspaceCheckoutEffect } from './workspaceEffect';
 import { materializePrivateProjectCheckoutProcess, startPrivateProjectSyncProcess } from './privateProjectCheckoutProcess';
 import type { PrivateProjectNativeSync, PrivateProjectSyncEffectConfiguration, PrivateProjectSyncNetwork } from './privateProjectSyncEffect';
+import type { PrepareWorkspaceSyncHandoffInput, WorkspaceSyncHandoffAdapter, WorkspaceSyncPrivateExecution } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
+import type { ActiveProjectAccountRowsSnapshot, ProjectAccountSessionCustody } from '@/workspaces/projectAccountRows';
+import type { StoredCredentials } from '@/persistence';
+import { createWorkspaceSyncRelationshipCredentialCustody } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 
 type OperationMaterial = ReturnType<Parameters<typeof createAgentIsolationOperationContext>[0]['readMaterial']>;
 export type PrivateProjectCheckoutOpenRuntime = Readonly<{
@@ -210,4 +214,48 @@ export async function recoverPrivateProjectSyncCheckout(input: Readonly<{
     const native = await prepared.startSync(input.configuration, input.network);
     return { native, release: prepared.release };
   } catch (error) { await prepared.release(); throw error; }
+}
+
+type PrivateProjectOpenCheckout = Awaited<ReturnType<typeof preparePrivateProjectOpenCheckout>>;
+
+/** The one requester private Sync capture. The admitted member checkout runs
+ * this operation's native Sync under the adapter's retained execution, keyed by
+ * the operation. A relationship the operation creates takes the checkout's
+ * native lifetime with the requester's relationship credentials. Project Open,
+ * requester relationship create and the handoff TARGET capture use it. */
+export async function retainPrivateSyncCapture(input: Readonly<{
+  adapter: Pick<WorkspaceSyncHandoffAdapter, 'preparePrivateExecution'>;
+  checkout: PrivateProjectOpenCheckout;
+  syncInput: PrepareWorkspaceSyncHandoffInput;
+  context?: RpcHandlerContext;
+  snapshot: ActiveProjectAccountRowsSnapshot;
+  credentials: StoredCredentials;
+  executionIdentity: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>;
+  accountRowsCustody: ProjectAccountSessionCustody;
+  relationshipCustody: Readonly<{ happyHomeDir: string; homeServerIdentityId: string;
+    machineAdmission: Parameters<typeof createWorkspaceSyncRelationshipCredentialCustody>[0]['machineAdmission'] }>;
+  /** Caller-owned continuations of the same execution (targets, snapshots, recovery). */
+  execution?: Partial<Pick<WorkspaceSyncPrivateExecution, 'getSnapshot' | 'replaceSnapshot' | 'callTargetPhase'
+    | 'recoverConflictResolutionAtTarget'>>;
+  assertTransferCurrent(): Promise<void>;
+  onRelationshipRetained?(relationshipId: string): void;
+  release(): Promise<void>;
+}>): Promise<WorkspaceSyncPrivateExecution> {
+  const { adapter, checkout, executionIdentity, credentials, relationshipCustody } = input;
+  if (!adapter.preparePrivateExecution) throw privateProjectCheckoutRefusal();
+  return adapter.preparePrivateExecution({ ...input.execution, input: input.syncInput,
+    ...(input.context ? { context: input.context } : {}), snapshot: input.snapshot, credentials, executionIdentity,
+    accountRowsCustody: input.accountRowsCustody, assertTransferCurrent: input.assertTransferCurrent,
+    createNativeSync: ({ configuration, network }) => checkout.startSync(configuration, network),
+    retainRelationship: async relationshipId => {
+      await createWorkspaceSyncRelationshipCredentialCustody({ happyHomeDir: relationshipCustody.happyHomeDir,
+        relationshipId, attribution: executionIdentity.requester, credentials, executionIdentity,
+        homeServerIdentityId: relationshipCustody.homeServerIdentityId, machineAdmission: relationshipCustody.machineAdmission });
+      // The bound capture owns its member even when graph publication
+      // succeeds but its acknowledgement is lost.
+      checkout.retainForRelationship();
+      input.onRelationshipRetained?.(relationshipId);
+    },
+    release: input.release,
+  });
 }

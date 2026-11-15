@@ -390,7 +390,8 @@ async function readHandoffPreflight(request: FastifyRequest, actionId: string,
     if (body.envelope.v === 1) {
         const input = body.envelope.input;
         const phase = input && typeof input === 'object' && !Array.isArray(input)
-            && Reflect.get(input, 'kind') === 'requester_session_handoff_preflight_bootstrap_v1' ? Reflect.get(input, 'input') : input;
+            && (Reflect.get(input, 'kind') === 'requester_session_handoff_preflight_bootstrap_v1'
+                || Reflect.get(input, 'kind') === 'requester_session_handoff_workspace_capture_v1') ? Reflect.get(input, 'input') : input;
         if (!phase || typeof phase !== 'object' || Array.isArray(phase)
             || Reflect.get(phase, 'sessionId') !== handoff.sessionId
             || Reflect.get(phase, 'sourceMachineId') !== handoff.sourceMachineId

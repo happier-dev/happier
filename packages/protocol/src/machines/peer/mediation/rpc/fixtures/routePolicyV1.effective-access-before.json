@@ -637,6 +637,7 @@
   ["statFile","use"],
   ["daemon.sessionHandoff.existingState.check.v3","use"],
   ["daemon.sessionHandoff.capability.v3.get","use"],
+  ["daemon.sessionHandoff.workspaceCapture.v3","use"],
   ["daemon.sessionHandoff.start","custodian_only"],
   ["daemon.sessionHandoff.prepareTarget","custodian_only"],
   ["daemon.sessionHandoff.prepareTargetResult.get","custodian_only"],

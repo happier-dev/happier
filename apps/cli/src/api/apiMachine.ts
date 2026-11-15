@@ -2092,11 +2092,11 @@ export class ApiMachineClient {
                 : null;
         };
         const callHandoffMachine: typeof callMachineRpc = async input => {
-            const preflight = input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET
-                || input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3;
+            const privateBootstrap = input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3
+                || input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_WORKSPACE_CAPTURE_V3;
+            const preflight = privateBootstrap || input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET;
             // Native preflight bootstrap needs Home-stamped admission even for a local target.
-            if (input.machineId === this.machine.id && !input.externalAction
-                && input.method !== RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3) {
+            if (input.machineId === this.machine.id && !input.externalAction && !privateBootstrap) {
                 return await this.rpcHandlerManager.invokeLocal(input.method, input.request,
                     input.signal ? { signal: input.signal } : undefined);
             }
@@ -4326,14 +4326,18 @@ export class ApiMachineClient {
             const admitted = input.routing.targetMachineId === this.machine.id ? admitSameMachineWorkspaceSyncTargetPhase({
                 routing: workspaceSyncSourceWriterTargetRouting,
                 callerInputAuthorization: isWorkspaceSyncSourceWriterCleanupPhaseV1(input.routing.phase)
-                    ? input.callerInputAuthorization : input.context.callerInputAuthorization }) : null;
+                    ? input.callerInputAuthorization : input.context.callerInputAuthorization,
+                request: input.request,
+                resolvePrivateCapture: admission => this.machineRpcAdmissionBoundary.resolvePrivateWorkspaceSyncTargetExecution?.(admission)
+                    ?? { kind: 'no_private_capture' } }) : null;
             if (admitted && !admitted.ok) {
                 throw Object.assign(new Error(admitted.error), { code: admitted.errorCode ?? 'peer_unavailable' });
             }
             const result = admitted?.ok
                 ? await this.rpcHandlerManager.invokeLocal(input.method, input.request, {
                     ...(input.signal ?? input.context.signal ? { signal: input.signal ?? input.context.signal } : {}),
-                    admissionResult: { ok: true },
+                    admissionResult: { ok: true, ...(admitted.workspaceSyncPrivateExecution
+                        ? { workspaceSyncPrivateExecution: admitted.workspaceSyncPrivateExecution } : {}) },
                     rpcContext: { machineAdmission: admitted.machineAdmission,
                         verifyMachineAdmissionCurrent: input.context.verifyMachineAdmissionCurrent,
                         ...(admitted.callerInputAuthorization ? { callerInputAuthorization: admitted.callerInputAuthorization } : {}),

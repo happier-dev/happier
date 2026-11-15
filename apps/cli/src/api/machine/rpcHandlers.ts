@@ -1064,6 +1064,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     ...(params.deps?.prepareManagedSessionHandoffDirectoryPlacement ? { prepareManagedDirectoryPlacement: params.deps.prepareManagedSessionHandoffDirectoryPlacement } : {}),
     ...(params.deps?.currentMachineId ? { localMachineId: params.deps.currentMachineId } : {}),
     ...(admitExistingSessionState ? { admitExistingSessionState } : {}),
+    ...(params.deps?.workspaceSync?.captureHandoffWorkspace ? { captureWorkspace: params.deps.workspaceSync.captureHandoffWorkspace } : {}),
     ...(params.deps?.requesterSessionRuntime ? { requesterSessionRuntime: params.deps.requesterSessionRuntime } : {}),
     ...(params.deps?.requesterBootstrapBoundary ? { requesterBootstrapBoundary: params.deps.requesterBootstrapBoundary } : {}),
     sessionOperationExclusion: externalSessionOperationExclusion,

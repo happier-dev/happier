@@ -371,6 +371,7 @@ export const RPC_METHODS = {
   DAEMON_SESSION_HANDOFF_START_V3: 'daemon.sessionHandoff.start.v3',
   DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET: 'daemon.sessionHandoff.capability.v3.get',
   DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3: 'daemon.sessionHandoff.existingState.check.v3',
+  DAEMON_SESSION_HANDOFF_WORKSPACE_CAPTURE_V3: 'daemon.sessionHandoff.workspaceCapture.v3',
   DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3: 'daemon.sessionHandoff.prepareTarget.v3',
   DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESUME_V3: 'daemon.sessionHandoff.prepareTarget.resume.v3',
   DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3: 'daemon.sessionHandoff.prepareTargetResult.get.v3',

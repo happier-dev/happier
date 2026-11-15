@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { readAgentIsolationMemberDirectories } from '@/daemon/agentIsolation/prepareNativeOperation';
 import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
@@ -54,13 +55,13 @@ import { WorkspaceSyncCommittedCopyTargetResultV1Schema, type WorkspaceSyncCommi
 import type { MachineWorkspaceSyncRpcService } from '@/api/machine/rpcHandlers.workspaceSync';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { StoredCredentials } from '@/persistence';
-import { preparePrivateProjectOpenCheckout, type PrivateProjectCheckoutOpenRuntime } from '@/workspaces/activation/privateProjectOpenCheckout';
+import { preparePrivateProjectOpenCheckout, retainPrivateSyncCapture, type PrivateProjectCheckoutOpenRuntime } from '@/workspaces/activation/privateProjectOpenCheckout';
 import { selectHostRequesterExecutionIdentity, resolveHostRequesterAgentExecutionIdentity,
   resolveHostRequesterAgentPlacementForHost, type HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { resolveMachineRpcWorkingDirectory } from '@/api/machine/resolveMachineRpcWorkingDirectory';
 import { buildActionExecutorContextForRpc, projectWorkspaceSyncPhysicalContextFromActionContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import type { WorkspaceSyncRequesterAvailabilityV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
-import { createWorkspaceSyncRelationshipCredentialCustody, createWorkspaceSyncSourceCredentialCustody, verifyWorkspaceSyncRelationshipMachineAdmissionCurrent,
+import { createWorkspaceSyncSourceCredentialCustody, verifyWorkspaceSyncRelationshipMachineAdmissionCurrent,
   verifyWorkspaceSyncSourceMachineAdmissionCurrent,
   type RequesterSessionMachineAdmissionBoundary } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { recoverPrivateWorkspaceSyncExecutions } from './recoverPrivateWorkspaceSyncExecutions';
@@ -76,7 +77,7 @@ import {
   createProjectAccountSnapshotMutation,
 } from '@/workspaces/projectAccountRows';
 import { resolveWorkspaceSyncRelationshipEndpointRoles } from '@/workspaces/sync/workspaceSyncRelationshipEndpoints';
-import { resolveWorkspaceRefById, resolveWorkspaceRefForMachineRoot } from '@/workspaces/workspaceRefsV1';
+import { materializeWorkspaceRefForMachineRoot, resolveWorkspaceRefById, resolveWorkspaceRefForMachineRoot } from '@/workspaces/workspaceRefsV1';
 import { callExactMachineRpc, callMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { logger } from '@/ui/logger';
 import {
@@ -99,7 +100,10 @@ import { materializeWorkspaceExportArtifactsWithScmWorkspace } from '@/scm/works
 import { buildDirectPeerTransferEndpointPath } from '@/machines/transfer/directPeerTransport';
 import { createWorkspaceSyncPeerIdentityValidator } from '@/workspaces/sync/transport/workspaceSyncPeerIdentity';
 import { inspectRetiredWorkspaceReplicationState } from '@/workspaces/sync/workspaceSyncLegacyState';
-import { sameExecutionWorkspace, type WorkspaceSyncHandoffAdapter, type WorkspaceSyncPrivateExecution } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
+import { sameExecutionWorkspace, type WorkspaceSyncHandoffAdapter, type WorkspaceSyncPrivateExecution,
+  type RetainedWorkspaceSyncPrivateExecution } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
+import type { SessionHandoffWorkspaceCaptureRequestV3, SessionHandoffWorkspaceCaptureResultV3 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { requesterWorkspaceCaptureRequired, requiresRequesterWorkspaceCapture } from '@/api/machine/machineRpcAuthorization';
 import {
   createWorkspaceSyncRelationshipOwner,
   type WorkspaceSyncRelationshipOwner,
@@ -2140,6 +2144,19 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         targetRootPath: request.actionInput.targetPath, ...(targetWorkspaceRefId ? { targetWorkspaceRefId } : {}), action, signal };
       let preparedTarget: Readonly<{ endpoint?: MachineInstallationPublicIdentityV1;
         operationId: string; machineId: string; workspaceRefId: string }> | undefined;
+      const bindRetainedRelationship = (id: string) => {
+        // The create Action's request lifetime ends here. Later signed
+        // preparation belongs to the retained relationship's SOURCE custody.
+        const boundary = input.requesterMachineAdmissionBoundary;
+        targetPhaseContext = { ...targetPhaseContext, verifyMachineAdmissionCurrent: async () => {
+          if (!boundary) return false;
+          const verifyCurrent = native ? verifyWorkspaceSyncRelationshipMachineAdmissionCurrent : verifyWorkspaceSyncSourceMachineAdmissionCurrent;
+          return await verifyCurrent({ credentials: requester.credentials,
+            sessionId: id, attribution: executionIdentity.requester, serverHttpBaseUrl: requester.serverHttpBaseUrl,
+            boundary });
+        } };
+        retained = true;
+      };
       const execution: WorkspaceSyncPrivateExecution = {
         credentials: requester.credentials, accountRowsCustody,
         getSnapshot: () => snapshot,
@@ -2192,32 +2209,24 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
           if (!await custody.isCurrent()) throw compositionError('project_requester_authority_unavailable', 'Requester Sync custody is unavailable');
         },
         retainRelationship: async id => {
-          if (native) await createWorkspaceSyncRelationshipCredentialCustody({ happyHomeDir: input.happyHomeDir, relationshipId: id,
-            attribution: executionIdentity.requester, credentials: requester.credentials, executionIdentity,
-            homeServerIdentityId: semanticServerId,
-            machineAdmission: { custodianAccountId: admission.custodianAccountId, role: admission.role } });
-          else await createWorkspaceSyncSourceCredentialCustody({ happyHomeDir: input.happyHomeDir, relationshipId: id,
+          // A member capture retains through the shared capture owner below.
+          await createWorkspaceSyncSourceCredentialCustody({ happyHomeDir: input.happyHomeDir, relationshipId: id,
             attribution: { ...executionIdentity.requester, serverId: localProfileId }, credentials: requester.credentials,
             homeServerIdentityId: semanticServerId,
             machineAdmission: { custodianAccountId: admission.custodianAccountId, role: admission.role } });
-          native?.retainForRelationship();
-          // The create Action's request lifetime ends here. Later signed
-          // preparation belongs to the retained relationship's SOURCE custody.
-          const boundary = input.requesterMachineAdmissionBoundary;
-          targetPhaseContext = { ...targetPhaseContext, verifyMachineAdmissionCurrent: async () => {
-            if (!boundary) return false;
-            const verifyCurrent = native ? verifyWorkspaceSyncRelationshipMachineAdmissionCurrent : verifyWorkspaceSyncSourceMachineAdmissionCurrent;
-            return await verifyCurrent({ credentials: requester.credentials,
-              sessionId: id, attribution: executionIdentity.requester, serverHttpBaseUrl: requester.serverHttpBaseUrl,
-              boundary });
-          } };
-          retained = true;
+          bindRetainedRelationship(id);
         },
         release: async () => { try { await native?.release(); } finally { await custody.release(); } },
       };
-      if (native) await runtime!.handoffAdapter.preparePrivateExecution!({ input: captureInput,
-        context, snapshot, ...execution, executionIdentity,
-        createNativeSync: ({ configuration, network }) => native.startSync(configuration, network) });
+      if (native) await retainPrivateSyncCapture({ adapter: runtime!.handoffAdapter, checkout: native, syncInput: captureInput,
+        context, snapshot, credentials: requester.credentials, executionIdentity, accountRowsCustody,
+        relationshipCustody: { happyHomeDir: input.happyHomeDir, homeServerIdentityId: semanticServerId,
+          machineAdmission: { custodianAccountId: admission.custodianAccountId, role: admission.role } },
+        execution: { getSnapshot: execution.getSnapshot, replaceSnapshot: execution.replaceSnapshot,
+          ...(execution.callTargetPhase ? { callTargetPhase: execution.callTargetPhase } : {}),
+          recoverConflictResolutionAtTarget: execution.recoverConflictResolutionAtTarget },
+        assertTransferCurrent: execution.assertTransferCurrent,
+        onRelationshipRetained: bindRetainedRelationship, release: execution.release });
       else runtime!.handoffAdapter.retainPrivateExecution!({ input: captureInput, execution });
       captured = true;
       const capture = runtime!.handoffAdapter.resolvePrivateExecution?.({ operationId: request.operationId });
@@ -2244,7 +2253,121 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         isCurrent: requester.isCustodyCurrent ?? requester.isCurrent },
       serverId: semanticServerId, selection: { kinds: ['workspace-ref', 'relationship-graph'] }, signal: context?.signal });
   };
+  /** Handoff TARGET capture for a requester without Manage (owner ruling 2026-11-15). The
+   * capture is the Project Open/requester-create capture owner, keyed by the handoff's
+   * workspace operation. The SOURCE's terminal call releases it; a newer capture of
+   * the same Session from the same person replaces an abandoned one; a daemon
+   * restart drops it with the rest of the in-memory captures. */
+  const captureHandoffWorkspace = async (request: SessionHandoffWorkspaceCaptureRequestV3,
+    context: RpcHandlerContext): Promise<SessionHandoffWorkspaceCaptureResultV3> => {
+    const admission = context.machineAdmission;
+    const refused = (errorCode: string, error: string) => ({ ok: false as const, errorCode, error });
+    if (!admission || request.targetMachineId !== input.localMachineId) return refused('target_unavailable', 'The handoff target is unavailable');
+    const owned = (capture: RetainedWorkspaceSyncPrivateExecution) =>
+      capture.execution.accountRowsCustody.accountId === admission.actorAccountId;
+    // A Sync link the handoff created takes the capture's native lifetime, as in Project Open.
+    const linked = (capture: RetainedWorkspaceSyncPrivateExecution) =>
+      capture.input.action.kind === 'create_relationship' && capture.relationshipId !== undefined;
+    if (request.release) {
+      const capture = runtime!.handoffAdapter.resolvePrivateExecution?.({ operationId: request.operationId });
+      if (capture && owned(capture)) {
+        if (linked(capture)) await capture.bindRelationship?.(capture.relationshipId!, 'relationship');
+        else await runtime!.handoffAdapter.releasePrivateExecution?.(request.operationId);
+      }
+      return { ok: true, capture: 'released' };
+    }
+    if (!requiresRequesterWorkspaceCapture(admission)) return { ok: true, capture: 'not_required' };
+    const required = () => { const refusal = requesterWorkspaceCaptureRequired(); return refused(refusal.errorCode!, refusal.error); };
+    const requester = readRequesterAccountActionContext(context.callerInputAuthorization);
+    const bootstrap = context.requesterSessionBootstrap;
+    if (!bootstrap || !requester?.retainCustody || request.accountServerId !== semanticServerId) {
+      return refused('project_requester_authority_unavailable', 'Requester Sync custody is unavailable');
+    }
+    const executionIdentity = resolveHostRequesterAgentExecutionIdentity(selectRequesterIdentity(context));
+    if (executionIdentity.kind !== 'isolated' || !input.privateCheckout
+      || resolveHostRequesterAgentPlacementForHost({ identity: executionIdentity, snapshot: input.agentIsolation?.read() }) !== 'member') {
+      return required();
+    }
+    for (const abandoned of runtime!.handoffAdapter.listPrivateExecutions?.() ?? []) {
+      if (owned(abandoned) && !linked(abandoned) && abandoned.input.sourceSessionId === request.sessionId
+        && abandoned.input.targetMachineId === input.localMachineId) {
+        await runtime!.handoffAdapter.releasePrivateExecution?.(abandoned.input.operationId);
+      }
+    }
+    if (runtime!.handoffAdapter.resolvePrivateExecution?.({ operationId: request.operationId })) {
+      return refused('workspace_sync_operation_conflict', 'Workspace sync operation identity is already in use');
+    }
+    const custody = requester.retainCustody();
+    const accountRowsCustody = { serverId: semanticServerId, accountId: admission.actorAccountId,
+      serverHttpBaseUrl: requester.serverHttpBaseUrl, isCurrent: custody.isCurrent };
+    // The capture outlives this call; the request signal only cancels its preparation.
+    const lifetime = new AbortController();
+    const cancel = () => lifetime.abort(context.signal.reason);
+    context.signal.addEventListener('abort', cancel, { once: true });
+    let checkout: Awaited<ReturnType<typeof preparePrivateProjectOpenCheckout>> | undefined;
+    let captured = false;
+    try {
+      let snapshot = await factories.refreshProjectRows({ credentials: requester.credentials, sessionCustody: accountRowsCustody,
+        serverId: semanticServerId, selection: { kinds: ['workspace-ref', 'relationship-graph'] }, signal: lifetime.signal });
+      // Both endpoint rows are persisted below with the requester's own
+      // credentials, after the capture reserved the member target.
+      const sourceRefs = materializeWorkspaceRefForMachineRoot(snapshot.workspaceRefs, { serverId: semanticServerId,
+        machineId: request.sourceMachineId, rootPath: request.sourceRootPath, nowMs: Date.now(), createId: randomUUID });
+      const source = sourceRefs.workspaceRef;
+      const existing = resolveWorkspaceRefForMachineRoot(snapshot.workspaceRefs,
+        { serverId: semanticServerId, machineId: input.localMachineId, rootPath: request.targetPath });
+      // The checkout owner refuses any path outside the member's own folder with its one typed code.
+      checkout = await preparePrivateProjectOpenCheckout({ runtime: input.privateCheckout, requesterAccount: requester,
+          retainedRequesterCustody: custody, ingress: context, requesterIdentity: executionIdentity,
+          request: { serverId: semanticServerId, machineId: input.localMachineId,
+            source: { kind: 'workspace', workspaceId: source.id },
+            materialization: { kind: 'sync', targetPath: request.targetPath, workspaceAction: request.workspaceAction } },
+          workspaceRefs: sourceRefs.workspaceRefs, ...(existing ? { existingWorkspaceRefId: existing.id } : {}),
+          materializationKey: request.operationId, signal: lifetime.signal, onEffectsIssued: () => {} });
+      const native = checkout;
+      snapshot = { ...snapshot, workspaceRefs: materializeWorkspaceRefForMachineRoot(sourceRefs.workspaceRefs, { serverId: semanticServerId,
+        machineId: input.localMachineId, rootPath: native.prepared.rootPath, nowMs: Date.now(),
+        createId: () => native.prepared.workspaceRefId }).workspaceRefs };
+      await retainPrivateSyncCapture({ adapter: runtime!.handoffAdapter, checkout: native,
+        syncInput: { operationId: request.operationId, accountServerId: semanticServerId, sourceSessionId: request.sessionId,
+          action: request.workspaceAction, sourceMachineId: source.machineId, sourceWorkspaceRefId: source.id,
+          sourceRootPath: source.rootPath, targetMachineId: input.localMachineId,
+          targetWorkspaceRefId: native.prepared.workspaceRefId, targetRootPath: native.prepared.rootPath },
+        context, snapshot, credentials: requester.credentials, executionIdentity, accountRowsCustody,
+        relationshipCustody: { happyHomeDir: input.happyHomeDir, homeServerIdentityId: semanticServerId,
+          machineAdmission: { custodianAccountId: admission.custodianAccountId, role: admission.role } },
+        execution: { getSnapshot: () => snapshot, replaceSnapshot: async next => { snapshot = next; } },
+        assertTransferCurrent: async () => {
+          if (!await custody.isCurrent()) throw compositionError('project_requester_authority_unavailable', 'Requester Sync custody is unavailable');
+        },
+        release: async () => {
+          lifetime.abort();
+          try { await native.release(); } finally { try { await custody.release(); } finally { await bootstrap.dispose(); } }
+        } });
+      captured = true;
+      const capture = runtime!.handoffAdapter.resolvePrivateExecution?.({ operationId: request.operationId });
+      if (!capture) return refused('project_requester_authority_unavailable', 'Requester Sync capture is unavailable');
+      try {
+        await requesterRelationshipOwner(capture).materializeEndpoints({ serverId: semanticServerId,
+          sourceMachineId: source.machineId, sourceRootPath: source.rootPath, sourceWorkspaceRefId: source.id,
+          targetMachineId: input.localMachineId, targetRootPath: native.prepared.rootPath,
+          targetWorkspaceRefId: native.prepared.workspaceRefId, signal: lifetime.signal });
+      } catch (error) {
+        await runtime!.handoffAdapter.releasePrivateExecution?.(request.operationId);
+        throw error;
+      }
+      return { ok: true, capture: 'member', sourceWorkspaceRefId: source.id,
+        targetRootPath: native.prepared.rootPath, targetWorkspaceRefId: native.prepared.workspaceRefId };
+    } finally {
+      context.signal.removeEventListener('abort', cancel);
+      if (!captured) {
+        lifetime.abort();
+        try { await checkout?.dispose(); } finally { await custody.release(); }
+      }
+    }
+  };
   const workspaceSync: MachineWorkspaceSyncRpcService = {
+    captureHandoffWorkspace,
     forRequester: async (context, options) => {
       const availability = options?.includeAvailability ? { requesterAvailability: await requesterAvailability(context) } : {};
       if (!isWorkspaceSyncRelationshipWriteActionId(context?.callerInputAuthorization?.binding.actionId ?? '')

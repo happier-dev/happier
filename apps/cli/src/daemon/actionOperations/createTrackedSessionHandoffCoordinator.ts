@@ -7,6 +7,7 @@ import { SpawnSessionExecutionAuthorizationSchema } from '@happier-dev/protocol/
 import { resolveWorkspaceSyncEndpoint } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import type { ActionExecuteResult, SessionHandoffPrepareTargetResponse, SessionHandoffStatus, SessionHandoffStorageMode } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { SessionHandoffWorkspaceCaptureResultV3Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
 
 import { encodeStoredCredentials, type StoredCredentials } from '@/persistence';
@@ -404,6 +405,33 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
       }
     }
 
+    // The TARGET decides whether this requester copies only into their own member
+    // folder there (no Manage on another person's Machine) and captures it before
+    // any Sync effect. Its result names both endpoints; the SOURCE's terminal state
+    // releases the capture.
+    let memberCapture: Readonly<{ sourceWorkspaceRefId: string; targetWorkspaceRefId: string; targetRootPath: string }> | undefined;
+    if (daemonMaterializesEndpoints && workspaceAction && targetPath && sourceWorkspaceRootPath) {
+      const captured = SessionHandoffWorkspaceCaptureResultV3Schema.safeParse(await preflightMachineRpc({ credentials,
+        machineId: targetMachineId, method: RPC_METHODS.DAEMON_SESSION_HANDOFF_WORKSPACE_CAPTURE_V3,
+        request: { sessionId, sourceMachineId: source.sourceMachineId, targetMachineId, operationId,
+          accountServerId: workspaceAccountServerId, sourceRootPath: sourceWorkspaceRootPath, targetPath, workspaceAction },
+        ...(hostInput.context ? { context: hostInput.context } : {}), signal: hostInput.signal }));
+      if (!captured.success) return { ok: false, errorCode: 'workspace_sync_prepare_failed', error: 'The target workspace capture was invalid' };
+      if (!captured.data.ok) return { ok: false, errorCode: captured.data.errorCode, error: captured.data.error ?? captured.data.errorCode };
+      // The member capture's root is the requested path itself (any other path is refused).
+      if (captured.data.capture === 'member') memberCapture = captured.data;
+    }
+    const releaseMemberCapture = async () => {
+      if (!memberCapture || !workspaceAction || !targetPath || !sourceWorkspaceRootPath) return;
+      // Terminal release runs even after cancellation; only this operation's own capture is released.
+      const releaseSignal = new AbortController().signal;
+      await preflightMachineRpc({ credentials, machineId: targetMachineId, method: RPC_METHODS.DAEMON_SESSION_HANDOFF_WORKSPACE_CAPTURE_V3,
+        request: { sessionId, sourceMachineId: source.sourceMachineId, targetMachineId, operationId,
+          accountServerId: workspaceAccountServerId, sourceRootPath: sourceWorkspaceRootPath, targetPath, workspaceAction, release: true },
+        ...(hostInput.context ? { context: { ...hostInput.context, signal: releaseSignal } } : {}), signal: releaseSignal,
+      }).catch(() => undefined);
+    };
+
     let spawnResult: unknown;
     let spawnNonce: string | null = null;
     let acceptedHandoffId: string | null = null;
@@ -482,6 +510,7 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
       }
     };
 
+    try {
     return await coordinateTrackedSessionHandoff({
       input: {
         operationId,
@@ -508,6 +537,11 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
           workspaceSyncTargetRootPath: workspaceContext.targetRootPath,
           workspaceSyncSourceWorkspaceRefId: workspaceContext.sourceWorkspaceRefId,
           workspaceSyncTargetWorkspaceRefId: workspaceContext.targetWorkspaceRefId,
+        } : memberCapture ? {
+          workspaceSyncSourceRootPath: sourceWorkspaceRootPath,
+          workspaceSyncTargetRootPath: memberCapture.targetRootPath,
+          workspaceSyncSourceWorkspaceRefId: memberCapture.sourceWorkspaceRefId,
+          workspaceSyncTargetWorkspaceRefId: memberCapture.targetWorkspaceRefId,
         } : daemonMaterializesEndpoints ? {
           workspaceSyncSourceRootPath: sourceWorkspaceRootPath,
           ...(targetPath ? { workspaceSyncTargetRootPath: targetPath } : {}),
@@ -613,6 +647,9 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
         ? { wait: (signal: AbortSignal, status: SessionHandoffStatus) => hostInput.localPreparation!.waitForChange(status, signal) }
         : deps.wait ? { wait: deps.wait } : {}),
     });
+    } finally {
+      await releaseMemberCapture();
+    }
     };
     return requester ? await runWithServerHttpBaseUrl(requester.serverHttpBaseUrl, coordinate) : await coordinate();
   };

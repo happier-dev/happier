@@ -352,8 +352,10 @@ it.each(['ordinary Account-codec baseline', 'installation-sealed request', 'phys
   const recipientMachineId = physicalParent ? 'physical-target-parent' : targetMachineId;
   const recipientInstallationId = physicalParent ? 'physical-target-installation' : targetInstallationId;
   const homeId = 'srv_installed_target_home';
+  // A Manage borrower keeps native placement on the chosen target (owner ruling 2026-11-15);
+  // a Can use borrower needs its own member capture, covered by the handoff capture suites.
   const machineAdmission = { actorAccountId: 'borrower', custodianAccountId: 'target-owner', machineId: targetMachineId,
-    installationId: targetInstallationId, role: 'use' as const, encryptionMode: 'e2ee' as const };
+    installationId: targetInstallationId, role: 'manage' as const, encryptionMode: 'e2ee' as const };
   const constraints = { models: [boundWorkspaceModel], permissionModes: null };
   // Home issuance/current grants are independently exercised by the server integration suite.
   // This owner test mocks only the Home HTTP transport and the installed-key OS reader.

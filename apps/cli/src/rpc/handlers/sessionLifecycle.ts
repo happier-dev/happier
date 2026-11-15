@@ -25,6 +25,7 @@ import type { SessionLifecycleActionHandler } from '@/session/actions/lifecycle/
 import { SessionRequesterBootstrapRpcRequestV1Schema, openSessionRequesterBootstrapRpcRequestV1,
     SessionRequesterHandoffBootstrapRpcRequestV1Schema, openSessionRequesterHandoffBootstrapRpcRequestV1,
     SessionRequesterHandoffPreflightBootstrapRpcRequestV1Schema, openSessionRequesterHandoffPreflightBootstrapRpcRequestV1,
+    SessionRequesterHandoffWorkspaceCaptureRpcRequestV1Schema, openSessionRequesterHandoffWorkspaceCaptureRpcRequestV1,
     type SessionRequesterHandoffBootstrapRpcRequestV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { REQUESTER_SESSION_RUNTIME_REFUSAL_PREVIEWS, type RequesterSessionRuntimeRefusalCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
@@ -144,7 +145,8 @@ export type SessionHandoffRequesterBootstrapBoundary = Readonly<{
         bootstrap: AdmittedRequesterSessionBootstrap): Promise<void>;
 }>;
 
-/** Handoff ingress owns both private carriers; preflight reads never acquire persistent transfer custody. */
+/** Handoff ingress owns the private carriers; preflight reads never acquire persistent transfer custody.
+ * A workspace capture keeps the admitted bootstrap for the capture owner to dispose on release. */
 export async function withSessionHandoffRequesterBootstrap(params: Readonly<{
     method: string;
     input: unknown;
@@ -155,11 +157,14 @@ export async function withSessionHandoffRequesterBootstrap(params: Readonly<{
     const { input, context, boundary, handler } = params;
     const kind = input && typeof input === 'object' ? Reflect.get(input, 'kind') : undefined;
     const readOnly = kind === 'requester_session_handoff_preflight_bootstrap_v1';
-    if (!readOnly && kind !== 'requester_session_handoff_bootstrap_v1') return await handler(input, context);
+    const capture = kind === 'requester_session_handoff_workspace_capture_v1';
+    if (!readOnly && !capture && kind !== 'requester_session_handoff_bootstrap_v1') return await handler(input, context);
     const refused = () => ({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' });
     const parsed = readOnly ? SessionRequesterHandoffPreflightBootstrapRpcRequestV1Schema.safeParse(input)
+        : capture ? SessionRequesterHandoffWorkspaceCaptureRpcRequestV1Schema.safeParse(input)
         : SessionRequesterHandoffBootstrapRpcRequestV1Schema.safeParse(input);
     if (params.method !== (readOnly ? RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3
+        : capture ? RPC_METHODS.DAEMON_SESSION_HANDOFF_WORKSPACE_CAPTURE_V3
         : RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3) || !parsed.success
         || !boundary || !context?.machineAdmission || !context.verifyMachineAdmissionCurrent
         || parsed.data.input.targetMachineId !== context.machineAdmission.machineId
@@ -169,12 +174,13 @@ export async function withSessionHandoffRequesterBootstrap(params: Readonly<{
         const installation = await boundary.readInstallation?.().catch(() => null);
         const opened = installation && installation.machineId === context.machineAdmission.machineId
             && installation.identity.installationId === context.machineAdmission.installationId
-            ? (readOnly ? openSessionRequesterHandoffPreflightBootstrapRpcRequestV1 : openSessionRequesterHandoffBootstrapRpcRequestV1)({
+            ? (readOnly ? openSessionRequesterHandoffPreflightBootstrapRpcRequestV1 : capture ? openSessionRequesterHandoffWorkspaceCaptureRpcRequestV1
+                : openSessionRequesterHandoffBootstrapRpcRequestV1)({
                 request: parsed.data, machineId: installation.machineId, installationId: installation.identity.installationId,
                 installationPrivateKey: decodeBase64(installation.identity.privateKey, 'base64url') }) : null;
         if (!opened) return refused();
         bootstrap = opened.requesterBootstrap;
-    } else if (readOnly || context.machineAdmission.encryptionMode === 'plain'
+    } else if (readOnly || capture || context.machineAdmission.encryptionMode === 'plain'
         && (bootstrap.credentials.secret || bootstrap.credentials.encryption)) return refused();
     let active = true;
     const custody = await admitRequesterSessionBootstrap({ bootstrap, boundary,
@@ -195,7 +201,9 @@ export async function withSessionHandoffRequesterBootstrap(params: Readonly<{
         const result = await handler(parsed.data.input, { ...context, requesterSessionBootstrap: custody.admitted,
             ...(authorization ? { callerInputAuthorization: authorization } : {}) });
         if (!readOnly) {
-            if (!result || typeof result !== 'object' || Reflect.get(result, 'ok') !== true) await custody.cleanupOnFailure();
+            // Only a created member capture keeps the bootstrap; its release disposes it.
+            if (!result || typeof result !== 'object' || Reflect.get(result, 'ok') !== true
+                || capture && Reflect.get(result, 'capture') !== 'member') await custody.cleanupOnFailure();
             else custody.admitted.savedSecretOperationContext.withdrawCatalog();
         }
         return result;

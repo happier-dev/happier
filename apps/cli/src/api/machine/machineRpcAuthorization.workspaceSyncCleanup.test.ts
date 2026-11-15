@@ -129,7 +129,9 @@ describe('retained Workspace Sync SOURCE writer cleanup admission', () => {
     }
   });
 
-  it('keeps native isolation for a non-release phase on the same signed transport', async () => {
+  // Owner ruling 2026-11-15: without the requester's own member capture, a Can use
+  // writer-target phase is refused with the typed Manage cause before any effect.
+  it('refuses a Can use non-release phase without a member capture on the same signed transport', async () => {
     const target = { actorAccountId: 'borrower', custodianAccountId: 'target-owner', machineId: 'target-writer',
       installationId: 'target-installation', role: 'use' as const, encryptionMode: 'plain' as const };
     const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'handoff-root', binding: {
@@ -161,6 +163,6 @@ describe('retained Workspace Sync SOURCE writer cleanup admission', () => {
     expect(await authorizeMachineRpcRequest({ method: `${target.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE}`,
       params, machineAdmission: target, callerAuthority: 'account_automation', callerInputAuthorization: root,
       workspaceSyncSourceWriterTargetRouting: routing }, boundary, 'authenticated_home_socket'))
-      .toMatchObject({ ok: false, errorCode: 'agent_isolation_unavailable' });
+      .toMatchObject({ ok: false, errorCode: 'machine_manage_required' });
   });
 });

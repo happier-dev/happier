@@ -23,7 +23,11 @@ import { createWorkspaceSyncRelationshipCredentialCustody } from '@/daemon/sessi
 import { recoverPrivateWorkspaceSyncExecutions } from './recoverPrivateWorkspaceSyncExecutions';
 import { workspaceCheckoutNativeBoundary as native } from '@/workspaces/activation/workspaceCheckoutNative.testkit';
 import { createRequesterWorkspaceSyncFixture } from './createRequesterWorkspaceSyncFixture.testkit';
-import { registerMachineWorkspaceSyncRpcHandlers } from '@/api/machine/rpcHandlers.workspaceSync';
+import { registerMachineWorkspaceSyncRpcHandlers, resolvePrivateWorkspaceSyncTargetExecution } from '@/api/machine/rpcHandlers.workspaceSync';
+import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { WorkspaceSyncSourceWriterTargetRoutingV1Schema } from '@happier-dev/protocol/socketRpc';
 import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
 import { WorkspaceSyncRelationshipCreateResultV1Schema, WorkspaceSyncRelationshipsListRpcResultV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { WorkspaceSyncController } from '@/workspaces/sync/workspaceSyncController';
@@ -791,4 +795,92 @@ it.skipIf(process.platform !== 'linux').each([true, false])(
     await expect(stop).rejects.toMatchObject({ code: 'forbidden' });
     expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
   }
+});
+
+// HANDOFF-MEMBER-CAPTURE-1114 (owner ruling 2026-11-15): a Can use requester's handoff
+// copy into another person's separate-users Machine runs inside their own member
+// capture; Manage keeps today's native placement.
+it.skipIf(process.platform !== 'linux').each(['use', 'manage'] as const)(
+  'captures a %s handoff copy at the TARGET owner, routes its signed preflight there and releases it', async role => {
+  executionBoundary.member = role === 'use';
+  const setup = await createRequesterWorkspaceSyncFixture({ role, socketIo });
+  const { installed, fixture, targetPath, custodianRef, account } = setup;
+  const home = installed.homeServerIdentityId;
+  const disposed = vi.fn(async () => {});
+  const admission = { actorAccountId: 'member-a', custodianAccountId: 'requester', machineId: installed.machineId,
+    installationId: installed.installation.installationId, role, encryptionMode: 'plain' as const };
+  // The handoff ingress hands its admitted requester bootstrap to the capture; only its release is observed here.
+  const context = { signal: new AbortController().signal, callerAuthority: 'present_user' as const,
+    callerInputAuthorization: account.authorization, verifyMachineAdmissionCurrent: async () => installed.isHomeCurrent(),
+    machineAdmission: admission,
+    requesterSessionBootstrap: { dispose: disposed } as unknown as NonNullable<RpcHandlerContext['requesterSessionBootstrap']> };
+  const action = { kind: 'copy_once' as const, contentPolicy: setup.request.actionInput.contentPolicy };
+  const capture = (input: Partial<Readonly<{ operationId: string; targetPath: string; release: true }>> = {}) =>
+    fixture.parent.workspaceSync.captureHandoffWorkspace!({ sessionId: 'moved-session', sourceMachineId: 'member-source',
+      targetMachineId: installed.machineId, operationId: 'handoff-copy', accountServerId: home,
+      sourceRootPath: '/member/workspace', targetPath, workspaceAction: action, ...input }, context);
+  if (role === 'manage') {
+    expect(await capture()).toEqual({ ok: true, capture: 'not_required' });
+    expect(fixture.parent.handoffAdapter.resolvePrivateExecution?.({ operationId: 'handoff-copy' })).toBeNull();
+    return;
+  }
+  // Any path outside the member's own folder gets the checkout owner's one refusal, and nothing is captured.
+  // The handoff RPC handler turns the thrown owner refusal into its typed result.
+  await expect(capture({ operationId: 'handoff-arbitrary', targetPath: custodianRef.rootPath }))
+    .rejects.toMatchObject({ code: 'workspace_private_checkout_review_required' });
+  expect(fixture.parent.handoffAdapter.resolvePrivateExecution?.({ operationId: 'handoff-arbitrary' })).toBeNull();
+
+  const captured = await capture();
+  expect(captured).toMatchObject({ ok: true, capture: 'member', targetRootPath: targetPath, targetWorkspaceRefId: setup.targetRef.id });
+  if (!captured.ok || captured.capture !== 'member') throw new Error('Member capture is unavailable');
+  expect(fixture.parent.handoffAdapter.resolvePrivateExecution?.({ operationId: 'handoff-copy' })?.execution.nativeSync).toBeDefined();
+  // Both endpoint rows exist in the requester's Account after the capture.
+  const persisted = await readProjectAccountRows({ credentials: setup.credentials, serverId: home,
+    selection: { kinds: ['workspace-ref'] } });
+  expect(persisted.workspaceRefs).toEqual(expect.arrayContaining([
+    expect.objectContaining({ id: captured.sourceWorkspaceRefId, machineId: 'member-source', rootPath: '/member/workspace' }),
+    expect.objectContaining({ id: setup.targetRef.id, machineId: installed.machineId, rootPath: targetPath }),
+  ]));
+
+  // The signed SOURCE-writer preflight reaches the member capture, never the host-native owner.
+  const hostNative = vi.spyOn(fixture.parent.workspaceSync, 'preflightHandoffTargetReplacement');
+  const ingress = new RpcHandlerManager({ scopePrefix: installed.machineId, localMachineId: installed.machineId,
+    encryptionMode: 'plain', logger: () => {},
+    authorizeRequest: incoming => authorizeMachineRpcRequest(incoming, { machineId: installed.machineId,
+      resolveInstallationId: () => installed.installation.installationId,
+      resolveCustodianAccountId: async () => 'requester', resolveHomeServerIdentityId: async () => home,
+      // Home's current admission is the network boundary.
+      verifyMachineAdmission: async () => true,
+      resolvePrivateWorkspaceSyncTargetExecution: input => resolvePrivateWorkspaceSyncTargetExecution(fixture.parent.handoffAdapter, input) }) });
+  registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: ingress, service: fixture.parent.workspaceSync });
+  const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'handoff-root', binding: {
+    accountId: 'member-a', authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+    custodianAccountId: 'member-a', serverIdentityId: home, machineId: 'member-source', installationId: 'member-source-installation',
+    actionId: 'session.handoff', requestId: 'handoff-copy', requestEnvelopeDigest: 'A'.repeat(43),
+    target: { kind: 'machine', machineId: 'member-source' },
+    handoffAdmission: { sessionId: 'moved-session', sourceMachineId: 'member-source', sourceInstallationId: 'member-source-installation',
+      targetMachineId: installed.machineId, targetInstallationId: installed.installation.installationId } } });
+  const routing = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ v: 1,
+    sourceWriter: { machineId: 'member-source', installationId: 'member-source-installation' },
+    source: { v: 1, phase: 'prepare', operationId: 'handoff-copy', accountServerId: home, sourceMachineId: 'member-source',
+      sourceRootPath: '/member/workspace', sourceSessionId: 'moved-session', sourceContext: { machineAdmission: {
+        actorAccountId: 'member-a', custodianAccountId: 'member-a', machineId: 'member-source',
+        installationId: 'member-source-installation', role: 'manage', encryptionMode: 'plain' },
+      callerAuthority: 'present_user', workspaceWrites: 'allow' } },
+    target: { v: 1, phase: 'preflight', operationId: 'handoff-copy', accountServerId: home,
+      targetMachineId: installed.machineId, targetRootPath: targetPath } });
+  const preflight = await ingress.handleRequest({
+    method: `${installed.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT}`,
+    params: { v: 1, operationId: 'handoff-copy', serverId: home, machineId: installed.machineId, targetPath },
+    callerAuthority: 'present_user', machineAdmission: admission, callerInputAuthorization: root,
+    workspaceSyncSourceWriterTargetRouting: routing });
+  expect(preflight).not.toHaveProperty('errorCode');
+  expect(hostNative).not.toHaveBeenCalled();
+  // The member folder stays the member's: the host cannot read it.
+  await expect(realpath(targetPath)).rejects.toMatchObject({ code: 'EACCES' });
+
+  // The SOURCE's terminal call releases the capture and the admitted bootstrap.
+  expect(await capture({ release: true })).toEqual({ ok: true, capture: 'released' });
+  expect(fixture.parent.handoffAdapter.resolvePrivateExecution?.({ operationId: 'handoff-copy' })).toBeNull();
+  expect(disposed).toHaveBeenCalledTimes(1);
 });

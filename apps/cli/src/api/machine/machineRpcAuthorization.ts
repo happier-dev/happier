@@ -1128,6 +1128,24 @@ function forbidden(
 export { readWorkspaceSyncTargetMethodV1 as readWorkspaceSyncTargetMethod } from '@happier-dev/protocol/socketRpc';
 
 /**
+ * The one capture-required decision. On another person's Machine, a requester
+ * without Manage gets TARGET workspace effects only inside their own member
+ * capture (owner rulings 2026-10-31, 2026-11-14, 2026-11-15). The custodian and
+ * Manage grantees keep native placement. Ingress, the in-process entry and the
+ * handoff capture owner all consume this result.
+ */
+export function requiresRequesterWorkspaceCapture(
+  admission: Pick<SocketRpcMachineAdmissionContextV1, 'actorAccountId' | 'custodianAccountId' | 'role'>,
+): boolean {
+  return admission.actorAccountId !== admission.custodianAccountId && admission.role !== 'manage';
+}
+
+export function requesterWorkspaceCaptureRequired(): Extract<RpcAuthorizationResult, { ok: false }> {
+  return { ok: false, errorCode: 'machine_manage_required',
+    error: 'Writing outside your own folder needs Manage access to this Machine' };
+}
+
+/**
  * In-process admission for a SOURCE-writer TARGET phase on this same Machine.
  * Home never delivers a daemon's own signed call back to its socket, so this is
  * the delivery Home and this ingress apply to a writer-target phase, decided from
@@ -1140,8 +1158,12 @@ export function admitSameMachineWorkspaceSyncTargetPhase(input: Readonly<{
   routing: WorkspaceSyncSourceWriterTargetRoutingV1;
   /** The admitted root for preflight/prepare; the current reviewed retirement for copy phases. */
   callerInputAuthorization?: ExternalActionExecutionAuthorizationV1;
+  /** The phase body, for the requester capture lookup ingress also applies. */
+  request?: unknown;
+  resolvePrivateCapture?: (admission: PrivateWorkspaceSyncTargetAdmission) => PrivateWorkspaceSyncTargetExecutionResolution;
 }>): Readonly<{ ok: true; machineAdmission: SocketRpcMachineAdmissionContextV1;
-  callerInputAuthorization?: ExternalActionExecutionAuthorizationV1 }> | Extract<RpcAuthorizationResult, { ok: false }> {
+  callerInputAuthorization?: ExternalActionExecutionAuthorizationV1;
+  workspaceSyncPrivateExecution?: RetainedWorkspaceSyncPrivateExecution }> | Extract<RpcAuthorizationResult, { ok: false }> {
   const { routing, callerInputAuthorization: root } = input;
   const source = routing.source.sourceContext.machineAdmission;
   if (isWorkspaceSyncSourceWriterCleanupPhaseV1(routing.target.phase)) {
@@ -1158,6 +1180,14 @@ export function admitSameMachineWorkspaceSyncTargetPhase(input: Readonly<{
     ? resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT).sharedMachineAccess : 'use';
   if (required !== 'use' && source.role !== 'manage') {
     return { ok: false, errorCode: 'machine_manage_required', error: 'Replacing a destination folder needs Manage access to this Machine' };
+  }
+  if (requiresRequesterWorkspaceCapture(source)) {
+    const body = routing.target.phase === 'prepare' ? WorkspaceSyncTargetBootstrapPrepareV1Schema.safeParse(input.request) : null;
+    const lookup = input.resolvePrivateCapture?.({ context: source, request: input.request, routing: routing.target,
+      receivingMachine: { machineId: source.machineId, installationId: source.installationId },
+      ...(body?.success ? { targetWorkspaceRefId: body.data.targetWorkspaceRefId } : {}) });
+    if (lookup?.kind !== 'matched') return requesterWorkspaceCaptureRequired();
+    return { ok: true, machineAdmission: source, callerInputAuthorization: root, workspaceSyncPrivateExecution: lookup.capture };
   }
   return { ok: true, machineAdmission: source, callerInputAuthorization: root };
 }
@@ -1855,6 +1885,9 @@ export async function authorizeMachineRpcRequest(
         return { ok: false, errorCode: 'agent_isolation_unavailable', error: 'Private workspace Sync execution is unavailable' };
       }
       if (privateSyncExecution) return { ok: true, workspaceSyncPrivateExecution: privateSyncExecution };
+      if (writerTargetRouting && workspaceTargetPhase
+        && !isWorkspaceSyncSourceWriterCleanupPhaseV1(writerTargetRouting.target.phase)
+        && requiresRequesterWorkspaceCapture(context)) return requesterWorkspaceCaptureRequired();
       if (
         !nativeManagedBindPhase &&
         !nativeEffectOwner &&

@@ -1051,7 +1051,7 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
     SESSION_RPC_METHODS.SESSION_SKILL_CATALOG_LIST
   ], 'ambiguous', 'Read or external-service behavior has privacy, access-policy, transcript, or side-effect ambiguity and must stay on the server route until proven safe.', "use")],
   ...serverRequiredRows(AMBIGUOUS_READ_RUNNER_READABLE_METHODS, 'ambiguous', 'Read or external-service behavior has privacy, access-policy, transcript, or side-effect ambiguity and must stay on the server route until proven safe.', 'use', undefined, 'readTranscript', true),
-  ...[...serverRequiredRows([RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3, RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET], 'server_persistence', 'Server persistence or external provider state remains server-authoritative for this RPC family.', "use"),
+  ...[...serverRequiredRows([RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3, RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET, RPC_METHODS.DAEMON_SESSION_HANDOFF_WORKSPACE_CAPTURE_V3], 'server_persistence', 'Server persistence or external provider state remains server-authoritative for this RPC family.', "use"),
   ...serverRequiredRows([RPC_METHODS.DAEMON_SESSION_HANDOFF_START, RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET, RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET, RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT, RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT, RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET, RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3, RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3, RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3, RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT_V3, RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT_V3, RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3, RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V2_GET, RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V2, RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V2, RPC_METHODS.DAEMON_SESSION_HANDOFF_TARGET_CONFIRM_V2, RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT_V2, RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT_V2], 'server_persistence', 'Server persistence or external provider state remains server-authoritative for this RPC family.', "custodian_only"),
   ...serverRequiredRows([
     RPC_METHODS.SCM_PULL_REQUEST_OPEN_OR_REUSE,
@@ -1209,7 +1209,10 @@ export function resolveMachineRpcExternalActionEffectV1(method: string,
       || binding.target.kind !== 'machine' || binding.target.machineId !== binding.machineId) return null;
     const target = binding.machineId === admission.targetMachineId && binding.installationId === admission.targetInstallationId;
     const source = binding.machineId === admission.sourceMachineId && binding.installationId === admission.sourceInstallationId;
-    return method === RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3 && target
+    // The workspace capture is the one effectful preflight: it runs only on the
+    // admitted TARGET and confines a non-Manage requester to their own folder.
+    return (method === RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3
+      || method === RPC_METHODS.DAEMON_SESSION_HANDOFF_WORKSPACE_CAPTURE_V3) && target
       || method === RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET && (source || target)
       ? 'session.handoff' : null;
   }

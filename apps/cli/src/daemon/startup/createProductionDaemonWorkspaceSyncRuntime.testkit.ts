@@ -891,9 +891,11 @@ export async function composeInstalledBindTargetTransport(
   onTestFinished(() => identityBoundary.mockRestore());
   const sourceAdmission = options.sourceRouting?.sourceContext?.machineAdmission ?? { actorAccountId: 'borrower', custodianAccountId: 'owner', machineId: fixture.childRef.machineId,
     installationId: fixture.childInstallationId, role: 'use' as const, encryptionMode: 'plain' as const };
+  // The borrower keeps native placement on another custodian's target only with Manage;
+  // Can use needs its own member capture first (owner ruling 2026-11-15).
   const targetAdmission = { ...sourceAdmission, custodianAccountId: targetCustodian,
     machineId: fixture.targetChildRef.machineId, installationId: fixture.targetChildInstallationId,
-    role: sourceAdmission.actorAccountId === targetCustodian ? 'manage' as const : 'use' as const };
+    role: 'manage' as const };
   const sourceRouting = socketSchemas.WorkspaceSyncSourceRoutingV1Schema.parse(options.sourceRouting ?? { v: 1, phase: 'prepare', operationId: options.operationId,
     accountServerId: fixture.serverId, sourceMachineId: sourceAdmission.machineId, sourceRootPath: fixture.childRef.rootPath,
     sourceSessionId: 'actual-source-session', sourceContext: { machineAdmission: sourceAdmission,

@@ -267,8 +267,10 @@ describe('bind-child replacement approval at the physical target owner', () => {
     const routing = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ v: 1, sourceWriter: fixture.controller, source,
       target: { v: 1, phase: 'preflight', operationId, accountServerId: fixture.serverId,
         targetMachineId: machineId, targetRootPath: fixture.targetPath } });
+    // A Manage borrower keeps native placement here; a Can use borrower needs its own
+    // member capture first (owner ruling 2026-11-15, handoff capture suites).
     const admission = SocketRpcMachineAdmissionContextV1Schema.parse({ actorAccountId: 'borrower', custodianAccountId: 'target-owner',
-      machineId, installationId, role: 'use', encryptionMode: 'plain' });
+      machineId, installationId, role: 'manage', encryptionMode: 'plain' });
     binding = { root, routing, packet, admission, machineId, installationId, method };
     const rpc = new RpcHandlerManager({ scopePrefix: machineId, localMachineId: machineId, encryptionMode: 'plain', logger: () => {},
       authorizeRequest: request => authorizeMachineRpcRequest(request, { machineId, resolveCustodianAccountId: async () => 'target-owner',
@@ -481,7 +483,8 @@ describe('bind-child replacement approval at the physical target owner', () => {
     const operationId = 'chosen-target-original-source-preflight';
     const sourceAdmission = { actorAccountId: 'borrower', custodianAccountId: 'owner', machineId: fixture.childRef.machineId,
       installationId: fixture.childInstallationId, role: 'use' as const, encryptionMode: 'plain' as const };
-    const admission = { ...sourceAdmission, custodianAccountId: targetCustodianAccountId,
+    // A Manage borrower keeps native placement on the chosen target (owner ruling 2026-11-15).
+    const admission = { ...sourceAdmission, custodianAccountId: targetCustodianAccountId, role: 'manage' as const,
       machineId: fixture.targetChildRef.machineId, installationId: fixture.targetChildInstallationId };
     const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'original-source-chosen-target-preflight', binding: {
       accountId: 'borrower', principalId: 'borrower', credentialId: 'source-pat', grant: API_TOKEN_FULL_GRANT_V1,
@@ -832,7 +835,8 @@ describe('bind-child replacement approval at the physical target owner', () => {
     const operationId = 'original-source-physical-preflight';
     const sourceAdmission = { actorAccountId: 'borrower', custodianAccountId: 'owner', machineId: fixture.childRef.machineId,
       installationId: fixture.childInstallationId, role: 'use' as const, encryptionMode: 'plain' as const };
-    const targetAdmission = { ...sourceAdmission, machineId: fixture.targetChildRef.machineId,
+    // A Manage borrower keeps native placement on the physical target (owner ruling 2026-11-15).
+    const targetAdmission = { ...sourceAdmission, role: 'manage' as const, machineId: fixture.targetChildRef.machineId,
       installationId: fixture.targetChildInstallationId };
     const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-issued-original-source-preflight', binding: {
       accountId: 'borrower', principalId: 'borrower', credentialId: 'original-source-pat', grant: API_TOKEN_FULL_GRANT_V1,

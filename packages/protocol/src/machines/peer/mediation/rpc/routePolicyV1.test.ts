@@ -393,7 +393,7 @@ describe('MachineRpcRoutePolicyV1', () => {
     expect(resolveMachineRpcExternalActionEffectV1(method)).toBe('projects.worker.copy.inspect');
     expect(resolveMachineRpcExternalActionEffectV1(RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_REMOVE)).toBeNull();
   });
-  it('restricts handoff preflight authority to read-only methods on its exact admitted peers', async () => {
+  it('restricts handoff preflight authority to its read-only checks and the TARGET workspace capture on its exact admitted peers', async () => {
     const { resolveMachineRpcRoutePolicy, resolveMachineRpcExternalActionEffectV1 } = await import('./routePolicyV1');
     const binding = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-issued-preflight', binding: {
       accountId: 'requester', principalId: 'requester', credentialId: '11111111-1111-4111-8111-111111111111',
@@ -407,7 +407,9 @@ describe('MachineRpcRoutePolicyV1', () => {
     } }).binding;
     const check = RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3;
     const capability = RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET;
-    for (const method of [check, capability]) {
+    // The workspace capture is the family's one effectful phase, admitted on the TARGET only.
+    const capture = RPC_METHODS.DAEMON_SESSION_HANDOFF_WORKSPACE_CAPTURE_V3;
+    for (const method of [check, capability, capture]) {
       expect(resolveMachineRpcRoutePolicy(method)).toMatchObject({ routeClass: 'server_required',
         rpcClassification: 'internal_only', sharedMachineAccess: 'use' });
       expect(resolveMachineRpcExternalActionEffectV1(method, binding)).toBe('session.handoff');
@@ -419,6 +421,7 @@ describe('MachineRpcRoutePolicyV1', () => {
       target: { kind: 'machine' as const, machineId: 'source' } };
     expect(resolveMachineRpcExternalActionEffectV1(capability, source)).toBe('session.handoff');
     expect(resolveMachineRpcExternalActionEffectV1(check, source)).toBeNull();
+    expect(resolveMachineRpcExternalActionEffectV1(capture, source)).toBeNull();
     for (const method of [RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3,
       RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3, RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT_V3,
       RPC_METHODS.SPAWN_HAPPY_SESSION]) {

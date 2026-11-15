@@ -1505,6 +1505,44 @@ export const HandoffWorkspaceActionV1Schema = lazyZodSchema(() => z.discriminate
 ]));
 export type HandoffWorkspaceActionV1 = z.infer<typeof HandoffWorkspaceActionV1Schema>;
 
+/**
+ * Pre-start handoff TARGET phase: a requester who is neither the Machine's
+ * custodian nor a Manage grantee gets their workspace copy captured inside
+ * their own member folder before any TARGET Sync effect. The TARGET decides
+ * whether capture applies; the SOURCE consumes its typed result.
+ */
+export const SessionHandoffWorkspaceCaptureRequestV3Schema = lazyZodSchema(() => z.strictObject({
+  sessionId: z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_RELATIONSHIP_ID_LENGTH)),
+  sourceMachineId: z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_MACHINE_ID_LENGTH)),
+  targetMachineId: z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_MACHINE_ID_LENGTH)),
+  operationId: z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_RELATIONSHIP_ID_LENGTH)),
+  accountServerId: z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_MACHINE_ID_LENGTH)),
+  sourceRootPath: z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_PATH_LENGTH)),
+  targetPath: z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_PATH_LENGTH)),
+  workspaceAction: HandoffWorkspaceActionV1Schema.check(z.refine(action => action.kind === 'copy_once' || action.kind === 'create_relationship')),
+  /** The SOURCE's terminal state: release this operation's capture unless a created relationship now owns it. */
+  release: z.optional(z.literal(true)),
+}));
+export type SessionHandoffWorkspaceCaptureRequestV3 = z.infer<typeof SessionHandoffWorkspaceCaptureRequestV3Schema>;
+
+export const SessionHandoffWorkspaceCaptureResultV3Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ ok: z.literal(true), capture: z.enum(['not_required', 'released']) }),
+  z.strictObject({
+    ok: z.literal(true),
+    capture: z.literal('member'),
+    /** Both endpoint rows exist in the requester's Account once this result returns. */
+    sourceWorkspaceRefId: z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_WORKSPACE_REF_ID_LENGTH)),
+    targetRootPath: z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_PATH_LENGTH)),
+    targetWorkspaceRefId: z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_WORKSPACE_REF_ID_LENGTH)),
+  }),
+  z.strictObject({
+    ok: z.literal(false),
+    errorCode: z.string().check(z.minLength(1), z.maxLength(MAX_ERROR_CODE_LENGTH)),
+    error: z.optional(z.string().check(z.minLength(1), z.maxLength(MAX_PATH_LENGTH))),
+  }),
+]));
+export type SessionHandoffWorkspaceCaptureResultV3 = z.infer<typeof SessionHandoffWorkspaceCaptureResultV3Schema>;
+
 export const WorkspaceSyncPrepareBetweenRequestV1Schema = lazyZodSchema(() => z.strictObject({
   sourceWorkspaceRefId: z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_RELATIONSHIP_ID_LENGTH)),
   targetWorkspaceRefId: z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_RELATIONSHIP_ID_LENGTH)),

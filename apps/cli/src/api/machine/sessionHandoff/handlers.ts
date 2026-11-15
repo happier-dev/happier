@@ -13,7 +13,10 @@ import {
 } from '../../../session/handoff/exportSessionHandoffState';
 import { importSessionHandoffAgentBundle, resolveExistingSessionHandoffState } from '../../../session/handoff/agentBundle/import';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { requiresRequesterWorkspaceCapture } from '../machineRpcAuthorization';
 import { SessionHandoffExistingStateCheckRequestV3Schema, type SessionHandoffExistingStateCheckRequestV3 } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
+import { SessionHandoffWorkspaceCaptureRequestV3Schema, SessionHandoffWorkspaceCaptureResultV3Schema,
+  type SessionHandoffWorkspaceCaptureRequestV3, type SessionHandoffWorkspaceCaptureResultV3 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import {
   resolveSessionHandoffExportMetadata,
@@ -128,6 +131,8 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
   loadLocalSessionMetadata?: (sessionId: string) => Promise<SessionHandoffLocalMetadataSource | null>;
   loadSessionMetadata?: (sessionId: string, context?: RpcHandlerContext) => Promise<Record<string, unknown> | null>;
   admitExistingSessionState?: (peerMachineId: string, context?: RpcHandlerContext, checkRequest?: SessionHandoffExistingStateCheckRequestV3) => Promise<Readonly<{ ok: false; errorCode: string; error?: string }> | null>;
+  /** Workspace Sync's handoff TARGET capture owner. */
+  captureWorkspace?: (request: SessionHandoffWorkspaceCaptureRequestV3, context: RpcHandlerContext) => Promise<SessionHandoffWorkspaceCaptureResultV3>;
   stopSessionForHandoff?: (sessionId: string, options?: Readonly<{ expectedSpawnNonce: string }>) => Promise<'stopped' | 'already_inactive' | 'failed'>;
   spawnSessionForHandoff?: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   exportSessionBundle?: (metadata: Record<string, unknown>) => Promise<Readonly<{
@@ -270,6 +275,24 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
       return { ok: false, errorCode: code, error: error instanceof Error ? error.message : 'Existing native state could not be verified' } as const;
     }
   };
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_HANDOFF_WORKSPACE_CAPTURE_V3, async (raw: unknown, context?: RpcHandlerContext) =>
+    // The custodian and Manage keep native placement: no requester bootstrap is admitted for them.
+    context?.machineAdmission && !requiresRequesterWorkspaceCapture(context.machineAdmission)
+      ? { ok: true, capture: 'not_required' } : await withSessionHandoffRequesterBootstrap({
+    method: RPC_METHODS.DAEMON_SESSION_HANDOFF_WORKSPACE_CAPTURE_V3, input: raw, context,
+    boundary: params.requesterBootstrapBoundary, handler: async (input, capturedContext) => {
+      const request = SessionHandoffWorkspaceCaptureRequestV3Schema.safeParse(input);
+      if (!request.success || !capturedContext) return invalidRequest();
+      if (!params.captureWorkspace) return { ok: false, errorCode: 'workspace_sync_unavailable', error: 'Workspace sync is unavailable' };
+      try {
+        return SessionHandoffWorkspaceCaptureResultV3Schema.parse(await params.captureWorkspace(request.data, capturedContext));
+      } catch (error) {
+        capturedContext.signal.throwIfAborted();
+        const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'workspace_sync_prepare_failed';
+        return { ok: false, errorCode: code, error: error instanceof Error && error.message ? error.message : code };
+      }
+    },
+  }));
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3, async (raw: unknown, context?: RpcHandlerContext) => await withSessionHandoffRequesterBootstrap({
     method: RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3, input: raw, context,
     boundary: params.requesterBootstrapBoundary, handler: checkExistingState,

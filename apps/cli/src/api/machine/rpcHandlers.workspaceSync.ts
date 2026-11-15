@@ -52,6 +52,9 @@ export type MachineWorkspaceSyncRpcService = Readonly<{
       requesterAvailability?: import('@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas').WorkspaceSyncRequesterAvailabilityV1;
     }>>;
   handoffSourcePhase?(request: WorkspaceSyncHandoffSourcePhaseRequestV1, context?: RpcHandlerContext): Promise<WorkspaceSyncHandoffSourcePhaseResultV1>;
+  /** Handoff TARGET member capture; the TARGET decides whether capture applies. */
+  captureHandoffWorkspace?(request: import('@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas').SessionHandoffWorkspaceCaptureRequestV3,
+    context: RpcHandlerContext): Promise<import('@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas').SessionHandoffWorkspaceCaptureResultV3>;
   controller: WorkspaceSyncRpcController;
   prepareBetween(request: WorkspaceSyncPrepareBetweenRequestV1, signal?: AbortSignal, context?: RpcHandlerContext): Promise<WorkspaceSyncPrepareBetweenResultV1>;
   relationshipOwner: Readonly<{

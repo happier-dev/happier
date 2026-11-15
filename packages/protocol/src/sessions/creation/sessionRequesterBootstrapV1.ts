@@ -27,7 +27,7 @@ import { ExternalActionRequesterInvocationBaseV1Schema } from './externalActionR
 import { CallerInputConstraintsV1Schema } from '../../auth/callerInputConstraintsV1.js';
 import { AgentPermissionIntentV1Schema, parseAgentPermissionIntentV1Alias } from '../../runtime/permissionIntentV1.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
-import { WorkspaceSyncPrepareBetweenRequestV1Schema, type WorkspaceSyncPrepareBetweenRequestV1 } from '../control/handoff/workspaceSyncSchemas.js';
+import { WorkspaceSyncPrepareBetweenRequestV1Schema, SessionHandoffWorkspaceCaptureRequestV3Schema, type WorkspaceSyncPrepareBetweenRequestV1 } from '../control/handoff/workspaceSyncSchemas.js';
 import { readSessionActionChildCreationRpcEffectV1 } from './sessionCreationActionIdsV1.js';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '../../actions/projectActionIdsV1.js';
 import { DeploymentChildRpcV1Schema, readDeploymentChildRpcV1 } from '../../deployments/deploymentChildRpcV1.js';
@@ -632,11 +632,21 @@ const SessionRequesterHandoffPreflightBootstrapOpenedRequestV1Schema = lazyZodSc
   requesterBootstrap: SessionRequesterCreationContextV1Schema,
 })));
 type OpenedHandoffPreflightRequest = Readonly<z.infer<typeof SessionRequesterHandoffPreflightBootstrapOpenedRequestV1Schema>>;
-type InstalledRequest = OpenedRequest | OpenedHandoffRequest | OpenedHandoffPreflightRequest;
+/** Pre-start TARGET workspace capture keeps the requester custody for the handoff's workspace lifetime. */
+export const SessionRequesterHandoffWorkspaceCaptureRpcRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('requester_session_handoff_workspace_capture_v1'),
+  input: SessionHandoffWorkspaceCaptureRequestV3Schema,
+  requesterBootstrap: z.union([SessionRequesterCreationContextV1Schema, SessionRequesterInstallationSealedBootstrapV1Schema]),
+}));
+const SessionRequesterHandoffWorkspaceCaptureOpenedRequestV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(SessionRequesterHandoffWorkspaceCaptureRpcRequestV1Schema, {
+  requesterBootstrap: SessionRequesterCreationContextV1Schema,
+})));
+type OpenedHandoffWorkspaceCaptureRequest = Readonly<z.infer<typeof SessionRequesterHandoffWorkspaceCaptureOpenedRequestV1Schema>>;
+type InstalledRequest = OpenedRequest | OpenedHandoffRequest | OpenedHandoffPreflightRequest | OpenedHandoffWorkspaceCaptureRequest;
 const InstallationPlaintextV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1), machineId: z.string().check(z.minLength(1)), installationId: z.string().check(z.minLength(1)),
   request: z.union([SessionRequesterBootstrapOpenedRequestV1Schema, SessionRequesterHandoffBootstrapOpenedRequestV1Schema,
-    SessionRequesterHandoffPreflightBootstrapOpenedRequestV1Schema]),
+    SessionRequesterHandoffPreflightBootstrapOpenedRequestV1Schema, SessionRequesterHandoffWorkspaceCaptureOpenedRequestV1Schema]),
 }));
 
 function readInstalledRequestMachineId(request: InstalledRequest): string {
@@ -680,6 +690,12 @@ export function sealSessionRequesterHandoffPreflightBootstrapRpcRequestV1(input:
   return sealInstalledRequest({ ...input, request: SessionRequesterHandoffPreflightBootstrapOpenedRequestV1Schema.parse(input.request) });
 }
 
+export function sealSessionRequesterHandoffWorkspaceCaptureRpcRequestV1(input: Readonly<{
+  request: OpenedHandoffWorkspaceCaptureRequest; installationId: string; installationPublicKey: Uint8Array; randomBytes(length: number): Uint8Array;
+}>) {
+  return sealInstalledRequest({ ...input, request: SessionRequesterHandoffWorkspaceCaptureOpenedRequestV1Schema.parse(input.request) });
+}
+
 /** The host supplies its current local installation, never a caller-selected key. */
 export function openSessionRequesterBootstrapRpcRequestV1(input: Readonly<{
   request: unknown; machineId: string; installationId: string; installationPrivateKey: Uint8Array;
@@ -702,12 +718,19 @@ export function openSessionRequesterHandoffPreflightBootstrapRpcRequestV1(input:
   return request?.kind === 'requester_session_handoff_preflight_bootstrap_v1' ? request : null;
 }
 
+export function openSessionRequesterHandoffWorkspaceCaptureRpcRequestV1(input: Readonly<{
+  request: unknown; machineId: string; installationId: string; installationPrivateKey: Uint8Array;
+}>): OpenedHandoffWorkspaceCaptureRequest | null {
+  const request = openInstalledRequest(input);
+  return request?.kind === 'requester_session_handoff_workspace_capture_v1' ? request : null;
+}
+
 function openInstalledRequest(input: Readonly<{
   request: unknown; machineId: string; installationId: string; installationPrivateKey: Uint8Array;
 }>): InstalledRequest | null {
   try {
     const parsed = z.union([SessionRequesterBootstrapRpcRequestV1Schema, SessionRequesterHandoffBootstrapRpcRequestV1Schema,
-      SessionRequesterHandoffPreflightBootstrapRpcRequestV1Schema]).safeParse(input.request);
+      SessionRequesterHandoffPreflightBootstrapRpcRequestV1Schema, SessionRequesterHandoffWorkspaceCaptureRpcRequestV1Schema]).safeParse(input.request);
     if (!parsed.success || !('kind' in parsed.data.requesterBootstrap)
       || parsed.data.requesterBootstrap.installationId !== input.installationId
       || (parsed.data.kind === 'requester_session_bootstrap_v1' ? parsed.data.input.executionTarget.machineId

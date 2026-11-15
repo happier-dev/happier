@@ -9500,6 +9500,20 @@ exports[`preserves every declared method and complete effective policy through d
     "sharedMachineAccess": "use",
   },
   {
+    "method": "daemon.sessionHandoff.workspaceCapture.v3",
+    "ownerPacket": "PMS-5",
+    "rationale": "Server persistence or external provider state remains server-authoritative for this RPC family.",
+    "routeClass": "server_required",
+    "rpcClassification": "internal_only",
+    "scope": {
+      "accountRequired": true,
+      "machineRequired": true,
+      "serverRequired": true,
+    },
+    "serverRequiredReason": "server_persistence",
+    "sharedMachineAccess": "use",
+  },
+  {
     "actionSpecId": "session.handoff",
     "method": "daemon.sessionHandoff.start",
     "ownerPacket": "PMS-5",
