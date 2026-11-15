@@ -5,7 +5,6 @@ import { CURSOR_UI_DESCRIPTOR } from './descriptor.js';
 const FORBIDDEN_NO_EXECUTE_KEYS = new Set([
   'projection',
   'importName',
-  'source',
   'label',
   'uiBehaviorOverride',
   'sessionProviderBehavior',
@@ -25,6 +24,8 @@ function collectNoExecuteViolations(value: unknown, path = 'descriptor'): string
   return Object.entries(value as Readonly<Record<string, unknown>>).flatMap(([key, child]) => {
     const violations: string[] = [];
     if (FORBIDDEN_NO_EXECUTE_KEYS.has(key)) violations.push(`${path}.${key}: executable projection key`);
+    // A Browse source option's `source` is a data object; only a string source is an executable reference.
+    if (key === 'source' && typeof child === 'string') violations.push(`${path}.${key}: executable projection source`);
     if (typeof child === 'string' && /#[0-9a-fA-F]{3,8}\b/.test(child)) {
       violations.push(`${path}.${key}: raw color literal`);
     }

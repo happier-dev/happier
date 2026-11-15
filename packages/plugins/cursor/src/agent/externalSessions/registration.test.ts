@@ -12,6 +12,7 @@ describe('Cursor native history registration', () => {
     });
     expect(PLUGIN_MANIFEST.contributes.agents[0]?.surfaces?.externalSession?.sources).toEqual([
       expect.objectContaining({ sourceKind: 'cursorHome', contentSearch: true }),
+      expect.objectContaining({ sourceKind: 'cursorApp' }),
     ]);
   });
 });

@@ -38,7 +38,16 @@ export const CURSOR_UI_DESCRIPTOR = Object.freeze({
     modelSelection: 'experimental',
     resume: 'experimental',
   },
-  behavior: {},
+  behavior: {
+    externalSessions: {
+      browse: {
+        sourceOptions: [
+          { key: 'cursor:cli', labelKey: 'externalSessions.browseSourceCursorCli', source: { kind: 'cursorHome' } },
+          { key: 'cursor:app', labelKey: 'externalSessions.browseSourceCursorApp', source: { kind: 'cursorApp' } },
+        ],
+      },
+    },
+  },
   components: { slots: [] },
   assets: {
     svgIcon: { path: 'assets/agent-mark.svg' },

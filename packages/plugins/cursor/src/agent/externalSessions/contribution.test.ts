@@ -7,6 +7,14 @@ import type { AgentExternalSessionsListCandidatesRequest, AgentExternalSessionsR
 import { cursorExternalSessionsContribution as contribution } from './contribution.js';
 import { cursorFixtureRow, CURSOR_FIXTURE_ID, writeCursorNativeFixture } from './__fixtures__/native.test-support.js';
 
+const nativeDirectoryReads = vi.hoisted(() => ({ paths: [] as string[] }));
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, readdir: ((path: Parameters<typeof actual.readdir>[0], ...rest: unknown[]) => {
+    nativeDirectoryReads.paths.push(String(path));
+    return (actual.readdir as (...args: unknown[]) => unknown)(path, ...rest);
+  }) as typeof actual.readdir };
+});
 vi.mock('node:fs', async importOriginal => {
   const actual = await importOriginal<typeof import('node:fs')>();
   return { ...actual, createReadStream: vi.fn(actual.createReadStream) };
@@ -117,6 +125,20 @@ describe('Cursor native role/content dialect', () => {
     const bounded = await contribution.pageTranscript({ ...f.request, remoteSessionId: CURSOR_FIXTURE_ID, direction: 'older', maxSerializedBytes: 4096 });
     expect(bounded).toMatchObject({ ok: false, code: 'agent_error' });
     expect(Buffer.byteLength(JSON.stringify(bounded))).toBeLessThan(4096);
+  });
+  it('verifies an appended transcript prefix once and walks the store once per readAfter', async () => {
+    const f = await fixture();
+    const first = value(await contribution.pageTranscript({ ...f.request, remoteSessionId: CURSOR_FIXTURE_ID, direction: 'older' }));
+    await appendFile(f.transcriptPath, cursorFixtureRow('user', 'garnet appended message'));
+    const streams = vi.mocked(nativeFs.createReadStream);
+    streams.mockClear();
+    const projectsDir = join(f.homeDir, 'projects');
+    nativeDirectoryReads.paths.length = 0;
+    const after = value(await contribution.readAfterTranscript({ ...f.request, remoteSessionId: CURSOR_FIXTURE_ID, cursor: first.tailCursor! }));
+    expect(after.outcome).toBe('advanced');
+    // One hash of the previously delivered prefix and one of the grown file bind the new cursor.
+    expect(streams.mock.calls.filter(([path]) => String(path) === f.transcriptPath)).toHaveLength(2);
+    expect(nativeDirectoryReads.paths.filter((path) => path === projectsDir)).toHaveLength(1);
   });
   it('does not reopen unchanged transcript bodies for a tail observation', async () => {
     const f = await fixture();

@@ -3,7 +3,8 @@ import type { AgentExternalSessionCandidate, AgentExternalSessionsListCandidates
 import { createAgentExternalSessionsProducerOverflowFailure, isAgentExternalSessionsResultWithinByteBudget } from '@happier-dev/plugin-sdk/sessions/external';
 import { createExternalSessionContentSearchControl, ExternalSessionContentSearchYield, readJsonlFileForward, searchExternalSessionContent } from '@happier-dev/plugin-sdk/sessions/file-stores';
 import { isRecord } from '@happier-dev/plugin-sdk';
-import { discoverCursorNativeFiles, readCursorMetadata, type CursorNativeSource } from './source.js';
+import { discoverCursorNativeFiles, readCursorMetadata, type CursorNativeFile, type CursorNativeSource } from './source.js';
+import { CURSOR_CLI_SOURCE, CursorCliStoreFormatError, discoverCursorCliStores, readCursorCliStoreHead, readCursorCliStoreWorkingDirectory, type CursorCliStoreConversation } from './cliStore.js';
 import { cursorFileWitness, decodeCursorNativeRecord, encodeCursor, type CursorFileWitness } from './transcript.js';
 
 type Scan = { v: 1; kind: 'cursorCandidates'; homeDir: string; query: string; target: string; after: string; incomplete?: boolean;
@@ -37,6 +38,11 @@ export async function listCursorNativeCandidates(root: CursorNativeSource, reque
   const scan: Scan = previous ?? { v: 1, kind: 'cursorCandidates', homeDir: root.homeDir, query, target, after: '' };
   const inventory = await discoverCursorNativeFiles(root, request.signal);
   if (scan.current && !inventory.files.some(file => file.path === scan.current!.path)) return { ok: false, code: 'source_invalid' };
+  const stores = await discoverCursorCliStores(root.homeDir, request.signal);
+  type Entry = Readonly<{ path: string; file?: CursorNativeFile; store?: CursorCliStoreConversation }>;
+  const entries: Entry[] = [...inventory.files.map(file => ({ path: file.path, file })),
+    ...stores.conversations.map(store => ({ path: store.storePath, store }))]
+    .sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
   const candidates: AgentExternalSessionCandidate[] = [];
   let partial = scan.incomplete === true; let unfinished = false;
   const result = (more: boolean): AgentExternalSessionsResult<AgentExternalSessionsListCandidatesResult> => ({ ok: true, value: {
@@ -46,10 +52,28 @@ export async function listCursorNativeCandidates(root: CursorNativeSource, reque
   } });
   const control = createExternalSessionContentSearchControl({ signal: request.signal,
     deadlineAtMs: request.scanDeadlineAtMs ?? request.deadlineAtMs });
-  for (const file of inventory.files) {
-    if (file.path <= scan.after) continue;
+  for (const entry of entries) {
+    if (entry.path <= scan.after) continue;
     request.signal.throwIfAborted();
     if (candidates.length >= request.maxItems) { unfinished = true; break; }
+    if (entry.store) {
+      const store = entry.store;
+      scan.after = entry.path;
+      // Store conversations are listed by metadata; their bodies are not content-searched yet.
+      if (target === 'content' && query) { partial = true; continue; }
+      const stored = await readCursorCliStoreCandidate(store, request);
+      if (!stored) continue;
+      if (query && ![stored.title ?? '', stored.cwd ?? '', stored.remoteSessionId].some(text => text.toLocaleLowerCase().includes(query.toLocaleLowerCase()))) continue;
+      candidates.push(stored);
+      if (!isAgentExternalSessionsResultWithinByteBudget(result(true), request.maxSerializedBytes)) {
+        candidates.pop();
+        if (!candidates.length) return createAgentExternalSessionsProducerOverflowFailure('Cursor candidate cannot fit the caller result budget.');
+        scan.after = entries[entries.indexOf(entry) - 1]?.path ?? '';
+        unfinished = true; break;
+      }
+      continue;
+    }
+    const file = entry.file!;
     // A fresh request may yield before any body work. A retained native step
     // gets one indivisible row on resume, preventing equal-budget starvation.
     if (!scan.current && request.scanDeadlineAtMs !== undefined && Date.now() >= request.scanDeadlineAtMs) { unfinished = true; break; }
@@ -122,9 +146,38 @@ export async function listCursorNativeCandidates(root: CursorNativeSource, reque
       // Revisit the unreturned candidate; never advance past a dropped hit.
       candidates.pop();
       if (!candidates.length) return createAgentExternalSessionsProducerOverflowFailure('Cursor candidate cannot fit the caller result budget.');
-      scan.after = inventory.files[inventory.files.indexOf(file) - 1]?.path ?? '';
+      scan.after = entries[entries.indexOf(entry) - 1]?.path ?? '';
       unfinished = true; break;
     }
   }
   return result(unfinished);
+}
+
+/**
+ * One row per root conversation; a subagent store belongs to its root. An
+ * unrecognised store still lists as a row so its open reports the typed
+ * unsupported-format failure instead of the row silently vanishing.
+ */
+async function readCursorCliStoreCandidate(store: CursorCliStoreConversation, request: AgentExternalSessionsListCandidatesRequest): Promise<AgentExternalSessionCandidate | null> {
+  const linkData = { cursorSource: CURSOR_CLI_SOURCE };
+  const updatedAtMs = await storeUpdatedAtMs(store);
+  try {
+    const { head, state } = await readCursorCliStoreHead(store, request.readCandidateIndexState?.({ remoteSessionId: store.id, linkData }));
+    if (head.subagentOf !== null) return null;
+    const cwd = await readCursorCliStoreWorkingDirectory(store);
+    return { remoteSessionId: store.id, title: head.title ?? store.id, ...(cwd ? { cwd } : {}), createdAtMs: head.createdAtMs,
+      updatedAtMs, linkData, ...(request.readCandidateIndexState ? { candidateIndexState: state } : {}) };
+  } catch (error) {
+    if (!(error instanceof CursorCliStoreFormatError)) throw error;
+    return { remoteSessionId: store.id, title: store.id, updatedAtMs, linkData };
+  }
+}
+
+async function storeUpdatedAtMs(store: CursorCliStoreConversation): Promise<number> {
+  // An empty WAL (one a reader created) is not a Cursor write.
+  const times = await Promise.all([store.storePath, `${store.storePath}-wal`].map(async (path) => {
+    try { const info = await lstat(path); return info.size > 0 ? info.mtimeMs : 0; }
+    catch (error) { if (isRecord(error) && error.code === 'ENOENT') return 0; throw error; }
+  }));
+  return Math.max(...times);
 }
