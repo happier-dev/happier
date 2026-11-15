@@ -69,14 +69,6 @@ JavaScript runtime, while the current native release binary does not.
 
 ## Runtime contract
 
-In 0.3 development, the shared native Lima adapter runs inside the selected
-retained store with a relative `LIMA_HOME`, keeping Unix socket paths short.
-It appends `-o StreamLocalBindUnlink=yes` to Lima's `SSH` command so guest-agent
-forwards can rebind after a restart leaves a socket file. The configured SSH
-executable and arguments stay unchanged; Lima parses that command. An explicit
-earlier `StreamLocalBindUnlink=no` retains OpenSSH's first-value precedence and
-can prevent rebinding. See the [OpenSSH option contract](https://man.openbsd.org/ssh_config#StreamLocalBindUnlink).
-
 In 0.3 development source, native Agent CLI detection, install checks and launch
 share `resolveAgentCliCommandForRuntime` in `cli-common`. An alternative binary
 name must resolve through the filesystem to the declared primary filename.

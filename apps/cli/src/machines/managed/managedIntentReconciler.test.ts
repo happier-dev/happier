@@ -493,7 +493,7 @@ describe('Delete with a retained native resource after canceled bootstrap', () =
         const nativeDeletes: string[][] = [];
         const exec: Pick<ExecService, 'run'> = { run: async request => {
             expect(request.cwd).toBe(resource.store);
-            expect(request.env).toEqual({ LIMA_HOME: '.', SSH: 'ssh -o StreamLocalBindUnlink=yes' });
+            expect(request.env).toEqual({ LIMA_HOME: '.' });
             const args = [...(request.args ?? [])];
             expect(['list', 'delete']).toContain(args[0]);
             if (args[0] === 'delete') {
