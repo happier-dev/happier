@@ -17125,6 +17125,8 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         add: 'Добавить',
         addAccessibility: 'Добавить блок в этот рабочий процесс',
         addStep: 'Шаг агента',
+        insert: 'Вставить',
+        insertValue: 'Вставить значение',
         addParallel: 'Рядом',
         addLoop: 'Повторять',
         addIf: 'Если',

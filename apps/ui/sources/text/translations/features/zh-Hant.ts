@@ -17071,6 +17071,8 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         add: '新增',
         addAccessibility: '在這個工作流程中新增一個區塊',
         addStep: '代理步驟',
+        insert: '插入',
+        insertValue: '插入一個值',
         addParallel: '並排',
         addLoop: '重複',
         addIf: '條件',

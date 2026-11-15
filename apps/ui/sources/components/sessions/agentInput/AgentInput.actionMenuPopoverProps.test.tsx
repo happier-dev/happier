@@ -62,9 +62,10 @@ vi.mock('react-native-keyboard-controller', () => ({
 }));
 
 const inputFocus = vi.hoisted(() => vi.fn());
+const inputSetTextAndSelection = vi.hoisted(() => vi.fn());
 vi.mock('@/components/ui/forms/MultiTextInput', () => ({
     MultiTextInput: React.forwardRef((props: Record<string, unknown>, ref) => {
-        React.useImperativeHandle(ref, () => ({ focus: inputFocus, blur: () => {}, setSelection: () => {} }));
+        React.useImperativeHandle(ref, () => ({ focus: inputFocus, blur: () => {}, setSelection: () => {}, setTextAndSelection: inputSetTextAndSelection }));
         return React.createElement('MultiTextInput', props, null);
     }),
 }));
@@ -710,6 +711,21 @@ describe('AgentInput (action menu popover props)', () => {
         await screen.pressByTestIdAsync('visible-mcp-chip');
 
         expect(screen.findByTestId('mcp-content')).toBeNull();
+    });
+
+    // Insert (owner 2026-11-15): a visible entry to the '@' list puts the trigger at the caret, as a new word.
+    it('puts the @ trigger at the caret as its own word and keeps focus in the field for Insert', async () => {
+        const { AgentInput } = await import('./AgentInput');
+        inputSetTextAndSelection.mockClear();
+        inputFocus.mockClear();
+        let requestControl: ((intent: 'insertMention') => void) | null = null;
+        const screen = await renderScreen(<AgentInput value="Fix it" placeholder="Type" onChangeText={() => {}}
+            autocompleteKinds={[]} autocompleteSuggestions={async () => []}
+            onComposerControlRequestChange={(request) => { requestControl = request; }} />);
+        await act(async () => { screen.findByType('MultiTextInput').props.onStateChange?.({ text: 'Fix it', selection: { start: 6, end: 6 } }); });
+        await act(async () => requestControl?.('insertMention'));
+        expect(inputSetTextAndSelection).toHaveBeenLastCalledWith('Fix it @', { start: 8, end: 8 });
+        expect(inputFocus).toHaveBeenCalled();
     });
 
     it('opens a visible extra-chip content popover for the initiating chip intent a picture hands over', async () => {

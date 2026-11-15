@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
 
 import type { WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
 import type { WorkflowWaitLeafV1 } from '@happier-dev/protocol/workflows/workflowLeafV1';
@@ -9,6 +10,7 @@ import type { SessionAuthoringControlFacts } from '@/components/sessions/authori
 import { resolveEffectiveWorkflowStepExecution } from '@/sync/domains/workflows/workflowAuthoring';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import {
@@ -24,6 +26,7 @@ import {
   type WorkflowSessionDrop,
 } from './WorkflowStepSessionDropZone';
 import { workflowEditorStyles } from './workflowEditorStyles';
+import { WorkflowKindCard } from './WorkflowKindCard';
 
 /**
  * The least height a summary row holds (px), also before its words mount: its heading, one prompt
@@ -121,17 +124,21 @@ export function WorkflowBlockSummary(
         onPress={activate}
         style={workflowEditorStyles.summaryPress}
       >
-        <Text
-          testID={`${rowPrefix}-summary-text`}
-          numberOfLines={SUMMARY_PROMPT_LINES}
-          style={workflowEditorStyles.summaryPrompt}
-        >
-          {props.summary}
-        </Text>
         {block.kind === 'step' && props.draft !== undefined ? (
-          <WorkflowStepSummaryMeta step={block} draft={props.draft} authoringFacts={props.authoringFacts}
-            testID={`${rowPrefix}-summary-meta`} />
-        ) : null}
+          // An Agent step at rest is the editor's one card (owner 2026-11-15): what runs it, its prompt,
+          // and its kind with its options, as an Action's card reads.
+          <WorkflowStepSummaryCard step={block} draft={props.draft} summary={props.summary}
+            {...(props.authoringFacts === undefined ? {} : { authoringFacts: props.authoringFacts })}
+            testID={rowPrefix} />
+        ) : (
+          <Text
+            testID={`${rowPrefix}-summary-text`}
+            numberOfLines={SUMMARY_PROMPT_LINES}
+            style={workflowEditorStyles.summaryPrompt}
+          >
+            {props.summary}
+          </Text>
+        )}
         {block.kind === 'wait' ? (
           <Text style={workflowEditorStyles.metaText}>
             {t(props.inLane ? 'workflows.page.blocks.waitSub' : 'workflows.page.blocks.waitSubRoot')}
@@ -168,14 +175,23 @@ export function WorkflowBlockSummary(
   );
 }
 
-/** A step at rest names what runs it and how, quietly (lab E1): "Opus 5.5 · Workflow defaults". */
-function WorkflowStepSummaryMeta(props: Readonly<{
+/** A step card's prompt at rest: two lines, the rest one press away (lab round 1115 r16 "collapsed"). */
+const STEP_CARD_PROMPT_LINES = 2;
+
+/**
+ * An Agent step at rest, in the editor's one card anatomy: the header names what runs it ("Claude ·
+ * Opus 5.5", a role by its name), the body is its prompt, the foot says what kind of step it is and
+ * what it changes from the workflow ("Workflow defaults").
+ */
+function WorkflowStepSummaryCard(props: Readonly<{
   step: WorkflowStep;
   draft: WorkflowEditorDraft;
+  summary: string;
   authoringFacts?: SessionAuthoringControlFacts;
   testID: string;
 }>): React.ReactElement {
   const { step, draft } = props;
+  const { theme } = useUnistyles();
   const engine = useSessionAuthoringEngineSummary({
     values: resolveEffectiveWorkflowStepExecution(draft, step),
     engine: step.execution?.participant ?? step.execution?.engine ?? draft.defaults.engine,
@@ -183,12 +199,25 @@ function WorkflowStepSummaryMeta(props: Readonly<{
     ...(props.authoringFacts === undefined ? {} : { facts: props.authoringFacts }),
   });
   const options = useWorkflowStepOptionsSummary(draft, step);
-  const line = [engine, options.label]
-    .filter((part): part is string => part !== null && part.trim().length > 0)
-    .join(' · ');
   return (
-    <Text testID={props.testID} numberOfLines={1} style={workflowEditorStyles.metaText}>
-      {line}
-    </Text>
+    <WorkflowKindCard
+      testID={`${props.testID}-card`}
+      title={engine}
+      note={t('workflows.editor.addStep')}
+      footAccessory={(
+        <View testID={`${props.testID}-summary-meta`} style={workflowEditorStyles.metaRow}>
+          <Icon name="sliders-horizontal" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
+          <Text numberOfLines={1} style={workflowEditorStyles.metaText}>{options.label}</Text>
+        </View>
+      )}
+    >
+      <Text
+        testID={`${props.testID}-summary-text`}
+        numberOfLines={STEP_CARD_PROMPT_LINES}
+        style={workflowEditorStyles.summaryPrompt}
+      >
+        {props.summary}
+      </Text>
+    </WorkflowKindCard>
   );
 }

@@ -37,7 +37,9 @@ import {
 
 import type { WorkflowBlockAction } from './WorkflowBlockActionsMenu';
 import { WorkflowBlockHeading, type WorkflowBlockNameEditor } from './WorkflowBlockHeading';
-import { useWorkflowDocumentGridStyles, workflowEditorStyles } from './workflowEditorStyles';
+import { WorkflowKindCard } from './WorkflowKindCard';
+import { useWorkflowInsertChip } from './workflowInsertChip';
+import { workflowEditorStyles } from './workflowEditorStyles';
 import { WorkflowStepDataEditor } from './WorkflowStepDataEditor';
 import { formatWorkflowIssueText } from './workflowIssueText';
 import { useWorkflowStepOptionsChip } from './WorkflowStepOptionsChip';
@@ -49,7 +51,7 @@ import { createWorkflowPromptSuggestions, resolveWorkflowPromptReferenceStates }
 /**
  * One repeatable authored step (07 S7, 04 §4.3): a stable ordinal, a prompt-derived label,
  * the prompt in the real composer with the step's **Step options** chip in its chip row,
- * and one footer line saying what it returns.
+ * and the values it gets without naming them, trailing the prompt.
  *
  * The prompt is the visual centre. Inherited configuration reads as one quiet chip
  * ("Workflow defaults") rather than repeating chrome on every step; a step that changes
@@ -120,6 +122,8 @@ const WorkflowStepPromptField = React.memo(React.forwardRef<
         <View testID={props.testID}>
             <ScopedAuthoringComposer
                 inputAccessibilityLabel={props.accessibilityLabel}
+                // The step's card is the edge (owner 2026-11-15: one card anatomy, no grey composer fill).
+                panelPresentation="embedded"
                 // A step card is narrower than its window: its chips wrap rather than clip on a rail (M5).
                 hostActionBarLayout="wrap"
                 inputExpansion={inputExpansion}
@@ -212,7 +216,6 @@ export function WorkflowStepEditor(props: Readonly<{
     } = props;
 
     const editable = props.editable !== false;
-    const grid = useWorkflowDocumentGridStyles();
     const inputRef = React.useRef<ScopedAuthoringComposerHandle>(null);
     const custody = props.composerCustody.entryFor(step.id);
     // The prompt's handlers close over the current document through a ref, so
@@ -298,7 +301,13 @@ export function WorkflowStepEditor(props: Readonly<{
         ...(!editable ? props.slots?.enginePresentation : undefined),
     }), [agentId, effective.modelSelection, permissionMode, enginePicker.agentId,
         editable, participant, roleName, engineSummary, enginePicker.label, enginePicker.onAgentClick, enginePicker.onSelect, enginePicker.options, enginePicker.selectedOptionId, props.slots?.enginePresentation]);
-    const composerChips = React.useMemo(() => [stepOptionsChip], [stepOptionsChip]);
+    // Insert leads the row (owner 2026-11-15): the visible way into the '@' value list.
+    const insertChip = useWorkflowInsertChip({
+        onInsert: () => inputRef.current?.control('insertMention'),
+        testID: `${testIDPrefix}-step-${step.id}-insert`,
+    });
+    const composerChips = React.useMemo(() => (editable ? [insertChip, stepOptionsChip] : [stepOptionsChip]),
+        [editable, insertChip, stepOptionsChip]);
     const promptFrameRef = React.useRef<View>(null);
     const issues = workflowIssuesForBlock(validation, step.id, props.draft);
     const referenceStates = resolveWorkflowPromptReferenceStates(step, issues);
@@ -333,13 +342,17 @@ export function WorkflowStepEditor(props: Readonly<{
 
             {/* A Session carried onto the step binds its conversation. The
                 zone always wraps the prompt so enabling it never remounts the composer. */}
-            <View style={grid.blockCard}>
+            {/* The card places itself on the grid (`blockCard`), as an Action's does. */}
+            <View>
             <WorkflowStepSessionDropZone
                 stepId={step.id}
                 label={displayName}
                 {...(props.sessionDrop === undefined ? {} : { sessionDrop: props.sessionDrop })}
                 testID={`${testIDPrefix}-step-${step.id}-session-drop`}
             >
+                {/* The editor's one card (owner 2026-11-15): the prompt inside it, its chip row (Agent, Step
+                    options) at the card's foot; at rest the same card names what runs it (WorkflowBlockSummary). */}
+                <WorkflowKindCard testID={`${testIDPrefix}-step-${step.id}-card`} title={displayName} header={false}>
                 <View ref={promptFrameRef} collapsable={false} style={workflowEditorStyles.promptFrame}>
                     <WorkflowStepPromptField
                         ref={inputRef}
@@ -360,6 +373,7 @@ export function WorkflowStepEditor(props: Readonly<{
                         {...(props.onRequestEdit === undefined ? {} : { onRequestEdit: handleRequestEdit })}
                     />
                 </View>
+                </WorkflowKindCard>
             </WorkflowStepSessionDropZone>
             </View>
 
@@ -371,7 +385,7 @@ export function WorkflowStepEditor(props: Readonly<{
                 </View>
             ) : null}
 
-            {/* A supplied footer fact shares the "Returns …" line: a reader's "Open conversation" (run-A_steps), and an
+            {/* A supplied footer fact shares the trailing values' line: a reader's "Open conversation" (run-A_steps), and an
                 editable document's Test Run output, duration and Open details. */}
             <WorkflowStepDataEditor
                 draft={props.draft}

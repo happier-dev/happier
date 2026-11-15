@@ -361,9 +361,12 @@ async function renderList(harness: Harness, options: Readonly<{
     presentation?: Record<string, unknown>;
     resolveActionFieldOptions?: ResolveSessionActionFieldOptions;
     createNodeMock?: NonNullable<Parameters<typeof renderScreen>[1]>['createNodeMock'];
+    /** The one prompt being edited: every other written prompt is its resting summary. */
+    editingBlockId?: string | null;
 }>) {
     const element = React.createElement(harness.WorkflowBlockListEditor, {
         ...(options.presentation === undefined ? {} : { presentation: options.presentation as never }),
+        ...(options.editingBlockId === undefined ? {} : { editingBlockId: options.editingBlockId, onRequestEditBlock: () => {} }),
         ...(options.resolveActionFieldOptions === undefined ? {} : { resolveActionFieldOptions: options.resolveActionFieldOptions }),
         draft: options.draft,
         list: { kind: 'root' },
@@ -1985,6 +1988,52 @@ describe('document anatomy (DESIGN-4)', () => {
         expect(reading.findByTestId('workflow-editor-parallel-panel-branch-one-label')?.props.children).toBe('Changelog');
     });
 
+    it('reads an Agent step at rest in the editor\'s one card: what runs it, its prompt, its kind and options (owner 2026-11-15)', async () => {
+        const harness = await loadHarness();
+        const draft = buildDraft(harness, [step('first', 'Find the cause'), step('second', 'Fix it')] as never);
+        const screen = await renderList(harness, { draft, editingBlockId: 'first' });
+        // The resting step is a card, like an Action's: header, prompt body, foot with its kind.
+        const card = screen.findByTestId('workflow-editor-step-second-card');
+        expect(card).not.toBeNull();
+        expect(screen.findByTestId('workflow-editor-step-second-card-title')).not.toBeNull();
+        expect(card?.findAll((node) => node.props?.testID === 'workflow-editor-step-second-summary-text').length).toBeGreaterThan(0);
+        expect(card?.findAll((node) => node.props?.children === 'workflows.editor.addStep').length).toBeGreaterThan(0);
+        expect(card?.findAll((node) => node.props?.testID === 'workflow-editor-step-second-summary-meta').length).toBeGreaterThan(0);
+        // The prompt reads two lines at rest; the rest is one press away.
+        expect(screen.findHostByTestId('workflow-editor-step-second-summary-text')?.props.numberOfLines).toBe(2);
+        await screen.unmount();
+        // Editing, the composer sits in the same card, and selection paints no grey plate behind it.
+        const selected = await renderList(harness, { draft, selectedBlockId: 'first', editingBlockId: 'first' });
+        expect(selected.findByTestId('workflow-editor-step-first-card')).not.toBeNull();
+        expect(selected.findByTestId('workflow-editor-first-selected')).toBeNull();
+    });
+
+    it('edits a text Action field as words with values inside, and Insert puts a value in them (owner 2026-11-15)', async () => {
+        const harness = await loadHarness();
+        const { WorkflowValuePicker } = await import('./WorkflowValuePicker');
+        const draft = buildDraft(harness, [
+            step('gather', 'Gather changes'),
+            { kind: 'action', id: 'notify', actionId: 'notifications.notify_me', input: { message: { kind: 'literal', value: 'Done:' } } },
+        ] as never);
+        let changed = draft;
+        const screen = await renderList(harness, { draft, selectedBlockId: 'notify', onChange: (next) => { changed = next as typeof draft; } });
+        // The field is typed into directly; no value-kind select stands before it.
+        const field = screen.findAllByTestId('workflow-editor-action-notify-field-message-text')
+            .find((node) => typeof node.props.onChangeText === 'function');
+        expect(field?.props.value).toBe('Done:');
+        await act(async () => { field!.props.onChangeText('Done: shipped'); });
+        expect((changed.blocks[1] as { input: Record<string, unknown> }).input.message).toEqual({ kind: 'literal', value: 'Done: shipped' });
+        // Insert opens the same value list; the chosen value lands inside the words as a token.
+        const insert = screen.findAllByType(WorkflowValuePicker).find((node) => node.props.testID === 'workflow-editor-action-notify-field-message-insert-list');
+        expect(insert).toBeDefined();
+        const gatherResult = { kind: 'result', producer: { blockId: 'gather', scope: { kind: 'current' } }, path: [] };
+        await act(async () => { insert!.props.onChange(gatherResult, {}); });
+        const message = (changed.blocks[1] as { input: Record<string, { kind: string; document?: { text: string }; input?: unknown[] }> }).input.message;
+        expect(message.kind).toBe('text');
+        expect(message.document?.text.startsWith('Done:')).toBe(true);
+        expect(message.input).toEqual([gatherResult]);
+    });
+
     it('keeps a step\'s card free of Returns and Add lines, the same selected or at rest (owner 2026-11-15)', async () => {
         const harness = await loadHarness();
         const named = { ...step('gather', 'Gather'), result: { kind: 'json', schema: { type: 'object', properties: { issues: { type: 'array' }, summary: { type: 'string' } } } } };
@@ -2143,7 +2192,8 @@ describe('document anatomy (DESIGN-4)', () => {
         expect(selections).toContain('notify');
         await screen.unmount();
         const selected = await renderList(harness, { draft, selectedBlockId: 'notify' });
-        expect(selected.findHostByTestId('workflow-editor-action-notify-field-message-input-0-value-trigger')).not.toBeNull();
+        // Selected, a text field is its words, typed into directly (owner 2026-11-15).
+        expect(selected.findHostByTestId('workflow-editor-action-notify-field-message-text')).not.toBeNull();
         await selected.unmount();
         // An empty value well says what goes in it, never a blank grey box (DESIGN-7 N5).
         const nested = buildDraft(harness, [{ kind: 'workflow', id: 'review', name: 'Review', workflowRef: 'builtin:review-and-converge',

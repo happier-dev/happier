@@ -100,7 +100,11 @@ export type ScopedAuthoringDocument = Readonly<{
     attachments: readonly PortableComposerAttachmentV1[];
 }>;
 
-export type ScopedAuthoringComposerHandle = Readonly<{ focus: () => void }>;
+export type ScopedAuthoringComposerHandle = Readonly<{
+    focus: () => void;
+    /** Runs a composer control (Insert's '@' list); a resting picture opens first, then runs it. */
+    control: (intent: AgentInputControlIntent) => void;
+}>;
 
 export type ScopedAuthoringComposerProps = Readonly<{
         /**
@@ -164,6 +168,8 @@ export type ScopedAuthoringComposerProps = Readonly<{
          */
         editing?: boolean;
         onRequestEdit?: () => void;
+        /** `embedded`: inside a card the host draws (a workflow step's card); `document` otherwise. */
+        panelPresentation?: 'document' | 'embedded';
     }>;
 
 /**
@@ -212,6 +218,10 @@ export const ScopedAuthoringComposer = React.memo(React.forwardRef<
         focus: () => {
             if (liveRef.current) liveRef.current.focus();
             else requestEdit(null);
+        },
+        control: (intent: AgentInputControlIntent) => {
+            if (liveRef.current) liveRef.current.control(intent);
+            else requestEdit(null, intent);
         },
     }), [requestEdit]);
     return <ScopedAuthoringComposerOwner {...props} ref={liveRef} onRequestPreviewEdit={requestEdit}
@@ -308,6 +318,10 @@ const ScopedAuthoringComposerOwner = React.forwardRef<
         focus: () => {
             if (focusRequestRef.current) focusRequestRef.current();
             else props.onRequestPreviewEdit(null);
+        },
+        control: (intent: AgentInputControlIntent) => {
+            if (controlRequestRef.current) controlRequestRef.current(intent);
+            else props.onRequestPreviewEdit(null, intent);
         },
     }), [props.onRequestPreviewEdit]);
     // Opened from its picture: the input is mounted by now (child effects run first), so the
@@ -631,7 +645,7 @@ const ScopedAuthoringComposerOwner = React.forwardRef<
                 onAgentPickerSelect={editable ? context?.onAgentPickerSelect : undefined}
                 onAgentClick={context?.onAgentClick}
                 contentPaddingHorizontal={0}
-                panelPresentation="document"
+                panelPresentation={props.panelPresentation ?? 'document'}
                 voiceAffordance={props.voiceAffordance}
             />
         </PluginComposerRegions>

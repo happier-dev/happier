@@ -30,6 +30,8 @@ export type AgentInputControlIntent =
     | 'actionMenu'
     | 'promptLibrary'
     | 'dictate'
+    /** Insert: the '@' value list at the caret, as typing '@' opens it. */
+    | 'insertMention'
     | Readonly<{ chipPopover: string }>;
 
 /** Admitted plugin status presentation; nodes stay opaque while their declared emphasis reaches the strip. */

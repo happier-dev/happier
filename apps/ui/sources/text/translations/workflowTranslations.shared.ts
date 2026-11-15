@@ -306,6 +306,8 @@ export const en = {
         add: 'Add',
         addAccessibility: 'Add a block to this workflow',
         addStep: 'Agent step',
+        insert: 'Insert',
+        insertValue: 'Insert a value',
         addParallel: 'Side by side',
         addLoop: 'Repeat',
         addIf: 'If',

@@ -17113,6 +17113,8 @@ const pl = translated(workflowValueReferenceTranslations.pl, {
         add: 'Dodaj',
         addAccessibility: 'Dodaj blok do tego przepływu pracy',
         addStep: 'Krok agenta',
+        insert: 'Wstaw',
+        insertValue: 'Wstaw wartość',
         addParallel: 'Obok siebie',
         addLoop: 'Powtarzaj',
         addIf: 'Jeśli',

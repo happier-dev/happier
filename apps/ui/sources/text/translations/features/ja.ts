@@ -17077,6 +17077,8 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         add: '追加',
         addAccessibility: 'このワークフローにブロックを追加',
         addStep: 'エージェントのステップ',
+        insert: '挿入',
+        insertValue: '値を挿入',
         addParallel: '並べて実行',
         addLoop: '繰り返し',
         addIf: '条件分岐',

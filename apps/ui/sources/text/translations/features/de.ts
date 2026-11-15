@@ -16581,6 +16581,8 @@ const de = translated(workflowValueReferenceTranslations.de, {
         add: 'Hinzufügen',
         addAccessibility: 'Einen Block zu diesem Workflow hinzufügen',
         addStep: 'Agent-Schritt',
+        insert: 'Einfügen',
+        insertValue: 'Einen Wert einfügen',
         addParallel: 'Nebeneinander',
         addLoop: 'Wiederholen',
         addIf: 'Wenn',

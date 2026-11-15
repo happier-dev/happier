@@ -17072,6 +17072,8 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         add: '添加',
         addAccessibility: '向这个工作流添加一个块',
         addStep: '代理步骤',
+        insert: '插入',
+        insertValue: '插入一个值',
         addParallel: '并排',
         addLoop: '重复',
         addIf: '条件',

@@ -17115,6 +17115,8 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         add: 'Afegeix',
         addAccessibility: 'Afegeix un bloc a aquest flux de treball',
         addStep: 'Pas d’agent',
+        insert: 'Insereix',
+        insertValue: 'Insereix un valor',
         addParallel: 'En paral·lel',
         addLoop: 'Repeteix',
         addIf: 'Si',

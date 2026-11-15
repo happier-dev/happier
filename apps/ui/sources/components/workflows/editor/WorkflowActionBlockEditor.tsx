@@ -34,8 +34,14 @@ import { workflowEditorStyles } from './workflowEditorStyles';
 import { WorkflowKindCard } from './WorkflowKindCard';
 import { formatWorkflowExecutionLiteral, formatWorkflowFieldLabel } from '../presentation/workflowValuePresentation';
 import { WorkflowActionFieldTextValue, WorkflowBindingRow, WorkflowValueReferenceEditor } from './WorkflowStepDataEditor';
+import { WorkflowActionTextFieldEditor } from './WorkflowActionTextFieldEditor';
 
 const NO_ROWS: readonly ActionFieldRow[] = Object.freeze([]);
+
+/** Typed words, so values can sit inside them: a text, URL or long-text field a command does not take literally. */
+function textCapable(hint: EffectiveActionInputField | null, literalOnly: boolean): boolean {
+    return !literalOnly && hint !== null && (hint.widget === 'text' || hint.widget === 'url' || hint.widget === 'textarea');
+}
 
 /** The literal a newly set field starts from: an empty selection for a multi-select, empty text otherwise. */
 function initialActionFieldLiteral(hint: EffectiveActionInputField | null): WorkflowActionFieldBindingV1 {
@@ -239,7 +245,18 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                             return formatActionInputFieldChoice(row.hint, value, resolveFieldOptions);
                         }}
                         onSet={() => { setBinding(row.key, initialActionFieldLiteral(row.hint)); props.onSelect(); }}
-                        renderEditor={() => binding === undefined ? null : binding.kind === 'list' ? (
+                        renderEditor={() => binding === undefined ? null : textCapable(row.hint, literalOnly) && binding.kind !== 'list' && binding.kind !== 'object' ? (
+                            // Words with values inside (owner 2026-11-15): typed directly, Insert puts a value at the caret.
+                            <WorkflowActionTextFieldEditor
+                                draft={props.draft}
+                                consumerBlockId={block.id}
+                                binding={binding}
+                                onChange={(next) => setBinding(row.key, next)}
+                                label={row.label}
+                                placeholder={row.hint?.placeholder ?? t('workflows.condition.literalPlaceholder')}
+                                testID={fieldId}
+                            />
+                        ) : binding.kind === 'list' ? (
                             binding.items.map((item, index) => (
                                 <WorkflowValueReferenceEditor
                                     key={index}
@@ -283,7 +300,7 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                                 />
                             </View>
                         )) : binding.kind === 'text' ? (
-                            // The field editor with Insert consumes `workflowActionTextField`; until it lands the text reads as authored.
+                            // A field that takes no typed words (a select) still reads the text it was given.
                             <WorkflowActionFieldTextValue draft={props.draft} binding={binding} testID={`${fieldId}-text`} />
                         ) : (
                             <WorkflowValueReferenceEditor

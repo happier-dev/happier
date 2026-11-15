@@ -616,9 +616,10 @@ interface AgentInputProps {
      * composer of a conversation. It draws the plain hairline card the read-only presentation
      * draws — no glass rim or cast shadow, whatever the composer style setting — with no outer
      * vertical padding and no reserved empty status row, so the document's own rhythm places it.
-     * Default `composer`.
+     * Default `composer`. `embedded`: a document composer inside a card its host already draws
+     * (a workflow step's card): the same document rhythm with no coat and no edge of its own.
      */
-    panelPresentation?: 'composer' | 'document';
+    panelPresentation?: 'composer' | 'document' | 'embedded';
     /**
      * Plan/quota usage bundle rendered by the instrument strip. Data path stays
      * System-B-owned (SessionView); the strip only restyles the trigger.
@@ -972,6 +973,8 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         },
         /** The same composer edge in a document, editable or read-only (C1: read-only is interaction, not an edge). */
         documentPanel: resolveAgentInputPanelLayoutStyle(theme),
+        /** Inside a card its host draws: the card is the edge, so the composer draws none. */
+        embeddedPanel: { borderWidth: 0, borderRadius: 0, paddingHorizontal: 0 },
         readOnlyPanel: {
             ...resolveAgentInputPanelLayoutStyle(theme),
             width: '100%',
@@ -1344,14 +1347,15 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const readOnly = props.onChangeText === undefined;
     const voiceFeatureEnabled = useFeatureEnabled('voice');
     const voiceEnabled = !readOnly && voiceFeatureEnabled && props.voiceAffordance !== 'none';
-    const documentPanel = props.panelPresentation === 'document';
+    const documentPanel = props.panelPresentation === 'document' || props.panelPresentation === 'embedded';
+    const embeddedPanel = props.panelPresentation === 'embedded';
     const chipTint = theme.colors.composer.chipTint;
     const composerSurfaceStyleSetting = useSetting('composerSurfaceStyle');
     const isGlassComposer = !documentPanel && isGlassComposerSurface({ setting: composerSurfaceStyleSetting });
     const surfaceGroup = props.surfaceGroup ?? 'card';
     const composerSurfaceColor = isGlassComposer ? theme.colors.glass.composerSurface : theme.colors.input.background;
     const panelMaterialProps = { surfaceGroup, nested: surfaceGroup === 'card', solidColor: composerSurfaceColor, finishRole: 'composer' as const,
-        backedStyle: styles.unifiedPanelBackedEdge };
+        backedStyle: styles.unifiedPanelBackedEdge, ...(embeddedPanel ? { noCoat: true } : {}) };
     const keyboardShortcutsV2Enabled = useSetting('keyboardShortcutsV2Enabled') === true;
     const keyboardSingleKeyShortcutsEnabled = useSetting('keyboardSingleKeyShortcutsEnabled') === true;
     const keyboardShortcutOverridesV1 = useSetting('keyboardShortcutOverridesV1') ?? {};
@@ -3786,8 +3790,25 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         hasEnvVars,
         hasAgent: !readOnly && hasAgent,
     });
+    // Insert (a visible entry to the '@' list): the trigger lands at the caret, starting a word, and
+    // every chip after it moves with the text, as an inserted reference's do.
+    const insertSuggestionTrigger = useEventCallback((trigger: '@') => {
+        const { text, selection } = inputStateRef.current;
+        const start = Math.min(selection.start, selection.end);
+        const end = Math.max(selection.start, selection.end);
+        const inserted = `${start > 0 && !/\s/u.test(text.charAt(start - 1)) ? ' ' : ''}${trigger}`;
+        const shift = inserted.length - (end - start);
+        const mentions = structuredInputMentionsRef.current
+            .filter((mention) => mention.end <= start || mention.start >= end)
+            .map((mention) => (mention.start >= end ? { ...mention, start: mention.start + shift, end: mention.end + shift } : mention));
+        const cursor = start + inserted.length;
+        inputRef.current?.setTextAndSelection(text.slice(0, start) + inserted + text.slice(end), { start: cursor, end: cursor });
+        updateStructuredInputMentions(mentions);
+        inputRef.current?.focus();
+    });
     const requestComposerControl = useEventCallback((intent: AgentInputControlIntent) => {
         switch (intent) {
+            case 'insertMention': insertSuggestionTrigger('@'); break;
             case 'engine': handleAgentPress(); break;
             case 'actionMenu': handleActionMenuPress(); break;
             case 'promptLibrary': openPromptPicker(); break;
@@ -4187,7 +4208,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             <TextSelectabilityScope selectable>
                 <View ref={overlayAnchorRef} testID="agent-input-composer" style={[styles.container, documentPanel ? styles.containerDocument : null, { paddingHorizontal: props.contentPaddingHorizontal ?? 0 }]}>
                     {instrumentStrip}
-                    <GlassSurface testID="agent-input-material-surface" {...panelMaterialProps} style={[styles.unifiedPanel, isMobileLayoutWidth(screenWidth) ? styles.unifiedPanelPhone : null, props.panelStyle, styles.readOnlyPanel]}>
+                    <GlassSurface testID="agent-input-material-surface" {...panelMaterialProps} style={[styles.unifiedPanel, isMobileLayoutWidth(screenWidth) ? styles.unifiedPanelPhone : null, props.panelStyle, styles.readOnlyPanel, embeddedPanel ? styles.embeddedPanel : null]}>
                         {composerPresentationFeedback}
                         <AgentInputAttachmentsRow items={attachmentRowItems} />
                         <View style={[styles.inputContainer, styles.readOnlyInputContent, documentPanel ? styles.readOnlyDocumentContent : null]}>
@@ -4417,6 +4438,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                         isMobileLayoutWidth(screenWidth) ? styles.unifiedPanelPhone : null,
                         isGlassComposer ? styles.unifiedPanelGlass : null,
                         documentPanel ? styles.documentPanel : null,
+                        embeddedPanel ? styles.embeddedPanel : null,
                         props.panelStyle,
                         typeof hostPanelMaxHeight === 'number' ? { maxHeight: hostPanelMaxHeight } : null,
                     ]}

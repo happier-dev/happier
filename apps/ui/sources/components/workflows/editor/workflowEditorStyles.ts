@@ -282,20 +282,6 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         color: theme.colors.text.tertiary,
         flexShrink: 1,
     },
-    /**
-     * The selected step's plate (lab `editor-L1`, `.uwe-sel`): a quiet ink tint behind its number, card
-     * and lines, so the step Step options is editing reads as one object beside the popover. It is
-     * absolutely placed, so selecting moves nothing (DESIGN-7 N27), and concentric with the card.
-     */
-    selectedPlate: {
-        position: 'absolute',
-        top: -theme.space.s8,
-        bottom: -theme.space.s8,
-        left: -theme.space.s8,
-        right: -theme.space.s8,
-        borderRadius: theme.parts.composer.radius + theme.space.s8,
-        backgroundColor: theme.colors.surface.selected,
-    },
     /** A list item's content on the name column (its ordinal hangs in the gutter): the block, then its "Only when" line. */
     blockColumn: {
         flexGrow: 1,
@@ -584,10 +570,17 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
      */
     kindCard: {
         ...resolveAgentInputPanelLayoutStyle(theme),
+        // In flow on the page's paper: the flat ink edge (DESIGN.md Materials), never the composer's
+        // glass rim, which reads near-white on a light page now the card has no grey fill.
+        borderWidth: 1,
+        borderColor: theme.colors.border.surface,
         paddingTop: 0,
         paddingBottom: 0,
         paddingHorizontal: 0,
         minWidth: 0,
+    },
+    kindCardPaper: {
+        backgroundColor: theme.colors.surface.base,
     },
     /** The card's header (lab `.uwe-khd`): mark, name, provenance, then its one action. */
     kindCardHeader: {
@@ -830,6 +823,33 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         flexShrink: 1,
         minWidth: 0,
         maxWidth: '100%',
+    },
+    /** A text Action field with values inside it: the field, then Insert on its line (owner 2026-11-15). */
+    textFieldLine: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        flexWrap: 'wrap',
+        gap: theme.space.s8,
+        minWidth: 0,
+        flexGrow: 1,
+    },
+    textFieldBox: {
+        borderRadius: theme.borderRadius.md,
+        borderWidth: StyleSheet.hairlineWidth,
+        paddingHorizontal: theme.space.s8,
+        paddingVertical: theme.space.s4,
+        minWidth: 72,
+        flexGrow: 1,
+        flexBasis: 160,
+        maxWidth: '100%',
+    },
+    textFieldInsert: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s4,
+        paddingHorizontal: theme.space.s4,
+        paddingVertical: theme.space.s4,
+        borderRadius: theme.borderRadius.sm,
     },
     inlineValue: {
         ...Typography.variant('label', 'regular'),

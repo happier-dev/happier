@@ -3,7 +3,6 @@ import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 
-import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
@@ -80,10 +79,13 @@ export function WorkflowKindCard(props: Readonly<{
             <DisclosureCaret expanded={expanded} size={14} />
         </HappierPressable>
     );
-    const titleBlock = (
+    // A card that only names what runs it (a resting step) is one line of text: no wrappers to lay out
+    // per row in a long workflow (PERF-WF3B).
+    const title = <Text testID={`${props.testID}-title`} numberOfLines={1} style={workflowEditorStyles.headingName}>{props.title}</Text>;
+    const titleBlock = props.source === undefined && props.summary === undefined ? title : (
         <View style={workflowEditorStyles.kindCardTitleBlock}>
             <View style={workflowEditorStyles.kindCardTitleLine}>
-                <Text testID={`${props.testID}-title`} numberOfLines={1} style={workflowEditorStyles.headingName}>{props.title}</Text>
+                {title}
                 {props.source === undefined ? null
                     : <Text numberOfLines={1} style={workflowEditorStyles.kindCardSource}>{'· '}{props.source}</Text>}
             </View>
@@ -94,8 +96,8 @@ export function WorkflowKindCard(props: Readonly<{
     );
     return (
         <WorkflowKindCardLabelTrack.Provider value={track}>
-        <GlassSurface testID={props.testID} surfaceGroup="card" nested solidColor={theme.colors.surface.base}
-            finishRole="composer" style={[workflowEditorStyles.kindCard, grid.blockCard]}>
+        {/* In flow on the page's paper: a flat card (DESIGN.md Materials), no glass material. */}
+        <View testID={props.testID} style={[workflowEditorStyles.kindCard, workflowEditorStyles.kindCardPaper, grid.blockCard]}>
             {props.header === false ? null : (
                 <View style={[workflowEditorStyles.kindCardHeader, props.summary === undefined ? null : workflowEditorStyles.kindCardHeaderTall,
                     actionBelow ? workflowEditorStyles.kindCardHeaderWrapped : null,
@@ -132,7 +134,7 @@ export function WorkflowKindCard(props: Readonly<{
                     {props.footAccessory ?? null}
                 </View>
             ) : null}
-        </GlassSurface>
+        </View>
         </WorkflowKindCardLabelTrack.Provider>
     );
 }

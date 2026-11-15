@@ -887,19 +887,7 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
             testID={`${testIDPrefix}-${block.id}-spine`}
           />
         )}
-        {/* The selected leaf's plate sits behind it; a container's selection stays on its mark. */}
-        {selected &&
-        editable &&
-        (block.kind === 'step' ||
-          block.kind === 'action' ||
-          block.kind === 'workflow' ||
-          block.kind === 'wait') ? (
-          <View
-            pointerEvents="none"
-            testID={`${testIDPrefix}-${block.id}-selected`}
-            style={workflowEditorStyles.selectedPlate}
-          />
-        ) : null}
+        {/* Selection reads on the block's filled ordinal, never a grey plate behind its card (owner 2026-11-15). */}
         {/* The block and its condition line, one column: a sibling here must
                             never take width from the block's card. A container draws the rail. */}
         <View style={grid.blockColumn}>

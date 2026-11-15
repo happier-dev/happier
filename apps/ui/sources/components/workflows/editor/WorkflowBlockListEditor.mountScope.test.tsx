@@ -187,7 +187,9 @@ const CONTAINER_NAME_FIELDS = 5;
 // An unreached summary row and the gap before it: the gap, the row's heading (ordinal, name, resting
 // ⋯ mark) and its prompt line. Before PERF-WF3B Option A this renderer counted 24 (30 live DOM nodes,
 // 19 after); the bound sits above the row's words and below a mounted menu or inserter.
-const INACTIVE_ROW_HOST_NODES = 16;
+// Owner 2026-11-15: an Agent step at rest is the editor's one card, so its words gain the card's frame,
+// header (what runs it), body and foot (its kind and options mark): measured 24, constant per row.
+const INACTIVE_ROW_HOST_NODES = 24;
 
 async function renderLongDocument(initialBlockId: string | null = null) {
     const initialDraft = buildDraft();
