@@ -1,6 +1,6 @@
 import { createLocalMcpBearer } from './localMcpBearer';
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import type { AddressInfo, Server } from 'node:net';
+import { createServer as createNetServer, type AddressInfo, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { createSessionNativeDirectory, grantExactUidPathAccess } from '@/utils/fs/unixPathAccess';
@@ -42,9 +42,11 @@ export async function prepareSessionMcpLocalTransport(options: SessionMcpLocalTr
     });
     let retired = false;
     let contextFilePath: string | undefined;
+    let front: Server | undefined;
     const retire = async () => {
         retired = true;
         bearer.retire();
+        front?.close();
         await directory.dispose();
     };
     try {
@@ -54,11 +56,17 @@ export async function prepareSessionMcpLocalTransport(options: SessionMcpLocalTr
             get url() { return retired ? undefined : 'http://localhost/mcp'; },
             authenticate: bearer.authenticate,
             listen: async (server: Server) => {
+                // The endpoint admits an Agent relay by its connection's kernel peer, which the
+                // custody helper reads from the socket's descriptor. Under Bun (shipped hosts) a
+                // `node:http` server's own sockets carry none, so every relay was refused; a `node:net`
+                // front accepts each connection and hands that same socket to the HTTP server.
+                const listener = createNetServer(socket => { server.emit('connection', socket); });
+                front = listener;
                 try {
                     await new Promise<void>((resolve, reject) => {
-                        server.once('error', reject);
-                        server.listen(localContext.socketPath, () => {
-                            server.off('error', reject);
+                        listener.once('error', reject);
+                        listener.listen(localContext.socketPath, () => {
+                            listener.off('error', reject);
                             resolve();
                         });
                     });
