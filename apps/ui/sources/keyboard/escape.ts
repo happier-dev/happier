@@ -19,6 +19,8 @@ export const ESCAPE_LAYER_PRIORITIES = {
     pane: 100,
     overlay: 200,
     composerSuggestions: 300,
+    /** Cancel a focused field's edit before an enclosing pane dismisses. */
+    inputEditing: 300,
     find: 300,
     popover: 400,
     commandPalette: 500,

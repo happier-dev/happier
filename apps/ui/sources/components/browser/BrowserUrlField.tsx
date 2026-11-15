@@ -15,6 +15,7 @@ import {
 } from '@/sync/domains/browser/shell';
 import { t } from '@/text';
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
+import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
 
 /**
  * How much room the field has. `toolbar` is the 34px chrome row above a rendered page; `panel` is
@@ -296,10 +297,7 @@ export function BrowserUrlField(props: BrowserUrlFieldProps): React.ReactElement
         props.onSubmitUrl(normalized.url);
     }, [props]);
 
-    const handleKeyPress = React.useCallback((event: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
-        if (event.nativeEvent.key !== 'Escape') {
-            return;
-        }
+    const cancelEdit = React.useCallback(() => {
         setRawDraft(props.value);
         draftRef.current = props.value;
         setSelection(NO_SELECTION);
@@ -307,6 +305,23 @@ export function BrowserUrlField(props: BrowserUrlFieldProps): React.ReactElement
         setFocused(false);
         inputRef.current?.blur();
     }, [props.value]);
+
+    const handleKeyPress = React.useCallback((event: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
+        if (event.nativeEvent.key === 'Escape') cancelEdit();
+    }, [cancelEdit]);
+
+    // Pane dismissal runs at window capture, before RNW's target key handler.
+    // Claim this field's edit in that same stack, leaving other fields and overlays alone.
+    useEscapeLayer({
+        enabled: Platform.OS === 'web' && focused,
+        priority: ESCAPE_LAYER_PRIORITIES.inputEditing,
+        allowEditableTarget: true,
+        onEscape: event => {
+            if ((event as { target?: unknown }).target !== inputRef.current) return false;
+            cancelEdit();
+            return true;
+        },
+    });
 
     const handleCopyUrl = React.useCallback(async () => {
         if (!props.value || props.disabled) return;
