@@ -132,9 +132,9 @@ describe('Pi parameter documents through installed provider serializers', () => 
       launch: { executablePath: process.execPath, argsPrefix: [] } },
       mcpServers: { authored: { command: process.execPath, args: [serverPath] } },
     });
-    expect(loaded.tools.map(tool => tool.name).sort()).toEqual([
+    await vi.waitFor(() => expect(loaded.tools.map(tool => tool.name).sort()).toEqual([
       'session_board_item_upsert', 'settings_get', 'inline_control', 'mcp__authored__authored0', 'mcp__authored__authored1',
-    ].sort());
+    ].sort()));
     console.info('Pi native parameter presentation JSON characters', native.filter(tool =>
       loaded.tools.some(registered => registered.name === tool.name)).map(tool => ({
       name: tool.name, shared: JSON.stringify(tool.inputSchema).length,
@@ -394,8 +394,8 @@ describe('Pi parameter documents through installed provider serializers', () => 
     } });
     try {
       const expected = ['mcp__healthy__authored0', 'mcp__healthy__authored1'];
-      expect(extension.tools.map(tool => tool.name)).toEqual(expected);
-      expect(extension.getActiveTools()).toEqual(expected);
+      await expect.poll(() => extension.tools.map(tool => tool.name)).toEqual(expected);
+      await expect.poll(() => extension.getActiveTools()).toEqual(expected);
     } finally { await extension.dispose(); }
   });
 });

@@ -3,7 +3,7 @@ import { createPiMcpToolPolicyContractFixture } from './mcpToolPolicy.test-suppo
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import type { AgentSessionRuntimeEvent, AgentExecutionRunRuntime, AgentSessionRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
 import { readSessionCapabilityNoticeV1, SessionCapabilityNoticeV1Schema } from '@happier-dev/protocol';
 
@@ -45,11 +45,14 @@ it('keeps healthy MCP callable after optional initialize failure through real Pi
       mcpServers: Object.fromEntries(fixture.servers.map(server => [server.key, server.config])),
       mcpServersStrictMode: false,
     });
-    expect(input.observeCapabilityNotices()).toHaveLength(1);
+    await expect.poll(() => input.observeCapabilityNotices()).toHaveLength(1);
     const notice = readSessionCapabilityNoticeV1(input.observeCapabilityNotices()[0]);
     expect(SessionCapabilityNoticeV1Schema.parse(notice)).toEqual({ v: 1,
       items: [{ kind: 'mcp_server', name: 'broken', code: `mcp_${stage}_failed` }] });
     expect(JSON.stringify(input.observeCapabilityNotices())).not.toContain('private-failure-sentinel');
+    // Optional native open precedes catalog discovery. Query the real installed
+    // Pi's public tool inventory before asking the synthetic model to call it.
+    await vi.waitFor(async () => expect(await input.readNativeTools()).toContain('mcp__a__echo'), { timeout: 30_000 });
     const result = await input.invokeTool(runtime, { server: 'a', tool: 'echo', arguments: {}, approvalScope: 'once' });
     expect(result.outcome).toBe('completed');
     expect(input.observeServerCalls()).toEqual([expect.objectContaining({ server: 'a', privateTokenDelivered: true })]);
@@ -155,8 +158,9 @@ it('witnesses native MCP calls only in a completed Pi window', async () => {
     }
     const usage = events.filter(event => event.kind === 'mcp-tool-usage');
     expect(usage).toHaveLength(2);
-    expect(usage).toMatchObject([0, 1].map(() => ({ coverage: 'partial',
-      servers: [{ serverName: 'a', toolCallCount: 1, schemaBytes: null }] })));
+    expect(usage).toMatchObject([0, 1].map(() => ({ coverage: 'complete',
+      servers: [{ serverName: 'a', toolCallCount: 1, schemaBytes: null },
+        { serverName: 'b', toolCallCount: 0, schemaBytes: null }] })));
     expect(new Set(usage.map(event => event.turnId)).size).toBe(2);
     expect(events.filter(event => event.kind === 'tool-call').map(event => event.toolName)).toEqual(['mcp__a__echo', 'mcp__a__echo']);
   } finally {

@@ -87,7 +87,7 @@ describe('Pi extension user MCP', () => {
         },
       });
       for (const handler of handlers.get('session_start') ?? []) await handler({});
-      expect(tools.map(tool => tool.name)).toEqual(['mcp__fixture__echo']);
+      await expect.poll(() => tools.map(tool => tool.name)).toEqual(['mcp__fixture__echo']);
       expect(spawnBoundary.mock.calls[0]?.[2]?.windowsHide).toBe(true);
       expect(activeTools).toEqual(['read', 'mcp__fixture__echo']);
       const tool = tools[0]!;
@@ -174,13 +174,16 @@ async function checkStartupFailure(stage: 'spawn' | 'initialize' | 'list', stric
     }
     else {
       await start();
-      expect(activeTools).toEqual(['mcp__good__toString', 'mcp__good__echo', 'mcp__later__toString', 'mcp__later__echo']);
+      // Optional discovery now settles independently of native startup and peers.
+      await expect.poll(() => activeTools.slice().sort()).toEqual([
+        'mcp__good__toString', 'mcp__good__echo', 'mcp__later__toString', 'mcp__later__echo',
+      ].sort());
       const echo = tools.find(tool => tool.name === 'mcp__good__echo')!;
       expect(await echo.execute('good-call', { text: 'alive' }, undefined, undefined,
         { cwd: root, ui: { confirm: async () => true } })).toMatchObject({ content: [{ type: 'text', text: 'good:alive' }] });
       expect(tools.some(tool => tool.name.startsWith('mcp__broken__'))).toBe(false);
     }
-    expect(notices).toHaveLength(1);
+    await expect.poll(() => notices).toHaveLength(1);
     const wire = notices[0] as { notice: unknown };
     expect(SessionCapabilityNoticeV1Schema.parse(wire.notice)).toEqual({ v: 1,
       items: [{ kind: 'mcp_server', name: 'broken', code: `mcp_${stage}_failed` }] });

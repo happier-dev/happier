@@ -67,6 +67,7 @@ let materialized: MaterializeMcpServerConfigRecordResult | undefined;
 let calls: (AgentMcpToolPolicyCallObservation & Readonly<{ privateTokenDelivered: boolean }>)[] = [];
 let permissions: AgentMcpToolPolicyPermissionObservation[] = [];
 let advertisedTools = new Set<string>();
+let queryNativeTools: () => Promise<string[]>;
 let corruptNativeApprovalCorrelation = false;
 let approvalScope: 'once' | 'session' = 'once';
 let handler: ProviderEnforcedPermissionHandler;
@@ -119,10 +120,22 @@ async function spawnPi(spec: Extract<PluginProtocolClientSpec, { kind: 'jsonStre
     if (argv[index] === '--happier-tools-config' || argv[index] === '--extension') launch.filesWritten.push(argv[index + 1]!);
   }
   const child = spawn(process.execPath, argv, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+  const inventoryRequests = new Map<string, (names: string[]) => void>();
+  queryNativeTools = () => new Promise(resolve => {
+    const id = randomUUID();
+    inventoryRequests.set(id, resolve);
+    child.stdin.write(JSON.stringify({ id, type: 'prompt', message: `/happier-qa-tools ${id}` }) + '\n');
+  });
   const subscribers = new Set<(record: JsonValue) => void | Promise<void>>();
   const lines = createInterface({ input: child.stdout });
   lines.on('line', line => {
     let record: JsonValue = JSON.parse(line);
+    if (record && typeof record === 'object' && !Array.isArray(record) && record.type === 'qa_native_tools'
+      && typeof record.id === 'string' && Array.isArray(record.names) && record.names.every((name): name is string => typeof name === 'string')) {
+      inventoryRequests.get(record.id)?.(record.names);
+      inventoryRequests.delete(record.id);
+      return;
+    }
     if (record && typeof record === 'object' && !Array.isArray(record) && record.type === 'response') {
       console.info('Real Pi RPC response', JSON.stringify({ command: record.command, elapsedMs: Date.now() - startedAtMs }));
     }
@@ -258,6 +271,7 @@ export type PiMcpToolPolicyContractFixture = AgentMcpToolPolicyContractInput & R
   observePermissions(): readonly AgentMcpToolPolicyPermissionObservation[];
   observeServerCalls(): readonly (AgentMcpToolPolicyCallObservation & Readonly<{ privateTokenDelivered: boolean }>)[];
   observeCapabilityNotices(): readonly TranscriptRawAgentEventV1[];
+  readNativeTools(): Promise<string[]>;
 }>;
 
 export function createPiMcpToolPolicyContractFixture(options: Readonly<{
@@ -311,7 +325,9 @@ export function createPiMcpToolPolicyContractFixture(options: Readonly<{
       });
       const modelUrl = await listen(modelServer);
       providerExtensionPath = join(cwd, 'fixture-provider.mjs');
-      await writeFile(providerExtensionPath, `export default function(pi){pi.registerProvider('fixture',{baseUrl:${JSON.stringify(modelUrl)},apiKey:'fixture-key',api:'anthropic-messages',models:[{id:'fixture',name:'fixture',reasoning:false,input:['text'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:200000,maxTokens:8192}]});}`);
+      await writeFile(providerExtensionPath, `import fs from 'node:fs'; export default function(pi){pi.registerProvider('fixture',{baseUrl:${JSON.stringify(modelUrl)},apiKey:'fixture-key',api:'anthropic-messages',models:[{id:'fixture',name:'fixture',reasoning:false,input:['text'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:200000,maxTokens:8192}]});
+        pi.registerCommand('happier-qa-tools',{description:'Fixture inventory',handler:async id=>{
+          fs.writeSync(1,JSON.stringify({type:'qa_native_tools',id,names:pi.getAllTools().map(tool=>tool.name)})+'\\n');}});}`);
       const serverPath = join(cwd, 'fixture-mcp.mjs'); fixtureMcpServerPath = serverPath; await writeFile(serverPath, serverSource);
       const identities = ['a', 'b'].map(key => ({ key, serverId: `catalog-${key}`, title: 'Duplicate fixture', tool: 'echo' }));
       catalog = { v: 1, bindings: identities.map(server => ({ id: `rule-${server.key}`, serverId: server.serverId, enabled: true,
@@ -372,7 +388,10 @@ export function createPiMcpToolPolicyContractFixture(options: Readonly<{
       // Unused host capabilities are inert fixture fields; the real transcript
       // publisher and strict event consumer above are never replaced.
     } as never);
+    // The fixture materializes a strict MCP selection above. Keep that fact at
+    // the native leaf; explicit optional-startup cases still select false.
     const runtime = await createPiAgentRuntime().sessions.open({ ...request, mcpServers: addBrokenServer(request.mcpServers),
+      mcpServersStrictMode: request.mcpServersStrictMode ?? true,
       launchEnvironment: { values: { PI_CODING_AGENT_DIR: cwd }, unset: [] },
     }, { signal: controller.signal, services: createRuntimeServices(),
       session: { id: request.sessionId, services: { transcripts: sessionServices.transcripts } },
@@ -383,7 +402,9 @@ export function createPiMcpToolPolicyContractFixture(options: Readonly<{
   },
   async openRun(request) {
     const open = createPiAgentRuntime().sessions.executionRunContextV1!.open;
-    return await open({ ...request, mcpServers: addBrokenServer(request.mcpServers), launchEnvironment: { values: { PI_CODING_AGENT_DIR: cwd }, unset: [] } },
+    return await open({ ...request, mcpServers: addBrokenServer(request.mcpServers),
+      mcpServersStrictMode: request.mcpServersStrictMode ?? true,
+      launchEnvironment: { values: { PI_CODING_AGENT_DIR: cwd }, unset: [] } },
       { signal: controller.signal, services: createRuntimeServices(),
         scope: { kind: 'execution_run', executionRunId: request.runId },
         executionRun: { id: request.runId, services: {} },
@@ -391,6 +412,7 @@ export function createPiMcpToolPolicyContractFixture(options: Readonly<{
   },
   observePermissions: () => permissions,
   observeCapabilityNotices: () => capabilityNotices,
+  readNativeTools: () => queryNativeTools(),
   observeServerCalls: () => calls,
   async invokeTool(runtime, request) {
     const before = permissions.length;

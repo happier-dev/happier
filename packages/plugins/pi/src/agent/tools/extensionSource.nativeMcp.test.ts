@@ -49,7 +49,8 @@ describe('Pi native MCP delivery', () => {
           :r.method==='tools/list'?{tools:[{name:'read_active_fixture_status',inputSchema:{type:'object',properties:{}}}]}
           :{content:[{type:'text',text:'Native MCP succeeded'}]};
         process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:r.id,result})+'\\n');});`);
-      prepared = await preparePiHappierToolsExtension({ directory: root, permissionMode,
+      // Explicit strict selection requires the complete catalog on the first turn.
+      prepared = await preparePiHappierToolsExtension({ directory: root, permissionMode, mcpServersStrictMode: true,
         mcpServers: { usage_qa_called_r164p: { command: process.execPath, args: [join(root, 'mcp.cjs')] },
           unused: { command: process.execPath, args: [join(root, 'mcp.cjs')] } } });
       const launch = buildPiRpcLaunch({ permissionMode, happierToolsExtension: prepared });
