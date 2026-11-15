@@ -387,28 +387,54 @@ describe('confidential secret-fill approval continuation', () => {
     expect(JSON.stringify([...records.values()])).not.toContain(privateInput.choice.value);
   });
 
-  it('rechecks the deciding human Machine admission after preparation rather than only the original requester', async () => {
+  it('admits the deciding human once and acquires on that admission, stopping only on the local cancel signal', async () => {
     let admitted = false;
+    let admissions = 0;
+    let originChecks = 0;
     let delivered = 0;
-    const { executor, records } = harness({ confidentialSecretFill: async ({ isCurrent }) => {
-      // The host callback is the external Home admission boundary; the original owner origin stays current.
-      admitted = false;
-      if (!await isCurrent()) return { status: 'refused', code: 'approval_changed' };
-      delivered += 1;
-      return { status: 'filled', code: 'filled' };
-    } });
+    const cancel = new AbortController();
+    const { executor, records } = harness({
+      isApprovalExecutionOriginCurrent: async () => { originChecks += 1; return true; },
+      confidentialSecretFill: async ({ isCurrent }) => {
+        const checksAtFill = { admissions, originChecks };
+        // Access changing after admission takes effect at the next continuation, not mid-fill.
+        admitted = false;
+        if (!await isCurrent()) return { status: 'refused', code: 'approval_changed' };
+        expect({ admissions, originChecks }).toEqual(checksAtFill);
+        delivered += 1;
+        return { status: 'filled', code: 'filled' };
+      },
+    });
     await executor.execute('browser.automation.secret.fill', request, context);
     const humanContext = {
-      authority: 'present_user' as const, serverId: 'home', verifyMachineAdmissionCurrent: async () => admitted,
+      authority: 'present_user' as const, serverId: 'home', signal: cancel.signal,
+      verifyMachineAdmissionCurrent: async () => { admissions += 1; return admitted; },
     };
+    // The deciding human, not only the original requester, is admitted before the claim.
     expect(await executor.continueConfidentialApprovalRequest(privateInput, humanContext))
       .toMatchObject({ ok: false, errorCode: 'approval_stale' });
     expect(records.get('approval')?.status).toBe('open');
     expect(delivered).toBe(0);
     admitted = true;
-    expect(await executor.continueConfidentialApprovalRequest(privateInput, {
-      ...humanContext,
-    })).toEqual({ ok: false, errorCode: 'approval_changed', error: 'approval_changed' });
+    admissions = 0;
+    expect(await executor.continueConfidentialApprovalRequest(privateInput, humanContext))
+      .toEqual({ ok: true, result: { status: 'filled', code: 'filled' } });
+    expect(admissions).toBe(1);
+    expect(delivered).toBe(1);
+  });
+
+  it('stops before acquisition when the admitted continuation is cancelled locally', async () => {
+    let delivered = 0;
+    const cancel = new AbortController();
+    const { executor } = harness({ confidentialSecretFill: async ({ isCurrent }) => {
+      cancel.abort();
+      if (!await isCurrent()) return { status: 'refused', code: 'approval_changed' };
+      delivered += 1;
+      return { status: 'filled', code: 'filled' };
+    } });
+    await executor.execute('browser.automation.secret.fill', request, context);
+    expect(await executor.continueConfidentialApprovalRequest(privateInput, { authority: 'present_user', serverId: 'home', signal: cancel.signal }))
+      .not.toEqual({ ok: true, result: { status: 'filled', code: 'filled' } });
     expect(delivered).toBe(0);
   });
 

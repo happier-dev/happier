@@ -57,7 +57,7 @@ import { isPresentUserApprovalDecisionForOrigin, resolveMachineServiceLogsApprov
 import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { prepareApprovalReplayAuthorization, resolveRetainedLogsReplayContext } from './executor/approvalReplayAuthorization.js';
 import { observeApprovalReplayOutcome, settleApprovalDecisionFailure } from './executor/approvalDecisionFailure.js';
-import { createConfidentialApprovalContinuation, isDecidingHumanAdmissionCurrent } from './executor/confidentialContinuation.js';
+import { createConfidentialApprovalContinuation } from './executor/confidentialContinuation.js';
 export { projectApprovalExecutionOriginCaller, buildApprovalExecutionOriginV1 } from './executor/approvalOrigins.js';
 import { materializeSessionCreationActionInput, buildSessionSpawnNewArgs, sameSessionCreationDirectoryApproval } from './executor/sessionSpawn.js';
 import { resolveInheritedApprovalProfileIdV1 } from './approvalProfiles.js';
@@ -2027,9 +2027,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           actionId: continuation.actionId, request: continuation.request, choice: continuation.choice,
           submit: continuation.submit, accountEncryptionMode: continuation.accountEncryptionMode,
           context: { ...executionContext, ...confidentialAccountContext, authority: 'present_user' },
+          // Continuation admission already decided policy, origin and the deciding human before
+          // the executing claim. Acquisition consumes that admission: only the local cancel
+          // signal and the claim's still-active row stop it; access changes apply next continuation.
           async isCurrent() {
             if (args.ctx.signal?.aborted) return false;
-            if (!isActionEnabled(getActionSpec(continuation.actionId), { ...args.ctx, surface: executionContext.surface })) return false;
             const current = deps.approvalsGet
               ? await deps.approvalsGet({ artifactId: args.artifactId, serverId: args.artifactServerId }) : null;
             const parsed = StoredApprovalRequestSchema.safeParse(current);

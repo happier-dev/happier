@@ -9,7 +9,7 @@ import { readActionFailureEnvelope } from './actionFailureEnvelope.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { readInputPath } from '../../inputs/inputPredicates.js';
 
-export async function isDecidingHumanAdmissionCurrent(ctx: ActionExecutorContext): Promise<boolean> {
+async function isDecidingHumanAdmissionCurrent(ctx: ActionExecutorContext): Promise<boolean> {
   if (ctx.signal?.aborted) return false;
   try {
     const admitted = !ctx.verifyMachineAdmissionCurrent || await ctx.verifyMachineAdmissionCurrent();

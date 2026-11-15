@@ -7992,7 +7992,10 @@ pending the integrated implementation, live checks and security review; see the 
 existing approval Artifact; its public input contains no credential. The private
 continuation accepts a Saved Secret catalog choice or an ephemeral one-time value.
 Always allow cannot supply that choice. Admission binds the deciding human's
-Machine access and the original requester's origin.
+Machine access and the original requester's origin. Secret acquisition consumes that
+admission: before acquiring material it checks only the local cancel signal and that the
+claimed request is still executing with the same exact input; an access change applies at
+the next continuation.
 
 Browser `snapshot` and `semanticSnapshot` retain masked text and structure on
 password-bearing pages while omitting screenshot media. The capture owner is
