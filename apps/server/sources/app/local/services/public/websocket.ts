@@ -23,7 +23,7 @@ import {
 import { readLocalServicePublicClientKey } from "@/app/local/services/public/accessAuthorization";
 import type { LocalServicePublicExposureV1 } from '@happier-dev/protocol/local/services/public/v1';
 import type { LocalServicePreviewResourceV1 } from '@happier-dev/protocol/local/services/preview/v1';
-import { readLocalServiceRequestHostname, resolveLocalServiceExternalProtocol } from '@/app/local/services/preview/origin';
+import { isLocalServiceUpgradeOriginAdmitted, readLocalServiceRequestHostname, resolveLocalServiceExternalProtocol } from '@/app/local/services/preview/origin';
 
 type UpgradeRequest = Readonly<{
     url?: string;
@@ -186,7 +186,7 @@ export async function handleLocalServicePublicWebSocketUpgrade(
         return;
     }
 
-    if (route.hasQueryToken) {
+    if (route.hasQueryToken || !isLocalServiceUpgradeOriginAdmitted(requestHeadersToRecord(request.headers))) {
         await sendUpgradeError(socket, 403, "Forbidden");
         return;
     }

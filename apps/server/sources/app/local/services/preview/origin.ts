@@ -11,6 +11,26 @@ export function readLocalServiceRequestHostname(headers: Record<string, unknown>
     }
 }
 
+/**
+ * A browser attaches a resource's host-only viewer cookie to a WebSocket opened by any
+ * same-site page, and WebSocket upgrades have no CORS. Another preview or exposure (arbitrary
+ * app code, possibly shared by another person) could otherwise act with this viewer's access,
+ * so a browser upgrade is admitted only from the resource's own origin. Non-browser clients
+ * send no Origin and keep their token admission.
+ */
+export function isLocalServiceUpgradeOriginAdmitted(headers: Record<string, unknown> | undefined): boolean {
+    const raw = headers?.origin;
+    const origin = Array.isArray(raw) ? raw[0] : raw;
+    if (origin === undefined) return true;
+    const hostname = readLocalServiceRequestHostname(headers);
+    if (typeof origin !== 'string' || !hostname) return false;
+    try {
+        return new URL(origin).hostname.toLowerCase().replace(/\.$/u, '') === hostname;
+    } catch {
+        return false;
+    }
+}
+
 export type ResolveLocalServicePreviewUrlInput = Readonly<{
     originMode: LocalServicePreviewOriginModeV1;
     publicBaseUrl: string;

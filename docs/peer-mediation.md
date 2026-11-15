@@ -1081,6 +1081,11 @@ Every server HTTP admission and WebSocket upgrade also checks the current Home p
 decision before exchange or forwarding. Disabling it refuses fresh admissions and subsequent
 cookie-authenticated requests without retiring registrations. A failed Home configuration read
 during an upgrade closes that request's socket; its rejection never escapes the preview ingress.
+WebSocket upgrades have no CORS, and a browser attaches a resource's host-only viewer cookie
+to an upgrade opened by any same-site page, including another preview. Private and public
+upgrades therefore refuse a browser `Origin` whose host differs from the request's resource
+host (`isLocalServiceUpgradeOriginAdmitted` in `app/local/services/preview/origin.ts`);
+requests without `Origin` (non-browser clients) keep token admission.
 Private and public viewer cookies share `app/local/services/viewerCookie.ts`: host-only,
 HttpOnly, with each route's existing path scope. Embedded and unknown request contexts
 use Secure, `SameSite=None; Partitioned`. An explicit `Sec-Fetch-Dest: document` request

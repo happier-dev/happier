@@ -35,7 +35,7 @@ import { sendLocalServicePreviewHttpResponse, type LocalServicePreviewHttpReply 
 import { encodeLocalServiceRequestPath } from "@/app/local/services/preview/requestTarget";
 import { scopedLocalServiceViewerTokenCookie } from '@/app/local/services/viewerCookie';
 import { LOCAL_SERVICE_APPLICATION_HTTP_METHODS, registerLocalServiceHostRoutes } from '../hostRoutes';
-import { readLocalServiceRequestHostname, resolveLocalServiceExternalProtocol } from '@/app/local/services/preview/origin';
+import { isLocalServiceUpgradeOriginAdmitted, readLocalServiceRequestHostname, resolveLocalServiceExternalProtocol } from '@/app/local/services/preview/origin';
 import { cooperativeProbeRefusalHeaders } from '@/app/local/services/preview/collectorBootstrap';
 import type {
     LocalServicePreviewRuntimeRegistrationInput,
@@ -575,6 +575,10 @@ async function handlePreviewWebSocketUpgrade(
     const preview = parsedRoute.preview ?? options.resolvePreview(parsedRoute.previewId);
     if (!preview) {
         await sendUpgradeError(socket, 404, "Not Found");
+        return;
+    }
+    if (!isLocalServiceUpgradeOriginAdmitted(requestHeadersToRecord(request.headers))) {
+        await sendUpgradeError(socket, 403, "Forbidden");
         return;
     }
 

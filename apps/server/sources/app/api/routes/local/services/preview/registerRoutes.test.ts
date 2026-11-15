@@ -1098,6 +1098,72 @@ describe('local service preview routes', () => {
         }
     }, 15_000);
 
+    it.each(['private', 'public'] as const)('refuses a %s upgrade carrying the viewer cookie from another resource origin (C51)', async (kind) => {
+        const env = { ...peerMediationGrantSigningEnv(), HANDY_MASTER_SECRET: 'test-master-secret',
+            HAPPIER_PUBLIC_SERVER_URL: 'https://app.happier.test',
+            HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: 'true',
+            HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN: 'preview.happier.test',
+            HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED: 'true',
+            HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOWED_MODES: 'secret_link',
+            HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__MAX_TTL_MS: '60000',
+            HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__DNS_TLS_REQUIRED: '0',
+            [FEATURE_ENV_KEYS.localServicesPublicPreviewAllowTestAuditSink]: '1',
+            [FEATURE_ENV_KEYS.localServicesPublicPreviewRateLimitProfileIds]: 'default',
+            [FEATURE_ENV_KEYS.localServicesPublicPreviewAllowTestRateLimitChecker]: '1',
+            [FEATURE_ENV_KEYS.machinesTunnelServerRoutedEnabled]: '1',
+            [FEATURE_ENV_KEYS.machinesTunnelAllowedPorts]: '5173' };
+        const runtimes = createLocalServiceRouteRuntimes(env);
+        const registered = runtimes.preview.registerPreview({ resource: preview, accountId: 'user_1' });
+        const other = runtimes.preview.registerPreview({ resource: { ...preview, previewId: 'preview_other' }, accountId: 'user_1' });
+        if (!registered.ok || !registered.accessUrl || !other.ok || !other.accessUrl) throw new Error('preview registration failed');
+        const exposure = runtimes.public.createExposure({ preview, requestedMode: 'secret_link', requestedTtlMs: 60_000,
+            actorId: 'user_1', sessionAuthorized: true, dnsTlsValid: true, rateLimitProfileId: 'default' });
+        if (!exposure.ok) throw new Error('public exposure failed');
+        const url = new URL(kind === 'private' ? registered.accessUrl : exposure.exposure.publicUrl);
+        // A page served by the person's other preview: arbitrary app code on a sibling origin.
+        const otherOrigin = new URL(other.accessUrl).origin;
+        const network = tunnelBoundary('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n');
+        let tunnelsOpened = 0;
+        const openTunnel: OpenLocalServicePreviewTunnel = async (input) => { tunnelsOpened += 1; return network.openTunnel(input); };
+        const app = fastify({ logger: false });
+        app.decorate('authenticate', async () => {});
+        try {
+            for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
+            vi.stubEnv('HAPPIER_DB_PROVIDER', 'postgres');
+            registerLocalServiceRoutes(app as unknown as Fastify, { runtimes, openTunnel });
+            const exchange = await app.inject({ method: 'GET', url: url.pathname + url.search, headers: { host: url.host } });
+            const cookie = String(exchange.headers['set-cookie']).split(';')[0]!;
+            const listener = new URL(await app.listen({ port: 0, host: '127.0.0.1' }));
+            const upgrade = async (origin: string | null) => {
+                const socket = connect(Number(listener.port), '127.0.0.1');
+                let response = '';
+                try {
+                    return await new Promise<string>((resolve) => {
+                        socket.on('error', () => resolve(response));
+                        socket.on('close', () => resolve(response));
+                        socket.on('data', chunk => {
+                            response += chunk.toString();
+                            if (response.includes('\r\n\r\n')) resolve(response);
+                        });
+                        socket.on('connect', () => socket.write(`GET /socket HTTP/1.1\r\nHost: ${url.host}\r\n${origin === null ? '' : `Origin: ${origin}\r\n`}Cookie: ${cookie}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n`));
+                    });
+                } finally { socket.destroy(); }
+            };
+            // The browser attaches this resource's host-only cookie to a WebSocket opened by a
+            // sibling origin; WebSocket has no CORS, so admission must refuse the foreign Origin.
+            expect(await upgrade(otherOrigin)).toContain('403');
+            expect(await upgrade('null')).toContain('403');
+            expect(tunnelsOpened).toBe(0);
+            // The resource's own page and non-browser clients (no Origin) keep working.
+            expect(await upgrade(url.origin)).toContain('101 Switching Protocols');
+            expect(await upgrade(null)).toContain('101 Switching Protocols');
+            expect(tunnelsOpened).toBe(2);
+        } finally {
+            await app.close();
+            vi.unstubAllEnvs();
+        }
+    }, 15_000);
+
     it('applies arbitrary-port policy to native preview admission too', async () => {
         sessionFindUnique.mockResolvedValue(sharedSession);
         const env = { HAPPIER_MANAGED_RELAY_PURPOSE: 'personal-home', HANDY_MASTER_SECRET: 'test-master-secret',
