@@ -92,6 +92,7 @@ export function createNativeSessionBoundary() {
 /** Real native factory and live wrapper chain; only the Agent SDK and Session transport are fixtures. */
 export function createVoiceSessionRuntimeThroughNativeFactory(params: Readonly<{
     runtime: AgentRuntime;
+    catalogEntry?: ResolvedAgentContribution['catalogEntry'];
     capabilities: AgentSessionCapabilities;
     modelId: string;
     functionTools?: AgentSessionOpenRequest['functionTools'];
@@ -109,6 +110,7 @@ export function createVoiceSessionRuntimeThroughNativeFactory(params: Readonly<{
         const occurrenceId = params.runtimeOptions?.controllerOccurrenceId ?? `voice-${params.modelId}`;
         const agent: ResolvedAgentContribution = {
             id: agentId, pluginId: 'acme.voice', provenance: 'external', source: { kind: 'path' },
+            ...(params.catalogEntry ? { catalogEntry: params.catalogEntry } : {}),
             identity: { pluginId: 'acme.voice', localId: 'default' },
             definition: { kindVersion: 1, id: agentId, ownedBackendIds: [] },
             richDefinition: { provenance: 'external', definition: PluginAgentContributionV2Schema.parse({
