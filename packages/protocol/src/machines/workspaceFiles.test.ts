@@ -17,12 +17,14 @@ describe('workspace file response budgets', () => {
     expect(WORKSPACE_FILE_LIST_MAX_RESPONSE_UTF8_BYTES).toBe(WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES);
   });
 
-  it('admits a 20 MB response supported by the current socket transport', () => {
-    const response = { ok: true, files: [{ path: 'large.txt', matches: [
-      { line: 1, column16: 1, length16: 1, text: 'a'.repeat(20_000_000), before: [], after: [] },
-    ] }], hasMore: false, coverage: 'complete' };
-    expect(new TextEncoder().encode(JSON.stringify(response)).byteLength).toBe(20_000_162);
-    expect(DaemonWorkspaceFileSearchResponseSchema.safeParse(response).success).toBe(true);
+  it('rejects a reply whose encrypted packet would outlast the relay heartbeat on the supported uplink', () => {
+    // The daemon's pong queues behind the packet it uploads: past ~11 MB on the ~1.96 Mbit/s
+    // floor the relay drops the whole machine socket, so 9 MB of JSON (~12 MB as base64) must page.
+    const search = (bytes: number) => ({ ok: true, files: [{ path: 'large.txt', matches: [
+      { line: 1, column16: 1, length16: 1, text: 'a'.repeat(bytes), before: [], after: [] },
+    ] }], hasMore: false, coverage: 'complete' });
+    expect(DaemonWorkspaceFileSearchResponseSchema.safeParse(search(9_000_000)).success).toBe(false);
+    expect(DaemonWorkspaceFileSearchResponseSchema.safeParse(search(8_000_000)).success).toBe(true);
   });
 
   it('admits a complete response at its byte boundary and rejects one byte more', () => {

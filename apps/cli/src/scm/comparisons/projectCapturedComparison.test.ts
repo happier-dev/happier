@@ -3,6 +3,7 @@ import type { ScmComparison } from '@happier-dev/protocol/scm/comparison';
 import { WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES } from '@happier-dev/protocol/machines/workspaceFiles';
 import { projectCapturedComparison } from './projectCapturedComparison';
 import { EXTERNAL_ACTION_RELAY_RESPONSE_SOCKET_MIN_BUFFER_BYTES_V2 } from '@happier-dev/protocol/actions/externalActionApi';
+import { SOCKET_HEARTBEAT_PACKET_MAX_BYTES } from '@happier-dev/protocol/actions/externalActionLimits';
 import { encryptLegacy, encodeBase64 } from '@/api/encryption';
 import { ScmComparisonCaptureInputSchema } from '@happier-dev/protocol/scm/diffSummary';
 
@@ -39,11 +40,10 @@ describe('captured comparison wire projection', () => {
       .toEqual(retained.comparison.inventory.files.slice(9_113).map(file => file.path));
   });
 
-  it('retains a 20 MB capture supported by the current socket transport', () => {
-    const result = projectCapturedComparison(capture(1, 'x'.repeat(20_000_000)));
-    expect(result.success).toBe(true);
-    if (!result.success) return;
-    expect(result.comparison.inventory.files[0]?.evidence.unifiedDiff).toHaveLength(20_000_000);
+  it('reports a 20 MB single-file diff unavailable instead of sending a packet the relay heartbeat drops', () => {
+    expect(projectCapturedComparison(capture(1, 'x'.repeat(20_000_000)))).toMatchObject({ success: false, errorCode: 'DIFF_UNAVAILABLE' });
+    const retained = projectCapturedComparison(capture(1, 'x'.repeat(8_000_000)));
+    expect(retained.success).toBe(true);
   });
 
   it('fits a boundary-sized retained response through authenticated RPC encryption and socket ACK framing', () => {
@@ -56,6 +56,7 @@ describe('captured comparison wire projection', () => {
     const encoded = encodeBase64(encryptLegacy({ v: 2, k: 'res', c: '0'.repeat(32), r: result }, new Uint8Array(32)));
     const ack = `43${Number.MAX_SAFE_INTEGER + 1}${JSON.stringify([{ v: 1, result: encoded }])}`;
     expect(Buffer.byteLength(ack, 'utf8')).toBeLessThanOrEqual(EXTERNAL_ACTION_RELAY_RESPONSE_SOCKET_MIN_BUFFER_BYTES_V2);
+    expect(Buffer.byteLength(ack, 'utf8')).toBeLessThanOrEqual(SOCKET_HEARTBEAT_PACKET_MAX_BYTES);
     retained.comparison.inventory.files[0]!.evidence.unifiedDiff += 'x';
     expect(projectCapturedComparison(retained)).toMatchObject({ success: false, errorCode: 'DIFF_UNAVAILABLE' });
   });

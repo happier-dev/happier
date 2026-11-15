@@ -127,6 +127,24 @@ export const EXTERNAL_ACTION_SOCKET_MIN_BUFFER_BYTES_V2 = Math.max(
   EXTERNAL_ACTION_RELAY_RESPONSE_SOCKET_MIN_BUFFER_BYTES_V2,
 );
 
+/** Engine.IO heartbeat of the relay: it pings every interval and drops a client whose pong is late. */
+export const SOCKET_PING_INTERVAL_MS = 15_000;
+export const SOCKET_PING_TIMEOUT_MS = 45_000;
+
+/**
+ * Slowest client → relay uplink a single packet must survive.
+ *
+ * The pong a client owes after a ping is queued behind any packet it is already uploading, so a
+ * packet that takes longer than SOCKET_PING_TIMEOUT_MS to upload makes the relay close the whole
+ * socket ("ping timeout") far below the buffer floor above. Field evidence (#902): a daemon
+ * delivered 11.03 MB replies for a week and lost its socket on every 12–17 MB one. The floor is
+ * the slowest uplink that still carries those 11.03 MB within the deadline (~1.96 Mbit/s).
+ */
+export const SOCKET_MIN_SUPPORTED_UPLINK_BYTES_PER_SECOND = Math.floor(11_030_000 / (SOCKET_PING_TIMEOUT_MS / 1_000));
+
+/** Largest packet the supported uplink finishes uploading before the relay's pong deadline. */
+export const SOCKET_HEARTBEAT_PACKET_MAX_BYTES = SOCKET_MIN_SUPPORTED_UPLINK_BYTES_PER_SECOND * (SOCKET_PING_TIMEOUT_MS / 1_000);
+
 const MAXIMUM_UTF8_EXTERNAL_ACTION_ID_V1 = '😀'.repeat(EXTERNAL_ACTION_ACTION_ID_MAX_LENGTH / 2);
 const MAXIMUM_UTF8_EXTERNAL_ACTION_REQUEST_ID_V1 = '😀'.repeat(
   EXTERNAL_ACTION_REQUEST_ID_MAX_LENGTH_V1 / 2,

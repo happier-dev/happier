@@ -1,7 +1,7 @@
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
-import { EXTERNAL_ACTION_RESULT_MAX_SERIALIZED_BYTES, EXTERNAL_ACTION_SOCKET_MIN_BUFFER_BYTES_V2 } from '../actions/externalActionLimits.js';
+import { EXTERNAL_ACTION_RESULT_MAX_SERIALIZED_BYTES, EXTERNAL_ACTION_SOCKET_MIN_BUFFER_BYTES_V2, SOCKET_HEARTBEAT_PACKET_MAX_BYTES } from '../actions/externalActionLimits.js';
 import { ACCOUNT_SCOPED_SECRETBOX_NONCE_BYTES, ACCOUNT_SCOPED_SECRETBOX_OVERHEAD_BYTES } from '../crypto/accountScopedCipherEnvelope.js';
 import { stringifySerializedJsonValue } from '../crypto/serializedJsonValue.js';
 import { SESSION_DATA_KEY_NONCE_BYTES, SESSION_DATA_KEY_TAG_BYTES } from '../crypto/sessionDataKeyBundleV0.js';
@@ -21,9 +21,12 @@ const workspaceReplyCipherOverheadBytes = Math.max(
   ACCOUNT_SCOPED_SECRETBOX_NONCE_BYTES + ACCOUNT_SCOPED_SECRETBOX_OVERHEAD_BYTES,
   1 + SESSION_DATA_KEY_NONCE_BYTES + SESSION_DATA_KEY_TAG_BYTES,
 );
-/** JSON UTF-8 budget fitting the real socket floor after RPC, E2EE and base64 framing. */
+/**
+ * JSON UTF-8 budget for one reply packet after RPC, E2EE and base64 framing. The packet must fit
+ * the relay's buffer floor and finish uploading before its heartbeat drops the daemon's socket.
+ */
 const workspaceReplySocketBudgetBytes = Math.floor(
-  (EXTERNAL_ACTION_SOCKET_MIN_BUFFER_BYTES_V2 - workspaceReplySocketFramingBytes) / 4,
+  (Math.min(EXTERNAL_ACTION_SOCKET_MIN_BUFFER_BYTES_V2, SOCKET_HEARTBEAT_PACKET_MAX_BYTES) - workspaceReplySocketFramingBytes) / 4,
 ) * 3 - workspaceReplyCipherOverheadBytes - workspaceReplyEncryptedFramingBytes;
 /** The successful Action result envelope is the tighter carrier for this response. */
 export const WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES = Math.min(

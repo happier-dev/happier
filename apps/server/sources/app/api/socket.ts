@@ -1,3 +1,4 @@
+import { SOCKET_PING_INTERVAL_MS, SOCKET_PING_TIMEOUT_MS } from '@happier-dev/protocol/actions/externalActionLimits';
 import { onShutdown } from "@/utils/process/shutdown";
 import { isIrohIngressRequest, IROH_REQUEST_IP } from '@/app/net/requestIngress';
 import { registerUiFocusSocketEvent } from '@/app/api/socket/registerUiFocusSocketEvent';
@@ -287,8 +288,8 @@ export function startSocket(app: Fastify): () => Promise<void> {
             adapter: createAdapter(getRedisSocketClusterAdapterClient(), socketAdapterConfig.redisStreamsOptions),
         } : {}),
         transports: ['websocket', 'polling'],
-        pingTimeout: 45000,
-        pingInterval: 15000,
+        pingTimeout: SOCKET_PING_TIMEOUT_MS,
+        pingInterval: SOCKET_PING_INTERVAL_MS,
         path: SOCKET_IO_PATH,
         // Upgrades that Socket.IO does not own belong to the local service data planes, which can
         // take longer than its fixed one-second cleanup to answer; unclaimed ones are closed below.
