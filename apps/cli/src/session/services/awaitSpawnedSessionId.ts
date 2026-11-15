@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
 import type { SpawnSessionCreationOutcome, SpawnSessionErrorDetail, SpawnSessionNonceResolution } from '@happier-dev/protocol';
 
@@ -97,7 +98,7 @@ export async function awaitSpawnedSessionId(params: Readonly<{
   }
 
   const timeoutMs = params.timeoutMs
-    ?? readPositiveInt(process.env.HAPPIER_SPAWN_SESSION_ID_RESOLVE_TIMEOUT_MS, resolveSessionStartupTimeoutMs());
+    ?? readPositiveInt(sessionProcessEnvironment().HAPPIER_SPAWN_SESSION_ID_RESOLVE_TIMEOUT_MS, resolveSessionStartupTimeoutMs());
   const settled = await new Promise<SpawnSessionNonceResolution | { status: 'timeout' }>((resolve) => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const deadlineAtMs = Date.now() + Math.max(0, timeoutMs);
@@ -193,7 +194,7 @@ export function abandonSpawnedSessionBestEffort(params: Readonly<{
   archiveSession?: (sessionId: string) => Promise<void>;
 }>): void {
   void (async () => {
-    const timeoutMs = readPositiveInt(process.env.HAPPIER_SPAWN_ABANDON_TIMEOUT_MS, DEFAULT_ABANDON_TIMEOUT_MS);
+    const timeoutMs = readPositiveInt(sessionProcessEnvironment().HAPPIER_SPAWN_ABANDON_TIMEOUT_MS, DEFAULT_ABANDON_TIMEOUT_MS);
     const settled = await awaitSpawnedSessionId({
       result: { type: 'success' },
       spawnNonce: params.spawnNonce,

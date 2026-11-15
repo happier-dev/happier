@@ -1,8 +1,38 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { awaitSpawnedSessionId } from './awaitSpawnedSessionId';
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 describe('awaitSpawnedSessionId terminal observation', () => {
+  it.each(['HAPPIER_SPAWN_SESSION_ID_RESOLVE_TIMEOUT_MS', 'HAPPIER_DAEMON_SESSION_WEBHOOK_TIMEOUT_MS'])(
+    'keeps concurrent hosted Session deadlines scoped for %s', async key => {
+      vi.useFakeTimers();
+      vi.stubEnv('HAPPIER_SPAWN_SESSION_ID_RESOLVE_TIMEOUT_MS', '9000');
+      vi.stubEnv('HAPPIER_DAEMON_SESSION_WEBHOOK_TIMEOUT_MS', '9000');
+      const completed: number[] = [];
+      const waits = [100, 200].map(timeout => runAddedHostedSession({
+        environment: { [key]: String(timeout) }, workingDirectory: `/session-${timeout}`, end: () => {},
+      }, async () => {
+        await Promise.resolve();
+        // The daemon nonce resolver is the process boundary; real deadline settlement stays active.
+        const result = await awaitSpawnedSessionId({ result: { type: 'success' }, spawnNonce: String(timeout),
+          resolveSpawnSessionByNonce: async () => ({ status: 'pending' }),
+        });
+        completed.push(timeout);
+        return result;
+      }));
+      await vi.advanceTimersByTimeAsync(100);
+      expect(completed).toEqual([100]);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(completed).toEqual([100, 200]);
+      expect(await Promise.all(waits)).toEqual([
+        expect.objectContaining({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT }),
+        expect.objectContaining({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT }),
+      ]);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllEnvs();

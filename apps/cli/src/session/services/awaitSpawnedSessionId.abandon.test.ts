@@ -1,8 +1,31 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { abandonSpawnedSessionBestEffort, abandonSpawnedSessionUntilCompleted } from './awaitSpawnedSessionId';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 describe('abandonSpawnedSessionBestEffort', () => {
+  it('retains cleanup only within each concurrent hosted Session authored deadline', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('HAPPIER_SPAWN_ABANDON_TIMEOUT_MS', '9000');
+    const stopped: string[] = [];
+    await Promise.all([100, 200].map(timeout => runAddedHostedSession({
+      environment: { HAPPIER_SPAWN_ABANDON_TIMEOUT_MS: String(timeout) },
+      workingDirectory: `/session-${timeout}`, end: () => {},
+    }, async () => {
+      await Promise.resolve();
+      abandonSpawnedSessionBestEffort({ spawnNonce: String(timeout), reason: 'caller cancelled',
+        resolveSpawnSessionByNonce: async () => {
+          await new Promise(resolve => setTimeout(resolve, 150));
+          return { status: 'success', sessionId: String(timeout) };
+        },
+        stopSession: async id => { stopped.push(id); return true; },
+      });
+    })));
+    await vi.advanceTimersByTimeAsync(200);
+    expect(stopped).toEqual(['200']);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllEnvs();

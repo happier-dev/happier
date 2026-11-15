@@ -27,6 +27,7 @@ import { SessionRolesV1Schema } from '@happier-dev/protocol/prompts/roles/sessio
 import { SessionInitialGoalRequestV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 import { SessionIdSchema } from '@happier-dev/protocol/sessions/idsV1';
 import { MachinePoolSelectionOriginV1Schema } from '@happier-dev/protocol/machines/pools/v1';
+import { SessionManagedTargetPlacementV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { NonBlankOpaqueIdentifierSchema } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { SecretReferenceOverlayV1Schema } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
 import { SessionProviderBindingSecurityChangeConfirmationV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
@@ -214,6 +215,7 @@ const SpawnDaemonSessionRequestCompatSchema = lazyZodSchema(() => (<I extends z.
   sessionCreationTag: z.optional(SessionCreationTagV1Schema),
   sessionCreationCorrespondence: z.optional(SessionCreationCorrespondenceV1Schema),
   placementOrigin: z.optional(MachinePoolSelectionOriginV1Schema),
+  managedTargetPlacement: z.optional(SessionManagedTargetPlacementV1Schema),
   initialTitle: z.optional(z.string().check(z.trim(), z.minLength(1))),
   authoringOrigin: z.optional(asHostProtocolZod(PluginUiNewSessionSeedOriginV1Schema)),
   identity: z.optional(asHostProtocolZod(SessionIdentityAdditionsV1Schema)),
@@ -263,6 +265,7 @@ const SpawnDaemonSessionRequestCompatSchema = lazyZodSchema(() => (<I extends z.
   permissionMode: z.optional(SpawnSessionPermissionModeSchema),
   ...AgentSessionToolPolicyShapeV1,
   workspaceWrites: z.optional(z.enum(['allow', 'deny'])),
+  nativeSandbox: z.optional(z.enum(['on', 'off'])),
   permissionModeUpdatedAt: z.optional(z.number().check(z.int())),
   agentModeId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   agentModeUpdatedAt: z.optional(z.number().check(z.int())),
@@ -452,6 +455,7 @@ const SPAWN_SESSION_OPTION_KEYS = [
   'sessionCreationTag',
   'sessionCreationCorrespondence',
   'placementOrigin',
+  'managedTargetPlacement',
   'initialTitle',
   'authoringOrigin',
   'identity',
@@ -481,6 +485,7 @@ const SPAWN_SESSION_OPTION_KEYS = [
   'allowedTools',
   'unlistedTools',
   'workspaceWrites',
+  'nativeSandbox',
   'permissionModeUpdatedAt',
   'agentModeId',
   'agentModeUpdatedAt',

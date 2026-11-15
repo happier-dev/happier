@@ -23,9 +23,14 @@ import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/
 import { getSessionStatus } from './getSessionStatus';
 import { SessionStatusActionResultV1Schema } from '@happier-dev/protocol/sessions/control/contract';
 import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 const { mockIo } = vi.hoisted(() => ({ mockIo: vi.fn() }));
-vi.mock('axios', () => ({ default: { get: vi.fn(), patch: vi.fn(), isAxiosError: () => false } }));
+vi.mock('axios', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('axios')>();
+  // Keep the real HTTP client's defaults for the credential transport wrapper.
+  return { ...actual, default: { ...actual.default, get: vi.fn(), patch: vi.fn() } };
+});
 vi.mock('socket.io-client', () => ({ io: mockIo }));
 
 const sessionId = 'c123456789012345678901234';
@@ -432,6 +437,34 @@ describe('getSessionStatus awareness acquisition', () => {
       pendingRequests: [{ requestId: 'ask', kind: 'user_action', tool: 'AskUserQuestion' }],
       awareness: { operational: { primary: 'action_required' } },
     });
+  });
+
+  it('settles live status at each concurrent hosted Session deadline', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('HAPPIER_SESSION_STATUS_LIVE_WAIT_MS', '9000');
+    try {
+      serveRow(true);
+      mockIo.mockImplementation(() => createApiSessionSocketStub());
+      const completed: number[] = [];
+      const statuses = [100, 200].map(timeout => runAddedHostedSession({
+        environment: { HAPPIER_SESSION_STATUS_LIVE_WAIT_MS: String(timeout) },
+        workingDirectory: `/session-${timeout}`, end: () => {},
+      }, async () => {
+        await Promise.resolve();
+        const result = await getSessionStatus({ credentials, idOrPrefix: sessionId, live: true });
+        completed.push(timeout);
+        return result;
+      }));
+      await vi.advanceTimersByTimeAsync(100);
+      expect(completed).toEqual([100]);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(completed).toEqual([100, 200]);
+      expect(await Promise.all(statuses)).toEqual([expect.objectContaining({ ok: true }), expect.objectContaining({ ok: true })]);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+      vi.unstubAllEnvs();
+    }
   });
 
   it('exposes exact pending permission and question identities through the status Action contract', async () => {

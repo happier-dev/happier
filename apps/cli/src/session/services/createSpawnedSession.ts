@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { normalizeSpawnSessionErrorDetail, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import { readConnectedServiceMaterializationIdentityV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/connectedServiceMaterializationIdentityV1';
 import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
@@ -232,6 +233,7 @@ export type CreateSpawnedSessionParams = Readonly<import('@happier-dev/protocol'
   | 'allowedTools'
   | 'unlistedTools'
   | 'workspaceWrites'
+  | 'nativeSandbox'
   | 'creationAuthorization'
   | 'callerInputConstraints'
   | 'permissionModeUpdatedAt'
@@ -279,7 +281,7 @@ const SPAWN_TRANSIENT_ERROR_MARKERS = [
 ] as const;
 
 function resolvePositiveIntFromEnv(key: string, fallback: number): number {
-  const raw = String(process.env[key] ?? '').trim();
+  const raw = String(sessionProcessEnvironment()[key] ?? '').trim();
   if (!raw) return fallback;
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
@@ -1006,6 +1008,7 @@ export async function createSpawnedSession(
     ...(params.allowedTools !== undefined ? { allowedTools: [...params.allowedTools] } : {}),
     ...(params.unlistedTools !== undefined ? { unlistedTools: params.unlistedTools } : {}),
     ...(params.workspaceWrites !== undefined ? { workspaceWrites: params.workspaceWrites } : {}),
+    ...(params.nativeSandbox !== undefined ? { nativeSandbox: params.nativeSandbox } : {}),
     ...(typeof params.permissionModeUpdatedAt === 'number' && Number.isFinite(params.permissionModeUpdatedAt)
       ? { permissionModeUpdatedAt: params.permissionModeUpdatedAt }
       : {}),

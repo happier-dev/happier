@@ -9,6 +9,7 @@ import {
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { createCompactSessionListRowFixture, createCurrentSessionProjectionRecordFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
 const { mockAxiosGet, mockAxiosPost } = vi.hoisted(() => ({
@@ -29,6 +30,43 @@ vi.mock('axios', async (importOriginal) => {
 });
 
 describe('resolveSessionIdOrPrefix', () => {
+  it('uses each hosted Session page budget for both selector entry points', async () => {
+    const key = 'HAPPIER_SESSION_ID_PREFIX_SCAN_MAX_PAGES';
+    const previous = process.env[key];
+    process.env[key] = '1';
+    try {
+      const { resolveSessionIdOrPrefix, resolveSessionIdOrPrefixFromSessionList } = await import('./resolveSessionId');
+      const id = 'cprefix000000000000000000';
+      mockAxiosGet.mockImplementation(async (url: string) => ({ status: 200, data: {
+        sessions: String(url).includes('/archived') ? [] : new URL(url).searchParams.has('cursor')
+          ? [createCompactSessionListRowFixture(createCurrentSessionProjectionRecordFixture({ id }))] : [],
+        hasNext: !String(url).includes('/archived') && !new URL(url).searchParams.has('cursor'),
+        nextCursor: !String(url).includes('/archived') && !new URL(url).searchParams.has('cursor') ? 'page-2' : null,
+      } }));
+      const results = await Promise.all([1, 2].map(pages => runAddedHostedSession({
+        environment: { [key]: String(pages) }, workingDirectory: `/session-${pages}`, end: () => {},
+      }, async () => {
+        await Promise.resolve();
+        const list = await resolveSessionIdOrPrefixFromSessionList({ idOrPrefix: 'cprefix', listPage: async input => {
+          await Promise.resolve();
+          return { sessions: input.archivedOnly ? [] : input.cursor ? [{ id }] : [],
+            hasNext: !input.archivedOnly && !input.cursor,
+            nextCursor: !input.archivedOnly && !input.cursor ? 'page-2' : null };
+        } });
+        const http = await resolveSessionIdOrPrefix({ reason: 'session-query',
+          credentials: { token: 'scope-token', encryption: null }, idOrPrefix: 'cprefix' });
+        return { list, http };
+      })));
+      expect(results).toEqual([
+        { list: { ok: false, code: 'session_not_found' }, http: { ok: false, code: 'session_not_found' } },
+        { list: { ok: true, sessionId: id }, http: { ok: true, sessionId: id } },
+      ]);
+    } finally {
+      if (previous === undefined) delete process.env[key];
+      else process.env[key] = previous;
+    }
+  });
+
   beforeEach(() => {
     mockAxiosGet.mockReset();
     mockAxiosPost.mockReset();

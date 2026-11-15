@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 
@@ -32,7 +33,7 @@ export function resolveSessionStartupTimeoutMs(explicitTimeoutMs?: number): numb
     return explicitTimeoutMs;
   }
 
-  const rawEnvValue = String(process.env[SESSION_WEBHOOK_TIMEOUT_ENV_KEY] ?? '').trim();
+  const rawEnvValue = String(sessionProcessEnvironment()[SESSION_WEBHOOK_TIMEOUT_ENV_KEY] ?? '').trim();
   if (!rawEnvValue) {
     return DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS;
   }

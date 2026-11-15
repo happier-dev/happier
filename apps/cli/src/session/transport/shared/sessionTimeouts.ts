@@ -1,5 +1,7 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+
 function readPositiveIntEnvMs(key: string, fallback: number): number {
-  const raw = String(process.env[key] ?? '').trim();
+  const raw = String(sessionProcessEnvironment()[key] ?? '').trim();
   if (!raw) return fallback;
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed)) return fallback;

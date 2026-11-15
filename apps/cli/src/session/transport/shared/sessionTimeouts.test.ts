@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 import {
   resolveSessionControlSocketAckTimeoutMs,
@@ -10,6 +11,26 @@ import {
 } from './sessionTimeouts';
 
 describe('sessionControlTimeouts', () => {
+  it('keeps concurrent hosted Session budgets independent of the host and stripped keys', async () => {
+    const key = 'HAPPIER_SESSION_SOCKET_CONNECT_TIMEOUT_MS';
+    const previous = process.env[key];
+    process.env[key] = '9876';
+    try {
+      const budgets = await Promise.all(['1234', '2345', undefined].map(value => runAddedHostedSession({
+        environment: value === undefined ? {} : { [key]: value },
+        workingDirectory: '/session', end: () => {},
+      }, async () => {
+        await Promise.resolve();
+        return resolveSessionControlSocketConnectTimeoutMs();
+      })));
+      expect(budgets).toEqual([1234, 2345, 10_000]);
+      expect(resolveSessionControlSocketConnectTimeoutMs()).toBe(9876);
+    } finally {
+      if (previous === undefined) delete process.env[key];
+      else process.env[key] = previous;
+    }
+  });
+
   const prevConnect = process.env.HAPPIER_SESSION_SOCKET_CONNECT_TIMEOUT_MS;
   const prevAck = process.env.HAPPIER_SESSION_SOCKET_ACK_TIMEOUT_MS;
   const prevWaitIdleConfirm = process.env.HAPPIER_SESSION_WAIT_IDLE_CONFIRM_MS;
