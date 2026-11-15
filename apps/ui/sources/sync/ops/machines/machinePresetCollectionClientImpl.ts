@@ -15,6 +15,7 @@ import {
     projectManagedMachinePresetForRecipientV1,
     rewrapManagedMachinePresetRecipientsV1,
     sealManagedMachinePresetContentV1,
+    ManagedMachinePresetContentV1Schema,
     ManagedMachinePresetRecipientProjectionV1Schema,
     type ManagedMachinePresetContentV1, type ManagedMachinePresetLaunchNameOverrideV1,
     type ManagedMachinePresetRecipientProjectionV1, type ManagedMachinePresetSavedSecretReferenceRewriteV1,
@@ -148,7 +149,8 @@ export type MachinePresetCollectionOptions<T> = Readonly<{
     search?: string;
     /** Exact visible structural basis for a content edit; no latest-record fetch is allowed. */
     preset?: Readonly<Partial<Pick<OpenedMachinePreset,
-        'owner' | 'controller' | 'controllerPoolId' | 'teamAcquireDelegated' | 'name' | 'launch' | 'setup' | 'controllerDisplayName'>>>;
+        'owner' | 'controller' | 'controllerPoolId' | 'teamAcquireDelegated' | 'name' | 'launch' | 'setup' | 'controllerDisplayName'
+        | 'contentEncryptionMode' | 'recipientProjection'>>>;
     onApprovalPending?: (approval: ActionApprovalRegistration) => void;
     onApprovalSettled?: () => void;
     onApprovalSucceeded?: (value: T) => void | Promise<void>;
@@ -523,13 +525,13 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
 
     async function sealPrivateContent(input: Readonly<{
         presetId: string;
+        writerMode: WriterMode;
         privateContent: ManagedMachinePresetContentV1;
         censusInput: ManagedMachinePresetRecipientCensusInputV1;
         teamAcquireDelegated?: boolean;
         signal?: AbortSignal;
     }>): Promise<SealResult> {
-        const writerMode = await resolveWriterMode(scope, input.signal);
-        if (!writerMode) return { kind: 'failed', code: 'content_unavailable' };
+        const { writerMode } = input;
         const census = await requestRecipientCensus(input.censusInput, input.signal);
         if (!census) return { kind: 'failed', code: 'content_unavailable' };
         if (census.kind === 'refused') return { kind: 'failed', code: census.code };
@@ -760,10 +762,12 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
         options?: MachinePresetCollectionOptions<OpenedPresetActionOutput<T>>): Promise<MachinePresetActionInputV1<T> | SealResult> {
         if (actionId === 'machines.presets.create') {
             const draft = input as MachinePresetCreateDraftInput;
+            const writerMode = await resolveWriterMode(scope, options?.signal);
+            if (!writerMode) return { kind: 'failed', code: 'content_unavailable' };
             const censusInput = { homeId: draft.homeId, owner: draft.owner,
                 ...(draft.controller ? { controller: draft.controller } : {}),
                 ...(draft.controllerPoolId ? { controllerPoolId: draft.controllerPoolId } : {}) };
-            const sealed = await sealPrivateContent({ presetId: draft.id, privateContent: draft.privateContent, censusInput,
+            const sealed = await sealPrivateContent({ presetId: draft.id, writerMode, privateContent: draft.privateContent, censusInput,
                 teamAcquireDelegated: draft.teamAcquireDelegated, signal: options?.signal });
             if (sealed.kind === 'failed') return sealed;
             const { privateContent: _privateContent, ...structural } = draft;
@@ -772,15 +776,30 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
         }
         if (actionId === 'machines.presets.update') {
             const draft = input as MachinePresetUpdateDraftInput;
-            const { privateContent, ...structuralPatch } = draft.patch;
-            if (privateContent === undefined) return { ...draft, patch: structuralPatch } as MachinePresetActionInputV1<T>;
+            const { privateContent: editedContent, ...structuralPatch } = draft.patch;
             const current = options?.preset;
+            if (editedContent === undefined && current?.contentEncryptionMode !== 'plain') {
+                return { ...draft, patch: structuralPatch } as MachinePresetActionInputV1<T>;
+            }
+            const writerMode = await resolveWriterMode(scope, options?.signal);
+            if (!writerMode) return { kind: 'failed', code: 'content_unavailable' };
+            if (editedContent === undefined && writerMode === 'plain') {
+                return { ...draft, patch: structuralPatch } as MachinePresetActionInputV1<T>;
+            }
             if (!current?.owner) return { kind: 'failed', code: 'content_unavailable' };
+            // Legacy rows read as Plain; their next save must seal for the saving Account's mode.
+            let privateContent = editedContent;
+            if (privateContent === undefined) {
+                const retainedContent = current.recipientProjection?.content;
+                const parsed = ManagedMachinePresetContentV1Schema.safeParse(retainedContent?.t === 'plain' ? retainedContent.v : undefined);
+                if (!parsed.success) return { kind: 'failed', code: 'content_unavailable' };
+                privateContent = parsed.data;
+            }
             const controller = Object.hasOwn(structuralPatch, 'controller') ? structuralPatch.controller ?? undefined : current.controller;
             const controllerPoolId = Object.hasOwn(structuralPatch, 'controllerPoolId') ? structuralPatch.controllerPoolId ?? undefined : current.controllerPoolId;
             const censusInput = { homeId: draft.homeId, owner: current.owner,
                 ...(controller ? { controller } : {}), ...(controllerPoolId ? { controllerPoolId } : {}) };
-            const sealed = await sealPrivateContent({ presetId: draft.id, privateContent, censusInput,
+            const sealed = await sealPrivateContent({ presetId: draft.id, writerMode, privateContent, censusInput,
                 teamAcquireDelegated: structuralPatch.teamAcquireDelegated ?? current.teamAcquireDelegated, signal: options?.signal });
             if (sealed.kind === 'failed') return sealed;
             return { ...draft, patch: { ...structuralPatch, contentEncryptionMode: sealed.contentEncryptionMode,

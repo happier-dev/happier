@@ -3448,6 +3448,35 @@ describe('reachable preset detail', () => {
     await screen.unmount();
   });
 
+  it('rolls back queued optimistic choices when the in-flight preset save is refused', async () => {
+    const serverId = await seed();
+    const initial = { ...preset, owner: { kind: 'team', teamId: 'team-1' }, teamAcquireDelegated: true } as const;
+    harness.answer(serverId, '/v1/machines/presets/get', {
+      body: { kind: 'found', preset: createPlainManagedMachinePresetFixture(initial) },
+    });
+    const { bindHomeDomainActionHttpRequestV1 } = await import('@happier-dev/protocol/actions/homeDomainActionFamily');
+    harness.answer(serverId, bindHomeDomainActionHttpRequestV1('teams.get', { v: 1, teamId: 'team-1' }).path, {
+      body: teamSummaryFixture({ name: 'Platform', capabilities: teamCapabilitiesFixture({ manageSettings: true }) }),
+    });
+    let release!: () => void;
+    const respondAfter = new Promise<void>(resolve => { release = resolve; });
+    onTestFinished(() => release());
+    harness.answer(serverId, '/v1/machines/presets/update', { respondAfter,
+      status: 400, body: { kind: 'refused', code: 'account_mode_mismatch' } });
+    const screen = await renderSettingsView(<MachinePresetView serverId={serverId} presetId="preset" />);
+    const toggle = () => screen.findByTestId('machine-preset.detail.memberCreate.switch');
+    await waitForHomeGovernance(() => expect(toggle()?.props.value).toBe(true));
+    await act(async () => { toggle()!.props.onValueChange(false); });
+    await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/update')).toHaveLength(1));
+    await act(async () => { toggle()!.props.onValueChange(false); });
+    expect(toggle()?.props.value).toBe(false);
+    await act(async () => { release(); });
+    await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.mutation-error')).not.toBeNull());
+    await waitForHomeGovernance(() => expect(toggle()?.props.value).toBe(true));
+    expect(harness.requestsFor('/v1/machines/presets/update')).toHaveLength(1);
+    await screen.unmount();
+  });
+
   it('offers no member-creation control on a personal preset', async () => {
     const serverId = await seed();
     const screen = await renderSettingsView(

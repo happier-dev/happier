@@ -131,7 +131,13 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
         try {
             const result = await mutation();
             if (result.kind === 'failed') setMutationError(result.code);
-        } catch { setMutationError('request_failed'); }
+            if (result.kind === 'failed' || (result.kind === 'succeeded' && result.value.kind !== 'saved')) {
+                setPendingEdit(null);
+            }
+        } catch {
+            setMutationError('request_failed');
+            setPendingEdit(null);
+        }
         finally { setMutating(false); }
     }, [canManage, busy]);
     const archiveOrRestore = () => runMutation(detail.archiveOrRestore);

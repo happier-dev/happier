@@ -232,6 +232,46 @@ describe('machine preset content envelopes', () => {
         expect(JSON.stringify(harness.requestsFor('/v1/machines/presets/update')[0]?.input)).not.toContain('Edited legacy name');
     });
 
+    it.each(['account', 'team'] as const)('seals retained Plain %s preset content on a structural save by an E2EE author', async ownerKind => {
+        const credentials = { token: createAccountTokenForTests('owner', { currentAccount: true }),
+            secret: encodeBase64(new Uint8Array(32).fill(17), 'base64url') };
+        const encryption = await createEncryptionFromAuthCredentials(credentials);
+        const homeId = 'srv_legacy_preset';
+        const serverId = await harness.addHome({ name: 'Legacy structural save', serverUrl: 'https://legacy-structural.example',
+            serverIdentityId: homeId, accountId: 'owner', currentAccount: true, accountEncryptionMode: 'e2ee', credentials });
+        const owner = ownerKind === 'team' ? { kind: 'team' as const, teamId: 'team-1' }
+            : { kind: 'account' as const, accountId: 'owner' };
+        const privateContent = { v: 1, name: 'Retained private name', launch,
+            setup: { scripts: [{ body: 'retained private setup' }] }, controllerDisplayName: 'Retained controller' } as const;
+        harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [{
+            id: 'legacy-preset', homeId, revision: 22, owner, controller,
+            contentEncryptionMode: 'plain', content: { t: 'plain', v: privateContent }, recipients: [],
+        }] } });
+        harness.answer(serverId, '/v1/machines/presets/recipient-census', { body: {
+            kind: 'ready', contentEncryptionMode: 'e2ee', recipients: [recipient('owner', encryption.contentDataKey)],
+        } });
+        harness.answer(serverId, '/v1/machines/presets/update', { body: { kind: 'refused', code: 'permission_denied' } });
+        const client = createMachinePresetCollectionClient({ serverId, accountId: 'owner' }, homeId);
+        const listed = await client.list();
+        if (listed.kind !== 'succeeded' || !listed.value[0] || !isOpenedManagedMachinePresetV1(listed.value[0]))
+            throw new Error('Expected the retained Plain preset to open');
+        expect(harness.requestsFor('/v1/machines/presets/update')).toEqual([]);
+        await client.execute('machines.presets.update', { homeId, id: 'legacy-preset', expectedRevision: 22,
+            patch: { simultaneousLimit: { maximum: 4 } } }, { preset: listed.value[0] });
+        const update = harness.requestsFor('/v1/machines/presets/update')[0]?.input;
+        expect(update).toMatchObject({ expectedRevision: 22, patch: {
+            simultaneousLimit: { maximum: 4 }, contentEncryptionMode: 'e2ee',
+            content: { t: 'encrypted', c: expect.any(String) }, recipients: [expect.objectContaining({ accountId: 'owner' })],
+        } });
+        expect(JSON.stringify(update)).not.toContain('Retained private name');
+        expect(JSON.stringify(update)).not.toContain('retained private setup');
+        const patch = (update as { patch: Record<string, unknown> }).patch;
+        harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [{
+            id: 'legacy-preset', homeId, revision: 23, owner, controller, ...patch,
+        }] } });
+        await expect(client.list()).resolves.toMatchObject({ kind: 'succeeded', value: [{ ...privateContent, revision: 23 }] });
+    });
+
     it('saves the editor draft through one private body instead of raw content fields', async () => {
         const homeId = 'srv_editor_draft';
         const serverId = await harness.addHome({ name: 'Editor draft', serverUrl: 'https://editor-draft.example',
