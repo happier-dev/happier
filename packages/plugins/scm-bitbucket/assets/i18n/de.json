@@ -285,7 +285,7 @@
   "plugins.bitbucket.settings.group": "Bitbucket Cloud",
   "plugins.bitbucket.settings.sources": "PRs & Tickets",
   "plugins.bitbucket.settings.sources.subtitle": "Wähle aus, welche Bitbucket-Cloud-Konten und -Workspaces unter PRs & Tickets angezeigt werden.",
-  "plugins.triage.readPartial": "Bisher gelesene Daten werden angezeigt",
+  "plugins.triage.readPartial": "Bisher gelesene Inhalte werden angezeigt",
   "plugins.bitbucket.ui.files.added": "Hinzugefügt",
   "plugins.bitbucket.ui.files.deleted": "Gelöscht",
   "plugins.bitbucket.ui.files.renamed": "Umbenannt",

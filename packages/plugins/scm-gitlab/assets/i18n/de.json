@@ -379,5 +379,5 @@
   "plugins.gitlab.settings.sources": "PRs & Tickets",
   "plugins.gitlab.settings.sources.subtitle": "Wähle aus, welche GitLab-Konten und -Projekte unter PRs & Tickets angezeigt werden.",
   "plugins.gitlab.ui.mutations.failure.code": "Code",
-  "plugins.triage.readPartial": "Bisher gelesene Daten werden angezeigt"
+  "plugins.triage.readPartial": "Bisher gelesene Inhalte werden angezeigt"
 }
