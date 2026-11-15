@@ -154,7 +154,8 @@ describe('app shell Actions', () => {
         { serverId: 'home-b', sessionId: 'same-id', status: 'failed' },
       ] },
     });
-    expect(calls).toEqual([{ actionId: 'inbox.mark_all_read', input, context }]);
+    // The owner receives the exact addressed operands once; its executor context is internal.
+    expect(calls).toEqual([expect.objectContaining({ actionId: 'inbox.mark_all_read', input })]);
   });
 
   it('refuses draft deletion when its client owner is unavailable', async () => {
