@@ -304,6 +304,25 @@ export function isActionOutcomeUnknownErrorCodeV1(code: unknown): boolean {
     || code === 'project_account_row_outcome_unknown' || code === 'project_account_row_acknowledgement_invalid';
 }
 
+/**
+ * The one approval outcome-unknown projection. An effect may have happened, so the result never
+ * claims a no-effect fact; the producer's cause, details and requestId survive, and its own code
+ * becomes `details.reasonCode`.
+ */
+export function projectApprovalExecutionOutcomeUnknownV1(failure?: ActionExecuteFailure): ActionExecuteFailure {
+  const errorCode = 'approval_execution_outcome_unknown';
+  if (!failure) return { ok: false, errorCode, error: errorCode };
+  if (failure.errorCode === errorCode) return failure;
+  const producerDetails = failure.details === undefined ? {}
+    : failure.details && typeof failure.details === 'object' && !Array.isArray(failure.details)
+      ? failure.details : { producerDetails: failure.details };
+  return { ok: false, errorCode, error: errorCode,
+    ...(failure.requestId ? { requestId: failure.requestId } : {}),
+    ...(failure.effectAttempted === true ? { effectAttempted: true } : {}),
+    ...(failure.failureCause ? { failureCause: failure.failureCause } : {}),
+    details: { ...producerDetails, reasonCode: failure.errorCode } };
+}
+
 export function projectUnexpectedActionFailureV1(admissionCommitted: boolean | null, requestId?: string): ActionExecuteFailure & Readonly<{
   errorCode: typeof UNEXPECTED_ACTION_FAILURE_CODES_V1[number];
 }> {

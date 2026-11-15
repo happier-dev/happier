@@ -3,6 +3,11 @@ import { SavedSecretResourceEnvelopeCensusRecipientV1Schema } from '../account/s
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 
+/** The immutable cipher binding shared by Group authors and readers. */
+export function teamGroupLabelBinding(groupId: string, field: 'name' | 'description') {
+  return { entity: 'team_group', field, id: groupId } as const;
+}
+
 /** One recipient-safe Team Group label projection, reused by every Group reader. */
 export const TeamGroupLabelProjectionV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('available'), label: PrivateLabelReadV1Schema }),

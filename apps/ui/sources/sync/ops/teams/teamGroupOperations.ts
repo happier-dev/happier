@@ -161,8 +161,8 @@ export function updateTeamGroup(params: Readonly<{
     scope: ServerAccountScope;
     address: TeamAddress;
     groupId: string;
-    name?: PrivateLabelStoredV1;
-    description?: PrivateLabelStoredV1 | null;
+    name?: string;
+    description?: string | null;
 }>): Promise<TeamGroupOutcome<TeamGroupV1>> {
     return groupMutation({
         scope: params.scope,

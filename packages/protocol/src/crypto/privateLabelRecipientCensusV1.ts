@@ -3,6 +3,9 @@ import { z } from '../zodRuntimePolicy.js';
 import { SavedSecretResourceEnvelopeCensusRecipientV1Schema } from '../account/settings/savedSecretCatalogV1.js';
 import { AccountEncryptionModeSchema } from '../features/payload/capabilities/encryptionCapabilities.js';
 
+export const PRIVATE_LABEL_RECIPIENT_CENSUS_PATH = '/v1/account/private-labels/recipient-census';
+export const ACCOUNT_DIRECTORY_PRIVATE_LABEL_RECIPIENT_CENSUS_PATH = '/v1/account-directory/private-labels/recipient-census';
+
 /** The audience whose current Account keys may receive one private label. */
 export const PrivateLabelRecipientCensusOwnerV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('account'), accountId: z.string().check(z.trim(), z.minLength(1)) }),

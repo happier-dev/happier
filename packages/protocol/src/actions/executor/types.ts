@@ -45,7 +45,7 @@ import type { SessionStopIntent } from '../../sessions/metadata/sessionExplicitS
 import type { AcpCatalogSnapshotV1, AcpCatalogRowMutationV1 } from '../../acp/catalog/catalogRowsV1.js';
 import type { AcpCatalogCleanupV1 } from '../../acp/catalog/catalogMutationsV1.js';
 import type { RequesterWorkAttributionV1 } from '../../machines/requesterWorkAttributionV1.js';
-import type { ActionRequestAttributionV1 } from '../actionRequestAttributionV1.js';
+import type { ActionActorV1, ActionRequestAttributionV1 } from '../actionRequestAttributionV1.js';
 import type { UsageSourceActionPort } from './usageSourceActions.js';
 import type { CapabilitiesDetectRequest, CapabilitiesInvokeRequest } from '../../capabilities/index.js';
 export type { MemorySessionSnapshotV1, MemoryAccountContextV1, MemoryInheritedContextV1, MemoryScopeContextV1, MemoryLibraryActionPortV1 } from './memoryDocumentActions.js';
@@ -150,7 +150,7 @@ import type { AdmittedActionInputById } from '../actionSpecs.js';
 import type { WorkspaceActionId } from '../workspaceActionFamily.js';
 import type { OpenProjectInputV1, OpenProjectResultV1 } from '../../projects/openProjectV1.js';
 import type { SessionTerminalActionId } from '../sessionTerminalActionFamily.js';
-import type { SessionAgentTransitionRequestV1, SessionAgentTransitionSelectionV1 } from '../../sessions/agentTransition.js';
+import type { SessionAgentTransitionRequestV1 } from '../../sessions/agentTransition.js';
 import type { ConnectedServiceConfigurationActionIdV1 } from '../../connect/configurationActionsV1.js';
 import type { SettingsDeclarationActionIdV1 } from '../settingsDeclarationActionFamily.js';
 import type { ActionPolicyActionId } from '../actionPolicyActionFamily.js';
@@ -775,6 +775,8 @@ export type ActionExecutorContext = Readonly<{
     operationId: string;
     /** Actual host operation owner identity; never supplied by Action or RPC input. */
     actionId?: string;
+    /** Accepted private provenance; null suppresses an unknown approver's initiating actor. */
+    actor?: ActionActorV1 | null;
     /** Same-input failed creation receipt retained by the host; never transported or accepted from Action input. */
     previousSessionCreationFailure?: Extract<SessionSpawnNewResultV1, Readonly<{ type: 'error' }>>;
     /** Provider outcome retained by this exact held restore; never Action input or RPC authority. */
@@ -792,6 +794,7 @@ export type ActionExecutorContext = Readonly<{
   }>;
   operationOwnerUpdate?: Readonly<{
     update(update: Readonly<{
+      actor?: ActionActorV1 | null;
       state?: 'running';
       /** Actual native owner capability, not inferred from an Action's AbortSignal. */
       cancellation?: 'supported' | 'unsupported';
@@ -1417,6 +1420,13 @@ export type ActionApprovedOperationAdmissionV1 = WorkflowApprovedOperationV1 & R
 }>;
 
 export type ActionExecutorDeps = Readonly<{
+  /** Captured Account host prepares one audience of private labels before the declared HTTP effect. */
+  privateLabelPrepare?: (request: Readonly<{
+    actionId: ActionId;
+    owner: import('../../crypto/privateLabelRecipientCensusV1.js').PrivateLabelRecipientCensusOwnerV1;
+    labels: readonly Readonly<{ binding: import('../../crypto/privateLabelV1.js').PrivateLabelBindingV1; value: string }>[];
+    signal?: AbortSignal;
+  }>, context: ActionExecutorContext) => Promise<readonly import('../../crypto/privateLabelV1.js').PrivateLabelStoredV1[]>;
   /** Captured keyholding host opens recipient-projected content for semantic display consumers. */
   privateLabelOpen?: (request: Readonly<{
     binding: import('../../crypto/privateLabelV1.js').PrivateLabelBindingV1;
@@ -2199,6 +2209,7 @@ export type ActionExecutorDeps = Readonly<{
   projectsVisibilitySet?: (args: import('../../projects/projectVisibilityV1.js').ProjectVisibilitySetInputV1, context?: ActionExecutorContext) => Promise<import('../../projects/projectVisibilityV1.js').ProjectVisibilitySetOutputV1>;
   projectsOrganizationUpdate?: (args: import('../../projects/projectOrganizationV1.js').ProjectOrganizationUpdateInputV1, context?: ActionExecutorContext) => Promise<import('../../projects/projectOrganizationV1.js').ProjectOrganizationUpdateOutputV1>;
   projectsWorkspaceUpdate?: (args: import('../../projects/projectWorkspaceActionsV1.js').ProjectWorkspaceUpdateInputV1, context?: ActionExecutorContext) => Promise<import('../../projects/projectWorkspaceActionsV1.js').ProjectWorkspaceUpdateOutputV1>;
+  projectsServicesPin?: (args: import('../../projects/projectServicesActionsV1.js').ProjectServicesPinInputV1, context?: ActionExecutorContext) => Promise<import('../../projects/projectServicesActionsV1.js').ProjectServicesPinOutputV1>;
   projectsWorkspaceForget?: (args: import('../../projects/projectWorkspaceActionsV1.js').ProjectWorkspaceForgetInputV1, context?: ActionExecutorContext) => Promise<import('../../projects/projectWorkspaceActionsV1.js').ProjectWorkspaceForgetOutputV1>;
   promptInvocationsList?: (args: Readonly<{ limit?: number; signal?: AbortSignal }>) => Promise<unknown>;
   promptInvocationResolve?: (args: Readonly<{ invocationId: string; argsText?: string; sessionId?: string | null; signal?: AbortSignal }>) => Promise<unknown>;
@@ -2317,7 +2328,7 @@ export type ActionExecutorDeps = Readonly<{
 
   // Session messaging (socket message event, server-scoped)
   sessionContinuationInspect?: (args: Readonly<{
-    input: Readonly<{ sessionId: string; selection: SessionAgentTransitionSelectionV1 }>;
+    input: AdmittedActionInputById['session.continuation.inspect'];
     context: ActionExecutorContext;
     serverId?: string | null;
   }>) => Promise<unknown>;
@@ -2463,7 +2474,7 @@ export type ActionExecutorDeps = Readonly<{
     context?: ActionExecutorContext;
     callerInputConstraints?: CallerInputConstraintsV1;
     permissionMode: string;
-    applyTiming?: 'immediate';
+    applyTiming?: 'immediate' | 'next_prompt';
     serverId?: string | null;
   }>) => Promise<unknown>;
   sessionModelSet?: (args: Readonly<{

@@ -12,6 +12,7 @@ import {
 import {
     PrivateLabelRecipientCensusRequestV1Schema,
     PrivateLabelRecipientCensusResponseV1Schema,
+    PRIVATE_LABEL_RECIPIENT_CENSUS_PATH,
     type PrivateLabelRecipientCensusOwnerV1,
 } from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
 import { prepareSavedSecretResourceRecipientEnvelopesV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
@@ -21,8 +22,6 @@ import { getRandomBytes } from '@/platform/cryptoRandom';
 import { classifyAccountStorageReadFailure } from '@/sync/encryption/accountStorageReadFailure';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
-
-const PRIVATE_LABEL_RECIPIENT_CENSUS_PATH = '/v1/account/private-labels/recipient-census';
 
 /** A label reader must not turn withdrawn Account custody into an unavailable label. */
 export function isPrivateLabelLifecycleFailureV1(error: unknown, signal?: AbortSignal): boolean {
@@ -52,6 +51,11 @@ export type PrivateLabelSealInputV1 = Readonly<{
     owner: PrivateLabelRecipientCensusOwnerV1;
     binding: PrivateLabelBindingV1;
     value: string;
+    signal?: AbortSignal;
+}>;
+type PrivateLabelSealBatchInputV1 = Readonly<{
+    owner: PrivateLabelRecipientCensusOwnerV1;
+    labels: readonly Pick<PrivateLabelSealInputV1, 'binding' | 'value'>[];
     signal?: AbortSignal;
 }>;
 
@@ -110,7 +114,7 @@ export function createPrivateLabelClientForAccountContext(context: PrivateLabelA
         return response.ok && census.success ? census.data : null;
     }
 
-    async function seal(input: PrivateLabelSealInputV1): Promise<PrivateLabelStoredV1 | null> {
+    async function sealMany(input: PrivateLabelSealBatchInputV1): Promise<PrivateLabelStoredV1[] | null> {
         assertContextCurrent(context, input.signal);
         const census = await requestRecipientCensus(input.owner, input.signal);
         if (!census) return null;
@@ -128,33 +132,44 @@ export function createPrivateLabelClientForAccountContext(context: PrivateLabelA
         if (!census || census.contentEncryptionMode !== contentEncryptionMode) return null;
         try {
             assertContextCurrent(context, input.signal);
-            if (contentEncryptionMode === 'plain') {
-                return sealPrivateLabelV1({ mode: 'plain', binding: input.binding, value: input.value });
+            const labels: PrivateLabelStoredV1[] = [];
+            for (const label of input.labels) {
+                if (contentEncryptionMode === 'plain') {
+                    labels.push(sealPrivateLabelV1({ mode: 'plain', binding: label.binding, value: label.value }));
+                    continue;
+                }
+                const dataKey = getRandomBytes(tweetnacl.secretbox.keyLength);
+                const prepared = prepareSavedSecretResourceRecipientEnvelopesV1({
+                    recipients: census.recipients,
+                    resourceDataKey: dataKey,
+                    randomBytes: getRandomBytes,
+                });
+                // A fresh DEK needs every exact census recipient. `prepared` belongs to a
+                // different persisted resource and cannot be borrowed for this label.
+                if (prepared.length !== census.recipients.length) return null;
+                labels.push(sealPrivateLabelV1({
+                    mode: 'e2ee', binding: label.binding, value: label.value, dataKey,
+                    recipients: prepared.map((recipient) => ({
+                        accountId: recipient.recipientAccountId,
+                        envelope: {
+                            encryptedDataKey: recipient.encryptedDataKey,
+                            recipientContentPublicKeyFingerprint: recipient.recipientContentPublicKeyFingerprint,
+                        },
+                    })),
+                    randomBytes: getRandomBytes,
+                }));
             }
-            const dataKey = getRandomBytes(tweetnacl.secretbox.keyLength);
-            const prepared = prepareSavedSecretResourceRecipientEnvelopesV1({
-                recipients: census.recipients,
-                resourceDataKey: dataKey,
-                randomBytes: getRandomBytes,
-            });
-            // A fresh DEK needs every exact census recipient. `prepared` belongs to a
-            // different persisted resource and cannot be borrowed for this label.
-            if (prepared.length !== census.recipients.length) return null;
-            return sealPrivateLabelV1({
-                mode: 'e2ee', binding: input.binding, value: input.value, dataKey,
-                recipients: prepared.map((recipient) => ({
-                    accountId: recipient.recipientAccountId,
-                    envelope: {
-                        encryptedDataKey: recipient.encryptedDataKey,
-                        recipientContentPublicKeyFingerprint: recipient.recipientContentPublicKeyFingerprint,
-                    },
-                })),
-                randomBytes: getRandomBytes,
-            });
+            return labels;
         } catch (error) {
             rethrowLifecycleFailure(error, input.signal);
             return null;
         }
+    }
+
+    async function seal(input: PrivateLabelSealInputV1): Promise<PrivateLabelStoredV1 | null> {
+        const labels = await sealMany({ owner: input.owner, labels: [{ binding: input.binding, value: input.value }],
+            ...(input.signal ? { signal: input.signal } : {}) });
+        return labels?.[0] ?? null;
     }
 
     async function open(input: PrivateLabelOpenInputV1): Promise<string | null> {
@@ -203,7 +218,7 @@ export function createPrivateLabelClientForAccountContext(context: PrivateLabelA
         }
     }
 
-    return { seal, open, rewrap };
+    return { seal, sealMany, open, rewrap };
 }
 
 /**
@@ -317,4 +332,18 @@ export function createPrivateLabelActionOpener(
     return async (request, context) => await labels.open({ ...request,
         ...((request.signal ?? context.signal) ? { signal: request.signal ?? context.signal } : {}),
     });
+}
+
+/** Semantic effects use the same captured client, mode and census as ordinary label authors. */
+export function createPrivateLabelActionPreparer(
+    account: PrivateLabelActionAccountContextV1,
+): NonNullable<ActionExecutorDeps['privateLabelPrepare']> {
+    const labels = createPrivateLabelClientForActionAccountContext(account);
+    return async (request, context) => {
+        const prepared = await labels.sealMany({ ...request,
+            ...((request.signal ?? context.signal) ? { signal: request.signal ?? context.signal } : {}),
+        });
+        if (!prepared) throw Object.assign(new Error('The private label is unavailable.'), { code: 'private_label_unavailable' });
+        return prepared;
+    };
 }

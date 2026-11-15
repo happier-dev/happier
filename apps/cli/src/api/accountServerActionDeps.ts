@@ -1,8 +1,10 @@
-import { createCliPrivateLabelActionOpener, deriveCliPrivateLabelAccountKey, openCliMachinePoolPrivateView } from '@/api/privateLabels';
+import { createCliPrivateLabelActionOpener, deriveCliPrivateLabelAccountKey, openCliMachinePoolPrivateView, prepareCliPrivateLabels } from '@/api/privateLabels';
+import { resolveRequesterSavedSecretActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { PRIVATE_LABEL_RECIPIENT_CENSUS_PATH } from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
 import { isManagedOpaquePresetMachineV1, type ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { openManagedMachineRead } from '@/machines/managed/readManagedMachine';
 import { projectManagedMachinePresetForRecipientV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
-import { requireExternalActionHeaders } from '@/api/externalActionHeaderRefusal';
+import { externalActionHeaderRefusalFailure, refuseExternalActionHeaders, requireExternalActionHeaders } from '@/api/externalActionHeaderRefusal';
 import axios from '@/api/client/credentialAxios';
 import { type AxiosResponse } from 'axios';
 import { createHash, randomUUID } from 'node:crypto';
@@ -118,6 +120,7 @@ export type AccountServerActionDeps = Pick<
   | 'managedMachineAction'
   | 'homeDomainAction'
   | 'privateLabelOpen'
+  | 'privateLabelPrepare'
   | 'sessionAccessAction'
   | 'machineAccessAction'
   | 'projectWorkerAction'
@@ -271,11 +274,16 @@ export function createAccountServerActionDeps(input: Readonly<{
     actionContext?.serverId && !await isServerProfileHomeIdentity(serverId, actionContext.serverId)
       ? { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' }
       : null;
-  const externalAuthorizationUnavailable = (): ActionExecuteFailure => ({
+  // Home answered 401/403: its authentication verdict. A local header refusal keeps its typed reason instead.
+  const homeAuthenticationRefused = (): ActionExecuteFailure => ({
     ok: false,
     errorCode: 'not_authenticated',
     error: 'not_authenticated',
   });
+  // This port has no signed external carrier; the refusal keeps the invocation's requestId.
+  const externalTransportUnsupported = (context: ActionExecutorContext | undefined): ActionExecuteFailure =>
+    externalActionHeaderRefusalFailure(refuseExternalActionHeaders('external_transport_unsupported',
+      context?.externalActionExecutionAuthorization?.binding.requestId));
   const qualifiedHomeActionFailure = async (params: Readonly<{
     actionId: string;
     homeId: string;
@@ -462,14 +470,14 @@ export function createAccountServerActionDeps(input: Readonly<{
     const spec = getActionSpec(actionId);
     const { path, method, body } = bindHomeDomainHttpRequestV1({ transport: spec.serverTransport!, inputSchema: spec.inputSchema, input: {} });
     const authorization = resolveRequestHeaders({ context, effectActionId: actionId, method, path, body });
-    if (!authorization.ok) return externalAuthorizationUnavailable();
+    if (!authorization.ok) return externalActionHeaderRefusalFailure(authorization);
     const sideEffectClass = spec.sideEffectClass;
     const dispatched = await dispatchAccountServerActionHttpRequest({ headers: authorization.headers, method, path, body,
       signal: context.signal, sideEffectClass });
     if (!dispatched.ok) return dispatched;
     if (context.signal?.aborted) return failure(refresh ? 'outcome_unknown' : 'cancelled');
     if (input.isCredentialCurrent && !await input.isCredentialCurrent()) return failure('credential_scope_retired');
-    if (isAuthenticationStatus(dispatched.response.status)) return externalAuthorizationUnavailable();
+    if (isAuthenticationStatus(dispatched.response.status)) return homeAuthenticationRefused();
     if ([404, 405, 501].includes(dispatched.response.status)) return failure('unsupported');
     if (dispatched.response.status >= 400) return failure('usage_prices_read_failed');
     const parsed = UsageModelPriceCatalogSchema.safeParse(dispatched.response.data);
@@ -513,7 +521,7 @@ export function createAccountServerActionDeps(input: Readonly<{
           if (code === 'scope-retired' || input.isCredentialCurrent && !await input.isCredentialCurrent()) return failure('credential_scope_retired');
           const typedFailure = parseActionExecuteFailure(error);
           if (typedFailure) return typedFailure;
-          if (isAuthenticationError(error) || code === 'action_authorization_unavailable') return externalAuthorizationUnavailable();
+          if (isAuthenticationError(error)) return homeAuthenticationRefused();
           return failure('usage_quota_read_failed');
         }
       };
@@ -527,6 +535,26 @@ export function createAccountServerActionDeps(input: Readonly<{
   });
   const openPrivateLabel = createCliPrivateLabelActionOpener(credentials.encryption);
   const deps: AccountServerActionDeps = {
+    privateLabelPrepare: async (request, context) => {
+      const mismatch = await accountServerTargetMismatch(context);
+      if (mismatch) throw Object.assign(new Error(mismatch.errorCode), { code: mismatch.errorCode });
+      const custody = resolveRequesterSavedSecretActionCustody({
+        authorization: context.externalActionExecutionAuthorization, credentials,
+      });
+      const effectActionId = request.actionId;
+      const currentnessHeaders = requireExternalActionHeaders(resolveRequestHeaders({ context, effectActionId,
+        method: 'GET', path: '/v1/account/encryption/currentness' }));
+      const endpoint = custody.operation?.serverHttpBaseUrl ?? serverHttpBaseUrl;
+      const storage = await resolveCliAccountStorageContext({ credentials: custody.credentials, serverBaseUrl: endpoint,
+        authorizationHeaders: currentnessHeaders, ...(request.signal ? { signal: request.signal } : {}) });
+      const path = PRIVATE_LABEL_RECIPIENT_CENSUS_PATH;
+      const body = { owner: request.owner };
+      const authorizationHeaders = requireExternalActionHeaders(resolveRequestHeaders({ context, effectActionId,
+        method: 'POST', path, body }));
+      return await prepareCliPrivateLabels({ endpoint, token: custody.credentials.token, accountMode: storage.mode,
+        recipientCensusPath: path, authorizationHeaders, owner: request.owner, labels: request.labels,
+        ...(request.signal ? { signal: request.signal } : {}) });
+    },
     privateLabelOpen: async (request, context) => {
       if (await accountServerTargetMismatch(context)) return null;
       if (input.isCredentialCurrent && !await input.isCredentialCurrent()) {
@@ -547,17 +575,17 @@ export function createAccountServerActionDeps(input: Readonly<{
         // Only the captured recap invocation may consume this Account-scoped
         // current view. Neither a caller handle nor a caller public DTO is accepted.
         if (!['usage.recap.compose', 'usage.recap.export', 'usage.recap.deliver'].includes(effectActionId)) {
-          return externalAuthorizationUnavailable();
+          return externalTransportUnsupported(context);
         }
         const path = '/v1/account/public-profile/view';
         const authorization = resolveRequestHeaders({ context, effectActionId, method: 'GET', path });
-        if (!authorization.ok) return externalAuthorizationUnavailable();
+        if (!authorization.ok) return externalActionHeaderRefusalFailure(authorization);
         const dispatched = await dispatchAccountServerActionHttpRequest({ headers: authorization.headers,
           method: 'GET', path, signal: context.signal, sideEffectClass: 'read' });
         if (context.signal?.aborted) return failure('cancelled');
         if (input.isCredentialCurrent && !await input.isCredentialCurrent()) return failure('credential_scope_retired');
         if (!dispatched.ok) return dispatched;
-        if (isAuthenticationStatus(dispatched.response.status)) return externalAuthorizationUnavailable();
+        if (isAuthenticationStatus(dispatched.response.status)) return homeAuthenticationRefused();
         if ([404, 405, 501].includes(dispatched.response.status)) return { kind: 'unavailable' };
         if (dispatched.response.status < 200 || dispatched.response.status >= 300) return failure('public_profile_read_failed');
         const parsed = PublicProfileReadResultV1Schema.safeParse(dispatched.response.data);
@@ -592,14 +620,14 @@ export function createAccountServerActionDeps(input: Readonly<{
         const snapshots = await readUsageAccountingSnapshots({ reads: accountingReads, nowMs: accountingNowMs, projectScopeKeys,
           post: async (path, body) => {
             const authorization = resolveRequestHeaders({ context, effectActionId: 'usage.query', method: 'POST', path, body });
-            if (!authorization.ok) return externalAuthorizationUnavailable();
+            if (!authorization.ok) return externalActionHeaderRefusalFailure(authorization);
             if (input.isCredentialCurrent && !await input.isCredentialCurrent()) return retired();
             const dispatched = await dispatchAccountServerActionHttpRequest({ headers: authorization.headers, method: 'POST', path, body,
               signal: context.signal, sideEffectClass: 'read' });
             if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
             if (input.isCredentialCurrent && !await input.isCredentialCurrent()) return retired();
             if (!dispatched.ok) return { sourceErrorCode: dispatched.errorCode };
-            if (isAuthenticationStatus(dispatched.response.status)) return externalAuthorizationUnavailable();
+            if (isAuthenticationStatus(dispatched.response.status)) return homeAuthenticationRefused();
             return { response: dispatched.response };
           },
         });
@@ -775,7 +803,7 @@ export function createAccountServerActionDeps(input: Readonly<{
       }
       if (actionId === 'machines.worker.policy.get' || actionId === 'machines.worker.policy.set') {
         // The incumbent metadata socket has no external Action signing carrier.
-        if (context.externalActionCredential) return externalAuthorizationUnavailable();
+        if (context.externalActionCredential) return externalTransportUnsupported(context);
         const lifetime = getActiveAccountSettingsSnapshotLifetimeToken();
         const client = await createAccountServerMachineFinitePolicyClient({
           machineId: ProjectWorkerActionInputSchemasV1[actionId].parse(actionInput).machineId,
@@ -877,7 +905,7 @@ export function createAccountServerActionDeps(input: Readonly<{
       const request = bindMachineAccessActionHttpRequestV1(actionId, actionInput);
       const requestHeaders = resolveRequestHeaders({ context: actionContext, effectActionId: actionId,
         method: request.method, path: request.path, ...(request.body === undefined ? {} : { body: request.body }) });
-      if (!requestHeaders.ok) return externalAuthorizationUnavailable();
+      if (!requestHeaders.ok) return externalActionHeaderRefusalFailure(requestHeaders);
       const dispatch = await dispatchAccountServerActionHttpRequest({ headers: requestHeaders.headers,
         method: request.method, path: request.path, ...(request.body === undefined ? {} : { body: request.body }),
         sideEffectClass: spec.sideEffectClass, ...(signal ? { signal } : {}) });
@@ -924,7 +952,7 @@ export function createAccountServerActionDeps(input: Readonly<{
       const unavailable = await qualifiedHomeActionFailure({ actionId, homeId, context: actionContext, signal });
       if (unavailable) return unavailable;
       if (actionId === 'machines.provisioners.list') {
-        if (actionContext.externalActionCredential || actionContext.externalActionExecutionAuthorization) return externalAuthorizationUnavailable();
+        if (actionContext.externalActionCredential || actionContext.externalActionExecutionAuthorization) return externalTransportUnsupported(actionContext);
         const result = await executeCliManagedProvisionerList({
           value: ManagedMachineActionInputSchemasV1['machines.provisioners.list'].parse(body),
           credentials: input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null },
@@ -1000,7 +1028,7 @@ export function createAccountServerActionDeps(input: Readonly<{
       const homeBody = actionId === 'machines.managed.inspect' && 'managedId' in body
         ? { homeId, managedId: body.managedId } : body;
       const requestHeaders = resolveRequestHeaders({ context: actionContext, effectActionId: actionId, method: 'POST', path, body: homeBody });
-      if (!requestHeaders.ok) return externalAuthorizationUnavailable();
+      if (!requestHeaders.ok) return externalActionHeaderRefusalFailure(requestHeaders);
       const dispatch = await dispatchAccountServerActionHttpRequest({
         headers: requestHeaders.headers, method: 'POST', path, body: homeBody, sideEffectClass: spec.sideEffectClass,
         ...(signal ? { signal } : {}),
@@ -1051,7 +1079,7 @@ export function createAccountServerActionDeps(input: Readonly<{
       if (unavailable) return unavailable;
       const path = machinePresetActionEndpointPathV1(actionId);
       const requestHeaders = resolveRequestHeaders({ context: actionContext, effectActionId: actionId, method: 'POST', path, body });
-      if (!requestHeaders.ok) return externalAuthorizationUnavailable();
+      if (!requestHeaders.ok) return externalActionHeaderRefusalFailure(requestHeaders);
       const sideEffectClass = getActionSpec(actionId).sideEffectClass;
       const dispatch = await dispatchAccountServerActionHttpRequest({
         headers: requestHeaders.headers, method: 'POST', path, body, sideEffectClass,
@@ -1087,7 +1115,7 @@ export function createAccountServerActionDeps(input: Readonly<{
         path,
         body,
       });
-      if (!requestHeaders.ok) return externalAuthorizationUnavailable();
+      if (!requestHeaders.ok) return externalActionHeaderRefusalFailure(requestHeaders);
       const dispatch = await dispatchAccountServerActionHttpRequest({
         headers: requestHeaders.headers,
         method: 'POST',
@@ -1125,7 +1153,7 @@ export function createAccountServerActionDeps(input: Readonly<{
       const credentials = input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null };
       const authorization = resolveRequestHeaders({ context: actionContext, effectActionId: actionId,
         method: 'GET', path: '/v1/account/encryption/currentness' });
-      if (!authorization.ok) return externalAuthorizationUnavailable();
+      if (!authorization.ok) return externalActionHeaderRefusalFailure(authorization);
       const storage = await resolveCliAccountStorageContext({ credentials, serverBaseUrl: serverHttpBaseUrl,
         authorizationHeaders: authorization.headers, ...(signal ? { signal } : {}) });
       const accountKey = storage.mode === 'e2ee' ? deriveCliPrivateLabelAccountKey(storage.encryption) : null;
@@ -1169,7 +1197,7 @@ export function createAccountServerActionDeps(input: Readonly<{
           await assertCurrent();
           const headers = resolveRequestHeaders({ context: actionContext, effectActionId: actionId, method, path,
             ...(body === undefined ? {} : { body }) });
-          if (!headers.ok) return externalAuthorizationUnavailable();
+          if (!headers.ok) return externalActionHeaderRefusalFailure(headers);
           const sideEffectClass = method === 'GET' ? 'read' : 'external';
           const dispatch = await dispatchAccountServerActionHttpRequest({ headers: headers.headers, method, path,
             ...(body === undefined ? {} : { body }), ...(signal ? { signal } : {}), sideEffectClass });
@@ -1239,7 +1267,7 @@ export function createAccountServerActionDeps(input: Readonly<{
         path: request.path,
         ...(request.body === undefined ? {} : { body: request.body }),
       });
-      if (!requestHeaders.ok) return externalAuthorizationUnavailable();
+      if (!requestHeaders.ok) return externalActionHeaderRefusalFailure(requestHeaders);
       const dispatch = await dispatchAccountServerActionHttpRequest({
         headers: requestHeaders.headers,
         method: request.method,
@@ -1459,7 +1487,7 @@ export function createAccountServerActionDeps(input: Readonly<{
         path: request.path,
         ...(request.body === undefined ? {} : { body: request.body }),
       });
-      if (!requestHeaders.ok) return externalAuthorizationUnavailable();
+      if (!requestHeaders.ok) return externalActionHeaderRefusalFailure(requestHeaders);
       const dispatch = await dispatchAccountServerActionHttpRequest({
         headers: requestHeaders.headers,
         method: request.method,
@@ -1591,7 +1619,7 @@ export function createAccountServerActionDeps(input: Readonly<{
         path: ACCOUNT_API_TOKENS_CREATE_HTTP_PATH_V1,
         body,
       });
-      if (!requestHeaders.ok) return externalAuthorizationUnavailable();
+      if (!requestHeaders.ok) return externalActionHeaderRefusalFailure(requestHeaders);
       await prepared.assertCurrent();
       const dispatch = await dispatchAccountServerActionHttpRequest({
         headers: requestHeaders.headers,
@@ -1627,7 +1655,7 @@ export function createAccountServerActionDeps(input: Readonly<{
         path: ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1,
         body,
       });
-      if (!requestHeaders.ok) return externalAuthorizationUnavailable();
+      if (!requestHeaders.ok) return externalActionHeaderRefusalFailure(requestHeaders);
       await prepared.assertCurrent();
       const dispatch = await dispatchAccountServerActionHttpRequest({
         headers: requestHeaders.headers,
@@ -1658,7 +1686,7 @@ export function createAccountServerActionDeps(input: Readonly<{
         path: ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1,
         body,
       });
-      if (!requestHeaders.ok) return externalAuthorizationUnavailable();
+      if (!requestHeaders.ok) return externalActionHeaderRefusalFailure(requestHeaders);
       const dispatch = await dispatchAccountServerActionHttpRequest({
         headers: requestHeaders.headers,
         method: 'POST',
@@ -1688,7 +1716,7 @@ export function createAccountServerActionDeps(input: Readonly<{
         path: ACCOUNT_API_TOKENS_REVOKE_HTTP_PATH_V1,
         body,
       });
-      if (!requestHeaders.ok) return externalAuthorizationUnavailable();
+      if (!requestHeaders.ok) return externalActionHeaderRefusalFailure(requestHeaders);
       const dispatch = await dispatchAccountServerActionHttpRequest({
         headers: requestHeaders.headers,
         method: 'POST',
@@ -1718,7 +1746,7 @@ export function createAccountServerActionDeps(input: Readonly<{
         path: ACCOUNT_API_TOKENS_REVOKE_ALL_HTTP_PATH_V1,
         body,
       });
-      if (!requestHeaders.ok) return externalAuthorizationUnavailable();
+      if (!requestHeaders.ok) return externalActionHeaderRefusalFailure(requestHeaders);
       const dispatch = await dispatchAccountServerActionHttpRequest({
         headers: requestHeaders.headers,
         method: 'POST',
@@ -1748,7 +1776,7 @@ export function createAccountServerActionDeps(input: Readonly<{
         method: 'GET',
         path: ACCOUNT_SECURITY_PATH_V1,
       });
-      if (!requestHeaders.ok) return externalAuthorizationUnavailable();
+      if (!requestHeaders.ok) return externalActionHeaderRefusalFailure(requestHeaders);
       return await executeAccountSecurityGet({
         headers: requestHeaders.headers,
         serverHttpBaseUrl,
@@ -1762,7 +1790,7 @@ export function createAccountServerActionDeps(input: Readonly<{
       if (targetMismatch) return targetMismatch;
       const body = AccountPasswordEnrollRequestV1Schema.parse(actionInput);
       const requestHeaders = resolveRequestHeaders({ context: actionContext, effectActionId: 'account.password.enroll', method: 'POST', path: ACCOUNT_PASSWORD_ENROLL_PATH_V1, body });
-      if (!requestHeaders.ok) return externalAuthorizationUnavailable();
+      if (!requestHeaders.ok) return externalActionHeaderRefusalFailure(requestHeaders);
       return await executeAccountSecurityAction({
         headers: requestHeaders.headers,
         serverHttpBaseUrl,
@@ -1778,7 +1806,7 @@ export function createAccountServerActionDeps(input: Readonly<{
       if (targetMismatch) return targetMismatch;
       const body = AccountPasswordChangeRequestV1Schema.parse(actionInput);
       const requestHeaders = resolveRequestHeaders({ context: actionContext, effectActionId: 'account.password.change', method: 'POST', path: ACCOUNT_PASSWORD_CHANGE_PATH_V1, body });
-      if (!requestHeaders.ok) return externalAuthorizationUnavailable();
+      if (!requestHeaders.ok) return externalActionHeaderRefusalFailure(requestHeaders);
       return await executeAccountSecurityAction({
         headers: requestHeaders.headers,
         serverHttpBaseUrl,
@@ -1794,7 +1822,7 @@ export function createAccountServerActionDeps(input: Readonly<{
       if (targetMismatch) return targetMismatch;
       const body = AccountPasswordRemoveRequestV1Schema.parse(actionInput);
       const requestHeaders = resolveRequestHeaders({ context: actionContext, effectActionId: 'account.password.remove', method: 'POST', path: ACCOUNT_PASSWORD_REMOVE_PATH_V1, body });
-      if (!requestHeaders.ok) return externalAuthorizationUnavailable();
+      if (!requestHeaders.ok) return externalActionHeaderRefusalFailure(requestHeaders);
       return await executeAccountSecurityAction({
         headers: requestHeaders.headers,
         serverHttpBaseUrl,
@@ -1810,7 +1838,7 @@ export function createAccountServerActionDeps(input: Readonly<{
       if (targetMismatch) return targetMismatch;
       const body = AccountEmailChangeRequestV1Schema.parse(actionInput);
       const requestHeaders = resolveRequestHeaders({ context: actionContext, effectActionId: 'account.email.change.request', method: 'POST', path: ACCOUNT_EMAIL_CHANGE_REQUEST_PATH_V1, body });
-      if (!requestHeaders.ok) return externalAuthorizationUnavailable();
+      if (!requestHeaders.ok) return externalActionHeaderRefusalFailure(requestHeaders);
       return await executeAccountSecurityAction({
         headers: requestHeaders.headers,
         serverHttpBaseUrl,

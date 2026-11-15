@@ -95,17 +95,17 @@ export function projectActionObservationContext(actionId: ActionId, context: Act
     resolveApprovalOriginForRequest(context.approvalOrigin, null), true) };
 }
 
-export function resolvePolicyApprovalRequestingSessionId(
+export function resolveApprovalRequestingSessionId(
   rawOrigin: unknown,
   ctx: ActionExecutorContext,
   targetSessionId: string | null,
 ): string | null {
+  const defaultSessionId = normalizeId(ctx.defaultSessionId);
+  if (defaultSessionId) return defaultSessionId;
+
   const origin = resolveApprovalOriginForRequest(rawOrigin, null);
   const originSessionId = normalizeId(origin?.sessionId);
   if (originSessionId) return originSessionId;
-
-  const defaultSessionId = normalizeId(ctx.defaultSessionId);
-  if (defaultSessionId) return defaultSessionId;
 
   return targetSessionId;
 }
@@ -360,21 +360,6 @@ export function buildApprovalExecutionOriginV1(params: Readonly<{
   if (!parsed.success || params.requesterConfirmation
     && !isApprovalRequesterConfirmationBoundToOriginV1(params.requesterConfirmation, parsed.data)) return null;
   return parsed.data;
-}
-
-export function resolveExplicitApprovalRequestingSessionId(
-  rawOrigin: unknown,
-  ctx: ActionExecutorContext,
-  targetSessionId: string | null,
-): string | null {
-  const defaultSessionId = normalizeId(ctx.defaultSessionId);
-  if (defaultSessionId) return defaultSessionId;
-
-  const origin = resolveApprovalOriginForRequest(rawOrigin, null);
-  const originSessionId = normalizeId(origin?.sessionId);
-  if (originSessionId) return originSessionId;
-
-  return targetSessionId;
 }
 
 export function isApprovalActionId(actionId: ActionId): boolean {

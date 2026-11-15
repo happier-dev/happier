@@ -1,5 +1,5 @@
 import { createActionConfirmationPresenter } from './actionConfirmationPresenter';
-import { createPrivateLabelActionOpener } from '@/sync/ops/privateLabels/privateLabelClient';
+import { createPrivateLabelActionOpener, createPrivateLabelActionPreparer } from '@/sync/ops/privateLabels/privateLabelClient';
 import { openMachinePoolActionOutputV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
 import { createMachinePoolPrivateLabelClientForAccount, openMachinePoolPrivateViewV1 } from '@/sync/ops/machinePoolPrivateLabelProjection';
 import { resolveAmbientTeamCredentialModelForModelIntent } from '@happier-dev/agents/session/state/metadataReaders';
@@ -26,7 +26,7 @@ import { isSessionArchiveOperationCurrent, resolveSessionArchiveAddress, type Se
 import { isTransientConnectivityError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import type { ApprovalStaleReason } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { executeSessionMessageReplyReview } from './sessionMessageReplyReview';
-import { inspectSessionContinuationOnMachine } from '@/sync/ops/sessionContinuationInspection';
+import { readSessionContinuationOnMachine, readSessionContinuationsOnMachine } from '@/sync/ops/sessionContinuationInspectionRpc';
 import { projectAutomationEligibleEventsCatalogV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { loadDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { readRpcFailureCode } from './rpcFailureCode';
@@ -336,6 +336,7 @@ import { applyPermissionModeSelectionEffect } from '@/sync/domains/permissions/p
 import { isPermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { loadSessionPermissionModes, loadSessionPermissionModeUpdatedAts, saveSessionPermissionModes,
   saveSessionPermissionModeUpdatedAts } from '@/sync/domains/state/sessionPersistence';
+import { captureSessionDraftCurrentness, clearSessionDraftCurrentnessLocal, writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { nowServerMs } from '@/sync/runtime/time';
 import { getModelOverrideForSpawn } from '@/sync/domains/models/modelOverride';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
@@ -587,12 +588,6 @@ export function isApprovalExecutionOriginCurrentForAccountContext(input: Readonl
   }
   return areServerProfileIdentifiersEquivalent(input.origin.serverId, input.accountServerId) || stale('home_changed');
 }
-
-/**
- * Re-exported from the Protocol owner of `ApprovalExecutionOriginV1`: the list
- * of origin facts this client cannot verify belongs beside the schema that
- * introduces them, not in a hand-maintained consumer-side enumeration.
- */
 
 export async function replayApprovalRequestAtExactDaemon(input: Readonly<{
   artifactId: string;
@@ -1980,7 +1975,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       }),
       providerActionExecute: createUiProviderActionExecuteV1(accountContext, { onRpcDispatched: opts?.onProviderRpcDispatched }),
     } : {}),
-    ...(accountContext ? { remoteHostActionExecute: createUiRemoteHostActionExecuteV1(accountContext, opts?.openRoute) } : {}),
+    ...(accountContext ? { remoteHostActionExecute: createUiRemoteHostActionExecuteV1(accountContext, opts?.openRoute, opts?.homeRuntimeRunner) } : {}),
     ...(accountContext ? { artifactAccessAction: createArtifactAccessActionsV1({
       read: (artifactId, options) => accountContext.readArtifactPublicLinkResource(artifactId, options?.signal),
       transport: accountContext.artifactAccessGrants,
@@ -2061,8 +2056,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       // input, and a genuine plugin update keeps that approval (ruling 2026-11-02), so the plugin's
       // current source is not re-read here.
       // Exact-daemon families verify their signed input at that daemon. For an
-      // app-owned Account proposal, verify against the fresh Home installation
-      // identity before the Artifact claim and again immediately before effect.
+      // app-owned Account proposal, verify once against the fresh Home installation
+      // identity before the Artifact claim; the claim and effect consume that admission.
       const authorization = origin.externalActionExecutionAuthorization;
       if (!authorization || executor.kind !== 'app') return true;
       if (request.v !== 2 || !origin.machineId || !origin.target || !origin.externalActionInputSignature
@@ -2944,10 +2939,16 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       }
       accountContext.assertCurrent();
       const scope = accountContext.accountLifetime.scope;
+      if (applyTiming === 'next_prompt') {
+        writeExistingSessionDraft({ scope, sessionId, patch: { nextPromptPermissionMode: permissionMode } });
+        return { ok: true };
+      }
+      const address = { kind: 'session' as const, sessionId };
+      const currentness = captureSessionDraftCurrentness({ scope, address });
       const isActiveScope = areServerAccountScopesEqual(scope, getActiveServerAccountScope());
       let updatedAt = nowServerMs();
       await applyPermissionModeSelectionEffect({
-        sessionId, mode: permissionMode, applyTiming: applyTiming ?? 'immediate',
+        sessionId, mode: permissionMode, applyTiming: 'immediate',
         updateSessionPermissionMode: (sid, mode) => {
           accountContext.assertCurrent();
           if (isActiveScope) {
@@ -2965,6 +2966,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
             accountLifetime: accountContext.accountLifetime });
         },
       });
+      clearSessionDraftCurrentnessLocal({ scope, address, currentness,
+        fieldIds: ['extensions.happier.nextPromptPermissionModeV1'] });
       return { ok: true };
     },
 
@@ -3424,6 +3427,11 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       return createUiProjectAccountRowsClient(accountContext).updateWorkspace({ ...input, signal: context?.signal }, context);
     },
+    projectsServicesPin: async (input, context) => {
+      if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      const result = await createUiProjectAccountRowsClient(accountContext).setEnvironmentPinned({ ...input, signal: context?.signal }, context);
+      return result.ok ? { ok: true, pinnedEnvironmentIds: [...result.pinnedEnvironmentIds] } : result;
+    },
     projectsWorkspaceForget: async (input, context) => {
       if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       return createUiProjectAccountRowsClient(accountContext).forgetWorkspace({ ...input, signal: context?.signal }, context);
@@ -3643,7 +3651,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       ? { discussionAction: opts?.discussionAction ?? capturedFamilyPorts!.discussionAction }
       : {}),
     ...(homeDomainAction ? { homeDomainAction } : {}),
-    ...(accountContext ? { privateLabelOpen: createPrivateLabelActionOpener(accountContext) } : {}),
+    ...(accountContext ? { privateLabelOpen: createPrivateLabelActionOpener(accountContext),
+      privateLabelPrepare: createPrivateLabelActionPreparer(accountContext) } : {}),
     ...(accountContext && homeDomainAction ? {
       teamCredentialUsageExport: createUiTeamCredentialUsageExportAction(accountContext, homeDomainAction),
     } : {}),
@@ -3981,10 +3990,15 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     },
     spawnConnectedServicesList: async (args, context) => await listSpawnConnectedServicesForActions({ ...args, signal: context?.signal }),
 
-    sessionContinuationInspect: async ({ input, serverId }) => {
+    sessionContinuationInspect: async ({ input, context, serverId }) => {
       const machineId = resolveSessionMachineId(input.sessionId, serverId);
+      if ('selections' in input) {
+        return { status: 'batch', inspections: machineId
+          ? await readSessionContinuationsOnMachine({ ...input, machineId, serverId: serverId ?? null, signal: context.signal })
+          : input.selections.map(() => ({ status: 'indeterminate' as const })) };
+      }
       if (!machineId) return { status: 'indeterminate' };
-      return await inspectSessionContinuationOnMachine({ ...input, machineId, serverId: serverId ?? null });
+      return await readSessionContinuationOnMachine({ ...input, machineId, serverId: serverId ?? null, signal: context.signal });
     },
     sessionAgentTransition: async ({ request, context, serverId }) => {
       if (!accountContext) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };

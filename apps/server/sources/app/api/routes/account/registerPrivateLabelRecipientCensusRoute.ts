@@ -3,6 +3,8 @@ import { z } from 'zod/mini';
 import {
     PrivateLabelRecipientCensusRequestV1Schema,
     PrivateLabelRecipientCensusResponseV1Schema,
+    PRIVATE_LABEL_RECIPIENT_CENSUS_PATH,
+    ACCOUNT_DIRECTORY_PRIVATE_LABEL_RECIPIENT_CENSUS_PATH,
 } from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
 
 import { AccountRouteAuthenticationForbiddenResponseSchema } from '@/app/api/utils/enableAuthentication';
@@ -21,8 +23,8 @@ const PrivateLabelRecipientCensusErrorV1Schema = z.strictObject({
     error: z.enum(['forbidden', 'encryption_unavailable', 'invalid_request']),
 });
 
-export const PRIVATE_LABEL_RECIPIENT_CENSUS_PATH = '/v1/account/private-labels/recipient-census';
-export const ACCOUNT_DIRECTORY_PRIVATE_LABEL_RECIPIENT_CENSUS_PATH = '/v1/account-directory/private-labels/recipient-census';
+export { PRIVATE_LABEL_RECIPIENT_CENSUS_PATH, ACCOUNT_DIRECTORY_PRIVATE_LABEL_RECIPIENT_CENSUS_PATH }
+    from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
 
 async function admitTeamRecipientCensusReadInTx(
     tx: Parameters<typeof resolveTeamActorContextInTx>[0],

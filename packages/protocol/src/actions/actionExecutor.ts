@@ -1,3 +1,6 @@
+import { deriveActionActorV1 } from './actionRequestAttributionV1.js';
+import { prepareTeamGroupUpdateActionInput, type TeamGroupUpdateActionInputV1 } from '../teams/group.js';
+import { isTeamGroupUpdateActionIdV1 } from '../teams/actionIdsV1.js';
 import { admitDeploymentHomeInputV1 } from './executor/deploymentHomeAdmission.js';
 import { readSessionStopConfirmationFailure } from './executor/session/stopConfirmation.js';
 import { buildApprovalOriginFailure } from '../approvals/approvalStaleReason.js';
@@ -52,7 +55,7 @@ import { projectApprovalInvocationResult, projectActionExecutionObservation, pro
 export { buildActionExecuteResultFromRecordedApprovalExecution, classifyApprovalExecutionOriginCurrentness } from './executor/approvalResults.js';
 import { mapApprovalCreatedBySurface, buildApprovalSummary, buildApprovalPreviewSummary, projectPreparedActionOperation, resolveComputerActionSelection, readDeploymentPreparation, prepareApprovalRequest } from './executor/approvalPreparation.js';
 export { buildApprovalPreviewSummary, projectPreparedActionOperation } from './executor/approvalPreparation.js';
-import { resolveApprovalOriginForRequest, projectActionApprovalOrigin, projectActionObservationContext, resolvePolicyApprovalRequestingSessionId, projectApprovalExecutionOriginCaller, buildApprovalExecutionOriginV1, resolveExplicitApprovalRequestingSessionId, isApprovalActionId, isApprovalRequestActionReplayAdmitted, isBlockingApprovalRequest } from './executor/approvalOrigins.js';
+import { resolveApprovalOriginForRequest, projectActionApprovalOrigin, projectActionObservationContext, resolveApprovalRequestingSessionId, projectApprovalExecutionOriginCaller, buildApprovalExecutionOriginV1, isApprovalActionId, isApprovalRequestActionReplayAdmitted, isBlockingApprovalRequest } from './executor/approvalOrigins.js';
 import { isPresentUserApprovalDecisionForOrigin, resolveMachineServiceLogsApprovalLifetime } from './executor/approvalOrigins.js';
 import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { prepareApprovalReplayAuthorization, resolveRetainedLogsReplayContext } from './executor/approvalReplayAuthorization.js';
@@ -78,13 +81,13 @@ import { isMachineSetupPlanOrApplyActionIdV1 } from '../machines/managed/actionI
 import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '../bots/templates/botTemplateActionIdsV1.js';
 import { hasPendingDeploymentBindingSelectionV1 } from '../deployments/deploymentBindingSelectionNarrowing.js';
 import { withoutClientActionInput } from './clientActionInput.js';
-import { isPresentUserHostInvocation } from './invocationAuthority.js';
+import { isHomeAdmittedPresentUserHostInvocation, isPresentUserHostInvocation } from './invocationAuthority.js';
 import { ReviewFindingsApplyInputV1Schema } from '../reviews/reviewApplyV1.js';
 import type { ReviewCommentV1 } from '../reviews/comments/v1.js';
 import { buildAcceptedReviewFindingsForVerifyV1,
   REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1, renderReviewFindingsForVerifyV1 } from '../reviews/reviewFindingsApplyInputV1.js';
 import { ReviewCommentGetResponseV1Schema } from '../reviews/comments/actions.js';
-import { isActionOutcomeUnknownErrorCodeV1, projectActionExecuteFailure } from './actionExecutionResult.js';
+import { isActionOutcomeUnknownErrorCodeV1, projectApprovalExecutionOutcomeUnknownV1, projectActionExecuteFailure } from './actionExecutionResult.js';
 import { createApprovalReplay } from './executor/approvalReplay.js';
 import { createBlockingApprovalDecisionResolver } from './executor/blockingApprovalDecision.js';
 import { approvalReadFailure as approvalContextUnavailable } from './executor/approvalRead.js';
@@ -122,7 +125,7 @@ import { AutonomousExchangeControlRequestV1Schema } from '../sessions/messages/a
 import { AutonomousExchangeObservedRevisionV1Schema } from '../sessions/messages/autonomousExchangeV1.js';
 import { ActionResolvedSessionTargetsV1Schema, normalizeSessionTargetV1, type ActionSessionTargetDeclarationV1 } from './sessionTargetV1.js';
 import { TargetActionApprovalRequestV1Schema } from '../approvals/targetActionApprovalRequestV1.js';
-import { deriveManagedDeleteApprovalSubjectKeyV1 } from '../approvals/approvalArtifactHeaderV1.js';
+import { deriveDeploymentEnvironmentApprovalSubjectKeyV1, deriveManagedDeleteApprovalSubjectKeyV1 } from '../approvals/approvalArtifactHeaderV1.js';
 import { executeApprovalObservationAction } from './executor/approvalObservation.js';
 import { isApprovalArtifactKindV1 } from '../approvals/approvalArtifactKindV1.js';
 import { ScmDiffSummaryModelSelectorSchema } from '../scm/diffSummary.js';
@@ -688,17 +691,15 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       let page: Awaited<ReturnType<NonNullable<ActionExecutorDeps['approvalsList']>>>;
       try {
         page = await deps.approvalsList({ status: 'open',
-          ...(subject.kind === 'managedMachine' ? { actionId: 'machines.managed.delete',
-            subjectKey: deriveManagedDeleteApprovalSubjectKeyV1(subject) } : {}), cursor,
+          ...(subject.kind === 'managedMachine' ? { actionId: 'machines.managed.delete' } : {}),
+          subjectKey: subject.kind === 'managedMachine' ? deriveManagedDeleteApprovalSubjectKeyV1(subject)
+            : deriveDeploymentEnvironmentApprovalSubjectKeyV1(subject), cursor,
           limit: 100, serverId: normalizeId(ctx.serverId) || null });
       } catch (error) {
         await warn({ code: failureCode(error, 'list_failed') });
         return;
       }
       for (const item of page.items) {
-        // The listed Action already rules out every other request: an Account's open approvals are read back only
-        // when they could belong to this subject, so its unrelated queue never delays the confirmed removal.
-        if (subject.kind === 'deploymentEnvironment' && !isDeploymentActionIdV1(item.actionId)) continue;
         let stored: Awaited<ReturnType<NonNullable<ActionExecutorDeps['approvalsGet']>>>;
         try {
           stored = await deps.approvalsGet({ artifactId: item.artifactId,
@@ -771,7 +772,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
     const now = Date.now();
     const requestedSurface = parseActionSurfaceKey(ctx.surface);
-    const requestingSessionId = resolvePolicyApprovalRequestingSessionId(ctx.approvalOrigin, ctx, targetSessionId);
+    const requestingSessionId = resolveApprovalRequestingSessionId(ctx.approvalOrigin, ctx, targetSessionId);
     const approvalOrigin = projectActionApprovalOrigin(actionId,
       resolveApprovalOriginForRequest(ctx.approvalOrigin, requestingSessionId));
     const proposedRequest: ApprovalRequestV2 = {
@@ -1469,12 +1470,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:approvals' };
     }
 
-    const executionOutcomeUnknown = (failure?: ActionExecuteFailure): ActionExecuteFailure => ({
-      ok: false,
-      errorCode: 'approval_execution_outcome_unknown',
-      error: 'approval_execution_outcome_unknown',
-      ...(failure?.failureCause ? { failureCause: failure.failureCause } : {}),
-    });
+    const executionOutcomeUnknown = projectApprovalExecutionOutcomeUnknownV1;
     const finishExecution = async (request: ApprovalRequest, exec: ActionExecuteResult) => {
       const settlementFailure = await settleApprovalExecutionPublication(args.artifactId, request, args.ctx);
       return settlementFailure ?? { ok: true as const, request, exec };
@@ -1664,8 +1660,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           }
           if (persisted.v === 2 && persisted.status === 'executing') {
             if (!writeNotCommitted && sameStrictJsonValue(persisted, JSON.parse(JSON.stringify(executingRequest)))) {
-              return await persistExecutionFailure(persisted, { ...executionOutcomeUnknown(),
-                details: { reasonCode: claimFailure.errorCode } }, true);
+              return await persistExecutionFailure(persisted, executionOutcomeUnknown(claimFailure), true);
             }
             return executionOutcomeUnknown();
           }
@@ -2123,8 +2118,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     })().catch((error): ActionExecuteFailure => {
       const failure = normalizeActionExecutorThrownError(error);
       return effectAttempted
-        ? { ok: false, errorCode: 'approval_execution_outcome_unknown', error: 'approval_execution_outcome_unknown',
-            details: { reasonCode: failure.errorCode } }
+        ? projectApprovalExecutionOutcomeUnknownV1({ ok: false, ...failure })
         : { ok: false, ...failure, error: redactBugReportSensitiveText(failure.error) };
     });
     if (
@@ -3833,6 +3827,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             } finally { await prepared?.dispose?.(); }
           } } : {}) });
       }
+      // The root operation owns provenance. Actual approval can arrive after native admission.
+      if (ctx.operationAcceptance?.actionId === actionId && ctx.presentUserApproval) {
+        const actor = deriveActionActorV1(ctx, actionId) ?? null;
+        ctx.operationOwnerUpdate?.update({ actor });
+        ctx = { ...ctx, operationAcceptance: { ...ctx.operationAcceptance, actor } };
+      }
       const executionPlacement = resolveActionExecutionPlacementForInput(spec, admittedInput, ctx.actionCaller, ctx.surface ?? 'ui');
       if (actionId === 'inbox.get') {
         const accountId = readNoticeInboxAccountIdV1(ctx);
@@ -5154,11 +5154,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (!deps.homeDomainAction) {
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
-        // `parsed.data` already satisfied this row's strict domain input; the
-        // family adds no second validation of the same declaration.
+        const homeInput = isTeamGroupUpdateActionIdV1(actionId)
+          ? await prepareTeamGroupUpdateActionInput(parsed.data as TeamGroupUpdateActionInputV1, deps.privateLabelPrepare, ctx)
+          : parsed.data;
         const result = await deps.homeDomainAction({
           actionId,
-          input: parsed.data,
+          input: homeInput,
           context: ctx,
           ...(actionId === 'session.sections.archive' ? { archiveSession: async (sessionId: string) => {
             const childContext = { ...ctx, bypassApprovals: false, approvedActionReplay: undefined,
@@ -5779,7 +5780,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             context: ctx,
             targetSessionId: normalizeId(ctx.defaultSessionId) || null,
           });
-          return await deps.invokeContributedAction({
+          const invoked = await deps.invokeContributedAction({
             action: invocation.action,
             input: invocation.input,
             ...(invocation.clientId === undefined ? {} : { clientId: invocation.clientId }),
@@ -5790,6 +5791,16 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             ...(deps.resolveEnvironmentApprovalScope ? { resolveEnvironmentApprovalScope: deps.resolveEnvironmentApprovalScope } : {}),
             ...(ctx.signal ? { signal: ctx.signal } : {}),
           });
+          // Another Action this press reached needs the person's review before any
+          // effect. Carry this press's own review back; its digest-bound re-press
+          // admits the whole press once (owner 2026-11-15, option A).
+          if (!invoked.ok && invoked.errorCode === 'action_interactive_review_required' && !reviewAdmitted
+            && readRecord(invoked.details).reviewDigest === undefined && ctx.surface === 'ui'
+            && (isPresentUserHostInvocation(ctx) || isHomeAdmittedPresentUserHostInvocation(ctx, 'action.invoke'))) {
+            const review = await prepareCurrentApproval();
+            if (review && !('ok' in review)) return reviewRefusal(review);
+          }
+          return invoked;
         }
         const dispatchAgentsSubagents2Result = await dispatchAgentsSubagents2({ actionId, deps, data, ctx, parsed });
         if (dispatchAgentsSubagents2Result !== null) return dispatchAgentsSubagents2Result;
@@ -6602,7 +6613,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const rawApprovalOrigin = Object.prototype.hasOwnProperty.call(data, 'origin')
           ? data.origin
           : ctx.approvalOrigin;
-        const requestSessionId = resolveExplicitApprovalRequestingSessionId(rawApprovalOrigin, ctx, targetSessionId);
+        const requestSessionId = resolveApprovalRequestingSessionId(rawApprovalOrigin, ctx, targetSessionId);
         const rawResolvedOrigin = resolveApprovalOriginForRequest(rawApprovalOrigin, requestSessionId);
         const approvalOrigin = isMemoryWriteActionV1(targetActionId) && rawResolvedOrigin?.kind === 'transcript_tool_call'
           ? { ...rawResolvedOrigin, toolInput: targetArgs } : rawResolvedOrigin;
@@ -7130,9 +7141,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         let approvalEffectMayHaveStarted = false;
         const settleApprovedFailure = async (failure: ActionExecuteFailure, outcomeUnknown = false): Promise<ActionExecuteResult> => {
           const settledFailure = outcomeUnknown && !isActionOutcomeUnknownErrorCodeV1(failure.errorCode)
-            ? { ...failure, errorCode: 'approval_execution_outcome_unknown', error: 'approval_execution_outcome_unknown',
-                details: { reasonCode: failure.errorCode } }
-            : failure;
+            ? projectApprovalExecutionOutcomeUnknownV1(failure) : failure;
           const settled = await executeApprovedActionForRequest({ artifactId, request: approvedRequest,
             artifactServerId: effectiveServerId, ctx,
             ...(outcomeUnknown ? { replayOutcomeUnknown: settledFailure } : { preExecutionFailure: settledFailure }) });

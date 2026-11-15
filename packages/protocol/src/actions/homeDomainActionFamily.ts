@@ -182,6 +182,12 @@ export function homeDomainActionInputSchemaV1(actionId: HomeDomainActionIdV1): z
   return getActionSpec(actionId).inputSchema;
 }
 
+/** The row owns any distinct host-prepared grammar consumed by HTTP binding and authorization. */
+export function homeDomainActionHttpWireInputSchemaV1(actionId: HomeDomainActionIdV1): z.ZodMiniType {
+  const spec = getActionSpec(actionId);
+  return spec.serverTransport?.inputSchema ?? spec.inputSchema;
+}
+
 /** Bind the exact Action row and strict input to its Home-local HTTP request. */
 export function bindHomeDomainActionHttpRequestV1(
   actionId: HomeDomainActionIdV1,
@@ -189,7 +195,7 @@ export function bindHomeDomainActionHttpRequestV1(
 ): HomeDomainHttpRequestV1 {
   const request = bindHomeDomainHttpRequestV1({
     transport: homeDomainActionTransportV1(actionId),
-    inputSchema: homeDomainActionInputSchemaV1(actionId),
+    inputSchema: homeDomainActionHttpWireInputSchemaV1(actionId),
     input,
   });
   // Both closed input shapes belong to the same admitted Action. Finite Team

@@ -5,7 +5,9 @@ import { AccountDisplayProfileV1Schema } from '../account/accountDisplayProfileV
 import {
   PrivateLabelStoredV1Schema,
 } from '../crypto/privateLabelV1.js';
-import { TeamGroupNameProjectionV1Schema, TeamGroupLabelProjectionV1Schema } from './groupLabel.js';
+import { TeamGroupNameProjectionV1Schema, TeamGroupLabelProjectionV1Schema, teamGroupLabelBinding } from './groupLabel.js';
+import type { ActionExecutorContext, ActionExecutorDeps } from '../actions/executor/types.js';
+import { TEAM_GROUP_UPDATE_ACTION_ID_V1 } from './actionIdsV1.js';
 export { TeamGroupLabelProjectionV1Schema, type TeamGroupLabelProjectionV1, TeamGroupNameProjectionV1Schema, type TeamGroupNameProjectionV1 } from './groupLabel.js';
 import {
   decodeTeamKeysetCursorV1,
@@ -24,6 +26,7 @@ import {
   TEAM_DESCRIPTION_MAX_LENGTH_V1,
   TEAM_NAME_MAX_LENGTH_V1,
   normalizeTeamNameV1,
+  normalizeTeamDescriptionV1,
   validateTeamDescriptionV1,
   validateTeamNameV1,
   type TeamDescriptionValidationV1,
@@ -217,6 +220,43 @@ export const TeamGroupUpdateInputV1Schema = lazyZodSchema(() => z.strictObject({
   description: z.optional(z.nullable(PrivateLabelStoredV1Schema)),
 }).check(z.refine((input) => input.name !== undefined || input.description !== undefined, { message: 'Group metadata patch changes nothing' })));
 export type TeamGroupUpdateInputV1 = z.infer<typeof TeamGroupUpdateInputV1Schema>;
+
+/** Authored intent. The captured Account host validates presentation and seals the wire patch. */
+export const TeamGroupUpdateActionInputV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1),
+  teamId: TeamIdSchema,
+  groupId: TeamGroupIdSchema,
+  name: z.optional(z.string().check(z.refine(value => validateTeamGroupNameV1(value).status === 'ok', { message: 'Invalid Group name' }))),
+  description: z.optional(z.nullable(z.string().check(z.refine(value => validateTeamGroupDescriptionV1(value).status === 'ok', { message: 'Invalid Group description' })))),
+}).check(z.refine((input) => input.name !== undefined || input.description !== undefined, { message: 'Group metadata patch changes nothing' })));
+export type TeamGroupUpdateActionInputV1 = z.infer<typeof TeamGroupUpdateActionInputV1Schema>;
+
+/** Translate approved authored intent through the keyholding host; HTTP and persistence stay sealed. */
+export async function prepareTeamGroupUpdateActionInput(
+  input: TeamGroupUpdateActionInputV1,
+  prepare: ActionExecutorDeps['privateLabelPrepare'],
+  context: ActionExecutorContext,
+): Promise<TeamGroupUpdateInputV1> {
+  const wire: TeamGroupUpdateInputV1 = { v: input.v, teamId: input.teamId, groupId: input.groupId };
+  const labels: { field: 'name' | 'description'; value: string }[] = [];
+  if (input.name !== undefined) {
+    labels.push({ field: 'name', value: normalizeTeamGroupNameV1(input.name) });
+  }
+  if (input.description !== undefined) {
+    const description = normalizeTeamDescriptionV1(input.description);
+    if (description === null) wire.description = null;
+    else labels.push({ field: 'description', value: description });
+  }
+  if (labels.length > 0) {
+    if (!prepare) throw Object.assign(new Error('Group label preparation requires the Account client'), { code: 'client_required' });
+    const sealed = await prepare({ actionId: TEAM_GROUP_UPDATE_ACTION_ID_V1, owner: { kind: 'team', teamId: input.teamId },
+      labels: labels.map(label => ({ binding: teamGroupLabelBinding(input.groupId, label.field), value: label.value })),
+      ...(context.signal ? { signal: context.signal } : {}),
+    }, context);
+    labels.forEach((label, index) => { wire[label.field] = sealed[index]!; });
+  }
+  return wire;
+}
 
 /**
  * `teams.members.groups.list` — the Groups one membership is effectively in.

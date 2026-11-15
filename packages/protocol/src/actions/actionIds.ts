@@ -8,6 +8,7 @@ import { INTERNAL_TASK_ACTION_IDS } from './internalTaskActionIdsV1.js';
 import { RPC_METHODS } from '../rpc/methods.js';
 export const SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1 = 'sessions.spawn.connected_services.list' as const;
 export const ACTION_INVOKE_ACTION_ID_V1 = 'action.invoke' as const;
+export const SESSION_PERMISSION_MODE_SET_ACTION_ID_V1 = 'session.permission_mode.set' as const;
 export const EXTERNAL_SESSION_CANDIDATE_DELETE_ACTION_ID_V1 = 'sessions.external.candidate.delete' as const;
 export const SCM_REMOTE_PUSH_ACTION_ID_V1 = 'scm.remote.push' as const;
 export const SCM_PULL_REQUEST_OPEN_OR_REUSE_ACTION_ID_V1 = 'scm.pullRequest.openOrReuse' as const;
@@ -75,6 +76,15 @@ export function isWorkspaceSyncRelationshipControlActionId(actionId: string): ac
 
 
 /** Actions that exercise the separately granted approval-decision authority. */
+/**
+ * Project Actions that run at the Account over its private Project rows (list, read, mutate). One list for every
+ * consumer that binds such an Action to the Project row transport (the server's external-execution admission).
+ */
+export const PROJECT_ACCOUNT_ROW_ACTION_IDS_V1 = ['projects.list', 'projects.workspace.update', 'projects.workspace.forget',
+    'projects.context.update', 'projects.organization.update', 'projects.visibility.set', 'projects.services.pin'] as const;
+export function isProjectAccountRowActionIdV1(actionId: string): actionId is (typeof PROJECT_ACCOUNT_ROW_ACTION_IDS_V1)[number] {
+    return (PROJECT_ACCOUNT_ROW_ACTION_IDS_V1 as readonly string[]).includes(actionId);
+}
 export const DECISION_ACTION_IDS = ['approval.request.decide', 'session.permission.respond'] as const;
 import { BROWSER_EXTENSION_ACTION_IDS, BROWSER_PROFILE_ACTION_IDS, BROWSER_DIAGNOSTICS_INTERACTION_ACTION_IDS } from './actionIdsBrowser.js';
 export {
@@ -411,6 +421,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'projects.visibility.set',
     'projects.workspace.update',
     'projects.workspace.forget',
+    'projects.services.pin',
     'prompts.invocations.list',
     'prompts.invocation.resolve',
     'machines.list',
@@ -467,7 +478,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'session.model.unarm',
     'session.config_option.set',
     'session.connected_services_auth.set',
-    'session.permission_mode.set',
+    SESSION_PERMISSION_MODE_SET_ACTION_ID_V1,
     'session.archive',
     'session.unarchive',
     'session.status.get',

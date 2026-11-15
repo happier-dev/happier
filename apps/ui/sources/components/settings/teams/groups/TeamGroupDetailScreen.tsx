@@ -10,7 +10,6 @@ import {
     type TeamGroupMemberV1,
     type TeamGroupV1,
 } from '@happier-dev/protocol/teams';
-import type { PrivateLabelStoredV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Avatar } from '@/components/ui/avatar/Avatar';
@@ -33,7 +32,7 @@ import { useOpenedPrivateLabels } from '@/sync/ops/privateLabels/useOpenedPrivat
 import { useTeamMembersRoster } from '@/hooks/teams/useTeamMembersRoster';
 import { resolveAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import { createPrivateLabelClient } from '@/sync/ops/privateLabels/privateLabelClient';
-import { sealTeamGroupLabel, teamGroupLabelBinding, TEAM_GROUP_LABEL_READ_POLICY } from '@/sync/ops/teams/teamGroupLabels';
+import { teamGroupLabelBinding, TEAM_GROUP_LABEL_READ_POLICY } from '@/sync/ops/teams/teamGroupLabels';
 import {
     addTeamGroupMember,
     archiveTeamGroup,
@@ -158,41 +157,17 @@ const GroupMetadataSection = React.memo(function GroupMetadataSection(props: Rea
         setError(null);
         let outcome: Awaited<ReturnType<typeof updateTeamGroup>>;
         try {
-            const client = createPrivateLabelClient(context.scope);
-            let sealedName: PrivateLabelStoredV1 | null | undefined;
-            if (mustSaveName) {
-                if (validatedName === null) {
-                    saveInFlightRef.current = false;
-                    setSaving(false);
-                    return;
-                }
-                sealedName = await sealTeamGroupLabel({
-                    client, field: 'name',
-                    teamId: context.address.teamId,
-                    groupId: group.id,
-                    value: validatedName,
-                });
-            }
-            if (mustSaveName && !sealedName) {
+            if (mustSaveName && validatedName === null) {
                 saveInFlightRef.current = false;
                 setSaving(false);
-                setError(t('teams.errors.generic'));
                 return;
-            }
-            let sealedDescription: PrivateLabelStoredV1 | null | undefined;
-            if (mustSaveDescription) {
-                const value = descriptionValidation.description;
-                sealedDescription = value === null ? null : await sealTeamGroupLabel({
-                    client, field: 'description', teamId: context.address.teamId, groupId: group.id, value,
-                });
-                if (value !== null && sealedDescription === null) throw new Error('Group description unavailable');
             }
             outcome = await updateTeamGroup({
                 scope: context.scope,
                 address: context.address,
                 groupId: group.id,
-                ...(sealedName ? { name: sealedName } : {}),
-                ...(sealedDescription === undefined ? {} : { description: sealedDescription }),
+                ...(mustSaveName && validatedName !== null ? { name: validatedName } : {}),
+                ...(mustSaveDescription ? { description: descriptionValidation.description } : {}),
             });
         } catch (cause) {
             saveInFlightRef.current = false;

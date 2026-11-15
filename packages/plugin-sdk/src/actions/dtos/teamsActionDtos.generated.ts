@@ -1081,38 +1081,8 @@ export type TeamsActionInputById = {
         v: 1;
         teamId: string;
         groupId: string;
-        name?: undefined | {
-            content: {
-                t: 'encrypted';
-                c: string;
-            } | {
-                t: 'plain';
-                v: string;
-            };
-            recipients: {
-                accountId: string;
-                envelope: {
-                    encryptedDataKey: string;
-                    recipientContentPublicKeyFingerprint: string;
-                };
-            }[];
-        };
-        description?: null | undefined | {
-            content: {
-                t: 'encrypted';
-                c: string;
-            } | {
-                t: 'plain';
-                v: string;
-            };
-            recipients: {
-                accountId: string;
-                envelope: {
-                    encryptedDataKey: string;
-                    recipientContentPublicKeyFingerprint: string;
-                };
-            }[];
-        };
+        name?: string | undefined;
+        description?: null | string | undefined;
     };
     readonly "teams.groups.archive": {
         v: 1;
@@ -3144,6 +3114,10 @@ export type TeamsActionResultById = {
                 cacheRead: null | number;
                 cacheWrite: null | number;
                 total: null | number;
+                measured?: undefined | {
+                    total: number;
+                    fromParts: true;
+                };
             };
             cost: {
                 reportedUsd: null | number;
@@ -3193,6 +3167,10 @@ export type TeamsActionResultById = {
                     cacheRead: null | number;
                     cacheWrite: null | number;
                     total: null | number;
+                    measured?: undefined | {
+                        total: number;
+                        fromParts: true;
+                    };
                 };
                 cost: {
                     reportedUsd: null | number;
@@ -3260,6 +3238,10 @@ export type TeamsActionResultById = {
                     cacheRead: null | number;
                     cacheWrite: null | number;
                     total: null | number;
+                    measured?: undefined | {
+                        total: number;
+                        fromParts: true;
+                    };
                 };
                 cost: {
                     reportedUsd: null | number;

@@ -45,6 +45,8 @@ type PrepareCliPrivateLabelInput = Readonly<{
   accountMode: PrivateLabelRecipientCensusResponseV1['contentEncryptionMode'];
   /** The credential-specific Account transport that authorizes this census. */
   recipientCensusPath: string;
+  owner?: PrivateLabelRecipientCensusOwnerV1;
+  authorizationHeaders?: Readonly<Record<string, string>>;
   binding: PrivateLabelBindingV1;
   value: string;
   signal?: AbortSignal;
@@ -81,6 +83,7 @@ async function requestRecipientCensus(params: Readonly<{
   token: string;
   owner: PrivateLabelRecipientCensusOwnerV1;
   recipientCensusPath: string;
+  authorizationHeaders?: Readonly<Record<string, string>>;
   signal?: AbortSignal;
 }>) {
   const request = PrivateLabelRecipientCensusRequestV1Schema.safeParse({ owner: params.owner });
@@ -93,6 +96,7 @@ async function requestRecipientCensus(params: Readonly<{
       headers: {
         Authorization: `Bearer ${params.token}`,
         'Content-Type': 'application/json',
+        ...params.authorizationHeaders,
       },
       body: JSON.stringify(request.data),
       ...(params.signal ? { signal: params.signal } : {}),
@@ -112,46 +116,58 @@ async function requestRecipientCensus(params: Readonly<{
  * recipient authority, but its census must not select the content mode.
  */
 export async function prepareCliPrivateLabel(input: PrepareCliPrivateLabelInput): Promise<PrivateLabelStoredV1> {
+  const labels = await prepareCliPrivateLabels({ ...input, owner: input.owner ?? { kind: 'account', accountId: input.accountId },
+    labels: [{ binding: input.binding, value: input.value }] });
+  return labels[0]!;
+}
+
+/** One captured audience prepares all labels belonging to the same semantic effect. */
+export async function prepareCliPrivateLabels(input: Omit<PrepareCliPrivateLabelInput, 'binding' | 'value' | 'accountId' | 'owner'> & Readonly<{
+  owner: PrivateLabelRecipientCensusOwnerV1;
+  labels: readonly Readonly<{ binding: PrivateLabelBindingV1; value: string }>[];
+}>): Promise<PrivateLabelStoredV1[]> {
   const census = await requestRecipientCensus({
     endpoint: input.endpoint,
     token: input.token,
-    owner: { kind: 'account', accountId: input.accountId },
+    owner: input.owner,
     recipientCensusPath: input.recipientCensusPath,
+    ...(input.authorizationHeaders ? { authorizationHeaders: input.authorizationHeaders } : {}),
     ...(input.signal ? { signal: input.signal } : {}),
   });
   try {
     if (census.contentEncryptionMode !== input.accountMode) throw new CliPrivateLabelError();
-    if (input.accountMode === 'plain') {
-      return sealPrivateLabelV1({ mode: 'plain', binding: input.binding, value: input.value });
-    }
-
-    const dataKey = tweetnacl.randomBytes(tweetnacl.secretbox.keyLength);
-    try {
-      const prepared = prepareSavedSecretResourceRecipientEnvelopesV1({
-        recipients: census.recipients,
-        resourceDataKey: dataKey,
-        randomBytes: tweetnacl.randomBytes,
-      });
-      // A newly generated key has no prior envelopes to retain: every census
-      // recipient must receive the one standard Saved Secret envelope.
-      if (prepared.length !== census.recipients.length) throw new CliPrivateLabelError();
-      return sealPrivateLabelV1({
-        mode: 'e2ee',
-        binding: input.binding,
-        value: input.value,
-        dataKey,
-        recipients: prepared.map((recipient) => ({
-          accountId: recipient.recipientAccountId,
-          envelope: {
-            encryptedDataKey: recipient.encryptedDataKey,
-            recipientContentPublicKeyFingerprint: recipient.recipientContentPublicKeyFingerprint,
-          },
-        })),
-        randomBytes: tweetnacl.randomBytes,
-      });
-    } finally {
-      dataKey.fill(0);
-    }
+    return input.labels.map(label => {
+      if (input.accountMode === 'plain') {
+        return sealPrivateLabelV1({ mode: 'plain', binding: label.binding, value: label.value });
+      }
+      const dataKey = tweetnacl.randomBytes(tweetnacl.secretbox.keyLength);
+      try {
+        const prepared = prepareSavedSecretResourceRecipientEnvelopesV1({
+          recipients: census.recipients,
+          resourceDataKey: dataKey,
+          randomBytes: tweetnacl.randomBytes,
+        });
+        // A newly generated key has no prior envelopes to retain: every census
+        // recipient must receive the one standard Saved Secret envelope.
+        if (prepared.length !== census.recipients.length) throw new CliPrivateLabelError();
+        return sealPrivateLabelV1({
+          mode: 'e2ee',
+          binding: label.binding,
+          value: label.value,
+          dataKey,
+          recipients: prepared.map((recipient) => ({
+            accountId: recipient.recipientAccountId,
+            envelope: {
+              encryptedDataKey: recipient.encryptedDataKey,
+              recipientContentPublicKeyFingerprint: recipient.recipientContentPublicKeyFingerprint,
+            },
+          })),
+          randomBytes: tweetnacl.randomBytes,
+        });
+      } finally {
+        dataKey.fill(0);
+      }
+    });
   } catch (error) {
     if (error instanceof CliPrivateLabelError) throw error;
     throw new CliPrivateLabelError();

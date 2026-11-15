@@ -133,10 +133,15 @@ export type TeamDescriptionValidationV1 =
  * metadata. A blank description stores `null` rather than an empty string, so
  * "absent" has one representation.
  */
-export function validateTeamDescriptionV1(raw: string | null | undefined): TeamDescriptionValidationV1 {
-  if (raw === null || raw === undefined) return { status: 'ok', description: null };
+export function normalizeTeamDescriptionV1(raw: string | null | undefined): string | null {
+  if (raw === null || raw === undefined) return null;
   const description = raw.normalize('NFC').replace(/\r\n?/gu, '\n').trim();
-  if (description.length === 0) return { status: 'ok', description: null };
+  return description.length === 0 ? null : description;
+}
+
+export function validateTeamDescriptionV1(raw: string | null | undefined): TeamDescriptionValidationV1 {
+  const description = normalizeTeamDescriptionV1(raw);
+  if (description === null) return { status: 'ok', description: null };
   if (TEAM_CONTROL_CHARACTERS_RE.test(description.replace(/\n/gu, ''))) {
     return { status: 'invalid', reason: 'control_characters' };
   }

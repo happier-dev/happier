@@ -1,4 +1,8 @@
 import { isScmRunStartRpcPurpose } from '@happier-dev/protocol/actions/actionSpecs';
+import { homeDomainActionHttpWireInputSchemaV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
+import { isTeamGroupUpdateActionIdV1 } from '@happier-dev/protocol/teams/actionIdsV1';
+import { PRIVATE_LABEL_RECIPIENT_CENSUS_PATH, PrivateLabelRecipientCensusRequestV1Schema }
+    from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
 import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
 import { readAdmittedManagedCreationChildInTx, hasAdmittedManagedCreationRootInTx, readSelectedManagedCreationChildAdmission, type ManagedCreationChildAdmission } from './externalActionManagedAdmission';
 import { readTeamCredentialActionHttpPurposeV1 } from '@happier-dev/protocol/teams/credentials/actionHttpPurposeV1';
@@ -38,7 +42,7 @@ import { isDeploymentWorkspaceListHttpPurpose, isDeploymentPreparationHttpPurpos
     isSetupDeploymentPreparationReadEffect } from '@/app/deployments/deploymentPreparationAuthorization';
 import { isScmRefineInputRpcPurposeV1, verifyScmRefineSavedSessionV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { isProjectWorkspaceSyncOpenActionV1, isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
-import { isSessionListActionId, isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
+import { isProjectAccountRowActionIdV1, isSessionListActionId, isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
 import { readWorkspaceSyncSourceAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isDeploymentActionIdV1, DeploymentDeployAdmissionInputV1Schema, DeploymentRollbackAdmissionInputV1Schema,
     DeploymentDeployInputV1Schema, DeploymentRollbackInputV1Schema, DeploymentPromoteInputV1Schema,
@@ -64,10 +68,9 @@ import { decodeExternalActionResolvedTargetV1, encodeExternalActionResolvedTarge
 import { isDeploymentDomainNativeAdmissionV1, isDeploymentBackupConfigureNativeAdmissionV1, type ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { getActionSpec, resolveActionExecutionPlacementForInput, isPluginProvenanceOnlyActionId, isSessionTargetPreparationAction, isScmDiffSummaryRunAction, PublicActionIdSchema, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
-import { ActionIdSchema, ACCOUNT_API_TOKENS_LIST_ACTION_ID_V1, SESSION_ORGANIZATION_PIN_SET_ACTION_ID_V1,
+import { ActionIdSchema, SESSION_ORGANIZATION_PIN_SET_ACTION_ID_V1,
     isMachineDeploymentEnvironmentAccessActionIdV1, isDeploymentPrepareSessionMessageEffectV1,
     SESSION_SPAWN_NEW_ACTION_ID_V1, ACTION_INVOKE_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
-import { SESSION_ATTENTION_SET_ACTION_ID } from '@happier-dev/protocol/sessions/organization/attentionActionIdsV1';
 import { MachineAccessActionIdSchema } from '@happier-dev/protocol/actions';
 import { admitSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { bindApiSessionSpawnNewInput } from '@happier-dev/protocol/actions/specs/session/lifecycle';
@@ -2302,8 +2305,7 @@ function isProjectAccountMetadataHttpPurpose(verified: VerifiedExternalActionExe
         return !actionId.endsWith('.get') && url.pathname === `${WORKSPACE_EXECUTION_CONFIG_ROUTE_V1}/mutate`
             && WorkspaceExecutionConfigMutationRequestV1Schema.safeParse(proof.body).success;
     }
-    if (!['projects.list', 'projects.workspace.update', 'projects.workspace.forget',
-        'projects.context.update', 'projects.organization.update', 'projects.visibility.set'].includes(actionId) || url.search !== '') return false;
+    if (!isProjectAccountRowActionIdV1(actionId) || url.search !== '') return false;
     if (method === 'GET' && proof.body === undefined) return actionId === 'projects.list'
         && (url.pathname === '/v1/account/authoring-memory' || url.pathname === '/v1/machines');
     if (method !== 'POST') return false;
@@ -2318,11 +2320,9 @@ function isAccountActionHttpOperation(actionId: string,
         return isSessionFollowActionHttpRequestV1(actionId, { method: proof.method, path: proof.path,
             body: proof.body, routeInput: proof.routeInput, sessionRouteSessionId: proof.sessionRouteTarget?.sessionId });
     }
-    if (!isHomeDomainActionIdV1(actionId) && !isDiscussionActionIdV1(actionId) && !isDeploymentActionIdV1(actionId) && !isUsagePriceActionIdV1(actionId)
-        && actionId !== SESSION_ORGANIZATION_PIN_SET_ACTION_ID_V1
-        && actionId !== SESSION_ATTENTION_SET_ACTION_ID && actionId !== ACCOUNT_API_TOKENS_LIST_ACTION_ID_V1
-        && !actionId.startsWith('session.delivery.mute.')
-        && !proof.sessionRouteTarget) return false;
+    // Signed-root admission already decided which Action may run; this binds
+    // the request to that Action's own declared Account transport for every
+    // family instead of a second hand-listed family permission.
     const action = ActionIdSchema.safeParse(actionId);
     if (!action.success) return false;
     const spec = getActionSpec(action.data);
@@ -2349,7 +2349,8 @@ function isAccountActionHttpOperation(actionId: string,
     // semantic Action schema is not its strict stored-content HTTP schema.
     const inputSchema = actionId === 'deployments.environments.update' ? DeploymentEnvironmentUpdateStorageInputV1Schema
         : actionId === 'deployments.bindings.set' ? DeploymentBindingsSetStorageInputV1Schema : isDiscussionActionIdV1(actionId)
-        ? discussionActionHttpWireInputSchemaV1(actionId) : spec.inputSchema;
+        ? discussionActionHttpWireInputSchemaV1(actionId) : isHomeDomainActionIdV1(actionId)
+        ? homeDomainActionHttpWireInputSchemaV1(actionId) : spec.inputSchema;
     const parsed = inputSchema.safeParse(input);
     const versioned = !parsed.success && transport.method.toUpperCase() === 'GET'
         && input && typeof input === 'object' && !Array.isArray(input)
@@ -2796,6 +2797,18 @@ export function isDeploymentNativeHttpPurpose(verified: Pick<VerifiedExternalAct
 async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
     proof: ExternalActionExecutionRequestProof, snapshotBatch: SessionReadBatchRequestV1 | null): Promise<boolean | null> {
     const root = verified.binding.actionId;
+    if (isTeamGroupUpdateActionIdV1(root)) {
+        if (verified.effectActionId !== root) return false;
+        if (isAccountEncryptionCurrentnessHttpRead(proof)) return true;
+        if (proof.method.toUpperCase() === 'POST' && proof.path === PRIVATE_LABEL_RECIPIENT_CENSUS_PATH) {
+            const census = PrivateLabelRecipientCensusRequestV1Schema.safeParse(proof.body);
+            // The installed host derives the Team from encrypted intent; the
+            // census route retains its canonical Team membership admission.
+            return census.success && census.data.owner.kind === 'team'
+                && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, census.data));
+        }
+        return isAccountActionHttpOperation(root, proof);
+    }
     const movePreparation = await readDeploymentMoveToRepositoryHttpPurpose(db, verified.binding, verified.effectActionId, proof);
     if (movePreparation !== null) return movePreparation;
     if (isExternalActionConnectedAccountInventoryHttpPurpose(verified.binding, verified.effectActionId, proof)) return true;
@@ -3425,14 +3438,14 @@ export async function verifyExternalActionDomainExecutionRequest(
             isReadOnlyArtifactHttpPurpose, undefined, verified.setupReceiverMachineId)) return refuse('deployment_setup_receiver_purpose');
     } else if (reviewedMachineSetupChild) {
         const purpose = readReviewedMachineSetupHttpPurpose(verified, proof);
-        if (!purpose) return null;
+        if (!purpose) return refuse('machine_setup_purpose');
         setupMachineReadId = purpose.machineId;
     } else if (verified.signedChildPurpose.reviewedSessionAgentReadinessChild) {
         // These finite children need the existing requester Machine codec only.
         // Installation permission is consumed at the install RPC admission.
         if (proof.method.toUpperCase() !== 'GET' || proof.body !== undefined
             || !isAccountEncryptionCurrentnessHttpRead(proof)
-                && proof.path !== `/v1/machines/${encodeURIComponent(verified.binding.machineId)}`) return null;
+                && proof.path !== `/v1/machines/${encodeURIComponent(verified.binding.machineId)}`) return refuse('session_agent_readiness_purpose');
     } else if (verified.signedChildPurpose.prepareSession) {
         // The signed child owner already bound these actual codec/Session reads.
         // Ordinary Session routes retain their access checks; preparation is not re-decided in P.
@@ -3580,30 +3593,30 @@ export async function verifyExternalActionDomainExecutionRequest(
         || isSessionSectionActionIdV1(verified.effectActionId)
         || verified.signedChildPurpose.sibling.sectionArchive
         || verified.signedChildPurpose.sibling.stopChild) {
-        if (!await isSessionSectionHttpPurpose(verified, proof)) return null;
+        if (!await isSessionSectionHttpPurpose(verified, proof)) return refuse('session_section_purpose');
     } else if (verified.binding.actionId === 'workflow.trigger.run_now') {
         const match = /^\/v3\/automations\/([^/]+)\/run-now$/u.exec(proof.path);
         if (proof.method.toUpperCase() !== 'POST' || proof.body !== undefined || !match
             || verified.effectActionId !== verified.binding.actionId
-            || proof.idempotencyKey !== verified.binding.idempotencyKey) return null;
+            || proof.idempotencyKey !== verified.binding.idempotencyKey) return refuse('automation_run_now_request');
         let automationId: string;
-        try { automationId = decodeURIComponent(match[1]!); } catch { return null; }
-        if (verified.binding.automationId !== undefined && verified.binding.automationId !== automationId) return null;
+        try { automationId = decodeURIComponent(match[1]!); } catch { return refuse('automation_run_now_request'); }
+        if (verified.binding.automationId !== undefined && verified.binding.automationId !== automationId) return refuse('automation_run_now_target');
         if ('grant' in verified.principal && !evaluateApiTokenGrantV1({ grant: verified.principal.grant,
             actionId: verified.binding.actionId, automationId, target: verified.target,
-            targetMachineId: verified.binding.machineId }).ok) return null;
+            targetMachineId: verified.binding.machineId }).ok) return refuse('automation_run_now_grant');
     } else if (verified.binding.actionId.startsWith('workflow.run.')) {
-        if (!isWorkflowRunActionHttpPurpose(verified, proof)) return null;
+        if (!isWorkflowRunActionHttpPurpose(verified, proof)) return refuse('workflow_run_purpose');
         // Direct and Session-origin Runs use the same requester storage port.
         // Automation workers retain their separate installed-publisher path.
     } else if (verified.binding.actionId === 'discussion.candidates.list') {
         // Keep this composed read out of generic read-root Session admission.
         // Native directory/roster routes still own current actor and resource access.
-        if (!isDiscussionCandidateReadHttpPurpose(verified, proof, snapshotBatch)) return null;
+        if (!isDiscussionCandidateReadHttpPurpose(verified, proof, snapshotBatch)) return refuse('discussion_candidate_purpose');
     } else if (isSessionStateFieldActionHttpPurpose(verified, proof)) {
         // The existing Session routes retain actor access, tuple CAS and publisher policy.
     } else if ((subtreeObservationHttpPurpose = await isInstalledSessionSubtreeObservationHttpPurpose(verified, proof, snapshotBatch)) !== null) {
-        if (!subtreeObservationHttpPurpose) return null;
+        if (!subtreeObservationHttpPurpose) return refuse('session_subtree_observation_purpose');
     } else if (isSessionListHttpPurpose(verified, proof, snapshotBatch)
         || isSessionSourceKeyTransportHttpPurpose(verified, proof)
         || await isInstalledSessionLifecycleHttpPurpose(verified, proof)) {
@@ -3627,7 +3640,7 @@ export async function verifyExternalActionDomainExecutionRequest(
         && proof.path.split('?')[0] === managedMachineActionEndpointPathV1('machines.managed.get')) {
         const request = ManagedMachineActionInputSchemasV1['machines.managed.get'].safeParse(proof.body);
         if (!request.success || request.data.homeId !== verified.binding.serverIdentityId
-            || request.data.managedId !== verified.binding.managedContinuation.managedId) return null;
+            || request.data.managedId !== verified.binding.managedContinuation.managedId) return refuse('managed_enrollment_get_purpose');
     } else if (!managedRoot.success && isMachineConnectorSecretGrantHttpPurpose(verified.binding, verified.effectActionId, proof)) {
         // The signed setup scope names reviewed grants; configure retains its
         // exact-installation scope. The route owns proof and target access.
@@ -3646,7 +3659,7 @@ export async function verifyExternalActionDomainExecutionRequest(
             const admittedControl = method === 'POST' && path === '/v1/machines/managed/controller/admit-control';
             if (admittedControl ? body?.action !== control.actionId || body.requestId !== verified.binding.requestId
                 || !sameManagedInput(body.input, control.input)
-                : method === 'GET' ? false : body?.homeId !== control.input.homeId || body.managedId !== control.input.managedId) return null;
+                : method === 'GET' ? false : body?.homeId !== control.input.homeId || body.managedId !== control.input.managedId) return refuse('managed_control_purpose');
         }
         if (managedRoot.data === 'machines.managed.acquire') {
             if (method === 'POST' && path === '/v1/machines/managed/controller/admit') {
@@ -3655,14 +3668,14 @@ export async function verifyExternalActionDomainExecutionRequest(
             } else {
                 const row = await readExternalActionManagedAcquireResourceInTx(db, verified.binding);
                 if (!row || !(body?.homeId === row.homeId && body.managedId === row.id
-                    || childManagedId === row.id)) return null;
+                    || childManagedId === row.id)) return refuse('managed_acquire_resource');
             }
         }
         if (recovery) {
             // A creator recovery root is not a controller-wide read/effect
             // grant, even when the installed custodian signs the request.
             if (body?.homeId !== recovery.input.homeId || body.managedId !== recovery.input.managedId) {
-                if (childManagedId !== recovery.input.managedId) return null;
+                if (childManagedId !== recovery.input.managedId) return refuse('managed_recovery_target');
             }
         }
         // The managed controller namespace is the incumbent native-effect
@@ -3674,7 +3687,7 @@ export async function verifyExternalActionDomainExecutionRequest(
             && path === managedMachineActionEndpointPathV1(managedRoot.data);
         // A retained controller may execute only the creator's reviewed revision.
         if (directPurpose && isManagedCreationMutationActionIdV1(managedRoot.data)
-            && (!recovery || !sameManagedInput(body, recovery.input))) return null;
+            && (!recovery || !sameManagedInput(body, recovery.input))) return refuse('managed_direct_revision');
         const childPurpose = method === 'POST'
             && MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1.some(action =>
                 (managedRoot.data === 'machines.managed.acquire' || isManagedEnrollmentRecoveryChildV1(managedRoot.data, action)) && (
@@ -3702,11 +3715,11 @@ export async function verifyExternalActionDomainExecutionRequest(
         const guestPath = method === 'GET' ? /^\/v1\/machines\/([^/]+)$/u.exec(path) : null;
         const guestPurpose = guestPath && await readCurrentManagedGuestActivityInTx(db, verified.binding, guestPath[1]);
         if (!controllerPurpose && !readPurpose && !directPurpose && !childPurpose && !guestPurpose && !setupPurpose
-            && !setupHostReviewPurpose && !setupWorkflowPurpose && !setupAppReadPurpose && !connectorGrantReadPurpose) return null;
+            && !setupHostReviewPurpose && !setupWorkflowPurpose && !setupAppReadPurpose && !connectorGrantReadPurpose) return refuse('managed_machine_purpose');
         if (guestPurpose) managedGuestActivity = guestPurpose;
     } else if (rootMachineAction.success || effectMachineAction.success) {
         if (!rootMachineAction.success || !effectMachineAction.success
-            || rootMachineAction.data !== effectMachineAction.data) return null;
+            || rootMachineAction.data !== effectMachineAction.data) return refuse('machine_access_effect');
         const path = proof.path.split('?')[0];
         const method = proof.method.toUpperCase();
         const preparesKeys = rootMachineAction.data === 'machines.access.grant.set'
@@ -3719,11 +3732,11 @@ export async function verifyExternalActionDomainExecutionRequest(
             || method === 'POST' && /^\/v1\/machines\/[^/]+\/content-key\/transition$/u.test(path)
         );
         if (keyPreparationPath) {
-            if (!preparesKeys || (method !== 'GET' && method !== 'PATCH')) return null;
+            if (!preparesKeys || (method !== 'GET' && method !== 'PATCH')) return refuse('machine_access_key_preparation');
         } else if (!custodianPreparationPath) {
             const transport = getActionSpec(rootMachineAction.data).serverTransport;
             if (!transport || method !== transport.method
-                || !/^\/v1\/machines\/[^/]+\/access$/u.test(path)) return null;
+                || !/^\/v1\/machines\/[^/]+\/access$/u.test(path)) return refuse('machine_access_transport');
         }
     } else if (isProjectAccountMetadataHttpPurpose(verified, proof)) {
         // The installed signature spends the unchanged root as its original

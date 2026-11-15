@@ -42,6 +42,8 @@ type HomeDomainActionRowInput<
   sideEffectClass: 'read' | 'write' | 'external' | 'danger';
   cliPath: readonly string[];
   inputSchema: TInputSchema;
+  /** Sealed effect grammar when the Action input describes authored plaintext. */
+  wireInputSchema?: z.ZodMiniType;
   outputSchema: TOutputSchema;
   /**
    * The REST verb this row travels on. POST is the default because the Home
@@ -135,6 +137,7 @@ export function homeDomainActionRow<
     ...(spec.approvalInputCustody ? { approvalInputCustody: spec.approvalInputCustody } : {}),
     ...(spec.approvalResultCustody ? { approvalResultCustody: spec.approvalResultCustody } : {}),
     serverTransport: { method: spec.method ?? 'POST', path: spec.path,
+      ...(spec.wireInputSchema ? { inputSchema: spec.wireInputSchema } : {}),
       ...(spec.preservePathFieldsInBody ? { preservePathFieldsInBody: true as const } : {}) },
   };
 }

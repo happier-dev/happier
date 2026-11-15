@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { logger } from '@/ui/logger';
 
 export type ExternalActionHeaderRefusalReason =
@@ -11,7 +11,9 @@ export type ExternalActionHeaderRefusalReason =
   | 'requester_account_custody_mismatch'
   | 'approval_replay_mismatch'
   | 'template_account_mismatch'
-  | 'authorization_headers_missing';
+  | 'authorization_headers_missing'
+  /** This Home port has no signed external carrier for the requested effect. */
+  | 'external_transport_unsupported';
 
 export type ExternalActionHeaderRefusal = Readonly<{
   ok: false;
@@ -26,20 +28,25 @@ export function refuseExternalActionHeaders(
   return { ok: false, reason, requestId };
 }
 
-/** Null-only transport adapters throw this existing Action carrier, never flatten its cause. */
-export function createExternalActionHeaderRefusalError(
-  refusal: ExternalActionHeaderRefusal = refuseExternalActionHeaders('authorization_headers_missing'),
-): ReturnType<typeof createActionExecuteFailureError> {
+/** The one refusal projection: returned by failure-returning ports, thrown by null-only adapters. */
+export function externalActionHeaderRefusalFailure(refusal: ExternalActionHeaderRefusal): ActionExecuteFailure {
   logger.infoFile('[ExternalAction] Header authorization refused', {
     reason: refusal.reason, requestId: refusal.requestId,
   });
-  return createActionExecuteFailureError({
+  return {
     ok: false, errorCode: 'action_failed',
     error: `External Action authorization unavailable: ${refusal.reason}`,
     requestId: refusal.requestId, effectAttempted: false,
     details: { authorizationRefusalReason: refusal.reason },
     failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: null, httpStatus: null },
-  });
+  };
+}
+
+/** Null-only transport adapters throw this existing Action carrier, never flatten its cause. */
+export function createExternalActionHeaderRefusalError(
+  refusal: ExternalActionHeaderRefusal = refuseExternalActionHeaders('authorization_headers_missing'),
+): ReturnType<typeof createActionExecuteFailureError> {
+  return createActionExecuteFailureError(externalActionHeaderRefusalFailure(refusal));
 }
 
 export function requireExternalActionHeaders(

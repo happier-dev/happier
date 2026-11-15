@@ -1,4 +1,6 @@
 import type { TeamGroupNameProjectionV1, TeamGroupV1 } from '@happier-dev/protocol/teams';
+import { teamGroupLabelBinding } from '@happier-dev/protocol/teams/groupLabel';
+export { teamGroupLabelBinding } from '@happier-dev/protocol/teams/groupLabel';
 import type {
     PrivateLabelReadPolicyV1,
     PrivateLabelStoredV1,
@@ -12,11 +14,6 @@ type PrivateLabelSealer = Pick<ReturnType<typeof createPrivateLabelClient>, 'sea
 // A Group's admitted stored arm, not the viewing Account's current mode,
 // decides whether a recipient projection may be opened.
 export const TEAM_GROUP_LABEL_READ_POLICY = { kind: 'team-resource' } as const satisfies PrivateLabelReadPolicyV1;
-
-/** The immutable cipher binding for each human-authored Group label. */
-export function teamGroupLabelBinding(groupId: string, field: 'name' | 'description') {
-    return { entity: 'team_group', field, id: groupId } as const;
-}
 
 export function teamGroupNameBinding(groupId: string) {
     return teamGroupLabelBinding(groupId, 'name');

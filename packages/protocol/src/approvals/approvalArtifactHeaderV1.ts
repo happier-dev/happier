@@ -8,7 +8,7 @@ import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest
 import { ManagedDeleteInputV1Schema } from '../machines/managed/actionsV1.js';
 import { isApiTokenGrantTargetMemberV1, type ApiTokenGrantV1 } from '../auth/apiTokenGrant.js';
 import type { ExternalActionTargetV1 } from '../actions/externalActionApi.js';
-import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
+import { isDeploymentActionIdV1, DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { DeploymentBindingsPatchInputV1Schema } from '../deployments/deploymentBindingPatchV1.js';
 import { isDiscussionActionIdV1 } from '../discussions/actionIds.js';
 import type { InboxArtifactAdmissionDispositionV1 } from '../artifacts/artifactKindV1.js';
@@ -68,6 +68,11 @@ export function deriveManagedDeleteApprovalSubjectKeyV1(input: Readonly<{ homeId
   return `managed-delete:${computeCanonicalDomainSeparatedDigest('happier.approval.managed-delete-subject.v1', [input.homeId, input.managedId])}`;
 }
 
+/** The private Artifact inventory supplies the Home and Account, independent of client profile aliases. */
+export function deriveDeploymentEnvironmentApprovalSubjectKeyV1(input: Readonly<{ environmentId: string }>): string {
+  return `deployment-environment:${computeCanonicalDomainSeparatedDigest('happier.approval.deployment-environment-subject.v1', [input.environmentId])}`;
+}
+
 /** One subject-index producer; a header hint never substitutes for body admission. */
 export function readApprovalRequestArtifactSubjectKeyV1(request: ApprovalRequest): string | null {
   if (request.v === 2 && request.actionId === 'localServices.launcher.start') {
@@ -75,6 +80,11 @@ export function readApprovalRequestArtifactSubjectKeyV1(request: ApprovalRequest
     return input.success && input.data.workspace && input.data.declaration?.selection.kind === 'manifest'
       && input.data.declaration.workspaceRefId === input.data.workspace.workspaceId
       ? deriveProjectServiceStartApprovalSubjectKeyV1({ machineId: input.data.workspace.machineId, refId: input.data.declaration.workspaceRefId }) : null;
+  }
+  if (isDeploymentActionIdV1(request.actionId)) {
+    const input = request.actionArgs;
+    return input && typeof input === 'object' && 'environmentId' in input && typeof input.environmentId === 'string'
+      ? deriveDeploymentEnvironmentApprovalSubjectKeyV1({ environmentId: input.environmentId }) : null;
   }
   if (request.actionId !== 'machines.managed.delete') return null;
   const input = ManagedDeleteInputV1Schema.safeParse(request.actionArgs);
@@ -88,7 +98,7 @@ export function managedDeleteApprovalIndexedKindV1(subjectKey: string): string {
 /**
  * What list readers (Inbox grouping, Discussion attention) need without opening the body. The writer
  * sets it; body admission rejects a header whose facts contradict the body. A header written before
- * these facts existed has no `approvalListFacts` and is unclassified (one-time owner backfill).
+ * these facts existed has no `approvalListFacts` and is unclassified.
  */
 export type ApprovalArtifactListFactsV1 = Readonly<{
   /** The Automation whose Run asked; its Run is the header's `runId`. */
