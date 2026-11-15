@@ -167,6 +167,16 @@ function readMachinePublishedContext(machine: FetchedMachineRow) {
     };
 }
 
+/**
+ * A hydrating row's daemon-state version names the daemon state it holds opened. Before an encrypted
+ * daemon state opens, the display shell holds none: the published revision stays a hint (`keyBasis`)
+ * instead of claiming that version, so opening its metadata and then its daemon state only ever
+ * advances the version. Locked views keep the authoritative revision; nothing opens under them.
+ */
+function readUnopenedDaemonStateVersion(machine: FetchedMachineRow): number {
+    return typeof machine.daemonState === 'string' && machine.daemonState.length > 0 ? 0 : machine.daemonStateVersion ?? 0;
+}
+
 function createLockedMachineView(
     machine: FetchedMachineRow,
     reason: MachineLockedReason,
@@ -878,8 +888,8 @@ export async function fetchAndApplyMachines(params: {
             metadata,
             daemonState: hasEncryptedDaemonState && canReuseContent ? existingMachine?.daemonState ?? null : null,
             daemonStateVersion: hasEncryptedDaemonState && canReuseContent
-                ? existingMachine?.daemonStateVersion ?? (machine.daemonStateVersion || 0)
-                : (machine.daemonStateVersion || 0),
+                ? existingMachine?.daemonStateVersion ?? 0
+                : readUnopenedDaemonStateVersion(machine),
             ...readMachineIdentityFields(machine),
             ...readMachinePublishedContext(machine),
             storageMode: 'e2ee',

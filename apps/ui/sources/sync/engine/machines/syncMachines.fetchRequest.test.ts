@@ -1019,6 +1019,43 @@ describe('fetchAndApplyMachines request override', () => {
         }
     });
 
+    it('never publishes a lower daemon-state version while a cold row opens its metadata before its daemon state', async () => {
+        const fetchAndApplyMachines = await loadFetchAndApplyMachines();
+        const encryption = await createEncryptionHarness();
+        const daemonOpen = createDeferred<void>();
+        encryption.decryptDaemonState.mockImplementation(async (_version: number, value: string | null) => {
+            await daemonOpen.promise;
+            return value ? { decrypted: value } : null;
+        });
+        const published: Array<Readonly<{ daemonStateVersion: number; metadata: boolean; daemonState: boolean }>> = [];
+        const store = createMachineStore();
+        const loading = fetchAndApplyMachines({
+            credentials: legacyCredentials, sourceServerId: 'home-1', encryption,
+            machineDataKeys: new Map<string, MachineDataKeyCacheEntry>(),
+            request: async () => jsonResponse([{ id: 'm_cold', metadata: 'encrypted-meta', metadataVersion: 5,
+                daemonState: 'encrypted-daemon', daemonStateVersion: 84, dataEncryptionKey: 'key-1', seq: 1, active: true,
+                activeAt: 10, revokedAt: null, createdAt: 1, updatedAt: 10 } satisfies RawMachine]),
+            getMachineSnapshot: () => store.getState().machines,
+            getExistingMachine: id => store.getState().machines[id],
+            applyMachineDisplayEntries: rows => store.getState().replaceMachineDisplays(rows),
+            applyMachines: (rows, replace) => {
+                for (const row of rows) published.push({ daemonStateVersion: row.daemonStateVersion,
+                    metadata: row.metadata !== null, daemonState: row.daemonState != null });
+                store.getState().applyMachines(rows, replace);
+            },
+        });
+        try {
+            // The metadata-opened row is published while its daemon state is still opening.
+            await vi.waitFor(() => expect(published.some(row => row.metadata && !row.daemonState)).toBe(true));
+        } finally {
+            daemonOpen.resolve();
+            await loading;
+        }
+        await vi.waitFor(() => expect(published.at(-1)).toEqual({ daemonStateVersion: 84, metadata: true, daemonState: true }));
+        const versions = published.map(row => row.daemonStateVersion);
+        expect(versions).toEqual([...versions].sort((left, right) => left - right));
+    });
+
     it('does not throw when the request transport fails (e.g. network error)', async () => {
         const fetchAndApplyMachines = await loadFetchAndApplyMachines();
         const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
