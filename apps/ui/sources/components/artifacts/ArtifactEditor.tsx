@@ -24,6 +24,8 @@ import { artifactViewRoute } from './artifactBrowserModel';
 import { useArtifactActionsClient, type ArtifactQuota } from './artifactActionsClient';
 import { ArtifactQuotaNotice } from './ArtifactQuotaNotice';
 import { ArtifactView } from './ArtifactView';
+import { presentArtifactActionFailure } from './artifactActionFailure';
+import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 
 /**
  * Writing a document: its title edited in the page header, its Markdown below, one Save. A save the
@@ -93,7 +95,8 @@ export function ArtifactEditor(props: Readonly<{ artifact: DecryptedArtifact | n
             if (!outcome.ok) {
                 if (outcome.failure.quota) { setQuota(outcome.failure.quota); return false; }
                 if (outcome.failure.code === 'version_mismatch') { setConflict(true); return false; }
-                throw outcome.failure;
+                alertActionFailure(presentArtifactActionFailure(outcome.failure, mode === 'new' ? t('artifacts.createError') : t('artifacts.updateError')));
+                return false;
             }
             ignoreRef.current = true;
             isDirtyRef.current = false;

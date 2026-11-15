@@ -33,6 +33,8 @@ import type { ArtifactBodyV1, ArtifactRevisionProvenanceV1 } from '@happier-dev/
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { readArtifactAccessCapabilities } from '@/sync/domains/artifacts/artifactAccessCapabilities';
 import { ArtifactBinaryBody } from './ArtifactBinaryBody';
+import { presentArtifactActionFailure } from './artifactActionFailure';
+import { showActionFailureDetails } from '@/utils/errors/alertActionFailure';
 
 type Revision = Readonly<{ bodyVersion: number; body: ArtifactBodyV1 | null; createdAt: number; sizeBytes: number; provenance?: ArtifactRevisionProvenanceV1 }>;
 
@@ -153,6 +155,7 @@ function ArtifactHistoryContent(props: HistorySubject & Readonly<{ onClose: () =
     const current = artifact?.bodyVersion;
     const compareFrom = props.compareFromBodyVersion;
     const history = state?.client === client && state.artifactId === artifactId ? state : null;
+    const historyFailure = history?.failure ?? null;
     const selected = selection?.client === client && selection.artifactId === artifactId ? selection.bodyVersion : null;
 
     React.useEffect(() => {
@@ -211,6 +214,8 @@ function ArtifactHistoryContent(props: HistorySubject & Readonly<{ onClose: () =
                     testID="artifact-history:failed"
                     kind="error"
                     title={resolveActionExecutionFailureTitle(history.failure, t('artifacts.browser.history.loadFailed'))}
+                    reason={resolveActionExecutionErrorMessage(history.failure, '', { safeToRetry: true }) || undefined}
+                    diagnosticCode={history.failure.code}
                     action={{ label: t('common.retry'), onPress: requestRefresh }}
                     accessibilitySemantics="alert"
                 />
@@ -295,7 +300,10 @@ function ArtifactHistoryContent(props: HistorySubject & Readonly<{ onClose: () =
                     reason={history.loading ? t('common.loading') : resolveActionExecutionErrorMessage(history.failure, t('artifacts.browser.history.loadFailed'), { safeToRetry: true })}
                     busy={history.loading}
                     tone={history.failure ? 'warning' : 'neutral'}
-                    action={history.failure ? { label: t('common.retry'), onPress: requestRefresh } : undefined}
+                    actions={historyFailure ? [
+                        { label: t('common.retry'), onPress: requestRefresh },
+                        { label: t('approvals.technicalDetails'), onPress: () => showActionFailureDetails(presentArtifactActionFailure(historyFailure, '')) },
+                    ] : undefined}
                 />
             ) : null}
             {compareUnavailableReason ? (
@@ -315,9 +323,21 @@ function ArtifactHistoryContent(props: HistorySubject & Readonly<{ onClose: () =
             </View>
             {chosen && props.canRestore ? (
                 <View style={[styles.footer, !sideBySide ? styles.footerStacked : null]}>
-                    <Text style={[styles.note, !sideBySide ? styles.noteStacked : null, restoreFailure ? styles.noteFailed : null]}>
-                        {restoreFailure ? resolveActionExecutionErrorMessage(restoreFailure, t('artifacts.browser.history.restoreFailed')) : t('artifacts.browser.history.restoreNote')}
-                    </Text>
+                    {restoreFailure ? (
+                        <SurfaceStateCard
+                            testID="artifact-history:restore-failed"
+                            kind="error"
+                            layout="inline"
+                            replacesContent={false}
+                            title={resolveActionExecutionErrorMessage(restoreFailure, t('artifacts.browser.history.restoreFailed'))}
+                            diagnosticCode={restoreFailure.code}
+                            accessibilitySemantics="alert"
+                        />
+                    ) : (
+                        <Text style={[styles.note, !sideBySide ? styles.noteStacked : null]}>
+                            {t('artifacts.browser.history.restoreNote')}
+                        </Text>
+                    )}
                     <RoundButton
                         testID="artifact-history:restore"
                         size="small"
@@ -447,9 +467,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexGrow: 0,
         flexShrink: 0,
         flexBasis: 'auto',
-    },
-    noteFailed: {
-        color: theme.colors.state.danger.foreground,
     },
     // Loading fills the body like the failure state does, so its state sits where the failure will.
     placeholder: {

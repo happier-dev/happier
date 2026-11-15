@@ -20,6 +20,8 @@ import { createArtifactActionsClient, createMountedArtifactActionExecute } from 
 import { artifactViewRoute, classifyArtifactViewKind } from './artifactBrowserModel';
 import { artifactKindLabel } from './artifactKindPresentation';
 import { showArtifactHistorySheet } from './ArtifactHistorySheet';
+import { presentArtifactActionFailure } from './artifactActionFailure';
+import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 
 /** The same access, sharing, history and confirmed delete operations for a row, pane and page. */
 export function useArtifactOperations(artifact: DecryptedArtifact | null, onDeleted?: () => void) {
@@ -91,7 +93,10 @@ export function useArtifactOperations(artifact: DecryptedArtifact | null, onDele
                 ? await client.deleteDashboard({ surface: layout.surface, expectedRevision }, { confirmed: true })
                 : await client.deleteArtifact({ artifactId: artifact.id, expectedRevision }, { confirmed: true });
             if (!mounted.isCurrent() || 'approvalId' in outcome) return;
-            if (!outcome.ok) throw outcome.failure;
+            if (!outcome.ok) {
+                alertActionFailure(presentArtifactActionFailure(outcome.failure, t('artifacts.deleteError')));
+                return;
+            }
             if (onDeleted) onDeleted();
             else router.replace('/artifacts');
         } catch (error) {

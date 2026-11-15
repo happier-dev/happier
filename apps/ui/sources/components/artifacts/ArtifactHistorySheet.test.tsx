@@ -318,6 +318,15 @@ describe('Artifact History continuity', () => {
         expect(screen.getTextContent()).toContain('Notes 1');
     });
 
+    it('keeps an initial history refusal available in the shared diagnostic disclosure', async () => {
+        const { screen } = await setup(request => request.path.endsWith('/revisions')
+            ? Response.json({ error: 'artifact_access_forbidden' }, { status: 403 }) : undefined);
+        expect(screen.findByTestId('artifact-history:failed-details-code')).toBeNull();
+        await screen.pressByTestIdAsync('artifact-history:failed-details-toggle');
+        expect(screen.findByTestId('artifact-history:failed-details-code')?.props.children).toBe('artifact_content_unavailable');
+        await screen.unmount();
+    });
+
     it('shows a canonical initial loading state and retains the selected preview during refresh, failure and retry', async () => {
         const first = createDeferred<Response>();
         let response = first.promise;
@@ -341,6 +350,8 @@ describe('Artifact History continuity', () => {
         expect(screen.getTextContent()).toContain('Notes 1');
         expect(screen.findByTestId('artifact-history:stale')).not.toBeNull();
         expect(screen.getTextContent()).toContain('approvals.transientFailureTitle');
+        await screen.pressByTestIdAsync('artifact-history:stale-action-1');
+        expect(Modal.alert).toHaveBeenLastCalledWith('approvals.technicalDetails', 'database_transaction_timeout');
         response = Promise.resolve(Response.json(revisions));
         await screen.pressByTestIdAsync('artifact-history:stale-action');
         await flushHookEffects();
@@ -412,6 +423,8 @@ describe('Artifact History continuity', () => {
         expect(screen.getTextContent()).toContain('artifacts.browser.conflict.title');
         expect(screen.findByType(HappierArtifactRevisionList).props.selectedVersion).toBe(1);
         expect(getStorage().getState().artifacts.document?.bodyVersion).toBe(3);
+        await screen.pressByTestIdAsync('artifact-history:restore-failed-details-toggle');
+        expect(screen.findByTestId('artifact-history:restore-failed-details-code')?.props.children).toBe('version_mismatch');
     });
 
     it('retains the selected revision when a restore times out without claiming rollback', async () => {

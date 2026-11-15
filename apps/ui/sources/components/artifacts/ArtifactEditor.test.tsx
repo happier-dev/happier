@@ -5,7 +5,7 @@ import { changeTextTestInstance, renderScreen } from '@/dev/testkit';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
-import { createHomeGovernanceHarness, createAccountTokenForTests, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createHomeGovernanceHarness, createAccountTokenForTests, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { Modal, ModalProvider } from '@/modal';
@@ -463,6 +463,25 @@ describe('ArtifactEditor', () => {
         expect(resolveActionExecutionFailureTitle(outcome.failure, 'common.error')).toBe('approvals.transientFailureTitle');
         expect(resolveActionExecutionErrorMessage(outcome.failure, 'artifacts.createError')).toBe('toolView.pending.unknownDescription');
     });
+    it('retains a typed create refusal in technical details while keeping the draft', async () => {
+        const serverId = await restoreEditorHome('https://artifact-editor-refusal.test');
+        homes.answer(serverId, 'POST /v1/artifacts', { status: 503, body: { error: 'database_transaction_timeout' } });
+        const ArtifactEditor = await loadArtifactEditor();
+        const screen = await renderScreen(<ArtifactEditor artifact={null} mode="new" />);
+        await act(async () => { changeTextTestInstance(screen.findHostByTestId('artifact-editor:body:source'), 'Kept draft'); });
+        await screen.pressByTestIdAsync('artifact-editor:save');
+        await waitForHomeGovernance(() => expect(vi.mocked(Modal.alert).mock.calls.at(-1)).toEqual([
+            expect.any(String), expect.any(String), expect.arrayContaining([expect.objectContaining({ text: 'approvals.technicalDetails' })]),
+        ]));
+        expect(homes.requestsFor('/v1/artifacts').some(request => request.method === 'POST')).toBe(true);
+        const details = vi.mocked(Modal.alert).mock.calls.at(-1)?.[2]?.find(button => button.text === 'approvals.technicalDetails');
+        await act(async () => { details?.onPress?.(); });
+        expect(Modal.alert).toHaveBeenLastCalledWith('approvals.technicalDetails', 'database_transaction_timeout');
+        expect(screen.findByTestId('artifact-editor:body:source')?.props.value).toBe('Kept draft');
+        expect(navigation.replace).not.toHaveBeenCalled();
+        await screen.unmount();
+    });
+
     it('keeps the draft and reports the named budget when the create Action refuses quota', async () => {
         const serverId = await restoreEditorHome('https://artifact-editor-quota.test');
         homes.answer(serverId, 'POST /v1/artifacts', { status: 413,

@@ -276,6 +276,34 @@ describe('Artifacts browser folders view', () => {
 });
 
 describe('Artifacts browser row operations', () => {
+    it('retains the refused delete code in deliberate technical details and keeps the artifact', async () => {
+        const artifact = artifactFixture('document');
+        const served = await serveActionHomes({ homes: [{ key: 'owner', serverUrl: 'https://artifact-delete-refusal.test', accountId: 'owner' }],
+            route: request => {
+                if (request.path === '/v1/artifacts/document' && request.method === 'GET')
+                    return Response.json(createPlainArtifactHttpFixture(artifact, 'owner'));
+                if (request.path === '/v1/artifacts/document/revision/1/2' && request.method === 'DELETE')
+                    return Response.json({ error: 'artifact_revision_conflict' }, { status: 409 });
+                return undefined;
+            } });
+        disposeHome = served.dispose;
+        getStorage().getState().addArtifact(artifact);
+        const onDeleted = vi.fn();
+        const hook = await renderHook(() => useArtifactOperations(artifact, onDeleted));
+        vi.mocked(Modal.confirm).mockResolvedValue(true);
+        vi.mocked(Modal.alert).mockClear();
+        await act(async () => { await hook.getCurrent().remove(); });
+        expect(served.requests.some(request => request.method === 'DELETE')).toBe(true);
+        expect(onDeleted).not.toHaveBeenCalled();
+        const buttons = vi.mocked(Modal.alert).mock.calls.at(-1)?.[2];
+        const details = buttons?.find(button => button.text === 'approvals.technicalDetails');
+        expect(details).toBeDefined();
+        await act(async () => { details?.onPress?.(); });
+        expect(Modal.alert).toHaveBeenLastCalledWith('approvals.technicalDetails', 'version_mismatch');
+        expect(getStorage().getState().artifacts.document).toBeDefined();
+        await hook.unmount();
+    });
+
     it.each([
         { mime: 'application/pdf', label: 'files.kind.pdf' },
         { mime: 'image/png', label: 'files.kind.image' },
