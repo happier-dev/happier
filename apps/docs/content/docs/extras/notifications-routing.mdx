@@ -28,6 +28,8 @@ If the notification belongs to a different saved server than the one currently a
 
 This is the default behavior for normal notification taps and for the `Answer` action that opens an action request in context.
 
+Development builds also apply the saved Home and Account checks to browser notification clicks. Windows desktop notification clicks are development-only and require an updated desktop app with its notification identity and app links registered. Windows development checks have verified Notification Center clicks with the main window minimized, hidden, and the app no longer running: Happier restores or launches its main window and opens the original session on its saved Home and Account. macOS and Linux retain their existing notification delivery.
+
 ## What happens when you press a notification action
 
 Background permission actions are development-only. On an iOS 18.6 simulator, banner `Allow` and `Deny` actions settled the exact CLI request without opening Happier. Notification Center expansion remains unresolved, and physical-device validation is still pending. This is not a verified stable-release capability.
