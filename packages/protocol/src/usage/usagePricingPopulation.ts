@@ -5,7 +5,7 @@ import type { UsagePricingReuse } from './usagePricingReuse.js';
 import { hasUnresolvedUsageReportedTotalScope, resolveEffectiveUsageCostUsd, resolveUsageCostBasis, resolveUsageCostFacts, serializeUsageCostBasis, type UsageCostMode } from './usageCostFacts.js';
 import { createUsageSourceCostFacts } from './usageCostFactTotals.js';
 import type { UsageModelPriceCatalog, UsageModelPriceOverridesV1 } from './usageModelPriceCatalog.js';
-import { resolveUsageTokenCategories } from './usageTokenCategories.js';
+import { hasZeroUsageTokens, resolveUsageTokenCategories } from './usageTokenCategories.js';
 import { addUsageMoney, createUsageMoneyAccumulator, subtractUsageMoney, readUsageMoney, usageMoneyFromNumber, usageMoneyToNumber, withUsageMoney, type ExactUsageMoney } from './usageMoney.js';
 
 type Group = UsagePricingPopulation['groups'][number];
@@ -79,20 +79,20 @@ function selection(raw: UsageObservationCost, resolved: UsageObservationCost, mo
     if (basis?.mode === mode) return basis.covered ? 'covered' : 'total';
     return hasUnresolvedUsageReportedTotalScope(raw, mode) ? 'unavailable' : 'plain';
 }
-function operandKey(modelId: string | null, categories: UsageObservationTokens | null, raw: UsageObservationCost, hasTokens: boolean) {
+function operandKey(modelId: string | null, categories: UsageObservationTokens | null, raw: UsageObservationCost) {
     return JSON.stringify([modelId, categories === null ? null : [categories.cacheRead !== null && categories.cacheRead > 0, categories.cacheWrite !== null && categories.cacheWrite > 0,
-        tokenFields.every(field => categories[field] === 0), tokenFields.map(field => categories[field] === null)], raw.currency, raw.costSource, raw.billingContext,
-        resolveUsageCostFacts(raw).map(fact => [fact.kind, fact.source]), hasTokens]);
+        hasZeroUsageTokens(categories), tokenFields.map(field => categories[field] === null)], raw.currency, raw.costSource, raw.billingContext,
+        resolveUsageCostFacts(raw).map(fact => [fact.kind, fact.source])]);
 }
-function groupKey(modelId: string | null, categories: UsageObservationTokens | null, raw: UsageObservationCost, states: Group['selection'], hasTokens: boolean) {
-    return JSON.stringify([operandKey(modelId, categories, raw, hasTokens), states]);
+function groupKey(modelId: string | null, categories: UsageObservationTokens | null, raw: UsageObservationCost, states: Group['selection']) {
+    return JSON.stringify([operandKey(modelId, categories, raw), states]);
 }
 function admitUsagePricingOperand(row: UsagePricingOperand) {
     const categories = row.tokenCategories ?? resolveUsageTokenCategories(row.tokens, null);
     const cost = row.cost;
     const { apiEquivalentUsd: _api, pricingSource: _price, effectiveUsd: _effective, selectedBasis: _selected,
         reportedTotalId: _total, reportedTotalContributionIds: _scope, ...raw } = cost;
-    return { categories, cost, raw, key: operandKey(row.modelId, categories, raw, row.tokens.total !== 0) };
+    return { categories, cost, raw, key: operandKey(row.modelId, categories, raw) };
 }
 
 /** Group only tariff/availability/raw-fact dimensions, never event ids or times. */
@@ -219,7 +219,7 @@ function selectPricingGroupCost(cost: UsageObservationCost, group: Group, mode: 
 export function mergeUsagePricingPopulations(populations: readonly UsagePricingPopulation[]): UsagePricingPopulation {
     const grouped = new Map<string, Group>();
     for (const population of populations) for (const group of population.groups) {
-        const key = groupKey(group.modelId, group.categories, group.cost, group.selection, group.tokens.total !== 0);
+        const key = groupKey(group.modelId, group.categories, group.cost, group.selection);
         const previous = grouped.get(key);
         if (!previous) { grouped.set(key, group); continue; }
         const cost = addUsageCost(restoreCost(previous.cost, previous.costUnits), restoreCost(group.cost, group.costUnits));

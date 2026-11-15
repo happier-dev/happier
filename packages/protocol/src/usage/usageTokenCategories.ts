@@ -8,6 +8,13 @@ export function hasMeasuredUsageTokenCategories(tokens: UsageObservationTokens |
     && tokens.cacheRead !== null && tokens.cacheWrite !== null;
 }
 
+/** Zero measured parts establish no usage only without a positive reported total. */
+export function hasZeroUsageTokens(tokens: UsageObservationTokens | null | undefined): boolean {
+  return tokens != null && (tokens.total === null || tokens.total === 0)
+    && tokens.input === 0 && tokens.output === 0 && tokens.reasoning === 0
+    && tokens.cacheRead === 0 && tokens.cacheWrite === 0;
+}
+
 /** Disjoint chart categories require producer-witnessed vendor counter semantics. */
 export function resolveUsageTokenCategories(tokens: UsageObservationTokens, accounting: UsageAccountingMetadata | null | undefined): MeasuredUsageTokenCategories | null {
   if (!hasMeasuredUsageTokenCategories(tokens)) return null;

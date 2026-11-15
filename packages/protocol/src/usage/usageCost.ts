@@ -1,6 +1,6 @@
 import type { UsageAnalyticsContribution, UsageAnalyticsQueryRequest, UsageAnalyticsQueryResponse, UsageObservationCost, UsageObservationTokens } from './usageAnalyticsContracts.js';
 import { bundledUsageModelPriceCatalog, resolveUsageModelPrice, type ResolvedUsageModelPrice, type UsageModelPriceCatalog, type UsageModelPriceOverridesV1 } from './usageModelPriceCatalog.js';
-import { hasMeasuredUsageTokenCategories, resolveUsageTokenCategories } from './usageTokenCategories.js';
+import { hasMeasuredUsageTokenCategories, hasZeroUsageTokens, resolveUsageTokenCategories } from './usageTokenCategories.js';
 import { createUsageSourceCostFacts } from './usageCostFactTotals.js';
 import { reprojectUsageLeadersSteps, usageTimelinePartitionKey, type UsageAnalyticsPricingPartitions } from './usageLeaderProjection.js';
 import { usageCostAggregationBasis } from './usageAggregation.js';
@@ -120,9 +120,8 @@ export function priceUsageObservation(rawCost: UsageObservationCost, modelId: st
     : `user:${estimate.price.source}:${modelId}` : undefined;
   // A money-only observation adds no token-tariff population. Its unknown model
   // must not make otherwise fully priced tokens incomplete.
-  const noTokens = categories !== null && categories.input === 0 && categories.output === 0 && categories.reasoning === 0
-    && categories.cacheRead === 0 && categories.cacheWrite === 0;
-  const apiMoney = estimate ? readUsageMoney(estimate, 'total', estimate.total) : noTokens ? usageMoneyFromNumber(0) : undefined;
+  const apiMoney = estimate ? readUsageMoney(estimate, 'total', estimate.total)
+    : hasZeroUsageTokens(categories) ? usageMoneyFromNumber(0) : undefined;
   // This rest object is owned by this call. Build its monetary fields before
   // publishing provenance, rather than copying a JSON-shaped cost per phase.
   if (apiMoney) {

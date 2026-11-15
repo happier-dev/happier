@@ -12,7 +12,7 @@ import { projectUsageAccountingSnapshotPrices } from './resolveUsagePageAggregat
 import type { UsageModelPriceOverridesV1 } from './usageModelPriceCatalog.js';
 import { readUsageMoney, withUsageMoney } from './usageMoney.js';
 import { resolveUsageCostFacts } from './usageCostFacts.js';
-import { buildUsagePricedPartition, buildUsagePricingPopulation, priceUsagePricingPopulation, resolveUsagePricingPopulationStates } from './usagePricingPopulation.js';
+import { buildUsagePricedPartition, buildUsagePricingPopulation, mergeUsagePricingPopulations, priceUsagePricingPopulation, resolveUsagePricingPopulationStates } from './usagePricingPopulation.js';
 import { projectUsageAnalyticsResponseDemand } from './usageAnalyticsDemandProjection.js';
 import * as usageSummary from './usageSummary.js';
 import { collectUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery } from './usageAnalyticsBatchDelivery.js';
@@ -430,6 +430,30 @@ describe('compact Usage summary', () => {
                 context: { usedTokens: 9, windowTokens: 20 } });
             expect(combined['leaders:models']![0]!.value.label).toBe('leader model');
         }
+    });
+
+    it.each([106_405, null])('preserves zero tariff categories beside unpriced usage with vendor total %s', total => {
+        // Exact B4 shapes: model-null reported totals and muse-spark zero parts
+        // with an unknown total. Only the latter population has no tokens.
+        const emptyCategories = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total };
+        const measured = { ...emptyCategories, input: 7, output: 11, total: total === null ? null : 18 };
+        const observed = { reportedUsd: total === null ? null : 0, estimatedUsd: 0,
+            invoiceUsd: total === null ? null : 0, currency: 'USD', billingContext: 'unknown',
+            costSource: total === null ? 'pricing_estimate' : 'provider_reported' } satisfies UsageAnalyticsContribution['cost'];
+        const rows = [emptyCategories, measured].map((tokens, index) => contribution(index, {
+            modelId: total === null ? 'muse-spark-1.3-contributor' : null, tokens, tokenCategories: tokens, cost: observed }));
+        const rich = response(rows);
+        if (total === null) expect(rich.costFacts).toContainEqual(expect.objectContaining({ kind: 'api_equivalent',
+            source: 'no_tokens', eventCount: 1, amountUsd: 0 }));
+        else expect(rich.costFacts?.some(fact => fact.kind === 'api_equivalent')).toBe(false);
+        expect(rich.costFacts).toContainEqual(expect.objectContaining({ kind: 'unpriced', eventCount: total === null ? 1 : 2 }));
+        const compact = UsageAnalyticsQueryResponseSchema.parse(JSON.parse(JSON.stringify({
+            ...usageCost.projectUsageAnalyticsSummary(rich, query), contributions: undefined })));
+        const repriced = usageCost.repriceUsageAnalyticsResponse(compact, catalog);
+        expect.soft(repriced.costFacts).toEqual(rich.costFacts);
+        expect(repriced.totals.cost.apiEquivalentUsd).toBe(rich.totals.cost.apiEquivalentUsd);
+        const merged = mergeUsagePricingPopulations(rows.map(row => buildUsagePricingPopulation([row])));
+        expect(priceUsagePricingPopulation(merged, catalog, {}, 'auto').facts).toEqual(rich.costFacts);
     });
 
     it('keeps zero-total observations out of unpriced fact counts after grouping', () => {
