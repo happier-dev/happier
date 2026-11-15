@@ -1,4 +1,5 @@
 import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
+import { withDeploymentDomainHealthCheckDefaultV1 } from '@happier-dev/protocol/deployments/deploymentDomainHealthCheckV1';
 import { previewOwnServerDomainDns } from './ownServerDomainDnsPreview';
 import { deploymentOutputValidationFailure } from '../../outputValidation';
 import axios from '@/api/client/credentialAxios';
@@ -363,11 +364,13 @@ export function createOwnServerDomainActions(host: Readonly<{
                     const environment = await host.readEnvironment({ environmentId: input.environmentId, context });
                     const link = environment.targetLinks.find(item => item.targetLink.id === original.targetLinkId)?.targetLink;
                     if (!link) return failure('target_mismatch');
-                    const preparedInput = 'content' in original ? await (async () => {
-                        const { content, ...metadata } = original;
-                        return { ...metadata, ...await host.createContent(content, environment.environment.owner, context) };
+                    // Authored content (app, CLI and agent adds alike) gets its default outside check here, once.
+                    const authored = 'content' in original ? withDeploymentDomainHealthCheckDefaultV1(original.content) : null;
+                    const preparedInput = 'content' in original && authored ? await (async () => {
+                        const { content: _authored, ...metadata } = original;
+                        return { ...metadata, ...await host.createContent(authored, environment.environment.owner, context) };
                     })() : original;
-                    const opened = 'content' in original ? { ok: true as const, content: original.content }
+                    const opened = authored ? { ok: true as const, content: authored }
                         : readDeploymentDomainArtifactV1(preparedInput, await host.open(preparedInput.contentArtifactId, context));
                     if (!opened.ok) return failure(opened.error, undefined, opened.failureCause);
                     privateContent = opened.content;

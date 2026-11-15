@@ -18852,7 +18852,7 @@ settingsSession: {
         domainFieldPath: "Caminho",
         domainPathHint: "ex. /docs envia só esse caminho",
         domainFieldCheck: "Verificação externa",
-        domainCheckHint: "O caminho que o Happier abre de fora, como os seus utilizadores. Introduza o estado HTTP que deve devolver.",
+        domainCheckHint: "A página que o Happier abre de fora, como os seus utilizadores. Se ficar vazio, o Happier verifica / e aceita qualquer resposta abaixo de 500.",
       domainFieldCheckStatus: "Estado HTTP esperado",
       domainRoutedOn: ({ machines }: { machines: string }) => `em ${machines}`,
         domainExists: "Este endereço já está neste ambiente",

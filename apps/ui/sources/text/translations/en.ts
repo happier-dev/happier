@@ -22183,7 +22183,7 @@ const enProjects = {
       domainFieldPath: "Path",
       domainPathHint: "e.g. /docs sends only that path",
       domainFieldCheck: "Outside check",
-      domainCheckHint: "The path Happier opens from outside, the way your users reach it. Enter the HTTP status it should return.",
+      domainCheckHint: "The page Happier opens from outside, the way your users reach it. Left empty, Happier checks / and accepts any answer below 500.",
       domainFieldCheckStatus: "Expected HTTP status",
       domainRoutedOn: ({ machines }: { machines: string }) => `on ${machines}`,
       domainExists: "This address is already on this environment",

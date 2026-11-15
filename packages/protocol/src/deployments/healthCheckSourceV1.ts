@@ -16,13 +16,15 @@ import type { DeploymentDomainHealthCheckV1 } from './deploymentDomainHealthChec
 export function readHealthCheckHttpTargetV1(target:
     | Readonly<{ hostname: string; healthCheck?: DeploymentDomainHealthCheckV1 }>
     | Readonly<{ endpoint: string; expectStatus: number }>,
-): Readonly<{ url: string; expectStatus: number }> | null {
+): Readonly<{ url: string; expectStatus?: number }> | null {
     if ('hostname' in target && !target.healthCheck) return null;
     const address = 'hostname' in target ? `https://${target.hostname}${target.healthCheck!.path}` : target.endpoint;
     // Concatenation keeps an admitted hostname even when the configured path starts with //.
     const url = new URL(address);
     url.hash = '';
-    return { url: url.href, expectStatus: 'hostname' in target ? target.healthCheck!.expectStatus : target.expectStatus };
+    // A Domain check without an expected status accepts any answer below 500 (deploymentDomainHealthStatusMatchesV1).
+    const expectStatus = 'hostname' in target ? target.healthCheck!.expectStatus : target.expectStatus;
+    return { url: url.href, ...(expectStatus === undefined ? {} : { expectStatus }) };
 }
 
 const positive = lazyZodSchema(() => z.number().check(z.int(), z.minimum(1), z.maximum(Number.MAX_SAFE_INTEGER)));

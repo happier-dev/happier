@@ -18746,7 +18746,7 @@ settingsSession: {
         domainFieldPath: "Ruta",
         domainPathHint: "p. ej. /docs envía solo esa ruta",
         domainFieldCheck: "Comprobación externa",
-        domainCheckHint: "La ruta que Happier abre desde fuera, como tus usuarios. Introduce el estado HTTP que debe devolver.",
+        domainCheckHint: "La página que Happier abre desde fuera, como tus usuarios. Si lo dejas vacío, Happier comprueba / y acepta cualquier respuesta por debajo de 500.",
       domainFieldCheckStatus: "Estado HTTP esperado",
       domainRoutedOn: ({ machines }: { machines: string }) => `en ${machines}`,
         domainExists: "Esta dirección ya está en este entorno",

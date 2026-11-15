@@ -387,8 +387,6 @@ describe('Environment → Domains: add form (P6)', () => {
         screen.changeTextByTestId(`${id}.port`, '3000');
         screen.changeTextByTestId(`${id}.redirect`, 'www.happier.dev');
         screen.changeTextByTestId(`${id}.basicAuth`, 'preview');
-        screen.changeTextByTestId(`${id}.check`, '/');
-        screen.changeTextByTestId(`${id}.checkStatus`, '200');
       });
       await screen.pressByTestIdAsync(`${id}.certificate:custom`);
       await screen.pressByTestIdAsync(`${id}.save`);
@@ -401,7 +399,6 @@ describe('Environment → Domains: add form (P6)', () => {
               containerPort: 3000,
               redirectTo: 'www.happier.dev',
             },
-            healthCheck: { path: '/', expectStatus: 200 },
             tls: { kind: 'custom' },
             basicAuth: { username: 'preview' },
           },
@@ -413,7 +410,7 @@ describe('Environment → Domains: add form (P6)', () => {
     }
   });
 
-  it('requires an explicit health path and preserves the reviewed HTTP status', async () => {
+  it('adds without a check (the Domain owner defaults it) and keeps an authored path from Advanced', async () => {
     const base = createDeploymentEnvironmentDetailV1();
     const detail = { ...base, content: { ...base.content, ingress: undefined } };
     const actions = domainActions(detail);
@@ -426,17 +423,18 @@ describe('Environment → Domains: add form (P6)', () => {
         screen.changeTextByTestId(`${id}.service`, 'web');
         screen.changeTextByTestId(`${id}.port`, '3000');
       });
+      expect(screen.findByTestId(`${id}.needs`), 'no check field is required').toBeNull();
+      await screen.pressByTestIdAsync(`${id}.advanced.header`);
+      await act(async () => screen.changeTextByTestId(`${id}.checkStatus`, 'abc'));
       await screen.pressByTestIdAsync(`${id}.save`);
-      expect(actions.addDomain).not.toHaveBeenCalled();
+      expect(actions.addDomain, 'a status that is not a number cannot be added').not.toHaveBeenCalled();
       await act(async () => {
         screen.changeTextByTestId(`${id}.check`, '/ready');
+        screen.changeTextByTestId(`${id}.checkStatus`, '');
       });
       await screen.pressByTestIdAsync(`${id}.save`);
-      expect(actions.addDomain).not.toHaveBeenCalled();
-      await act(async () => screen.changeTextByTestId(`${id}.checkStatus`, '204'));
-      await screen.pressByTestIdAsync(`${id}.save`);
       expect(actions.addDomain).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
-        content: expect.objectContaining({ healthCheck: { path: '/ready', expectStatus: 204 } }),
+        content: expect.objectContaining({ healthCheck: { path: '/ready' } }),
       }));
     } finally {
       await screen.unmount();
@@ -550,8 +548,6 @@ describe('Environment → Domains: add form (P6)', () => {
       ).toEqual(['web', 'worker']);
       await act(async () => {
         select(`${id}.service`)!.props.onSelect('web');
-        screen.changeTextByTestId(`${id}.check`, '/ready');
-        screen.changeTextByTestId(`${id}.checkStatus`, '204');
       });
       await screen.pressByTestIdAsync(`${id}.save`);
       expect(actions.addDomain).toHaveBeenCalledExactlyOnceWith(
@@ -933,8 +929,6 @@ describe('Environment → Domains: Add domain never looks dead (UI-DOMAIN-VIEWER
         screen.changeTextByTestId(`${id}.host`, 'app.example.test');
         screen.changeTextByTestId(`${id}.service`, 'web');
         screen.changeTextByTestId(`${id}.port`, '3000');
-        screen.changeTextByTestId(`${id}.check`, '/');
-        screen.changeTextByTestId(`${id}.checkStatus`, '200');
       });
       await screen.pressByTestIdAsync(`${id}.save`);
       expect(actions.addDomain).toHaveBeenCalledOnce();
@@ -966,8 +960,6 @@ describe('Environment → Domains: Add domain never looks dead (UI-DOMAIN-VIEWER
         screen.changeTextByTestId(`${id}.host`, 'app.example.test');
         screen.changeTextByTestId(`${id}.service`, 'web');
         screen.changeTextByTestId(`${id}.port`, '3000');
-        screen.changeTextByTestId(`${id}.check`, '/');
-        screen.changeTextByTestId(`${id}.checkStatus`, '200');
       });
       await screen.pressByTestIdAsync(`${id}.save`);
       expect(await settle(`${id}.outcome`)).not.toBeNull();
@@ -993,12 +985,6 @@ describe('Environment → Domains: Add domain never looks dead (UI-DOMAIN-VIEWER
         screen.changeTextByTestId(`${id}.service`, 'web');
         screen.changeTextByTestId(`${id}.port`, '3000');
       });
-      expect(screen.findByTestId(`${id}.needs`)?.props.children)
-        .toBe(t('projects.deployments.editors.addNeeds', { field: t('projects.deployments.domainFieldCheck') }));
-      await act(async () => screen.changeTextByTestId(`${id}.check`, '/'));
-      expect(screen.findByTestId(`${id}.needs`)?.props.children)
-        .toBe(t('projects.deployments.editors.addNeeds', { field: t('projects.deployments.domainFieldCheckStatus') }));
-      await act(async () => screen.changeTextByTestId(`${id}.checkStatus`, '200'));
       expect(screen.findByTestId(`${id}.needs`), 'nothing left to name once Add domain can work').toBeNull();
     } finally { await screen.unmount(); controller.retire(); }
   });
@@ -1025,8 +1011,6 @@ describe('Environment → Domains: whether the address reaches this Machine (#2)
         screen.changeTextByTestId(`${id}.host`, 'app.example.test');
         screen.changeTextByTestId(`${id}.service`, 'web');
         screen.changeTextByTestId(`${id}.port`, '3000');
-        screen.changeTextByTestId(`${id}.check`, '/');
-        screen.changeTextByTestId(`${id}.checkStatus`, '200');
       });
       // Typing asks nothing of the Machine.
       expect(previewDomainDns).not.toHaveBeenCalled();

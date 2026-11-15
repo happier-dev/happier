@@ -17,6 +17,8 @@ import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
 import { InlineAddExpander } from '@/components/ui/forms/InlineAddExpander';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
+import { Item } from '@/components/ui/lists/Item';
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -433,6 +435,7 @@ function DomainAddForm(
   const [path, setPath] = React.useState('');
   const [checkPath, setCheckPath] = React.useState('');
   const [checkStatus, setCheckStatus] = React.useState('');
+  const [advanced, setAdvanced] = React.useState(false);
   const [redirectTo, setRedirectTo] = React.useState('');
   const [certificate, setCertificate] = React.useState<'managed' | 'custom'>('managed');
   const [basicAuthUser, setBasicAuthUser] = React.useState('');
@@ -461,28 +464,31 @@ function DomainAddForm(
   const containerPort = Number(port);
   const portValid = /^\d+$/.test(port) && containerPort >= 1 && containerPort <= 65535;
   const routePath = path.trim();
-  const healthCheck = DeploymentDomainHealthCheckV1Schema.safeParse({ path: checkPath.trim(), expectStatus: Number(checkStatus) });
+  // The outside check is optional: left empty, the Domain owner checks / and accepts any answer below 500.
+  const checkPathText = checkPath.trim();
+  const checkStatusText = checkStatus.trim();
+  const healthCheck = checkPathText || checkStatusText ? DeploymentDomainHealthCheckV1Schema.safeParse({ path: checkPathText || '/',
+    ...(checkStatusText ? { expectStatus: Number(checkStatusText) } : {}) }) : null;
+  const checkValid = healthCheck === null || healthCheck.success && (!checkStatusText || /^\d+$/.test(checkStatusText));
   const duplicate = props.taken.includes(host);
   const pathValid = routePath === '' || routePath.startsWith('/');
   const redirect = redirectTo.trim();
   const user = basicAuthUser.trim();
   const ready = host.length > 0 && !duplicate && !props.busy && (provider ? !needsZone || !!zone
-    : service.trim().length > 0 && portValid && pathValid && healthCheck.success && (!needsSelection || !!ingress));
+    : service.trim().length > 0 && portValid && pathValid && checkValid && (!needsSelection || !!ingress));
   // A disabled Add domain names the first field it still needs (zone and tunnel choices say so in their own rows).
   const missingField = props.busy || duplicate ? null : host.length === 0 ? t('projects.deployments.domainFieldHost')
     : provider ? null
     : service.trim().length === 0 ? t('projects.deployments.domainFieldService')
     : !portValid ? t('projects.deployments.domainFieldPort')
     : !pathValid ? t('projects.deployments.domainFieldPath')
-    : !checkPath.trim() ? t('projects.deployments.domainFieldCheck')
-    : !/^\d+$/.test(checkStatus.trim()) ? t('projects.deployments.domainFieldCheckStatus')
-    : !healthCheck.success ? t('projects.deployments.domainFieldCheck')
+    : !checkValid ? t('projects.deployments.domainFieldCheck')
     : null;
   // The one content this form adds, and the one the DNS check inspects.
   const draft = (): DeploymentDomainContentV1 | null => {
     if (host.length === 0 || duplicate) return null;
     if (provider) return needsZone && !zone ? null : { hostname: host, target: { kind: 'provider', ...(zone ? { zone } : {}) } };
-    if (!healthCheck.success || !(service.trim().length > 0 && portValid && pathValid && (!needsSelection || !!ingress))) return null;
+    if (!checkValid || !(service.trim().length > 0 && portValid && pathValid && (!needsSelection || !!ingress))) return null;
     return {
       hostname: host,
       target: {
@@ -491,7 +497,7 @@ function DomainAddForm(
         ...(routePath ? { path: routePath } : {}),
         ...(redirect ? { redirectTo: redirect } : {}),
       },
-      healthCheck: healthCheck.data,
+      ...(healthCheck?.success ? { healthCheck: healthCheck.data } : {}),
       ...(needsSelection && ingress ? { ingress } : {}),
       ...(props.credentials && certificate === 'custom' ? { tls: { kind: 'custom' as const } } : {}),
       ...(props.credentials && user ? { basicAuth: { username: user } } : {}),
@@ -655,7 +661,11 @@ function DomainAddForm(
             </FieldItem>
           </>
         ) : null}
-        {/* The page and the status it should answer are one check: one line on wide screens, like the route. */}
+        {/* The outside check has a default, so it waits under Advanced; page and status share one line, like the route. */}
+        <ExpandableItem testID="project-deployments.environment.domains.add.advanced" expanded={advanced} onExpandedChange={setAdvanced}
+          header={state => <Item testID="project-deployments.environment.domains.add.advanced.header" {...state.headerProps}
+            title={t('projects.deployments.domainIngressAdvanced')} />}
+        >
         <View style={props.phone ? styles.stack : styles.route}>
           <FieldItem
             label={t('projects.deployments.domainFieldCheck')}
@@ -669,7 +679,7 @@ function DomainAddForm(
               monospace
               autoCapitalize="none"
               accessibilityLabel={t('projects.deployments.domainFieldCheck')}
-              placeholder="/health"
+              placeholder="/"
             />
           </FieldItem>
           <FieldItem label={t('projects.deployments.domainFieldCheckStatus')} style={props.phone ? undefined : styles.routePort}>
@@ -680,10 +690,10 @@ function DomainAddForm(
               monospace
               keyboardType="number-pad"
               accessibilityLabel={t('projects.deployments.domainFieldCheckStatus')}
-              placeholder="200"
             />
           </FieldItem>
         </View>
+        </ExpandableItem>
         </> : null}
         {dnsDraft && props.checkDns ? <DomainDnsCheck content={dnsDraft} machine={props.machine} check={props.checkDns} /> : null}
         {missingField ? (

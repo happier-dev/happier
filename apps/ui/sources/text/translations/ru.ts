@@ -18699,7 +18699,7 @@ settingsSession: {
         domainFieldPath: "Путь",
         domainPathHint: "например, /docs направляет только этот путь",
         domainFieldCheck: "Внешняя проверка",
-        domainCheckHint: "Путь, который Happier открывает снаружи, как пользователи. Укажите ожидаемый HTTP-статус.",
+        domainCheckHint: "Страница, которую Happier открывает снаружи, как пользователи. Если пусто, Happier проверяет / и принимает любой ответ ниже 500.",
       domainFieldCheckStatus: "Ожидаемый HTTP-статус",
       domainRoutedOn: ({ machines }: { machines: string }) => `на ${machines}`,
         domainExists: "Этот адрес уже есть в этом окружении",

@@ -18365,7 +18365,7 @@ settingsSession: {
         domainFieldPath: "路径",
         domainPathHint: "例如 /docs 只转发该路径",
         domainFieldCheck: "外部检查",
-        domainCheckHint: "Happier 像用户一样从外部打开的路径。请输入它应返回的 HTTP 状态码。",
+        domainCheckHint: "Happier 像用户一样从外部打开的页面。留空时，Happier 检查 / 并接受任何低于 500 的响应。",
       domainFieldCheckStatus: "预期 HTTP 状态码",
       domainRoutedOn: ({ machines }: { machines: string }) => `在 ${machines} 上`,
         domainExists: "此地址已在该环境中",

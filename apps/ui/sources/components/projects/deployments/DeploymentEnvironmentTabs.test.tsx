@@ -273,8 +273,6 @@ describe('Environment → Domains', () => {
         screen.changeTextByTestId(`${id}.host`, 'docs.happier.dev');
         screen.changeTextByTestId(`${id}.service`, 'web');
         screen.changeTextByTestId(`${id}.port`, '3000');
-        screen.changeTextByTestId(`${id}.check`, '/');
-        screen.changeTextByTestId(`${id}.checkStatus`, '200');
       });
       await screen.pressByTestIdAsync(`${id}.ingress.mode:cloudflare`);
       await screen.pressByTestIdAsync(`${id}.save`);
@@ -282,7 +280,7 @@ describe('Environment → Domains', () => {
       await screen.pressByTestIdAsync(`${id}.ingress.mode:environment`);
       await screen.pressByTestIdAsync(`${id}.save`);
       expect(addDomain).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ content: {
-        hostname: 'docs.happier.dev', target: { service: 'web', containerPort: 3000 }, healthCheck: { path: '/', expectStatus: 200 },
+        hostname: 'docs.happier.dev', target: { service: 'web', containerPort: 3000 },
       } }));
     } finally { await screen.unmount(); controller.retire(); }
   });
@@ -366,8 +364,6 @@ describe('Environment → Domains', () => {
         screen.changeTextByTestId(`${id}.service`, 'web');
         screen.changeTextByTestId(`${id}.port`, '3000');
         const chooser = screen.findAllByType(ConnectedAccountPurposeTargetChooser)[0];
-        screen.changeTextByTestId(`${id}.check`, '/');
-        screen.changeTextByTestId(`${id}.checkStatus`, '200');
         chooser?.props.onChange({ kind: 'account', account: credentialRef }, null);
       });
       await screen.pressByTestIdAsync(`${id}.ingress.advanced.header`);
@@ -415,7 +411,7 @@ describe('Environment → Domains', () => {
         expect(addDomain).toHaveBeenCalledExactlyOnceWith({ environmentId: detail.environment.id,
           expectedRevision: detail.environment.revision, targetLinkId: link.id, expectedTargetLinkRevision: link.revision,
           content: { hostname: 'docs.happier.dev', target: { service: 'web', containerPort: 3000 },
-            healthCheck: { path: '/', expectStatus: 200 }, ingress: options[count === 2 ? 1 : 0]!.selection } });
+            ingress: options[count === 2 ? 1 : 0]!.selection } });
       }
     } finally { await screen.unmount(); controller.retire(); }
   });
@@ -451,8 +447,6 @@ describe('Environment → Domains', () => {
         screen.changeTextByTestId(`${id}.service`, 'web');
         screen.changeTextByTestId(`${id}.port`, '3000');
         screen.findAllByType(ConnectedAccountPurposeTargetChooser)[0]!.props.onChange({ kind: 'account', account: credentialRef }, null);
-        screen.changeTextByTestId(`${id}.check`, '/');
-        screen.changeTextByTestId(`${id}.checkStatus`, '200');
       });
       expect(screen.findByTestId(`${id}.ingress.accountId`)).toBeNull();
       expect(screen.findByTestId(`${id}.ingress.imageRef`)).toBeNull();
@@ -536,15 +530,12 @@ describe('Environment → Domains', () => {
         screen.changeTextByTestId(`${id}.add.service`, 'web');
         screen.changeTextByTestId(`${id}.add.port`, '3000');
         screen.changeTextByTestId(`${id}.add.path`, '/docs');
-        screen.changeTextByTestId(`${id}.add.check`, '/');
-        screen.changeTextByTestId(`${id}.add.checkStatus`, '200');
       });
       await screen.pressByTestIdAsync(`${id}.add.save`);
       expect(addDomain).toHaveBeenCalledExactlyOnceWith({
         environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
         targetLinkId: link.id, expectedTargetLinkRevision: link.revision,
-        content: { hostname: 'docs.happier.dev', target: { service: 'web', containerPort: 3000, path: '/docs' },
-          healthCheck: { path: '/', expectStatus: 200 } },
+        content: { hostname: 'docs.happier.dev', target: { service: 'web', containerPort: 3000, path: '/docs' } },
       });
       // A settled add closes the form and gives the section its Add button back.
       expect(await settle(`${id}.add`)).not.toBeNull();

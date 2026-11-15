@@ -4,6 +4,7 @@ import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { isNativeTlsErrorCode } from '@/plugins/runtime/fetch/tlsError';
 import { finiteHealthCheckResult } from './finiteHealthCheckResult';
 import { readHealthCheckHttpTargetV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
+import { deploymentDomainHealthStatusMatchesV1 } from '@happier-dev/protocol/deployments/deploymentDomainHealthCheckV1';
 
 /** P50 resolves these facts from the current saved source and chosen observer.
  * This host-internal value is never an Action operand or network authority. */
@@ -18,9 +19,9 @@ export type AdmittedHttpHealthCheckV1 = Readonly<{
             domainRevision: number; targetLinkRevision: number; hostname: string;
             healthCheck?: DeploymentDomainContentV1['healthCheck'] }>
         | Readonly<{ kind: 'machineService'; machineId: string; serviceId: string;
-            endpoint: string; expectStatus: number }>
+            endpoint: string; expectStatus?: number }>
         | Readonly<{ kind: 'environment'; environmentId: string;
-            endpoint: string; expectStatus: number }>;
+            endpoint: string; expectStatus?: number }>;
     keyword?: string;
 }>;
 
@@ -125,10 +126,11 @@ async function observe(check: AdmittedHttpHealthCheckV1, context: HealthCheckFin
                 disclosure: 'Cloudflare blocked the HTTP client signature; the application response was not observed',
                 remedy: 'Review Cloudflare error 1010 guidance for this health client. Pages and workers.dev Browser Integrity Check cannot be disabled; other zones can adjust the blocking rule.' });
         }
-        const statusMatched = response.status === expectStatus;
+        const statusMatched = deploymentDomainHealthStatusMatchesV1(response.status, expectStatus);
         const keywordMatched = check.keyword === undefined || new TextDecoder().decode(response.body).includes(check.keyword);
         return result(check, kind, context, startedAt, statusMatched && keywordMatched ? 'up' : 'down',
-            { httpStatus: response.status, expectStatus, ...(check.keyword === undefined ? {} : { keywordMatched }) });
+            { httpStatus: response.status, ...(expectStatus === undefined ? {} : { expectStatus }),
+                ...(check.keyword === undefined ? {} : { keywordMatched }) });
     }
     const peer = response.tlsPeer;
     if (!peer || peer.url !== url || response.finalUrl !== url) {

@@ -267,6 +267,9 @@ function DomainByline(props: Readonly<{ item: DomainItem; context: DomainRowCont
   const lead = records.length > 0 ? records.join(' · ')
     : dns === 'missing' && context.machineName ? t('projects.deployments.domainDnsMissingBody', { machine: context.machineName })
     : dns === 'not_this_machine' && context.machineName ? t('projects.deployments.domainDnsElsewhereBody', { machine: context.machineName })
+    // A wrong answer says what came back (lab svcDom "answers 502"): the Domain health owner's observed status.
+    : item.health?.needsYou?.cause === 'http' && item.health.needsYou.httpStatus !== undefined
+      ? t('projects.deployments.editors.domainAnswers', { status: item.health.needsYou.httpStatus })
     : content.target.kind !== 'provider' && content.target.redirectTo ? t('projects.deployments.domainRedirect', { target: content.target.redirectTo })
     : content.basicAuth ? t('projects.deployments.domainTagBasicAuth')
     : null;

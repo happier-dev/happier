@@ -107,8 +107,12 @@ export function projectDeploymentDomainHealthFactsV1(domain: DeploymentDomainHea
     } else if (http?.result.status === 'down') {
         const facts = finiteEvidence(http.result.evidence);
         const reason = typeof facts.reason === 'string' ? facts.reason : 'http_status';
-        needsYou = { cause: reason === 'dns' ? 'dns' : reason === 'tls' ? 'certificate'
-            : reason === 'connection' ? 'network' : 'http', reason, vantage: http.vantage };
+        const cause = reason === 'dns' ? 'dns' : reason === 'tls' ? 'certificate' : reason === 'connection' ? 'network' : 'http';
+        // A wrong answer keeps the status the check observed, so the row can say what came back.
+        const observedStatus = http.result.cause?.httpStatus;
+        const httpStatus = cause === 'http' && observedStatus !== undefined && observedStatus >= 100 && observedStatus <= 599
+            ? observedStatus : undefined;
+        needsYou = { cause, reason, vantage: http.vantage, ...(httpStatus === undefined ? {} : { httpStatus }) };
     } else if (domain.dnsHealth?.status === 'down' && http?.result.status !== 'up') {
         const facts = finiteEvidence(domain.dnsHealth.evidence);
         needsYou = { cause: 'dns', reason: typeof facts.reason === 'string' ? facts.reason : 'dns_missing',

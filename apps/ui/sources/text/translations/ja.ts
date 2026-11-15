@@ -18660,7 +18660,7 @@ settingsSession: {
         domainFieldPath: "パス",
         domainPathHint: "例: /docs はそのパスだけを送ります",
         domainFieldCheck: "外部チェック",
-        domainCheckHint: "Happier がユーザーと同じように外部から開くパスです。返すべき HTTP ステータスを入力してください。",
+        domainCheckHint: "Happier がユーザーと同じように外部から開くページです。空欄の場合は / を確認し、500 未満の応答を到達可能とみなします。",
       domainFieldCheckStatus: "期待する HTTP ステータス",
       domainRoutedOn: ({ machines }: { machines: string }) => `${machines} 上`,
         domainExists: "このアドレスはすでにこの環境にあります",

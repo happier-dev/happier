@@ -18571,7 +18571,7 @@ settingsSession: {
         domainFieldPath: "Ścieżka",
         domainPathHint: "np. /docs kieruje tylko tę ścieżkę",
         domainFieldCheck: "Sprawdzanie z zewnątrz",
-        domainCheckHint: "Ścieżka, którą Happier otwiera z zewnątrz, tak jak użytkownicy. Wpisz oczekiwany status HTTP.",
+        domainCheckHint: "Strona, którą Happier otwiera z zewnątrz, tak jak użytkownicy. Puste: Happier sprawdza / i akceptuje każdą odpowiedź poniżej 500.",
       domainFieldCheckStatus: "Oczekiwany status HTTP",
       domainRoutedOn: ({ machines }: { machines: string }) => `na ${machines}`,
         domainExists: "Ten adres jest już w tym środowisku",

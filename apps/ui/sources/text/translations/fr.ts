@@ -18620,7 +18620,7 @@ settingsSession: {
         domainFieldPath: "Chemin",
         domainPathHint: "p. ex. /docs n’envoie que ce chemin",
         domainFieldCheck: "Vérification externe",
-        domainCheckHint: "Le chemin que Happier ouvre de l’extérieur, comme vos utilisateurs. Saisissez le statut HTTP attendu.",
+        domainCheckHint: "La page que Happier ouvre de l’extérieur, comme vos utilisateurs. Vide, Happier vérifie / et accepte toute réponse inférieure à 500.",
       domainFieldCheckStatus: "Statut HTTP attendu",
       domainRoutedOn: ({ machines }: { machines: string }) => `sur ${machines}`,
         domainExists: "Cette adresse est déjà sur cet environnement",

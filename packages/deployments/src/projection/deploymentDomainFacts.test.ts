@@ -115,6 +115,15 @@ describe('Domain saved health facts', () => {
         expect(projectDeploymentDomainHealthFactsV1(domain, content, [{ ...http, domainRevision: 999 }], null, 2000))
             .toMatchObject({ certificate: { state: 'not_checked' }, needsYou: null });
     });
+    it('carries the observed HTTP status of a wrong answer as the cause, and none for a network failure', () => {
+        const http = { ...certificate, kind: 'http' as const, result: { status: 'down' as const,
+            observedAt: 2000, evidence: evidence('http', {}), cause: { kind: 'http' as const, vantage: 'outside' as const,
+                observerMachineId: 'controller', httpStatus: 502 } } };
+        expect(projectDeploymentDomainHealthFactsV1(domain, content, [http], null, 2000))
+            .toMatchObject({ needsYou: { cause: 'http', httpStatus: 502, vantage: 'outside' } });
+        expect(projectDeploymentDomainHealthFactsV1(domain, content, [{ ...http, result: { ...http.result,
+            evidence: evidence('http', { reason: 'connection' }) } }], null, 2000).needsYou).not.toHaveProperty('httpStatus');
+    });
     it('keeps an outside failure distinct from a newer local success and advances known expiry only at read', () => {
         const outside = { ...certificate, kind: 'http' as const, result: { status: 'down' as const,
             observedAt: 1000, evidence: evidence('http', { reason: 'connection' }) } };

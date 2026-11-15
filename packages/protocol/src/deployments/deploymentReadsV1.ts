@@ -56,7 +56,9 @@ export const DeploymentDomainHealthFactsV1Schema = lazyZodSchema(() => z.strictO
   certificate: z.strictObject({ state: z.enum(['not_checked', 'valid', 'invalid', 'expired', 'expiresSoon']),
     expiresAt: z.nullable(timestamp) }),
   needsYou: z.nullable(z.strictObject({ cause: z.enum(['dns', 'network', 'certificate', 'http']),
-    reason: id, vantage: z.nullable(domainVantage()) })),
+    reason: id, vantage: z.nullable(domainVantage()),
+    /** The status a wrong answer returned ("answers 502"); only for an HTTP cause the check observed. */
+    httpStatus: z.optional(z.number().check(z.int(), z.minimum(100), z.maximum(599))) })),
 }));
 export type DeploymentDomainHealthFactsV1 = z.infer<typeof DeploymentDomainHealthFactsV1Schema>;
 export const DeploymentCurrentEdgeObservationV1Schema = lazyZodSchema(() => z.strictObject({

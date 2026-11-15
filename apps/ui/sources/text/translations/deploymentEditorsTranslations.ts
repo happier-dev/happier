@@ -71,6 +71,7 @@ type DeploymentEditorsTranslations = Readonly<{
   approveVariablesHint: string;
   reachCaddy: (params: { machine: string }) => string;
   reachCaddyBody: string;
+  domainAnswers: (params: { status: number }) => string;
   reachTunnelBody: string;
   zonesFinding: string;
   readStopped: string;
@@ -222,6 +223,7 @@ export const deploymentEditorsTranslations = {
     approveVariablesHint: 'Change its variables and secrets',
     reachCaddy: ({ machine }) => `Caddy on ${machine}`,
     reachCaddyBody: 'Public · opens ports 80 and 443 · Caddy gets the certificate',
+    domainAnswers: ({ status }) => `Answers ${status}`,
     reachTunnelBody: 'Public · no open ports · the zone must be on Cloudflare',
     zonesFinding: 'Finding zones…',
     readStopped: 'Stopped. Nothing was read.',
@@ -341,6 +343,7 @@ export const deploymentEditorsTranslations = {
     approveVariablesHint: 'Изменить переменные и секреты',
     reachCaddy: ({ machine }) => `Caddy на ${machine}`,
     reachCaddyBody: 'Публично · открывает порты 80 и 443 · сертификат получает Caddy',
+    domainAnswers: ({ status }) => `Отвечает ${status}`,
     reachTunnelBody: 'Публично · без открытых портов · зона должна быть в Cloudflare',
     zonesFinding: 'Ищем зоны…',
     readStopped: 'Остановлено. Ничего не прочитано.',
@@ -459,6 +462,7 @@ export const deploymentEditorsTranslations = {
     approveVariablesHint: 'Zmień zmienne i sekrety',
     reachCaddy: ({ machine }) => `Caddy na ${machine}`,
     reachCaddyBody: 'Publicznie · otwiera porty 80 i 443 · certyfikat pobiera Caddy',
+    domainAnswers: ({ status }) => `Odpowiada ${status}`,
     reachTunnelBody: 'Publicznie · bez otwartych portów · strefa musi być w Cloudflare',
     zonesFinding: 'Szukam stref…',
     readStopped: 'Zatrzymano. Nic nie odczytano.',
@@ -578,6 +582,7 @@ export const deploymentEditorsTranslations = {
     approveVariablesHint: 'Cambiar sus variables y secretos',
     reachCaddy: ({ machine }) => `Caddy en ${machine}`,
     reachCaddyBody: 'Público · abre los puertos 80 y 443 · Caddy obtiene el certificado',
+    domainAnswers: ({ status }) => `Responde ${status}`,
     reachTunnelBody: 'Público · sin puertos abiertos · la zona debe estar en Cloudflare',
     zonesFinding: 'Buscando zonas…',
     readStopped: 'Detenido. No se leyó nada.',
@@ -697,6 +702,7 @@ export const deploymentEditorsTranslations = {
     approveVariablesHint: 'Modifier ses variables et secrets',
     reachCaddy: ({ machine }) => `Caddy sur ${machine}`,
     reachCaddyBody: 'Public · ouvre les ports 80 et 443 · Caddy obtient le certificat',
+    domainAnswers: ({ status }) => `Répond ${status}`,
     reachTunnelBody: 'Public · aucun port ouvert · la zone doit être sur Cloudflare',
     zonesFinding: 'Recherche des zones…',
     readStopped: 'Arrêté. Rien n’a été lu.',
@@ -816,6 +822,7 @@ export const deploymentEditorsTranslations = {
     approveVariablesHint: 'Modifica variabili e segreti',
     reachCaddy: ({ machine }) => `Caddy su ${machine}`,
     reachCaddyBody: 'Pubblico · apre le porte 80 e 443 · Caddy ottiene il certificato',
+    domainAnswers: ({ status }) => `Risponde ${status}`,
     reachTunnelBody: 'Pubblico · nessuna porta aperta · la zona deve essere su Cloudflare',
     zonesFinding: 'Ricerca delle zone…',
     readStopped: 'Interrotto. Non è stato letto nulla.',
@@ -934,6 +941,7 @@ export const deploymentEditorsTranslations = {
     approveVariablesHint: 'Mudar variáveis e segredos',
     reachCaddy: ({ machine }) => `Caddy em ${machine}`,
     reachCaddyBody: 'Público · abre as portas 80 e 443 · o Caddy obtém o certificado',
+    domainAnswers: ({ status }) => `Responde ${status}`,
     reachTunnelBody: 'Público · sem portas abertas · a zona tem de estar no Cloudflare',
     zonesFinding: 'A procurar zonas…',
     readStopped: 'Parado. Nada foi lido.',
@@ -1053,6 +1061,7 @@ export const deploymentEditorsTranslations = {
     approveVariablesHint: 'Canvia les variables i els secrets',
     reachCaddy: ({ machine }) => `Caddy a ${machine}`,
     reachCaddyBody: 'Públic · obre els ports 80 i 443 · Caddy obté el certificat',
+    domainAnswers: ({ status }) => `Respon ${status}`,
     reachTunnelBody: 'Públic · sense ports oberts · la zona ha de ser a Cloudflare',
     zonesFinding: 'Cercant zones…',
     readStopped: 'Aturat. No s’ha llegit res.',
@@ -1171,6 +1180,7 @@ export const deploymentEditorsTranslations = {
     approveVariablesHint: 'Variablen und Secrets ändern',
     reachCaddy: ({ machine }) => `Caddy auf ${machine}`,
     reachCaddyBody: 'Öffentlich · öffnet die Ports 80 und 443 · Caddy holt das Zertifikat',
+    domainAnswers: ({ status }) => `Antwortet mit ${status}`,
     reachTunnelBody: 'Öffentlich · keine offenen Ports · die Zone muss bei Cloudflare liegen',
     zonesFinding: 'Zonen werden gesucht…',
     readStopped: 'Gestoppt. Nichts wurde gelesen.',
@@ -1289,6 +1299,7 @@ export const deploymentEditorsTranslations = {
     approveVariablesHint: '更改其变量和密钥',
     reachCaddy: ({ machine }) => `${machine} 上的 Caddy`,
     reachCaddyBody: '公开 · 开放 80 和 443 端口 · 由 Caddy 获取证书',
+    domainAnswers: ({ status }) => `返回 ${status}`,
     reachTunnelBody: '公开 · 不开放端口 · 域名区域须在 Cloudflare',
     zonesFinding: '正在查找区域…',
     readStopped: '已停止，未读取任何内容。',
@@ -1407,6 +1418,7 @@ export const deploymentEditorsTranslations = {
     approveVariablesHint: '變更其變數和密鑰',
     reachCaddy: ({ machine }) => `${machine} 上的 Caddy`,
     reachCaddyBody: '公開 · 開放 80 與 443 連接埠 · 由 Caddy 取得憑證',
+    domainAnswers: ({ status }) => `回應 ${status}`,
     reachTunnelBody: '公開 · 不開放連接埠 · 網域區域須在 Cloudflare',
     zonesFinding: '正在尋找區域…',
     readStopped: '已停止，未讀取任何內容。',
@@ -1525,6 +1537,7 @@ export const deploymentEditorsTranslations = {
     approveVariablesHint: '変数とシークレットを変更',
     reachCaddy: ({ machine }) => `${machine} の Caddy`,
     reachCaddyBody: '公開 · ポート 80 と 443 を開きます · 証明書は Caddy が取得',
+    domainAnswers: ({ status }) => `${status} を返します`,
     reachTunnelBody: '公開 · ポートを開きません · ゾーンは Cloudflare 上に必要',
     zonesFinding: 'ゾーンを検索中…',
     readStopped: '停止しました。何も読み取っていません。',

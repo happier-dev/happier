@@ -86,6 +86,19 @@ describe('finite saved HTTP and certificate health', () => {
         expect(requests).toBe(2);
     });
 
+    it('treats any answer below 500 as reachable when no status is expected, and 502 as down', async () => {
+        let status = 302;
+        const url = await endpoint((_request, response) => { response.statusCode = status; response.end(); });
+        const { expectStatus: _exact, ...target } = admitted(url).target;
+        const check = { ...admitted(url), target };
+        for (const [answer, verdict] of [[302, 'up'], [404, 'up'], [502, 'down']] as const) {
+            status = answer;
+            const result = HealthCheckResultV1Schema.parse(await readHttpHealthCheckV1(check, context(url)));
+            expect(result.status).toBe(verdict);
+            expect(result.cause).toMatchObject({ httpStatus: answer });
+            expect(result.cause).not.toHaveProperty('expectStatus');
+        }
+    });
     it('identifies the health client on the wire instead of inheriting the HTTP library signature', async () => {
         let userAgent: string | undefined;
         const url = await endpoint((request, response) => { userAgent = request.headers['user-agent']; response.end(); });

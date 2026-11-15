@@ -14,6 +14,17 @@ describe('Caddy public TLS materialization', () => {
         expect(material.replicaProxy?.upstreams).toEqual([{ dial: 'web-1:3000' }]);
         expect(material.replicaProxy).not.toHaveProperty('health_checks');
     });
+    it('adds Caddy active checks and their auth exemption only for an explicitly expected status', () => {
+        const input: Parameters<typeof materializeCaddyDomainRouteV1>[0] = { domainId: 'default-check', listener: 'privateOrigin',
+            domain: { hostname: 'app.example.test', target: { service: 'web', containerPort: 3000 }, healthCheck: { path: '/' } },
+            upstreams: { kind: 'replicas', containerNames: ['web-1'] }, privateSourceRanges: ['100.64.0.0/10'],
+            basicAuth: [{ username: 'reader', bcryptHash: 'boundary-hash' }] };
+        const defaulted = materializeCaddyDomainRouteV1(input);
+        expect(defaulted.replicaProxy).not.toHaveProperty('health_checks');
+        expect(defaulted.route).not.toHaveProperty('handle.0.routes.0.match');
+        const explicit = materializeCaddyDomainRouteV1({ ...input, domain: { ...input.domain, healthCheck: { path: '/', expectStatus: 200 } } });
+        expect(explicit.replicaProxy).toHaveProperty('health_checks.active', expect.objectContaining({ uri: '/', expect_status: 200 }));
+    });
     it('exempts only the exact uncleaned private GET health path and keeps public health authenticated', () => {
         for (const path of ['/healthz', '/', '/health"check']) {
             const input: Parameters<typeof materializeCaddyDomainRouteV1>[0] = { domainId: 'health-auth', listener: 'privateOrigin',

@@ -227,11 +227,14 @@ function renderCaddyDomainRoute(input: CaddyDomainRenderInput, privatePeerAllowe
         ? input.upstreams.containerNames.map((name) => `${name}:${domain.target.containerPort}`)
         : input.upstreams.endpoints;
     const healthCheck = domain.healthCheck;
-    const healthMatcher: CaddyMatcher | undefined = healthCheck ? {
+    // Caddy's active checks take an upstream out of rotation, so they run only for an explicitly expected status:
+    // the default check (any answer below 500) is the outside check's alone and can never take the site down.
+    const activeHealth = healthCheck?.expectStatus !== undefined ? { path: healthCheck.path, expectStatus: healthCheck.expectStatus } : undefined;
+    const healthMatcher: CaddyMatcher | undefined = activeHealth ? {
         method: ['GET'],
         // Path matchers clean traversal segments, but reverse_proxy forwards
         // the original path. Exempt only the exact path sent to the upstream.
-        expression: `{http.request.uri.path} == ${JSON.stringify(healthCheck.path)}`,
+        expression: `{http.request.uri.path} == ${JSON.stringify(activeHealth.path)}`,
         remote_ip: { ranges: input.privateSourceRanges },
     } : undefined;
     const exemptPrivateHealth = healthMatcher && listener === 'privateOrigin' && input.privateSourceRanges.length > 0;
@@ -248,9 +251,9 @@ function renderCaddyDomainRoute(input: CaddyDomainRenderInput, privatePeerAllowe
                 selection_policy: { policy: 'round_robin' },
                 retries: role === 'local' ? Math.max(0, addresses.length - 1) : 0,
             },
-            ...(healthCheck ? { health_checks: { active: {
-                uri: healthCheck.path,
-                expect_status: healthCheck.expectStatus,
+            ...(activeHealth ? { health_checks: { active: {
+                uri: activeHealth.path,
+                expect_status: activeHealth.expectStatus,
                 headers: activeHeaders,
             } } } : {}),
             headers: { request: role === 'local'

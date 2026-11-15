@@ -18854,7 +18854,7 @@ settingsSession: {
             domainFieldPath: "Pfad",
             domainPathHint: "z. B. /docs leitet nur diesen Pfad weiter",
             domainFieldCheck: "Prüfung von außen",
-            domainCheckHint: "Der Pfad, den Happier von außen wie deine Nutzer öffnet. Gib den erwarteten HTTP-Status ein.",
+            domainCheckHint: "Die Seite, die Happier von außen wie deine Nutzer öffnet. Leer prüft Happier / und akzeptiert jede Antwort unter 500.",
       domainFieldCheckStatus: "Erwarteter HTTP-Status",
       domainRoutedOn: ({ machines }: { machines: string }) => `auf ${machines}`,
             domainExists: "Diese Adresse gehört schon zu dieser Umgebung",
