@@ -136,7 +136,8 @@ export function resolveLocalServiceEntryActions(
       managedLive &&
       row.status === 'running' &&
       Boolean(handlers.onRestartManagedService),
-    address: formatLocalServiceRowAddress(row),
+    // A stopped or failed Service answers nowhere: there is no address to copy until it runs again.
+    address: row.status === 'stopped' || row.status === 'failed' ? null : formatLocalServiceRowAddress(row),
     openUnavailableReason:
       preview?.accessUnavailableReasonCode === 'preview_private_route_unavailable'
         ? t('browserShell.unavailable.previewElsewhere')

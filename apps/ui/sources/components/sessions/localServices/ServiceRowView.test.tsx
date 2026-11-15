@@ -246,6 +246,14 @@ describe('ServiceRowView', () => {
         expect(start).toHaveBeenLastCalledWith(target);
     });
 
+    it('offers no address for a stopped Service: nothing answers there until it starts again', async () => {
+        const target = launchTarget({ source: 'managed_service', sourceClass: { kind: 'managed_service', managedServiceId: 'stopped-instance' },
+            state: 'available', serviceState: 'stopped', actions: ['manage'], endpointUrl: 'http://localhost:5173/' });
+        const screen = await renderScreen(<ServiceRowView row={serviceRow({ target, scope: 'workspace', status: 'stopped',
+            reasonCode: null, portLabel: ':5173', host: 'localhost', scheme: 'http' })} expanded onExpandedChange={vi.fn()} testID="row" />);
+        expect(screen.findAllByTestId('row-copy-address')).toHaveLength(0);
+    });
+
     it('does not copy a managed address through the renderer when its canonical Action port is absent', async () => {
         const target = launchTarget({ source: 'managed_service', sourceClass: { kind: 'managed_service', managedServiceId: 'actual-instance' },
             state: 'available', serviceState: 'running', actions: ['manage'], endpointUrl: 'http://localhost:5173/' });
@@ -459,6 +467,8 @@ describe('ServiceRowView', () => {
         expect(screen.findAllByTestId('row-open')).toHaveLength(0);
         expect(screen.findByTestId('placement-probe')).toBeTruthy();
         expect(screen.getTextContent()).toContain('Address');
+        // The Address row names the address the facts line shows, never a bare port.
+        expect(screen.findAllByType(Item).find((item) => item.props.testID === 'row-address')?.props.detail).toBe('localhost:5173');
         await pressTestInstanceAsync(screen.findByTestId('row-address'), 'row-address');
         expect(onOpen).toHaveBeenCalledExactlyOnceWith(row.primaryAction?.kind === 'open' ? row.primaryAction.openTarget : undefined);
         const copy = rowOverflowActions(screen).find((action) => action.id === 'copy-address');

@@ -307,9 +307,7 @@ function resolveRowFacts(row: ServiceRow, machineName: string | null, startedByN
         // source chip a running row draws (lab s-services).
         return { lead, tail: [], tailReason: null, reason: null };
     }
-    const address = row.addressLabel
-        ?? formatLocalServiceRowAddress(row)?.replace(/^https?:\/\//, '').replace(/^127\.0\.0\.1(?=:)/, 'localhost')
-        ?? row.portLabel
+    const address = formatServiceRowDisplayAddress(row)
         ?? (row.addressNote === 'none' ? t('localServices.row.noAddress') : null);
     // Where it runs names the machine on a machine-scoped host; elsewhere the source says what it is.
     const where = row.scope === 'thisSession'
@@ -327,6 +325,13 @@ function resolveRowFacts(row: ServiceRow, machineName: string | null, startedByN
         tailReason: null,
         reason,
     };
+}
+
+/** Where a row answers, as people read it (`localhost:5173`): the facts line and the Address row say it the same way. */
+function formatServiceRowDisplayAddress(row: ServiceRow): string | null {
+    return row.addressLabel
+        ?? formatLocalServiceRowAddress(row)?.replace(/^https?:\/\//, '').replace(/^127\.0\.0\.1(?=:)/, 'localhost')
+        ?? row.portLabel;
 }
 
 function ServiceActionDivider(): React.ReactElement {
@@ -876,7 +881,7 @@ export function ServiceRowView(props: Readonly<{
                                     title={t('localServices.row.address')}
                                     subtitle={elsewhereText ?? (canOpen ? t('localServices.row.addressOpensHere') : undefined)}
                                     subtitleLines={2}
-                                    detail={row.portLabel ?? row.addressLabel ?? addressValue}
+                                    detail={formatServiceRowDisplayAddress(row) ?? addressValue}
                                     showChevron={canOpen}
                                     onPress={canOpen ? handleOpen : addressCopy.copy}
                                     rightElement={addressCopy.copied ? <CopiedPill visible testID={`${props.testID}-copy-address-feedback`} /> : undefined}
