@@ -103,13 +103,18 @@ function observeInventoryChanges(demand: InventoryDemand) {
     }, { reconnect: 'refresh' });
 }
 
+/** An entry field set to undefined is the field being absent. */
+function definedFields(entry: ManagedMachineInventoryEntry): ManagedMachineInventoryEntry {
+    return Object.fromEntries(Object.entries(entry).filter(([, value]) => value !== undefined)) as ManagedMachineInventoryEntry;
+}
+
 function createInventoryReader(serverId: string, accountId: string, homeId: string, managedId: string | undefined,
     includeArchived: boolean, executeAction: InventoryExecute, remove: () => void, onPublished: () => void, retained?: ManagedMachineInventoryEntry,
     enrolledMachineId?: string, admitted = false, onRead?: (machines: readonly ManagedMachineV1[], absent?: ReadonlyMap<string, string>, admitMembership?: boolean) => void,
     joinedInitialRead = false) {
     const consumers = new Map<() => void, ServerAccountScopeLifetime>();
-    let entry: ManagedMachineInventoryEntry = { accountId, homeId, managedId, enrolledMachineId, includeArchived,
-        machines: retained?.machines ?? EMPTY_ROWS, ...(retained?.asOf !== undefined ? { asOf: retained.asOf } : {}), status: admitted ? 'ready' : 'loading' };
+    let entry: ManagedMachineInventoryEntry = definedFields({ accountId, homeId, managedId, enrolledMachineId, includeArchived,
+        machines: retained?.machines ?? EMPTY_ROWS, ...(retained?.asOf !== undefined ? { asOf: retained.asOf } : {}), status: admitted ? 'ready' : 'loading' });
     let machinesById = new Map(entry.machines.map(machine => [machine.id, machine]));
     let machinesByEnrolledId = new Map(entry.machines.flatMap(machine => machine.enrolledMachineId && machine.archivedAt === undefined
         ? [[machine.enrolledMachineId, machine] as const] : []));
@@ -121,7 +126,9 @@ function createInventoryReader(serverId: string, accountId: string, homeId: stri
     const isCurrent = () => !disposed && getServerProfileById(serverId)?.serverIdentityId === homeId
         && [...consumers.values()].some(binding => binding.isCurrent());
     const publish = (next: ManagedMachineInventoryEntry) => {
-        next = { ...next, machines: retainKeyedRows(entry.machines, next.machines, machine => machine.id) };
+        // One entry shape whichever read answered (a row re-read clears `errorCode: undefined`, a list read omits it), so
+        // an equal receipt from a different read is still an equal receipt.
+        next = definedFields({ ...next, machines: retainKeyedRows(entry.machines, next.machines, machine => machine.id) });
         // asOf marks that this reader has answered. A later equal receipt is
         // not a changed inventory fact; first admission still publishes it.
         if (entry.asOf !== undefined && next.asOf !== undefined && retainShallow(entry, { ...next, asOf: entry.asOf }) === entry) return;

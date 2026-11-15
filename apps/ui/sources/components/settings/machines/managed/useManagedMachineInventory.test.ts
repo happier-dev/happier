@@ -372,6 +372,49 @@ describe('managed Machine inventory', () => {
             await screen.unmount();
         }
     });
+    // A busy Account pushes Machine changes all day; a row-level re-read or a list revalidation that finds the same
+    // rows is not an inventory change, whichever read answered last.
+    it('publishes nothing when row-level and list re-reads find the same rows', async () => {
+        const homeId = 'srv_equal_rereads';
+        const managed = ManagedMachineV1Schema.parse({ id: 'steady', homeId, custodianAccountId: 'owner', enrolledMachineId: 'guest-steady',
+            launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+            resource: { contributionRef: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, value: { id: 'native' } },
+            allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            observation: { observedAt: 1, availability: 'present', power: 'running', storage: 'retained' },
+        });
+        const homes = await serveAccountHomes({ homes: [
+            { key: 'a', serverUrl: 'https://equal-rereads.test', serverIdentityId: homeId, accountId: 'owner' },
+        ], route: request => {
+            if (request.path === '/v1/machines/managed/actions/list') return Response.json({ machines:
+                request.body && typeof request.body === 'object' && 'archived' in request.body && request.body.archived ? [] : [managed] });
+            if (request.path === '/v1/machines/managed/actions/get') return Response.json(managed);
+            return undefined;
+        } });
+        const serverId = homes.homes.a!.id;
+        const ids = [serverId];
+        let renders = 0;
+        const hook = await renderHook(() => { renders += 1; return useManagedMachineInventory(ids, undefined, undefined, true); });
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent().entries[serverId]?.status).toBe('ready'));
+            await flushHookEffects({ cycles: 30 });
+            const settled = renders;
+            const entry = hook.getCurrent().entries[serverId];
+            for (let round = 0; round < 2; round++) {
+                // A pushed change re-reads the row, then a revalidation re-reads the list: both find the same row.
+                await act(async () => publishHomeAccountChange(serverId, [managed.id], { source: 'socket', machineResourcesAffect: true,
+                    managedMachineChangedIds: [managed.id] }));
+                await waitForHomeGovernance(() => expect(homes.requests.filter(request => request.path === '/v1/machines/managed/actions/get')).toHaveLength(round + 1));
+                await flushHookEffects({ cycles: 30 });
+                await act(async () => { await hook.getCurrent().refresh(); });
+                await flushHookEffects({ cycles: 30 });
+            }
+            expect(renders - settled).toBe(0);
+            expect(hook.getCurrent().entries[serverId]).toBe(entry);
+        } finally {
+            await hook.unmount();
+        }
+    });
     it('retains only the addressed execution target and settles pushed power changes without passive power effects', async () => {
         const asleep = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'srv_target', custodianAccountId: 'owner', enrolledMachineId: 'guest',
             launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
