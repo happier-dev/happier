@@ -689,6 +689,8 @@ describe('filesystem path mutations', () => {
         return { bytesRead: length };
       });
       const openMock = vi.fn(async () => ({
+        // The workspace source type-checks the opened handle before reading.
+        stat: vi.fn(async () => ({ isFile: () => true, isDirectory: () => false })),
         read: boundedRead,
         close: vi.fn(async () => undefined),
       }));

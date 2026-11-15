@@ -1,5 +1,3 @@
-import { open, readFile, stat } from 'fs/promises';
-
 import { configuration } from '@/configuration';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { logger } from '@/ui/logger';
@@ -16,6 +14,7 @@ import { registerRootedFilesystemRpcHandlers } from './registerRootedFilesystemR
 import type { RpcActionExecutor, RpcActionExecutorContext } from '../_actionDispatchAdapter';
 import type { ActionId } from '@happier-dev/protocol';
 import { FilesystemReadFileInputSchema } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 
 type ReadFileRequest = Readonly<{ rootPath?: string; path: string; offset?: number; length?: number }>;
 
@@ -62,9 +61,10 @@ async function readFileForRpc(data: ReadFileRequest | undefined, deps: ReadFileH
     resolvedPath = exactFileValidation.resolvedPath;
   }
 
+  const source = currentWorkspaceSource();
   try {
     await assertFilesystemEffectCurrent(context);
-    const stats = await stat(resolvedPath);
+    const stats = await source.stat(resolvedPath);
     if (stats.isDirectory()) {
       return { success: false, error: 'Path is a directory' };
     }
@@ -74,7 +74,7 @@ async function readFileForRpc(data: ReadFileRequest | undefined, deps: ReadFileH
         return { success: false, error: 'Requested range is too large to read' };
       }
       await assertFilesystemEffectCurrent(context);
-      const file = await open(resolvedPath, 'r');
+      const file = await source.open(resolvedPath);
       try {
         const sizeBytes = (await file.stat()).size;
         const offset = parsed.data.offset ?? 0;
@@ -101,7 +101,7 @@ async function readFileForRpc(data: ReadFileRequest | undefined, deps: ReadFileH
     }
 
     await assertFilesystemEffectCurrent(context);
-    const buffer = await readFile(resolvedPath);
+    const buffer = await source.readFile(resolvedPath);
     await assertFilesystemEffectCurrent(context);
     return { success: true, content: buffer.toString('base64') };
   } catch (error) {

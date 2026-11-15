@@ -1594,6 +1594,16 @@ fails instead of reading this Machine. The default resolves at call time; a
 chunk-split bundle test (`workspaceSource.bundle.test.ts`, the shipped CLI
 bundler settings) proves it whichever module enters the graph first.
 
+The local source returns bytes from regular files only. `open` and `readFile`
+open non-blocking and check the opened handle, so a FIFO, socket or device
+(including one reached through a link) settles as `workspace_file_not_regular`
+instead of parking a daemon filesystem thread or streaming `/dev/zero` into
+memory; directories keep their `EISDIR` reads. `open(path, { noFollow: true })`
+also refuses a final link, which export hashing uses because its scan already
+classified the entry as a regular file. This matters where the daemon reads a
+folder another person can write, such as a Manage viewer browsing a Can use
+member's folder.
+
 Path policy stays in `filesystemPathAuthorization.ts`: it uses this Machine's link
 facts only for the local source; a target confines each operation to its root
 with its own facts (`confineWorkspaceTargetPath`) and never falls back to this
@@ -2634,7 +2644,12 @@ repository metadata read, such as rebase/merge state files and `shallow`) in
 the member's `workspace-effect` child, the Project Open/Sync member owner,
 launched as the member through `prepareNativeOperation`. The daemon never
 opens a path in the member folder, so a symlinked or FIFO state file only
-reaches what the member itself can read (SEC-FORKC-1115F F1). The child
+reaches what the member itself can read (SEC-FORKC-1115F F1). When the daemon
+user runs Git in a repository the member owns (a Manage viewer's Session-less
+SCM, or registering a member Session's Project), Git itself refuses with
+`detected dubious ownership` before the backend opens any state file, so those
+reads fail closed rather than reaching member-planted files (MEMBER-PATH-READS-1115).
+A `safe.directory` exception in the daemon user's Git config removes that refusal. The child
 resolves the Project root and `cwd` with the member folder as the
 access-policy root, so a path outside it is `INVALID_PATH`. The child has no
 daemon credentials, so captured diff evidence is unavailable to it. Every other `scm.*` method (forge, hosting, saved results, Agent

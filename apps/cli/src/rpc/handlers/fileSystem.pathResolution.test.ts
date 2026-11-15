@@ -2,20 +2,25 @@ import { describe, expect, it, vi } from 'vitest';
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import type { RpcHandler } from '@/api/rpc/types';
 
-vi.mock('fs/promises', async (importOriginal) => ({
-  ...await importOriginal<typeof import('fs/promises')>(),
-  readFile: vi.fn(async () => Buffer.from('hello')),
-  writeFile: vi.fn(async () => undefined),
-  mkdir: vi.fn(async () => undefined),
-  readdir: vi.fn(async () => []),
-  stat: vi.fn(async () => {
-    const err: NodeJS.ErrnoException = new Error('ENOENT');
-    err.code = 'ENOENT';
-    throw err;
-  }),
-}));
+vi.mock('fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs/promises')>();
+  return {
+    ...actual,
+    readFile: vi.fn(async () => Buffer.from('hello')),
+    // Real by default (writes use it); read tests hand the workspace source an opened regular file.
+    open: vi.fn(actual.open),
+    writeFile: vi.fn(async () => undefined),
+    mkdir: vi.fn(async () => undefined),
+    readdir: vi.fn(async () => []),
+    stat: vi.fn(async () => {
+      const err: NodeJS.ErrnoException = new Error('ENOENT');
+      err.code = 'ENOENT';
+      throw err;
+    }),
+  };
+});
 
-import { readFile, readdir, writeFile } from 'fs/promises';
+import { open, readFile, readdir, writeFile } from 'fs/promises';
 import { mkdir } from 'fs/promises';
 import { stat } from 'fs/promises';
 import { tmpdir } from 'node:os';
@@ -29,6 +34,11 @@ import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider
 import { accountSettingsParse } from '@happier-dev/protocol';
 
 const realFs = await vi.importActual<typeof import('fs/promises')>('fs/promises');
+
+/** An opened regular-file handle at the OS boundary; the mocked readFile supplies its bytes. */
+function openedRegularFile(): Awaited<ReturnType<typeof open>> {
+  return { stat: async () => ({ isFile: () => true, isDirectory: () => false }), close: async () => undefined } as unknown as Awaited<ReturnType<typeof open>>;
+}
 
 /**
  * Guarded writes stage a temporary file beside the destination and rename it, so their
@@ -203,6 +213,7 @@ describe('registerFileSystemHandlers', () => {
       mtime: new Date(),
       isDirectory: () => false,
     } as any);
+    vi.mocked(open).mockResolvedValueOnce(openedRegularFile());
     await expect(read({ path: grantedPath })).resolves.toMatchObject({ success: true });
     await expect(read({ path: '/tmp/transient-media/sibling-secret.png' })).resolves.toMatchObject({
       success: false,
@@ -241,8 +252,10 @@ describe('registerFileSystemHandlers', () => {
       const read = mgr.handlers.get(RPC_METHODS.READ_FILE);
       if (!read) throw new Error('expected read handler');
       vi.mocked(stat).mockResolvedValueOnce({ size: 1, mtime: new Date(), isDirectory: () => false } as any);
+      vi.mocked(open).mockResolvedValueOnce(openedRegularFile());
       await read({ path: 'notes.txt' });
-      expect(readFile).toHaveBeenCalledWith(resolve(work, 'notes.txt'));
+      expect(open).toHaveBeenCalledWith(resolve(work, 'notes.txt'), expect.any(Number));
+      expect(readFile).toHaveBeenCalledTimes(1);
 
       const write = mgr.handlers.get(RPC_METHODS.WRITE_FILE);
       if (!write) throw new Error('expected write handler');

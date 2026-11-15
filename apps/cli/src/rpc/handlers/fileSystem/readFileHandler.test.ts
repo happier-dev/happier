@@ -1,4 +1,6 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { constants } from 'node:fs';
+import { mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -19,12 +21,16 @@ const filesystemBoundary = vi.hoisted(() => ({ truncateOnReadPath: null as strin
 // admission, range handling, EOF decisions and returned schemas remain real.
 vi.mock('fs/promises', async importOriginal => {
   const actual = await importOriginal<typeof import('fs/promises')>();
+  // The workspace source reads through the handle it type-checked; map it back to its path.
+  const openedPaths = new WeakMap<object, unknown>();
   return { ...actual, readFile: async (...args: Parameters<typeof actual.readFile>) => {
     const bytes = await actual.readFile(...args);
-    if (args[0] === filesystemBoundary.afterReadPath) filesystemBoundary.afterRead?.();
+    const path = typeof args[0] === 'object' && args[0] !== null ? openedPaths.get(args[0]) : args[0];
+    if (path === filesystemBoundary.afterReadPath) filesystemBoundary.afterRead?.();
     return bytes;
   }, open: async (...args: Parameters<typeof actual.open>) => {
     const file = await actual.open(...args);
+    openedPaths.set(file, args[0]);
     if (args[0] !== filesystemBoundary.truncateOnReadPath) return file;
     return new Proxy(file, { get(target, key) {
       if (key === 'read') return async (...readArgs: unknown[]) => {
@@ -201,6 +207,31 @@ describe('readFile ranged RPC', () => {
         .toMatchObject({ success: false, errorCode: 'filesystem_identity_custody_unavailable' });
     } finally { await rm(rootPath, { recursive: true, force: true }); }
   });
+  // A member-planted FIFO in a folder a Manage/owner viewer browses must not park
+  // a daemon filesystem thread; whole and ranged reads both settle as a refusal.
+  it.skipIf(process.platform === 'win32')('refuses a planted FIFO without blocking the daemon read', async () => {
+    const rootPath = await mkdtemp(join(tmpdir(), 'happier-read-fifo-'));
+    const handlers = new Map<string, RpcHandler>();
+    registerReadFileHandler({ registerHandler: (name, handler) => { handlers.set(name, handler); } }, {
+      workingDirectory: rootPath, accessPolicy: { kind: 'osUser' }, getAdditionalAllowedReadDirs: () => [],
+    });
+    const read = handlers.get('daemon.filesystem.readFile');
+    if (!read) throw new Error('Missing file read handler');
+    const fifo = join(rootPath, 'README.md');
+    execFileSync('/usr/bin/mkfifo', [fifo]);
+    try {
+      for (const input of [{ rootPath, path: 'README.md' }, { rootPath, path: 'README.md', offset: 0, length: 4 }]) {
+        const outcome = await Promise.race([read(input), new Promise(resolve => { setTimeout(() => resolve('pending'), 1_000); })]);
+        expect(outcome).toMatchObject({ success: false });
+      }
+    } finally {
+      // Gives a blocked reader (RED) EOF so the worker can exit.
+      const writer = await open(fifo, constants.O_WRONLY | constants.O_NONBLOCK).catch(() => null);
+      await writer?.close();
+      await rm(rootPath, { recursive: true, force: true });
+    }
+  });
+
   it('refuses bytes from a file truncated during the range read instead of reporting stale EOF metadata', async () => {
     const rootPath = await mkdtemp(join(tmpdir(), 'happier-ranged-read-truncate-'));
     const handlers = new Map<string, RpcHandler>();
