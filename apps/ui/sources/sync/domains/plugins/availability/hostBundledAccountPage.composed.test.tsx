@@ -850,6 +850,25 @@ it.each(['plugin_availability_unavailable', 'plugin_availability_invalid_respons
     } finally { await screen.unmount(); }
 });
 
+it.each(['plugin_availability_unavailable', 'plugin_availability_invalid_response'] as const)(
+'preserves the acquisition refusal for a retained Machine page instead of reporting missing host methods (%s)', async (code) => {
+    await account.restore({ machines: [], features: enabledPluginFeatures, serverIdentityId: 'srv_bundled_account_page' });
+    const projection = normalizePluginInstalledUiDeclarations(BUNDLED_PLUGIN_UI_APP_DECLARATIONS[0]!.entriesById);
+    const placement = projection.surfacePlacementsById['surfacePlacement:happier.fixture:account-page']!;
+    clearPluginAccountAvailabilityProjection();
+    failPluginAccountAvailabilityProjection({ scope: storage.getState().profileScope!, code });
+    const screen = await renderWithAppProviders(<PluginSurfacePlacementHost placement={{ ...placement,
+        hostSupplies: [], renderer: { ...placement.renderer, requiredHostMethods: ['executeAction', 'publishCurrentUiContext'] },
+    }} pluginUiProjection={projection} machineId={null} serverId={null} platform="web" projectionInteractionEnabled={false} />);
+    try {
+        await flushHookEffects();
+        expect(screen.tree.root.findAllByProps({ reasonCode: code }).length, JSON.stringify(screen.tree.toJSON())).toBeGreaterThan(0);
+        expect(screen.tree.root.findAllByProps({ reasonCode: 'required_host_methods_unavailable' })).toHaveLength(0);
+        expect(screen.tree.root.findAllByProps({ testID: 'plugin-surface-unavailable-action' })
+            .some(node => typeof node.props.onPress === 'function')).toBe(true);
+    } finally { await screen.unmount(); }
+});
+
 it('recovers an already-open page as Account binding and Availability hydrate without remounting the route', async () => {
     clearPluginAccountAvailabilityProjection();
     const screen = await renderWithAppProviders(<AppPaneProvider><AppShellPluginUiProjectionProvider>

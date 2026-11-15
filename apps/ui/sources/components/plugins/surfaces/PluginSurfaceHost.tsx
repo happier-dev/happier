@@ -2050,7 +2050,8 @@ function PluginSurfaceHostMount(props: Readonly<(
     // admit reads from that interim requester. Availability publishes bundled
     // declarations atomically with its first scoped observation.
     const requesterAccountAdmission = accountUnionMount
-        ? availabilityReader?.readCurrentAccountExecution(mountedPluginId) : undefined;
+        ? declarationAdmission : undefined;
+    const accountAcquisitionRefusal = availabilityReader?.readUiProjectionInputs()?.unavailableReasonCode;
     const requesterAccountProjection = accountUnionMount ? availabilityReader?.readAccountUiProjection() : null;
     const requesterAccountEntry = descriptor?.contributionKind === 'settingsPage'
         ? requesterAccountProjection?.settingsPagesById[descriptor.id]
@@ -3538,6 +3539,13 @@ function PluginSurfaceHostMount(props: Readonly<(
         return declarationLoad?.failed && declarationLoad.reader === availabilityReader && declarationLoad.pluginId === mountedPluginId
             ? renderUnavailable('plugin_ui_artifact_invalid', 'unavailable', retryDeclaration)
             : renderUnavailable('plugin_ui_declaration_pending', 'loading');
+    }
+    // A retained Machine declaration still names the page while the Account
+    // acquisition is unavailable. Present that owner's refusal before the
+    // narrower host-method set can disguise it as a structural incompatibility.
+    if (accountUnionMount && requesterAccountAdmission?.kind === 'unavailable'
+        && requesterAccountAdmission.code === accountAcquisitionRefusal) {
+        return renderUnavailable(requesterAccountAdmission.code);
     }
     if (!mountBinding) {
         return renderUnavailable(props.inlineMount
