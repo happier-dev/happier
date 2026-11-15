@@ -34,10 +34,11 @@ export type DeploymentsActionInputById = {
                     name: string;
                     value: string;
                 }[];
+                failureCause?: unknown;
             };
             healthCheck?: undefined | {
                 path: string;
-                expectStatus: number;
+                expectStatus?: number | undefined;
             };
             ingress?: undefined | {
                 provider: {
@@ -236,10 +237,11 @@ export type DeploymentsActionInputById = {
                     name: string;
                     value: string;
                 }[];
+                failureCause?: unknown;
             };
             healthCheck?: undefined | {
                 path: string;
-                expectStatus: number;
+                expectStatus?: number | undefined;
             };
             ingress?: undefined | {
                 provider: {
@@ -545,9 +547,9 @@ export type DeploymentsActionInputById = {
         intent?: 'add' | undefined;
         managedRetention?: 'keep' | 'until-delete' | undefined;
         generatedSecretAudience?: undefined | {
+            groupGrants?: string[] | undefined;
             accountGrants?: string[] | undefined;
             teamGrants?: string[] | undefined;
-            groupGrants?: string[] | undefined;
         };
         connectTo?: undefined | {
             service: string;
@@ -638,7 +640,6 @@ export type DeploymentsActionInputById = {
                 isCrossRepository?: boolean | undefined;
                 headSha?: null | string | undefined;
                 baseSha?: null | string | undefined;
-                mergeCommitSha?: string | undefined;
                 createdAtMs?: number | undefined;
                 closedAtMs?: number | undefined;
                 mergedAtMs?: number | undefined;
@@ -710,7 +711,6 @@ export type DeploymentsActionInputById = {
                 isCrossRepository?: boolean | undefined;
                 headSha?: null | string | undefined;
                 baseSha?: null | string | undefined;
-                mergeCommitSha?: string | undefined;
                 createdAtMs?: number | undefined;
                 closedAtMs?: number | undefined;
                 mergedAtMs?: number | undefined;
@@ -838,6 +838,7 @@ export type DeploymentsActionInputById = {
                     windowName?: string | undefined;
                 };
             };
+            roleId?: string | undefined;
             modelSelection?: undefined | {
                 v: 1;
                 ref: {
@@ -912,14 +913,17 @@ export type DeploymentsActionInputById = {
                     };
                 }> | undefined;
             };
-            permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
-            approvalProfileId?: null | string | undefined;
-            roleId?: string | undefined;
+            configuration?: unknown;
             manager?: undefined | {
                 sessionId: string;
             };
-            configuration?: unknown;
             primaryTeamId?: null | string | undefined;
+            permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
+            approvalProfileId?: null | string | undefined;
+            organizationPlacement?: undefined | {
+                folderId: null | string;
+                tagIds: string[];
+            };
             capabilitySelection?: undefined | {
                 mcp?: undefined | {
                     v?: 1 | undefined;
@@ -981,21 +985,6 @@ export type DeploymentsActionInputById = {
             placementOrigin?: undefined | {
                 kind: 'machine_pool';
                 poolId: string;
-            };
-            sourceContext?: undefined | {
-                v: 1;
-                kind: 'session_replay';
-                sourceSessionId: string;
-                forkPoint: {
-                    type: 'latest';
-                } | {
-                    type: 'seq';
-                    upToSeqInclusive: number;
-                };
-            };
-            organizationPlacement?: undefined | {
-                folderId: null | string;
-                tagIds: string[];
             };
             teamCredentialBindings?: ({
                 v: 1;
@@ -1394,6 +1383,81 @@ export type DeploymentsActionInputById = {
                                     connectedServiceGroupId?: string | undefined;
                                 };
                             };
+                            title?: string | undefined;
+                            primaryTeamId?: null | string | undefined;
+                            organizationPlacement?: undefined | {
+                                folderId: null | string;
+                                tagIds: string[];
+                            };
+                            memoryEnabled?: boolean | undefined;
+                            secretReferenceOverlay?: undefined | {
+                                v: 1;
+                                bindings: Record<string, {
+                                    ref: string;
+                                    revision?: number | undefined;
+                                }>;
+                            };
+                            teamCredentialBindings?: ({
+                                v: 1;
+                                slot: {
+                                    kind: 'connected_service_purpose';
+                                    purpose: {
+                                        consumer: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        purpose: string;
+                                    };
+                                } | {
+                                    kind: 'provider_model';
+                                };
+                                resourceId: null;
+                            } | {
+                                v: 1;
+                                slot: {
+                                    kind: 'connected_service_purpose';
+                                    purpose: {
+                                        consumer: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        purpose: string;
+                                    };
+                                } | {
+                                    kind: 'provider_model';
+                                };
+                                resourceId: string;
+                                expectedResourceRevision: number;
+                                deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                                teamId?: string | undefined;
+                                providerModelSelection?: undefined | {
+                                    agentTargetKey: string;
+                                    modelId: string;
+                                    application?: undefined | {
+                                        implementationIdentity: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        endpointTemplateId: string;
+                                        protocol: string;
+                                        agentTargetKey: string;
+                                    };
+                                    executionMachineId?: string | undefined;
+                                    nativeSource?: undefined | {
+                                        sourceRevision: string;
+                                        providerTicket: string;
+                                    };
+                                };
+                                nativeDelivery?: undefined | {
+                                    managedId: string;
+                                    controllerInstallationId: string;
+                                    guestInstallationId: string;
+                                    bindingKey: string;
+                                    placeholderRef: string;
+                                    sourceRevision: string;
+                                    providerTicket: string;
+                                };
+                            })[] | undefined;
                             permissionModeUpdatedAt?: number | undefined;
                             launchEnvironment?: undefined | {
                                 values: Record<string, string>;
@@ -1589,13 +1653,13 @@ export type DeploymentsActionInputById = {
                     name: string;
                     description: null | string;
                 };
-                approvalProfileId?: null | string | undefined;
                 inputs?: Record<string, unknown> | undefined;
                 executionTarget?: undefined | {
                     kind: 'detached_run';
                 } | {
                     kind: 'session';
                 };
+                approvalProfileId?: null | string | undefined;
                 visibleTeamId?: null | string | undefined;
                 roleOverrides?: undefined | {
                     roleId: string;
@@ -1655,6 +1719,17 @@ export type DeploymentsActionInputById = {
                 id: string;
                 revision: number;
             }> | undefined;
+            sourceContext?: undefined | {
+                v: 1;
+                kind: 'session_replay';
+                sourceSessionId: string;
+                forkPoint: {
+                    type: 'latest';
+                } | {
+                    type: 'seq';
+                    upToSeqInclusive: number;
+                };
+            };
         };
         importFrom?: undefined | {
             tool: string;
@@ -2501,9 +2576,9 @@ export type DeploymentsActionInputById = {
             grantRef?: string | undefined;
         }[];
         generatedSecretAudience?: undefined | {
+            groupGrants?: string[] | undefined;
             accountGrants?: string[] | undefined;
             teamGrants?: string[] | undefined;
-            groupGrants?: string[] | undefined;
         };
         domainBindings?: undefined | {
             templateDomainId: string;
@@ -3015,6 +3090,20 @@ export type DeploymentsActionInputById = {
             };
             preparedNative?: undefined | {
                 projectName: string;
+                productionBranchOutcome?: undefined | {
+                    status: 'defaultKept';
+                    branch: string;
+                    requestedBranch: string;
+                    failureCause: unknown;
+                } | {
+                    status: 'set';
+                    branch: string;
+                } | {
+                    status: 'unconfirmed';
+                    requestedBranch: string;
+                    failureCause: unknown;
+                    previousBranch?: string | undefined;
+                };
                 reviewNotice?: string | undefined;
                 gitSource?: undefined | {
                     type: 'github';
@@ -3217,6 +3306,20 @@ export type DeploymentsActionInputById = {
             };
             preparedNative?: undefined | {
                 projectName: string;
+                productionBranchOutcome?: undefined | {
+                    status: 'defaultKept';
+                    branch: string;
+                    requestedBranch: string;
+                    failureCause: unknown;
+                } | {
+                    status: 'set';
+                    branch: string;
+                } | {
+                    status: 'unconfirmed';
+                    requestedBranch: string;
+                    failureCause: unknown;
+                    previousBranch?: string | undefined;
+                };
                 reviewNotice?: string | undefined;
                 gitSource?: undefined | {
                     type: 'github';
@@ -3263,8 +3366,8 @@ export type DeploymentsActionInputById = {
     readonly "deployments.targets.unlink": {
         expectedRevision: number;
         serverId: string;
-        environmentId: string;
         requestKey: string;
+        environmentId: string;
         targetLinkId: string;
         expectedTargetLinkRevision: number;
         detachKeepRunning?: boolean | undefined;
@@ -3966,19 +4069,9 @@ export type DeploymentsActionInputById = {
     readonly "deployments.teardown": {
         expectedRevision: number;
         serverId: string;
-        environmentId: string;
-        requestKey: string;
-        targetLinkId: string;
-        expectedTargetLinkRevision: number;
-        detachKeepRunning: true;
         reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
-        teardownDeploymentId?: string | undefined;
-    } | {
-        expectedRevision: number;
-        serverId: string;
-        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
-        environmentId: string;
         requestKey: string;
+        environmentId: string;
         targetLinkId: string;
         expectedTargetLinkRevision: number;
         dataCreation: {
@@ -3999,8 +4092,8 @@ export type DeploymentsActionInputById = {
         expectedRevision: number;
         serverId: string;
         reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
-        environmentId: string;
         requestKey: string;
+        environmentId: string;
         targetLinkId: string;
         expectedTargetLinkRevision: number;
         volumes?: ({
@@ -4013,6 +4106,16 @@ export type DeploymentsActionInputById = {
         })[] | undefined;
         machines?: string[] | undefined;
         removeEnvironment?: true | undefined;
+    } | {
+        expectedRevision: number;
+        serverId: string;
+        requestKey: string;
+        environmentId: string;
+        targetLinkId: string;
+        expectedTargetLinkRevision: number;
+        detachKeepRunning: true;
+        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
+        teardownDeploymentId?: string | undefined;
     } | {
         reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
         contentArtifactId: string;
@@ -4040,8 +4143,8 @@ export type DeploymentsActionInputById = {
         removeEnvironment: true;
         expectedRevision: number;
         serverId: string;
-        environmentId: string;
         requestKey: string;
+        environmentId: string;
         targetLinkId: string;
         expectedTargetLinkRevision: number;
         volumes?: ({
@@ -4285,6 +4388,7 @@ export type DeploymentsActionInputById = {
         projectSourceId?: string | undefined;
         machineId?: string | undefined;
         includeDeleted?: true | undefined;
+        includeTotal?: true | undefined;
         projection?: 'activity' | undefined;
         environmentIds?: string[] | undefined;
         previewRepositoryId?: string | undefined;
@@ -4304,6 +4408,8 @@ export type DeploymentsActionInputById = {
         serverId: string;
         state?: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded' | undefined;
         actorAccountId?: string | undefined;
+        requestedAtFromMs?: number | undefined;
+        requestedAtToMs?: number | undefined;
         operation?: 'deploy' | 'promote' | 'rollback' | 'teardown' | undefined;
         inProgressOnly?: true | undefined;
         cursor?: string | undefined;
@@ -5611,6 +5717,10 @@ export type DeploymentsActionResultById = {
             provenanceDataEncryptionKey?: null | string | undefined;
         }[];
         nextCursor: null | string;
+        projectSources?: undefined | {
+            id: string;
+            name: string;
+        }[];
         coverage?: 'complete' | 'partial' | undefined;
     };
     readonly "deployments.data.page": {
@@ -5913,7 +6023,7 @@ export type DeploymentsActionResultById = {
                 path?: string | undefined;
                 healthCheck?: undefined | {
                     path: string;
-                    expectStatus: number;
+                    expectStatus?: number | undefined;
                 };
             }[];
             volumes: {
@@ -6196,7 +6306,6 @@ export type DeploymentsActionResultById = {
                 isCrossRepository?: boolean | undefined;
                 headSha?: null | string | undefined;
                 baseSha?: null | string | undefined;
-                mergeCommitSha?: string | undefined;
                 createdAtMs?: number | undefined;
                 closedAtMs?: number | undefined;
                 mergedAtMs?: number | undefined;
@@ -6242,7 +6351,6 @@ export type DeploymentsActionResultById = {
                 isCrossRepository?: boolean | undefined;
                 headSha?: null | string | undefined;
                 baseSha?: null | string | undefined;
-                mergeCommitSha?: string | undefined;
                 createdAtMs?: number | undefined;
                 closedAtMs?: number | undefined;
                 mergedAtMs?: number | undefined;
@@ -6265,17 +6373,6 @@ export type DeploymentsActionResultById = {
         requiredFact?: string | undefined;
         remedy?: string | undefined;
         failure?: undefined | {
-            environmentId: string;
-            domainId: string;
-            step: 'container_identity' | 'route_upstreams' | 'service_docker' | 'service_replicas';
-            requiredFact: 'managedServiceDocker' | 'nativeContainerIdentity' | 'nativeServiceReplicas' | 'routeUpstreams';
-            remedy?: string | undefined;
-            operation?: undefined | {
-                serverId: string;
-                machineId: string;
-                operationId: string;
-            };
-        } | {
             environmentId: string;
             domainId: string;
             step: 'native_execution';
@@ -6315,6 +6412,11 @@ export type DeploymentsActionResultById = {
                 machineId: string;
                 operationId: string;
             };
+            tunnelId?: string | undefined;
+            recovery?: undefined | {
+                kind: 'adopt';
+                tunnelId: string;
+            };
         } | {
             environmentId: string;
             domainId: string;
@@ -6323,6 +6425,22 @@ export type DeploymentsActionResultById = {
             requiredFact: string;
             remedy: string;
             domainHostname?: string | undefined;
+        } | {
+            requiredFact: 'managedServiceDocker' | 'nativeContainerIdentity' | 'nativeServiceReplicas' | 'routeUpstreams';
+            environmentId: string;
+            domainId: string;
+            step: 'container_identity' | 'route_upstreams' | 'service_docker' | 'service_replicas';
+            remedy?: string | undefined;
+            operation?: undefined | {
+                serverId: string;
+                machineId: string;
+                operationId: string;
+            };
+            tunnelId?: string | undefined;
+            recovery?: undefined | {
+                kind: 'adopt';
+                tunnelId: string;
+            };
         };
         deployment?: undefined | {
             deploymentId: string;
@@ -7003,6 +7121,20 @@ export type DeploymentsActionResultById = {
                     };
                     preparedNative?: undefined | {
                         projectName: string;
+                        productionBranchOutcome?: undefined | {
+                            status: 'defaultKept';
+                            branch: string;
+                            requestedBranch: string;
+                            failureCause: ActionFailureCauseV1;
+                        } | {
+                            status: 'set';
+                            branch: string;
+                        } | {
+                            status: 'unconfirmed';
+                            requestedBranch: string;
+                            failureCause: ActionFailureCauseV1;
+                            previousBranch?: string | undefined;
+                        };
                         reviewNotice?: string | undefined;
                         gitSource?: undefined | {
                             type: 'github';
@@ -7077,10 +7209,10 @@ export type DeploymentsActionResultById = {
                     resourceRevision: number;
                     kind: 'secret';
                 };
-                grantRef: string;
                 purpose: 'variable';
                 name: string;
                 phase: 'build' | 'runtime';
+                grantRef?: string | undefined;
             }[];
             generatedSecrets: {
                 name: string;
@@ -7129,7 +7261,7 @@ export type DeploymentsActionResultById = {
                 path?: string | undefined;
                 healthCheck?: undefined | {
                     path: string;
-                    expectStatus: number;
+                    expectStatus?: number | undefined;
                 };
             }[];
             profiles: string[];
@@ -7315,7 +7447,6 @@ export type DeploymentsActionResultById = {
             isCrossRepository?: boolean | undefined;
             headSha?: null | string | undefined;
             baseSha?: null | string | undefined;
-            mergeCommitSha?: string | undefined;
             createdAtMs?: number | undefined;
             closedAtMs?: number | undefined;
             mergedAtMs?: number | undefined;
@@ -7366,7 +7497,6 @@ export type DeploymentsActionResultById = {
                 isCrossRepository?: boolean | undefined;
                 headSha?: null | string | undefined;
                 baseSha?: null | string | undefined;
-                mergeCommitSha?: string | undefined;
                 createdAtMs?: number | undefined;
                 closedAtMs?: number | undefined;
                 mergedAtMs?: number | undefined;
@@ -7445,7 +7575,6 @@ export type DeploymentsActionResultById = {
                 isCrossRepository?: boolean | undefined;
                 headSha?: null | string | undefined;
                 baseSha?: null | string | undefined;
-                mergeCommitSha?: string | undefined;
                 createdAtMs?: number | undefined;
                 closedAtMs?: number | undefined;
                 mergedAtMs?: number | undefined;
@@ -7491,7 +7620,6 @@ export type DeploymentsActionResultById = {
                 isCrossRepository?: boolean | undefined;
                 headSha?: null | string | undefined;
                 baseSha?: null | string | undefined;
-                mergeCommitSha?: string | undefined;
                 createdAtMs?: number | undefined;
                 closedAtMs?: number | undefined;
                 mergedAtMs?: number | undefined;
@@ -7627,7 +7755,6 @@ export type DeploymentsActionResultById = {
                 isCrossRepository?: boolean | undefined;
                 headSha?: null | string | undefined;
                 baseSha?: null | string | undefined;
-                mergeCommitSha?: string | undefined;
                 createdAtMs?: number | undefined;
                 closedAtMs?: number | undefined;
                 mergedAtMs?: number | undefined;
@@ -7708,7 +7835,6 @@ export type DeploymentsActionResultById = {
             isCrossRepository?: boolean | undefined;
             headSha?: null | string | undefined;
             baseSha?: null | string | undefined;
-            mergeCommitSha?: string | undefined;
             createdAtMs?: number | undefined;
             closedAtMs?: number | undefined;
             mergedAtMs?: number | undefined;
@@ -7772,7 +7898,6 @@ export type DeploymentsActionResultById = {
                 isCrossRepository?: boolean | undefined;
                 headSha?: null | string | undefined;
                 baseSha?: null | string | undefined;
-                mergeCommitSha?: string | undefined;
                 createdAtMs?: number | undefined;
                 closedAtMs?: number | undefined;
                 mergedAtMs?: number | undefined;
@@ -7837,7 +7962,6 @@ export type DeploymentsActionResultById = {
             isCrossRepository?: boolean | undefined;
             headSha?: null | string | undefined;
             baseSha?: null | string | undefined;
-            mergeCommitSha?: string | undefined;
             createdAtMs?: number | undefined;
             closedAtMs?: number | undefined;
             mergedAtMs?: number | undefined;
@@ -8093,6 +8217,7 @@ export type DeploymentsActionResultById = {
                     cause: 'certificate' | 'dns' | 'http' | 'network';
                     reason: string;
                     vantage: 'outside' | 'sameMachine' | null;
+                    httpStatus?: number | undefined;
                 };
             };
             observations: {
@@ -8121,6 +8246,23 @@ export type DeploymentsActionResultById = {
                         }[];
                     };
                     latencyMs?: number | undefined;
+                    cause?: undefined | {
+                        kind: 'certificate' | 'dns' | 'heartbeat' | 'http' | 'tcp';
+                        vantage: 'outside' | 'sameMachine';
+                        observerMachineId: string;
+                        reason?: string | undefined;
+                        httpStatus?: number | undefined;
+                        expectStatus?: number | undefined;
+                        providerCode?: number | undefined;
+                        keywordMatched?: boolean | undefined;
+                        recordType?: string | undefined;
+                        fingerprint256?: string | undefined;
+                        notBefore?: number | undefined;
+                        notAfter?: number | undefined;
+                        disclosure?: string | undefined;
+                        requiredFact?: string | undefined;
+                        remedy?: string | undefined;
+                    };
                 };
             }[];
         }[];
@@ -9222,9 +9364,9 @@ export type DeploymentsActionResultById = {
                 grantRef?: string | undefined;
             }[];
             generatedSecretAudience?: undefined | {
+                groupGrants?: string[] | undefined;
                 accountGrants?: string[] | undefined;
                 teamGrants?: string[] | undefined;
-                groupGrants?: string[] | undefined;
             };
             domainBindings?: undefined | {
                 templateDomainId: string;
@@ -9322,10 +9464,10 @@ export type DeploymentsActionResultById = {
                         resourceRevision: number;
                         kind: 'secret';
                     };
-                    grantRef: string;
                     purpose: 'variable';
                     name: string;
                     phase: 'build' | 'runtime';
+                    grantRef?: string | undefined;
                 }[];
                 generatedSecrets: {
                     name: string;
@@ -9374,7 +9516,7 @@ export type DeploymentsActionResultById = {
                     path?: string | undefined;
                     healthCheck?: undefined | {
                         path: string;
-                        expectStatus: number;
+                        expectStatus?: number | undefined;
                     };
                 }[];
                 profiles: string[];
@@ -9610,10 +9752,10 @@ export type DeploymentsActionResultById = {
                 resourceRevision: number;
                 kind: 'secret';
             };
-            grantRef: string;
             purpose: 'variable';
             name: string;
             phase: 'build' | 'runtime';
+            grantRef?: string | undefined;
         }[];
         previewNativeData?: undefined | {
             service: string;
@@ -9885,10 +10027,10 @@ export type DeploymentsActionResultById = {
                 resourceRevision: number;
                 kind: 'secret';
             };
-            grantRef: string;
             purpose: 'variable';
             name: string;
             phase: 'build' | 'runtime';
+            grantRef?: string | undefined;
         }[];
         previewNativeData?: undefined | {
             service: string;
@@ -10052,6 +10194,20 @@ export type DeploymentsActionResultById = {
                 };
                 preparedNative?: undefined | {
                     projectName: string;
+                    productionBranchOutcome?: undefined | {
+                        status: 'defaultKept';
+                        branch: string;
+                        requestedBranch: string;
+                        failureCause: ActionFailureCauseV1;
+                    } | {
+                        status: 'set';
+                        branch: string;
+                    } | {
+                        status: 'unconfirmed';
+                        requestedBranch: string;
+                        failureCause: ActionFailureCauseV1;
+                        previousBranch?: string | undefined;
+                    };
                     reviewNotice?: string | undefined;
                     gitSource?: undefined | {
                         type: 'github';
@@ -10155,6 +10311,20 @@ export type DeploymentsActionResultById = {
         ok: true;
         environmentId: string;
         revision: number;
+        productionBranchOutcome?: undefined | {
+            status: 'defaultKept';
+            branch: string;
+            requestedBranch: string;
+            failureCause: ActionFailureCauseV1;
+        } | {
+            status: 'set';
+            branch: string;
+        } | {
+            status: 'unconfirmed';
+            requestedBranch: string;
+            failureCause: ActionFailureCauseV1;
+            previousBranch?: string | undefined;
+        };
         failureObserver?: undefined | {
             deploymentEnvironment: {
                 serverId: string;
@@ -12942,6 +13112,7 @@ export type DeploymentsActionResultById = {
             id: string;
             name: string;
         }[];
+        totalCount?: number | undefined;
         runtimeTargetLinks?: undefined | {
             v: 1;
             id: string;
@@ -12978,6 +13149,161 @@ export type DeploymentsActionResultById = {
             predecessorTargetLinkId?: string | undefined;
             deletedAtMs?: number | undefined;
             detachedAtMs?: number | undefined;
+        }[];
+        servingDeployments?: undefined | {
+            v: 1;
+            id: string;
+            environmentId: string;
+            targetLinkId: string;
+            revision: number;
+            operation: 'deploy' | 'promote' | 'rollback' | 'teardown';
+            state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded';
+            requestKey: string;
+            requestedByAccountId: string;
+            actionOperationId: string;
+            requestedAtMs: number;
+            contentArtifactId: string;
+            contentHeaderVersion: number;
+            contentBodyVersion: number;
+            acceptedExecution?: undefined | {
+                v: 1;
+                controller: {
+                    machineId: string;
+                    installationId: string;
+                };
+                builder?: undefined | {
+                    machineId: string;
+                    installationId: string;
+                };
+            };
+            predecessorDeploymentId?: string | undefined;
+            rollbackOfDeploymentId?: string | undefined;
+            promotedFromDeploymentId?: string | undefined;
+            cancelRequestedAtMs?: number | undefined;
+            startedAtMs?: number | undefined;
+            settledAtMs?: number | undefined;
+        }[];
+        liveAddressDomains?: undefined | {
+            createdByAccountId: string;
+            createdAtMs: number;
+            updatedAtMs: number;
+            contentArtifactId: string;
+            contentHeaderVersion: number;
+            contentBodyVersion: number;
+            v: 1;
+            id: string;
+            environmentId: string;
+            targetLinkId: string;
+            revision: number;
+            state: 'active' | 'applying' | 'failed' | 'pending' | 'removing' | 'warning';
+            observedAtMs?: number | undefined;
+            placements?: undefined | {
+                placement: {
+                    serverId: string;
+                    accountId: string;
+                    environmentId: string;
+                    targetLinkId: string;
+                    domainId: string;
+                    machineId: string;
+                    installationId: string;
+                    actionOperationId: string;
+                    requestId: string;
+                    nativeServer: string;
+                };
+                content: {
+                    contentArtifactId: string;
+                    contentHeaderVersion: number;
+                    contentBodyVersion: number;
+                };
+                desired: boolean;
+                listener: 'privateOrigin' | 'public';
+                dockerEngineId?: string | undefined;
+                retireSharedTunnel?: boolean | undefined;
+                environmentContent?: undefined | {
+                    contentArtifactId: string;
+                    contentHeaderVersion: number;
+                    contentBodyVersion: number;
+                };
+                targetLinkContent?: undefined | {
+                    contentArtifactId: string;
+                    contentHeaderVersion: number;
+                    contentBodyVersion: number;
+                };
+            }[];
+            provider?: true | undefined;
+            providerPlacement?: undefined | {
+                serverId: string;
+                accountId: string;
+                environmentId: string;
+                targetLinkId: string;
+                domainId: string;
+                controller: {
+                    machineId: string;
+                    installationId: string;
+                };
+                actionOperationId: string;
+                requestId: string;
+            };
+            operationAddress?: undefined | {
+                serverId: string;
+                machineId: string;
+                operationId: string;
+            };
+            dnsHealth?: undefined | {
+                status: 'degraded' | 'down' | 'unknown' | 'up';
+                evidence: {
+                    v: 1;
+                    items: readonly {
+                        source: {
+                            kind: 'alert' | 'entry' | 'hostedCi' | 'localTerminal' | 'pullRequest' | 'releaseNotes';
+                            label: string;
+                            url?: string;
+                        };
+                        author: {
+                            kind: 'bot' | 'person' | 'process' | 'unknown';
+                            label?: string;
+                        };
+                        text: string;
+                    }[];
+                };
+            };
+            routedReplicas?: undefined | {
+                source: 'recordedTopology';
+                count: number;
+                replicas: {
+                    machineId: string;
+                    installationId: string;
+                    containerName: string;
+                }[];
+            };
+            networkExposure?: undefined | {
+                machineId: string;
+                installationId: string;
+                nativeServer: string;
+                listener: 'privateOrigin' | 'public';
+                observation: {
+                    kind: 'ready';
+                    listener: 'privateOrigin' | 'public';
+                    listeners: {
+                        tls: boolean;
+                        automaticHttpsDisabled: boolean;
+                        endpoints: {
+                            audience: 'loopback' | 'other' | 'privateNetwork' | 'wildcard';
+                            hostPort: number;
+                            containerPort: number;
+                            protocol: 'tcp';
+                        }[];
+                    }[];
+                    localOrigin: boolean;
+                    fallback: boolean;
+                } | {
+                    kind: 'unavailable';
+                    reason: string;
+                    requiredFact?: 'activeDomainMembers' | 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks' | 'cloudflarePreparation' | 'deploymentActionResult' | 'domainIngress' | 'edgeCaddyMachine' | 'memberCaddyObservation' | 'nativeExecutionResult' | 'networkExposure' | 'privateCaddyListener' | 'publicCaddyListener' | 'publicCaddyObservation' | 'reachabilityPosture' | 'sharedTunnelOrigin' | undefined;
+                    remedy?: string | undefined;
+                };
+            }[];
+            deletedAtMs?: number | undefined;
         }[];
         currentDeployments?: undefined | {
             v: 1;
