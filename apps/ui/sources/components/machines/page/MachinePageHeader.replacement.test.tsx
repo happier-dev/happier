@@ -39,8 +39,9 @@ it.each([
     });
     const publish = (current: typeof machine) => store.getState().applyMachines([current], true, { sourceServerId: serverId,
         activityUpdates: [{ id: current.id, active: false, activeAt: current.activeAt }] });
+    // The page is handed the admitted record, which carries the live presence the Home answered (a raw fixture has none).
     const content = (current: typeof machine) => <ModalProvider><MachinePageHeader target={{ machineId: current.id,
-        requestedServerId: serverId, serverId, activeServerId: serverId, machine: current, machineName: 'Source',
+        requestedServerId: serverId, serverId, activeServerId: serverId, machine: store.getState().machines[current.id] ?? current, machineName: 'Source',
         machineSentenceName: 'Source', isServerSwitching: false, isHydratingMachine: false, switchReady: true }}
         managedIdentity={null} renaming={false} onRename={() => {}} /></ModalProvider>;
     publish(refused);
@@ -191,7 +192,8 @@ it.each([false, true])('replaces a Machine using its current active fact after a
     const previous = store.getState();
     const machine = createMachineFixture({ id: machineId, active: initialActive, activeAt: 1_000, isShared: false });
     store.getState().applyMachines([machine, createMachineFixture({ id: replacementId, isShared: false })], true, { sourceServerId: serverId });
-    const target = { machineId, requestedServerId: serverId, serverId, activeServerId: serverId, machine,
+    // The page reads the admitted record: its activity slice is what a later presence answer updates.
+    const target = { machineId, requestedServerId: serverId, serverId, activeServerId: serverId, machine: store.getState().machines[machineId]!,
         machineName: 'Source', machineSentenceName: 'Source', isServerSwitching: false, isHydratingMachine: false, switchReady: true };
     const screen = await renderScreen(<ModalProvider>
         <MachinePageHeader target={target} managedIdentity={null} renaming={false} onRename={() => {}} />
@@ -200,9 +202,10 @@ it.each([false, true])('replaces a Machine using its current active fact after a
         await act(async () => store.getState().applyMachineActivityUpdates([
             { id: machineId, active: nextActive, activeAt: 2_000 },
         ], { sourceServerId: serverId }));
-        expect(store.getState().machines[machineId]).toBe(machine);
-        expect(machine.active).toBe(initialActive);
-        expect(readMachineActivity(machine).active).toBe(nextActive);
+        // The admitted row stays an immutable snapshot; its activity slice carries the current fact the replace reads.
+        const admitted = store.getState().machines[machineId]!;
+        expect(admitted.active).toBe(initialActive);
+        expect(readMachineActivity(admitted).active).toBe(nextActive);
         const menu = screen.findAllByType(DropdownMenu).find(menu => menu.props.testID === 'machine-detail-menu')!;
         await act(async () => menu.props.onSelect('replace'));
         await act(async () => screen.pressByTestId(`machine-replacement-picker-candidate:${replacementId}`));

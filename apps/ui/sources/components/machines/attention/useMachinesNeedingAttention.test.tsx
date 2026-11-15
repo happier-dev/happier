@@ -6,6 +6,7 @@ import {
   renderHook,
   standardCleanup,
 } from '@/dev/testkit';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storageStore';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -60,14 +61,8 @@ function shortOnMemory(id: string): Machine {
 describe('machines needing attention', () => {
   it('tells apart two machines that share a name, as every list of machines does', async () => {
     const serverId = getActiveServerSnapshot().serverId;
-    storage.setState({
-      profileScope: { serverId, accountId: 'attention-account' },
-      machines: {},
-      machineListByServerId: {
-        [serverId]: [shortOnMemory('a1b2c3d4e5'), shortOnMemory('f6e5d4c3b2')],
-      },
-      machineListStatusByServerId: { [serverId]: 'idle' },
-    });
+    await publishMachineInventoryForTest({ serverId, accountId: 'attention-account' },
+      [shortOnMemory('a1b2c3d4e5'), shortOnMemory('f6e5d4c3b2')]);
     const hook = await renderHook(() => useMachinesNeedingAttention());
     const titles = hook.getCurrent().map((row) => row.title);
     expect(titles).toHaveLength(2);
@@ -77,16 +72,19 @@ describe('machines needing attention', () => {
     await hook.unmount();
   });
 
+  it('waits for a machine whose name is still being read instead of listing it as Loading', async () => {
+    const serverId = getActiveServerSnapshot().serverId;
+    const unread = createMachineFixture({ ...shortOnMemory('0f1e2d3c4b'), metadata: null, availability: undefined });
+    await publishMachineInventoryForTest({ serverId, accountId: 'attention-account' }, [shortOnMemory('a1b2c3d4e5'), unread]);
+    const hook = await renderHook(() => useMachinesNeedingAttention());
+    expect(hook.getCurrent().map((row) => row.machineId)).toEqual(['a1b2c3d4e5']);
+    await hook.unmount();
+  });
+
   it('reads several machines as one fact with one way in, and one machine by its name and reason', async () => {
     const serverId = getActiveServerSnapshot().serverId;
-    storage.setState({
-      profileScope: { serverId, accountId: 'attention-account' },
-      machines: {},
-      machineListByServerId: {
-        [serverId]: [shortOnMemory('a1b2c3d4e5'), shortOnMemory('f6e5d4c3b2'), shortOnMemory('0a9b8c7d6e')],
-      },
-      machineListStatusByServerId: { [serverId]: 'idle' },
-    });
+    await publishMachineInventoryForTest({ serverId, accountId: 'attention-account' },
+      [shortOnMemory('a1b2c3d4e5'), shortOnMemory('f6e5d4c3b2'), shortOnMemory('0a9b8c7d6e')]);
     const hook = await renderHook(() => useMachinesNeedingAttention());
     const rows = hook.getCurrent();
     const several = summarizeMachinesNeedingAttention(rows);

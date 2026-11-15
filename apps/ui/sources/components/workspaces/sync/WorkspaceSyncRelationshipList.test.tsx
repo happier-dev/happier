@@ -1,9 +1,10 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import type { WorkspaceSyncRelationshipSummary } from '@/sync/domains/sessionHandoff/workspaceSyncRelationshipModel';
+import { resetWorkspaceSyncStatusStoreForTests } from '@/sync/domains/sessionHandoff/workspaceSyncStatusStore';
 import { installSessionHandoffCommonModuleMocks } from '@/components/sessions/handoff/sessionHandoffTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -156,6 +157,9 @@ function statusOf(screen: RenderedScreen): Readonly<{ text: string; tone: string
 }
 
 describe('WorkspaceSyncRelationshipRow', () => {
+    // A failed lifecycle Action records its error in the shared status snapshot; no row test inherits another's.
+    beforeEach(() => resetWorkspaceSyncStatusStoreForTests());
+
     it('routes termination through its Action even when a private modal would refuse', async () => {
         for (const spy of Object.values(relationshipActionSpies)) spy.mockClear();
         const screen = await renderScreen(<WorkspaceSyncRelationshipRow summary={createSummary(0)} />);
@@ -176,12 +180,12 @@ describe('WorkspaceSyncRelationshipRow', () => {
 
         relationshipActionSpies.enable.mockResolvedValueOnce({ ok: false, errorCode: 'target_bootstrap_required', error: 'Git workspace sync target requires an explicit SCM bootstrap source' } as never);
         await act(async () => { menu?.props.onSelect('enable'); });
-        await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith('common.error', 'workspaceSync.error.destinationNeedsPreparation'));
+        await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith('common.error', 'workspaceSync.error.destinationNeedsPreparation (target_bootstrap_required)'));
 
         vi.mocked(Modal.alert).mockClear();
         relationshipActionSpies.enable.mockResolvedValueOnce({ ok: false, errorCode: 'something_unmapped', error: 'x' } as never);
         await act(async () => { menu?.props.onSelect('enable'); });
-        await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith('common.error', 'errors.operationFailed'));
+        await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith('common.error', 'common.requestFailed (something_unmapped)'));
     });
 
     it('presents nothing when the row left the list before its own Stop settled', async () => {

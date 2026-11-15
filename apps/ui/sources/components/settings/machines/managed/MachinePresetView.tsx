@@ -168,8 +168,10 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
     const memberCreateOn = (desiredEdit.teamAcquireDelegated ?? visiblePreset.teamAcquireDelegated) === true;
     const desiredLimit = desiredEdit.simultaneousLimit === undefined ? visiblePreset.simultaneousLimit : desiredEdit.simultaneousLimit;
     const desiredController = desiredEdit.controller ?? visibleCreation?.controller;
+    const presenceOf = (machine: NonNullable<typeof controller>) =>
+        resolveMachinePickerPresence(machine, presenceNowMs, catalog.binding?.isCurrent() ? catalog.binding.scope : null);
     const presenceLabel = (machine: NonNullable<typeof controller>) => {
-        const presence = resolveMachinePickerPresence(machine, presenceNowMs, catalog.binding?.isCurrent() ? catalog.binding.scope : null);
+        const presence = presenceOf(machine);
         return presence.status === 'online' ? t('status.online') : presence.status === 'offline' ? t('status.offline') : t('common.unknown');
     };
     // Managed from is edited in place among this Home's machines that can manage; the server re-checks the launch on it.
@@ -273,8 +275,9 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
             : { title: visiblePreset.simultaneousLimit
                 ? `${t('machinePresets.atMost')} ${visiblePreset.simultaneousLimit.maximum}` : t('machinePresets.limitNone'),
                 ...(visiblePreset.simultaneousLimit ? { subtitle: t('machinePresets.limitWaits') } : {}) } },
-        // Its row names the controller; the description says only why it matters.
-        controller: { description: pooled ? t('machinePresets.controllerPoolHelp') : t('managedMachines.controller.requiredUnnamed'),
+        // Its row names the controller; the description says only why it matters, and an online controller needs none.
+        controller: { description: pooled ? t('machinePresets.controllerPoolHelp')
+            : controller && presenceOf(controller).status === 'online' ? undefined : t('managedMachines.controller.requiredUnnamed'),
             row: pooled ? { title: controllerName, ...(poolName ? { subtitle: t('machinePresets.controllerPoolAny') } : {}),
                 leading: <Icon name="stack" color={theme.colors.text.secondary} /> } : controllerChoices.length ? {
                 title: t('machinePresets.controllerRow'),

@@ -78,7 +78,7 @@ export type MachinePresetDetailModel = Readonly<{
   }>;
   /** Optional simultaneous limit; local and cloud launchs may both belong to a Team. */
   limit?: Readonly<{ description?: string; row: ManagedFieldRowModel }>;
-  controller?: Readonly<{ description: string; row: ManagedFieldRowModel }>;
+  controller?: Readonly<{ description?: string; row: ManagedFieldRowModel }>;
   /** Machines made from it; absent for a setup-only preset, which never makes one. */
   machines?: readonly ManagedLinkedMachine[];
   receipt: ManagedReceiptModel;

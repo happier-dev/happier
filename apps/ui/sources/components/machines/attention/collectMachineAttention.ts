@@ -2,7 +2,7 @@ import type { MachineResourceAutomaticActionV1 } from '@happier-dev/protocol/mac
 
 import { readMachinePublishedResources, type MachineAttentionSubject } from '@/components/machines/summary/machineResourceSentences';
 import type { ActiveSelectionMachineGroup } from '@/components/settings/machines/hooks/useActiveSelectionMachineGroups';
-import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
+import { isMachineDisplayHydrating, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { isMachineReachable } from '@/sync/domains/machines/reachability/machineReachability';
 import { isMachineVisibleForLaunchSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -86,6 +86,8 @@ export function collectMachineAttention(groups: readonly ActiveSelectionMachineG
         const names = presentation === 'facts' ? null : resolveMachineDisplayNames(group.machines);
         for (const machine of group.machines) {
             if (!canPublishAttention(machine)) continue;
+            // A Machine whose name is still being read joins once it is known, so no row prints a placeholder name and reorders.
+            if (isMachineDisplayHydrating(machine)) continue;
             const online = isMachineReachable(group.accountScope, machine, nowMs);
             if (online) onlineCount += 1;
             const published = online ? readMachinePublishedResources(machine.daemonState) : null;

@@ -20,7 +20,7 @@ describe('presentWorkspaceSyncStatusLine', () => {
     it('names why the status is unavailable and offers to ask again', () => {
         const unreachable = Object.assign(new Error('rpc failed'), { code: 'controller_unavailable' });
         expect(present('workspaceSync.state.controllerUnavailable', { readError: unreachable }))
-            .toEqual({ text: t('workspaceSync.error.machineOffline'), tone: 'warn', busy: false, action: 'retry' });
+            .toEqual({ text: `${t('workspaceSync.error.machineOffline')} (controller_unavailable)`, tone: 'warn', busy: false, action: 'retry' });
         // An unclassified read failure still says what is wrong and keeps the same next step.
         expect(present('workspaceSync.state.controllerUnavailable', { readError: new Error('boom') }))
             .toEqual({ text: t('workspaceSync.state.controllerUnavailable'), tone: 'warn', busy: false, action: 'retry' });

@@ -2952,9 +2952,12 @@ describe('reachable preset detail', () => {
     await flushHookEffects({ cycles: 2, turns: 2 });
     expect(model()?.controller.row.subtitle).toBe(t('status.online'));
     expect(model()?.controller.row.choices[0].subtitle).toBe(t('status.online'));
+    // An online controller leaves nothing to wait for, so no "needs to be online" sentence stands beside it.
+    expect(model()?.controller.description).toBeUndefined();
     await act(async () => publishMachineActivityForTest([machine], { active: false, activeAt: Date.now() }));
     await waitForHomeGovernance(() => expect(model()?.controller.row.subtitle).toBe(t('status.offline')));
     expect(model()?.controller.row.choices[0].subtitle).toBe(t('status.offline'));
+    expect(model()?.controller.description).toBe(t('managedMachines.controller.requiredUnnamed'));
     await act(async () => publishMachineActivityForTest([machine], { active: true, activeAt: Date.now() }));
     await waitForHomeGovernance(() =>
       expect(model()?.controller.row.subtitle).toBe(t('status.online')),
