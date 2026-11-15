@@ -34,6 +34,7 @@ import { buildMachineActivityPlaceholder, publishMachineActivities, readMachineA
 
 import type { StoreGet, StoreSet } from './_shared';
 import { indexMachineInventory, mergeMachineInventory } from './machines/machineInventory';
+import { readOrdinarySessionListRowsForServer } from './sessionListIndexFinalization';
 
 export { resolveMachineSessionListIndexImpact } from './machineSessionListIndexImpact';
 
@@ -91,17 +92,6 @@ type MachinesDomainDependencies = Readonly<{
     settings: Settings;
     sessionListIndexByServerId: Readonly<Record<string, SessionListIndexItem[] | null | undefined>>;
 }>;
-
-function readOrdinaryRowsForServer(
-    state: MachinesDomainDependencies,
-    serverId: string,
-): Record<string, SessionListRenderableSession> {
-    const rows = state.sessionListRowsByServerId[serverId] ?? {};
-    return Object.fromEntries((state.ordinarySessionListMembershipByServerId[serverId] ?? []).flatMap((sessionId) => {
-        const row = rows[sessionId];
-        return row ? [[sessionId, row] as const] : [];
-    }));
-}
 
 function scheduleActiveWarmMachineCacheSave(
     state: Pick<MachinesDomain & MachinesDomainDependencies, 'machineDisplayById' | 'profileScope'>,
@@ -545,7 +535,7 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                 const previousIndexByServerId = state.sessionListIndexByServerId ?? {};
                 const previousActiveIndex = activeServerId ? (previousIndexByServerId[activeServerId] ?? null) : null;
                 const activeSessionListRows = activeServerId && (hasDisplaySemanticChanges || previousActiveIndex == null)
-                    ? readOrdinaryRowsForServer(state, activeServerId) : {};
+                    ? readOrdinarySessionListRowsForServer(state, activeServerId) : {};
                 let needsSessionListIndexRebuild = Boolean(activeServerId) && previousActiveIndex == null;
                 let needsProjectManagerUpdate = false;
 
@@ -689,7 +679,7 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                 }
                 const previousIndexByServerId = state.sessionListIndexByServerId ?? {};
                 const previousActiveIndex = activeServerId ? (previousIndexByServerId[activeServerId] ?? null) : null;
-                const activeSessionListRows = activeServerId ? readOrdinaryRowsForServer(state, activeServerId) : {};
+                const activeSessionListRows = activeServerId ? readOrdinarySessionListRowsForServer(state, activeServerId) : {};
                 const nextSessionListIndex = activeServerId
                     ? buildActiveServerSessionListIndex({
                         sessions: activeSessionListRows,

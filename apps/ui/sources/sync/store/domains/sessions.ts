@@ -99,6 +99,8 @@ import {
     doesActiveSessionListProjectionNeedRepair,
     buildNextSessionListRenderableDelta,
     finalizeSessionListIndexUpdate,
+    pickOrdinarySessionListRows,
+    readOrdinarySessionListRowsForServer,
     finalizeSessionListRenderablePublication,
     saveWarmSessionCacheForState,
     type OrdinarySessionMembershipChange,
@@ -1198,6 +1200,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             let changedSessionCount = 0;
             let changedRenderableCount = 0;
             const changedRenderableSessionIds = new Set<string>();
+            const rowsCopiedThisApply = new Map<object, Record<string, SessionListRenderableSession>>();
             let reconciledSessionMessageCount = 0;
             let listViewFieldChangeCount = 0;
             let didReachablePeerReevaluation = false;
@@ -1393,7 +1396,10 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                         }
                     }
                     if (ownerServerId) {
-                        const nextOwnerRows = { ...ownerRows, [session.id]: mergedRenderable };
+                        // One copy of a Home's rows per apply: later Sessions of the same batch write into it.
+                        const nextOwnerRows = rowsCopiedThisApply.get(ownerRows) ?? { ...ownerRows };
+                        nextOwnerRows[session.id] = mergedRenderable;
+                        rowsCopiedThisApply.set(nextOwnerRows, nextOwnerRows);
                         mergedRowsByServerId = publishSessionListHomeValue(mergedRowsByServerId, ownerServerId, nextOwnerRows);
                         if (isActiveOwner) mergedRenderables = nextOwnerRows;
                         const ordinaryKey = resolveSessionListHomeKey(mergedOrdinaryMembershipByServerId, ownerServerId);
@@ -1689,13 +1695,10 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
 
             let mergedSessionListIndexByServerId = state.sessionListIndexByServerId;
             for (const serverId of inactiveOwnerServerIdsNeedingIndexRebuild) {
-                const rows = mergedRowsByServerId[serverId] ?? {};
-                const ordinaryRows = Object.fromEntries(
-                    (mergedOrdinaryMembershipByServerId[serverId] ?? []).flatMap((sessionId) => {
-                        const row = rows[sessionId];
-                        return row ? [[sessionId, row] as const] : [];
-                    }),
-                );
+                const ordinaryRows = readOrdinarySessionListRowsForServer({
+                    sessionListRowsByServerId: mergedRowsByServerId,
+                    ordinarySessionListMembershipByServerId: mergedOrdinaryMembershipByServerId,
+                }, serverId);
                 const previousIndexKey = resolveSessionListHomeKey(mergedSessionListIndexByServerId, serverId);
                 const previousIndex = previousIndexKey ? mergedSessionListIndexByServerId[previousIndexKey] ?? null : null;
                 const nextIndex = buildSessionListIndexWithServerScope({
@@ -1726,7 +1729,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             };
 
             const needsActiveProjectionRepair = !needsSessionListIndexRebuild
-                && doesActiveSessionListProjectionNeedRepair(nextStateBase);
+                && doesActiveSessionListProjectionNeedRepair(nextStateBase, { state, changedSessionIds: changedRenderableSessionIds });
             if (needsActiveProjectionRepair) {
                 needsSessionListIndexRebuild = true;
             }
@@ -2195,10 +2198,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                         listViewFieldChanges: listViewFieldChangeCount,
                     }),
                     () => buildSessionListIndexWithServerScope({
-                        sessions: Object.fromEntries(nextOrdinaryMembership.flatMap((sessionId) => {
-                            const row = nextRows[sessionId];
-                            return row ? [[sessionId, row] as const] : [];
-                        })),
+                        sessions: pickOrdinarySessionListRows(nextRows, nextOrdinaryMembership),
                         machines: resolveSessionListMachineDisplaysForServer(state, serverId),
                         layoutV1: settings.layoutV1,
                         previousIndex: state.sessionListIndexByServerId[serverId] ?? null,
@@ -2322,12 +2322,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             ];
             const nextMembership = areStringArraysEqual(previousMembership, candidateMembership)
                 ? previousMembership : candidateMembership;
-            const ordinaryRows = Object.fromEntries(
-                nextMembership.flatMap((sessionId) => {
-                    const row = nextRows[sessionId];
-                    return row ? [[sessionId, row] as const] : [];
-                }),
-            );
+            const ordinaryRows = pickOrdinarySessionListRows(nextRows, nextMembership);
             const settings = resolveSessionListIndexRebuildSettings(state.settings);
             const nextIndex = buildSessionListIndexWithServerScope({
                 sessions: ordinaryRows,
@@ -2409,12 +2404,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             ])];
             const nextMembership = areStringArraysEqual(previousMembership, candidateMembership)
                 ? previousMembership : candidateMembership;
-            const ordinaryRows = Object.fromEntries(
-                nextMembership.flatMap((sessionId) => {
-                    const row = nextRows[sessionId];
-                    return row ? [[sessionId, row] as const] : [];
-                }),
-            );
+            const ordinaryRows = pickOrdinarySessionListRows(nextRows, nextMembership);
             const settings = resolveSessionListIndexRebuildSettings(state.settings);
             const nextIndex = buildSessionListIndexWithServerScope({
                 sessions: ordinaryRows,
@@ -3205,10 +3195,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     remainingArchivedMembershipByServerId[serverId] = nextArchivedMembership;
                 }
                 if (nextOrdinaryMembership.length !== previousOrdinaryMembership.length) {
-                    const ordinaryRows = Object.fromEntries(nextOrdinaryMembership.flatMap((id) => {
-                        const candidate = remainingRows[id];
-                        return candidate ? [[id, candidate] as const] : [];
-                    }));
+                    const ordinaryRows = pickOrdinarySessionListRows(remainingRows, nextOrdinaryMembership);
                     if (remainingIndexByServerId === state.sessionListIndexByServerId) {
                         remainingIndexByServerId = { ...state.sessionListIndexByServerId };
                     }

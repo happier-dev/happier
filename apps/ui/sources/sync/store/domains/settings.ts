@@ -43,6 +43,7 @@ import { normalizeServerSelectionGroupsForSettings } from '@/sync/domains/server
 
 import type { StoreGet, StoreSet } from './_shared';
 import { projectSavedSecretReferenceSettings } from './settingsSavedSecretReferences';
+import { readOrdinarySessionListRowsForServer } from './sessionListIndexFinalization';
 
 function reconcilePurchasesReferences(previous: Purchases, next: Purchases): Purchases {
     if (areAccountSettingsJsonValuesEqual(previous, next)) return previous;
@@ -114,18 +115,6 @@ type SettingsDomainDependencies = Readonly<{
 
 type SettingsDomainState = SettingsDomain & SettingsDomainDependencies;
 
-function readOrdinaryRowsForServer(
-    state: SettingsDomainState,
-    serverId: string,
-): Readonly<Record<string, SessionListRenderableSession>> {
-    const rows = state.sessionListRowsByServerId?.[serverId] ?? {};
-    const membership = state.ordinarySessionListMembershipByServerId?.[serverId] ?? [];
-    return Object.fromEntries(membership.flatMap((sessionId) => {
-        const row = rows[sessionId];
-        return row ? [[sessionId, row] as const] : [];
-    }));
-}
-
 function rebuildSessionListIndexesForSettingsChange(
     state: SettingsDomainState,
     nextSettings: Settings,
@@ -136,7 +125,7 @@ function rebuildSessionListIndexesForSettingsChange(
     if (activeServerId) {
         const previousActiveIndex = nextSessionListIndexByServerId[activeServerId] ?? null;
         const nextActiveIndex = buildActiveServerSessionListIndex({
-            sessions: readOrdinaryRowsForServer(state, activeServerId),
+            sessions: readOrdinarySessionListRowsForServer(state, activeServerId),
             sessionRecords: state.sessions,
             machines: state.machineDisplayById,
             machineRecords: state.machines,
@@ -155,7 +144,7 @@ function rebuildSessionListIndexesForSettingsChange(
         if (serverId === activeServerId) continue;
         const entry = state.concurrentSessionListCacheByServerId?.[serverId];
         const nextIndex = buildSessionListIndexWithServerScope({
-            sessions: readOrdinaryRowsForServer(state, serverId),
+            sessions: readOrdinarySessionListRowsForServer(state, serverId),
             machines: buildMachineDisplaysByIdFromMachineList(state.machineListByServerId?.[serverId]),
             layoutV1: nextSettings.sessionListLayoutV1,
             serverScope: {

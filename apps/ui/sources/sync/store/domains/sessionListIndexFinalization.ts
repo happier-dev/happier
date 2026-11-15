@@ -78,16 +78,41 @@ function measureSessionListIndexFinalizationPhase<T>(
     return syncPerformanceTelemetry.measure(name, fields(), fn);
 }
 
-function readOrdinaryRowsForServer(
-    state: SessionListIndexFinalizationState,
-    serverId: string,
+type OrdinaryRowsState = Pick<SessionListIndexFinalizationState, 'sessionListRowsByServerId' | 'ordinarySessionListMembershipByServerId'>;
+
+/** Ordinary list rows: the membership, in order, restricted to loaded rows. O(membership). */
+export function pickOrdinarySessionListRows(
+    rows: Readonly<Record<string, SessionListRenderableSession>>,
+    membership: readonly string[],
 ): Record<string, SessionListRenderableSession> {
-    const rows = state.sessionListRowsByServerId?.[serverId] ?? {};
-    const membership = state.ordinarySessionListMembershipByServerId?.[serverId] ?? [];
     return Object.fromEntries(membership.flatMap((sessionId) => {
         const row = rows[sessionId];
         return row ? [[sessionId, row] as const] : [];
     }));
+}
+
+export function readOrdinarySessionListRowsForServer(
+    state: OrdinaryRowsState,
+    serverId: string,
+): Record<string, SessionListRenderableSession> {
+    return pickOrdinarySessionListRows(
+        state.sessionListRowsByServerId?.[serverId] ?? {},
+        state.ordinarySessionListMembershipByServerId?.[serverId] ?? [],
+    );
+}
+
+function hasOrdinaryRowsForServer(state: OrdinaryRowsState, serverId: string): boolean {
+    const rows = state.sessionListRowsByServerId?.[serverId];
+    if (!rows) return false;
+    return (state.ordinarySessionListMembershipByServerId?.[serverId] ?? []).some(sessionId => rows[sessionId] !== undefined);
+}
+
+function countOrdinaryRowsForServer(state: OrdinaryRowsState, serverId: string): number {
+    const rows = state.sessionListRowsByServerId?.[serverId];
+    if (!rows) return 0;
+    let count = 0;
+    for (const sessionId of state.ordinarySessionListMembershipByServerId?.[serverId] ?? []) if (rows[sessionId]) count += 1;
+    return count;
 }
 
 export function saveWarmSessionCacheForState(
@@ -99,7 +124,7 @@ export function saveWarmSessionCacheForState(
     if (!activeServerId || !accountId) return;
     const previousWarmCacheEntries = previousEntries ?? peekSessionListWarmCacheEntries(activeServerId, accountId) ?? undefined;
     const nextEntries = buildPersistedSessionListCacheEntriesFromRenderables(
-        readOrdinaryRowsForServer(state, activeServerId),
+        readOrdinarySessionListRowsForServer(state, activeServerId),
         previousWarmCacheEntries,
     );
     if (previousWarmCacheEntries && nextEntries === previousWarmCacheEntries) return;
@@ -124,17 +149,77 @@ function isSessionListIndexProjectionCurrent(
     return actualSessionCount === expectedUserFacingSessionIds.size;
 }
 
-export function doesActiveSessionListProjectionNeedRepair(state: SessionListIndexFinalizationState): boolean {
-    return doesActiveSessionListIndexProjectionNeedRepair(state);
+/**
+ * Rows objects already proven to match their Home's index under one membership. The store keeps an
+ * unchanged rows object, membership and index by identity, so a later publication that changed only
+ * named rows re-checks those rows instead of the whole membership.
+ */
+const currentProjectionByRows = new WeakMap<object, Readonly<{
+    membership: readonly string[] | undefined;
+    index: ReadonlyArray<SessionListIndexItem>;
+}>>();
+
+function isProjectionProvenCurrent(
+    rows: object | undefined,
+    membership: readonly string[] | undefined,
+    index: ReadonlyArray<SessionListIndexItem>,
+): boolean {
+    const proven = rows ? currentProjectionByRows.get(rows) : undefined;
+    return proven !== undefined && proven.membership === membership && proven.index === index;
 }
 
-export function doesActiveSessionListIndexProjectionNeedRepair(state: SessionListIndexFinalizationState): boolean {
+function isUserFacingRow(row: SessionListRenderableSession | undefined): boolean {
+    return row !== undefined && isUserFacingSession(row);
+}
+
+export type SessionListProjectionRepairBaseline = Readonly<{
+    /** The state the publication started from. */
+    state: SessionListIndexFinalizationState;
+    /** Every Session whose list row may differ between `state` and the checked state. */
+    changedSessionIds: Iterable<string>;
+}>;
+
+export function doesActiveSessionListProjectionNeedRepair(
+    state: SessionListIndexFinalizationState,
+    baseline?: SessionListProjectionRepairBaseline,
+): boolean {
+    return doesActiveSessionListIndexProjectionNeedRepair(state, baseline);
+}
+
+/**
+ * Whether the active Home's index no longer covers exactly its user-facing ordinary rows. With a
+ * baseline already proven current under the same membership and index, only the named rows can
+ * move the answer; anything else (no proof, membership or index moved) is checked in full.
+ */
+export function doesActiveSessionListIndexProjectionNeedRepair(
+    state: SessionListIndexFinalizationState,
+    baseline?: SessionListProjectionRepairBaseline,
+): boolean {
     const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
     if (!activeServerId) return false;
-    return !isSessionListIndexProjectionCurrent(
-        readOrdinaryRowsForServer(state, activeServerId),
-        state.sessionListIndexByServerId?.[activeServerId],
-    );
+    const index = state.sessionListIndexByServerId?.[activeServerId];
+    if (!Array.isArray(index)) return true;
+    const rows = state.sessionListRowsByServerId?.[activeServerId];
+    const membership = state.ordinarySessionListMembershipByServerId?.[activeServerId];
+    if (isProjectionProvenCurrent(rows, membership, index)) return false;
+    const previousRows = baseline?.state.sessionListRowsByServerId?.[activeServerId];
+    if (
+        rows
+        && baseline
+        && baseline.state.ordinarySessionListMembershipByServerId?.[activeServerId] === membership
+        && baseline.state.sessionListIndexByServerId?.[activeServerId] === index
+        && isProjectionProvenCurrent(previousRows, membership, index)
+    ) {
+        for (const sessionId of baseline.changedSessionIds) {
+            if (isUserFacingRow(previousRows?.[sessionId]) === isUserFacingRow(rows[sessionId])) continue;
+            if (membership?.includes(sessionId)) return true;
+        }
+        currentProjectionByRows.set(rows, { membership, index });
+        return false;
+    }
+    const current = isSessionListIndexProjectionCurrent(readOrdinarySessionListRowsForServer(state, activeServerId), index);
+    if (current && rows) currentProjectionByRows.set(rows, { membership, index });
+    return !current;
 }
 
 export function buildNextSessionListRenderableDelta(input: Readonly<{
@@ -175,11 +260,13 @@ export function finalizeSessionListIndexUpdate<S extends SessionListIndexFinaliz
     renderableDelta?: SessionListRenderableDeltaPublication,
 ): S {
     const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
-    const activeServerRenderables = activeServerId ? readOrdinaryRowsForServer(nextStateBase, activeServerId) : {};
     const previousIndexByServerId = nextStateBase.sessionListIndexByServerId ?? state.sessionListIndexByServerId ?? {};
     const previousActiveIndex = activeServerId ? previousIndexByServerId[activeServerId] ?? null : null;
     const extraFields = telemetry?.fields?.() ?? {};
     const settings = nextStateBase.settings ?? {};
+    // Only a rebuild reads the whole ordinary list; a row-level publication keeps the index.
+    const activeServerRenderables = needsSessionListIndexRebuild && activeServerId
+        ? readOrdinarySessionListRowsForServer(nextStateBase, activeServerId) : {};
     const nextActiveIndex = needsSessionListIndexRebuild && activeServerId
         ? measureSessionListIndexFinalizationPhase(
             telemetry?.indexRebuildEventName ?? 'sync.store.sessions.apply.indexRebuild',
@@ -230,7 +317,6 @@ export function finalizeSessionListRenderablePublication<S extends SessionListIn
     renderableDelta?: SessionListRenderableDeltaPublication,
 ): S {
     const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
-    const activeServerRenderables = activeServerId ? readOrdinaryRowsForServer(nextStateBase, activeServerId) : {};
     const extraFields = telemetry?.fields?.() ?? {};
     const nextState = {
         ...nextStateBase,
@@ -256,23 +342,24 @@ export function finalizeSessionListRenderablePublication<S extends SessionListIn
         } : {}),
     };
 
-    const previousRenderableCount = activeServerId ? Object.keys(readOrdinaryRowsForServer(state, activeServerId)).length : 0;
-    const nextRenderableCount = Object.keys(activeServerRenderables).length;
+    // Telemetry counts are read only when telemetry is on; the save decision needs only "already warm".
+    const readNextRenderableCount = () => activeServerId ? countOrdinaryRowsForServer(nextStateBase, activeServerId) : 0;
     if (didAnyImmediateWarmCacheRelevantRenderableChange) {
         if (
             warmCache?.deferImmediateSaveWhenAlreadyWarm === true
-            && previousRenderableCount > 0
+            && activeServerId
+            && hasOrdinaryRowsForServer(state, activeServerId)
             && typeof warmCache.scheduleDeferredSave === 'function'
         ) {
             const eventName = telemetry?.warmCacheEventName
                 ? `${telemetry.warmCacheEventName}.deferred`
                 : 'sync.store.sessions.apply.warmCache.deferred';
-            syncPerformanceTelemetry.count(eventName, { renderables: nextRenderableCount, ...extraFields, immediate: 1 });
+            syncPerformanceTelemetry.countLazy(eventName, () => ({ renderables: readNextRenderableCount(), ...extraFields, immediate: 1 }));
             warmCache.scheduleDeferredSave(nextState as S);
         } else {
             measureSessionListIndexFinalizationPhase(
                 telemetry?.warmCacheEventName ?? 'sync.store.sessions.apply.warmCache',
-                () => ({ renderables: nextRenderableCount, ...extraFields }),
+                () => ({ renderables: readNextRenderableCount(), ...extraFields }),
                 () => (warmCache?.saveImmediately ?? saveWarmSessionCacheForState)(nextState),
             );
         }
@@ -280,7 +367,7 @@ export function finalizeSessionListRenderablePublication<S extends SessionListIn
         const eventName = telemetry?.warmCacheEventName
             ? `${telemetry.warmCacheEventName}.deferred`
             : 'sync.store.sessions.apply.warmCache.deferred';
-        syncPerformanceTelemetry.count(eventName, { renderables: nextRenderableCount, ...extraFields });
+        syncPerformanceTelemetry.countLazy(eventName, () => ({ renderables: readNextRenderableCount(), ...extraFields }));
         warmCache.scheduleDeferredSave(nextState as S);
     }
     return nextState as S;
