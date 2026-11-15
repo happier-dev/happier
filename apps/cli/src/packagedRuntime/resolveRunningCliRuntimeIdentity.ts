@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -81,9 +82,14 @@ export function resolveRunningCliRuntimeIdentity(
   const normalizedModulePath = modulePath.replaceAll('\\', '/');
   const sourceIndex = normalizedModulePath.lastIndexOf(sourceMarker);
   if (sourceIndex >= 0) {
+    // A source runtime is entered through `src/index.mjs` when one exists: a Stack source
+    // bundle emits it, and a Stack source tree writes it as the launcher that registers the
+    // source runtime and imports `src/index.ts`. Both select that path as the daemon entry.
+    // Only a bare checkout run through tsx enters `src/index.ts` directly.
+    const sourceDir = join(normalizedModulePath.slice(0, sourceIndex), 'src');
+    const launcher = join(sourceDir, 'index.mjs');
     return {
-      entrypoint: join(normalizedModulePath.slice(0, sourceIndex), 'src',
-        normalizedModulePath.endsWith('.mjs') || normalizedModulePath.endsWith('.js') ? 'index.mjs' : 'index.ts'),
+      entrypoint: existsSync(launcher) ? launcher : join(sourceDir, 'index.ts'),
       tree: 'source',
       builtAt: null,
       manifestVerified: false,

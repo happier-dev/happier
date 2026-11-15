@@ -76,6 +76,25 @@ describe('resolveRunningCliRuntimeIdentity', () => {
     });
   });
 
+  it('reports the source launcher a Stack tree selected, and only that tree\'s launcher', () => {
+    // A Stack source tree launches `src/index.mjs`, which registers the source runtime and
+    // imports `src/index.ts`; the Stack selects that launcher as the daemon entry.
+    const createTree = () => {
+      const cliSrc = join(createRoot(), 'apps', 'cli', 'src');
+      mkdirSync(join(cliSrc, 'packagedRuntime'), { recursive: true });
+      writeFileSync(join(cliSrc, 'index.mjs'), 'await import("./index.ts");\n');
+      writeFileSync(join(cliSrc, 'index.ts'), 'export {};\n');
+      return cliSrc;
+    };
+    const selectedTree = createTree();
+    const otherTree = createTree();
+    const identityOf = (cliSrc: string) =>
+      resolveRunningCliRuntimeIdentity(pathToFileURL(join(cliSrc, 'packagedRuntime', 'x.ts')).href).entrypoint;
+
+    expect(identityOf(selectedTree)).toBe(join(selectedTree, 'index.mjs'));
+    expect(identityOf(otherTree)).not.toBe(join(selectedTree, 'index.mjs'));
+  });
+
   it.each(['index.mjs', 'chunks/shared.mjs', 'index.js', 'chunks/shared.js'])('reports the emitted source entry from %s rather than an absent TypeScript entry', modulePath => {
     const root = createRoot();
     const entrypoint = join(root, 'apps', 'cli', 'src', 'index.mjs');
