@@ -1477,7 +1477,10 @@ test('inspectExistingStartLikeRuntime does not short-circuit run when only Expo-
   assert.equal(status.canShortCircuit, false);
 });
 
-test('local source restart attests an admitted replacement to the inner run owner', async (t) => {
+// A plain start of a stopped Stack that names a revision selects it like a restart
+// (the controller resolves and ships it); a bare plain start keeps recovery semantics.
+for (const [selection, prepared] of [[['--restart'], '1'], [['--rev=HEAD'], '1'], [[], null]]) {
+test(`local source start ${JSON.stringify(selection)} ${prepared ? 'attests an admitted replacement' : 'keeps recovery'} to the inner run owner`, async (t) => {
   const temp = await withTempDir();
   const storageDir = join(temp.dir, 'storage');
   const rootDir = join(temp.dir, 'repo');
@@ -1513,17 +1516,18 @@ test('local source restart attests an admitted replacement to the inner run owne
       rootDir,
       stackName,
       scriptPath: 'run.mjs',
-      args: ['--runtime=source', '--restart', '--no-dev-targets', '--no-server',
+      args: ['--runtime=source', ...selection, '--no-dev-targets', '--no-server',
         '--server-url=http://fixture.invalid', '--no-daemon', '--no-ui', '--no-browser'],
     });
     const observed = JSON.parse(await readFile(markerPath, 'utf8'));
-    assert.equal(observed.prepared, '1');
-    assert.equal(observed.args.includes('--reuse-source-runtime'), true);
+    assert.equal(observed.prepared, prepared);
+    assert.equal(observed.args.includes('--reuse-source-runtime'), Boolean(prepared));
   } finally {
     restore();
     await temp.cleanup();
   }
 });
+}
 
 test('inspectExistingStartLikeRuntime does not short-circuit run for an untrusted live server pid', async () => {
   const staleServerPort = await reserveUnusedPort();

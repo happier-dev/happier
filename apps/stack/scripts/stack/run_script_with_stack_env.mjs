@@ -55,7 +55,7 @@ import { withStackEnv } from './stack_environment.mjs';
 import { readBackgroundServicePublication } from './background_server_publication.mjs';
 import { spawnBackgroundStackRunner } from './background_runner.mjs';
 import { resolveStackRuntimeLaunchContext } from '../runtime/launch/resolveStackRuntimeLaunchContext.mjs';
-import { prepareSourceRuntimeReload } from '../runtime/launch/prepareSourceRuntimeReload.mjs';
+import { prepareSourceRuntimeReload, resolveSourceRuntimeReloadArguments } from '../runtime/launch/prepareSourceRuntimeReload.mjs';
 import { SOURCE_START_SUPERSEDED_MARKER, supersededError } from '../runtime/shared/pending_source_start.mjs';
 import { isBorrowedExpoConsumer, projectBorrowedExpoWebappEnv, resolveSourceQaUiMode } from '../runtime/shared/borrowed_expo.mjs';
 import { resolveRuntimeRemoteServiceObservation } from '../utils/tui/runtime_placement_summary.mjs';
@@ -891,9 +891,14 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
         // - Stop only stack-owned processes (runner, daemon, Expo, etc.)
         // - Never kill arbitrary port listeners
         // - Preserve previous runtime ports in memory so a true restart can reuse them
-        if (wantsRestart && !wantsJson) {
+        // A plain start of a stopped Stack that names `--rev`/`--overlay` selects that
+        // source exactly like a restart: the controller resolves it and ships its
+        // description to execution hosts, whose mirrors carry no Git objects.
+        const requestedSource = resolveSourceRuntimeReloadArguments({ args });
+        const selectsSource = wantsRestart || (!wasRunning && Boolean(requestedSource.rev || requestedSource.overlay?.length));
+        if (selectsSource && !wantsJson) {
           // Recovery explicitly selects the already-recorded source. Only an
-          // owner-requested fresh restart may capture and select current source.
+          // owner-requested fresh selection may capture and select current source.
           if (scriptPath === 'run.mjs' && !args.includes('--reuse-source-runtime') && runtimeLaunchContext.runtimeMode?.mode === 'source-snapshot'
               && env.HAPPIER_STACK_PREPARED_SOURCE_RELOAD !== '1') {
             const prepared = await prepareSourceRuntimeReload({ stackName, stackBaseDir: baseDir,
@@ -908,6 +913,8 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
               ...(prepared.ui ? [`--source-ui-dir=${prepared.ui.uiDir}`] : [])];
             env.HAPPIER_STACK_PREPARED_SOURCE_RELOAD = '1';
           }
+        }
+        if (wantsRestart && !wantsJson) {
           if (isTrueRestart) {
             // A failed preflight must escape before either retirement path or
             // replacement publication can touch the incumbent lifecycle.

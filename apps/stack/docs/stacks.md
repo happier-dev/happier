@@ -209,6 +209,11 @@ hstack stack start exp1 --runtime=source --restart --verify --rev=HEAD      # ex
 hstack stack start exp1 --runtime=source --restart --verify --overlay=apps/cli/src/foo.ts,packages/protocol/src/bar
 ```
 
+A plain `stack start` of a stopped Stack that names `--rev` or `--overlay`
+selects that source the same way, including the controller's revision
+description for execution hosts. A bare plain start keeps recovery semantics and
+reuses the recorded source.
+
 `--rev` takes any commit. `--overlay` (or `hstack stack env set
 HAPPIER_STACK_SOURCE_OVERLAY=<paths>`) takes repository-relative files or
 directories; they are layered on HEAD (or `--rev`), and only those paths keep
