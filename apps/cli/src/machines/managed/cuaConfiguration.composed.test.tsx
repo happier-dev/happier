@@ -5,7 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, onTestFailed, vi } from 'v
 import { Dimensions } from 'react-native';
 import { installApprovalCommonModuleMocks } from '../../../../ui/sources/components/approvals/approvalsTestHelpers';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, loadScopedHomeActionExecutorForTests, waitForHomeGovernance } from '../../../../ui/sources/dev/testkit/harness/homeGovernanceHarness';
-import { createMachineFixture } from '../../../../ui/sources/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture } from '../../../../ui/sources/dev/testkit/fixtures/machineFixtures';
+import { createManagedControllerMachineFixture } from '../../../../ui/sources/dev/testkit/fixtures/machineProvisionerFixtures';
+import { answerExternalActionAccountForHome } from '../../../../ui/sources/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { publishMachineInventoryForTest } from '../../../../ui/sources/dev/testkit/harness/machinePresence';
 import { renderScreen, standardCleanup } from '../../../../ui/sources/dev/testkit';
 import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '../../../../ui/sources/dev/testkit/fixtures/pluginProviderDaemonProjection';
@@ -23,6 +25,11 @@ import { ByocOptionsQueryV1Schema } from '../../../../../packages/plugins/machin
 import { MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { MachineProvisionersListResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { MachinePresetActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
+import { ManagedMachineActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, ConnectedAccountCatalogRowReadResponseV1Schema,
+    emptyConnectedAccountCatalogRecordV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import type { PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 
 const boundary = vi.hoisted(() => ({ rpc: vi.fn() }));
@@ -82,7 +89,7 @@ describe('fresh Cua declarations through the mounted shared configurator', () =>
         { id: 'byoc', fields: [], savedCloud: 'modal' },
         { id: 'byoc', fields: [], savedCloud: 'aws' },
         { id: 'byoc', fields: [], savedCloud: 'gcp' },
-    ])('produces a strict complete $id launch ($savedCloud) with Create and Save enabled', async ({ id, fields, savedCloud }) => {
+    ])('produces a strict complete $id launch ($savedCloud, $fields) with Create and Save enabled', async ({ id, fields, savedCloud }) => {
         let phase = 'discovering declared fields';
         let editedFields: Readonly<Record<string, unknown>> = {};
         onTestFailed(() => console.error('Cua configuration failed', { id, savedCloud, phase,
@@ -91,12 +98,19 @@ describe('fresh Cua declarations through the mounted shared configurator', () =>
         if (!descriptor) throw new Error('Missing actual Cua descriptor');
         const declaration = CUA_PLUGIN.manifest.contributes.actions?.find(value => value.id === descriptor.actions.options);
         if (!declaration?.inputSchema || !declaration.inputHints) throw new Error('Missing actual Cua options form');
-        const controller = { machineId: 'host', installationId: 'installation' };
+        const machine = createHydratedPlainMachineFixture({ id: 'host', accountId: 'owner',
+            machine: createManagedControllerMachineFixture({ id: 'host', activeAt: Date.now() }) });
+        const controller = { machineId: machine.id, installationId: machine.installationId! };
         const contribution = { pluginId: CUA_PLUGIN.manifest.id, localId: id };
         const serverId = await home.addHome({ name: 'Cua', serverUrl: `https://${id}.example`, serverIdentityId: `srv_${id}`, accountId: 'owner', currentAccount: true });
-        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
-            createMachineFixture({ id: 'host', installationId: 'installation' }),
-        ]);
+        for (const key of ['configurations', 'purposes'] as const) home.answer(serverId, `${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/${key}`, {
+            body: ConnectedAccountCatalogRowReadResponseV1Schema.parse({ status: 'present', revision: 1,
+                content: { t: 'plain', v: emptyConnectedAccountCatalogRecordV1(key) } }),
+        });
+        home.answer(serverId, '/v1/machines/presets/list', {
+            body: MachinePresetActionOutputSchemasV1['machines.presets.list'].parse({ kind: 'listed', presets: [] }),
+        });
+        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [machine]);
         const projected = PluginProjectedActionV2Schema.parse({ id: declaration.id, pluginId: contribution.pluginId, occurrenceId: id,
             title: declaration.title, scopes: declaration.scopes, surfaces: declaration.surfaces, execution: declaration.execution,
             dangerLevel: declaration.dangerLevel, inputHints: declaration.inputHints, available: true });
@@ -110,11 +124,12 @@ describe('fresh Cua declarations through the mounted shared configurator', () =>
         const acquire = CUA_PLUGIN.manifest.contributes.actions?.find(value => value.id === descriptor.actions.acquire);
         const catalog = MachineProvisionersListResultV1Schema.parse({ controller, provisioners: [{ contribution, occurrenceId: id,
             acquireExecutionTarget: acquire?.execution.target, descriptor, credentialPurposes: [] }] });
-        for (const [actionId, result] of [['machines.provisioners.list', catalog],
-            ['machines.provisioners.check', { available: true }]] as const) home.answer(serverId, `/v1/actions/${actionId}`, { select(value) {
+        home.answer(serverId, '/v1/actions/machines.provisioners.list', { select(value) {
             const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
-            return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
+            return { body: { v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId, execution: { ok: true, result: catalog } } };
         } });
+        await answerExternalActionAccountForHome(home, serverId, { actionId: 'machines.provisioners.check',
+            ...controller, tokenEpoch: 0, execute: () => ({ available: true }) });
         if (savedCloud) {
             const savedOptions = await nativeOptions(id, { cloud: savedCloud });
             const selection = Object.fromEntries(Object.entries(savedOptions.dimensions).flatMap(([dimension, entries]) =>
@@ -122,21 +137,22 @@ describe('fresh Cua declarations through the mounted shared configurator', () =>
             const selected = projectMachineProvisionerSelectionV1({ options: savedOptions, selection, launchSchema: descriptor.launchSchema });
             if (selected.kind !== 'ready') throw new Error('Native BYOC setup must qualify the saved launch');
             const savedLaunch = selected.launch;
-            const saved = ManagedMachinePresetV1Schema.parse({ id: 'saved-byoc', homeId: `srv_${id}`, revision: 1, name: 'Saved BYOC',
-                owner: { kind: 'account', accountId: 'owner' }, controller,
-                launch: { provider: contribution, schemaVersion: descriptor.schemaVersion, name: 'Saved BYOC', choices: savedLaunch },
+            const sealed = sealManagedMachinePresetContentV1({ mode: 'plain', presetId: 'saved-byoc', content: { v: 1, name: 'Saved BYOC',
+                launch: { provider: contribution, schemaVersion: descriptor.schemaVersion, name: 'Saved BYOC', choices: savedLaunch } } });
+            const saved = ManagedMachinePresetV1Schema.parse({ id: 'saved-byoc', homeId: `srv_${id}`, revision: 1,
+                owner: { kind: 'account', accountId: 'owner' }, controller, contentEncryptionMode: 'plain', ...sealed,
                 retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true });
             home.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: saved } });
         }
         let options: ReturnType<typeof MachineProvisionerOptionsResultV1Schema.parse> | undefined;
-        home.answer(serverId, '/v1/actions/machines.provisioners.options', { async select(value) {
-            const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
-            const input = request.input as { selectors: unknown };
+        await answerExternalActionAccountForHome(home, serverId, { actionId: 'machines.provisioners.options',
+            ...controller, tokenEpoch: 0, async execute(value) {
+            const input = ManagedMachineActionInputSchemasV1['machines.provisioners.options'].parse(value);
             const validate = await compilePluginJsonSchema(declaration.inputSchema);
             const result = validate(input.selectors) ? MachineProvisionerOptionsResultV1Schema.parse(await nativeOptions(id, input.selectors))
                 : { dimensions: { size: [], image: [], location: [], network: [], duration: [] } };
             options = result;
-            return { body: { v: 1, actionId: 'machines.provisioners.options', requestId: request.requestId, execution: { ok: true, result } } };
+            return result;
         } });
         phase = 'mounting shared configurator';
         const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId} provisioner={buildQualifiedPluginContributionKey(contribution)} initialController={controller}
