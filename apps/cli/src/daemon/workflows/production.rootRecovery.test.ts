@@ -27,17 +27,18 @@ const encryption = { witness: { mode: 'plain' as const, version: 1, contentKeyFi
   runCrypto: { mode: 'plain' as const } };
 
 async function interruptedRoot(lifecycle: 'pending' | 'running' | 'needs_attention', claimOrigin: 'direct' | 'automation' = 'direct',
-  condition: 'onlyWhen' | 'runWhen' = 'onlyWhen') {
+  condition: 'onlyWhen' | 'runWhen' = 'onlyWhen', authoredDefinition?: unknown,
+  executionTarget: 'session' | 'detached_run' = 'detached_run') {
   const origin = claimOrigin === 'direct' ? { kind: 'direct' as const }
     : { kind: 'automation' as const, automationId: 'automation-1' };
-  const definition = WorkflowDefinitionV1Schema.parse({ version: 1, inputs: [], blocks: [
+  const definition = WorkflowDefinitionV1Schema.parse(authoredDefinition ?? { version: 1, inputs: [], blocks: [
     { kind: 'wait', id: 'check', document: { text: 'Review if needed', references: [], attachments: [] },
       ...(condition === 'runWhen' ? { runWhen: 'failure' } : {
         onlyWhen: { kind: 'compare', operator: 'eq', left: { kind: 'literal', value: true },
           right: { kind: 'literal', value: false } } }) },
   ] });
   const accepted = await materializeWorkflowAcceptedSnapshotV1({ definition,
-    context: { source: origin.kind === 'direct' ? { kind: 'inline' } : origin, inputs: {}, machineId, executionTarget: { kind: 'detached_run' },
+    context: { source: origin.kind === 'direct' ? { kind: 'inline' } : origin, inputs: {}, machineId, executionTarget: { kind: executionTarget },
       workspaceTarget: { project: { machineId, directory: '/repo', checkoutRootPath: '/repo' } },
       ...(origin.kind === 'direct' ? { origin } : {}), authorization: { principal: { kind: 'host' } } },
     admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true } });
@@ -146,6 +147,66 @@ function heartbeatHttpFailure(status?: number) {
 }
 
 describe('Workflow root recovery', () => {
+  it.each([true, false])('recovers an interrupted parallel comparison without replaying completed candidates (all completed: %s)', async allCompleted => {
+    const branches = ['first', 'second', 'third'].map(id => ({ id, blocks: [{ kind: 'step', id: `implement-${id}`,
+      document: { text: 'Implement independently', references: [], attachments: [] }, input: [], result: { kind: 'text' } }] }));
+    const h = await interruptedRoot('running', 'direct', 'onlyWhen', { version: 1, inputs: [], defaults: {
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } } },
+      blocks: [{ kind: 'parallel', id: 'implementations', failurePolicy: 'collect_outcomes', branches },
+        { kind: 'wait', id: 'compare', document: { text: 'Compare the completed candidates', references: [], attachments: [] },
+          onlyWhen: { kind: 'all', conditions: branches.map((branch, index) => ({ kind: 'compare', operator: 'eq',
+            left: { kind: 'result', producer: { blockId: 'implementations', scope: { kind: 'current' } },
+              path: [index, 'results', `implement-${branch.id}`] },
+            right: { kind: 'literal', value: `candidate output ${branch.id}` } })) } }] }, 'session');
+    const parentKey = workflowInvocationKey({ runId, blockId: 'implementations', scope: [], attempt: 0 });
+    await h.store.ensureIntent({ key: parentKey, recordId: 'implementations', runId, blockId: 'implementations',
+      blockKind: 'parallel', parentKey: h.rootKey, memberOrdinal: '0', path: { blockId: 'implementations', scope: [] },
+      attempt: 0, acceptedAtMs: 1, lifecycle: 'needs_attention', reason: 'result_read_failed',
+      container: { kind: 'parallel', nextBranchOrdinal: '3' } });
+    await h.store.commitFact({ key: parentKey, lifecycle: 'needs_attention', reason: 'result_read_failed' });
+    const candidateIds: string[] = [];
+    for (const [index, branch] of branches.entries()) {
+      const scope = [{ kind: 'branch' as const, blockId: 'implementations', branchId: branch.id }];
+      const frameKey = workflowInvocationKey({ runId, blockId: 'implementations', scope, attempt: 0 });
+      await h.store.ensureIntent({ key: frameKey, recordId: `frame-${branch.id}`, runId, blockId: 'implementations',
+        blockKind: 'parallel', parentKey, memberOrdinal: String(index), path: { blockId: 'implementations', scope },
+        attempt: 0, acceptedAtMs: 2 + index, lifecycle: index === 1 ? 'completed' : 'needs_attention',
+        ...(index === 1 ? { containerResult: { kind: 'container' as const, containerRecordId: `frame-${branch.id}` } }
+          : { reason: 'result_read_failed' }),
+        frame: { ownerBlockId: 'implementations', source: { kind: 'branch', branchId: branch.id } },
+        container: { kind: 'body', nextBlockOrdinal: index === 1 ? '1' : '0' } });
+      if (index !== 1) await h.store.commitFact({ key: frameKey, lifecycle: 'needs_attention', reason: 'result_read_failed' });
+      const blockId = `implement-${branch.id}`;
+      const recordId = `candidate-${branch.id}`;
+      candidateIds.push(recordId);
+      const key = workflowInvocationKey({ runId, blockId, scope, attempt: 0 });
+      await h.store.ensureIntent({ key, recordId,
+        runId, blockId, blockKind: 'step', parentKey: frameKey, memberOrdinal: '0', path: { blockId, scope },
+        attempt: 0, acceptedAtMs: 5 + index, lifecycle: 'pending',
+        execution: { kind: 'session', sessionId: `session-${branch.id}`, localInputId: `input-${branch.id}` } });
+      await h.store.commitFact({ key, lifecycle: allCompleted || index < 2 ? 'completed' : 'waiting_for_review',
+        ...(allCompleted || index < 2 ? { result: `candidate output ${branch.id}` } : {}) });
+    }
+    await h.storage.execute({ operation: 'transition', runId, parentAttempt: 0, accountCurrentness: encryption.witness,
+      expectedRevision: h.storage.run().revision, state: 'interrupted', checkpointEnvelope: h.storage.checkpointEnvelope()! });
+    const candidateBytes = candidateIds.map(id => structuredClone(h.storage.rowById(id)));
+    const detail = WorkflowActionOutputSchemasV1['workflow.run.invocations.get'].parse(await h.reader.execute({
+      actionId: 'workflow.run.invocations.get', input: { runId, invocationId: 'implementations' }, context: {} }));
+    expect(detail.invocation.recoveryAvailability?.retry).toEqual({ kind: 'available', causalInvocationIds: ['implementations'] });
+    const recovered = WorkflowActionOutputSchemasV1['workflow.run.invocations.retry'].parse(await h.reader.execute({
+      actionId: 'workflow.run.invocations.retry', input: { runId, expectedRevision: h.storage.run().revision,
+        invocation: { recordId: 'implementations' }, causalInvocationIds: ['implementations'], conversation: 'fresh_agent',
+        input: { kind: 'original' } }, context: { authority: 'present_user', callerPermissionMode: 'yolo' } }));
+    expect(recovered.disposition).toBe('accepted');
+    const outcome = await recoveredCoordinator(h.storage)({ runId, attempt: 1, expectedRevision: h.storage.run().revision,
+      acceptedEnvelope: h.acceptedEnvelope, accountCurrentness: encryption.witness });
+    expect(outcome, JSON.stringify(outcome)).toMatchObject({ state: 'waiting_for_review' });
+    expect(h.storage.rows().find(row => row.index.parentRecordId === rootId && row.index.memberOrdinal === '1')?.index.lifecycle)
+      .toBe(allCompleted ? 'waiting_for_review' : undefined);
+    expect(candidateIds.map(id => h.storage.rowById(id))).toEqual(candidateBytes);
+    expect(h.storage.rows().filter(row => candidateIds.includes(row.index.id))).toHaveLength(3);
+  });
+
   it.each(['onlyWhen', 'runWhen'] as const)('preserves a false %s after storage loses the skip fact', async condition => {
     const h = await interruptedRoot('pending', 'direct', condition);
     const failure = new Error('skip_fact_not_written');
