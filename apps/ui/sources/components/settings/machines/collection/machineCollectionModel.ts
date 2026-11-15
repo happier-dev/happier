@@ -123,15 +123,15 @@ export type MachineCollection = Readonly<{
 }>;
 
 /**
- * Long rails fold offline rows within each ownership/Home section; short rails keep them inline. A row whose name
+ * Collection surfaces fold offline rows within each ownership/Home section; short rails keep them inline. A row whose name
  * is still being read already knows its presence, so its reserved slot sits in its final group and never moves.
  */
-export function partitionMachineCollectionRailRows(rows: readonly MachineCollectionRow[], foldOffline: boolean): Readonly<{
-    inline: readonly MachineCollectionRow[];
-    offline: readonly MachineCollectionRow[];
+export function partitionMachineCollectionRailRows<Row extends MachineCollectionRow>(rows: readonly Row[], foldOffline: boolean): Readonly<{
+    inline: readonly Row[];
+    offline: readonly Row[];
 }> {
     if (!foldOffline) return { inline: rows, offline: [] };
-    const { offline } = partitionMachineFleetPresence(rows, row => row.fleetPresence);
+    const { offline } = partitionMachineFleetPresence(rows, row => row.presenceSource?.managedPresence?.offline ? null : row.fleetPresence);
     if (offline.length === 0) return { inline: rows, offline: [] };
     const folded = new Set(offline);
     return { inline: rows.filter(row => !folded.has(row)), offline };
@@ -181,8 +181,8 @@ export function buildMachineCollection(input: Readonly<{
             .filter(machine => isManagedMachineListArchived(machine) || !machine.enrolledMachineId || !enrolledIds.has(machine.enrolledMachineId));
         const names = resolveMachineDisplayNameParts([
             ...group.machines.filter(machine => !endedMachineIds.has(machine.id)).map(machine => ({ ...machine,
-                managedName: managedByMachineId.get(machine.id)?.launch.name })),
-            ...managedMachines.map(machine => ({ id: machine.id, managedName: machine.launch.name })),
+                managedName: managedByMachineId.get(machine.id)?.launch?.name })),
+            ...managedMachines.map(machine => ({ id: machine.id, managedName: machine.launch?.name })),
         ]);
         // Your machines, then the ones Happier created for you, then each Home member's shared machines (lab `R`);
         // retired created machines close the list.

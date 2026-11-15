@@ -2,7 +2,8 @@ import { isMachineVisibleForSelection } from '@/sync/domains/machines/identity/f
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedOpaquePresetMachineV1Schema, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { t } from '@/text';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -215,6 +216,19 @@ describe('buildMachineCollection', () => {
         expect(rows).toHaveLength(2);
         expect(rows[0]).toMatchObject({ kind: 'machine', machineId: 'guest', online: false, presence: t('managedPower.asleep') });
         expect(rows[1]?.presence).not.toBe(t('managedPower.asleep'));
+        expect(partitionMachineCollectionRailRows(rows, true).offline.map(row => row.serverId)).toEqual(['b']);
+        expect(partitionMachineCollectionRailRows(rows, true).inline).toContain(rows[0]);
+    });
+    it('keeps recipient-safe native status inline without requiring the private managed inventory', () => {
+        const collection = buildMachineCollection({ groups: [group('a', [
+            machine('sleeping', { managedInputRuntime: { nativeReady: false, wakeState: null, state: 'asleep' } }),
+            machine('starting', { managedInputRuntime: { nativeReady: false, wakeState: null, state: 'starting' } }),
+            machine('offline'),
+        ])], groupedByHome: false });
+        const rows = collection.sections.flatMap(section => section.rows);
+        const partition = partitionMachineCollectionRailRows(rows, true);
+        expect(partition.offline.map(row => row.machineId)).toEqual(['offline']);
+        expect(partition.inline.map(row => row.machineId).sort()).toEqual(['sleeping', 'starting']);
     });
     it('reopens archived recovery from its retained managed id even after enrollment', () => {
         const collection = buildMachineCollection({ groups: [group('a', [machine('joined')])], groupedByHome: false,
@@ -235,6 +249,27 @@ describe('buildMachineCollection', () => {
         expect(row).toMatchObject({ kind: 'managed', managedId: 'removed', presence: t('managedPower.resourceAbsent') });
         expect(machineCollectionHref(row)).toBe('/settings/machines/managed/removed?serverId=a');
         expect(machineCollectionHref(row, 'rail')).toBe('/machines/managed/removed?serverId=a');
+    });
+    it.each([false, true])('names an opaque cleanup-pending creation without private launch data (enrollment retained: %s)', retained => {
+        const opaque = ManagedOpaquePresetMachineV1Schema.parse({
+            id: 'opaque-creation', homeId: 'home-a', custodianAccountId: 'owner',
+            preset: { id: 'sealed-preset', revision: 1, contentEncryptionMode: 'e2ee' },
+            enrolledMachineId: 'guest', allocation: 'bound', creationState: 'active',
+            desired: 'delete', desiredWhen: 'now', intentRevision: 1,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            observation: { observedAt: 20, availability: 'present', power: 'stopped' },
+            cleanup: { disposition: 'pending', reason: 'cleanup_pending' },
+        });
+        const guest = machine('guest');
+        const collection = buildMachineCollection({ groups: [group('a', retained ? [guest] : [])], groupedByHome: false,
+            managedByServerId: { a: [opaque] } });
+        const rows = collection.sections.flatMap(section => section.rows);
+        expect(rows).toHaveLength(1);
+        const name = getMachineDisplayName(retained ? guest : { id: opaque.id });
+        expect(rows[0]).toMatchObject({ ...(retained ? { kind: 'machine', machineId: guest.id } : { kind: 'managed', managedId: opaque.id }), title: name,
+            titleParts: { name, hint: null } });
+        expect(machineCollectionHref(rows[0]!)).toBe(retained ? '/settings/machines/guest?serverId=a'
+            : '/settings/machines/managed/opaque-creation?serverId=a');
     });
     it('moves ended created machines into Archive, but keeps one whose cleanup is still open in the live list', () => {
         const collection = buildMachineCollection({ groups: [group('a', [])], groupedByHome: false,

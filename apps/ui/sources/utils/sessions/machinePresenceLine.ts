@@ -34,7 +34,7 @@ export function projectMachineManagedPresence(
     const read = (online: boolean): ManagedPresenceOverride | null => {
         const status = resolveManagedMachineWorkStatus({ online, managedMachine, machineId: machine.id, revokedAt: machine.revokedAt,
             nativeState: machine.managedInputRuntime?.state,
-            machineName: getMachineDisplayName({ ...machine, managedName: managedMachine?.launch.name }) });
+            machineName: getMachineDisplayName({ ...machine, managedName: managedMachine?.launch?.name }) });
         return status ? { state: status.state, word: status.word } : null;
     };
     const online = read(true);
@@ -43,7 +43,12 @@ export function projectMachineManagedPresence(
 }
 
 /** One presentation of the selected presence and native lifecycle facts, with its one recovery. */
-export type MachineRuntimePresence = MachinePresenceLine & Readonly<{ nextAction: 'retry' | null; showStatus: boolean }>;
+export type MachineRuntimePresence = MachinePresenceLine & Readonly<{
+    nextAction: 'retry' | null;
+    showStatus: boolean;
+    /** The selected native lifecycle word, independent of daemon connectivity. */
+    nativeWord?: string | null;
+}>;
 
 function presentMachinePresence(input: Readonly<{
     reachability: 'reachable' | 'unreachable' | 'unknown';
@@ -63,6 +68,7 @@ function presentMachinePresence(input: Readonly<{
         online: online && !resourceAbsent,
         status: resourceAbsent ? 'offline' : input.reachability === 'unknown' ? 'unknown' : online ? 'online' : 'offline',
         label: presentation.word,
+        nativeWord: input.managed?.word ?? null,
         nextAction: !input.managed && input.reachability === 'unreachable' ? 'retry' : null,
         showStatus: Boolean(input.managed) || input.reachability === 'unreachable',
     };
@@ -87,8 +93,8 @@ export function describeMachineRuntimePresence(
     connection?: 'reachable' | 'unreachable' | 'unknown',
 ): MachineRuntimePresence {
     if (machine.id && getDemoMachineRead({ serverId: scope?.serverId ?? getDemoModeServerId(), machineId: machine.id }))
-        return { online: true, status: 'online', label: t('settingsOverview.machineOnline'), nextAction: null, showStatus: false };
-    if (machine.presence === null) return { online: false, status: 'unknown', label: '', nextAction: null, showStatus: false };
+        return { online: true, status: 'online', label: t('settingsOverview.machineOnline'), nextAction: null, showStatus: false, nativeWord: null };
+    if (machine.presence === null) return { online: false, status: 'unknown', label: '', nextAction: null, showStatus: false, nativeWord: null };
     const activity = readMachineActivity(machine);
     // Keep the admitted row identity so the activity owner's unanswered presence is preserved.
     const reachability = connection ?? (machine.id
