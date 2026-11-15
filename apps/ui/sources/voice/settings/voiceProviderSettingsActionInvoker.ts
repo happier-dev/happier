@@ -13,6 +13,7 @@ import { resolveVoiceProviderIdForSettingsAction } from '@/voice/settings/resolv
 import { areAccountSettingsScopesEqual, type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { t } from '@/text';
 import { acquireVoiceProviderRuntimeDemand } from '@/voice/session/voiceProviderRuntimeDemand';
+import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 export type VoiceProviderSettingsActionOwner = Readonly<{
   schemaVersion: number;
@@ -38,6 +39,7 @@ function actionError(code: string): Error {
 export type SafeSettingsActionFailureDiagnostic = Readonly<{
   code?: string;
   stage?: string;
+  failureCause?: ActionFailureCauseV1;
   responseFailure?: Readonly<{ kind: string; status: number; statusClass: string; validation?: readonly ProviderValidationIssue[] }>;
 }>;
 const SAFE_RESPONSE_FAILURE_KINDS = new Set([
@@ -61,7 +63,13 @@ export function projectSafeSettingsActionFailure(error: unknown): SafeSettingsAc
     responseFailure = { kind: raw.kind, status: raw.status, statusClass: raw.statusClass,
       ...(validation.length ? { validation } : {}) };
   }
-  return { ...(code ? { code } : {}), ...(stage ? { stage } : {}), ...(responseFailure ? { responseFailure } : {}) };
+  // Code-only host lifecycle refusals are already complete. Provider steps and
+  // unclassified exceptions retain the canonical content-free cause as well.
+  const failureCause = 'failureCause' in error || !code || code === 'internal_error' || stage || responseFailure
+    ? projectActionFailureCauseV1(error, stage ? `voice.settings.${stage}` : 'voice.settings.execute',
+      { allowUnknownErrorCode: code !== null }) : undefined;
+  return { ...(code ? { code } : {}), ...(stage ? { stage } : {}), ...(responseFailure ? { responseFailure } : {}),
+    ...(failureCause ? { failureCause: { ...failureCause, httpStatus: failureCause.httpStatus ?? responseFailure?.status ?? null } } : {}) };
 }
 
 const SAFE_SETTINGS_ACTION_ERROR_CODES = new Set([

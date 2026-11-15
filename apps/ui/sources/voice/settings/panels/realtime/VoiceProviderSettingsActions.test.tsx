@@ -328,7 +328,7 @@ describe('VoiceProviderSettingsActions', () => {
   });
 
   it('does not expose plugin-supplied failure text through an operation result', async () => {
-    provider.fetch.mockRejectedValueOnce({ code: 'private_provider_payload', message: 'private_provider_payload' });
+    provider.fetch.mockRejectedValueOnce(Object.assign(new TypeError('private_provider_payload'), { code: 'private_provider_payload' }));
     const { invokeVoiceProviderSettingsAction } = await import('@/voice/settings/voiceProviderSettingsActionInvoker');
     let pending!: ReturnType<typeof invokeVoiceProviderSettingsAction>;
     await act(async () => { pending = invokeVoiceProviderSettingsAction({ providerId: PROVIDER_ID, owner, declaration: action }); });
@@ -336,7 +336,27 @@ describe('VoiceProviderSettingsActions', () => {
     await act(async () => humanConfirmations[0]!());
     const result = await pending;
     expect(result).toMatchObject({ status: 'unavailable', reason: 'internal_error' });
+    expect(result).toMatchObject({ value: { failureCause: {
+      phase: 'voice.settings.list_agents', errorClass: 'TypeError', errorCode: null, httpStatus: null,
+    } } });
     expect(JSON.stringify(result)).not.toContain('private_provider_payload');
+    expect(state.mutationApplied).toBe(false);
+  });
+
+  it('shows a safe native cause for a failed create press without exposing vendor prose', async () => {
+    provider.fetch.mockRejectedValueOnce(new TypeError('private vendor prompt'));
+    const { VoiceProviderSettingsActions } = await import('./VoiceProviderSettingsActions');
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => { tree = await mountActionView(<VoiceProviderSettingsActions providerId={PROVIDER_ID}
+      owner={owner} actions={[action]} placement={{ kind: 'afterField', fieldId: 'agentId' }} />); });
+    await act(async () => { tree.root.findByProps({ testID: 'voice-settings-action-create-agent' }).props.onPress(); });
+    await waitForConfirmation(1);
+    await act(async () => { humanConfirmations[0]!(); await settleMountedOperation(); });
+    const surfaced = JSON.stringify([nativeAlert.mock.calls, log.getLogs()]);
+    expect(surfaced).toContain('voice.settings.list_agents');
+    expect(surfaced).toContain('TypeError');
+    expect(surfaced).not.toContain('private vendor prompt');
+    expect(nativeAlert.mock.calls.map(call => call[1])).toContainEqual(expect.stringContaining('voice.settings.list_agents'));
     expect(state.mutationApplied).toBe(false);
   });
 
@@ -710,16 +730,13 @@ describe('VoiceProviderSettingsActions', () => {
       '[VoiceProviderSettingsActions] settings action failed ' + JSON.stringify({ actionId: 'create-agent', code: 'provider_response_invalid', stage: 'create_agent', responseFailure: {
         kind: 'http_status', status: 422, statusClass: '4xx',
         ...(validation ? { validation: [{ path: 'body.tool_config.parameters.additionalProperties', code: 'extra_forbidden' }] } : {}),
-      } }),
+      }, failureCause: { phase: 'voice.settings.create_agent', errorClass: 'Error', errorCode: 'provider_response_invalid', httpStatus: 422 } }),
     );
     // The press is still actionable: the alert names the failing step and the
     // provider status without repeating a single character of provider prose.
     expect(nativeAlert.mock.calls.map(call => call.slice(0, 2))).toContainEqual([
       t('common.error'),
-      t('settingsVoice.realtimeProviders.operationFailedUnsaved')
-        + '\n\n' + (validation ? 'body.tool_config.parameters.additionalProperties: extra_forbidden\n' : '')
-        + t('settingsVoice.realtimeProviders.operationFailedStage', { stage: 'create_agent' })
-        + '\n' + t('settingsVoice.realtimeProviders.operationFailedStatus', { status: 422 }),
+      expect.stringMatching(/voice\.settings\.create_agent[\s\S]*422/),
     ]);
     const surfaced = JSON.stringify([log.getLogs(), nativeAlert.mock.calls]);
     expect(surfaced).not.toContain('HAPPIER_PROVIDER_PROSE_SENTINEL');
@@ -809,7 +826,7 @@ describe('VoiceProviderSettingsActions', () => {
     expect(log.getLogs()).toContain(
       '[VoiceProviderSettingsActions] settings action failed'
       + ' {"actionId":"update-agent","code":"provider_response_invalid","stage":"update_agent"'
-      + ',"responseFailure":{"kind":"http_status","status":400,"statusClass":"4xx"}}',
+      + ',"responseFailure":{"kind":"http_status","status":400,"statusClass":"4xx"},"failureCause":{"phase":"voice.settings.update_agent","errorClass":"Error","errorCode":"provider_response_invalid","httpStatus":400}}',
     );
     const providerMutations = provider.fetch.mock.calls.filter(([, init]) => init?.method === 'PATCH');
     expect(providerMutations).toHaveLength(1);
@@ -819,9 +836,7 @@ describe('VoiceProviderSettingsActions', () => {
     expect(cancelBody).toHaveBeenCalledOnce();
     expect(nativeAlert.mock.calls.map(call => call.slice(0, 2))).toContainEqual([
       t('common.error'),
-      t('settingsVoice.realtimeProviders.operationFailedUnsaved')
-        + '\n\n' + t('settingsVoice.realtimeProviders.operationFailedStage', { stage: 'update_agent' })
-        + '\n' + t('settingsVoice.realtimeProviders.operationFailedStatus', { status: 400 }),
+      expect.stringMatching(/voice\.settings\.update_agent[\s\S]*400/),
     ]);
     const surfaced = JSON.stringify([log.getLogs(), nativeAlert.mock.calls]);
     expect(surfaced).not.toContain('HAPPIER_PROVIDER_PROSE_SENTINEL');
@@ -860,12 +875,11 @@ describe('VoiceProviderSettingsActions', () => {
     // user is told the selected voice is the thing to change.
     expect(nativeAlert.mock.calls.map(call => call.slice(0, 2))).toContainEqual([
       t('common.error'),
-      t('settingsVoice.realtimeProviders.operationFailedVoiceNotFound')
-        + '\n\n' + t('settingsVoice.realtimeProviders.operationFailedStage', { stage: 'validate_voice' }),
+      expect.stringContaining('voice.settings.validate_voice'),
     ]);
     expect(log.getLogs()).toContain(
       '[VoiceProviderSettingsActions] settings action failed'
-      + ' {"actionId":"create-agent","code":"voice_not_found","stage":"validate_voice"}',
+      + ' {"actionId":"create-agent","code":"voice_not_found","stage":"validate_voice","failureCause":{"phase":"voice.settings.validate_voice","errorClass":"Error","errorCode":"voice_not_found","httpStatus":null}}',
     );
     const surfaced = JSON.stringify([log.getLogs(), nativeAlert.mock.calls]);
     expect(surfaced).not.toContain('HAPPIER_PROVIDER_PROSE_SENTINEL');

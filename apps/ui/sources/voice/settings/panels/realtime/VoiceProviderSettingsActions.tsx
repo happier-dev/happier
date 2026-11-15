@@ -22,6 +22,7 @@ import { SettingsDeclarationActionOutputSchemasV1 } from '@happier-dev/protocol/
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { presentActionTurnedOffNoticeIfOff } from '@/sync/ops/actions/actionTurnedOffNotice';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 import { isPressedProviderSelected, projectSafeSettingsActionFailure, type SafeSettingsActionFailureDiagnostic, type VoiceProviderSettingsActionOwner } from '@/voice/settings/voiceProviderSettingsActionInvoker';
 export type { VoiceProviderSettingsActionOwner } from '@/voice/settings/voiceProviderSettingsActionInvoker';
@@ -48,11 +49,15 @@ function settingsActionFailureBody(
 ): string {
   const remedyKey = diagnostic.code ? ACTIONABLE_FAILURE_COPY_KEYS[diagnostic.code] : undefined;
   const facts = [
+    ...(diagnostic.failureCause
+      ? presentActionExecutionFailure({ ok: false, errorCode: diagnostic.code ?? 'internal_error',
+        failureCause: diagnostic.failureCause }).technicalDetails.map(detail => `${detail.label}: ${detail.value}`)
+      : []),
     ...(diagnostic.responseFailure?.validation?.map(issue => `${issue.path}: ${issue.code}`) ?? []),
-    ...(diagnostic.stage
+    ...(!diagnostic.failureCause && diagnostic.stage
       ? [t('settingsVoice.realtimeProviders.operationFailedStage', { stage: diagnostic.stage })]
       : []),
-    ...(diagnostic.responseFailure
+    ...(!diagnostic.failureCause && diagnostic.responseFailure
       ? [t(
         'settingsVoice.realtimeProviders.operationFailedStatus',
         { status: diagnostic.responseFailure.status },
