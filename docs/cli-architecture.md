@@ -1099,6 +1099,17 @@ the window. Changing the setting applies the native frame immediately. A failed 
 applied runtime mode and exposes the persistence failure in settings so another change can retry.
 This is unreleased development behavior; compatibility with ActualTitleButtons has not been tested.
 
+On Windows and Linux, `window_frame.rs` owns the main window's remembered physical position,
+inner size and maximized state in `window-state/main-window-frame.json`. One app-lifetime tracker
+survives tray-driven window recreation, debounces changes and flushes pending state on destruction,
+actual app exit and Windows updater installation. Failed writes remain pending for the next flush.
+Controls and persistence share the chrome owner's native presentation-state read; Linux uses
+current GDK flags so stale GTK/Tao flags cannot classify maximized geometry as normal.
+Minimized and fullscreen geometry does not replace the last normal frame. Restoration rejects
+frames without reachable title-bar space on a connected monitor; Linux Wayland does not support
+restoring window position.
+macOS continues to use its native frame autosave. This persistence is development-only.
+
 ### What may repoint this computer's daemon
 
 Moving an already-configured background service to a different relay originates from the **direct
