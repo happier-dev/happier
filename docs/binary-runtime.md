@@ -328,6 +328,14 @@ promotion passes that install-home input to the newly delivered payload's own
 installer, independently of its private daemon home. Interpreter failures retain
 only phase, exit, response classification and safe result reason in current
 operation diagnostics, never native output or administrator input.
+
+The invoking UI's Account-native enrollment currently has no default Home-payload
+supplier. Its native guest exec/file adapters can deliver bytes, but cannot read
+the controller's local payload root; native SSH's self-download path likewise has
+no Home artifact export to consume. Both paths retain `guest_payload_missing`
+rather than selecting a public channel. Supporting them requires a Home payload
+export consumed by the same enrollment installer, including a decision about
+controllerless Account execution; no such export is provided by this contract.
 Linux ARM64 source payloads can also be built on Linux x64 when the canonical
 support producer's ARM cross-toolchain prerequisites are installed; a foreign
 launcher alone is insufficient because each target needs its native support.

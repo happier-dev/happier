@@ -8,6 +8,7 @@ import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/mana
 import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { ManagedControllerContextOutputV1Schema, ManagedControllerIntentReportV1Schema,
     projectManagedOpaquePresetAcquireResultV1, projectManagedOpaquePresetIntentResultV1,
     projectManagedOpaquePresetResizeResultV1, type ManagedAcquireInputV1, type ManagedControllerResizeReportV1,
@@ -432,7 +433,7 @@ normalizer?: UiManagedAccountMachineNormalizer) {
                     }
                     const target = await params.account.resolveHomeTarget();
                     await runUiManagedMachineEnrollment({
-                        replacePayload: action === 'machines.managed.bootstrap.retry',
+                        replacePayload: action === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1,
                         correlation: enrollment.correlation, homeCorrelation: enrollment.homeCorrelation,
                         carrier: enrollment.carrier, target,
                         channel: resolvePreferredPublicReleaseRingLabelForCurrentApp(), operationId: params.context.operationAcceptance?.operationId ?? params.requestId,

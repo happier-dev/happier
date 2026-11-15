@@ -15,12 +15,12 @@ import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/ac
 import { createAccountScopedCryptoMaterialSnapshotV1, deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
-import type { JsonValue } from '@happier-dev/protocol';
+import type { ActionExecutorContext, JsonValue } from '@happier-dev/protocol';
 import type { ActionOperationProgressV1, ManagedMachineBootstrapPromptV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { ManagedMachineFullV1, ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { DevcontainerRebuildIntentV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import type { ManagedMachineActionIdV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import type { AdmittedManagedProviderOperationExecutionRequest } from '@/plugins/runtime/invocation/actions/executeContributedAction';
@@ -628,7 +628,7 @@ async function runManagedEnrollment(params: ManagedMachineReconciliationInput, e
     let enrollmentAttempted = false;
     try {
         const enrollment = await runManagedMachineEnrollment({ correlation, homeCorrelation, target, carrier, signal: params.options.signal,
-            replacePayload: params.action === 'machines.managed.bootstrap.retry',
+            replacePayload: params.action === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1,
             onInstalled: enrollmentInput.onInstalled,
             reviewedChild: params.options.context?.hostReviewedChild,
             accountCredentials: readRequesterAccountActionContext(params.options.context?.externalActionExecutionAuthorization)?.credentials,
