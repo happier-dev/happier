@@ -9,7 +9,7 @@ installSessionFilesViewBoundaries({ renderItemLimit: 25 });
 await prepareSessionFilesViewTestkit();
 const { ProjectGitSurface } = await import('./ProjectGitSurface');
 const { ProjectPageCatalogProvider, useProjectPageCatalog } = await import('@/components/projects/navigation/useProjectPageCatalog');
-const { ProjectPhoneCheckoutRow } = await import('@/components/projects/shell/ProjectShellHeaderHost');
+const { ProjectPhoneHead } = await import('@/components/projects/shell/ProjectShellHeaderHost');
 const { WorkspaceScmReviewBody } = await import('@/components/projects/scm/WorkspaceScmReviewBody');
 const { ChangedFilesReview } = await import('@/components/workspaces/scm/review/ChangedFilesReview');
 const { DiffFilesListView } = await import('@/components/ui/code/diff/DiffFilesListView');
@@ -30,6 +30,9 @@ function SelectionFacts(props: Readonly<{ serverId: string; rootPath: string; re
         requestedWorktreeId: props.requestedWorktreeId, refreshOnMount: true });
     return React.createElement('WorktreeSelectionFacts', selection);
 }
+
+// The phone head's launchers; its Machine chip is the header's checkout read under test.
+const PHONE_HEAD_LAUNCHERS = { testIdPrefix: 'project-header', showWorktreesButton: false } as const;
 
 describe('Project Changes status demand through its page entry', () => {
     it('does not acquire status to resolve an already-known default checkout', async () => {
@@ -120,7 +123,7 @@ describe('Project Changes status demand through its page entry', () => {
             <ProjectPageCatalogProvider workspaceRef={workspaceRef} activeRootPath="/viewport"
                 scopeId="project:viewport" selection={{ kind: 'builtin', page: 'changes' }}>
             <ContextFacts />
-            <ProjectPhoneCheckoutRow workspaceRef={workspaceRef} activeRootPath="/viewport"
+            <ProjectPhoneHead launchers={PHONE_HEAD_LAUNCHERS} workspaceRef={workspaceRef} activeRootPath="/viewport"
                 selection={{ kind: 'builtin', page: 'changes' }} onSelectRootPath={noop} />
             <ProjectGitSurface scopeId="project:viewport" serverId={fixture.home.id} machineId="m1" rootPath="/viewport"
                 onOpenFile={noop} onOpenFilePinned={noop} onOpenReviewAllChanges={noop} onOpenStashDetails={noop}

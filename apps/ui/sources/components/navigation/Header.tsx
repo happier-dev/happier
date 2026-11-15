@@ -122,7 +122,7 @@ export const Header = React.memo((props: HeaderProps) => {
                         ) : title}
                     </View>
 
-                    <View pointerEvents="box-none" style={styles.rightContainer}>
+                    <View pointerEvents="box-none" style={[styles.rightContainer, title ? null : styles.rightContainerUntitled]}>
                         {headerRight && headerRight()}
                     </View>
                 </View>
@@ -389,6 +389,11 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         minWidth: 0,
         maxWidth: '60%',
         alignItems: 'flex-end',
+    },
+    // A bar whose page draws its own large title (a Project on a phone) has no title to protect: its controls
+    // (a Machine chip, ⋯) take the room Back leaves and shrink their own text past it.
+    rightContainerUntitled: {
+        maxWidth: '100%',
     },
     title: {
         ...Typography.variant('heading'),

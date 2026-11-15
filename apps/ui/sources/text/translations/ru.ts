@@ -18517,6 +18517,7 @@ settingsSession: {
     checkouts: {
         chipLabel: ({ machine, branch }: { machine: string; branch: string }) => `Checkout: ${machine} · ${branch}`,
         waiting: ({ machine }: { machine: string }) => `Ожидание ${machine}`,
+        shownWhenReachable: ({ machine }: { machine: string }) => `Появится, когда ${machine} будет доступен`,
         outOfReach: ({ machine }: { machine: string }) => `${machine} вне досягаемости`,
         lastSeen: ({ when }: { when: string }) => `Последний раз в сети ${when}.`,
         filesReturn: 'Ваши файлы появятся здесь, когда он вернётся.',

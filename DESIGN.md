@@ -674,8 +674,9 @@ live in the page-presentation owners in code.
 - **Every page has an identity.** A page header states the title and one sentence of purpose. Where
   native navigation already shows the title, the header shows only the purpose.
 - **One title rule.** Every page uses the page title. A page uses the large title in one case only:
-  on a phone, at the top level of a tab, where the navigation bar leaves the page's name to the page
-  (Home, Inbox, a plugin's top-level collection). An entity page keeps the page title because its mark
+  on a phone, where the navigation bar leaves the page's name to the page: the top level of a tab (Home,
+  Inbox, a plugin's top-level collection), or a pushed page whose bar holds only Back and the page's own
+  controls (PRs & Issues; a Project, its Machine chip and "…" on that line, owner 2026-11-15). An entity page keeps the page title because its mark
   leads. Home's greeting over its planet is Home's own moment, not a page title. A page never chooses;
   `HappierPageHeader` decides from what navigation says. The title sits
   at one height on every page, with or without header actions. On the desktop that height is the

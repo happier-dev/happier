@@ -9,14 +9,11 @@ import {
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
   HAPPIER_FOCUS_RING_DELEGATED_STYLE,
-  HAPPIER_PAGE_METRICS,
   HAPPIER_SEGMENTED_METRICS,
   happierFocusRingStyle,
-  happierPageTextMetrics,
   isHappierFocusVisible,
   useHappierMaterialColorResolver,
 } from '@happier-dev/plugin-ui/presentation';
-import { GROUPED_SURFACE_RADIUS_PX } from '@/components/ui/lists/pageListMetrics';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 import type { EntityDragScopeV1 } from '@happier-dev/protocol/plugins/ui';
 
@@ -382,17 +379,15 @@ export const ProjectShellHeader = React.memo(function ProjectShellHeader(
 
 /**
  * The checkout chip: which machine and branch the whole page follows, and the exact choices behind it.
- * `row` is the phone's full-width field under the navigation bar (lab `p-overview` HOMEp).
+ * A phone draws it on its head line (`ProjectPhoneHead`).
  */
 export const ProjectCheckoutChip = React.memo(function ProjectCheckoutChip(
   props: Readonly<{
     checkout: ProjectShellCheckout;
     compact: boolean;
-    presentation?: 'chip' | 'row';
     testID: string;
   }>,
 ) {
-  const row = props.presentation === 'row';
   const { theme } = useUnistyles();
   // The chip rests on its containing material: over glass it is the glass's field tint (owner 11-11 #11/#12);
   // hover and the open menu only add a step of ink.
@@ -406,9 +401,9 @@ export const ProjectCheckoutChip = React.memo(function ProjectCheckoutChip(
         branch,
       })
     : props.checkout.machineName;
-  // What stays whole beside the shortened name: the same-name suffix, then the row's branch separator.
+  // What stays whole beside the shortened name: the same-name suffix.
   const machineHint = props.checkout.machineNameParts.hint;
-  const machineTail = `${machineHint ? ` · ${machineHint}` : ''}${row && branch ? ' ·' : ''}`;
+  const machineTail = machineHint ? ` · ${machineHint}` : '';
   return (
     <DropdownMenu
       testID={`${props.testID}.menu`}
@@ -443,8 +438,7 @@ export const ProjectCheckoutChip = React.memo(function ProjectCheckoutChip(
             hovered?: boolean;
           }) => [
             styles.chip,
-            props.compact && !row ? styles.chipCompact : null,
-            row ? styles.row : null,
+            props.compact ? styles.chipCompact : null,
             HAPPIER_FOCUS_RING_DELEGATED_STYLE,
             {
               borderColor: theme.colors.border.default,
@@ -463,14 +457,13 @@ export const ProjectCheckoutChip = React.memo(function ProjectCheckoutChip(
             <>
               <Icon
                 name={props.checkout.machineIcon}
-                size={row ? ICON_SIZE.sm : ICON_SIZE.xs}
+                size={ICON_SIZE.xs}
                 color={theme.colors.text.secondary}
               />
               <Text
                 numberOfLines={1}
                 style={[
                   styles.chipText,
-                  row ? styles.rowText : null,
                   // Without a branch the machine is the chip's whole name.
                   {
                     color: branch
@@ -487,7 +480,6 @@ export const ProjectCheckoutChip = React.memo(function ProjectCheckoutChip(
                   style={[
                     styles.chipText,
                     styles.chipHint,
-                    row ? styles.rowText : null,
                     { color: branch ? theme.colors.text.secondary : theme.colors.text.primary },
                   ]}
                 >
@@ -496,7 +488,7 @@ export const ProjectCheckoutChip = React.memo(function ProjectCheckoutChip(
               ) : null}
             </>
           )}
-          {row || !branch ? null : (
+          {!branch ? null : (
             <Icon
               name="git-branch"
               size={ICON_SIZE.xs}
@@ -509,17 +501,15 @@ export const ProjectCheckoutChip = React.memo(function ProjectCheckoutChip(
               style={[
                 styles.chipText,
                 styles.chipBranch,
-                row ? styles.rowText : null,
                 { color: theme.colors.text.primary },
               ]}
             >
               {branch}
             </Text>
           ) : null}
-          {row ? <View style={styles.grow} /> : null}
           <Icon
             name="caret-down"
-            size={row ? ICON_SIZE.xs : 12}
+            size={12}
             color={theme.colors.text.tertiary}
           />
         </Pressable>
@@ -576,17 +566,6 @@ const styles = StyleSheet.create(() => ({
   },
   pagesRow: { flexDirection: 'row', minWidth: 0, paddingBottom: 4 },
   grow: { flex: 1 },
-  // The phone row is a field at the page control height (a finger reaches it through its own
-  // press area), the content width, a card's radius.
-  row: {
-    height: HAPPIER_PAGE_METRICS.controlHeightPx,
-    maxWidth: '100%',
-    alignSelf: 'stretch',
-    borderRadius: GROUPED_SURFACE_RADIUS_PX,
-    paddingHorizontal: 14,
-    gap: 8,
-  },
-  rowText: { ...Typography.default(), ...happierPageTextMetrics('rowTitle') },
   actions: {
     flexDirection: 'row',
     alignItems: 'center',

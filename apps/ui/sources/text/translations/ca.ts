@@ -17370,6 +17370,7 @@ La meva pregunta: `,
         checkouts: {
             chipLabel: ({ machine, branch }: { machine: string; branch: string }) => `Checkout: ${machine} · ${branch}`,
             waiting: ({ machine }: { machine: string }) => `Esperant ${machine}`,
+            shownWhenReachable: ({ machine }: { machine: string }) => `Es mostra quan ${machine} sigui accessible`,
             outOfReach: ({ machine }: { machine: string }) => `${machine} està fora d'abast`,
             lastSeen: ({ when }: { when: string }) => `Vist per última vegada ${when}.`,
             filesReturn: 'Els teus fitxers apareixeran aquí quan torni.',

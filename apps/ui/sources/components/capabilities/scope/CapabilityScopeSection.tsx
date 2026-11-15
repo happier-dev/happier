@@ -29,7 +29,7 @@ import { useLocalSetting } from '@/sync/domains/state/storage';
 import { useFoundSkillsCount } from '@/sync/domains/skills/useFoundSkills';
 import { t } from '@/text';
 import { joinList } from '@/utils/text/joinList';
-import { AnnouncedCheckoutWait } from '@/components/workspaces/reachability/checkoutReachability';
+import { AnnouncedCheckoutLine } from '@/components/workspaces/reachability/checkoutReachability';
 import { describeOfflineMachines } from '@/components/capabilities/where/whereItsOnPresentation';
 
 import {
@@ -193,7 +193,8 @@ export const ScopeSheet = React.memo(function ScopeSheet(
       {/* A read that failed while its machine is offline is not an error: the list comes when the machine runs. */}
       {list.state !== 'ready' && props.offlineMachine !== null ? (
         props.offlineMachine.announced ? (
-          <AnnouncedCheckoutWait machineName={props.offlineMachine.name} testID={`${props.testID}.offline`} />
+          // The page above already says the machine is not answering: the sheet only says what it waits for.
+          <AnnouncedCheckoutLine machineName={props.offlineMachine.name} among={false} testID={`${props.testID}.offline`} />
         ) : (
           <Item
             testID={`${props.testID}.offline`}

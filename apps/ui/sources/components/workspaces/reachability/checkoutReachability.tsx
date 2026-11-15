@@ -1,12 +1,6 @@
 import * as React from 'react';
-import { View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
 
 import { useIsWidgetFrameBody } from '@/components/widgets/frame/widgetFrameBody';
-import { useWidgetFrameBodyMeta } from '@/components/widgets/frame/widgetFrameBodyCaption';
-import { visuallyHiddenStyle } from '@/components/ui/accessibility/visuallyHiddenStyle';
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
-import { Text } from '@/components/ui/text/Text';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import {
@@ -80,14 +74,14 @@ const renderNoHeader = () => null;
 /**
  * What a surface under an unreachable checkout shows in place of its own failure. Announced above:
  * no second cause or Retry. A body of its own says in one quiet line what it waits for, so a tab is
- * never blank; a widget or a section among siblings keeps only its header. Not announced: it names
- * the cause and offers Retry.
+ * never blank; a widget or a section among siblings says in that line when it shows. Not announced:
+ * it names the cause and offers Retry.
  */
 export function CheckoutUnreachableState(
   props: Readonly<{
     reachability: CheckoutReachability;
     size?: SurfaceStateSize;
-    /** One section among siblings: the line would repeat under each of them, so it stays wordless. */
+    /** One section among siblings: its line says when it shows rather than what the page waits for. */
     silent?: boolean;
     /** What this surface shows again once the machine answers ("Your files show up here when it's back."). */
     returns?: string;
@@ -98,19 +92,15 @@ export function CheckoutUnreachableState(
   // Inside a widget it is the widget's one quiet line; elsewhere the container sizes it.
   const widget = useIsWidgetFrameBody();
   if (reachability.announced) {
-    const testID = props.testID ?? 'checkout-unreachable';
-    if (!widget && !props.silent) {
-      return (
-        <SurfaceStateCard
-          testID={testID}
-          kind="unavailable"
-          size="line"
-          iconName="wifi-slash"
-          title={t('projects.checkouts.waiting', { machine: reachability.machineName })}
-        />
-      );
-    }
-    return <AnnouncedCheckoutWait machineName={reachability.machineName} testID={testID} />;
+    // A body of its own says what it waits for; a widget or a section among siblings says, in the same one
+    // line, when it shows (owner P1 11-15: "Shown when <Machine> is reachable"), never an empty block.
+    return (
+      <AnnouncedCheckoutLine
+        machineName={reachability.machineName}
+        among={widget || props.silent === true}
+        testID={props.testID ?? 'checkout-unreachable'}
+      />
+    );
   }
   // A machine that can be asked again is "out of reach": named in the title, when it was last seen and
   // what comes back in the reason, Try again beneath (lab p5 files). A managed machine's own state
@@ -139,33 +129,22 @@ export function CheckoutUnreachableState(
 }
 
 /**
- * A widget or sibling section waiting on an announced machine, with nothing last-known to show: it
- * keeps only its header. No placeholder rows (they read as loading that never
- * ends) and no second sentence. In a widget frame the header's meta slot carries the one quiet
- * offline glyph, so the bare heading reads as unavailable, not as unfinished. Assistive technology
- * still hears what it waits for.
+ * The one line a surface draws while the page above already says its machine is not answering: what it waits for
+ * ("Waiting for studio"), or, among sibling sections, when it shows ("Shown when studio is reachable").
  */
-export function AnnouncedCheckoutWait(
-  props: Readonly<{ machineName: string; testID: string }>,
+export function AnnouncedCheckoutLine(
+  props: Readonly<{ machineName: string; among: boolean; testID: string }>,
 ) {
-  const { theme } = useUnistyles();
-  const glyph = React.useMemo(
-    () => (
-      <Icon
-        name="wifi-slash"
-        size={ICON_SIZE.sm}
-        color={theme.colors.text.tertiary}
-      />
-    ),
-    [theme.colors.text.tertiary],
-  );
-  useWidgetFrameBodyMeta(glyph);
-  // Spoken, not drawn: a label on a role-less box is never read, so the words are a visually hidden text.
+  const machine = props.machineName;
   return (
-    <View testID={props.testID}>
-      <Text style={visuallyHiddenStyle}>
-        {t('projects.checkouts.waiting', { machine: props.machineName })}
-      </Text>
-    </View>
+    <SurfaceStateCard
+      testID={props.testID}
+      kind="unavailable"
+      size="line"
+      iconName="wifi-slash"
+      title={props.among
+        ? t('projects.checkouts.shownWhenReachable', { machine })
+        : t('projects.checkouts.waiting', { machine })}
+    />
   );
 }

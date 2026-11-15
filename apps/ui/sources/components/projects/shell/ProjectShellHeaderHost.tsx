@@ -1,14 +1,16 @@
 import { selectScmChangedFileCount } from '@/scm/scmStatusFiles';
 import { useMountedScopeActionCommand } from '@/components/approvals/useMountedScopeActionCommand';
 import * as React from 'react';
+import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { seedAndOpenProjectDraft } from '@/components/projects/activation/projectOpenDraftSeed';
-import { ProjectAtmosphereLookChip } from '@/components/atmosphere/ProjectAtmosphereFrame';
+import { ProjectAtmosphereLookChip, ProjectLookPopover } from '@/components/atmosphere/ProjectAtmosphereFrame';
+import { ProjectHeaderActions, type ProjectHeaderActionsProps } from '@/components/projects/detail/ProjectHeaderActions';
+import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { useNavigateToProjectOpen } from '@/components/projects/activation/projectOpenPresentation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import type { PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { useProjectNewSessionAction } from '@/components/projects/useProjectNewSessionAction';
@@ -328,17 +330,45 @@ function ProjectShellHeaderContent(props: ProjectShellHeaderHostProps) {
     );
 }
 
-/** Phones (lab `p-overview` HOMEp): the checkout as one full-width row under the navigation bar. */
-export const ProjectPhoneCheckoutRow = React.memo(
-  function ProjectPhoneCheckoutRow(props: ProjectShellScope) {
-    const { checkout } = useProjectShellCheckout(props);
-    return (
-      <ProjectCheckoutChip
-        checkout={checkout}
-        compact={false}
-        presentation="row"
-        testID="project-phone-checkout"
-      />
-    );
-  },
-);
+/**
+ * A phone Project page's head line (owner P1 11-15; the head PRs & Issues ships): Back stays the bar's own, the
+ * Machine chip and the route's launchers sit on its right, then ⋯ with the Project's Look. The name is the page's
+ * large title under it, so the bar carries no title.
+ */
+export const ProjectPhoneHead = React.memo(function ProjectPhoneHead(
+  props: ProjectShellScope & Readonly<{ launchers: ProjectHeaderActionsProps }>,
+) {
+  const { checkout } = useProjectShellCheckout(props);
+  const { serverId, projectKey, id } = props.workspaceRef;
+  const project = React.useMemo(() => ({ serverId, projectKey: projectKey ?? id }), [id, projectKey, serverId]);
+  return <ProjectPhoneHeadView checkout={checkout} project={project} launchers={props.launchers} />;
+});
+
+const PHONE_HEAD_CHIP_SLOT = { flexShrink: 1, minWidth: 0 } as const;
+
+export function ProjectPhoneHeadView(props: Readonly<{
+  checkout: ProjectShellCheckout;
+  project: Readonly<{ serverId: string; projectKey: string }>;
+  launchers: ProjectHeaderActionsProps;
+}>) {
+  const lookAnchorRef = React.useRef<View | null>(null);
+  const [lookOpen, setLookOpen] = React.useState(false);
+  const closeLook = React.useCallback(() => setLookOpen(false), []);
+  const menuActions = React.useMemo((): readonly PageHeaderMenuAction[] => [{
+    id: 'look', title: t('settingsAppearance.glassControls.look'), testID: 'project-phone-head.look',
+    onSelect: () => setLookOpen(true),
+  }], []);
+  return (
+    <ProjectHeaderActions
+      {...props.launchers}
+      // The bar's right side is capped; the chip gives up its width there (its name ellipsizes) and Back stays.
+      leading={<View style={PHONE_HEAD_CHIP_SLOT}>
+        <ProjectCheckoutChip checkout={props.checkout} compact={false} testID="project-phone-checkout" />
+      </View>}
+      trailing={<View ref={lookAnchorRef} collapsable={false}>
+        <PageHeaderMenu actions={menuActions} testID="project-phone-head.menu" />
+        {lookOpen ? <ProjectLookPopover project={props.project} anchorRef={lookAnchorRef} onRequestClose={closeLook} /> : null}
+      </View>}
+    />
+  );
+}

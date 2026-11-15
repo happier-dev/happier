@@ -17,6 +17,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: theme.space.s4,
         paddingRight: theme.space.s8,
+        // A phone head's Machine chip gives up its width first (its name ellipsizes), never the launchers.
+        flexShrink: 1,
+        minWidth: 0,
+        maxWidth: '100%',
     },
 }));
 
@@ -26,7 +30,7 @@ const stylesheet = StyleSheet.create((theme) => ({
  * buttons carry no edge). The phone File page has no tab strip, so the bar is where the browser
  * launcher lives there (lab FV1p); the Details strip leaves it, and Terminal, to the bar.
  */
-export const ProjectHeaderActions = React.memo((props: Readonly<{
+export type ProjectHeaderActionsProps = Readonly<{
     testIdPrefix: string;
     showWorktreesButton: boolean;
     showWorkspaceExperienceButton?: boolean;
@@ -36,7 +40,12 @@ export const ProjectHeaderActions = React.memo((props: Readonly<{
     onOpenBrowser?: () => void;
     /** Absent where the Project cockpit bar is on screen: Terminal lives in the bar and its ⋯ there. */
     onOpenTerminal?: () => void;
-}>) => {
+    /** A phone page's own head (`ProjectPhoneHead`): its Machine chip before the launchers, its ⋯ after them. */
+    leading?: React.ReactNode;
+    trailing?: React.ReactNode;
+}>;
+
+export const ProjectHeaderActions = React.memo((props: ProjectHeaderActionsProps) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const glyphColor = theme.colors.chrome.header.foreground;
@@ -45,6 +54,7 @@ export const ProjectHeaderActions = React.memo((props: Readonly<{
 
     return (
         <View style={styles.container}>
+            {props.leading}
             {props.showWorkspaceExperienceButton && props.onToggleWorkspaceExperience && props.workspaceExperienceToggleA11yLabel ? (
                 <IconButton
                     testID={`${props.testIdPrefix}-toggle-workspace-experience`}
@@ -87,6 +97,7 @@ export const ProjectHeaderActions = React.memo((props: Readonly<{
                     icon={glyph('terminal')}
                 />
             ) : null}
+            {props.trailing}
         </View>
     );
 });

@@ -147,8 +147,9 @@ describe('capability scope sheet when its list could not be read', () => {
     expect(text).not.toContain(t('capabilities.scopeSection.whenRunning', { machine: 'studio' }));
     expect(text).not.toContain(t('capabilities.scopeSection.loadFailed'));
     expect(screen.findByTestId('scope.skills.unavailable')).toBeNull();
-    expect(screen.findHostByTestId('scope.skills.offline')?.props.accessibilityLabel)
-      .toBe(t('projects.checkouts.waiting', { machine: 'studio' }));
+    // It says only what it waits for, on the reachability owner's one line.
+    expect(screen.findByTestId('scope.skills.offline')).not.toBeNull();
+    expect(text).toContain(t('projects.checkouts.waiting', { machine: 'studio' }));
     await screen.unmount();
   });
 

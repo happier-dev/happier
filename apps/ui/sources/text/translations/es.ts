@@ -18564,6 +18564,7 @@ settingsSession: {
     checkouts: {
         chipLabel: ({ machine, branch }: { machine: string; branch: string }) => `Checkout: ${machine} · ${branch}`,
         waiting: ({ machine }: { machine: string }) => `Esperando a ${machine}`,
+        shownWhenReachable: ({ machine }: { machine: string }) => `Se muestra cuando ${machine} esté accesible`,
         outOfReach: ({ machine }: { machine: string }) => `${machine} está fuera de alcance`,
         lastSeen: ({ when }: { when: string }) => `Visto por última vez ${when}.`,
         filesReturn: 'Tus archivos aparecerán aquí cuando vuelva.',

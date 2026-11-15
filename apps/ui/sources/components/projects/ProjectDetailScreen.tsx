@@ -35,7 +35,9 @@ import { useWorkspaceRefById } from './detail/useWorkspaceRefById';
 import { ProjectRightPanel, ProjectRightSidebarProvider, ProjectRightSidebarRail } from './detail/ProjectRightPanel';
 import { ProjectWorktreeRecoveryToast } from './detail/ProjectWorktreeRecoveryToast';
 import { ProjectOpenResolutionPage } from './ProjectOpenResolution';
-import { ProjectPhoneCheckoutRow, ProjectShellHeaderHost } from './shell/ProjectShellHeaderHost';
+import { ProjectShellHeaderHost } from './shell/ProjectShellHeaderHost';
+import { PageHeader } from '@/components/ui/layout/PageHeader';
+import { NavigationLargeTitleProvider } from '@/components/ui/layout/navigationTitleChrome';
 import { createProjectInfoDetailsTab } from './detail/projectDetailsTabBuilders';
 import { ListPresentationProvider, PageColumnProvider } from '@/components/ui/lists/listPresentation';
 import { useProjectRouteActions } from './detail/useProjectRouteActions';
@@ -45,7 +47,7 @@ import { ProjectTerminalSurface } from './detail/surfaces/ProjectTerminalSurface
 import { resolveProjectCheckoutWorkspaceRef } from '@/sync/domains/workspaces/workspaceRefs';
 import type { WorkspaceRefResolutionV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { WorkspaceRefUnconfirmed } from './detail/useWorkspaceRefById';
-import { ProjectAtmosphereFrame, ProjectAtmosphereLookChip } from '@/components/atmosphere/ProjectAtmosphereFrame';
+import { ProjectAtmosphereFrame } from '@/components/atmosphere/ProjectAtmosphereFrame';
 import { useAtmosphereBandBoundary } from '@/components/atmosphere/atmosphereBandBoundary';
 import { resolveWorkspaceRefDisplayName } from './resolveWorkspaceRefDisplayName';
 import { Text } from '@/components/ui/text/Text';
@@ -380,16 +382,8 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
                                     />
                                     </PageColumnProvider>
                                 ) : props.surface === undefined || props.surface === props.page ? (
-                                    <ProjectPhoneAtmosphereHeader>
-                                        <ProjectPhoneCheckoutRow
-                                            workspaceRef={workspaceRef}
-                                            selection={selectedPage}
-                                            activeRootPath={resolvedActiveRootPath}
-                                            activeWorktreeId={resolvedActiveWorktreeId}
-                                            onSelectRootPath={handleSelectRootPath}
-                                            onSelectWorkspace={handleSelectWorkspace}
-                                        />
-                                    </ProjectPhoneAtmosphereHeader>
+                                    <ProjectPhoneTitle name={resolveWorkspaceRefDisplayName(workspaceRef)}
+                                        repository={workspaceRef.repositoryIdentity?.repository ?? null} />
                                 ) : null}
                                 {/* Cockpit phones with page tabs at the top: the pinned pages, on every surface. */}
                                 {deviceType === 'phone' ? <ProjectPhonePageStrip workspaceRefId={workspaceRef.id} /> : null}
@@ -422,12 +416,16 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
     );
 });
 
-function ProjectPhoneAtmosphereHeader(props: Readonly<{ children: React.ReactNode }>) {
+/**
+ * A phone Project page's name (owner P1 11-15): the bar above holds Back, the Machine chip and ⋯
+ * (`ProjectPhoneHead`), so the name is the page's large title on the page edge, its repository under it.
+ */
+function ProjectPhoneTitle(props: Readonly<{ name: string; repository: string | null }>) {
     const boundary = useAtmosphereBandBoundary();
-    // The Look sits on the checkout field's line (its trailing control), never on a row of its own.
-    return <View ref={boundary?.ref} onLayout={boundary?.onLayout}
-        style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }}>
-        <View style={{ flex: 1, minWidth: 0 }}>{props.children}</View>
-        <ProjectAtmosphereLookChip />
+    return <View ref={boundary?.ref} onLayout={boundary?.onLayout}>
+        <NavigationLargeTitleProvider largeTitle>
+            <PageHeader testID="project-phone-title" title={props.name}
+                {...(props.repository ? { description: props.repository } : {})} />
+        </NavigationLargeTitleProvider>
     </View>;
 }

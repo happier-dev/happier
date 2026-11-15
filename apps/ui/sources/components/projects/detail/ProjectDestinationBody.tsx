@@ -20,6 +20,9 @@ import { useProjectLastMobileSurface, useWorkspaceRefs } from '@/sync/domains/st
 import { resolveProjectSelectionPreferenceKeys } from '@/sync/domains/settings/projectSelectionPersistence';
 import { persistProjectSelectionUiState, useProjectSelectionUiState } from '@/sync/domains/state/projectSelectionUiState';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { ProjectPhoneHead } from '@/components/projects/shell/ProjectShellHeaderHost';
+import type { ProjectHeaderActionsProps } from './ProjectHeaderActions';
+import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { t } from '@/text';
 
 export const ProjectDestinationBody = React.memo(() => {
@@ -92,12 +95,21 @@ export const ProjectDestinationBody = React.memo(() => {
     // A page's pushed detail (a phone Service) takes the bar's Back while it is open; otherwise Back leaves the Project.
     const [pageBack, setPageBack] = React.useState<(() => void) | null>(null);
     const registerPageBack = React.useCallback((back: (() => void) | null) => setPageBack(() => back), []);
+    // A page's own surface (not a file or detail pushed inside it) leads with the Project's name under the bar.
+    const pageHead = surface === page && workspaceRef !== null;
+    const { navigateToSegment } = actions;
+    const selectWorkspace = React.useCallback((next: WorkspaceRefV1) => { void navigateToSegment({ workspaceRef: next }); }, [navigateToSegment]);
+    const phoneHead = React.useCallback((launchers: ProjectHeaderActionsProps) => workspaceRef ? (
+        <ProjectPhoneHead workspaceRef={workspaceRef} activeRootPath={activeRootPath} activeWorktreeId={activeWorktreeId}
+            selection={pageSelection} onSelectRootPath={selectRootPath} onSelectWorkspace={selectWorkspace} launchers={launchers} />
+    ) : null, [activeRootPath, activeWorktreeId, pageSelection, selectRootPath, selectWorkspace, workspaceRef]);
     const screenOptions = useProjectRouteHeaderOptions({
         workspaceRef,
         activeRootPath,
         testIdPrefix: 'project-header',
         showWorktreesButton: true,
         ...(pageBack ? { onBack: pageBack } : {}),
+        ...(pageHead ? { phoneHead } : {}),
         onToggleWorktrees: () => actions.replaceOverviewVisibility({ visible: !showWorktrees }),
         onOpenBrowser: actions.openBrowser,
         onOpenTerminal: () => actions.openTerminal({ exitOverview: true }),

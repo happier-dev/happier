@@ -14126,6 +14126,7 @@ settingsSession: {
         checkouts: {
             chipLabel: ({ machine, branch }: { machine: string; branch: string }) => `簽出：${machine} · ${branch}`,
             waiting: ({ machine }: { machine: string }) => `正在等待 ${machine}`,
+            shownWhenReachable: ({ machine }: { machine: string }) => `${machine} 可連線時顯示`,
             outOfReach: ({ machine }: { machine: string }) => `${machine} 無法連線`,
             lastSeen: ({ when }: { when: string }) => `上次上線：${when}。`,
             filesReturn: '它恢復後，你的檔案會顯示在這裡。',

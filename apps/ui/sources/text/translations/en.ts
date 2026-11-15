@@ -22008,6 +22008,7 @@ const enProjects = {
   checkouts: {
       chipLabel: ({ machine, branch }: { machine: string; branch: string }) => `Checkout: ${machine} · ${branch}`,
       waiting: ({ machine }: { machine: string }) => `Waiting for ${machine}`,
+      shownWhenReachable: ({ machine }: { machine: string }) => `Shown when ${machine} is reachable`,
       outOfReach: ({ machine }: { machine: string }) => `${machine} is out of reach`,
       lastSeen: ({ when }: { when: string }) => `Last seen ${when}.`,
       filesReturn: 'Your files show up here when it’s back.',

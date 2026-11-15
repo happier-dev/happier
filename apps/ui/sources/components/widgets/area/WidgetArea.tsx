@@ -728,6 +728,9 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
 }>) {
     const { placement, surface, write, context, geometry } = props;
     const instance = placement.instance;
+    // A phone stacks a Project's Overview as one page, so each widget is a section of it, titled as one (owner P1 11-15).
+    const phone = useDeviceType() === 'phone';
+    const pageSection = surface.owner.kind === 'corePage' || (phone && surface.owner.kind === 'project');
     const [localCollapsed, setLocalCollapsed] = React.useState(() => instance.definition.kind === 'builtin' && instance.definition.id === 'project_readme');
     const collapsed = props.disclosure?.collapsedByInstanceId[instance.id] ?? localCollapsed;
     const onCollapsedChange = (next: boolean) => props.disclosure
@@ -991,7 +994,7 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
                         ? widgetGroupFollowSource(followed, parent?.wide === true)
                         : bodyCaption ?? bindingLabel ?? sourceName ?? undefined}
                 sourceHeld={widgetDefinitionNamesItsSource(instance.definition)}
-                pageSection={surface.owner.kind === 'corePage'}
+                pageSection={pageSection}
                 meta={bodyMeta}
                 grouped={parent !== undefined}
                 // Every column's first widget leads: paired, the row reads level, with no hairline on one side only.

@@ -31,7 +31,24 @@ afterEach(async () => {
 
 describe('checkout reachability', () => {
 
-    it('an announced wait is one quiet line in a body of its own, and wordless among sibling sections', async () => {
+    it('an announced wait among sibling sections is one visible line naming the Machine it shows with (owner P1 11-15)', async () => {
+        const reachability = { unreachable: true, machineName: 'NLDW3-5-36-33', lastSeenAt: null, announced: true,
+            runtime: { online: false, status: 'offline' as const, label: '', nextAction: null, showStatus: true } };
+        const line = t('projects.checkouts.shownWhenReachable', { machine: 'NLDW3-5-36-33' });
+        const section = await renderScreen(<CheckoutUnreachableState reachability={reachability} silent testID="section" />);
+        try {
+            // One line, seen as well as heard: no second cause and no Retry (the page's notice owns both).
+            expect(section.getTextContent()).toBe(line);
+            const shown = section.root.findAll((node) => node.props.children === line && node.props.style !== undefined)[0];
+            const flat = Object.assign({}, ...[shown?.props.style].flat(Infinity).filter(Boolean));
+            expect(flat.position).not.toBe('absolute');
+            expect(flat.width).not.toBe(1);
+        } finally {
+            await section.unmount();
+        }
+    });
+
+    it('an announced wait is one quiet line in a body of its own', async () => {
         const reachability = { unreachable: true, machineName: 'devbox', lastSeenAt: null, announced: true,
             runtime: { online: false, status: 'offline' as const, label: '', nextAction: null, showStatus: true } };
         const waiting = t('projects.checkouts.waiting', { machine: 'devbox' });
@@ -40,15 +57,6 @@ describe('checkout reachability', () => {
         // No second cause and no second Retry: the page's line owns both.
         expect(body.getTextContent()).not.toContain(t('common.retry'));
         await body.unmount();
-        const section = await renderScreen(<CheckoutUnreachableState reachability={reachability} silent testID="section" />);
-        // Wordless on screen, yet spoken: the words are a visually hidden text node, because a label on a
-        // role-less box is never read (axe aria-prohibited-attr).
-        expect(section.getTextContent()).toBe(waiting);
-        expect(section.findHostByTestId('section')?.props.accessibilityLabel).toBeUndefined();
-        const spoken = section.root.findAll((node) => node.props.children === waiting && node.props.style !== undefined)[0];
-        const flat = Object.assign({}, ...[spoken?.props.style].flat(Infinity).filter(Boolean));
-        expect(flat).toMatchObject({ position: 'absolute', width: 1, height: 1, overflow: 'hidden' });
-        await section.unmount();
     });
     it('an unannounced offline checkout is the shared out-of-reach state: when it was seen, what returns, and Try again', async () => {
         const lastSeenAt = Date.now() - 3 * 60 * 60 * 1000;

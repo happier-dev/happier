@@ -73,6 +73,9 @@ async function mountWithRows(kind: 'exact' | 'missing' | 'ambiguous') {
     return { screen, grants, scope };
 }
 
+// The phone head's launchers; its Machine chip is the header's checkout read under test.
+const PHONE_HEAD_LAUNCHERS = { testIdPrefix: 'project-header', showWorktreesButton: false } as const;
+
 describe('WorkspaceScmReviewDetailsView', () => {
     it.each(['walkthrough', 'commits'] as const)('reads summary facts for live %s without listing checkout files', async (view) => {
         fixture = await createSessionFilesViewFixture({ rootPath: '/summary', rpc: request => request.method === 'scm.status.snapshot'
@@ -104,13 +107,13 @@ describe('WorkspaceScmReviewDetailsView', () => {
                 entriesPage: { totalFiles, nextCursor: cursor + limit < totalFiles ? cursor + limit : null } } };
         } });
         fixture.storage.setState({ sessions: {} });
-        const { ProjectPhoneCheckoutRow } = await import('@/components/projects/shell/ProjectShellHeaderHost');
+        const { ProjectPhoneHead } = await import('@/components/projects/shell/ProjectShellHeaderHost');
         const { WorkspaceScmReviewBody } = await import('@/components/projects/scm/WorkspaceScmReviewBody');
         const { ChangedFilesReview } = await import('@/components/workspaces/scm/review/ChangedFilesReview');
         const { DiffFilesListView } = await import('@/components/ui/code/diff/DiffFilesListView');
         const workspaceRef: WorkspaceRefV1 = { id: 'viewport', serverId: fixture.home.id, machineId: 'm1', rootPath: '/viewport', createdAtMs: 1 };
         const screen = await fixture.render(<>
-            <ProjectPhoneCheckoutRow workspaceRef={workspaceRef} activeRootPath="/viewport"
+            <ProjectPhoneHead launchers={PHONE_HEAD_LAUNCHERS} workspaceRef={workspaceRef} activeRootPath="/viewport"
                 selection={{ kind: 'builtin', page: 'changes' }} onSelectRootPath={() => {}} />
             <WorkspaceScmReviewDetailsView scopeId="project:viewport" machineId="m1" serverId={fixture.home.id} rootPath="/viewport" />
         </>);
@@ -162,7 +165,7 @@ describe('WorkspaceScmReviewDetailsView', () => {
             ? { success: true, snapshot: fileViewSnapshot({ rootPath: '/legacy', entries }) } : undefined });
         fixture.storage.setState({ sessions: {} });
         const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
-        const { ProjectPhoneCheckoutRow } = await import('@/components/projects/shell/ProjectShellHeaderHost');
+        const { ProjectPhoneHead } = await import('@/components/projects/shell/ProjectShellHeaderHost');
         const { ChangedFilesReview } = await import('@/components/workspaces/scm/review/ChangedFilesReview');
         const workspaceRef: WorkspaceRefV1 = { id: 'legacy', serverId: fixture.home.id, machineId: 'm1', rootPath: '/legacy', createdAtMs: 1 };
         let setPresented!: React.Dispatch<React.SetStateAction<boolean>>;
@@ -170,7 +173,7 @@ describe('WorkspaceScmReviewDetailsView', () => {
             const [active, setActive] = React.useState(false);
             setPresented = setActive;
             return <PluginSurfaceFocusEligibilityProvider active={active}>
-                <ProjectPhoneCheckoutRow workspaceRef={workspaceRef} activeRootPath="/legacy"
+                <ProjectPhoneHead launchers={PHONE_HEAD_LAUNCHERS} workspaceRef={workspaceRef} activeRootPath="/legacy"
                     selection={{ kind: 'builtin', page: 'changes' }} onSelectRootPath={() => {}} />
                 <WorkspaceScmReviewDetailsView scopeId="project:legacy" machineId="m1" serverId={fixture.home.id} rootPath="/legacy" />
             </PluginSurfaceFocusEligibilityProvider>;

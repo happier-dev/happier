@@ -80,6 +80,37 @@ describe('Project route header options', () => {
         }
     });
 
+    it('on a phone page with its own head, keeps Back, leaves the name to the page and lets the head draw the controls (owner P1 11-15)', async () => {
+        windowSize.width = 390;
+        windowSize.height = 844;
+        let seen: Readonly<Record<string, unknown>> | null = null;
+        function HeadProbe() {
+            const options = useProjectRouteHeaderOptions({
+                workspaceRef: null, testIdPrefix: 'project-header', showWorktreesButton: true,
+                onToggleWorktrees: () => {}, onOpenTerminal: () => {},
+                phoneHead: (launchers) => `head:${launchers.testIdPrefix}`,
+            });
+            seen = options;
+            return null;
+        }
+        const screen = await renderScreen(<HeadProbe />);
+        try {
+            expect(seen!.headerTitle).toBe('');
+            expect(seen!.headerSubtitle).toBeUndefined();
+            expect(typeof seen!.headerLeft).toBe('function');
+            const HeaderRight = seen!.headerRight as () => React.ReactNode;
+            const bar = await renderScreen(<>{HeaderRight()}</>);
+            try {
+                // The head draws the bar's right side around the route's own launchers.
+                expect(bar.getTextContent()).toBe('head:project-header');
+            } finally {
+                await bar.unmount();
+            }
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     it('on a phone carries the browser launcher beside Terminal, since the File page has no strip to hold it (lab FV1p)', async () => {
         windowSize.width = 390;
         windowSize.height = 844;

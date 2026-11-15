@@ -660,15 +660,12 @@ describe('Project Local Changes', () => {
         expect(states.filter(state => state.props.kind === 'error').map(state => state.props.testID)).toEqual([]);
         expect(screen.findHostByTestId('repository-tree-root-error')).toBeNull();
         expect(screen.findHostByTestId('project_code-footer')).toBeNull();
-        // A widget with nothing last-known inherits one quiet wait (the never-listed folder here); one with
-        // last-known content keeps it. Either way nothing offers a second Retry or fails on its own.
-        // 7a18b51d07a speaks the wait through hidden text rather than a label on
-        // a role-less box. The page still owns the cause and the only Retry.
-        expect(states.map(state => String(state.props.testID ?? '')).filter(id => id.endsWith('-unreachable'))).toEqual([]);
-        const quietWait = screen.findHostByTestId('repository-tree-unreachable');
-        const spokenWait = quietWait?.findAll(node => typeof node.type === 'string')
-            .flatMap(node => node.children.filter(child => typeof child === 'string')).join(' ');
-        expect(spokenWait).toMatch(/projects\.checkouts\.waiting|Waiting for/);
+        // A widget with nothing last-known says in one line when it shows (owner P1 11-15; the never-listed
+        // folder here); one with last-known content keeps it. Either way nothing offers a second Retry or
+        // fails on its own: the page still owns the cause and the only Retry.
+        const waits = states.filter(state => String(state.props.testID ?? '').endsWith('-unreachable'));
+        expect(waits.map(state => state.props.testID)).toContain('project_code-unreachable');
+        for (const wait of waits) expect(String(wait.props.title)).toMatch(/^projects\.checkouts\.shownWhenReachable/);
         expect(states.filter(state => state.props.kind === 'unavailable' && state.props.action !== undefined)
             .map(state => state.props.testID)).toEqual([]);
         expect(screen.findHostByTestId('project_changes-error')).toBeNull();
@@ -703,8 +700,8 @@ describe('Project Local Changes', () => {
         // Its page tools (filter, create, Project | All files) live on the Code page, not in the card.
         const ids = screen.root.findAll(node => typeof node.props.testID === 'string').map(node => String(node.props.testID));
         expect(ids.filter(id => /^(workspace-)?repository-tree-(visibility|all-files|toggle-details)/.test(id))).toEqual([]);
-        // The folder still waits quietly in the card's own shape.
-        expect(screen.findHostByTestId('repository-tree-unreachable')).not.toBeNull();
+        // A never-listed folder draws no empty sheet: the card says in one line when it shows (owner P1 11-15).
+        expect(screen.findHostByTestId('project_code-unreachable')).not.toBeNull();
     });
     it('summarizes Local changes in the Overview column: one files row, one push row and one commit box (lab p-overview HOME)', async () => {
         storage.getState().applySettingsLocal({ experiments: true, featureToggles: { 'scm.writeOperations': true }, scmCommitStrategy: 'atomic' });

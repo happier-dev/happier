@@ -24,7 +24,7 @@ import { useWorkspaceEntryHistory } from '@/hooks/workspaces/files/useWorkspaceE
 import { useWorkspaceRepositoryDirectoryRevision } from '@/hooks/workspaces/files/useWorkspaceRepositoryDirectoryRevision';
 import { useWorkspaceScmSnapshotController } from '@/hooks/workspaces/scm/useWorkspaceScmSnapshotController';
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
-import { CheckoutReachabilityLine, CheckoutReachabilityScope, useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
+import { CheckoutReachabilityLine, CheckoutReachabilityScope, CheckoutUnreachableState, useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -290,10 +290,11 @@ export const WorkspaceCodeBrowserView = React.memo(function WorkspaceCodeBrowser
                 onRefreshScm={props.history === undefined ? refreshHistory : undefined}
             />
     );
-    // Nothing was ever listed and the machine isn't answering: the widget keeps only its header (the
-    // page's line says why), so no empty sheet is drawn around nothing.
+    // Nothing was ever listed and the machine isn't answering: no empty sheet is drawn around nothing. Under a
+    // page that says why, the widget says in one line when it shows (owner P1 11-15); otherwise its own line does.
     const waitingWithNothing = reachability.unreachable && entryCount === null;
-    const body = location.kind === 'folder' ? (widget ? (waitingWithNothing ? null : (
+    const body = location.kind === 'folder' ? (widget ? (waitingWithNothing ? (reachability.announced
+        ? <CheckoutUnreachableState reachability={reachability} silent testID={`${testID}-unreachable`} /> : null) : (
         <GlassSurface surfaceGroup="card" nested finishRole="card" testID={`${testID}-table`} style={[sheetStyle, styles.fileSheet]} onLayout={onTableLayout}>
             {folderBrowser}
         </GlassSurface>

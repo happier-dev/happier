@@ -18183,6 +18183,7 @@ settingsSession: {
     checkouts: {
         chipLabel: ({ machine, branch }: { machine: string; branch: string }) => `检出：${machine} · ${branch}`,
         waiting: ({ machine }: { machine: string }) => `正在等待 ${machine}`,
+        shownWhenReachable: ({ machine }: { machine: string }) => `${machine} 可连接时显示`,
         outOfReach: ({ machine }: { machine: string }) => `${machine} 无法连接`,
         lastSeen: ({ when }: { when: string }) => `上次在线：${when}。`,
         filesReturn: '它恢复后，你的文件会显示在这里。',

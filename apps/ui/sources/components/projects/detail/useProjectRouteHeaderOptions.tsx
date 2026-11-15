@@ -6,7 +6,7 @@ import { t } from '@/text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 
-import { ProjectHeaderActions } from './ProjectHeaderActions';
+import { ProjectHeaderActions, type ProjectHeaderActionsProps } from './ProjectHeaderActions';
 import { resolveProjectRouteHeaderTitle } from './projectRouteState';
 import { useProjectRouteRouterRef } from './useProjectRouteRouterRef';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -26,6 +26,11 @@ export function useProjectRouteHeaderOptions(params: Readonly<{
     onToggleWorktrees?: () => void;
     onOpenBrowser?: () => void;
     onOpenTerminal: () => void;
+    /**
+     * A phone page's own head (owner P1 11-15, `ProjectPhoneHead`): it draws the bar's controls around the
+     * launchers, and the page draws the Project's name as its large title, so the bar carries none.
+     */
+    phoneHead?: (launchers: ProjectHeaderActionsProps) => React.ReactNode;
 }>): Readonly<Record<string, unknown>> {
     const routerRef = useProjectRouteRouterRef();
     const navigation = useNavigation();
@@ -40,6 +45,7 @@ export function useProjectRouteHeaderOptions(params: Readonly<{
     const navigationRef = React.useRef(navigation);
     navigationRef.current = navigation;
     const onBack = params.onBack;
+    const phoneHead = phoneBar ? params.phoneHead : undefined;
 
     const handleBack = React.useCallback(() => {
         if (onBack) {
@@ -55,11 +61,11 @@ export function useProjectRouteHeaderOptions(params: Readonly<{
 
     return React.useMemo(() => ({
         headerShown: true,
-        headerTitle: params.workspaceRef && params.activeRootPath
+        headerTitle: phoneHead ? '' : params.workspaceRef && params.activeRootPath
             ? resolveProjectRouteHeaderTitle(params.workspaceRef, params.activeRootPath)
             : t('projects.detail.groupTitle'),
         // The repository under the name (lab `p-overview` HOMEp); a folder without one stays name-only.
-        headerSubtitle: params.workspaceRef?.repositoryIdentity?.repository,
+        headerSubtitle: phoneHead ? undefined : params.workspaceRef?.repositoryIdentity?.repository,
         headerBackTitle: t('common.back'),
         headerBackVisible: false,
         headerStyle: {
@@ -82,18 +88,19 @@ export function useProjectRouteHeaderOptions(params: Readonly<{
                 <Icon name="arrow-left" size={24} color={theme.colors.chrome.header.foreground} />
             </HappierPressable>
         ),
-        headerRight: () => (
-            <ProjectHeaderActions
-                testIdPrefix={params.testIdPrefix}
-                showWorktreesButton={params.showWorktreesButton}
-                showWorkspaceExperienceButton={params.showWorkspaceExperienceButton}
-                workspaceExperienceToggleA11yLabel={params.workspaceExperienceToggleA11yLabel}
-                onToggleWorkspaceExperience={params.onToggleWorkspaceExperience}
-                onOpenWorktrees={params.onToggleWorktrees}
-                onOpenBrowser={barHoldsTools ? undefined : params.onOpenBrowser}
-                onOpenTerminal={barHoldsTools ? undefined : params.onOpenTerminal}
-            />
-        ),
+        headerRight: () => {
+            const launchers: ProjectHeaderActionsProps = {
+                testIdPrefix: params.testIdPrefix,
+                showWorktreesButton: params.showWorktreesButton,
+                showWorkspaceExperienceButton: params.showWorkspaceExperienceButton,
+                workspaceExperienceToggleA11yLabel: params.workspaceExperienceToggleA11yLabel,
+                onToggleWorkspaceExperience: params.onToggleWorkspaceExperience,
+                onOpenWorktrees: params.onToggleWorktrees,
+                onOpenBrowser: barHoldsTools ? undefined : params.onOpenBrowser,
+                onOpenTerminal: barHoldsTools ? undefined : params.onOpenTerminal,
+            };
+            return phoneHead ? phoneHead(launchers) : <ProjectHeaderActions {...launchers} />;
+        },
         } : {}),
     }), [
         phoneBar,
@@ -105,6 +112,7 @@ export function useProjectRouteHeaderOptions(params: Readonly<{
         params.onOpenTerminal,
         params.onToggleWorkspaceExperience,
         params.onToggleWorktrees,
+        phoneHead,
         params.showWorktreesButton,
         params.showWorkspaceExperienceButton,
         params.testIdPrefix,

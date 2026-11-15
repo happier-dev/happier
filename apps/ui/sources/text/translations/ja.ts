@@ -18478,6 +18478,7 @@ settingsSession: {
     checkouts: {
         chipLabel: ({ machine, branch }: { machine: string; branch: string }) => `チェックアウト: ${machine} · ${branch}`,
         waiting: ({ machine }: { machine: string }) => `${machine} を待っています`,
+        shownWhenReachable: ({ machine }: { machine: string }) => `${machine} に接続できるときに表示されます`,
         outOfReach: ({ machine }: { machine: string }) => `${machine} に接続できません`,
         lastSeen: ({ when }: { when: string }) => `最終確認: ${when}。`,
         filesReturn: '戻ってきたら、ここにファイルが表示されます。',
