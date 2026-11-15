@@ -7,6 +7,9 @@ import type { ElevenLabsConversationHandleEvent } from './conversationHandle.js'
 import { createElevenLabsSdkConnection } from './sdkConnection.js';
 import { createElevenLabsConversationHandle } from './conversationHandle.js';
 import { createElevenLabsSessionPreparationService } from './sessionPreparation.js';
+import { createElevenLabsVoiceProviderRuntime } from '../runtime.js';
+import type { CreateVoiceConversationController } from '../../../../../../../apps/ui/sources/voice/runtime/controller/VoiceConversationController.js';
+import type { createRealtimeToolBarrier as CreateRealtimeToolBarrier } from '../../../../../../../apps/ui/sources/voice/tools/realtimeToolBarrier.js';
 import {
   ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS,
   ElevenLabsVoiceProviderSettingsSchema,
@@ -21,13 +24,56 @@ const { createSdkHandleConnection } = await import(/* @vite-ignore */ hostConnec
   createSdkHandleConnection: Parameters<typeof createElevenLabsSdkConnection>[0]['createSdkHandleConnection'];
 }>;
 
+const liveKit = vi.hoisted(() => ({
+  rooms: [] as Array<{
+    name: string;
+    emit(event: string, ...args: unknown[]): boolean;
+    sent: Array<Readonly<Record<string, unknown>>>;
+    rejectResult: ((reason: Error) => void) | null;
+    disconnected: boolean;
+  }>,
+}));
+
+vi.mock('livekit-client', async (importOriginal) => {
+  const original = await importOriginal<typeof import('livekit-client')>();
+  const { EventEmitter } = await import('node:events');
+  // Only LiveKit's network room is replaced. SDK connection creation, incoming
+  // tool dispatch, callback completion and outgoing delivery remain installed 1.18.0 code.
+  class ProviderRoom extends EventEmitter {
+    name = `conv_delivery${liveKit.rooms.length + 1}`;
+    sent: Array<Readonly<Record<string, unknown>>> = [];
+    rejectResult: ((reason: Error) => void) | null = null;
+    disconnected = false;
+    localParticipant = {
+      audioTrackPublications: new Map(),
+      getTrackPublication: () => undefined,
+      publishData: (data: Uint8Array) => {
+        const message = JSON.parse(new TextDecoder().decode(data)) as Readonly<Record<string, unknown>>;
+        this.sent.push(message);
+        return message.type === 'client_tool_result'
+          ? new Promise<void>((_resolve, reject) => { this.rejectResult = reject; })
+          : Promise.resolve();
+      },
+    };
+    constructor() { super(); liveKit.rooms.push(this); }
+    async connect() { this.emit(original.RoomEvent.Connected); }
+    async disconnect() { this.disconnected = true; }
+  }
+  return { ...original, Room: ProviderRoom };
+});
+
 describe('createElevenLabsSdkConnection', () => {
-  it.each([1006, 1013])('retains native socket close %s from real SDK startup', async (closeCode) => {
+  it.each([
+    { closeCode: 1006, closeReason: 'private-provider-close-reason', code: 'voice_service_unavailable' },
+    { closeCode: 1013, closeReason: 'private-provider-close-reason', code: 'voice_service_unavailable' },
+    { closeCode: 3000, closeReason: 'The AI agent you are trying to reach is not available.', code: 'voice_provider_agent_unavailable' },
+    { closeCode: 3000, closeReason: 'private-provider-close-reason', code: 'voice_service_unavailable' },
+  ])('retains native socket close $closeCode as $code from real SDK startup', async ({ closeCode, closeReason, code }) => {
     class ProviderSocket extends EventTarget {
       constructor() {
         super();
         queueMicrotask(() => this.dispatchEvent(Object.assign(new Event('close'), {
-          code: closeCode, reason: 'private-provider-close-reason',
+          code: closeCode, reason: closeReason,
         })));
       }
       close() {}
@@ -37,14 +83,120 @@ describe('createElevenLabsSdkConnection', () => {
     const connection = createElevenLabsSdkConnection({ createSdkHandleConnection, handle,
       startConfig: { textOnly: true, signedUrl: 'wss://fixture.invalid' }, duckGain: 0.18 });
     try {
-      await expect(connection.connect(new AbortController().signal)).rejects.toMatchObject({
-        message: 'voice_service_unavailable', failureCause: {
+      const failure = await connection.connect(new AbortController().signal).catch((error: unknown) => error);
+      expect(failure).toMatchObject({
+        code, message: code, failureCause: {
           phase: 'elevenlabs.session.start', errorClass: 'Error', nativeErrorCode: String(closeCode),
+          ...(code === 'voice_provider_agent_unavailable' ? { nativeErrorReason: 'agent_unavailable' } : {}),
         },
       });
+      expect(JSON.stringify(failure)).not.toContain(closeReason);
+      if (code === 'voice_service_unavailable') {
+        expect(failure).not.toHaveProperty('failureCause.nativeErrorReason');
+      }
     } finally {
       await connection.close({ code: 'user_stop' });
       vi.unstubAllGlobals();
+    }
+  });
+
+  it('recovers from real SDK late tool-result delivery failure with a fresh Retry and no replay', async () => {
+    const { createVoiceConversationController } = await import(/* @vite-ignore */ new URL(
+      '../../../../../../../apps/ui/sources/voice/runtime/controller/VoiceConversationController.ts', import.meta.url,
+    ).href) as Readonly<{ createVoiceConversationController: CreateVoiceConversationController }>;
+    const { createRealtimeToolBarrier } = await import(/* @vite-ignore */ new URL(
+      '../../../../../../../apps/ui/sources/voice/tools/realtimeToolBarrier.ts', import.meta.url,
+    ).href) as Readonly<{ createRealtimeToolBarrier: typeof CreateRealtimeToolBarrier }>;
+    const { RoomEvent } = await import('livekit-client');
+    const runtime = createElevenLabsVoiceProviderRuntime({ loadConversationSdk: () => import('@elevenlabs/client') });
+    const failures: string[] = [];
+    const debugEvents: unknown[] = [];
+    const effects: string[] = [];
+    const connections: Array<ReturnType<typeof createElevenLabsSdkConnection>> = [];
+    const hostedConversation = {
+      start: async () => ({ allowed: true as const, token: 'hosted-token', leaseId: 'lease', bindingNonce: 'nonce', expiresAtMs: 1000 }),
+      abort: async () => {}, complete: async () => {},
+    };
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const firstRoomIndex = liveKit.rooms.length;
+    const controller = createVoiceConversationController({
+      adapter: {
+        id: 'elevenlabs',
+        turnControls: { cancelResponse: 'unsupported', truncatePlayback: 'unsupported', clearInput: false,
+          stopSession: true, resumption: 'none', exactMessage: true },
+        ...runtime.protocol,
+        prepare: (input) => runtime.protocol.prepare({ ...input, platform: 'web',
+          providerConfig: ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS,
+          credentials: { phase: 'prepare', mediated: null, raw: null },
+          providerConversation: null, hostedConversation }),
+      },
+      machine: {
+        connecting() {}, connected() {}, ending() {}, disconnected() {},
+        failed: ({ code }) => { failures.push(code); },
+      },
+      createConnection: async (session) => {
+        const handle = createElevenLabsConversationHandle({
+          tools: [{ name: 'sendSessionMessage' }], loadConversationSdk: () => import('@elevenlabs/client'),
+        });
+        handle.subscribe(event => { if (event.type === 'debug') debugEvents.push(event.message); });
+        const connection = createElevenLabsSdkConnection({ createSdkHandleConnection, handle,
+          startConfig: { ...session.config as Record<string, unknown>, textOnly: true, connectionType: 'webrtc' }, duckGain: 0.18 });
+        connections.push(connection);
+        return connection;
+      },
+      isSelectionCurrent: () => true,
+      onCanonicalEvent: async () => {},
+      createToolBarrier: () => createRealtimeToolBarrier({
+        classifyCall: () => 'mutation',
+        // The remote Session effect is the boundary. Do not mock SDK result
+        // settlement, provider protocol, controller or the all-results barrier.
+        executeCall: async call => { effects.push(call.callId); return { receipt: 'private-tool-output' }; },
+        redactResult: value => value,
+        submitResults: async (_responseId, results) => {
+          for (const event of runtime.encodeToolResults(results)) await controller.sendClientControl(event);
+        },
+        continueResponse: async responseId => { await controller.sendClientControl(runtime.encodeToolContinuation(responseId)); },
+      }),
+    });
+    try {
+      await expect(controller.start({ controlSessionId: 'late-delivery', request: { textOnly: true } })).resolves.toEqual({ status: 'connected' });
+      const first = liveKit.rooms[firstRoomIndex]!;
+      first.emit(RoomEvent.DataReceived, new TextEncoder().encode(JSON.stringify({
+        type: 'client_tool_call', client_tool_call: { tool_call_id: 'effect-once', tool_name: 'sendSessionMessage',
+          parameters: { message: 'do not replay this effect' } },
+      })));
+      await vi.waitFor(() => expect(first.rejectResult).toBeTypeOf('function'));
+      // BaseConversation.handleClientToolCall awaits the real callback before
+      // WebRTCConnection.sendMessage reaches publishData. That pending publish
+      // therefore proves callback success before the late transport failure.
+      expect(first.sent).toContainEqual(expect.objectContaining({ type: 'client_tool_result',
+        tool_call_id: 'effect-once', result: JSON.stringify({ receipt: 'private-tool-output' }), is_error: false }));
+      expect(effects).toEqual(['effect-once']);
+      expect(failures).toEqual([]);
+      first.rejectResult!(new Error('private-vendor-publish-error'));
+      await vi.waitFor(() => expect(failures).toEqual(['voice_tool_result_delivery_unrecoverable']));
+      // This envelope is emitted by pinned SDK 1.18.0 WebRTCConnection.sendMessage,
+      // not manufactured by the test as in the neighbouring controller keeper.
+      expect(debugEvents).toContainEqual(expect.objectContaining({ type: 'send_message_error', message: {
+        message: expect.objectContaining({ type: 'client_tool_result', tool_call_id: 'effect-once' }),
+        error: expect.objectContaining({ message: 'private-vendor-publish-error' }),
+      } }));
+      await vi.waitFor(() => expect(first.disconnected).toBe(true));
+      expect(connections[0]?.state()).toBe('closed');
+      expect(controller.getOwnedControlSessionId()).toBeNull();
+      expect(liveKit.rooms).toHaveLength(firstRoomIndex + 1);
+
+      await expect(controller.start({ controlSessionId: 'late-delivery', request: { textOnly: true } })).resolves.toEqual({ status: 'connected' });
+      const retry = liveKit.rooms[firstRoomIndex + 1]!;
+      expect(retry.name).not.toBe(first.name);
+      expect(connections[1]?.currentProviderSessionId()).toBe(retry.name);
+      expect(retry.sent.map(event => event.type)).toEqual(['conversation_initiation_client_data']);
+      expect(effects).toEqual(['effect-once']);
+      expect(failures).toEqual(['voice_tool_result_delivery_unrecoverable']);
+    } finally {
+      await controller.stop();
+      await runtime.dispose();
+      consoleError.mockRestore();
     }
   });
 

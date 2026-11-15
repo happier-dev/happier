@@ -40,6 +40,13 @@ function readNumericNativeCode(value: unknown): string | undefined {
   return typeof number === 'number' && Number.isSafeInteger(number) ? String(number) : undefined;
 }
 
+function isUnavailableAgentError(nativeErrorCode: string | undefined, message: unknown): boolean {
+  // The signed socket exposes this public refusal as its close reason; SDK
+  // error callbacks prepend "Server error: ". Never retain arbitrary prose.
+  const reason = 'The AI agent you are trying to reach is not available.';
+  return nativeErrorCode === '3000' && (message === reason || message === `Server error: ${reason}`);
+}
+
 function readSdkDisconnectReason(value: unknown): string | undefined {
   // SDK 1.18.0 authors these literals itself. Other close prose comes from the
   // remote peer and may contain private content; never copy that into diagnostics.
@@ -176,8 +183,8 @@ export function createElevenLabsSdkConnection(input: Readonly<{
               // prefixed message. Keep only this known, content-free category.
               const nativeErrorReason = context.errorType === 'call_initialization_error'
                 ? 'call_initialization_error' : undefined;
-              const unavailable = nativeErrorCode === '3000' && nativeErrorReason === 'call_initialization_error'
-                && event.error === 'Server error: The AI agent you are trying to reach is not available.';
+              const unavailable = nativeErrorReason === 'call_initialization_error'
+                && isUnavailableAgentError(nativeErrorCode, event.error);
               reportSessionFailure(event.context, 'elevenlabs.sdk.error', nativeErrorCode, nativeErrorReason,
                 unavailable ? 'voice_provider_agent_unavailable' : 'voice_service_unavailable');
               return;
@@ -237,7 +244,12 @@ export function createElevenLabsSdkConnection(input: Readonly<{
         try {
           sessionId = await handle.startSession(input.startConfig);
         } catch (error) {
-          throw reportSessionFailure(error, 'elevenlabs.session.start', readNumericNativeCode(readRecord(error).closeCode));
+          const details = readRecord(error);
+          const nativeErrorCode = readNumericNativeCode(details.closeCode);
+          const unavailable = isUnavailableAgentError(nativeErrorCode, details.closeReason);
+          throw reportSessionFailure(error, 'elevenlabs.session.start', nativeErrorCode,
+            unavailable ? 'agent_unavailable' : undefined,
+            unavailable ? 'voice_provider_agent_unavailable' : 'voice_service_unavailable');
         }
         if (sessionFailure) throw sessionFailure;
         if (signal.aborted || closed) {
