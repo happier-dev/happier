@@ -10,7 +10,7 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { AgentSessionRuntime, AgentSessionOpenRequest, AgentSessionRuntimeContext, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 import { externalShellBridgeAgentDeclaration } from '../../../../../../../packages/plugin-sdk/fixtures/external-targeted-packages/agent-runtime-source';
 import { accountSettingsParse } from '@happier-dev/protocol';
-import { PluginAvailabilityIntentsListActionInputV1Schema, PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
+import { PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
 import { listVoiceActionBlockSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { VOICE_CONVERSATION_SYSTEM_SESSION_KEY } from '@happier-dev/protocol/voice/sessionBinding';
 import { SessionExecutionRunBrokerAuthorityRequestV1Schema, SessionExecutionRunBrokerAuthorityResponseV1Schema } from '@happier-dev/protocol/daemon/executionRuns';
@@ -46,6 +46,7 @@ import { resolveExecutionRunPolicy } from '@/agent/executionRuns/policy/executio
 import { logger } from '@/ui/logger';
 import { ExecutionRunTurnStreamReadResponseSchema, ExecutionRunTurnStreamStartResponseSchema } from '@happier-dev/protocol/execution/runs/streaming';
 import '@/agent/runtime/registry/engineRegistry/runtimeCore';
+import { readRequestedIntentPluginIds } from '@/testkit/http/accountPluginAvailability';
 
 const fixtureCredentials = vi.hoisted(() => ({
   token: `header.${Buffer.from(JSON.stringify({ sub: 'voice-mcp-account' })).toString('base64url')}.signature`,
@@ -317,7 +318,7 @@ describe('Voice Run MCP provisioning occurrence', () => {
       homePost.mockImplementation(async (url, request) => {
         const path = new URL(String(url)).pathname;
         if (path === '/v1/plugins/availability/intents/list') {
-          const { knownPluginIds: pluginIds = [] } = PluginAvailabilityIntentsListActionInputV1Schema.parse(request);
+          const pluginIds = readRequestedIntentPluginIds(request);
           return { status: 200, data: PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor: 1,
             pluginIds, failedPluginIds: [], intentReads: pluginIds.map(pluginId => ({ pluginId, response: {
               availabilityCursor: 1, hostingCapability: { enabled: false }, intent: null, release: null, uiArtifacts: [], packageAssets: [],

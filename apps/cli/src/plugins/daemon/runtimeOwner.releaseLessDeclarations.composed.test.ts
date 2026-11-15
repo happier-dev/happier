@@ -20,8 +20,8 @@ import { buildPluginProjectionV2 } from '@/plugins/projection/registry/projectio
 import { createDaemonPluginRuntimeOwner } from './runtimeOwner';
 import { createDaemonPluginRegistryProjectionInvalidation } from '@/daemon/pluginRegistryProjectionInvalidation';
 import type { DaemonState } from '@/api/types';
-import { PluginAvailabilityIntentsListActionInputV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { publishPluginAccountAvailabilityChanges, publishPluginAccountCollectionWatchInvalidation, retirePluginAccountCollectionWatchScope } from '@/plugins/runtime/context/pluginAccountSettingsChangeBroker';
+import { readRequestedIntentPluginIds } from '@/testkit/http/accountPluginAvailability';
 
 // Model a cold daemon with no last-green UI graph at the filesystem boundary.
 // Discovery, runtime construction, source admission and availability stay real.
@@ -79,7 +79,7 @@ describe('daemon release-less declaration publication', () => {
                     if (!accountReadable) throw Object.assign(new axios.AxiosError('Account temporarily unavailable during reconnect', accountReadErrorCode), {
                         requestId: '0b54db2b-c37b-4cc0-9ad3-a8c54aab2616',
                     });
-                    const pluginIds = [...(PluginAvailabilityIntentsListActionInputV1Schema.parse(body).knownPluginIds ?? [])];
+                    const pluginIds = readRequestedIntentPluginIds(body);
                     return { data: { availabilityCursor: 17, pluginIds, failedPluginIds: [], intentReads: pluginIds.map(pluginId => ({ pluginId,
                         response: { availabilityCursor: 17, hostingCapability: { enabled: false }, release: null, uiArtifacts: [], packageAssets: [],
                             intent: pluginId === manifest.id ? { pluginId, desiredVersion: null, enabled: accountPluginEnabled,

@@ -15,7 +15,7 @@ import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/pr
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { PluginAvailabilityIntentsListActionInputV1Schema, PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
+import { PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
 import { createOpenCodeAgentRuntime } from '../../../../../../../packages/plugins/opencode/src/agent/runtime/nativeRuntime';
 import { OPEN_CODE_CONNECTED_ACCOUNT_DECLARATIONS } from '../../../../../../../packages/plugins/opencode/src/agent/auth/services/purposes';
 import { createUnboundConnectedAccountsFixture } from '@/agent/runtime/registry/engineRegistry/connectedAccounts.testkit';
@@ -66,6 +66,7 @@ import { createSessionFixture, createPlainV2SessionRecordFixture } from '../../.
 import { settingsDefaults } from '../../../../../../../apps/ui/sources/sync/domains/settings/settings';
 import type { VoiceAgentHandle } from '../../../../../../../apps/ui/sources/voice/agent/types';
 import { installLocalStorageMock, installWebLockManagerMock } from '../../../../../../../apps/ui/sources/auth/storage/tokenStorage.web.testHelpers';
+import { readRequestedIntentPluginIds } from '@/testkit/http/accountPluginAvailability';
 
 const credentials = vi.hoisted(() => ({ token: `header.${Buffer.from(JSON.stringify({ sub: 'alice' })).toString('base64url')}.signature`, encryption: null }));
 // Credential storage, external Home HTTP, ACP and socket RPC are the boundaries.
@@ -261,7 +262,7 @@ describe('OpenCode Voice authority through shared MCP', () => {
         const path = new URL(String(url)).pathname;
         if (path.endsWith('/execution-authorization/verify')) return { status: 200, data: { ok: true } };
         if (path === '/v1/plugins/availability/intents/list') {
-          const { knownPluginIds: pluginIds = [] } = PluginAvailabilityIntentsListActionInputV1Schema.parse(request);
+          const pluginIds = readRequestedIntentPluginIds(request);
           return { status: 200, data: PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor: 1,
             pluginIds, failedPluginIds: [], intentReads: pluginIds.map(pluginId => ({ pluginId, response: {
               availabilityCursor: 1, hostingCapability: { enabled: false }, intent: null, release: null, uiArtifacts: [], packageAssets: [],

@@ -12,7 +12,7 @@ export function readBundledPluginAvailabilityHttpFixture(path: string, body: unk
     }
     if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']) {
         const input = PluginAvailabilityIntentsListActionInputV1Schema.parse(body);
-        const pluginIds = input.knownPluginIds ?? [];
+        const pluginIds = input.pluginIds ?? input.knownPluginIds ?? [];
         return PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor: 1,
             pluginIds, intentReads: pluginIds.map(pluginId => ({ pluginId, response: response() })), failedPluginIds: [] });
     }

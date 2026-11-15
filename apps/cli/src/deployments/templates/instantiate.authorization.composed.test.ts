@@ -10,7 +10,7 @@ import { verifyExternalActionMachineRequestV1, signExternalActionApprovalInputV1
 import { createRegistryHostV1, DeploymentTemplateV1Schema, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1,
     type RegistrySourceDescriptorV1 } from '@happier-dev/protocol/registries';
 import { PromptLibraryCatalogKeyV1Schema, PromptLibraryRowsListResponseV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
-import { PluginAvailabilityIntentsListActionInputV1Schema, PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
+import { PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
@@ -28,6 +28,7 @@ import { createDaemonDeploymentActionDeps } from '../createDaemonDeploymentActio
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { handleActionsCommand } from '@/cli/commands/actions';
+import { readRequestedIntentPluginIds } from '@/testkit/http/accountPluginAvailability';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); process.exitCode = undefined; });
 
@@ -114,7 +115,7 @@ it('retains the signed allocated-Source refusal and partial creation through tem
             httpPaths.push(new URL(String(url)).pathname);
             if (String(url).endsWith('/verify')) return { status: 200, data: { ok: true } };
             if (String(url).endsWith('/v1/plugins/availability/intents/list')) {
-                const { knownPluginIds: pluginIds = [] } = PluginAvailabilityIntentsListActionInputV1Schema.parse(body);
+                const pluginIds = readRequestedIntentPluginIds(body);
                 return { status: 200, data: PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor: 1,
                     pluginIds, failedPluginIds: [], intentReads: pluginIds.map(pluginId => ({ pluginId, response: {
                         availabilityCursor: 1, hostingCapability: { enabled: false }, intent: null, release: null, uiArtifacts: [], packageAssets: [],

@@ -43,9 +43,10 @@ import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/ag
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import type { HostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/types';
-import { PluginAvailabilityIntentsListActionInputV1Schema, PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
+import { PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { prepareDeploymentTemplateInstantiationV1 } from '@happier-dev/deployments';
+import { readRequestedIntentPluginIds } from '@/testkit/http/accountPluginAvailability';
 
 /** These fixtures store inline JSON bodies; a blob reference would be a different contract. */
 function parseInlineBody(document: Readonly<{ body?: unknown }> | null | undefined): unknown {
@@ -660,7 +661,7 @@ it('applies admitted Project defaults and preserves Team content audience throug
             } },
         ] } };
         if (url.endsWith('/v1/plugins/availability/intents/list')) {
-            const { knownPluginIds: pluginIds = [] } = PluginAvailabilityIntentsListActionInputV1Schema.parse(body);
+            const pluginIds = readRequestedIntentPluginIds(body);
             return { status: 200, data: PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor: 1,
                 pluginIds, failedPluginIds: [], intentReads: pluginIds.map(pluginId => ({ pluginId, response: {
                     availabilityCursor: 1, hostingCapability: { enabled: false }, intent: null, release: null, uiArtifacts: [], packageAssets: [],

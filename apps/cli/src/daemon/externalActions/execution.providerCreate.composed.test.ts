@@ -3,8 +3,9 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, PROVIDER_CONNECTIONS_ROWS_ROUTE_V1,
   ProviderConnectionsRowMutationV1Schema } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { createHarness, resetFilesystemApprovalSocketBoundary } from './executeExternalAction.filesystemApprovals.testkit';
-import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentsListActionInputV1Schema,
+import { PluginAvailabilityActionHttpPathsV1,
   PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
+import { readRequestedIntentPluginIds } from '@/testkit/http/accountPluginAvailability';
 
 afterEach(() => { vi.restoreAllMocks(); resetFilesystemApprovalSocketBoundary(); });
 
@@ -25,7 +26,7 @@ it('creates an approved managed CLIProxyAPI gateway through installed daemon app
     });
     vi.mocked(axios.post).mockImplementation(async (url, body, ...args) => {
       if (new URL(String(url)).pathname === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']) {
-        const ids = PluginAvailabilityIntentsListActionInputV1Schema.parse(body).knownPluginIds ?? [];
+        const ids = readRequestedIntentPluginIds(body);
         return { status: 200, data: PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor: 1,
           pluginIds: ids, failedPluginIds: [], intentReads: ids.map(pluginId => ({ pluginId, response: {
             availabilityCursor: 1, hostingCapability: { enabled: false }, intent: null,

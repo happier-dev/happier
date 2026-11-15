@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import fastify from 'fastify';
-import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentsListActionInputV1Schema } from '@happier-dev/protocol/plugins/availability';
+import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { AcpBackendDefinitionV1Schema } from '@happier-dev/protocol/acp/catalog/settingsV1';
 import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
@@ -14,6 +14,7 @@ import { publishServerHttpRuntimeOrigin } from '@/api/client/serverHttpBaseUrl';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { fetchGitHubReleaseByTag } from '@happier-dev/release-runtime/github';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { readRequestedIntentPluginIds } from '@/testkit/http/accountPluginAvailability';
 
 afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
 
@@ -46,7 +47,7 @@ it('admits qualified bundled Codex installs through the published Home carrier a
   const response = new Promise<Response>(resolve => { finishFetch = resolve; });
   const app = fastify();
   app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], async request => {
-    const ids = PluginAvailabilityIntentsListActionInputV1Schema.parse(request.body).knownPluginIds ?? [];
+    const ids = readRequestedIntentPluginIds(request.body);
     return { availabilityCursor: 1, pluginIds: ids, failedPluginIds: [], intentReads: ids.map(pluginId => ({ pluginId,
       response: { availabilityCursor: 1, hostingCapability: { enabled: false }, intent: null,
         release: null, uiArtifacts: [], packageAssets: [] },

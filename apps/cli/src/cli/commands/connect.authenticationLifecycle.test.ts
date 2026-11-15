@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import axios from 'axios';
 import type { ResolvedConnectedAccountDescriptorContribution } from '@/plugins/projection/registry/types';
+import { readRequestedIntentPluginIds } from '@/testkit/http/accountPluginAvailability';
 
 const boundary = vi.hoisted(() => ({ rpc: vi.fn(), prompt: vi.fn(), promptSecret: vi.fn(async () => 'github_pat_secret'), openBrowser: vi.fn(async () => true) }));
 
@@ -46,7 +47,7 @@ describe('connect authentication consumer lifetime', () => {
       const path = new URL(String(url)).pathname;
       // The Account plugin census is an HTTP boundary; every bundled plugin keeps its default intent.
       if (path === '/v1/plugins/availability/intents/list') {
-        const pluginIds = [...(body as { knownPluginIds: string[] }).knownPluginIds];
+        const pluginIds = readRequestedIntentPluginIds(body);
         return { status: 200, data: { availabilityCursor: 0, pluginIds, nextCursor: null, failedPluginIds: [],
           intentReads: pluginIds.map(pluginId => ({ pluginId, response: { availabilityCursor: 0,
             hostingCapability: { enabled: false }, intent: null, release: null, uiArtifacts: [], packageAssets: [] } })) } };

@@ -10,7 +10,7 @@ import { prepareRunnerAgentSessionBootstrapForLease } from '@/daemon/spawn/prepa
 import { logger } from '@/ui/logger';
 import { projectPluginCatalogEntrySnapshot } from '@/plugins/projection/introspection/catalogSnapshot';
 import { projectBundledPluginCatalogEntries } from '@/plugins/projection/catalog/installed';
-import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentsListActionInputV1Schema } from '@happier-dev/protocol/plugins/availability';
+import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
@@ -19,6 +19,7 @@ import { resolveMergedContributionRegistry } from '../merged';
 import { loadCurrentBundledPluginLocatorResult } from './locators';
 import { getResolvedContributionRegistry, readCurrentBundledPluginEnablement } from './snapshot';
 import { BUNDLED_FIRST_PARTY_PLUGIN_METADATA } from '../sources/generatedBundledPluginManifests';
+import { readRequestedIntentPluginIds } from '@/testkit/http/accountPluginAvailability';
 
 describe('bundled admission Account boundary', () => {
     it('withdraws an installed development replacement under the same bundled Account identity and restores it', async () => {
@@ -31,7 +32,7 @@ describe('bundled admission Account boundary', () => {
         let censusReads = 0;
         app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], async request => {
             censusReads++;
-            const ids = PluginAvailabilityIntentsListActionInputV1Schema.parse(request.body).knownPluginIds ?? [];
+            const ids = readRequestedIntentPluginIds(request.body);
             return { availabilityCursor: 1, pluginIds: ids, failedPluginIds: [], intentReads: ids.map(id => ({ pluginId: id,
                 response: { availabilityCursor: 1, hostingCapability: { enabled: false }, intent: id === pluginId ? {
                     pluginId, desiredVersion: null, enabled, offlineUiHosting: 'disabled', writableCollections: [], revision: '1',
@@ -151,7 +152,7 @@ describe('bundled admission Account boundary', () => {
         const requestId = '0b54db2b-c37b-4cc0-9ad3-a8c54aab2616';
         const failure = Object.assign(new axios.AxiosError('private payload must not escape', 'ECONNRESET'), { requestId });
         const post = vi.spyOn(axios, 'post').mockRejectedValueOnce(failure).mockImplementation(async (_url, body) => {
-            const pluginIds = PluginAvailabilityIntentsListActionInputV1Schema.parse(body).knownPluginIds ?? [];
+            const pluginIds = readRequestedIntentPluginIds(body);
             return { data: { availabilityCursor: 1, pluginIds, failedPluginIds: [], intentReads: pluginIds.map(pluginId => ({ pluginId,
                 response: { availabilityCursor: 1, hostingCapability: { enabled: false }, intent: null, release: null, uiArtifacts: [], packageAssets: [] },
             })) } };

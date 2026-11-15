@@ -5,6 +5,7 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 import { defineContributionProtocol } from '@happier-dev/plugin-sdk/contributions';
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentReadActionInputV1Schema, PluginAvailabilityIntentReadActionOutputV1Schema,
+    PluginAvailabilityIntentsListActionInputV1Schema, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE,
     createPluginAccountBundledSelectionV1, normalizePluginReleaseFactsV1 } from '@happier-dev/protocol/plugins/availability';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -74,7 +75,39 @@ describe('captured Account execution selection transport', () => {
             expect(reads).toBe(1);
         } finally { restore(); await app.close(); }
     });
-    it('reads Account enablement in the shared census and keeps missing intent default-on', async () => {
+    it.each([[3, 10], [3, 450], [201, 10], [201, 450]])(
+        'reads %i named plugins\' enablement exactly, independent of a %i-intent Account census', async (named, census) => {
+        const app = fastify();
+        const censusIds = Array.from({ length: census }, (_, index) => `com.acme.census${String(index).padStart(4, '0')}`);
+        const pluginIds = Array.from({ length: named }, (_, index) => `com.acme.named${String(index).padStart(4, '0')}`);
+        const read = (pluginId: string) => ({ availabilityCursor: 1, hostingCapability: { enabled: false }, intent: censusIds.includes(pluginId)
+            ? { pluginId, desiredVersion: null, enabled: false, offlineUiHosting: 'disabled', writableCollections: [], revision: '1' } : null,
+            release: null, uiArtifacts: [], packageAssets: [] });
+        const served: number[] = [];
+        // The Home's list contract: an exact named read, or a census page of every intent plus caller-known ids.
+        app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], async request => {
+            const input = PluginAvailabilityIntentsListActionInputV1Schema.parse(request.body);
+            const candidates = input.pluginIds ? [...new Set(input.pluginIds)].sort()
+                : [...new Set([...censusIds, ...(input.knownPluginIds ?? [])])].filter(id => !input.cursor || id > input.cursor).sort();
+            const page = candidates.slice(0, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE);
+            served.push(page.length);
+            return { availabilityCursor: 1, pluginIds: page.filter(id => censusIds.includes(id)), failedPluginIds: [],
+                intentReads: page.map(pluginId => ({ pluginId, response: read(pluginId) })),
+                ...(candidates.length > page.length ? { nextCursor: page.at(-1) } : {}) };
+        });
+        await app.ready();
+        const restore = installAxiosFastifyAdapter({ app, origin: 'http://account-named-enablement.test' });
+        try {
+            const enabled = await readCurrentAccountPluginEnablements({ pluginIds, credentials: { token: 'account', encryption: null },
+                serverUrl: 'http://account-named-enablement.test' });
+            expect([...enabled.values()].every(value => value)).toBe(true);
+            expect(enabled.size).toBe(named);
+            // One request per page of the named set; no census row is read.
+            expect({ requests: served.length, rows: served.reduce((total, rows) => total + rows, 0) })
+                .toEqual({ requests: Math.ceil(named / PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE), rows: named });
+        } finally { restore(); await app.close(); }
+    });
+    it('reads Account enablement through the exact named read and keeps missing intent default-on', async () => {
         const app = fastify();
         const pluginIds = ['happier.language.markdown', 'happier.language.typescript'];
         let reads = 0;

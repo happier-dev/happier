@@ -120,8 +120,10 @@ export async function registerAuthoredAccountActionRelease(app: FastifyInstance,
     app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], async request => {
         const input = PluginAvailabilityIntentsListActionInputV1Schema.parse(request.body);
         const fixtureIds = [...fixtures.map(fixture => fixture.pluginId), ...(options.includeBundledPluginIds ?? [])];
-        // Home returns an explicit absent-intent read for caller-known ids too.
-        const candidates = [...new Set([...fixtureIds, ...(input.knownPluginIds ?? [])])]
+        // An exact named read answers only its plugins (absent intents explicitly);
+        // a census page lists every intent plus caller-known ids.
+        const candidates = (input.pluginIds ? [...new Set(input.pluginIds)]
+            : [...new Set([...fixtureIds, ...(input.knownPluginIds ?? [])])])
             .filter(pluginId => !input.cursor || pluginId > input.cursor).sort();
         const pageIds = candidates.slice(0, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE);
         return PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor: 1,

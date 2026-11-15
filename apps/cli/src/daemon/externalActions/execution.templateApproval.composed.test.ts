@@ -17,7 +17,7 @@ import { EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER, EXTERNAL_ACTION_EFFE
 import { DeploymentTemplateInstantiateInputV1Schema, DeploymentReceiptResultV1Schema, DeploymentReceiptGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateV1Schema, createRegistryHostV1, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/registries';
 import { PromptLibraryCatalogKeyV1Schema, PromptLibraryRowsListResponseV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
-import { PluginAvailabilityIntentsListActionInputV1Schema, PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
+import { PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { SharedSavedSecretCreateInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { DeploymentEnvironmentContentV1Schema, MachineSecretGrantV1Schema, type MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
@@ -30,6 +30,7 @@ import { DeploymentOwnServerTargetMachinesV1Schema } from '@happier-dev/protocol
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 import { createHarness, resetFilesystemApprovalSocketBoundary } from './executeExternalAction.filesystemApprovals.testkit';
 import { terrariaCommit, terrariaDocument, terrariaIndex } from './terrariaTemplate.testkit';
+import { readRequestedIntentPluginIds } from '@/testkit/http/accountPluginAvailability';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); resetFilesystemApprovalSocketBoundary(); resetServerFeaturesClientForTests(); });
 
@@ -170,7 +171,7 @@ it.each([false, true, 'profile_drift', 'builder_dispatch', 'terraria_build', 'te
     vi.mocked(axios.post).mockImplementation(async (url, body, config) => {
       if (String(url).endsWith('/v1/account/saved-secrets/resources')) { generated = SharedSavedSecretCreateInputV1Schema.parse(body); return { status: 200, data: { resourceId: generated.resourceId, revision: 1 } }; }
       if (String(url).endsWith('/v1/plugins/availability/intents/list')) {
-        const { knownPluginIds: pluginIds } = PluginAvailabilityIntentsListActionInputV1Schema.parse(body);
+        const pluginIds = readRequestedIntentPluginIds(body);
         return { status: 200, data: PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor: 1,
           pluginIds, failedPluginIds: [], intentReads: pluginIds.map(pluginId => ({ pluginId, response: {
             availabilityCursor: 1, hostingCapability: { enabled: false }, intent: null, release: null, uiArtifacts: [], packageAssets: [],

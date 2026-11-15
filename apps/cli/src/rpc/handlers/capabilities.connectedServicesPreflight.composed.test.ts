@@ -21,7 +21,7 @@ import {
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { AgentModelsProbeObservationSchema } from '@happier-dev/protocol/capabilities';
 import { QualifiedConnectedAccountCredentialPayloadV1Schema, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
-import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentsListActionInputV1Schema,
+import { PluginAvailabilityActionHttpPathsV1,
   PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
 
 import type { ApiClient } from '@/api/api';
@@ -33,6 +33,7 @@ import type { PreparedPluginDevelopmentActivationGraph } from '@/plugins/authori
 import { materializeSamplePluginFixture, SAMPLE_PLUGIN_ID } from '@/plugins/testkit/samplePackage';
 import type { PluginApi } from '@happier-dev/plugin-sdk';
 import { writeKimiNativeProcessFixture } from '@/daemon/connectedServices/materialize/kimiNativeProcess.testkit';
+import { readRequestedIntentPluginIds } from '@/testkit/http/accountPluginAvailability';
 
 // Device storage is outside the inventory contract; reuse the UI's native boundary.
 await vi.hoisted(async () => {
@@ -431,7 +432,7 @@ describe('capabilities.invoke connected-service preflight', () => {
         if (new URL(String(url)).pathname !== PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']) {
           throw new Error('Unexpected Account HTTP mutation');
         }
-        const pluginIds = PluginAvailabilityIntentsListActionInputV1Schema.parse(body).knownPluginIds ?? [];
+        const pluginIds = readRequestedIntentPluginIds(body);
         return { status: 200, data: PluginAvailabilityIntentsListActionOutputV1Schema.parse({
           availabilityCursor: 1, pluginIds, failedPluginIds: [], intentReads: pluginIds.map(pluginId => ({ pluginId,
             response: { availabilityCursor: 1, hostingCapability: { enabled: false }, intent: null, release: null,

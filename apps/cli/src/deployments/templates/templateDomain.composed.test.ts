@@ -7,7 +7,7 @@ import { createActionExecutor, type ActionExecutorContext, DeploymentTemplateIns
     DeploymentChildRpcV1Schema, ProjectDeploymentDefaultsOutputV1Schema, HomeConnectionDescriptorV1Schema,
     deploymentDomainObservationProofPayloadV1, signMachineInstallationProof, FeaturesResponseSchema,
     DeploymentDomainAddAdmissionInputV1Schema, ArtifactJsonUpdateHttpInputV1Schema } from '@happier-dev/protocol';
-import { PluginAvailabilityIntentsListActionInputV1Schema, PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
+import { PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { normalizeActionsSettingsV1, setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
 import { ExternalActionExecutionAuthorizationV1Schema, projectDeploymentPreparationAdmissionV1,
     EXTERNAL_ACTION_REVIEWED_CHILD_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
@@ -45,6 +45,7 @@ import { createDaemonDeploymentActionDeps } from '../createDaemonDeploymentActio
 import { createOwnServerDeploymentRuntimeForHost } from '../targets/ownServer/ownServerDeploymentHostRuntime';
 import { createOwnServerDockerBoundary } from '../targets/ownServer/ownServerDeployment.testkit';
 import { readEnvironmentSecretLaunchAdmissionForHost } from '../secrets/readEnvironmentSecretLaunchAdmissionForHost';
+import { readRequestedIntentPluginIds } from '@/testkit/http/accountPluginAvailability';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
@@ -134,7 +135,7 @@ it.each(['allowed', 'denied Domain', 'occupied Caddy port', 'approved Create rep
             httpPaths.push(`POST ${path}`);
             if (path.endsWith('/verify')) return { status: 200, data: { ok: true } };
             if (path === '/v1/plugins/availability/intents/list') {
-                const { knownPluginIds: pluginIds = [] } = PluginAvailabilityIntentsListActionInputV1Schema.parse(body);
+                const pluginIds = readRequestedIntentPluginIds(body);
                 return { status: 200, data: PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor: 1,
                     pluginIds, failedPluginIds: [], intentReads: pluginIds.map(pluginId => ({ pluginId, response: {
                         availabilityCursor: 1, hostingCapability: { enabled: false }, intent: null, release: null, uiArtifacts: [], packageAssets: [],

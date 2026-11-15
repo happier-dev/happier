@@ -27,7 +27,7 @@ import { AccountEncryptionModeResponseSchema, AccountEncryptionCurrentnessRespon
 import { AccountProfileResponseSchema } from '@happier-dev/protocol/account/profile';
 import { ChangesResponseSchema } from '@happier-dev/protocol/changes';
 import { PluginAccountSettingsReadResponseV1Schema } from '@happier-dev/protocol/plugins/settings/accountSettingsV1';
-import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentsListActionInputV1Schema,
+import { PluginAvailabilityActionHttpPathsV1,
   PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { PROMPT_LIBRARY_ROWS_ROUTE_V1, PromptLibraryRowsListResponseV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRecordV1Schema, AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
@@ -97,6 +97,7 @@ import { SessionInputAdmissionReceiptV1Schema } from '@happier-dev/protocol/sess
 import type { SessionMessageContent } from '@/api/types';
 import type { SessionMessageDeliveryResolutionV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageDeliveryResolutionV1';
 import { SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
+import { readRequestedIntentPluginIds } from '@/testkit/http/accountPluginAvailability';
 
 // This is a host attribution contract, not Claude codec/process certification.
 // An authored public-SDK Agent supplies the external sessions.open/send behavior;
@@ -405,7 +406,7 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
   home.get('/v1/account/plugin-settings/:pluginId', async () =>
     PluginAccountSettingsReadResponseV1Schema.parse({ status: 'absent' }));
   home.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], async request => {
-    const ids = PluginAvailabilityIntentsListActionInputV1Schema.parse(request.body).knownPluginIds ?? [];
+    const ids = readRequestedIntentPluginIds(request.body);
     return PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor: 1,
       pluginIds: ids, failedPluginIds: [], intentReads: ids.map(pluginId => ({ pluginId,
         response: { availabilityCursor: 1, hostingCapability: { enabled: false }, intent: null,

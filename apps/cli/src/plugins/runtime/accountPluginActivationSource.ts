@@ -84,7 +84,11 @@ export async function setCurrentAccountPluginEnabled(input: AccountReadBinding &
         PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.set'], body));
 }
 
-async function readCurrentAccountPluginIntentReads(input: AccountReadBinding & Readonly<{
+/**
+ * The Account intent census: every Account intent (Account releases this
+ * Machine does not declare) plus the caller-known ids, paged to completion.
+ */
+async function readCurrentAccountPluginIntentCensus(input: AccountReadBinding & Readonly<{
     pluginIds: readonly string[]; isCurrent?: () => boolean;
 }>) {
     const knownPluginIds = [...new Set(input.pluginIds)].sort();
@@ -98,13 +102,7 @@ async function readCurrentAccountPluginIntentReads(input: AccountReadBinding & R
                 // Execution selection consumes intent and release facts, never declaration bodies.
                 omitDeclarations: true,
             }));
-        if (input.isCurrent?.() === false) throw new Error('plugin_account_execution_retired');
-        if (page.failedPluginIds.length > 0) throw new Error('plugin_account_execution_unavailable');
-        for (const entry of page.intentReads) {
-            const response = snapshotIntentRead(entry.pluginId, entry.response);
-            if (reads.has(entry.pluginId)) throw new Error('plugin_account_execution_duplicate_read');
-            reads.set(entry.pluginId, response);
-        }
+        assertIntentPage(input, page, reads);
         if (page.nextCursor && cursor && page.nextCursor <= cursor) throw new Error('plugin_account_execution_invalid_cursor');
         cursor = page.nextCursor ?? undefined;
     } while (cursor);
@@ -112,11 +110,40 @@ async function readCurrentAccountPluginIntentReads(input: AccountReadBinding & R
     return reads;
 }
 
+/** Exact named intent reads: one request per Availability page of the named set, never the Account census. */
+async function readNamedAccountPluginIntentReads(input: AccountReadBinding & Readonly<{ pluginIds: readonly string[] }>) {
+    const pluginIds = [...new Set(input.pluginIds)].sort();
+    const reads = new Map<string, PluginAvailabilityIntentReadActionOutputV1>();
+    for (let start = 0; start < pluginIds.length; start += PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE) {
+        const named = pluginIds.slice(start, start + PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE);
+        assertIntentPage(input, PluginAvailabilityIntentsListActionOutputV1Schema.parse(await postAvailability(input,
+            PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], {
+                pluginIds: named,
+                omitDeclarations: true,
+            })), reads);
+    }
+    if (pluginIds.some(pluginId => !reads.has(pluginId))) throw new Error('plugin_account_execution_unavailable');
+    return reads;
+}
+
+/** Admits one strict intent page into `reads`: a failed or duplicated read fails the whole read. */
+function assertIntentPage(input: Readonly<{ isCurrent?: () => boolean }>,
+    page: ReturnType<typeof PluginAvailabilityIntentsListActionOutputV1Schema.parse>,
+    reads: Map<string, PluginAvailabilityIntentReadActionOutputV1>): void {
+    if (input.isCurrent?.() === false) throw new Error('plugin_account_execution_retired');
+    if (page.failedPluginIds.length > 0) throw new Error('plugin_account_execution_unavailable');
+    for (const entry of page.intentReads) {
+        const response = snapshotIntentRead(entry.pluginId, entry.response);
+        if (reads.has(entry.pluginId)) throw new Error('plugin_account_execution_duplicate_read');
+        reads.set(entry.pluginId, response);
+    }
+}
+
 /** Account intent is default-on; an unavailable census never becomes an enabled fact. */
 export async function readCurrentAccountPluginEnablements(input: AccountReadBinding & Readonly<{
     pluginIds: readonly string[];
 }>): Promise<ReadonlyMap<string, boolean>> {
-    const reads = await readCurrentAccountPluginIntentReads(input);
+    const reads = await readNamedAccountPluginIntentReads(input);
     return new Map(input.pluginIds.map(pluginId => [pluginId, reads.get(pluginId)!.intent?.enabled ?? true]));
 }
 
@@ -153,7 +180,7 @@ export async function readCurrentAccountPluginExecutionDeclarations(input: Accou
             pluginId: input.pluginId, bundled: bundledById.get(input.pluginId) });
         return selection.kind === 'available' ? { kind: 'available', declarations: [selection] } : selection;
     }
-    const reads = await readCurrentAccountPluginIntentReads({ ...input, pluginIds: [...bundledById.keys()] });
+    const reads = await readCurrentAccountPluginIntentCensus({ ...input, pluginIds: [...bundledById.keys()] });
     const declarations = [...reads].flatMap(([pluginId, intentRead]) => {
         const selection = resolvePluginAccountExecutionSelectionV1({ pluginId, intentRead, bundled: bundledById.get(pluginId) });
         return selection.kind === 'available' && (selection.manifest.contributes[input.family]?.length ?? 0) > 0 ? [selection] : [];
@@ -199,8 +226,8 @@ export type AccountPluginActivationSources = Readonly<{
 /** Supplies Account custody to the existing registry and module evaluator. */
 export async function resolveAccountPluginActivationSources(input: AccountPluginActivationSourcesInput): Promise<AccountPluginActivationSources> {
     const bundledDeclarations = (input.contributes.pluginDeclarations ?? []).filter(plugin => plugin.sourceSpec.kind === 'bundled');
-    const knownPluginIds = bundledDeclarations.map(plugin => plugin.pluginId).sort();
-    const reads = await readCurrentAccountPluginIntentReads({ ...input, pluginIds: knownPluginIds });
+    const bundledPluginIds = bundledDeclarations.map(plugin => plugin.pluginId).sort();
+    const reads = await readCurrentAccountPluginIntentCensus({ ...input, pluginIds: bundledPluginIds });
     const pluginEnablementById = resolveBundledPluginEnablement({ pluginIds: [...reads.keys()],
         accountEnabledById: new Map([...reads].map(([pluginId, read]) => [pluginId, read.intent?.enabled ?? true])),
         machineEnabledById: input.machineEnabledById,

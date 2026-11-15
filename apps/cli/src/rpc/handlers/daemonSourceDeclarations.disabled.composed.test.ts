@@ -39,9 +39,9 @@ it('carries actual disabled GitHub admission through Machine RPC into cold, exac
     const app = fastify();
     app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], async request => {
         const input = PluginAvailabilityIntentsListActionInputV1Schema.parse(request.body);
-        const pluginIds = (input.knownPluginIds ?? []).slice(0, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE);
+        const pluginIds = (input.pluginIds ?? input.knownPluginIds ?? []).slice(0, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE);
         return { availabilityCursor: 1, pluginIds, failedPluginIds: [],
-            ...((input.knownPluginIds?.length ?? 0) > pluginIds.length ? { nextCursor: pluginIds.at(-1) } : {}),
+            ...(((input.pluginIds ?? input.knownPluginIds)?.length ?? 0) > pluginIds.length ? { nextCursor: pluginIds.at(-1) } : {}),
             intentReads: pluginIds.map(pluginId => ({ pluginId, response: { availabilityCursor: 1, hostingCapability: { enabled: false },
             intent: pluginId === sourceId ? { pluginId, desiredVersion: null, enabled: false,
                 offlineUiHosting: 'disabled', writableCollections: [], revision: '1' } : null,

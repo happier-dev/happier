@@ -1,10 +1,11 @@
 import fastify from 'fastify';
 import { describe, expect, it, vi } from 'vitest';
-import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentsListActionInputV1Schema } from '@happier-dev/protocol/plugins/availability';
+import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from './sources/generatedBundledPluginManifests';
 import { resolveMergedContributionRegistry } from './merged';
+import { readRequestedIntentPluginIds } from '@/testkit/http/accountPluginAvailability';
 
 const { manifestReads } = vi.hoisted(() => ({ manifestReads: [] as string[] }));
 
@@ -26,7 +27,7 @@ describe('merged bundled catalog admission cost', () => {
         let enabled = false;
         const app = fastify();
         app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], async request => {
-            const ids = PluginAvailabilityIntentsListActionInputV1Schema.parse(request.body).knownPluginIds ?? [];
+            const ids = readRequestedIntentPluginIds(request.body);
             return { availabilityCursor: 1, pluginIds: ids, failedPluginIds: [], intentReads: ids.map(id => ({ pluginId: id,
                 response: { availabilityCursor: 1, hostingCapability: { enabled: false }, intent: id === pluginId ? {
                     pluginId, desiredVersion: null, enabled, offlineUiHosting: 'disabled', writableCollections: [], revision: '1',

@@ -59,6 +59,7 @@ import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@hap
 import { registerPlainArtifactRoutes } from '@/session/actions/widgetApproval.testkit';
 import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { decodeStoredCredentials } from '@/persistence';
+import { readRequestedIntentPluginIds } from '@/testkit/http/accountPluginAvailability';
 
 /** These fixtures attach a reviewed-child port that closes over the same context object. */
 type MutableContext<T> = { -readonly [K in keyof T]: T[K] };
@@ -270,7 +271,7 @@ describe('managed inventory CLI Home adapter', () => {
     app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], async request => {
       inventoryReads++;
       const input = PluginAvailabilityIntentsListActionInputV1Schema.parse(request.body);
-      const pluginIds = input.knownPluginIds ?? [];
+      const pluginIds = input.pluginIds ?? input.knownPluginIds ?? [];
       return PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor: 1,
         pluginIds, failedPluginIds: [], intentReads: pluginIds.map(pluginId => ({
           pluginId, response: PluginAvailabilityIntentReadActionOutputV1Schema.parse({ availabilityCursor: 1,
@@ -328,11 +329,11 @@ describe('managed inventory CLI Home adapter', () => {
 
   it.each(['failed', 'missing'] as const)('refuses a %s Account declaration census instead of silently hiding a bundled provider', async failure => {
     app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], async request => {
-      const { knownPluginIds = [] } = PluginAvailabilityIntentsListActionInputV1Schema.parse(request.body);
+      const namedPluginIds = readRequestedIntentPluginIds(request.body);
       const unread = 'happier.machine.agent37';
-      const successful = knownPluginIds.filter(pluginId => pluginId !== unread);
+      const successful = namedPluginIds.filter(pluginId => pluginId !== unread);
       return PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor: 1,
-        pluginIds: failure === 'failed' ? knownPluginIds : successful,
+        pluginIds: failure === 'failed' ? namedPluginIds : successful,
         failedPluginIds: failure === 'failed' ? [unread] : [],
         intentReads: successful.map(pluginId => ({ pluginId,
           response: PluginAvailabilityIntentReadActionOutputV1Schema.parse({ availabilityCursor: 1,
