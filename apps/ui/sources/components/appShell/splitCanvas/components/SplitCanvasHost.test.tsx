@@ -180,15 +180,21 @@ describe('SplitCanvasHost', () => {
     it('leaves a hidden retained member layer untouched by a canvas resize', async () => {
         const state = createNestedState();
         const header = () => null;
-        const hidden = { id: 'hidden', leafId: 'leaf-a', isActive: false, render: () => React.createElement('HiddenBody', {}) };
-        const visible = { id: 'visible', leafId: 'leaf-a', isActive: true, render: () => React.createElement('VisibleBody', {}) };
+        const hiddenBody = () => React.createElement('HiddenBody', {});
+        const visibleBody = () => React.createElement('VisibleBody', {});
+        // The hidden member was presented once (a visited tab), so it keeps its retained layer.
+        const presented = [{ id: 'hidden', leafId: 'leaf-a', isActive: true, render: hiddenBody },
+            { id: 'visible', leafId: 'leaf-a', isActive: false, render: visibleBody }];
+        const hidden = { id: 'hidden', leafId: 'leaf-a', isActive: false, render: hiddenBody };
+        const visible = { id: 'visible', leafId: 'leaf-a', isActive: true, render: visibleBody };
         const members = [hidden, visible];
-        const screen = await renderScreen(<SplitCanvasHost state={state} dispatch={() => {}} renderLeafHeader={header} retainedLeafContents={members} />);
+        const screen = await renderScreen(<SplitCanvasHost state={state} dispatch={() => {}} renderLeafHeader={header} retainedLeafContents={presented} />);
         const layout = async (width: number, height: number) => act(async () => {
             invokeTestInstanceHandler(screen.findByTestId('split-canvas-host'), 'onLayout', { nativeEvent: { layout: { width, height } } });
             invokeTestInstanceHandler(screen.findByTestId('split-canvas-content-slot-leaf-a'), 'onLayout', { nativeEvent: { layout: { x: 0, y: 30 } } });
         });
         await layout(1000, 600);
+        await screen.update(<SplitCanvasHost state={state} dispatch={() => {}} renderLeafHeader={header} retainedLeafContents={members} />);
         const hiddenBefore = screen.findByTestId('split-canvas-retained-content-hidden')?.props;
         expect(hiddenBefore).toBeTruthy();
         const visibleBefore = screen.findByTestId('split-canvas-retained-content-visible')?.props;

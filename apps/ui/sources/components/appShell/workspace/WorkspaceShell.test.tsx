@@ -357,6 +357,24 @@ describe('WorkspaceShell retained member layer', () => {
         expect(layerProps(otherId)).toBe(otherBefore);
     });
 
+    it.each([10, 400])('mounts member layers only for presented tabs, independent of %i restored tabs', async (tabCount) => {
+        let initial = createWorkspaceState(restoredTab('restored-0'));
+        for (let index = 1; index < tabCount; index++) {
+            initial = reduceWorkspaceState(initial, { type: 'openTab', groupId: 'group:1', tab: restoredTab(`restored-${index}`) });
+        }
+        const screen = await renderWorkspace(initial);
+        const prefix = 'split-canvas-retained-content-';
+        const layers = () => screen.root.findAll(node => typeof node.type === 'string' && typeof node.props.testID === 'string'
+            && node.props.testID.startsWith(prefix)).map(node => String(node.props.testID).slice(prefix.length)).sort();
+        const last = `restored-${tabCount - 1}`;
+        expect(layers()).toEqual([last]);
+        const { navigation } = screen.root.findByType('WorkspaceStateProbe').props;
+        await act(async () => { navigation.activateTab('group:1', 'restored-0'); });
+        await settle(() => { expect(stateOf(screen).groups['group:1'].activeTabId).toBe('restored-0'); });
+        // The visited tab keeps its layer (its retained state); unvisited tabs still mount nothing.
+        expect(layers()).toEqual(['restored-0', last].sort());
+    });
+
     it('re-renders a member layer when its tab changes', async () => {
         const screen = await renderWorkspace(initialState());
         const { navigation } = screen.root.findByType('WorkspaceStateProbe').props;

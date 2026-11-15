@@ -187,6 +187,9 @@ function SplitCanvasHostInner<TLeafPayload>(props: Readonly<{
     const renderLeaf = props.retainedLeafContents === undefined ? props.renderLeaf : props.renderLeafHeader;
     // Members hold the newest dispatch through this stable handle, so a parent's new callback does not redraw every retained tab.
     const dispatch = useEventCallback(props.dispatch);
+    // A retained member gets its layer once it is first presented and keeps it while it stays listed, so restoring
+    // many tabs mounts layers for the visited ones only (a never-presented layer would render nothing anyway).
+    const presentedMembers = React.useRef(new Set<string>());
     const [liveRatios, setLiveRatios] = React.useState<Readonly<Record<string, number>>>({});
     const publishLiveRatio = React.useCallback((splitId: string, ratio: number | null) => {
         setLiveRatios(current => {
@@ -377,6 +380,10 @@ function SplitCanvasHostInner<TLeafPayload>(props: Readonly<{
     ]);
 
     if (!props.state.root) return null;
+    if (props.retainedLeafContents && presentedMembers.current.size > 0) {
+        const listed = new Set(props.retainedLeafContents.map(member => member.id));
+        for (const id of presentedMembers.current) if (!listed.has(id)) presentedMembers.current.delete(id);
+    }
     const leafRects = collectSplitCanvasLeafRects(props.state.root, { x: 0, y: 0, width: hostSize?.width ?? 0, height: hostSize?.height ?? 0 }, {
         dividerSizePx,
         resolveRatio: (node, size) => resolveSplitRatio(liveRatios[node.id] ?? node.ratio, splitNodeSizing(node, size, props.getLeafMinimumSizePx, dividerSizePx)),
@@ -409,6 +416,8 @@ function SplitCanvasHostInner<TLeafPayload>(props: Readonly<{
                     const edges = leafEdges.get(member.leafId);
                     const slot = contentSlots[member.leafId];
                     const visible = Boolean(slot) && member.isActive && (!props.state.maximizedLeafId || maximized);
+                    if (visible) presentedMembers.current.add(member.id);
+                    else if (!presentedMembers.current.has(member.id)) return null;
                     // A hidden member's body is `display: none`, so its frame is unobservable: it keeps one
                     // resting frame and redraws only when it becomes visible (and on its own tab's changes).
                     const frameRect = !visible ? HOST_ORIGIN_RECT : maximized ? HOST_ORIGIN_RECT : rect;
