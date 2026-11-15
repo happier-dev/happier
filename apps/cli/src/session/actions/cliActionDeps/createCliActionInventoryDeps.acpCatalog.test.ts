@@ -21,14 +21,16 @@ import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { buildAgentBackendInventoryItems } from '../inventory/buildAgentBackendInventoryItems';
 import { buildReviewEngineInventoryItems } from '../inventory/buildReviewEngineInventoryItems';
-import { ScmDiffSummaryModelCatalogObservationV1Schema } from '@happier-dev/protocol/actions/settings/scmDiffSummarySettings';
-import { listAgentExecutionTargetsV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { resolveScmDiffSummaryDefaultModelProfile, ScmDiffSummaryModelCatalogObservationV1Schema } from '@happier-dev/protocol/actions/settings/scmDiffSummarySettings';
+import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, listAgentExecutionTargetsV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { createCliMachineInventoryActionDeps } from './machineInventory';
 import { createCapabilitiesService } from '@/capabilities/service';
 import { createAcpAgentInventoryCapability } from '@/capabilities/registry/machineAgentsInventory';
 import type { CapabilitiesDetectRequest } from '@/capabilities/types';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 const record = { v: 1, definitions: [{ id: 'row-review', name: 'row-review', title: 'Row Review', launch: { kind: 'command' as const, command: 'review-agent', args: ['acp'] },
    env: {}, capabilities: { supportsLoadSession: true, supportsModes: 'yes', supportsModels: 'yes',
@@ -213,13 +215,14 @@ describe('ACP Action inventory row authority', () => {
     } else {
       expect(result).toMatchObject({ ok: true, result: { items: [
         { agentId: 'acme/helper', title: 'Remote Helper', ...nativeFacts },
-        { agentId: 'custom-acp', definitionId: 'host-only', title: 'Host private Agent', installed: true },
+        { agentId: buildQualifiedPluginContributionKey(CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1),
+          definitionId: 'host-only', title: 'Host private Agent', installed: true },
       ] } });
       expect(result).not.toHaveProperty('result.definitionCatalog');
       expect(requests).toContain(`GET ${ACP_CATALOG_ROWS_ROUTE_V1}`);
     }
   });
-  it.each(['models', 'session_modes', 'summary'] as const)('returns native %s evidence only for an explicit configured probe in its requested workspace', async kind => {
+  it.each(['models', 'session_modes', 'config_options', 'summary'] as const)('returns native %s evidence in the Session workspace unless a probe directory is explicit', async kind => {
     await withTempDir('happier-acp-action-probe-', async directory => {
       // Genuine executable boundary: the real ACP transport negotiates this
       // agent's session state; catalog admission, probing and Actions are real.
@@ -248,6 +251,8 @@ describe('ACP Action inventory row authority', () => {
                 modes: { currentModeId: 'agent-mode', availableModes: [{
                   id: 'agent-mode', name: 'Agent mode', description: process.cwd(),
                 }] },
+                configOptions: [{ id: 'agent-config', name: 'Agent config', description: process.cwd(),
+                  type: 'select', currentValue: 'on', options: [{ value: 'on', name: 'On' }] }],
               });
             } else if (request.id !== undefined) {
               reply(request.id, {});
@@ -286,22 +291,9 @@ describe('ACP Action inventory row authority', () => {
         expect(catalog.automaticProfiles).toEqual([]);
         expect(catalog.discoveryTargetKeys).toContain(targetKey);
         expect.soft(requests).not.toContain('GET /v2/account/settings');
-        // Runtime import follows the cross-App parity harness convention: the
-        // pure picker consumer runs here without adding UI aliases to CLI compilation.
-        const picker: { projectAgentModelChoices(input: Readonly<{ purpose: 'walkthrough'; sources: readonly unknown[];
-          executableProfiles: typeof catalog.profiles; automaticProfiles: typeof catalog.automaticProfiles;
-          discoveryTargetKeys: readonly string[]; defaultModelTitle: string }>): Readonly<{
-            selections: Map<string, unknown>; defaultProfile: unknown; groups: readonly { discoverable: boolean }[];
-          }> } = await import(new URL('../../../../../ui/sources/components/settings/pickers/projectAgentModelChoices.ts', import.meta.url).href);
-        const project = (profiles: typeof catalog.profiles) => picker.projectAgentModelChoices({ purpose: 'walkthrough',
-          sources: [{ entry: { kind: 'configuredBackend', backendTarget: targetKey, agentId: 'custom-acp', title: 'Row Review' },
-            models: [], catalogModels: [], runnerCapable: true, discoverable: true }],
-          executableProfiles: profiles, automaticProfiles: catalog.automaticProfiles, discoveryTargetKeys: catalog.discoveryTargetKeys, defaultModelTitle: 'Default' });
-        // ACP does not prove JSON support for this model. The real consumer
-        // keeps discovery reachable without inventing an executable model.
-        expect(project(catalog.profiles).selections.size).toBe(0);
-        expect(project(catalog.profiles).defaultProfile).toBeNull();
-        expect(project([]).groups).toMatchObject([{ discoverable: true }]);
+        // ACP does not prove JSON support for this model: the task-runner owner
+        // offers no Auto model rather than inventing an executable one.
+        expect(resolveScmDiffSummaryDefaultModelProfile(catalog.profiles)).toBeNull();
         expect(await read(true)).toMatchObject({ profiles: catalog.profiles });
         const beforeFailure = operationContext.readSnapshot();
         if (!beforeFailure) throw new Error('Requester retired before metadata failure');
@@ -315,6 +307,10 @@ describe('ACP Action inventory row authority', () => {
           expect(incomplete).toMatchObject({ profiles: catalog.profiles, automaticProfiles: [],
             unavailableReason: 'account_metadata_unavailable' });
           expect(incomplete).not.toHaveProperty('probeFailures');
+          // A transient row failure cannot activate source transfer. Confirmed
+          // absence can; this fixture's unavailable source keeps it incomplete.
+          expect(requests.filter(request => request === 'GET /v2/account/settings'))
+            .toHaveLength(status === 'absent' ? 1 : 0);
         }
         const afterFailure = operationContext.readSnapshot();
         if (!afterFailure) throw new Error('Requester retired during metadata failure');
@@ -323,7 +319,7 @@ describe('ACP Action inventory row authority', () => {
         const recovered = await read();
         expect(recovered.profiles).toEqual(catalog.profiles);
         expect(recovered).not.toHaveProperty('unavailableReason');
-        expect(requests).not.toContain('GET /v2/account/settings');
+        expect(requests.filter(request => request === 'GET /v2/account/settings')).toHaveLength(1);
         expect(requests).not.toContain('GET /v1/account/encryption');
         expect(requests.filter(request => request.startsWith('POST '))).toEqual([]);
         const current = operationContext.readSnapshot();
@@ -339,9 +335,10 @@ describe('ACP Action inventory row authority', () => {
         expect(getActiveAccountSettingsSnapshot()).toBe(incumbent);
         return;
       }
-      const actionId = kind === 'models' ? 'agents.models.list' : 'agents.session_modes.list';
-      const id = kind === 'models' ? 'agent-model' : 'agent-mode';
-      const label = kind === 'models' ? 'Agent model' : 'Agent mode';
+      const actionId = kind === 'models' ? 'agents.models.list'
+        : kind === 'session_modes' ? 'agents.session_modes.list' : 'agents.config_options.list';
+      const id = kind === 'models' ? 'agent-model' : kind === 'session_modes' ? 'agent-mode' : 'agent-config';
+      const label = kind === 'models' ? 'Agent model' : kind === 'session_modes' ? 'Agent mode' : 'Agent config';
       const context = { surface: 'cli', authority: 'account_automation' } as const;
       const ordinary = await executor.execute(actionId, { backendTargetKey: targetKey }, context);
       expect(ordinary).toMatchObject({ ok: true, result: { source: 'dynamic', items: expect.arrayContaining([
@@ -349,6 +346,12 @@ describe('ACP Action inventory row authority', () => {
       ]) } });
       if (!ordinary.ok) throw new Error(JSON.stringify(ordinary));
       expect(ordinary.result).not.toHaveProperty('probeObservation');
+
+      const scoped = await runAddedHostedSession({ environment: process.env, workingDirectory: directory, end: () => {} },
+        () => executor.execute(actionId, { backendTargetKey: targetKey }, context));
+      expect(scoped).toMatchObject({ ok: true, result: { source: 'dynamic', items: expect.arrayContaining([
+        expect.objectContaining({ id, label, description: directory }),
+      ]) } });
 
       const explicit = await executor.execute(actionId, { backendTargetKey: targetKey,
         probe: { cwd: directory },
@@ -360,7 +363,8 @@ describe('ACP Action inventory row authority', () => {
           id, name: label, description: directory, contextWindowTokens: 32000,
           modelOptions: [expect.objectContaining({ id: 'reasoning', currentValue: 'private-current-value' })],
         })]),
-      } : { source: 'dynamic', availableModes: [{ id, name: label, description: directory }] } } });
+      } : kind === 'session_modes' ? { source: 'dynamic', availableModes: [{ id, name: label, description: directory }] }
+        : { source: 'dynamic', configOptions: [expect.objectContaining({ id, name: label, description: directory })] } } });
       expect(requests).toContain(`GET ${ACP_CATALOG_ROWS_ROUTE_V1}`);
       expect(requests.some(request => request.startsWith('POST'))).toBe(false);
       expect(getActiveAccountSettingsSnapshot()).toBe(incumbent);

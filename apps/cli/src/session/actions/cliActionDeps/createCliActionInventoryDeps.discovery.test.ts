@@ -14,8 +14,35 @@ import { z } from 'zod/mini';
 import { configuration } from '@/configuration';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { DaemonMcpServersPreviewRequestSchema } from '@happier-dev/protocol/mcp/servers/previewV1';
 
 describe('native Action configuration discovery', () => {
+  it('previews MCP servers in each hosted Session directory unless a directory or Session path is supplied', async () => {
+    const directories: string[] = [];
+    const createInventory = (path?: string) => createCliActionInventoryDeps({ token: 'fixture-token', sessionId: '',
+      mode: 'plain', ctx: null, rawSession: { machineId: 'worker', ...(path ? { path } : {}) },
+      // Machine RPC is the boundary; directory selection and preview projection remain real.
+      callMachineAction: async input => {
+        expect(input.method).toBe(RPC_METHODS.DAEMON_MCP_SERVERS_PREVIEW);
+        const request = DaemonMcpServersPreviewRequestSchema.parse(input.request);
+        directories.push(request.directory!);
+        return { ok: true, builtIn: [], managed: [], detected: [] };
+      },
+    });
+    const inventory = createInventory();
+    await Promise.all(['/hosted/first', '/hosted/second'].map(async workingDirectory => {
+      await runAddedHostedSession({ environment: process.env, workingDirectory, end: () => {} }, async () => {
+        expect(await inventory.spawnMcpServersPreview!({ agentId: 'codex' })).toMatchObject({ ok: true });
+        await inventory.spawnMcpServersPreview!({ agentId: 'codex', directory: '/explicit/project' });
+        await createInventory('/metadata/project').spawnMcpServersPreview!({ agentId: 'codex' });
+      });
+    }));
+    await inventory.spawnMcpServersPreview!({ agentId: 'codex' });
+    expect(directories.sort()).toEqual(['/hosted/first', '/explicit/project', '/metadata/project',
+      '/hosted/second', '/explicit/project', '/metadata/project', process.cwd()].sort());
+  });
+
   it('keeps complete Machine model discovery and honors a deliberate 201-row projection', async () => {
     const agentId = 'acme.discovery/assistant';
     const inventory = createCliActionInventoryDeps({ token: 'fixture-token', sessionId: '', mode: 'plain', ctx: null,
@@ -188,7 +215,7 @@ describe('native Action configuration discovery', () => {
           expect.objectContaining({ id: 'small', description: 'model-probe-1' }),
         ]) });
       const unavailable = await inventory.agentsConfigOptionsList!({ agentId, backendTargetKey, modelId: 'small', machineId: 'other-machine' });
-      expect(unavailable).toMatchObject({ ok: false, errorCode: 'agent_inventory_probe_failed' });
+      expect(unavailable).toMatchObject({ ok: false, errorCode: 'not_authenticated' });
       const foreignHome = await inventory.agentsConfigOptionsList!({ agentId, backendTargetKey, modelId: 'small',
         machineId: 'machine', serverId: 'other-home' });
       expect(foreignHome).toMatchObject({ ok: false, errorCode: 'agent_inventory_probe_failed' });

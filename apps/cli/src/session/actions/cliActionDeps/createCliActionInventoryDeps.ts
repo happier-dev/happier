@@ -1,4 +1,5 @@
 import type { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
+import { sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { AccountProfileResponseSchema } from '@happier-dev/protocol/account/profile';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
@@ -209,7 +210,7 @@ async function probeActionModelsBestEffort(params: Readonly<{
   }
 
   const probe = params.args.probe;
-  const cwd = normalizeStringValue(probe?.cwd) || normalizeStringValue(params.rawSession?.path) || process.cwd();
+  const cwd = normalizeStringValue(probe?.cwd) || normalizeStringValue(params.rawSession?.path) || sessionWorkingDirectory();
   try {
     const { probeAgentModelsBestEffort } = await import('./resolveAgentProbeInventoryDeps');
     return await probeAgentModelsBestEffort({
@@ -259,7 +260,7 @@ async function probeActionModesBestEffort(params: Readonly<{
   }
 
   const probe = params.args.probe;
-  const cwd = normalizeStringValue(probe?.cwd) || normalizeStringValue(params.rawSession?.path) || process.cwd();
+  const cwd = normalizeStringValue(probe?.cwd) || normalizeStringValue(params.rawSession?.path) || sessionWorkingDirectory();
   try {
     const { probeAgentModesBestEffort } = await import('./resolveAgentProbeInventoryDeps');
     return await probeAgentModesBestEffort({
@@ -307,7 +308,7 @@ async function probeActionConfigOptionsBestEffort(params: Readonly<{
   }
 
   const probe = params.args.probe;
-  const cwd = normalizeStringValue(probe?.cwd) || normalizeStringValue(params.rawSession?.path) || process.cwd();
+  const cwd = normalizeStringValue(probe?.cwd) || normalizeStringValue(params.rawSession?.path) || sessionWorkingDirectory();
   try {
     const { probeAgentConfigOptionsBestEffort } = await import('./resolveAgentProbeInventoryDeps');
     return await probeAgentConfigOptionsBestEffort({
@@ -1015,7 +1016,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
         || '';
       const directory = normalizeStringValue((args as { directory?: unknown }).directory)
         || await readCurrentSessionValue('path')
-        || process.cwd();
+        || sessionWorkingDirectory();
       if (!params.callMachineAction || !machineId || !agentId) return { ok: false, items: [], preview: null };
       const { projectSpawnMcpServersPreviewInventory } = await import("./resolveSpawnMcpServersPreviewInventory");
       return projectSpawnMcpServersPreviewInventory(await params.callMachineAction({ machineId, serverId: context?.serverId ?? params.serverId,
