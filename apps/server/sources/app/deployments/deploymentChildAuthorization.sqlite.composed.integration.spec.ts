@@ -1357,6 +1357,52 @@ describe('deployment children retain their controller Action authority', () => {
         }, { authentication: 'real' });
     });
 
+    it('refuses a Team member saved-reference read of an Environment they cannot read', async () => {
+        for (const shape of ['teammate-owned', 'team-owned guest'] as const) {
+            // A references B's export; the requester shares a Team with B's owner
+            // but has no read access to B. The signed child admits only transport.
+            const f = await fixture('account', 'account', { readableEnvironment: true });
+            const b = shape === 'teammate-owned'
+                ? await fixture('account', 'account', { readableEnvironment: true })
+                : await fixture('team', 'account', { readableEnvironment: true });
+            const team = b.team ?? await db.team.create({ data: { name: 'Shared Team' } });
+            if (!b.team) await db.teamMembership.create({ data: { teamId: team.id, accountId: b.account.id, role: 'owner' } });
+            await db.teamMembership.create({ data: { teamId: team.id, accountId: f.account.id,
+                role: shape === 'teammate-owned' ? 'member' : 'guest' } });
+            await db.deployment.delete({ where: { id: f.receipt.id } });
+            const target = f.authorization.binding.target;
+            const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: f.authorization,
+                serverId, serverIdentityId: serverId, serverHttpBaseUrl: 'http://home.test', target,
+                installationId: f.controller.installationId, privateKey: f.controller.keys.secretKey, rootAdmitted: true });
+            if (!authorization) throw new Error('Expected admitted root HTTP projection');
+            const action = 'deployments.environments.get';
+            await withAuthenticatedTestApp(app => { registerDeploymentRoutes(app); artifactsRoutes(app); }, async app => {
+                const responses = await invokeHostReviewedChildV1({ parent: { actionId: 'deployments.deploy', input: f.input },
+                    context: { runtimeAccountId: f.account.id, externalActionTarget: target,
+                        externalActionExecutionAuthorization: authorization, surface: 'cli' },
+                    child: { action, role: 'deployment.reference', input: { serverId, environmentId: b.environment.id } },
+                    admittedReview: { action, role: 'deployment.reference', surface: 'cli' }, environmentId: b.environment.id,
+                    execute: async (_input, context) => {
+                        const results = [];
+                        for (const path of [`/v1/deployments/environments/${b.environment.id}?serverId=${serverId}`,
+                            `/v1/artifacts/${b.environment.contentArtifactId}`]) {
+                            const headers = await context.externalActionExecutionAuthorization!.requesterHttpProjection!.createRequestHeaders({
+                                effectActionId: action, method: 'GET', path });
+                            results.push(await app.inject({ method: 'GET', url: path,
+                                headers: { ...currentAccountStoredContentCompatibilityHeaders, ...headers } }));
+                        }
+                        return results;
+                    } });
+                if (!Array.isArray(responses)) throw new Error('Expected reference read results');
+                for (const response of responses) {
+                    expect([403, 404], `${shape}: ${response.body}`).toContain(response.statusCode);
+                    expect(response.json()).not.toHaveProperty('environment');
+                    expect(response.json()).not.toHaveProperty('artifact');
+                }
+            }, { authentication: 'real' });
+        }
+    });
+
     it('retains the deployment Source-read purpose inside a reviewed Cloudflare Upload child', async () => {
         const f = await fixture('account', 'account', { platformTarget: 'workers' });
         const target = f.authorization.binding.target;
