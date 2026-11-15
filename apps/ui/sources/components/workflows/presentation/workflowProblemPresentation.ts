@@ -189,7 +189,15 @@ export function formatWorkflowDefinitionContentUnavailableReason(reason: Workflo
 }
 
 /** A missing rejected-header title is unavailable, not a fabricated authored name. */
-export function formatWorkflowDefinitionLibraryTitle(definition: Readonly<{ metadata: WorkflowDefinitionMetadataV1 | null }>): string {
+export function formatWorkflowDefinitionLibraryTitle(definition: Readonly<{
+    metadata: WorkflowDefinitionMetadataV1 | null;
+    definitionId?: string;
+    contentUnavailableReason?: WorkflowDefinitionContentUnavailableReasonV1;
+}>): string {
+    if (definition.contentUnavailableReason === 'history_not_readable'
+        && (!definition.metadata || definition.metadata.title === definition.definitionId)) {
+        return t('workflows.readState.historyTitle');
+    }
     return definition.metadata?.title ?? t('common.unavailable');
 }
 

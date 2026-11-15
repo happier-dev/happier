@@ -66,7 +66,8 @@ export function projectWorkflowLibraryRecords(input: Readonly<{
         return {
             key: `account-trigger:${set.automationId}`, group: 'library', accountTrigger: set,
             name: sourceGone ? t('workflows.triggers.row.workflowUnavailable')
-                : set.name ?? describeLegacyTriggerSet(set)?.title ?? describeTriggerTarget(set.target, () => null),
+                : (set.name === set.automationId ? undefined : set.name)
+                    ?? describeLegacyTriggerSet(set)?.title ?? describeTriggerTarget(set.target, () => null),
             triggerSummary: formatTriggerSetSummary(set.triggers, input.automationSummaries?.get(set.automationId)?.lastRun?.state),
             updatedAt: set.updatedAt ?? 0,
             lastRunSummary: input.automationSummaries?.get(set.automationId),
@@ -75,7 +76,12 @@ export function projectWorkflowLibraryRecords(input: Readonly<{
     });
     // The existing Library is updated_desc with descending identity as its tie-breaker.
     const previousByKey = new Map(input.previous?.map(row => [row.key, row]));
-    const ordered = [...definitions, ...triggers].map(row => {
+    // List sources can overlap; one identity has one row in both the column and Library.
+    const recordsByKey = new Map<string, WorkflowLibraryRecordRow>();
+    for (const row of [...definitions, ...triggers]) {
+        if (!recordsByKey.has(row.key)) recordsByKey.set(row.key, row);
+    }
+    const ordered = [...recordsByKey.values()].map(row => {
         const previous = previousByKey.get(row.key);
         if (!previous || previous.group !== row.group || previous.lastRunSummary !== row.lastRunSummary
             || previous.name !== row.name || previous.triggerSummary !== row.triggerSummary || previous.updatedAt !== row.updatedAt) return row;

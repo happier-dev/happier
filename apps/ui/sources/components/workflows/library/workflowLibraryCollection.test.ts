@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { WorkflowTriggerSetV1Schema, type WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { WorkflowDefinitionListResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -18,6 +19,28 @@ const project = (accountTriggers: readonly WorkflowTriggerSetV1[]) => projectWor
     definitions: { library: [], sharedWithYou: [] }, accountTriggers, summaries: null, automationSummaries: null });
 
 describe('retained triggers whose Workflow is gone', () => {
+    it('lists a definition once across list sources and presents unreadable earlier-build content', () => {
+        const definitionId = 'cmwg2ttqc01hwmcswcfldvi20';
+        const { definitions } = WorkflowDefinitionListResultV1Schema.parse({ definitions: [{
+            kind: 'workflow-definition.v1', definitionId, revision: null, metadata: { title: definitionId },
+            triggers: [], nextRunAt: null, contentStatus: 'unavailable', stepCount: null,
+            contentUnavailableReason: 'history_not_readable',
+        }] });
+        const rows = projectWorkflowLibraryRecords({ definitions: { library: definitions, sharedWithYou: definitions },
+            accountTriggers: [], summaries: null, automationSummaries: null });
+        expect(rows.map(row => row.name)).toEqual(['workflows.readState.historyTitle']);
+    });
+    it('lists overlapping trigger sources once', () => {
+        const trigger = set('overlap', { name: 'Morning digest' });
+        expect(project([trigger, trigger])).toHaveLength(1);
+    });
+
+    it('labels an unreadable legacy record by its state rather than its stored identity', () => {
+        const legacy = set('cmwg2ttqc01hwmcswcfldvi20', { name: 'cmwg2ttqc01hwmcswcfldvi20',
+            health: 'source_unavailable', legacy: { editable: false, reason: 'created_in_0_2', lockedReason: 'decryption_failed' } });
+        const rows = project([legacy]);
+        expect(rows[0]?.name).toBe('workflows.triggers.row.templateDecryptionFailed');
+    });
     it('reads the same for a deleted and a revoked Workflow: nothing tells the two apart', () => {
         const row = (automationId: string) => {
             const [record] = project([set(automationId, { health: 'source_unavailable' })]);
