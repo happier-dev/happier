@@ -130,7 +130,8 @@ export function resolveSessionActionDefaultBackend(params: Readonly<{
     defaultAgentId,
   });
 
-  if (configuredBackend?.backendId) {
+  // Compatibility for Sessions whose configured carrier predates current Agent identity.
+  if (configuredBackend?.backendId && !metadataAgentId) {
     return {
       agentTarget: null,
       backendTarget: {

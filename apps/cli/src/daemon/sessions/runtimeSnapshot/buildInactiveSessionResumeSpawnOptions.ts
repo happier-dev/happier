@@ -3,9 +3,7 @@ import {
   resolveSessionMetadataAgentIdentity,
   parsePermissionIntentAlias,
 } from '@happier-dev/agents';
-import { AgentExecutionTargetV1Schema, CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
-import { agentRoutingIdAddressesContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readLegacyConfiguredAcpBackendId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
@@ -33,6 +31,8 @@ export type InactiveSessionResumeRuntimeOptions = Partial<Pick<SpawnSessionOptio
 
 export type BuildInactiveSessionResumeSpawnOptionsParams = Readonly<{
   fallbackMachineId?: string | null;
+  /** Ephemeral placement, supplied only after the caller proves Session locality. */
+  executionMachineId?: string;
   sessionId: string;
   rawSession: unknown;
   metadata: Record<string, unknown>;
@@ -110,18 +110,16 @@ export function resolveSessionPersistedRuntimeIdentity(metadata: Record<string, 
     metadata.sessionCreationCorrespondenceV1,
   );
   const linked = resolveLinkedExternalSessionMetadataV1(metadata, 'stored');
-  const agentTarget = correspondence.success || linked.ok && linked.linkedSession.qualifiedIdentity
-    ? resolveAgentExecutionTargetFromSessionMetadata(metadata)
-    : null;
+  const agentTarget = resolveAgentExecutionTargetFromSessionMetadata(metadata);
 
   // Creation correspondence is immutable provenance. Its qualified target can
   // still address the current Agent, but must not override a later cutover's
   // persisted target. Before the first native open publishes an Agent identity,
   // the admitted qualified birth target is already sufficient to retry it.
   if (agentTarget
-    && backendTarget?.sourceKind !== 'configured'
+    && (correspondence.success || linked.ok && linked.linkedSession.qualifiedIdentity
+      || backendTarget?.sourceKind === 'configured')
     && !identity.ambiguousVendorResumeKeys) {
-    if (runtimeDescriptorV1 && runtimeDescriptorV1.agentId !== identity.agentId) return null;
     return {
       agentTarget,
       ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
@@ -134,25 +132,12 @@ export function resolveSessionPersistedRuntimeIdentity(metadata: Record<string, 
     const definitionId = backendTarget.configuredBackendId ?? backendTarget.backendId;
     const flavorBackendId = readLegacyConfiguredAcpBackendId(metadata.flavor);
     if (flavorBackendId !== null && flavorBackendId !== definitionId) return null;
-    if (runtimeDescriptorV1
-      && agentRoutingIdAddressesContributionIdentityV1(runtimeDescriptorV1.agentId, CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1)) {
-      if (identity.agentId !== runtimeDescriptorV1.agentId || runtimeDescriptorV1.agent.definitionId !== definitionId) return null;
-      return {
-        agentTarget: AgentExecutionTargetV1Schema.parse({ kind: 'agent', identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, definitionId }),
-        runtimeDescriptorV1,
-      };
-    }
     // The predecessor carrier has no contribution identity. Foreign Agent
     // evidence contradicts it rather than supplying a configured runtime.
     if (identity.agentId || identity.vendorResumeKeyAgentIds.length > 0 || runtimeDescriptorV1) return null;
   } else {
     if (!isCatalogAgentId(backendTarget.backendId)) return null;
     if (!identity.agentId || identity.agentId !== backendTarget.backendId) return null;
-    if (
-      runtimeDescriptorV1
-      && isCatalogAgentId(runtimeDescriptorV1.agentId)
-      && runtimeDescriptorV1.agentId !== identity.agentId
-    ) return null;
   }
 
   return {
@@ -168,12 +153,17 @@ export function buildInactiveSessionResumeSpawnOptions(
   const rawSession = params.rawSession && typeof params.rawSession === 'object' && !Array.isArray(params.rawSession)
     ? params.rawSession as Record<string, unknown>
     : {};
-  const rawDirectory = resolveCanonicalPersistedDirectory(rawSession.path);
-  const metadataDirectory = resolveCanonicalPersistedDirectory(params.metadata.path);
-
   const rawMachineId = readNonEmptyString(rawSession.machineId);
   const metadataMachineId = readNonEmptyString(params.metadata.machineId);
   if (rawMachineId && metadataMachineId && rawMachineId !== metadataMachineId) return null;
+  const recordedMachineId = rawMachineId ?? metadataMachineId ?? readNonEmptyString(params.fallbackMachineId);
+  const machineId = readNonEmptyString(params.executionMachineId) ?? recordedMachineId;
+  const rawDirectory = resolveCanonicalPersistedDirectory(resolveSessionMachineWorkspacePath({
+    metadata: params.metadata, currentMachineId: machineId, candidatePath: rawSession.path,
+  }));
+  const metadataDirectory = resolveCanonicalPersistedDirectory(resolveSessionMachineWorkspacePath({
+    metadata: params.metadata, currentMachineId: machineId, candidatePath: params.metadata.path,
+  }));
 
   const rawCorrespondence = params.metadata.sessionCreationCorrespondenceV1;
   const parsedCorrespondence = SessionCreationCorrespondenceV1ReadSchema.safeParse(rawCorrespondence);
@@ -201,15 +191,9 @@ export function buildInactiveSessionResumeSpawnOptions(
   const persistedDirectory = firstManagedBirth
     ? createManagedSessionDirectories().prepareForCreation({ sessionCreationTag: correspondence.sessionCreationTag }).directory
     : selectCanonicalPersistedDirectory(rawDirectory, metadataDirectory);
-  const machineId = rawMachineId ?? metadataMachineId ?? readNonEmptyString(params.fallbackMachineId);
   const runtimeIdentity = resolveSessionPersistedRuntimeIdentity(params.metadata);
   if (!persistedDirectory || !machineId || !runtimeIdentity) return null;
-  const directory = resolveSessionMachineWorkspacePath({
-    metadata: params.metadata,
-    currentMachineId: machineId,
-    candidatePath: persistedDirectory,
-  });
-  if (!directory) return null;
+  const directory = persistedDirectory;
   const directoryKind = readSessionDirectoryKind(params.metadata);
 
   let resolved: SpawnSessionOptions;

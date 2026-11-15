@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createSessionFixture } from '@/dev/testkit';
 import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { buildConfiguredAcpAgentSelectionV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 
 import {
   resolveSessionActionDefaultBackend,
@@ -9,6 +10,26 @@ import {
 } from './resolveSessionActionDefaultBackend';
 
 	describe('resolveSessionActionDefaultBackend', () => {
+      it('uses the canonical current configured target for Session Actions', () => {
+        const target = buildConfiguredAcpAgentSelectionV1('review-bot');
+        const resolved = resolveSessionActionDefaultBackend({ session: createSessionFixture({ metadata: {
+          flavor: target.agentId, runtimeDescriptorV1: target.runtimeDescriptorV1,
+          acpConfiguredBackendV1: { v: 1, backendId: 'review-bot', title: 'Review Bot', updatedAt: 1 },
+        } }) });
+
+        expect(resolveSessionActionDefaultTarget(resolved)).toEqual(target.agentTarget);
+      });
+
+      it('preserves the canonical refusal for contradictory current configured targets', () => {
+        const target = buildConfiguredAcpAgentSelectionV1('review-bot');
+        const resolved = resolveSessionActionDefaultBackend({ session: createSessionFixture({ metadata: {
+          flavor: target.agentId, runtimeDescriptorV1: target.runtimeDescriptorV1,
+          acpConfiguredBackendV1: { v: 1, backendId: 'other-bot', title: 'Other Bot', updatedAt: 1 },
+        } }) });
+
+        expect(resolved).toBeNull();
+      });
+
       it('retains the canonical Agent target from stored birth provenance with retired fields', () => {
         const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'example.custom', localId: 'agent' } };
         const correspondence = SessionCreationCorrespondenceV1Schema.parse({ v: 1, sessionCreationTag: `create:v1:${'a'.repeat(43)}`, recipe: {

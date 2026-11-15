@@ -7,7 +7,7 @@ import { AGENT_IDS } from './types.js';
 import { isLegacyConfiguredBackendSentinelId, readLegacyConfiguredBackendIdFromMetadata } from './compat/legacyConfiguredBackend.js';
 import { getAgentResumeConfig } from './manifest.js';
 import { resolveCanonicalAgentIdFromFlavor } from './resolveAgentIdFromFlavor.js';
-import { AgentExecutionTargetV1Schema, type AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { AgentExecutionTargetV1Schema, isCustomAcpAgentContributionIdentityV1, type AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { resolveLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import { agentRoutingIdAddressesContributionIdentityV1, buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey, PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -215,6 +215,17 @@ export function resolveAgentExecutionTargetFromSessionMetadata(
   const matchesCurrentAgent = (identity: { pluginId: string; localId: string }): boolean => currentIdentity
     ? currentIdentity.pluginId === identity.pluginId && currentIdentity.localId === identity.localId
     : !agentId || agentRoutingIdAddressesContributionIdentityV1(agentId, identity);
+  const configuredBackend = readAcpConfiguredBackendV1FromMetadata(record);
+  if (configuredBackend && !isCustomAcpAgentContributionIdentityV1(currentIdentity)) return null;
+  if (isCustomAcpAgentContributionIdentityV1(currentIdentity)) {
+    const runtimeDescriptor = readRuntimeDescriptorV1FromMetadata(record);
+    if (runtimeDescriptor || configuredBackend) {
+      const definitionId = runtimeDescriptor ? runtimeDescriptor.agent.definitionId : configuredBackend?.backendId;
+      if (runtimeDescriptor && configuredBackend && definitionId !== configuredBackend.backendId) return null;
+      const current = AgentExecutionTargetV1Schema.safeParse({ kind: 'agent', identity: currentIdentity, definitionId });
+      return current.success ? current.data : null;
+    }
+  }
   // Birth is immutable provenance. It may supply a matching configured
   // definition, but cannot select the departing Agent after a cutover.
   const candidate = correspondence.success && matchesCurrentAgent(correspondence.data.recipe.agentTarget.identity)

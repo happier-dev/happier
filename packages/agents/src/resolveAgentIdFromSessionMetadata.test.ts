@@ -9,12 +9,70 @@ import { readNonAuthoritativeLinkedExternalSessionV1FromMetadata } from '@happie
 import { buildSessionCreationCorrespondence } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { buildCommittedLaunchMetadata } from './session/state/metadataWriters.js';
 import { projectCurrentAgentSessionView } from './session/state/projectCurrentAgentSessionView.js';
+import { buildConfiguredAcpAgentSelectionV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 
 function runtimeDescriptor(agentId: string) {
   return { v: 1, agentId, agent: {} };
 }
 
 describe('resolveSessionMetadataAgentIdentity', () => {
+  it.each([
+    { kind: 'agent' as const, identity: { pluginId: 'happier.agent.muse', localId: 'muse' } },
+    buildConfiguredAcpAgentSelectionV1('old-bot').agentTarget,
+  ])('resolves the current configured definition after cutover from $identity.localId', initialTarget => {
+    const target = buildConfiguredAcpAgentSelectionV1('review-bot');
+    const birth = buildSessionCreationCorrespondence({
+      identity: { callerCreationNamespace: 'user', creationKey: 'configured-cutover' },
+      recipe: { execution: { machineId: 'machine-1', directory: { kind: 'path', path: '/tmp' } },
+        organization: { folderId: null, tagIds: [] }, agentTarget: initialTarget },
+    });
+    const initial = buildCommittedLaunchMetadata({ options: { sessionCreationCorrespondence: birth }, directory: '/tmp' });
+    const continued = projectCurrentAgentSessionView(initial, { agentId: target.agentId,
+      runtimeDescriptor: target.runtimeDescriptorV1, agentScopedCurrentState: 'clear' });
+
+    expect(resolveAgentExecutionTargetFromSessionMetadata(continued)).toEqual(target.agentTarget);
+    expect(continued.sessionCreationCorrespondenceV1).toEqual(birth);
+  });
+
+  it('resolves the selected configured definition before its runtime is published', () => {
+    const target = buildConfiguredAcpAgentSelectionV1('review-bot');
+    const continued = projectCurrentAgentSessionView({}, { agentId: target.agentId,
+      configuredBackend: { v: 1, backendId: 'review-bot', title: 'Review Bot', updatedAt: 1 },
+      agentScopedCurrentState: 'clear' });
+
+    expect(resolveAgentExecutionTargetFromSessionMetadata(continued)).toEqual(target.agentTarget);
+  });
+
+  it('rejects a current configured runtime that contradicts the selected definition', () => {
+    const target = buildConfiguredAcpAgentSelectionV1('review-bot');
+    const continued = projectCurrentAgentSessionView({}, { agentId: target.agentId,
+      runtimeDescriptor: target.runtimeDescriptorV1,
+      configuredBackend: { v: 1, backendId: 'other-bot', title: 'Other Bot', updatedAt: 1 },
+      agentScopedCurrentState: 'clear' });
+
+    expect(resolveAgentExecutionTargetFromSessionMetadata(continued)).toBeNull();
+  });
+
+  it('rejects a configured definition that contradicts a different current Agent', () => {
+    expect(resolveAgentExecutionTargetFromSessionMetadata({
+      runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: {} },
+      acpConfiguredBackendV1: { v: 1, backendId: 'review-bot', title: 'Review Bot', updatedAt: 1 },
+    })).toBeNull();
+  });
+
+  it('does not select immutable birth for a legacy configured carrier with no current Agent identity', () => {
+    const birth = buildSessionCreationCorrespondence({
+      identity: { callerCreationNamespace: 'user', creationKey: 'legacy-configured-cutover' },
+      recipe: { execution: { machineId: 'machine-1', directory: { kind: 'path', path: '/tmp' } },
+        organization: { folderId: null, tagIds: [] },
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } },
+    });
+    expect(resolveAgentExecutionTargetFromSessionMetadata({
+      flavor: 'acp:review-bot', sessionCreationCorrespondenceV1: birth,
+      acpConfiguredBackendV1: { v: 1, backendId: 'review-bot', title: 'Review Bot', updatedAt: 1 },
+    })).toBeNull();
+  });
+
   it.each([
     { agentId: 'pi', identity: { pluginId: 'happier.agent.pi', localId: 'pi' } },
     { agentId: 'example.agents/reviewer', identity: { pluginId: 'example.agents', localId: 'reviewer' } },

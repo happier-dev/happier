@@ -3,6 +3,8 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { projectCurrentAgentSessionView } from '@happier-dev/agents';
+import { buildConfiguredAcpAgentSelectionV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { buildSessionCreationCorrespondence } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import {
   buildQualifiedPluginContributionKey,
   deriveSessionCreationTagV1,
@@ -98,6 +100,15 @@ describe('buildInactiveSessionResumeSpawnOptions', () => {
     } finally { Object.defineProperty(process, 'platform', platformDescriptor); }
   });
 
+  it('refuses directory carriers that disagree after mapping to Machine paths', () => {
+    expect(buildInactiveSessionResumeSpawnOptions({ sessionId: 'inactive-mapped-conflict',
+      rawSession: { machineId: 'machine-1', path: '/different/workspace' },
+      metadata: { machineId: 'machine-1', path: 'relative/project', flavor: 'codex',
+        sessionWorkspaceLocationV1: { v: 1, machineId: 'machine-1',
+          agentPath: 'relative/project', machinePath: '/machine/project' } },
+    })).toBeNull();
+  });
+
   it('restores a never-started checkout request for realization on its selected Machine', () => {
     const sessionCreationTag = deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: 'asleep-checkout' });
     const checkoutCreationDraft = { kind: 'git_worktree' as const, displayName: 'bot', baseRef: 'main', branchMode: 'new' as const };
@@ -134,6 +145,25 @@ describe('buildInactiveSessionResumeSpawnOptions', () => {
       metadata: { machineId: 'machine-1', sessionDirectoryV1: { v: 1, kind: 'managed' }, sessionCreationCorrespondenceV1: correspondence },
     })).toBeNull();
   });
+  it.each([
+    { kind: 'agent' as const, identity: { pluginId: 'happier.agent.muse', localId: 'muse' } },
+    buildConfiguredAcpAgentSelectionV1('old-bot').agentTarget,
+  ])('resumes the current configured definition after cutover from $identity.localId', initialTarget => {
+    const target = buildConfiguredAcpAgentSelectionV1('review-bot');
+    const birth = buildSessionCreationCorrespondence({
+      identity: { callerCreationNamespace: 'user', creationKey: 'configured-resume' },
+      recipe: { execution: { machineId: 'machine-1', directory: { kind: 'path', path: '/tmp' } },
+        organization: { folderId: null, tagIds: [] }, agentTarget: initialTarget },
+    });
+    const metadata = projectCurrentAgentSessionView({ sessionCreationCorrespondenceV1: birth }, {
+      agentId: target.agentId, runtimeDescriptor: target.runtimeDescriptorV1, agentScopedCurrentState: 'clear',
+    });
+
+    expect(resolveSessionPersistedRuntimeIdentity(metadata)).toEqual({
+      agentTarget: target.agentTarget, runtimeDescriptorV1: target.runtimeDescriptorV1,
+    });
+  });
+
   it.each(['custom-acp', 'happier.agent.custom-acp/custom-acp'])('retains the exact configured definition when resuming the declared %s Agent', (agentId) => {
     const descriptor = { v: 1, agentId, agent: { definitionId: 'review-bot' } };
     const metadata = {
@@ -235,21 +265,25 @@ describe('buildInactiveSessionResumeSpawnOptions', () => {
 
   });
 
-  it('rebases the persisted agent workspace onto the selected daemon machine workspace', () => {
+  it.each([
+    ['/home/coder/project', '/home/coder/project'],
+    ['relative/project', 'relative/project'],
+    ['/Users/alice/project', 'relative/project'],
+  ])('rebases persisted agent workspaces before directory identity selection (%s, %s)', (rowPath, agentPath) => {
     const result = buildInactiveSessionResumeSpawnOptions({
       sessionId: 'session-1',
       rawSession: {
         machineId: 'machine-1',
-        path: '/home/coder/project',
+        path: rowPath,
       },
       metadata: {
         machineId: 'machine-1',
-        path: '/home/coder/project',
+        path: agentPath,
         flavor: 'codex',
         sessionWorkspaceLocationV1: {
           v: 1,
           machineId: 'machine-1',
-          agentPath: '/home/coder/project',
+          agentPath,
           machinePath: '/Users/alice/project',
         },
       },
