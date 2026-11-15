@@ -18716,6 +18716,7 @@ settingsSession: {
               noChecksBody: "Ein Check meldet, wenn eine App oder Adresse nicht mehr antwortet. Füge einen bei den Domains einer Umgebung oder einem beobachteten Dienst hinzu.",
               noWatched: "Noch nichts beobachtet",
               noWatchedBody: "Dienste, die schon auf einer Maschine laufen, erscheinen hier, sobald du sie in ihrem Dienste-Tab beobachtest.",
+              showMore: "Mehr anzeigen",
               bandOne: ({ environment, state }: { environment: string; state: string }) => `${environment} · ${state}`,
               countOnPage: "auf dieser Seite",
               backupChecking: "Wird geprüft…",

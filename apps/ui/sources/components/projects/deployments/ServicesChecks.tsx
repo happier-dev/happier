@@ -1,16 +1,16 @@
 import * as React from 'react';
-import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { MachineManagedInventorySection } from '@/components/machines/page/MachineManagedInventorySection';
 import { ManagedInventoryCoverage } from '@/components/store/inventory/ManagedInventoryCoverage';
 import { RowMark } from '@/components/store/inventory/ManagedInventoryDirectory';
 import type { ManagedInventorySectionsState } from '@/components/store/inventory/ManagedInventorySections';
-import type { ManagedConfiguredCheckRow } from '@/components/store/inventory/managedOperationalInventory';
+import { isConfiguredCheckResultsPartial, type ManagedConfiguredCheckRow } from '@/components/store/inventory/managedOperationalInventory';
+import { partialInventoryCoverageState } from '@/components/store/inventory/inventoryCoverage';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Status, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { MachineServiceByline, machineServiceColumnFields, machineServiceStateField, renderMachineServicePort } from '@/components/machines/services/machineServiceColumns';
+import { machineServiceByline, machineServiceBylineLead, machineServiceColumnFields, machineServiceStateField, renderMachineServicePort } from '@/components/machines/services/machineServiceColumns';
 import { machineServiceDisplayName, machineServiceExpectedStop, machineServiceIcon, machineServiceStateSpeaks } from '@/components/machines/services/machineServicesPresentation';
 import { useMachineServicesList } from '@/components/machines/services/useMachineServices';
 import type { ManagedWatchedServiceRow } from '@/components/store/inventory/managedOperationalInventory';
@@ -21,7 +21,6 @@ import { useMachineDisplayNamesById } from '@/sync/store/hooks';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
-import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 
@@ -34,7 +33,7 @@ import {
 } from './serviceCheckPresentation';
 import { SERVICES_ONE_SHEET, ServicesPageList } from './DeploymentEnvironmentRows';
 import { watchedServiceBands, watchedServiceItems, type WatchedMachineRead, type WatchedServiceItem } from './watchedServiceItems';
-import { useReportViewCount, type ServicesViewCount } from './ServicesViews';
+import { ServicesPaging, useReportViewCount, type ServicesViewCount } from './ServicesViews';
 
 const NO_OPEN = () => {};
 const CHECK_KINDS = ['configuredCheck'] as const;
@@ -45,32 +44,35 @@ function uptimePercentText(percent: number | null): string | null {
   return percent === null ? null : `${Math.round(percent * 10) / 10}%`;
 }
 
-/** The inventory's own coverage words: reading, or why a family could not be read. Never "none" for an unread list. */
-function familyState(state: ManagedInventorySectionsState, kind: 'configuredCheck' | 'watchedService', testID: string): React.ReactNode | null {
-  const family = state.families.find((candidate) => candidate.kind === kind);
-  if (!family || family.result.coverage === 'available') return null;
-  if (family.result.coverage === 'loading')
-    return (
+type ServicesFamily = ManagedInventorySectionsState['families'][number];
+
+/**
+ * A family's coverage on a Services view, in the inventory's own words (ManagedInventoryCoverage): reading, settled
+ * short, or why it could not be read. Never "none" for an unread list, and never silent beside listed rows (REVIEW-2
+ * R2). A page that continues in place is offered under the rows instead (servicesFamilyMore); `rowFacts` names partial
+ * reads about the listed rows' own facts, which their cells already say.
+ */
+function servicesFamilyCoverage(family: ServicesFamily | undefined, listed: boolean, testID: string,
+  rowFacts?: (reason: unknown) => boolean): React.ReactNode | null {
+  const coverage = family?.result.coverage;
+  if (!family || coverage === undefined || coverage === 'available') return null;
+  if (coverage === 'loading')
+    return listed ? null : (
       <ItemGroup surface="none" testID={`${testID}.loading`}>
         <SkeletonRows rows={3} />
       </ItemGroup>
     );
-  if ('unavailable' in family.result.coverage) {
-    return (
-      <ItemGroup surface="none">
-        <SurfaceStateCard
-          testID={`${testID}.unavailable`}
-          kind="unavailable"
-          size="line"
-          title={t('projects.deployments.unavailableTitle')}
-        />
-      </ItemGroup>
-    );
-  }
-  // Partly read with nothing listed (a Machine not read yet) is not "none": the inventory's own coverage line, never the
-  // empty scene. With rows listed, a partial read is about their facts (a Check's results), so nothing is added.
-  if (family.result.rows.length > 0) return null;
+  if (listed && typeof coverage === 'object' && !('unavailable' in coverage)
+    && (rowFacts?.(coverage.partial) === true || servicesFamilyMore(family, rowFacts) !== null)) return null;
   return <ManagedInventoryCoverage families={[family]} testIDPrefix={testID} />;
+}
+
+/** The family's next page, followed in place on intent (ServicesPaging Show more); none for a read that settled short. */
+function servicesFamilyMore(family: ServicesFamily | undefined, rowFacts?: (reason: unknown) => boolean): (() => unknown) | null {
+  const coverage = family?.result.coverage;
+  if (!family || typeof coverage !== 'object' || 'unavailable' in coverage || rowFacts?.(coverage.partial) === true) return null;
+  if (partialInventoryCoverageState(coverage.partial) !== 'paged') return null;
+  return typeof family.result.continuation === 'function' ? family.result.continuation as () => unknown : null;
 }
 
 /**
@@ -114,7 +116,8 @@ export function ServicesChecksView(
           (row): row is ManagedConfiguredCheckRow =>
             row.kind === 'configuredCheck',
         );
-        const pending = familyState(state, 'configuredCheck', 'services.checks');
+        const family = state.families.find((candidate) => candidate.kind === 'configuredCheck');
+        const pending = servicesFamilyCoverage(family, rows.length > 0, 'services.checks', isConfiguredCheckResultsPartial);
         if (rows.length === 0) {
           return (
             pending ?? (
@@ -134,6 +137,7 @@ export function ServicesChecksView(
             <SelectedRowReport rows={rows} selectedKey={props.selectedKey} onSelectedRow={props.onSelectedRow} />
             <ChecksList rows={rows} input={input} selectedKey={props.selectedKey} onSelect={props.onSelect}
               onCount={props.onCount} />
+            <ServicesPaging testID="services.checks.paging" more={servicesFamilyMore(family, isConfiguredCheckResultsPartial)} />
           </>
         );
       }}
@@ -162,7 +166,6 @@ function ChecksList(props: Readonly<{
   onSelect: (row: ManagedConfiguredCheckRow) => void;
   onCount: (count: ServicesViewCount) => void;
 }>) {
-  const { theme } = useUnistyles();
   const { rows, onSelect } = props;
   const facts = React.useMemo(() => new Map(rows.map((row) => [row.key, readServiceCheckFacts(row.lastResults)])), [rows]);
   // Each row named by what it checks, with its kind, cadence and latest result (the Check presentation owner).
@@ -174,7 +177,6 @@ function ChecksList(props: Readonly<{
   const model = useHappierCollection<ManagedConfiguredCheckRow>({ items: rows, keyOf: keyOfCheck,
     openKey: props.selectedKey, onOpenChange: open });
   const anatomy = React.useMemo<CollectionAnatomy<ManagedConfiguredCheckRow>>(() => {
-    const meta = { ...Typography.variant('meta'), color: theme.colors.text.secondary, flexShrink: 1 } as const;
     const stateWord = (row: ManagedConfiguredCheckRow) => <CheckStateWord row={row} status={facts.get(row.key)?.status ?? 'unknown'} />;
     return {
       glyph: (row) => <RowMark row={row} title={row.native.name} input={props.input} />,
@@ -184,19 +186,12 @@ function ChecksList(props: Readonly<{
         const row2 = listFacts.get(row.key);
         const columns = layout?.fieldColumns === true;
         const named = row2 && row2.title !== row.native.name ? row.native.name : null;
-        const line = [row2?.kind, named, columns ? null : row2?.every, columns ? null : row2?.lastResult]
-          .filter(Boolean).join(' · ');
-        // A phone row (no columns) leads line 2 with the state when it speaks (failing, degraded, switched off).
-        const status = facts.get(row.key)?.status ?? 'unknown';
-        const lead = !columns && (!row.native.enabled || serviceCheckStatusTone(status) !== null);
-        if (!line && !lead) return null;
-        return (
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s4, minWidth: 0, maxWidth: '100%', alignSelf: 'stretch' }}>
-            {lead ? stateWord(row) : null}
-            {line ? <Text style={meta} numberOfLines={1}>{lead ? `· ${line}` : line}</Text> : null}
-          </View>
-        );
+        return [row2?.kind, named, columns ? null : row2?.every, columns ? null : row2?.lastResult]
+          .filter(Boolean).join(' · ') || null;
       },
+      // A phone row (no columns) leads line 2 with the state when it speaks (failing, degraded, switched off).
+      bylineLead: (row, layout) => layout?.fieldColumns !== true
+        && (!row.native.enabled || serviceCheckStatusTone(facts.get(row.key)?.status ?? 'unknown') !== null) ? stateWord(row) : null,
       fields: [
         { key: 'every', title: t('projects.deployments.services.columnEvery'), minWidth: 72, priority: 2,
           listColumn: true, render: (row) => listFacts.get(row.key)?.every ?? null },
@@ -211,7 +206,7 @@ function ChecksList(props: Readonly<{
       testID: (row) => `services.checks.row.${row.automationId}.${row.triggerId}`,
       columnTitles: { title: t('projects.deployments.services.columnCheck') },
     };
-  }, [facts, listFacts, props.input, theme.colors.text.secondary, theme.space.s4]);
+  }, [facts, listFacts, props.input]);
   const failing = rows.filter((row) => row.native.enabled && facts.get(row.key)?.status === 'down').length;
   const count = React.useMemo(() => [t('projects.deployments.services.countChecks', { count: rows.length }),
     failing > 0 ? t('projects.deployments.services.countFailing', { count: failing }) : null], [failing, rows.length]);
@@ -262,9 +257,10 @@ export function ServicesWatchedView(
       openKey={null}
       onOpenChange={NO_OPEN}
     >
-      {(state) =>
-        state.rows.length === 0 ? (
-          (familyState(state, 'watchedService', 'services.watched') ?? (
+      {(state) => {
+        const family = state.families.find((candidate) => candidate.kind === 'watchedService');
+        return state.rows.length === 0 ? (
+          (servicesFamilyCoverage(family, false, 'services.watched') ?? (
             <EmptyState
               testID="services.watched.empty"
               layout="page"
@@ -274,10 +270,14 @@ export function ServicesWatchedView(
             />
           ))
         ) : (
-          <WatchedList state={state} serverId={props.scope?.serverId ?? null} presented={props.presented}
-            onCount={props.onCount} />
-        )
-      }
+          <>
+            {servicesFamilyCoverage(family, true, 'services.watched')}
+            <WatchedList state={state} serverId={props.scope?.serverId ?? null} presented={props.presented}
+              onCount={props.onCount} />
+            <ServicesPaging testID="services.watched.paging" more={servicesFamilyMore(family)} />
+          </>
+        );
+      }}
     </MachineManagedInventorySection>
   );
 }
@@ -343,11 +343,11 @@ function WatchedList(props: Readonly<{
     // Line 2 is the Machine list's line (what the service is); the State column says its state where columns are
     // drawn. Before its Machine answers, the line says why it watches it and that it is still reading (or couldn't).
     byline: (item, layout) => item.service
-      ? <MachineServiceByline row={item.service} runFactsInColumns={layout?.fieldColumns === true}
-          stateInColumn={layout?.fieldColumns === true} />
+      ? machineServiceByline(item.service, layout?.fieldColumns === true)
       : <Text style={{ ...Typography.variant('meta'), color: theme.colors.text.secondary, flexShrink: 1 }} numberOfLines={1}>
           {t(`machineServices.purpose.${item.lifecyclePurpose === 'infrastructure' ? 'infrastructure' : 'watched'}`)}
         </Text>,
+    bylineLead: (item, layout) => item.service ? machineServiceBylineLead(item.service, layout?.fieldColumns === true) : null,
     titleMeta: (item) => item.service ? renderMachineServicePort(item.service) : null,
     titleMetaAlign: 'row',
     fields: [...machineServiceColumnFields<WatchedItem>((item) => item.service), machineServiceStateField<WatchedItem>((item) => item.service)],

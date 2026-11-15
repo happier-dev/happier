@@ -18561,6 +18561,7 @@ settingsSession: {
           noChecksBody: "Проверка сообщит, когда приложение или адрес перестанет отвечать. Добавьте её в доменах окружения или у отслеживаемого сервиса.",
           noWatched: "Пока ничего не отслеживается",
           noWatchedBody: "Сервисы, уже работающие на машине, появятся здесь, когда вы начнёте отслеживать их на её вкладке «Сервисы».",
+          showMore: "Показать ещё",
           bandOne: ({ environment, state }: { environment: string; state: string }) => `${environment} · ${state}`,
           countOnPage: "на этой странице",
           backupChecking: "Проверка…",

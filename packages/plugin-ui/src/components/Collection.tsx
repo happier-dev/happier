@@ -232,6 +232,12 @@ export type CollectionAnatomy<Item> = Readonly<{
    * fields as columns; when it doesn't (a phone), the byline is where those facts go.
    */
   byline?: (item: Item, layout?: Readonly<{ fieldColumns: boolean }>) => ReactNode;
+  /**
+   * The state word that leads the list row's second line ("• Failed · fix(api) · Ana"), when it speaks: a phone row
+   * has no State column, so its name keeps line 1 whole and the state leads line 2 (DESIGN "Phones recompose").
+   * The anatomy returns null where its State column says it. The Collection draws it before the byline, one line.
+   */
+  bylineLead?: (item: Item, layout?: Readonly<{ fieldColumns: boolean }>) => ReactNode;
   /** The one loud fact. */
   reason?: (item: Item) => ReactNode;
   /**
@@ -1163,6 +1169,25 @@ function cellStyle(column: ResolvedColumn<unknown>): HappierPortableStyle {
 }
 
 /** Plain text a slot returned is drawn as quiet secondary text; an element is the caller's own. */
+/** A row's second line led by its state word ("• Failed · fix(api) · Ana"): see `bylineLead`. */
+function LeadingByline(props: Readonly<{ lead: ReactNode; line: ReactNode; textStyle: HappierPortableStyle }>): ReactElement {
+  const line = props.line;
+  const empty = line === null || line === undefined || line === false || line === '';
+  const text = typeof line === 'string' || typeof line === 'number';
+  return (
+    <View style={leadingBylineStyle}>
+      {props.lead}
+      {empty ? null : text ? <SlotContent value={`· ${String(line)}`} textStyle={props.textStyle} /> : (
+        <><SlotContent value="·" textStyle={props.textStyle} />{line}</>
+      )}
+    </View>
+  );
+}
+
+const leadingBylineStyle: HappierPortableStyle = {
+  flexDirection: 'row', alignItems: 'center', gap: HAPPIER_SPACE_STEPS.s4, minWidth: 0, maxWidth: '100%', alignSelf: 'stretch',
+};
+
 function SlotContent(props: Readonly<{ value: ReactNode; tone?: 'secondary' | 'muted'; tabular?: boolean; textStyle?: HappierPortableStyle }>): ReactElement | null {
   const value = props.value;
   if (value === null || value === undefined || value === false) return null;
@@ -1410,7 +1435,8 @@ function ListCells<Item>(props: Readonly<{
     : { paddingLeft: ruledPaddingPx };
   const age = anatomy.age?.(item) ?? null;
   const fieldColumns = props.listColumns.length > 0;
-  const where = anatomy.byline === undefined ? anatomy.where?.(item) : anatomy.byline(item, { fieldColumns });
+  const byline = anatomy.byline === undefined ? anatomy.where?.(item) : anatomy.byline(item, { fieldColumns });
+  const bylineLead = anatomy.bylineLead?.(item, { fieldColumns }) ?? null;
   const reason = anatomy.reason?.(item);
   const described = anatomy.description !== undefined;
   // The second line ends with the loud reason, or else the caller's one list fact.
@@ -1453,6 +1479,8 @@ function ListCells<Item>(props: Readonly<{
   // The resting list on the page's canvas (rows parted by air): its marks take the page row's leading column.
   const restingFlat = props.wrapTitle && !page && props.ruledInsetPx === null;
   const secondLine = page ? { ...resolveHappierPageTextStyle('rowDescription', typography), flexShrink: 1 } : undefined;
+  const where = bylineLead === null || bylineLead === false ? byline
+    : <LeadingByline lead={bylineLead} line={byline} textStyle={secondLine ?? cellTextStyle} />;
   const metaOnRow = anatomy.titleMetaAlign === 'row' && !catalog && !singleLine && meta !== null;
   const metaCell = meta === null ? null : (
     <View style={metaCellStyle} onLayout={(event) => { placeMeta({ meta: event.nativeEvent.layout.width }); }}>

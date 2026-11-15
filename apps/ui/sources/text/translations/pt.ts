@@ -18714,6 +18714,7 @@ settingsSession: {
           noChecksBody: "Uma verificação avisa quando um app ou endereço para de responder. Adicione uma nos Domínios de um ambiente ou em um serviço observado.",
           noWatched: "Nada observado ainda",
           noWatchedBody: "Serviços que já rodam em uma Máquina aparecem aqui quando você os observa na aba Serviços dela.",
+          showMore: "Mostrar mais",
           bandOne: ({ environment, state }: { environment: string; state: string }) => `${environment} · ${state}`,
           countOnPage: "nesta página",
           backupChecking: "Verificando…",

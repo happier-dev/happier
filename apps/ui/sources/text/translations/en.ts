@@ -22044,6 +22044,7 @@ const enProjects = {
         noChecksBody: "A check tells you when an app or address stops answering. Add one from an environment’s Domains or a watched service.",
         noWatched: "Nothing watched yet",
         noWatchedBody: "Services already running on a Machine show here once you watch them from its Services tab.",
+        showMore: "Show more",
         bandOne: ({ environment, state }: { environment: string; state: string }) => `${environment} · ${state}`,
         countOnPage: "on this page",
         backupChecking: "Checking…",

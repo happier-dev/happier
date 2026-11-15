@@ -8,6 +8,7 @@ import {
   type CollectionAnatomy,
   type CollectionField,
   type CollectionGroupAction,
+  type CollectionRowActions,
   type HappierCollectionModel,
 } from '@happier-dev/plugin-ui';
 import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol/v1';
@@ -142,6 +143,9 @@ export function DeploymentEnvironmentRows(
     },
     [byId, openBackups, router, serverId],
   );
+  const openTab = React.useCallback((row: Row, tab: EnvironmentRowMenuTab) => {
+    router.push(deploymentEnvironmentRoute({ serverId, projectSourceId: row.projectSourceId, environmentId: row.environmentId, tab }));
+  }, [router, serverId]);
   const groups = React.useMemo(() => deploymentEnvironmentBands(rows), [rows]);
   const model = useHappierCollection<Row>({
     items: rows,
@@ -247,18 +251,10 @@ export function DeploymentEnvironmentRows(
       // Line 2 (lab envRow): what was deployed and who asked; a phone folds the columns in (deploymentEnvironmentRowLine).
       // A phone row (no columns) leads line 2 with the state that speaks, so the name keeps line 1 whole (DESIGN
       // "Phones recompose"); wide, the State column says it.
-      byline: (row, layout) => {
-        const columns = layout?.fieldColumns === true;
-        const line = deploymentEnvironmentRowLine(row, authorOf(row), { columns, hereMachine });
-        const lead = deploymentEnvironmentRowLeadState(row, { columns });
-        if (!line && !lead) return null;
-        return (
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s4, minWidth: 0, maxWidth: '100%', alignSelf: 'stretch' }}>
-            {lead ? <EnvironmentStateWord row={row} /> : null}
-            {line ? <Text style={meta} numberOfLines={1}>{lead ? `· ${line}` : line}</Text> : null}
-          </View>
-        );
-      },
+      byline: (row, layout) =>
+        deploymentEnvironmentRowLine(row, authorOf(row), { columns: layout?.fieldColumns === true, hereMachine }),
+      bylineLead: (row, layout) =>
+        deploymentEnvironmentRowLeadState(row, { columns: layout?.fieldColumns === true }) ? <EnvironmentStateWord row={row} /> : null,
       fields,
       accessibilityLabel: (row) =>
         [
@@ -275,15 +271,33 @@ export function DeploymentEnvironmentRows(
         title: t('projects.deployments.services.columnEnvironment'),
       },
     };
-  }, [hasAddress, authorOf, hereMachine, props.testID, theme.colors.text.secondary, theme.space.s2, theme.space.s4]);
+  }, [hasAddress, authorOf, hereMachine, props.testID, theme.colors.text.secondary, theme.space.s2]);
   return (
-    <ServicesPageList<Row>
-      testID={props.testID}
-      model={model}
-      anatomy={anatomy}
-      accessibilityLabel={props.accessibilityLabel}
-    />
+    <EnvironmentRowMenuContext.Provider value={openTab}>
+      <ServicesPageList<Row>
+        testID={props.testID}
+        model={model}
+        anatomy={anatomy}
+        accessibilityLabel={props.accessibilityLabel}
+        useRowActions={useEnvironmentRowActions}
+      />
+    </EnvironmentRowMenuContext.Provider>
   );
+}
+
+type EnvironmentRowMenuTab = 'variables' | 'settings';
+const EnvironmentRowMenuContext = React.createContext<((row: Row, tab: EnvironmentRowMenuTab) => void) | null>(null);
+
+/** A row's ⋯ (Collection row actions): the Environment's Variables and settings, the page's own ways in (lab Reach). */
+function useEnvironmentRowActions(row: Row): CollectionRowActions {
+  const openTab = React.useContext(EnvironmentRowMenuContext);
+  return React.useMemo(() => openTab === null ? {} : {
+    secondaryActions: [
+      { id: 'variables', label: t('projects.deployments.tabVariables') },
+      { id: 'settings', label: t('projects.deployments.menuEdit') },
+    ],
+    onSecondaryAction: (id: string) => openTab(row, id === 'variables' ? 'variables' : 'settings'),
+  }, [openTab, row]);
 }
 
 const NO_SCOPE: ServerAccountScope = Object.freeze({ serverId: '', accountId: '' });
@@ -325,6 +339,8 @@ export function ServicesPageList<Item>(props: Readonly<{
   accessibilityLabel: string;
   /** A band's one action (Watched: Retry a Machine whose services couldn't be read). */
   groupAction?: (groupKey: string) => CollectionGroupAction | null;
+  /** A row's ⋯ (Collection `useRowActions`: one stable module-level hook). */
+  useRowActions?: (item: Item) => CollectionRowActions;
 }>) {
   return (
     <ListPresentationProvider value="page" pageInsets="contained">
@@ -342,6 +358,7 @@ export function ServicesPageList<Item>(props: Readonly<{
             minDetailWidth={0}
             preferredListRatio={1}
             {...(props.groupAction ? { groupAction: props.groupAction } : {})}
+            {...(props.useRowActions ? { useRowActions: props.useRowActions } : {})}
           />
         </CoreCollectionScope>
       </ItemGroup>

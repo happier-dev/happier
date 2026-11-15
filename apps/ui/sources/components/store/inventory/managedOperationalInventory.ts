@@ -180,6 +180,14 @@ export function useManagedSetup(input: StoreInstalledInput, demand: StoreDemand,
 }
 
 /**
+ * A saved Check's partial read about its listed rows' own health results (each row's cells say what they know), not
+ * about missing rows: a surface listing the rows says nothing more for it.
+ */
+export function isConfiguredCheckResultsPartial(reason: unknown): boolean {
+    return reason === 'health_result_loading' || reason === 'health_result_page';
+}
+
+/**
  * Saved Checks from the Account's Automation summaries, which name each one whether or not it has run. What a Check
  * watches lives in its private definition, so a Check claims no Machine and is left out of a Machine's own inventory.
  */

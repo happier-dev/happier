@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createDeploymentReadControllerV1,
@@ -160,6 +161,23 @@ describe('Projects → All deployments', () => {
     controller.retire();
   });
 
+  it('offers a row\'s ⋯ menu that opens that Environment\'s Variables (lab Reach "Apps row ⋯ → Variables")', async () => {
+    const { controller } = controllerFor(() =>
+      page([environment('env-api-production', 'source-api', 'Production API', { projectSourceName: 'payments-api' })]));
+    const screen = await render(controller, 'all-deployments.row.env-api-production');
+    const { ContextMenu } = await import('@happier-dev/plugin-ui');
+    const row = screen.findAll((node) => node.props.testID === 'all-deployments.row.env-api-production'
+      && Array.isArray(node.props.secondaryActions))[0];
+    expect(row).toBeDefined();
+    routerMock.spies.push.mockClear();
+    await act(async () => { row!.findByType(ContextMenu).props.onSelect('variables'); });
+    expect(routerMock.spies.push).toHaveBeenCalledWith({
+      pathname: '/deployments/[projectSourceId]',
+      params: { projectSourceId: 'source-api', serverId: 'home', deploymentEnvironment: 'env-api-production', deploymentTab: 'variables' },
+    });
+    controller.retire();
+  });
+
   it('says on line 2 the commit subject of the latest deploy and who asked for it (lab envRow)', async () => {
     const { createDeploymentReceiptHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
     const shipped = { ...environment('env-shop', 'source-shop', 'Production', { projectSourceName: 'storefront' }),
@@ -194,7 +212,7 @@ describe('Projects → All deployments', () => {
     );
     const screen = await render(controller, 'all-deployments.pageEmpty');
     expect(screen.findByTestId('all-deployments.empty')).toBeNull();
-    await screen.pressByTestIdAsync('all-deployments.older');
+    await screen.pressByTestIdAsync('all-deployments.paging.older');
     await act(async () => {
       await waitForTestEvent(
         screen.subscribe,
@@ -209,7 +227,7 @@ describe('Projects → All deployments', () => {
   it('says an empty Account is empty only when no page continues', async () => {
     const { controller } = controllerFor(() => page([]));
     const screen = await render(controller, 'all-deployments.empty');
-    expect(screen.findByTestId('all-deployments.older')).toBeNull();
+    expect(screen.findByTestId('all-deployments.paging.older')).toBeNull();
     expect(screen.findByTestId('services.views')).not.toBeNull();
     controller.retire();
   });

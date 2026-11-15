@@ -18433,6 +18433,7 @@ settingsSession: {
           noChecksBody: "Sprawdzenie powiadomi cię, gdy aplikacja lub adres przestanie odpowiadać. Dodaj je w Domenach środowiska lub przy obserwowanej usłudze.",
           noWatched: "Nic nie jest obserwowane",
           noWatchedBody: "Usługi działające już na Maszynie pojawią się tutaj, gdy zaczniesz je obserwować na jej karcie Usługi.",
+          showMore: "Pokaż więcej",
           bandOne: ({ environment, state }: { environment: string; state: string }) => `${environment} · ${state}`,
           countOnPage: "na tej stronie",
           backupChecking: "Sprawdzanie…",

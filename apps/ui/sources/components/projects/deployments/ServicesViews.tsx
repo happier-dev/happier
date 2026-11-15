@@ -13,14 +13,13 @@ import { Status, useHappierCollection, type CollectionAnatomy } from '@happier-d
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { databaseEngineTitle, describeDatabaseSize } from './databasePresentation';
 import { DeploymentDomainsList } from './DeploymentDomainRow';
@@ -170,7 +169,6 @@ export function ServicesDatabasesView(
   }, [router, rows, serverId]);
   const model = useHappierCollection<DatabaseRow>({ items: rows, keyOf: keyOfDatabase, groups, openKey: null, onOpenChange: open });
   const anatomy = React.useMemo<CollectionAnatomy<DatabaseRow>>(() => {
-    const meta = { ...Typography.variant('meta'), color: theme.colors.text.secondary, flexShrink: 1 } as const;
     const backupWord = (row: DatabaseRow) => {
       const status = coverage.get(row.environmentId);
       return status === 'uncovered' ? <Status tone="warning" label={t('projects.deployments.notBackedUp')} presentation="inline" />
@@ -185,18 +183,8 @@ export function ServicesDatabasesView(
       title: (row) => row.service,
       // Line 2: the engine and how it grew; a phone also says its size.
       // A phone row (no columns) leads line 2 with "Not backed up" when it speaks; the name keeps line 1 whole.
-      byline: (row, layout) => {
-        const columns = layout?.fieldColumns === true;
-        const line = [row.engine, row.growth, columns ? null : row.size].filter(Boolean).join(' · ');
-        const lead = !columns && coverage.get(row.environmentId) === 'uncovered';
-        if (!line && !lead) return null;
-        return (
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s4, minWidth: 0, maxWidth: '100%', alignSelf: 'stretch' }}>
-            {lead ? backupWord(row) : null}
-            {line ? <Text style={meta} numberOfLines={1}>{lead ? `· ${line}` : line}</Text> : null}
-          </View>
-        );
-      },
+      byline: (row, layout) => [row.engine, row.growth, layout?.fieldColumns === true ? null : row.size].filter(Boolean).join(' · ') || null,
+      bylineLead: (row, layout) => layout?.fieldColumns !== true && coverage.get(row.environmentId) === 'uncovered' ? backupWord(row) : null,
       fields: [
         { key: 'size', title: t('projects.deployments.services.sizeLabel'), minWidth: 216, priority: 2, listColumn: true,
           render: (row) => row.size },
@@ -207,7 +195,7 @@ export function ServicesDatabasesView(
       testID: (row) => `services.databases.row.${row.environmentId}.${row.service}`,
       columnTitles: { title: t('projects.deployments.services.columnDatabase') },
     };
-  }, [coverage, theme.colors.text.secondary, theme.space.s4]);
+  }, [coverage, theme.colors.text.secondary]);
   const uncovered = backups.coverage?.rows.filter((row) => row.status === 'uncovered').length ?? 0;
   const countParts = React.useMemo(() => read.snapshot.value ? [
     rows.length > 0 ? t('projects.deployments.services.countDatabases', { count: rows.length }) : null,
@@ -249,8 +237,7 @@ export function ServicesDatabasesView(
       {rows.length === 0 ? (
         // A page whose Environments hold no databases still leads on to the next one.
         <ItemGroup surface="none">
-          <SurfaceStateCard testID="services.databases.pageEmpty" kind="empty" size="line"
-            title={t('projects.deployments.services.pageEmpty')} />
+          <EmptyState testID="services.databases.pageEmpty" layout="line" title={t('projects.deployments.services.pageEmpty')} />
         </ItemGroup>
       ) : (
         <ServicesPageList<DatabaseRow> testID="services.databases" model={model} anatomy={anatomy}
@@ -297,14 +284,26 @@ function domainProjectBands<Item extends AccountDomainItem>(items: readonly Item
   };
 }
 
-/** Newer / Older under a paged view's sheet (the Apps paging pattern): only the way that exists is offered. */
-export function ServicesPaging(props: Readonly<{
-  testID: string;
-  page: Readonly<{ hasNextPage: boolean; hasPreviousPage: boolean }>;
-  onNewer: () => void;
-  onOlder: () => void;
-}>) {
+/**
+ * Newer / Older under a paged view's sheet (the Apps paging pattern): only the way that exists is offered. A family read
+ * that continues in place (the managed inventory's continuation) offers Show more instead, on intent, never on open.
+ */
+export function ServicesPaging(props: Readonly<{ testID: string } & (
+  | { page: Readonly<{ hasNextPage: boolean; hasPreviousPage: boolean }>; onNewer: () => void; onOlder: () => void; more?: never }
+  | { more: (() => unknown) | null; page?: never }
+)>) {
   const { theme } = useUnistyles();
+  if (props.page === undefined) {
+    const more = props.more;
+    return more ? (
+      <ItemGroup surface="none" testID={props.testID}>
+        <View style={{ flexDirection: 'row', justifyContent: 'center' }}>
+          <SectionActionButton testID={`${props.testID}.more`} title={t('projects.deployments.services.showMore')} icon="caret-down"
+            onPress={() => fireAndForget(Promise.resolve(more()), { tag: 'ServicesPaging.more' })} />
+        </View>
+      </ItemGroup>
+    ) : null;
+  }
   if (!props.page.hasNextPage && !props.page.hasPreviousPage) return null;
   return (
     <ItemGroup surface="none" testID={props.testID}>
@@ -381,24 +380,20 @@ export function ServicesDomainsView(
   // An empty page that continues is not an empty Account: it leads on (the Apps paging pattern).
   if (items.length === 0 && !page.hasNextPage && !page.hasPreviousPage) {
     return (
-      <ItemGroup surface="none">
-        <SurfaceStateCard
-          testID="services.domains.empty"
-          scene="nothingListening"
-          kind="empty"
-          size="page"
-          title={t('projects.deployments.services.noDomains')}
-          reason={t('projects.deployments.services.noDomainsBody')}
-        />
-      </ItemGroup>
+      <EmptyState
+        testID="services.domains.empty"
+        layout="page"
+        scene="nothingListening"
+        title={t('projects.deployments.services.noDomains')}
+        subtitle={t('projects.deployments.services.noDomainsBody')}
+      />
     );
   }
   return (
     <>
       {items.length === 0 ? (
         <ItemGroup surface="none">
-          <SurfaceStateCard testID="services.domains.pageEmpty" kind="empty" size="line"
-            title={t('projects.deployments.services.pageEmpty')} />
+          <EmptyState testID="services.domains.pageEmpty" layout="line" title={t('projects.deployments.services.pageEmpty')} />
         </ItemGroup>
       ) : (
         <ItemGroup surface="none">

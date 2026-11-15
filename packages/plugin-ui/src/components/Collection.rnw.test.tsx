@@ -3276,6 +3276,27 @@ describe('render scope', () => {
       expect(view.query('row:a')?.textContent).toContain('payments-api · 18m');
     } finally { view.unmount(); }
   });
+  it('leads a row\'s second line with the state word its anatomy names, on one line with the byline after a separator', () => {
+    const view = mount({
+      presentation: 'list', scroll: 'page',
+      anatomy: {
+        ...anatomy,
+        byline: (entry) => entry.repo,
+        // The anatomy says when the state leads (here: a phone row, where no State column says it).
+        bylineLead: (entry, layout) => entry.id === 'a' && layout?.fieldColumns !== true
+          ? <Text testID={`lead:${entry.id}`}>Failed</Text> : null,
+      },
+    });
+    try {
+      view.measure(390);
+      const lead = view.query('lead:a')!;
+      expect(lead).not.toBeNull();
+      expect(lead.parentElement!.textContent).toBe('Failed· payments-api');
+      // A row with no lead keeps its byline as it was.
+      expect(view.query('lead:c')).toBeNull();
+      expect(view.query('row:c')?.textContent).not.toContain('·');
+    } finally { view.unmount(); }
+  });
   it.each([[390, false], [1200, true]] as const)('a shared sheet band at %ipx keeps its name on line 1 and its fact with its action %s on the same line', (width, sameLine) => {
     const view = mount({
       presentation: 'list', scroll: 'page',

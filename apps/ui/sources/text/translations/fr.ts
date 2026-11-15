@@ -18482,6 +18482,7 @@ settingsSession: {
           noChecksBody: "Une vérification vous prévient quand une app ou une adresse ne répond plus. Ajoutez-en une depuis les Domaines d’un environnement ou un service surveillé.",
           noWatched: "Rien de surveillé",
           noWatchedBody: "Les services qui tournent déjà sur une Machine apparaissent ici une fois surveillés depuis son onglet Services.",
+          showMore: "Afficher plus",
           bandOne: ({ environment, state }: { environment: string; state: string }) => `${environment} · ${state}`,
           countOnPage: "sur cette page",
           backupChecking: "Vérification…",

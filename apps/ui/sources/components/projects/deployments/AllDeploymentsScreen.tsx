@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useUnistyles } from 'react-native-unistyles';
 import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol/v1';
 
 import {
@@ -17,7 +17,6 @@ import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShel
 import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { usePageSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
@@ -31,7 +30,7 @@ import { t } from '@/text';
 import { DeploymentEnvironmentRows } from './DeploymentEnvironmentRows';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useDeploymentInventory } from './useDeploymentProject';
-import { readServicesView, ServicesDatabasesView, ServicesDomainsView, ServicesViewTabs, type ServicesView, type ServicesViewCount } from './ServicesViews';
+import { readServicesView, ServicesDatabasesView, ServicesDomainsView, ServicesPaging, ServicesViewTabs, type ServicesView, type ServicesViewCount } from './ServicesViews';
 import { deploymentRailState } from './deploymentPresentation';
 import { buildServiceCheckHref } from './deploymentNavigation';
 import { ServiceCheckDetail } from './ServiceCheckDetail';
@@ -336,49 +335,18 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
       {filtering && shownItems.length === 0 && items.length > 0 ? (
         // Nothing known uncovered: "all backed up" only when every shown Environment answered.
         unresolved > 0 ? null : <ItemGroup surface="none">
-          <SurfaceStateCard
-            testID="all-deployments.allBackedUp"
-            kind="empty"
-            size="line"
-            title={t('projects.deployments.allBackedUp')}
-          />
+          <EmptyState testID="all-deployments.allBackedUp" layout="line" title={t('projects.deployments.allBackedUp')} />
         </ItemGroup>
       ) : items.length === 0 ? (
         // A page whose rows all belong to Projects this Account can't open still leads on to the next one.
         <ItemGroup surface="none">
-          <SurfaceStateCard
-            testID="all-deployments.pageEmpty"
-            kind="empty"
-            size="line"
-            title={t('projects.deployments.allPageEmpty')}
-          />
+          <EmptyState testID="all-deployments.pageEmpty" layout="line" title={t('projects.deployments.allPageEmpty')} />
         </ItemGroup>
       ) : (
         <AllDeploymentsGroups items={shownItems} serverId={serverId} lifetime={props.lifetime ?? null}
           openBackups={filtering} />
       )}
-      {paged ? (
-        <ItemGroup surface="none" testID="all-deployments.paging">
-          <View style={styles.paging}>
-            {read.hasPreviousPage ? (
-              <SectionActionButton
-                testID="all-deployments.newer"
-                title={t('projects.deployments.pageNewer')}
-                icon="caret-left"
-                onPress={read.previousPage}
-              />
-            ) : null}
-            {read.hasNextPage ? (
-              <SectionActionButton
-                testID="all-deployments.older"
-                title={t('projects.deployments.pageOlder')}
-                icon="caret-right"
-                onPress={read.nextPage}
-              />
-            ) : null}
-          </View>
-        </ItemGroup>
-      ) : null}
+      <ServicesPaging testID="all-deployments.paging" page={read} onNewer={read.previousPage} onOlder={read.nextPage} />
     </ItemList>
     </>
   );
@@ -442,10 +410,3 @@ function DeployAppButton(props: Readonly<{ onPress: () => void }>) {
   );
 }
 
-const styles = StyleSheet.create((theme) => ({
-  paging: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: theme.space.s8,
-  },
-}));

@@ -18522,6 +18522,7 @@ settingsSession: {
           noChecksBody: "チェックはアプリやアドレスが応答しなくなったときに知らせます。環境のドメインや監視中のサービスから追加できます。",
           noWatched: "監視しているものはまだありません",
           noWatchedBody: "マシンですでに動いているサービスは、そのサービスタブから監視するとここに表示されます。",
+          showMore: "さらに表示",
           bandOne: ({ environment, state }: { environment: string; state: string }) => `${environment} · ${state}`,
           countOnPage: "このページ",
           backupChecking: "確認中…",

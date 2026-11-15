@@ -3,7 +3,6 @@ import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import {
   Collection,
-  Status,
   useHappierCollection,
   type CollectionAnatomy,
 } from '@happier-dev/plugin-ui';
@@ -32,8 +31,6 @@ import { useMachineTabFacts } from '@/components/machines/page/useMachineTabFact
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { deploymentEnvironmentRoute } from '@/components/projects/deployments/deploymentNavigation';
 import { MachineTabSubHead } from '@/components/machines/page/MachineTabSubHead';
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { describeActionExecutionPrerequisite, resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
@@ -47,13 +44,12 @@ import {
   machineServiceIcon,
   machineServiceGroupOf,
   machineServiceStateSpeaks,
-  machineServiceStateTone,
   machineServiceExpectedStop,
 } from './machineServicesPresentation';
 import { useMachineDeploymentRoles, useMachineServiceEnvironments, useMachineServiceSourceName } from './useMachineServiceEnvironments';
 import { MachineDeploymentRolesSection, machineDeploymentRoleRows } from './MachineDeploymentRolesSection';
 import { MachineServicePage } from './MachineServicePage';
-import { MachineServiceByline, machineServiceColumnFields, renderMachineServicePort } from './machineServiceColumns';
+import { MachineServiceStateWord, machineServiceBylineLead, machineServiceByline, machineServiceColumnFields, renderMachineServicePort } from './machineServiceColumns';
 import { MachineServiceWatchMenu } from './MachineServiceWatchMenu';
 import {
   useMachineServicesList,
@@ -270,8 +266,9 @@ function MachineServicesList(
       // On a wide page Memory and Up stand in their own columns; a phone's row says them here instead.
       // An Environment row says how many services it holds and, when one needs the person, that service's state.
       byline: (item, layout) => item.kind === 'environment'
-        ? <EnvironmentByline rows={item.rows} />
-        : <MachineServiceByline row={item.row} runFactsInColumns={layout?.fieldColumns === true} />,
+        ? t('machineServices.environmentRow.services', { count: item.rows.length })
+        : machineServiceByline(item.row, layout?.fieldColumns === true),
+      bylineLead: (item) => item.kind === 'environment' ? environmentLead(item.rows) : machineServiceBylineLead(item.row),
       // The port it listens on: a mono chip in the row's end column on a phone, the Ports column on a wide page.
       titleMeta: (item) => item.kind === 'service' ? renderMachineServicePort(item.row) : null,
       titleMetaAlign: 'row',
@@ -453,20 +450,10 @@ function MachineServiceSourceNameReader(props: Readonly<{
 
 
 /** An Environment row's second line: how many services it holds, led by the state of one that needs the person. */
-function EnvironmentByline(props: Readonly<{ rows: readonly MachineServiceRowV1[] }>) {
-  const { theme } = useUnistyles();
-  const speaking = props.rows.find((row) => machineServiceExpectedStop(row) === null && machineServiceStateSpeaks(row.state));
-  const count = t('machineServices.environmentRow.services', { count: props.rows.length });
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s4, minWidth: 0, maxWidth: '100%', alignSelf: 'stretch' }}>
-      {speaking ? (
-        <Status tone={machineServiceStateTone(speaking.state)} label={t(`machineServices.state.${speaking.state}`)} presentation="inline" />
-      ) : null}
-      <Text style={{ ...Typography.variant('meta'), color: theme.colors.text.secondary, flexShrink: 1 }} numberOfLines={1}>
-        {speaking ? `· ${count}` : count}
-      </Text>
-    </View>
-  );
+/** An Environment row's line leads with the state of a service in it that needs the person. */
+function environmentLead(rows: readonly MachineServiceRowV1[]): React.ReactNode {
+  const speaking = rows.find((row) => machineServiceExpectedStop(row) === null && machineServiceStateSpeaks(row.state));
+  return speaking ? <MachineServiceStateWord row={speaking} /> : null;
 }
 
 type ListState =
