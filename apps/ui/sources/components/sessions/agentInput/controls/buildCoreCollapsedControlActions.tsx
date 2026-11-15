@@ -1,3 +1,4 @@
+import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import type { AgentInputFolderChipState } from '../definitions/AgentInputFolderChip';
 import * as React from 'react';
 
@@ -19,8 +20,8 @@ import { resolveAgentInputFolderChipState } from '../definitions/AgentInputFolde
  * the honest label rather than a borrowed one.
  */
 function resolveAgentDisplayLabel<T extends string | null | undefined>(agentId: T): string | T {
-    const displayNameKey = getAgentCore(agentId ?? '')?.displayNameKey;
-    return displayNameKey ? t(displayNameKey) : agentId;
+    const core = getAgentCore(agentId ?? '');
+    return core ? formatAgentLikeIdForDisplay(core.id) : agentId;
 }
 
 export function buildCoreCollapsedControlActions(opts: Readonly<{

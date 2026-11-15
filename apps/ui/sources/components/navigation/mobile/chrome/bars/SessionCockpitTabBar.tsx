@@ -134,7 +134,7 @@ export function useSessionCockpitTabDefinitions(props: Pick<SessionCockpitTabBar
                     id: 'chat',
                     sfSymbol: 'bubble.left',
                     label: agentCore
-                        ? t(agentCore.displayNameKey)
+                        ? formatAgentLikeIdForDisplay(agentCore.id)
                         // No Agent to name yet (unhydrated or unpublished): the tab names its pane.
                         : agentId ? formatAgentLikeIdForDisplay(agentId) : t('phoneNav.rail.chatPane'),
                     icon: {

@@ -1,3 +1,4 @@
+import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import * as React from 'react';
 import { Platform } from 'react-native';
 
@@ -23,8 +24,8 @@ const RUNS_THROUGH_POPOVER_MAX_HEIGHT_PX = 560;
 /** The popover names itself and the Agent it routes (lab RT1/RT1p). */
 function resolveRunsThroughPopoverHeader(agentId: string | null | undefined): AgentInputContentPopoverHeader {
     const id = typeof agentId === 'string' ? agentId.trim() : '';
-    const displayNameKey = id && isBundledAgentId(id) ? getAgentCore(id)?.displayNameKey ?? null : null;
-    const agent = displayNameKey ? t(displayNameKey) : id;
+    const core = id && isBundledAgentId(id) ? getAgentCore(id) : null;
+    const agent = core ? formatAgentLikeIdForDisplay(core.id) : id;
     return {
         title: t('connectedServices.authChip.popoverTitle'),
         ...(agent ? { description: t('connectedServices.authChip.popoverDescription', { agent }) } : {}),

@@ -10,6 +10,29 @@ import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
 import { ActionIdSchema } from './actionIds.js';
 
 describe('app shell Actions', () => {
+  it('admits an exact New Session Agent edit with closed selection inputs', () => {
+    const spec = getActionSpec(ActionIdSchema.parse('session.draft.agent.set'));
+    const input = { ref: { kind: 'newSession', instanceId: 'mounted-draft' }, agent: { kind: 'picker',
+      backendTarget: { kind: 'backend', backendId: 'codex' },
+      selection: { modelId: 'custom-model', sessionModeId: 'plan', configOverrides: { reasoning_effort: 'high' } },
+    } };
+    expect(spec.inputSchema.safeParse(input).success).toBe(true);
+    expect(spec.inputSchema.safeParse({ ...input, agent: { kind: 'mode', sessionModeId: null } }).success).toBe(true);
+    expect(spec.inputSchema.safeParse({ ...input, agent: { kind: 'config', configId: 'reasoning_effort', value: 'high' } }).success).toBe(true);
+    expect(spec.inputSchema.safeParse({ ...input, ref: { kind: 'session', sessionId: 'running-session' } }).success).toBe(true);
+    expect(spec.inputSchema.safeParse({ ...input, ref: { kind: 'pendingMessage', sessionId: 'running-session', localId: 'pending-1' } }).success).toBe(false);
+    expect(spec.inputSchema.safeParse({ ...input, agent: { ...input.agent,
+      selection: { ...input.agent.selection, arbitrary: true } } }).success).toBe(false);
+    expect(spec.inputSchema.safeParse({ ...input, agent: { ...input.agent,
+      selection: { ...input.agent.selection, configOverrides: { reasoning_effort: true } } } }).success).toBe(false);
+  });
+  it('admits an exact Session draft model edit while keeping directory edits New Session only', () => {
+    const ref = { kind: 'session', sessionId: 'running-session' };
+    expect(getActionSpec('session.draft.model.set').inputSchema.safeParse({ ref,
+      model: { kind: 'mode', modelId: 'chosen-model' } }).success).toBe(true);
+    expect(getActionSpec('session.draft.directory.set').inputSchema.safeParse({ ref,
+      directory: { kind: 'path', path: '/repo' } }).success).toBe(false);
+  });
   it.each(['account_automation', 'present_user'] as const)(
     'admits the own-Account Voice host with %s authority while refusing foreign and external callers', authority => {
       const context = { surface: 'voice', authority, runtimeAccountId: 'owner', expectedAccountId: 'owner',

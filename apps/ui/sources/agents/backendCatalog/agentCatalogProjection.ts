@@ -220,9 +220,6 @@ export function resolveAgentCatalogTitle(
         return primaryMergedBackendProjection.title;
     }
 
-    const core = getAgentCore(agentId);
-    if (core) return t(core.displayNameKey);
-
     return formatAgentLikeIdForDisplay(agentId);
 }
 

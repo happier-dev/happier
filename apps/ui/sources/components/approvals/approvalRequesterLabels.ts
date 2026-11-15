@@ -1,5 +1,4 @@
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import { getAgentCore } from '@/agents/catalog/catalog';
 import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import { resolveHomeDisplayName } from '@/components/settings/server/homeDisplayName';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
@@ -125,6 +124,5 @@ export function describeApprovalAgent(
 ): string | null {
   const id = agentId?.trim();
   if (!id) return null;
-  const core = getAgentCore(id as Parameters<typeof getAgentCore>[0]);
-  return core ? t(core.displayNameKey) : formatAgentLikeIdForDisplay(id);
+  return formatAgentLikeIdForDisplay(id);
 }

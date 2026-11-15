@@ -1,3 +1,4 @@
+import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import * as React from 'react';
 
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
@@ -136,11 +137,11 @@ export function ConnectedServicesProviderStateSharingBackendGroups(props: Readon
                 return (
                     <ItemGroup
                         key={agentId}
-                        title={t(agentCore.displayNameKey)}
+                        title={formatAgentLikeIdForDisplay(agentCore.id)}
                     >
                         <ProviderStateSharingRows
                             agentId={agentId}
-                            agentTitle={t(agentCore.displayNameKey)}
+                            agentTitle={formatAgentLikeIdForDisplay(agentCore.id)}
                             capability={agentCore.connectedServices?.providerStateSharing ?? null}
                             settings={props.settings}
                         />

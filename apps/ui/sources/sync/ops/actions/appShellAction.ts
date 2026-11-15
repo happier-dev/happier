@@ -1,5 +1,7 @@
 import { AppShellActionInputSchemas, dismissAccountNoticeArtifactV1,
     readNoticeInboxAccountIdV1 } from '@happier-dev/protocol/actions/appShellActionFamily';
+import { isNewSessionDraftEditActionIdV1, SESSION_DRAFT_AGENT_SET_ACTION_ID_V1,
+    SESSION_DRAFT_DIRECTORY_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/appShellActionIdsV1';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { executeSessionBulkAction } from '@/components/sessions/actions/sessionBulkActionExecution';
@@ -17,7 +19,7 @@ import {
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { runWithSessionDraftRepositoryScopedRuntime } from '@/sync/ops/sessionDrafts/runWithSessionDraftRepositoryScopedRuntime';
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from './actionAccountContext';
-import { applyRegisteredNewSessionDirectoryIntent, applyRegisteredNewSessionModelIntent } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
+import { applyRegisteredNewSessionAgentIntent, applyRegisteredNewSessionDirectoryIntent, applyRegisteredNewSessionModelIntent } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { invokeMountedWorkRead } from './mountedWorkReadAction';
 import { sync } from '@/sync/sync';
@@ -114,11 +116,13 @@ export function createAppShellAction(accountContext?: LazyActionAccountContext):
                 return result;
             } finally { if (!accountContext) account.dispose(); }
         }
-        if (actionId === 'session.draft.directory.set' || actionId === 'session.draft.model.set') {
+        if (isNewSessionDraftEditActionIdV1(actionId)) {
             context.signal?.throwIfAborted();
             accountContext?.assertCurrent();
             const expectedServerId = accountContext?.serverId ?? context.serverId ?? undefined;
-            const expectedAccountId = accountContext?.accountId ?? context.runtimeAccountId;
+            const expectedAccountId = accountContext?.accountId ?? context.runtimeAccountId ?? context.expectedAccountId;
+            if (context.runtimeAccountId && context.expectedAccountId
+                && context.runtimeAccountId !== context.expectedAccountId) return { status: 'unavailable' };
             if (accountContext && context.serverId
                 && !areServerProfileIdentifiersEquivalent(accountContext.serverId, context.serverId)) return { status: 'unavailable' };
             if (accountContext && context.runtimeAccountId && accountContext.accountId !== context.runtimeAccountId) return { status: 'unavailable' };
@@ -126,9 +130,13 @@ export function createAppShellAction(accountContext?: LazyActionAccountContext):
                 ...(expectedServerId ? { serverId: expectedServerId } : {}),
                 ...(expectedAccountId ? { accountId: expectedAccountId } : {}),
             };
-            if (actionId === 'session.draft.directory.set') {
+            if (actionId === SESSION_DRAFT_DIRECTORY_SET_ACTION_ID_V1) {
                 const { ref, directory } = AppShellActionInputSchemas[actionId].parse(input);
                 return { status: applyRegisteredNewSessionDirectoryIntent(ref, directory, scope) ? 'applied' : 'unavailable' };
+            }
+            if (actionId === SESSION_DRAFT_AGENT_SET_ACTION_ID_V1) {
+                const { ref, agent } = AppShellActionInputSchemas[actionId].parse(input);
+                return { status: await applyRegisteredNewSessionAgentIntent(ref, agent, scope) ? 'applied' : 'unavailable' };
             }
             const { ref, model } = AppShellActionInputSchemas[actionId].parse(input);
             return { status: await applyRegisteredNewSessionModelIntent(ref, model, scope) ? 'applied' : 'unavailable' };

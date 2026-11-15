@@ -1,7 +1,6 @@
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { getAgentCore } from '@/agents/catalog/catalog';
 import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
-import { t } from '@/text';
 import { AgentNativeResumeIdentityV1Schema } from '@happier-dev/protocol/agents/nativeResumeIdentityV1';
 import type { Metadata } from '@happier-dev/session-core/state';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -118,7 +117,7 @@ export function buildSessionDebugInformationForSession(session: SessionDebugInfo
     const core = getAgentCore(agentId);
     return buildSessionDebugInformation({
         session,
-        providerDisplayName: core ? t(core.displayNameKey) : formatAgentLikeIdForDisplay(agentId),
+        providerDisplayName: formatAgentLikeIdForDisplay(agentId),
         providerSessionId: resolveProviderSessionIdForDebug({ metadata, vendorResumeIdField: core?.resume.vendorResumeIdField }),
     });
 }

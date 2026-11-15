@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { AGENT_IDS, type AgentId } from '@happier-dev/agents';
+import { readConcreteAgentPresentation } from '@happier-dev/agents/presentation';
 import { getAgentPickerOptions } from './agentPickerOptions';
 
 describe('agents/agentPickerOptions', () => {
@@ -14,7 +15,7 @@ describe('agents/agentPickerOptions', () => {
         const options = getAgentPickerOptions(AGENT_IDS);
         for (const option of options) {
             expect(option.agentId).toBeTypeOf('string');
-            expect(option.titleKey).toMatch(/^agentInput\./);
+            expect(option).toMatchObject({ title: readConcreteAgentPresentation(option.agentId)!.name });
             expect(typeof option.subtitleKey).toBe('string');
             expect(typeof option.iconName).toBe('string');
             expect(option.iconName.length).toBeGreaterThan(0);

@@ -91,7 +91,7 @@ function ActiveHomeManagedWakeRow(props: Readonly<{ session: SessionPresentation
         machineName: observation.machine?.launch?.name ?? (observation.machine
             ? getMachineSentenceName({ id: observation.machine.enrolledMachineId ?? observation.machine.id }) : t('common.machine')),
         homeName: resolveHomeDisplayLabel(getServerProfileById(serverId), serverId),
-        agentName: agentCore ? t(agentCore.displayNameKey) : formatAgentLikeIdForDisplay(agentId),
+        agentName: formatAgentLikeIdForDisplay(agentId),
     }) : null);
     // Both routes consume the retained-input owners: confirmed direct delivery or the wake banner's recovery.
     const retry = presentation?.primaryAction === 'process_when_online' ? 'rearm' as const

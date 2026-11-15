@@ -1494,7 +1494,7 @@ export function useSessionComposerController({
         cwd: ownerMetadata?.path ?? null,
     }), [sessionRouteServerId, machineId, ownerMetadata?.path]);
     const currentAgentLabel = agentInputCore
-        ? t(agentInputCore.displayNameKey)
+        ? formatAgentLikeIdForDisplay(agentInputCore.id)
         : formatAgentLikeIdForDisplay(agentInputAgentType);
     const managedWakeNames = React.useMemo(() => ({
         controllerName: managedWakeController ? getMachineSentenceName(managedWakeController) : t('common.machine'),
@@ -1656,7 +1656,7 @@ export function useSessionComposerController({
     // The Goal control's continuation owner (FIN 04 §5.5): this session, the machine whose daemon owns
     // its triggers, and whether its opened runtime keeps going on its own.
     const sessionNativeGoalOwner = resolveSessionNativeGoalOwner(session);
-    const sessionGoalAgentLabel = agentCore ? t(agentCore.displayNameKey) : (agentId ? formatAgentLikeIdForDisplay(agentId) : '');
+    const sessionGoalAgentLabel = agentCore ? formatAgentLikeIdForDisplay(agentCore.id) : (agentId ? formatAgentLikeIdForDisplay(agentId) : '');
     const sessionGoalContinuation = React.useMemo(() => ({
         sessionId,
         machineId: typeof goalControlMachineId === 'string' ? goalControlMachineId : null,
@@ -4518,6 +4518,8 @@ export function useSessionComposerController({
         },
         commitDocument: (input) => commitSessionComposerDocument(input, activeComposerRef),
         applySessionPresentationIntent: applySessionPresentationIntentFromCommand,
+        applyDraftAgentIntent: inSessionAgentPicker.applyDraftAgentIntent,
+        applyDraftModelIntent: inSessionAgentPicker.applyDraftModelIntent,
         commitDocumentEmitsChange: true,
         createAttachmentInstanceId: randomUUID,
         setComposerDecorations: composerInputEffects.setComposerDecorations,
@@ -4592,6 +4594,8 @@ export function useSessionComposerController({
         },
         commitDocument: (input) => commitSessionComposerDocument(input, sessionComposerRef),
         applySessionPresentationIntent: applySessionPresentationIntentFromCommand,
+        applyDraftAgentIntent: inSessionAgentPicker.applyDraftAgentIntent,
+        applyDraftModelIntent: inSessionAgentPicker.applyDraftModelIntent,
         commitDocumentEmitsChange: true,
         createAttachmentInstanceId: randomUUID,
         setComposerDecorations: composerInputEffects.setComposerDecorations,

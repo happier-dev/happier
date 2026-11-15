@@ -8,7 +8,7 @@ import { ComposerOperationV1Schema, ComposerTransactionV1Schema, type ComposerDe
 import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
 import type { SessionExecutionTargetV1 } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
 import type { SessionDirectoryIntentV1 } from '@happier-dev/protocol/sessions/creation/sessionDirectoryIntentV1';
-import type { NewSessionDraftModelIntent } from '@happier-dev/protocol/actions/appShellActionFamily';
+import type { NewSessionDraftAgentIntent, NewSessionDraftModelIntent } from '@happier-dev/protocol/actions/appShellActionFamily';
 import { composerRefV1Key } from '@happier-dev/protocol/plugins/ui/composerRef';
 import type {
     CurrentSessionPresentationIntentResultV1,
@@ -241,6 +241,10 @@ export type ComposerPresentationTarget = Readonly<{
     /** The mounted New Session directory owner; never a launch or filesystem write. */
     applyNewSessionDirectoryIntent?: (intent: SessionDirectoryIntentV1, expectedScope?: Readonly<Partial<ServerAccountScope>>) => boolean;
     applyNewSessionModelIntent?: (intent: NewSessionDraftModelIntent, expectedScope?: Readonly<Partial<ServerAccountScope>>) => Promise<boolean>;
+    applyNewSessionAgentIntent?: (intent: NewSessionDraftAgentIntent, expectedScope?: Readonly<Partial<ServerAccountScope>>) => Promise<boolean>;
+    /** Mounted Session continuation picker; edits its draft without a runtime transition. */
+    applyDraftModelIntent?: (intent: NewSessionDraftModelIntent, expectedScope?: Readonly<Partial<ServerAccountScope>>) => Promise<boolean>;
+    applyDraftAgentIntent?: (intent: NewSessionDraftAgentIntent, expectedScope?: Readonly<Partial<ServerAccountScope>>) => Promise<boolean>;
     /**
      * Projects an ephemeral, owner-scoped decoration into the incumbent input.
      * The owner plus key is the visual identity; it must not mutate text,
@@ -373,6 +377,15 @@ export function useStableComposerPresentationTarget(
                 } : {}),
                 ...(target.applyNewSessionModelIntent ? {
                     applyNewSessionModelIntent: async (intent, expectedScope) => await readCurrent().applyNewSessionModelIntent?.(intent, expectedScope) ?? false,
+                } : {}),
+                ...(target.applyNewSessionAgentIntent ? {
+                    applyNewSessionAgentIntent: async (intent, expectedScope) => await readCurrent().applyNewSessionAgentIntent?.(intent, expectedScope) ?? false,
+                } : {}),
+                ...(target.applyDraftAgentIntent ? {
+                    applyDraftAgentIntent: async (intent, expectedScope) => await readCurrent().applyDraftAgentIntent?.(intent, expectedScope) ?? false,
+                } : {}),
+                ...(target.applyDraftModelIntent ? {
+                    applyDraftModelIntent: async (intent, expectedScope) => await readCurrent().applyDraftModelIntent?.(intent, expectedScope) ?? false,
                 } : {}),
                 ...(target.setComposerDecorations ? {
                     setComposerDecorations: (input) => readCurrent().setComposerDecorations!(input),
@@ -2020,10 +2033,23 @@ export function applyRegisteredNewSessionDirectoryIntent(ref: ComposerRefV1, int
 }
 
 export async function applyRegisteredNewSessionModelIntent(ref: ComposerRefV1, intent: NewSessionDraftModelIntent, expectedScope?: Readonly<Partial<ServerAccountScope>>): Promise<boolean> {
-    if (ref.kind !== 'newSession') return false;
-    const target = readRegisteredTarget(ref);
+    if (ref.kind !== 'newSession' && ref.kind !== 'session') return false;
+    const target = expectedScope?.serverId && expectedScope.accountId
+        ? resolveScopedMountedComposerTarget(ref, { serverId: expectedScope.serverId, accountId: expectedScope.accountId })
+        : readRegisteredTarget(ref);
     if (!target || !isComposerPresentationTargetPresented(target)) return false;
+    if (ref.kind === 'session') return await target.applyDraftModelIntent?.(intent, expectedScope) === true;
     return await target.applyNewSessionModelIntent?.(intent, expectedScope) === true;
+}
+
+export async function applyRegisteredNewSessionAgentIntent(ref: ComposerRefV1, intent: NewSessionDraftAgentIntent, expectedScope?: Readonly<Partial<ServerAccountScope>>): Promise<boolean> {
+    if (ref.kind !== 'newSession' && ref.kind !== 'session') return false;
+    const target = expectedScope?.serverId && expectedScope.accountId
+        ? resolveScopedMountedComposerTarget(ref, { serverId: expectedScope.serverId, accountId: expectedScope.accountId })
+        : readRegisteredTarget(ref);
+    if (!target || !isComposerPresentationTargetPresented(target)) return false;
+    if (ref.kind === 'session') return await target.applyDraftAgentIntent?.(intent, expectedScope) === true;
+    return await target.applyNewSessionAgentIntent?.(intent, expectedScope) === true;
 }
 
 /**

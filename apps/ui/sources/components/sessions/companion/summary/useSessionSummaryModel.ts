@@ -1,3 +1,4 @@
+import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import * as React from 'react';
 
 import {
@@ -8,7 +9,6 @@ import {
 import { getAgentCore } from '@/agents/catalog/catalog';
 import { buildSessionScmSummary } from '@/components/sessions/sourceControl/status/statusSummary';
 import { resolveSessionAgentActivityPresentation } from '@/components/sessions/agents/presentation/sessionAgentActivityPresentation';
-import { t } from '@/text';
 import { useSessionAgentActivity } from '@/hooks/session/useSessionAgentActivity';
 import { EMPTY_SESSION_LIST_SERVER_KEY } from '@/sync/domains/session/listing/sessionListKeyNormalization';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
@@ -92,7 +92,7 @@ export function readSessionAgentLabel(session: Session): string | null {
     const agentId = readSessionPresentationAgentId(session);
     if (!agentId) return null;
     const core = getAgentCore(agentId);
-    return core ? t(core.displayNameKey) : null;
+    return core ? formatAgentLikeIdForDisplay(core.id) : null;
 }
 
 /**

@@ -970,14 +970,14 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                                 const disabledReason = !compatible
                                                     ? t('newSession.aiBackendNotCompatibleWithSelectedProfile')
                                                     : !selectable
-                                                        ? t('newSession.aiBackendCliNotDetectedOnMachine', { cli: t(option.titleKey) })
+                                                        ? t('newSession.aiBackendCliNotDetectedOnMachine', { cli: option.title })
                                                         : null;
 
                                                 return {
                                                     id: option.agentId,
                                                     key: option.agentId,
                                                     testID: `new-session-agent:${option.agentId}`,
-                                                    title: t(option.titleKey),
+                                                    title: option.title,
                                                     subtitle: t(option.subtitleKey),
                                                     leftElement: renderIconNode(option.iconName as any, 24, theme.colors.text.secondary),
                                                     dropdownIcon: renderIconNode(option.iconName as any, 20, theme.colors.text.secondary),

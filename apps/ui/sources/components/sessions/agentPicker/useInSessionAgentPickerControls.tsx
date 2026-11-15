@@ -6,6 +6,9 @@ import { buildAcpConfigOptionOverridesV1FromConfigOptions } from '@happier-dev/p
 import { isNativeAutomaticModelSelectionInputV1, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import type { FeatureDecision } from '@happier-dev/protocol/features/decision';
+import type { NewSessionDraftAgentIntent, NewSessionDraftModelIntent } from '@happier-dev/protocol/actions/appShellActionFamily';
+import { backendTargetKeysMatch, resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
+import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { SessionAgentTransitionSelectionV1 } from '@happier-dev/protocol/sessions/agentTransition';
 import {
     projectAgentConnectedAccountPurposeDefaultsToSessionBindings,
@@ -41,6 +44,8 @@ import { useProviderDefaultModelSelections } from '@/providers/hooks/useProvider
 import { readAgentDefaultModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
 import { useConnectedAccountCatalog } from '@/sync/store/settings/useConnectedAccountCatalog';
 import { getConnectedAccountCatalogValue } from '@/sync/store/settings/connectedAccountCatalogSnapshot';
+import { refreshConnectedAccountCatalog } from '@/sync/engine/settings/connectedAccountCatalogEngine';
+import { useSessionDraftActions } from '@/components/sessions/composer/useSessionDraftActions';
 
 import {
     buildSessionAgentPickerDetailContent,
@@ -55,6 +60,7 @@ import {
     type SessionAgentContinuationEligibility,
     type SessionAgentContinuationMachineTarget,
     type SessionAgentContinuationSourceState,
+    type SessionAgentContinuationInspectionState,
 } from './resolveSessionAgentContinuationEligibility';
 
 /**
@@ -466,6 +472,13 @@ export function useInSessionAgentPickerControls(
 
     const currentAgentReportedStatus = resolveReportedModelStatus(params.currentAgentSessionActive);
     const [armed, setArmed] = React.useState<ArmedAgentContinuation | null>(null);
+    // The existing latest pending choice owns completion when exact inspections
+    // answer out of order, including a later choice of the running Agent.
+    const pendingArmRef = React.useRef<Readonly<{
+        backendTargetKey: string;
+        sourceAgentId: string;
+        selection: SessionAgentPickerSelection;
+    }> | null>(null);
     const draftSessionId = sessionId.trim().length > 0 ? sessionId.trim() : null;
     const persistedArmedContinuation = draftSessionId === null || !accountScopeIsCurrent()
         ? undefined
@@ -506,6 +519,8 @@ export function useInSessionAgentPickerControls(
     // Whether the composer's Agent picker is on screen: the inspection demand
     // boundary and the scope of one popover's geometry.
     const [pickerVisible, setPickerVisible] = React.useState(false);
+    const draftRef = React.useMemo(() => ({ kind: 'session' as const, sessionId }), [sessionId]);
+    const draftActions = useSessionDraftActions(draftRef, accountScope);
 
     const targetEntries = React.useMemo(() => entries.filter((entry) => (
         entry.backendTargetKey !== source.currentBackendTargetKey
@@ -679,6 +694,7 @@ export function useInSessionAgentPickerControls(
     }
 
     const clearArmedContinuation = React.useCallback(() => {
+        pendingArmRef.current = null;
         persistArmedContinuation(null);
     }, [persistArmedContinuation]);
 
@@ -833,68 +849,81 @@ export function useInSessionAgentPickerControls(
 
     const armedTargetKey = featureEnabled ? armed?.backendTargetKey ?? null : null;
 
-    // A target detail choice may change model, provider connection, mode or
-    // configuration. It is not armable until the inspection has answered for
-    // that exact full selection; the existing picker selection remains the
-    // authority while this tiny pending reference waits for that answer.
-    const pendingArmRef = React.useRef<Readonly<{
-        backendTargetKey: string;
-        sourceAgentId: string;
-        selection: SessionAgentPickerSelection;
-    }> | null>(null);
-
     const armExactSelection = React.useCallback((
         entry: ResolvedBackendCatalogEntry,
         sourceAgentId: string,
         selection: SessionAgentPickerSelection,
+        inspection: SessionAgentContinuationInspectionState,
     ) => {
+        if (!featureEnabled || retainedSubmissionArm !== null || !accountScopeIsCurrent() || currentAgentId !== sourceAgentId) return false;
         if (!purposeDefaultsReady(entry)) {
-            pendingArmRef.current = null;
             persistArmedContinuation(null);
-            return;
+            return false;
         }
         const eligibility = resolveSessionAgentContinuationEligibility({
             entry,
             source,
-            inspection: readInspection(buildTargetSelection(entry, selection)),
+            inspection,
         });
         if (eligibility.status === 'eligible') {
-            pendingArmRef.current = null;
             persistArmedContinuation(buildArmedContinuation(entry, sourceAgentId, selection));
-            return;
+            return true;
         }
-        // Changing a selected target's configuration invalidates the former
-        // exact choice. Hold no arm while the new complete selection is being
-        // inspected; an answered refusal simply leaves it clear.
         persistArmedContinuation(null);
-        pendingArmRef.current = eligibility.status === 'checking'
-            ? { backendTargetKey: entry.backendTargetKey, sourceAgentId, selection }
-            : null;
-    }, [persistArmedContinuation, purposeDefaultsReady, readInspection, source]);
+        return false;
+    }, [accountScopeIsCurrent, currentAgentId, featureEnabled, persistArmedContinuation, purposeDefaultsReady, retainedSubmissionArm, source]);
 
-    React.useEffect(() => {
-        const pending = pendingArmRef.current;
-        if (pending === null) return;
-        if (!featureEnabled || currentAgentId !== pending.sourceAgentId) {
-            pendingArmRef.current = null;
-            return;
-        }
-        const entry = targetEntries.find((candidate) => candidate.backendTargetKey === pending.backendTargetKey);
-        if (!entry || !purposeDefaultsReady(entry) || JSON.stringify(readTargetSelection(entry.backendTargetKey)) !== JSON.stringify(pending.selection)) {
-            pendingArmRef.current = null;
-            return;
-        }
-        const eligibility = resolveSessionAgentContinuationEligibility({
-            entry,
-            source,
-            inspection: readInspection(buildTargetSelection(entry, pending.selection)),
-        });
-        if (eligibility.status === 'checking') return;
+    const armOwnerRef = React.useRef(armExactSelection);
+    armOwnerRef.current = armExactSelection;
+    const applySelection = React.useCallback(async (entry: ResolvedBackendCatalogEntry, selection: SessionAgentPickerSelection) => {
+        if (!accountScope || !accountScopeIsCurrent() || currentAgentId === null) return false;
+        if (selection.modelSelection && (!backendTargetKeysMatch(selection.modelSelection.ref.agentTargetKey, entry.backendTarget)
+            || selection.modelSelection.ref.modelId !== selection.modelId)) return false;
+        if (!inspectableTargetSelections.some(selection => selection.agentId === resolveContinuationAgentId(entry))) return false;
+        const admittedScopeKey = armScopeRef.current.key;
+        const pending = { backendTargetKey: entry.backendTargetKey, sourceAgentId: currentAgentId, selection };
+        pendingArmRef.current = pending;
+        setSelectionByTargetKey(current => new Map(current).set(entry.backendTargetKey, selection));
+        if (!purposeDefaultsReady(entry)) await refreshConnectedAccountCatalog(accountScope, 'purposes');
+        if (pendingArmRef.current !== pending || armScopeRef.current.key !== admittedScopeKey) return false;
+        // A changed exact choice stops being armed while its demanded inspection
+        // settles. The same Action resumes here, using the existing pending choice.
+        persistArmedContinuation(null);
+        const inspection = await inspections.request(buildTargetSelection(entry, selection));
+        if (pendingArmRef.current !== pending || armScopeRef.current.key !== admittedScopeKey) return false;
         pendingArmRef.current = null;
-        if (eligibility.status === 'eligible') {
-            persistArmedContinuation(buildArmedContinuation(entry, pending.sourceAgentId, pending.selection));
+        const applied = armOwnerRef.current(entry, currentAgentId, selection, inspection);
+        return applied;
+    }, [accountScope, accountScopeIsCurrent, currentAgentId, inspectableTargetSelections, inspections.request, persistArmedContinuation, purposeDefaultsReady]);
+
+    const applyDraftAgentIntent = React.useCallback(async (intent: NewSessionDraftAgentIntent) => {
+        if (intent.kind === 'picker') {
+            const key = resolveBackendTargetKeyV2(intent.backendTarget);
+            if (source.currentBackendTargetKey && backendTargetKeysMatch(key, source.currentBackendTargetKey)) {
+                if (!accountScope || !accountScopeIsCurrent() || sessionReason !== null) return false;
+                clearArmedContinuation();
+                return true;
+            }
+            const entry = targetEntries.find(candidate => backendTargetKeysMatch(candidate.backendTarget, key));
+            return entry ? await applySelection(entry, intent.selection) : false;
         }
-    }, [currentAgentId, featureEnabled, persistArmedContinuation, purposeCatalog, purposeDefaultsReady, readInspection, readTargetSelection, source, targetEntries]);
+        const entry = targetEntries.find(candidate => candidate.backendTargetKey === armed?.backendTargetKey);
+        if (!entry || !armed) return false;
+        const selection = readTargetSelection(entry.backendTargetKey);
+        return await applySelection(entry, intent.kind === 'mode'
+            ? { ...selection, sessionModeId: intent.sessionModeId }
+            : { ...selection, configOverrides: { ...selection.configOverrides, [intent.configId]: intent.value } });
+    }, [accountScope, accountScopeIsCurrent, applySelection, armed, clearArmedContinuation, readTargetSelection, sessionReason, source.currentBackendTargetKey, targetEntries]);
+
+    const applyDraftModelIntent = React.useCallback(async (intent: NewSessionDraftModelIntent) => {
+        const entry = targetEntries.find(candidate => candidate.backendTargetKey === armed?.backendTargetKey);
+        if (!entry || !armed || intent.kind === 'team') return false;
+        const selection = readTargetSelection(entry.backendTargetKey);
+        return await applySelection(entry, { ...selection,
+            modelId: intent.kind === 'mode' ? intent.modelId : intent.ref?.modelId ?? 'default', modelLabel: null,
+            modelSelection: intent.kind === 'selection' && intent.ref ? { v: 1, updatedAt: Date.now(), ref: intent.ref } : null,
+        });
+    }, [applySelection, armed, readTargetSelection, targetEntries]);
 
     const targetOptions = React.useMemo(() => {
         // A retained submitted snapshot is already in custody reconciliation. It
@@ -1009,27 +1038,23 @@ export function useInSessionAgentPickerControls(
                             : t('session.agentContinuation.detailDescriptionEmpty')}
                         selection={readTargetSelection(entry.backendTargetKey)}
                         onSelectionChange={(next) => {
-                            setSelectionByTargetKey((current) => {
-                                const nextMap = new Map(current);
-                                nextMap.set(entry.backendTargetKey, next);
-                                return nextMap;
-                            });
                             // Re-arm rather than announce: the model row's own selected
                             // state is the feedback here, exactly as in every sibling
                             // picker, and re-speaking on each model tap would nag. The
                             // submission identity is derived from the intent, so it
                             // re-mints itself for what is genuinely a different switch.
-                            armExactSelection(entry, sourceAgentId, next);
+                            return draftActions.setAgent({ kind: 'picker', backendTarget: entry.backendTarget, selection: next });
                         }}
                     />;
                     },
                     // Fired on deliberate activation of the row — tap, click, Enter or
                     // Space — never on hover or pointer travel.
-                    onSelectImmediate: () => {
-                        armExactSelection(entry, sourceAgentId, readTargetSelection(entry.backendTargetKey));
+                    onSelectImmediate: async () => {
+                        const applied = await draftActions.setAgent({ kind: 'picker', backendTarget: entry.backendTarget,
+                            selection: readTargetSelection(entry.backendTargetKey) });
                         // The one thing a vanished confirm step would otherwise cost a
                         // screen-reader user: what just changed, and that nothing was sent.
-                        announceAccessibilityMessage(
+                        if (applied) announceAccessibilityMessage(
                             t('session.agentContinuation.announcement', { agent: entry.title }),
                         );
                     },
@@ -1046,7 +1071,7 @@ export function useInSessionAgentPickerControls(
         featureEnabled,
         params.detail,
         params.favoriteBackendTargetKeys,
-        armExactSelection,
+        draftActions.setAgent,
         purposeCatalog,
         purposeDefaultsReady,
         railOffersRows,
@@ -1103,14 +1128,18 @@ export function useInSessionAgentPickerControls(
                 // than displacing it.
                 onSelectImmediate: () => {
                     option.onSelectImmediate?.();
-                    clearArmedContinuation();
+                    if (source.currentBackendTargetKey) return draftActions.setAgent({ kind: 'picker',
+                        backendTarget: parseBackendTargetKeyV2(source.currentBackendTargetKey),
+                        selection: readTargetSelection(source.currentBackendTargetKey) });
                 },
             })),
             ...targetOptions,
         ];
     }, [
         armedTargetKey,
-        clearArmedContinuation,
+        draftActions.setAgent,
+        readTargetSelection,
+        source.currentBackendTargetKey,
         currentAgentLabel,
         currentAgentReportedStatus,
         targetOptions,
@@ -1127,6 +1156,8 @@ export function useInSessionAgentPickerControls(
         clearArmedContinuation,
         clearArmedContinuationSubmissionIfCurrent,
         recordArmedContinuationSubmission,
+        applyDraftAgentIntent,
+        applyDraftModelIntent,
         onAgentPickerVisibilityChange,
     };
 }

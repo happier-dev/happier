@@ -1,3 +1,4 @@
+import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -32,9 +33,9 @@ import { openAgentTransitionHandedOverContextModal } from './openAgentTransition
  * unknown or uninstalled Agent to its neutral mark without inventing a brand.
  */
 function resolveAgentSlot(agentId: string): AgentTransitionTitleAgent {
-    const displayNameKey = getAgentCore(agentId)?.displayNameKey;
+    const core = getAgentCore(agentId);
     return {
-        label: displayNameKey ? t(displayNameKey) : agentId,
+        label: core ? formatAgentLikeIdForDisplay(core.id) : agentId,
         markAgentId: agentId,
     };
 }

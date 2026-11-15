@@ -1,3 +1,4 @@
+import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -62,7 +63,7 @@ function useSessionStart(sessionId: string, machineName: string | null): Transcr
         if (!session) return null;
         const agentId = readSessionPresentationAgentId(session);
         const core = agentId ? getAgentCore(agentId) : null;
-        return core ? t(core.displayNameKey) : null;
+        return core ? formatAgentLikeIdForDisplay(core.id) : null;
     }, [session]);
     const hasSession = session !== null;
     // Keyed on the primitives, not the Session object: heartbeats must not re-render the list.

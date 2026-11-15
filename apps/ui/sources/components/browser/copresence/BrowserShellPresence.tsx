@@ -1,3 +1,4 @@
+import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import type { HappierPresenceTakeControlResult } from '@happier-dev/plugin-ui/presentation';
 import { BrowserCommandDispatchResultV1Schema } from '@happier-dev/protocol/browser/control/v1';
 import { type ActionExecuteResult} from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -44,7 +45,7 @@ export type BrowserShellAgentPresence = Readonly<{
 
 function resolveAgentName(agentId: string | null | undefined): Readonly<{ name: string; agentless: boolean }> {
     const core = agentId ? getAgentCore(agentId as AgentId) : null;
-    return core ? { name: t(core.displayNameKey), agentless: false } : { name: t('browserPresence.agentFallbackName'), agentless: true };
+    return core ? { name: formatAgentLikeIdForDisplay(core.id), agentless: false } : { name: t('browserPresence.agentFallbackName'), agentless: true };
 }
 
 /**

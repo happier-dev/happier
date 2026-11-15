@@ -551,8 +551,8 @@ function SessionInfoContent({
   );
   const providerDisplayName = React.useMemo(
     () =>
-      core ? t(core.displayNameKey) : formatAgentLikeIdForDisplay(agentId),
-    [agentId, core],
+      formatAgentLikeIdForDisplay(agentId),
+    [agentId],
   );
 
   const handleOpenSameSetup = React.useCallback(async (invocation?: CurrentUiContextCommandInvocation) => {

@@ -1,3 +1,4 @@
+import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import * as React from 'react';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import type { SessionTerminalWorkspaceV1 } from '@happier-dev/protocol/terminal/workspace';
@@ -9,7 +10,6 @@ import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSession
 import { getStorage, useActiveMachineFacts, useMachineListForServer } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { t } from '@/text';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 
 import { resolveSessionTerminalIdentity } from '../sessionTerminalMode';
@@ -74,7 +74,7 @@ export function useSessionTerminalDescribeContext(sessionId: string, serverId: s
         const agentCore = agentId ? getAgentCore(agentId) : null;
         return {
             agentId,
-            agentName: agentCore ? t(agentCore.displayNameKey as never) : null,
+            agentName: agentCore ? formatAgentLikeIdForDisplay(agentCore.id) : null,
             agentAsking,
             agentTerminalHost,
             sessionMachineId,

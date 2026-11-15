@@ -24,8 +24,7 @@ export interface ProfileListStrings {
 export function getDefaultProfileListStrings(enabledAgentIds: readonly AgentId[]): ProfileListStrings {
     const agentLabelById: Partial<Record<AgentId, string>> = {};
     for (const agentId of enabledAgentIds) {
-        const core = getAgentCore(agentId);
-        agentLabelById[agentId] = core ? t(core.displayNameKey) : formatAgentLikeIdForDisplay(agentId);
+        agentLabelById[agentId] = formatAgentLikeIdForDisplay(agentId);
     }
     return {
         builtInLabel: t('profiles.builtIn'),

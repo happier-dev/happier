@@ -1,3 +1,4 @@
+import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import { useLastUsedBackendSelection } from '@/hooks/session/useLastUsedBackendSelection';
 import React from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -169,8 +170,8 @@ export default function ResumePickerScreen() {
     const agentType = operationalAgentId ?? staticAgentId ?? DEFAULT_AGENT_ID;
     const agentLabel = selectedBackendEntry?.title
         ?? (() => {
-            const displayNameKey = getAgentCore(agentType)?.displayNameKey;
-            return displayNameKey ? t(displayNameKey) : null;
+            const core = getAgentCore(agentType);
+            return core ? formatAgentLikeIdForDisplay(core.id) : null;
         })();
     const agentOptionState = React.useMemo(() => {
         const map = readBackendNewSessionOptionStateByTargetKey(tempSessionData);

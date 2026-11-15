@@ -1,3 +1,4 @@
+import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import type { ComputerAccessV1, ComputerSelectedTargetResponseV1 } from '@happier-dev/protocol/computer/v1';
 
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
@@ -77,7 +78,7 @@ export function resolveComputerTargetPickerForSession(params: ComputerTargetPick
         accountLifetime,
         purpose,
         scope: { sessionId: params.sessionId, machineId: params.machineId, serverId },
-        agentName: core ? t(core.displayNameKey) : t('browserPresence.agentFallbackName'),
+        agentName: core ? formatAgentLikeIdForDisplay(core.id) : t('browserPresence.agentFallbackName'),
         agentless: core === null,
         machineName: params.machineName ?? t('computerUse.presentation.tabFallback'),
         currentTargetKey: params.currentTargetKey ?? null,

@@ -16,7 +16,6 @@ import type {
     MergedBackendProjectionEntry,
     MergedProviderProjectionEntry,
 } from './mergedProjectionTypes';
-import { t } from '@/text';
 import { resolveCliAuthBackgroundCheckSafe } from './resolveCliAuthBackgroundCheckSafe';
 import { resolveAgentExecutionTargetForBackendTarget } from './resolveAgentExecutionTargetForBackendTarget';
 import {
@@ -403,7 +402,7 @@ function createBuiltInTargetEntry(agentId: string, params: MergedProjectionInput
 
     if (isBuiltInAgent) {
         const agentCatalogEntry = resolveTargetAgentCatalogEntry(resolvedAgentId, params);
-        const bundledTitle = core ? t(core.displayNameKey) : agentCatalogEntry.title;
+        const bundledTitle = agentCatalogEntry.title;
         return {
             agentCatalogEntry,
             backendTarget: canonicalTarget,

@@ -1,3 +1,4 @@
+import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
@@ -129,7 +130,7 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
                                 rowKind="item"
                                 popoverBoundaryRef={popoverBoundaryRef}
                                 itemTrigger={{
-                                    title: t(core.displayNameKey),
+                                    title: formatAgentLikeIdForDisplay(core.id),
                                     icon: <AgentIcon agentId={agentId} size={22} />,
                                     // The field shows the mode; a subtitle repeating it adds nothing.
                                     showSelectedSubtitle: false,
@@ -218,7 +219,7 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
                                             key={`storage-${agentId}`}
                                             testID={`settings-permissions-storage-${agentId}`}
                                             testIDPrefix={`settings-permissions-storage-${agentId}`}
-                                            title={t(core.displayNameKey)}
+                                            title={formatAgentLikeIdForDisplay(core.id)}
                                             icon={<AgentIcon agentId={agentId} size={22} />}
                                             options={[
                                                 {

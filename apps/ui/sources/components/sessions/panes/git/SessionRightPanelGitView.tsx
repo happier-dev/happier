@@ -1,3 +1,4 @@
+import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { usePaneContentInsetPx } from '@/components/ui/lists/listPresentation';
 import { formatHappierAsOfTime } from '@happier-dev/plugin-ui/presentation';
@@ -167,7 +168,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     const ownerMetadata = session ? readSessionOwnerMetadataView(session) : null;
     const agentId = resolveAgentIdFromSessionMetadata(ownerMetadata);
     const agent = agentId ? getAgentCore(agentId) : null;
-    const agentName = agent ? t(agent.displayNameKey) : null;
+    const agentName = agent ? formatAgentLikeIdForDisplay(agent.id) : null;
     const scmSnapshot = useSessionProjectScmSnapshot(props.sessionId, props.serverId);
     const lastGoodScmSnapshot = useLastNonNullValue(scmSnapshot, { resetKey: props.scopeId });
     const effectiveScmSnapshot = scmSnapshot ?? lastGoodScmSnapshot;

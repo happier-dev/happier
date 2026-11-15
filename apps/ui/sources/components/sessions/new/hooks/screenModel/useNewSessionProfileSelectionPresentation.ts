@@ -1,3 +1,4 @@
+import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import * as React from 'react';
 
 import { getAgentCore, isBundledAgentId, resolveAgentIdFromCliDetectKey } from '@/agents/catalog/catalog';
@@ -51,8 +52,8 @@ export function useNewSessionProfileSelectionPresentation(params: Readonly<{
         if (availability.reason.startsWith('cli-not-detected:')) {
             const cli = availability.reason.split(':')[1];
             const agentFromCli = resolveAgentIdFromCliDetectKey(cli);
-            const displayNameKey = getAgentCore(agentFromCli ?? '')?.displayNameKey;
-            const cliLabel = displayNameKey ? t(displayNameKey) : cli;
+            const core = getAgentCore(agentFromCli ?? '');
+            const cliLabel = core ? formatAgentLikeIdForDisplay(core.id) : cli;
             return t('newSession.profileAvailability.cliNotDetected', { cli: cliLabel });
         }
         return availability.reason;

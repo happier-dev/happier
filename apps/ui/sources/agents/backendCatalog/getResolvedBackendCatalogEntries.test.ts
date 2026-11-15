@@ -9,6 +9,7 @@ vi.mock('@/text', async () => {
 
 import { getResolvedBackendCatalogEntries as readBackendCatalog, resolveBackendTargetOperationalAgentId, resolveCatalogAgentIdForBackendTarget, resolveOperationalBackendTargetForAgentSelection } from './getResolvedBackendCatalogEntries';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
+import { readConcreteAgentPresentation } from '@happier-dev/agents/presentation';
 import type { BundledAgentId } from '@/agents/catalog/catalog';
 import { AcpBackendDefinitionV1Schema, type AcpCatalogSettingsV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
 import { isProfileCompatibleWithBackendTarget } from '@/sync/domains/profiles/profileCompatibility';
@@ -57,7 +58,7 @@ describe('getResolvedBackendCatalogEntries', () => {
         const params = { enabledAgentIds: [], acpCatalogSnapshot };
         expect(getResolvedBackendCatalogEntries(params).map(entry => entry.backendTargetKey))
             .toEqual([configuredAgentTargetKey(definition.id)]);
-        expect(getResolvedAgentCatalogEntries(params).filter(entry => entry.identity.localId === 'custom-acp')
+        expect(getResolvedAgentCatalogEntries(params).filter(entry => entry.identity?.localId === 'custom-acp')
             .map(entry => entry.backendTargetKey))
             .toEqual([configuredAgentTargetKey(definition.id)]);
         const retainedAcpCatalogRecord = { v: 1 as const, definitions: [{ ...definition, id: 'stale-review' }] };
@@ -266,7 +267,7 @@ describe('getResolvedBackendCatalogEntries', () => {
                 kind: 'builtInAgent',
                 catalogAgentId: 'claude',
                 iconAgentId: 'claude',
-                title: 't:agentInput.agent.claude',
+                title: readConcreteAgentPresentation('claude')!.name,
             }),
             expect.objectContaining({
                 backendTarget: configuredAgentTarget('review-bot'),
@@ -579,7 +580,7 @@ describe('getResolvedBackendCatalogEntries', () => {
                 catalogAgentId: 'codex',
                 builtInAgentId: 'codex',
                 iconAgentId: 'codex',
-                title: 't:agentInput.agent.codex',
+                title: readConcreteAgentPresentation('codex')!.name,
             }),
         ]);
     });
@@ -670,7 +671,7 @@ describe('getResolvedBackendCatalogEntries', () => {
             kind: 'builtInAgent',
             backendTarget: bundledAgentTarget('codex'),
             builtInAgentId: 'codex',
-            title: 't:agentInput.agent.codex',
+            title: readConcreteAgentPresentation('codex')!.name,
         }));
     });
 
@@ -710,7 +711,7 @@ describe('getResolvedBackendCatalogEntries', () => {
             expect.objectContaining({
                 backendTargetKey: bundledAgentTargetKey('codex'),
                 backendTarget: bundledAgentTarget('codex'),
-                title: 't:agentInput.agent.codex',
+                title: readConcreteAgentPresentation('codex')!.name,
             }),
         ]);
 

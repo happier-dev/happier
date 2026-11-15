@@ -9,7 +9,8 @@ import type { PreNormalizedActionSpec } from './actionSpecs.js';
 import { ComposerRefV1Schema } from '../plugins/ui/composerRef.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { SessionDirectoryIntentV1Schema } from '../sessions/creation/sessionDirectoryIntentV1.js';
-import { ProviderBoundModelRefSchema } from '../providers/selection/v1.js';
+import { ProviderBoundModelRefSchema, SessionModelSelectionV1Schema } from '../providers/selection/v1.js';
+import { PersistedBackendTargetRefV2Schema } from '../backends/targets/backendTargetRefV2.js';
 import { TeamCredentialProviderModelSelectionV1Schema } from '../teams/credentials/providerModelCatalogV1.js';
 import { DiscussionMessageRefV1Schema } from '../discussions/references.js';
 import { DiscussionSelectionSourceV1Schema } from '../discussions/content.js';
@@ -132,6 +133,20 @@ export const NewSessionDraftModelIntentSchema = lazyZodSchema(() => z.discrimina
   z.strictObject({ kind: z.literal('team'), selection: z.nullable(TeamCredentialProviderModelSelectionV1Schema) }),
 ]));
 export type NewSessionDraftModelIntent = z.infer<typeof NewSessionDraftModelIntentSchema>;
+export const SessionAgentPickerSelectionSchema = lazyZodSchema(() => z.strictObject({
+    modelId: z.string().check(z.minLength(1)),
+    modelSelection: z.optional(z.nullable(SessionModelSelectionV1Schema)),
+    modelLabel: z.optional(z.nullable(z.string())),
+    sessionModeId: z.nullable(z.string()),
+    configOverrides: z.record(z.string(), z.string()),
+}));
+export const NewSessionDraftAgentIntentSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('picker'), backendTarget: PersistedBackendTargetRefV2Schema,
+    selection: SessionAgentPickerSelectionSchema }),
+  z.strictObject({ kind: z.literal('mode'), sessionModeId: z.nullable(z.string()) }),
+  z.strictObject({ kind: z.literal('config'), configId: z.string().check(z.trim(), z.minLength(1)), value: z.string() }),
+]));
+export type NewSessionDraftAgentIntent = z.infer<typeof NewSessionDraftAgentIntentSchema>;
 
 export const AppShellActionInputSchemas = {
   'session.work.get': z.strictObject({ sessionId: z.string().check(z.minLength(1)) }),
@@ -142,8 +157,10 @@ export const AppShellActionInputSchemas = {
   'session.draft.delete': z.strictObject({ draftId: SessionDraftAddressV1Schema._zod.def.options[0].shape.draftId }),
   'session.draft.directory.set': z.strictObject({ ref: asProtocolZod(ComposerRefV1Schema).check(zMini.refine(ref => ref.kind === 'newSession')),
     directory: SessionDirectoryIntentV1Schema }),
-  'session.draft.model.set': z.strictObject({ ref: asProtocolZod(ComposerRefV1Schema).check(zMini.refine(ref => ref.kind === 'newSession')),
+  'session.draft.model.set': z.strictObject({ ref: asProtocolZod(ComposerRefV1Schema).check(zMini.refine(ref => ref.kind === 'newSession' || ref.kind === 'session')),
     model: NewSessionDraftModelIntentSchema }),
+  'session.draft.agent.set': z.strictObject({ ref: asProtocolZod(ComposerRefV1Schema).check(zMini.refine(ref => ref.kind === 'newSession' || ref.kind === 'session')),
+    agent: NewSessionDraftAgentIntentSchema }),
   'session.draft.append': z.strictObject({ sessionId: z.string().check(z.trim(), z.minLength(1)),
     text: z.string().check(z.refine(text => text.trim().length > 0)), sourceSessionId: z.optional(z.string().check(z.trim(), z.minLength(1))),
     discussionSource: z.optional(z.omit(DiscussionSelectionSourceV1Schema, { draftCorrelationId: true })) }),
@@ -178,6 +195,7 @@ export const AppShellActionOutputSchemas = {
   ]),
   'session.draft.directory.set': z.strictObject({ status: z.enum(['applied', 'unavailable']) }),
   'session.draft.model.set': z.strictObject({ status: z.enum(['applied', 'unavailable']) }),
+  'session.draft.agent.set': z.strictObject({ status: z.enum(['applied', 'unavailable']) }),
   'session.draft.append': z.discriminatedUnion('status', [ReadUnavailableSchema, z.strictObject({
     status: z.literal('appended'), sessionId: z.string().check(z.minLength(1)), createdAtMs: z.number().check(z.int(), z.nonnegative()),
   })]),
@@ -270,16 +288,28 @@ function createAppShellActionSpecs() {
     inputHints: { fields: [{ path: 'draftId', title: 'Draft id', widget: 'text', required: true }] },
   },
   {
-    id: 'session.draft.model.set', approval: {result: 'required'}, title: 'Set New Session draft model',
-    description: 'Select a model on one exact mounted editable New Session draft through its existing model and Team credential disclosure owners.',
+    id: 'session.draft.model.set', approval: {result: 'required'}, title: 'Set draft model',
+    description: 'Select a model on one exact mounted editable New Session draft or armed Session continuation through its existing picker owner. Does not send input or change the running Agent.',
     safety: 'safe', sideEffectClass: 'write', requiredAuthority: 'account_automation', executionPlacement: 'client',
     placements: [], bindings: { mcpToolName: 'session_draft_model_set' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
     cli: { acceptsServerId: true, commands: [{ path: ['session', 'draft', 'model', 'set'], visibility: 'canonical' }] },
     toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
     inputSchema: AppShellActionInputSchemas['session.draft.model.set'], outputSchema: AppShellActionOutputSchemas['session.draft.model.set'],
-    inputHints: { fields: [{ path: 'ref', title: 'Exact New Session composer', widget: 'json', required: true },
+    inputHints: { fields: [{ path: 'ref', title: 'Exact mounted composer', widget: 'json', required: true },
       { path: 'model', title: 'Model selection', widget: 'json', required: true }] },
+  },
+  {
+    id: 'session.draft.agent.set', approval: {result: 'required'}, title: 'Set draft Agent',
+    description: 'Select an Agent, model, mode and config on one exact mounted editable New Session draft or arm a Session continuation through its existing Agent picker owner. Does not send input or change the running Agent.',
+    safety: 'safe', sideEffectClass: 'write', requiredAuthority: 'account_automation', executionPlacement: 'client',
+    placements: [], bindings: { mcpToolName: 'session_draft_agent_set' },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    cli: { acceptsServerId: true, commands: [{ path: ['session', 'draft', 'agent', 'set'], visibility: 'canonical' }] },
+    toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
+    inputSchema: AppShellActionInputSchemas['session.draft.agent.set'], outputSchema: AppShellActionOutputSchemas['session.draft.agent.set'],
+    inputHints: { fields: [{ path: 'ref', title: 'Exact mounted composer', widget: 'json', required: true },
+      { path: 'agent', title: 'Agent selection', widget: 'json', required: true }] },
   },
   {
     id: 'session.draft.directory.set', approval: {result: 'required'}, title: 'Set New Session draft directory',

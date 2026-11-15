@@ -1,3 +1,4 @@
+import { publishSessionDraftPickerFixture, useSessionDraftPickerPresentation } from '@/dev/testkit/harness/sessionDraftPickerPresentation';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -130,7 +131,9 @@ type HookProps = Readonly<{
 }>;
 
 async function renderControls(props: HookProps = {}) {
-    const hook = await renderHook((hookProps: HookProps) => useInSessionAgentPickerControls({
+    publishSessionDraftPickerFixture(SCOPE, 'session-1');
+    const hook = await renderHook((hookProps: HookProps) => {
+        const controls = useInSessionAgentPickerControls({
         sessionId: 'session-1',
         accountScope: SCOPE,
         currentAgentId: hookProps.currentAgentId ?? 'claude',
@@ -141,13 +144,16 @@ async function renderControls(props: HookProps = {}) {
             ? { state: 'enabled' }
             : hookProps.featureDecision,
         source: hookProps.source ?? supportedSource,
-        machine: hookProps.machine ?? onlineMachine,
+        machine: { ...(hookProps.machine ?? onlineMachine), serverId: SCOPE.serverId },
         detail: {
             capabilityServerId: 'server-1',
             machineId: 'machine-1',
             cwd: '/repo',
         },
-    }), { initialProps: props });
+    });
+        useSessionDraftPickerPresentation(controls, SCOPE, 'session-1');
+        return controls;
+    }, { initialProps: props });
     // Let the inspections answer so the rail decision is settled.
     await act(async () => { await Promise.resolve(); });
     await act(async () => { await Promise.resolve(); });
@@ -167,7 +173,7 @@ async function armTarget(
             .composeAgentPickerOptions([CURRENT_AGENT_ROW])
             .find((candidate) => candidate.id === optionId);
         if (!option?.onSelectImmediate) throw new Error(`Missing armable Agent row ${optionId}`);
-        option.onSelectImmediate();
+        await option.onSelectImmediate();
     });
 }
 
@@ -399,7 +405,7 @@ describe('useInSessionAgentPickerControls arm draft', () => {
         await armTarget(first, 'agent:happier.agent.codex/codex');
         // Selecting the running Agent is the cancel gesture.
         await act(async () => {
-            first.getCurrent()
+            await first.getCurrent()
                 .composeAgentPickerOptions([CURRENT_AGENT_ROW])
                 .find((option) => option.id === 'engine:claude')
                 ?.onSelectImmediate?.();
@@ -432,10 +438,24 @@ describe('useInSessionAgentPickerControls arm draft', () => {
         // Opening refreshes availability; it does not discard a cancellable choice.
         expect(hook.getCurrent().armedContinuation).toEqual(armedIntentFor('codex'));
         await act(async () => {
-            hook.getCurrent().composeAgentPickerOptions([CURRENT_AGENT_ROW])[0]?.onSelectImmediate?.();
+            await hook.getCurrent().composeAgentPickerOptions([CURRENT_AGENT_ROW])[0]?.onSelectImmediate?.();
         });
         expect(hook.getCurrent().armedContinuation).toBeNull();
         expect(readPersistedArm()).toBeNull();
+    });
+
+    it('clears an arm from the running row when its Agent is no longer in the catalog', async () => {
+        writeSessionDraftValue(SCOPE, 'session-1', 'routing.agentContinuation', {
+            backendTargetKey: 'agent:happier.agent.codex/codex',
+            intent: armedIntentFor('codex'),
+        });
+        const hook = await renderControls({ entries: [entry('codex')] });
+        expect(hook.getCurrent().armedContinuation).toEqual(armedIntentFor('codex'));
+        await act(async () => {
+            await hook.getCurrent().composeAgentPickerOptions([CURRENT_AGENT_ROW])[0]?.onSelectImmediate?.();
+        });
+        await vi.waitFor(() => expect(readPersistedArm()).toBeNull());
+        expect(hook.getCurrent().armedContinuation).toBeNull();
     });
 
     it('clears a persisted arm formed against an Agent the Session no longer runs', async () => {
@@ -661,7 +681,7 @@ describe('useInSessionAgentPickerControls arm draft', () => {
         expect(readPersistedArm()).toBeDefined();
         await act(async () => hook.getCurrent().onAgentPickerVisibilityChange(true));
         await act(async () => {
-            hook.getCurrent().composeAgentPickerOptions([CURRENT_AGENT_ROW])[0]?.onSelectImmediate?.();
+            await hook.getCurrent().composeAgentPickerOptions([CURRENT_AGENT_ROW])[0]?.onSelectImmediate?.();
         });
         expect(hook.getCurrent().armedContinuation).toBeNull();
         expect(readPersistedArm()).toBeNull();
