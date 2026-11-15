@@ -6,12 +6,48 @@ import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHo
 import { storage } from '@/sync/domains/state/storageStore';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { removeServerProfile, setActiveServerId, setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
-import { useMachineField, useMachineListForServerSelection } from './hooks';
+import { useMachineField, useMachineListForServerSelection, useMachineDisplayNamesById } from './hooks';
+import { createMachineMetadataFixture } from '@/dev/testkit/fixtures/machineFixtures';
 
 describe('useMachineField exact demand', () => {
     let previousState: ReturnType<typeof storage.getState>;
     beforeEach(async () => { await selectActiveTestHomeForTests(); previousState = storage.getState(); });
     afterEach(() => { standardCleanup(); vi.restoreAllMocks(); storage.setState(previousState, true); });
+
+    it('keeps bounded non-active Home labels quiet on heartbeats, holds while hidden, and follows peer renames', async () => {
+        const serverId = 'labels-other-home';
+        const machine = createMachineFixture({ id: 'label-controller', metadata: createMachineMetadataFixture({ displayName: 'Studio', host: 'first-host' }) });
+        const peer = createMachineFixture({ id: 'label-peer', metadata: createMachineMetadataFixture({ displayName: 'Other', host: 'second-host' }) });
+        storage.getState().applyMachines([machine, peer], true, { sourceServerId: serverId });
+        let renders = 0;
+        const ids = [machine.id, 'late-controller'];
+        const hook = await renderHook(({ presented }: { presented: boolean }) => {
+            renders++;
+            return useMachineDisplayNamesById(ids, { serverId, presented });
+        }, { initialProps: { presented: true } });
+        expect(hook.getCurrent()[machine.id]).toBe('Studio');
+        expect(hook.getCurrent()['late-controller']).toBeUndefined();
+        const before = renders;
+        for (let tick = 1; tick <= 10; tick++) await act(async () => {
+            storage.getState().applyMachines([{ ...peer, activeAt: peer.activeAt + tick }], false, { sourceServerId: serverId });
+        });
+        expect(renders).toBe(before);
+        await act(async () => storage.getState().applyMachines([{ ...peer, metadata: { ...peer.metadata!, displayName: 'Studio' } }], false, { sourceServerId: serverId }));
+        expect(hook.getCurrent()[machine.id]).not.toBe('Studio');
+        await hook.rerender({ presented: false });
+        const held = hook.getCurrent();
+        const hiddenRenders = renders;
+        await act(async () => storage.getState().applyMachines([{ ...machine, metadata: { ...machine.metadata!, displayName: 'Renamed' } }], false, { sourceServerId: serverId }));
+        expect(renders).toBe(hiddenRenders);
+        expect(hook.getCurrent()).toBe(held);
+        await hook.rerender({ presented: true });
+        expect(hook.getCurrent()[machine.id]).toBe('Renamed');
+        await act(async () => storage.getState().applyMachines([
+            createMachineFixture({ id: 'late-controller', metadata: createMachineMetadataFixture({ displayName: 'Arrived' }) }),
+        ], false, { sourceServerId: serverId }));
+        expect(hook.getCurrent()['late-controller']).toBe('Arrived');
+        await hook.unmount();
+    });
 
     it('does no Software fleet traversal for resource arrivals while setup, availability and membership remain current', async () => {
         const serverId = getActiveServerSnapshot().serverId;

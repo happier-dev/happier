@@ -8,6 +8,20 @@ import { resolveWorkspaceRefByAddress, resolveWorkspaceRefById, sameWorkspacePro
 import { parseProjectPaneScopeId } from './projectPaneScope';
 import type { DaemonTerminalListEntryV1 } from '@happier-dev/protocol/daemon/terminal';
 import type { SessionTerminalMemberV1 } from '@happier-dev/protocol/terminal/workspace';
+import * as React from 'react';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
+
+/** Keep Account withdrawal reactive even when the retained terminal is hidden. */
+export function useProjectTerminalScope(scopeId: string, selected?: WorkspaceAddressV1): ProjectTerminalScope | null {
+    const select = React.useMemo(() => {
+        let previous: ProjectTerminalScope | null = null;
+        return (state: ReturnType<typeof storage.getState>) => {
+            previous = retainDeep(previous, selected ? resolveProjectTerminalScope(scopeId, selected, state) : null);
+            return previous;
+        };
+    }, [scopeId, selected]);
+    return storage(select);
+}
 
 export type ProjectTerminalScope = Readonly<{
     scope: ServerAccountScope;
@@ -47,12 +61,13 @@ export function resolveRunningProjectTerminalMember(scopeId: string, authority: 
 }
 
 /** Resolve the incumbent pane against the current Account's accepted checkouts, never a path guess. */
-export function resolveProjectTerminalScope(scopeId: string, selected?: WorkspaceAddressV1): ProjectTerminalScope | null {
+export function resolveProjectTerminalScope(scopeId: string, selected?: WorkspaceAddressV1,
+    state = storage.getState()): ProjectTerminalScope | null {
     const identity = parseProjectPaneScopeId(scopeId);
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!identity || !lifetime?.isCurrent()
         || !areServerProfileIdentifiersEquivalent(identity.serverId, lifetime.scope.serverId)) return null;
-    const rows = readCurrentProjectAccountRows(storage.getState());
+    const rows = readCurrentProjectAccountRows(state);
     if (!rows || rows.status !== 'ready') return null;
     const project = resolveWorkspaceRefById(rows.workspaceRefs, identity.workspaceRefId, identity.serverId);
     if (project.kind !== 'resolved') return null;

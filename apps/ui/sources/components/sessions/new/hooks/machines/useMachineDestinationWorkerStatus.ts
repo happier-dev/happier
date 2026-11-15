@@ -40,7 +40,6 @@ export function useMachineDestinationWorkerStatus(params: Readonly<{
     const purpose = params.purpose === 'finite' || params.purpose === 'service-start' ? params.purpose : null;
     const request = purpose ? params.workerPlacement : undefined;
     const { binding } = useServerCredentialAccountScopeBinding(request?.workspace.serverId);
-    const controllers = useMachineListForServer(request?.workspace.serverId ?? '');
     const scope = binding?.isCurrent() ? binding.scope : null;
     const machines = params.groups.flatMap(group => request && group.serverId === request.workspace.serverId
         && !group.loading && !group.signedOut && !group.error ? group.machines : []);
@@ -49,6 +48,7 @@ export function useMachineDestinationWorkerStatus(params: Readonly<{
         ? params.managedMachines?.filter(managed => managed.enrolledMachineId
             && machineIds.has(managed.enrolledMachineId) && managed.wakeOnAcceptedMessage)
             .flatMap(managed => managed.controller ? [managed.controller.machineId] : []) : []);
+    const controllers = useMachineListForServer(request?.workspace.serverId ?? '', purpose === 'finite' && controllerIds.size > 0);
     const presenceMachines = new Map<string, MachineDisplayRenderable>([
         ...machines.map(machine => [machine.id, machine] as const),
         ...(controllers ?? []).filter(machine => controllerIds.has(machine.id)).map(machine => [machine.id, machine] as const),

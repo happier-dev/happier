@@ -104,6 +104,24 @@ beforeEach(async () => {
 afterEach(async () => { actionOperationStore.reset(); await homes.reset(); });
 
 describe('worker destination list demand', () => {
+    it.each(['session', 'finite'] as const)('does no wake projection work for unrelated heartbeats with %s and no wake rows', async purpose => {
+        const peer = createMachineFixture({ id: 'unrelated-controller' });
+        await seedAnsweredMachines([peer]);
+        const groups: Parameters<typeof useMachineDestinationWorkerStatus>[0]['groups'] = [];
+        const workerPlacement = { workspace: { serverId, refId: 'checkout' } };
+        let renders = 0;
+        const hook = await renderHook(() => {
+            renders++;
+            return useMachineDestinationWorkerStatus({ purpose, workerPlacement, groups });
+        });
+        await flushHookEffects({ cycles: 20 });
+        const before = renders;
+        for (let tick = 1; tick <= 10; tick++) await act(async () => {
+            storage.getState().applyMachines([{ ...peer, activeAt: peer.activeAt + tick }], false, { sourceServerId: serverId });
+        });
+        expect(renders).toBe(before);
+        await hook.unmount();
+    });
     it('does zero worker-row inventory work for unrelated operation and relationship pushes at scale', async () => {
         const scope = { serverId, accountId: 'owner' };
         const machine = createMachineFixture({ id: 'demanded-worker', active: true, activeAt: Date.now() });
@@ -419,6 +437,7 @@ describe('worker destination list demand', () => {
         { name: 'supported', online: false, wakeOnAcceptedMessage: true, newSessionWake: { kind: 'available' }, selectable: true },
         { name: 'owner disabled', online: false, wakeOnAcceptedMessage: false, newSessionWake: { kind: 'available' }, selectable: false },
         { name: 'no controller', online: false, wakeOnAcceptedMessage: true, newSessionWake: { kind: 'unavailable', reason: 'no_controller' }, selectable: false },
+        { name: 'offline controller', online: false, wakeOnAcceptedMessage: true, newSessionWake: { kind: 'unavailable', reason: 'controller_unavailable' }, selectable: false },
         { name: 'unknown support', online: false, wakeOnAcceptedMessage: true, newSessionWake: undefined, selectable: false },
         { name: 'online without controller', online: true, wakeOnAcceptedMessage: true, newSessionWake: { kind: 'unavailable', reason: 'no_controller' }, selectable: true },
     ] as const)('admits an asleep shared Session target only when start-on-send is enabled and supported ($name)', async ({ online, wakeOnAcceptedMessage, newSessionWake, selectable }) => {
@@ -446,7 +465,8 @@ describe('worker destination list demand', () => {
         } else if (online) {
             expect(option?.subtitle).not.toContain('managedWake.startsOnSend');
         } else if (newSessionWake?.kind === 'unavailable') {
-            expect(option?.subtitle).toContain('managedWake.startBeforeSend');
+            expect(option?.subtitle).toContain(newSessionWake.reason === 'controller_unavailable'
+                ? 'managedMachines.controller.requiredUnnamed' : 'managedWake.startBeforeSend');
         } else if (wakeOnAcceptedMessage) {
             expect(option?.subtitle).toContain('common.unavailable');
         }

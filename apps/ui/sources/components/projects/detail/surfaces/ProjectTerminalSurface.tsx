@@ -19,13 +19,14 @@ import { createEmptyTerminalSurfaceState, replaceTerminalSurfaceState } from '@/
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useFloatingChromeClearance } from '@/components/ui/layout/useFloatingChromeClearance';
-import { useWorkspaceRefs, useMachineListForServer } from '@/sync/domains/state/storage';
+import { useMachineDisplayNamesById, useServerScopedMachine } from '@/sync/domains/state/storage';
+import { useShallow } from 'zustand/react/shallow';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useDeviceType } from '@/utils/platform/responsive';
-import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { presentTerminalActionFailure } from '@/components/sessions/terminal/terminalActionFailure';
 import { t } from '@/text';
-import { buildProjectMemberTerminalKey, buildProjectTerminalKey, resolveProjectTerminalScope } from '../projectTerminalScope';
+import { buildProjectMemberTerminalKey, buildProjectTerminalKey, useProjectTerminalScope } from '../projectTerminalScope';
 import { SessionTerminalTrustNotice } from '@/components/sessions/terminal/strip/SessionTerminalTrustNotice';
 import { usePaneDestinationWindowActions } from '@/components/appShell/panes/useOpenPaneDestinationWindow';
 import { useProjectRunningTerminals } from '../useProjectRunningTerminals';
@@ -50,15 +51,12 @@ export const ProjectTerminalSurface = React.memo((props: Readonly<{
     // A phone page's floating tab bar covers the surface's bottom. The surface reserves it once, as the
     // Session cockpit's fullscreen surfaces do, so its last rows, key rail and seated Find bar sit above it.
     const chromeClearance = useFloatingChromeClearance();
-    const refs = useWorkspaceRefs();
-    const machines = useMachineListForServer(props.workspace?.serverId ?? props.serverId);
+    const presented = useLayoutPresentationActive();
     const { workspace, execute, dispatchResize, hideWorkspace } = useSessionTerminalWorkspace(props.scopeId, EMPTY_TERMINAL_WORKSPACE);
     const renderTerminals = useAppPaneContext(value => props.presentation === undefined
         || selectSessionTerminalWorkspaceHost(value.state, props.scopeId, props.terminalInstanceId) === props.presentation);
     const requestHide = props.onHideWorkspace ?? hideWorkspace;
-    const authority = React.useMemo(() => props.workspace
-        ? resolveProjectTerminalScope(props.scopeId, props.workspace) : null,
-    [props.scopeId, props.workspace, refs]);
+    const authority = useProjectTerminalScope(props.scopeId, props.workspace ?? undefined);
     const [retired, setRetired] = React.useState(false);
     const dispatch = useAppPaneContext(value => value.dispatch);
     const running = useProjectRunningTerminals(props.scopeId, authority, renderTerminals && !retired && workspace.tabs.length === 0);
@@ -69,6 +67,19 @@ export const ProjectTerminalSurface = React.memo((props: Readonly<{
     });
     const recovering = workspace.tabs.length === 0 && running.status === 'ready' && running.workspace.tabs.length > 0;
     const presentedWorkspace = recovering ? running.workspace : workspace;
+    const labelMachineIds = React.useMemo(() => [
+        ...(authority ? [authority.workspace.machineId] : []),
+        ...presentedWorkspace.tabs.flatMap(tab => tab.terminals.flatMap(member =>
+            member.target.kind === 'machine_shell' || member.target.kind === 'terminal_view' ? [member.target.machineId]
+                : member.target.kind === 'workspace_shell' && member.target.workspace ? [member.target.workspace.machineId] : [])),
+    ], [authority, presentedWorkspace.tabs]);
+    const names = useMachineDisplayNamesById(labelMachineIds, {
+        serverId: props.workspace?.serverId ?? props.serverId, presented: presented && renderTerminals,
+    });
+    const targetMachineId = authority?.workspace.machineId ?? '';
+    const targetServerId = authority?.workspace.serverId ?? props.serverId;
+    const [platform, isolationPolicy, isolation] = useServerScopedMachine(targetServerId, targetMachineId,
+        useShallow(machine => [machine?.metadata?.platform, machine?.metadata?.agentIsolation, machine?.daemonState?.agentIsolation] as const));
     const privateKeys = React.useRef<readonly string[]>([]);
     const clearPrivatePresentation = React.useCallback(() => {
         for (const key of privateKeys.current) {
@@ -87,12 +98,11 @@ export const ProjectTerminalSurface = React.memo((props: Readonly<{
         return () => subscription?.dispose();
     }, [authority, clearPrivatePresentation]);
     const context = React.useMemo((): SessionTerminalDescribeContext => {
-        const names = new Map((machines ?? []).map(machine => [machine.id, getMachineDisplayName(machine) ?? machine.id]));
         const machineId = authority?.workspace.machineId ?? null;
         return { agentId: null, agentName: null, agentAsking: false, agentTerminalHost: null,
-            sessionMachineId: machineId, sessionMachineName: machineId ? names.get(machineId) ?? null : null,
-            machineName: id => names.get(id) ?? null };
-    }, [machines, authority]);
+            sessionMachineId: machineId, sessionMachineName: machineId ? names[machineId] ?? null : null,
+            machineName: id => names[id] ?? null };
+    }, [names, authority]);
     const keys = React.useMemo(() => presentedWorkspace.tabs.flatMap(tab => tab.terminals.map(member => authority
         ? buildProjectMemberTerminalKey(authority, member) : '')),
     [authority, presentedWorkspace.tabs]);
@@ -169,9 +179,8 @@ export const ProjectTerminalSurface = React.memo((props: Readonly<{
     // Shells this device did not open, found running on the Machine: the list says what they are before one is opened.
     const recoveredNote = recovering ? t('terminalWorkspace.recovered.note', {
         machine: terminalMachine, count: presentedWorkspace.tabs.reduce((total, tab) => total + tab.terminals.length, 0) }) : undefined;
-    const machine = machines?.find(machine => machine.id === authority.workspace.machineId);
-    const { separateUsers } = presentMachineAuthorityV1({ platform: machine?.metadata?.platform,
-        isolationPolicy: machine?.metadata?.agentIsolation, isolation: machine?.daemonState?.agentIsolation });
+    const { separateUsers } = presentMachineAuthorityV1({ platform: platform ?? undefined,
+        isolationPolicy: isolationPolicy ?? undefined, isolation: isolation ?? undefined });
     const notice = describeMachineShareTrust(separateUsers.placement, true, terminalMachine);
     // The desktop pane carries the line in its own strip; a page without a strip carries it as one quiet row.
     const noticeRow = <View style={{ paddingHorizontal: 12, paddingVertical: 6 }}><SessionTerminalTrustNotice notice={notice} /></View>;
