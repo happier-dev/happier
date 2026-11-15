@@ -13,6 +13,7 @@ import { deploymentFailure, resolveDeploymentEnvironmentAdmissionInTx, projectDe
 import { loadDeploymentEnvironmentInTx, projectDeploymentEnvironmentHeader,
     readDeploymentEnvironmentRequiredSecretUsesInTx, readDeploymentPreviewTemplateEnvironmentId } from './deploymentEnvironmentService';
 import { readEnvironmentSecretGrantCoverageInTx } from './environmentSecretGrantRepository';
+import { DEPLOYMENT_SECRET_SCOPE_PURPOSES_V1 } from '@happier-dev/deployments';
 import { loadDeploymentTargetRowsInTx, projectDeploymentTargetHeader } from './deploymentTargetLinkService';
 import { hasCompleteTeardownInTx } from './deploymentDispositionService';
 import { openDeploymentReadCursor, sealDeploymentReadCursor } from './deploymentReadCursor';
@@ -208,7 +209,8 @@ export async function readDeploymentEnvironmentInTx(tx: Tx, actorAccountId: stri
         const revision = current.get(formatSharedSavedSecretRefV1(capture.resourceId));
         return revision === undefined ? [] : [{ resourceId: capture.resourceId, revision }];
     });
-    const required = await readDeploymentEnvironmentRequiredSecretUsesInTx(tx, loaded.row);
+    // Deploy admission consumes this scope; operational purposes keep their own exact owners.
+    const required = await readDeploymentEnvironmentRequiredSecretUsesInTx(tx, loaded.row, DEPLOYMENT_SECRET_SCOPE_PURPOSES_V1);
     const coverage = await readEnvironmentSecretGrantCoverageInTx(tx, {
         environmentId: loaded.row.id, requiredSecretUses: required.requiredSecretUses,
     });

@@ -35,7 +35,8 @@ export { buildResticRetentionArgsV1, type BackupRetentionV1 } from './backups/re
 
 export * from './secrets/prepareEnvironmentSecretBindingsV1.js';
 export { readDeploymentSecretRevisionFacts } from './secrets/readDeploymentSecretRevisionFacts.js';
-export { environmentSecretBindingInstallationsV1, projectEnvironmentSecretBindingRequiredUsesV1, type EnvironmentSecretRequiredUseV1,
+export { DEPLOYMENT_SECRET_SCOPE_PURPOSES_V1, environmentSecretBindingInstallationsV1, projectEnvironmentSecretBindingRequiredUsesV1,
+    selectEnvironmentSecretCapturePurposesV1, type EnvironmentSecretRequiredUseV1,
     type EnvironmentSecretRequiredUsesProjectionV1 } from './secrets/projectEnvironmentSecretBindingRequiredUsesV1.js';
 export * from './secrets/sealMachineSecretGrantEnvelopeV1.js';
 

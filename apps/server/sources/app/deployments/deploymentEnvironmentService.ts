@@ -14,7 +14,7 @@ import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_
     type DeploymentBindingsSetStorageInputV1, type DeploymentEnvironmentTemplateSetInputV1, type DeploymentEnvironmentBackupSetInputV1,
     type DeploymentEnvironmentUpdateStorageInputV1 } from '@happier-dev/deployment-protocol';
 import { environmentSecretBindingInstallationsV1, projectEnvironmentSecretBindingRequiredUsesV1,
-    type EnvironmentSecretRequiredUsesProjectionV1 } from '@happier-dev/deployments';
+    selectEnvironmentSecretCapturePurposesV1, type EnvironmentSecretRequiredUsesProjectionV1 } from '@happier-dev/deployments';
 import { formatSharedSavedSecretRefV1, parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { readSavedSecretResourcesForAccountInTx, validateSavedSecretResourceReferenceCapturesV1,
     readSavedSecretResourcesForPrincipalInTx, publishSavedSecretUsageChangesInTx,
@@ -142,11 +142,14 @@ export async function loadDeploymentEnvironmentForInstalledMachineInTx(tx: Tx, i
     return denied ?? loaded;
 }
 
-/** Current placement requirements, independent of retained ciphertext for accepted work. */
+/** Current placement requirements, independent of retained ciphertext for accepted work.
+ * Without `purposes` every routed use counts, so operational families stay incomplete. */
 export async function readDeploymentEnvironmentRequiredSecretUsesInTx(tx: Tx,
     row: Pick<DeploymentEnvironmentRow, 'id' | 'runtimeTargetLinkId' | 'buildMachineId' | 'referencedSavedSecretRevisions'>,
+    purposes?: Parameters<typeof selectEnvironmentSecretCapturePurposesV1>[1],
 ): Promise<EnvironmentSecretRequiredUsesProjectionV1> {
-    const captures = readDeploymentBindingSavedSecretRevisionsV1(row.referencedSavedSecretRevisions);
+    const captures = purposes ? selectEnvironmentSecretCapturePurposesV1(row.referencedSavedSecretRevisions, purposes)
+        : readDeploymentBindingSavedSecretRevisionsV1(row.referencedSavedSecretRevisions);
     if (!captures) return { status: 'incomplete', requiredSecretUses: [] };
     const link = row.runtimeTargetLinkId ? await tx.deploymentTargetLink.findFirst({
         where: { id: row.runtimeTargetLinkId, environmentId: row.id, deletedAt: null },

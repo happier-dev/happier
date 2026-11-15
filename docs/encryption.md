@@ -146,7 +146,11 @@ The final template metadata write preserves the committed captures. Deploy and
 candidate preparation consume Home's typed `secretScope` result once at
 admission, before native acquisition; a missing result refuses with
 `secret_scope_requirements_unavailable`. They do not inspect private content or
-recompute grant coverage. A controller-admitted signed preparation child consumes
+recompute grant coverage. That `secretScope` covers only the purposes deploy
+launches (variables, registry access and backup destinations): Domain credentials
+and data roles are delivered by their own operations through private exact
+destinations, so their routing summaries never make deploy readiness unknown.
+Retained captures without routing still do. A controller-admitted signed preparation child consumes
 that admission instead of checking readiness again on its builder. Ordinary
 binding-free creates retain complete empty captures. This does not retroactively identify incomplete older installs whose
 captures were already recorded as an empty list.

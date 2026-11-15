@@ -201,6 +201,15 @@ describe('deployment storage real SQLite boundary', () => {
             const stored = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environmentId } });
             expect(stored.referencedSavedSecretRevisions).toEqual([{ resourceId, revision: 1,
                 requiredBindings: [{ purpose: 'variable', phase: 'runtime' }] }]);
+            // The same resource also bound as a data role and Domain credential: those
+            // operations own their private destinations, so deploy scope stays known.
+            await db.deploymentEnvironment.update({ where: { id: environmentId }, data: { referencedSavedSecretRevisions: [
+                { resourceId, revision: 1, requiredBindings: [{ purpose: 'dataRole' }, { purpose: 'domainCredential' },
+                    { purpose: 'variable', phase: 'runtime' }] },
+            ] } });
+            expect(await read()).toMatchObject({ secretScope: {
+                status: 'ready', reason: 'secret_scope_current', requiredGrantCount: 1, missingGrantCount: 0,
+            } });
         });
     });
 

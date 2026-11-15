@@ -25,6 +25,21 @@ export function environmentSecretBindingInstallationsV1<T extends Installation>(
     }
 }
 
+type EnvironmentSecretBindingPurposeV1 = EnvironmentSecretBindingRoutingV1['purpose'];
+/** Deploy launches these purposes. Domain credentials and data roles are delivered by
+ * their own operations through private exact destinations, so they never gate deploy. */
+export const DEPLOYMENT_SECRET_SCOPE_PURPOSES_V1: readonly EnvironmentSecretBindingPurposeV1[] = ['variable', 'registry', 'backupDestination'];
+
+/** One consumer's purposes. Captures without routing stay, so the projection still reports them incomplete. */
+export function selectEnvironmentSecretCapturePurposesV1(referencedSavedSecretRevisions: unknown,
+    purposes: readonly EnvironmentSecretBindingPurposeV1[]) {
+    return readDeploymentBindingSavedSecretRevisionsV1(referencedSavedSecretRevisions)?.flatMap(capture => {
+        if (!capture.requiredBindings) return [capture];
+        const requiredBindings = capture.requiredBindings.filter(binding => purposes.includes(binding.purpose));
+        return requiredBindings.length ? [{ ...capture, requiredBindings }] : [];
+    }) ?? null;
+}
+
 /** Value-free requirements from canonical captures and current placement, never delivered grants. */
 export function projectEnvironmentSecretBindingRequiredUsesV1(input: Readonly<{
     referencedSavedSecretRevisions: unknown;

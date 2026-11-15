@@ -1,9 +1,9 @@
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { projectEnvironmentSecretBindingRequiredUsesV1 } from '@happier-dev/deployments';
+import { projectEnvironmentSecretBindingRequiredUsesV1, selectEnvironmentSecretCapturePurposesV1 } from '@happier-dev/deployments';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { computeEnvironmentSecretLaunchAdmissionDigestV1,
-    EnvironmentSecretLaunchAdmissionResultV1Schema, readDeploymentBindingSavedSecretRevisionsV1, type EnvironmentSecretAdmissionRequestV1,
+    EnvironmentSecretLaunchAdmissionResultV1Schema, type EnvironmentSecretAdmissionRequestV1,
     type EnvironmentSecretLaunchAdmissionResultV1, type MachineConnectorSecretGrantInputV1,
     type MachineConnectorSecretGrantResultV1 } from '@happier-dev/deployment-protocol';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
@@ -211,14 +211,8 @@ export async function readEnvironmentSecretLaunchAdmissionInTx(tx: Tx, actorAcco
     const grants = await readEnvironmentMachineSecretGrantsInTx(tx, { environmentId: loaded.row.id,
         machineId: input.machineId, installationId: input.installationId });
     if (copySourceRead) {
-        const captures = readDeploymentBindingSavedSecretRevisionsV1(loaded.row.referencedSavedSecretRevisions);
-        const backupCaptures = captures?.flatMap(capture => {
-            // Retain unknown routing so the capture owner reports incomplete;
-            // it cannot be guessed from possession of an installation seal.
-            if (!capture.requiredBindings) return [capture];
-            const requiredBindings = capture.requiredBindings.filter(binding => binding.purpose === 'backupDestination');
-            return requiredBindings.length ? [{ ...capture, requiredBindings }] : [];
-        });
+        // Unknown routing stays incomplete; it cannot be guessed from possession of an installation seal.
+        const backupCaptures = selectEnvironmentSecretCapturePurposesV1(loaded.row.referencedSavedSecretRevisions, ['backupDestination']);
         const required = projectEnvironmentSecretBindingRequiredUsesV1({ referencedSavedSecretRevisions: backupCaptures,
             runtimeInstallations: [{ machineId: input.machineId, installationId: input.installationId }] });
         if (required.status !== 'complete') return { ok: false, error: 'secret_missing' };

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { projectEnvironmentSecretBindingRequiredUsesV1 } from './projectEnvironmentSecretBindingRequiredUsesV1.js';
+import { DEPLOYMENT_SECRET_SCOPE_PURPOSES_V1, projectEnvironmentSecretBindingRequiredUsesV1,
+    selectEnvironmentSecretCapturePurposesV1 } from './projectEnvironmentSecretBindingRequiredUsesV1.js';
 
 describe('current Environment secret requirements', () => {
     const runtime = { machineId: 'runtime', installationId: 'runtime-current' };
@@ -72,5 +73,15 @@ describe('current Environment secret requirements', () => {
             referencedSavedSecretRevisions: [{ resourceId: 'secret', revision: 1, requiredBindings: [
                 { purpose: 'variable', phase: 'build' }, { purpose: 'variable', phase: 'runtime' }, { purpose: 'dataRole' },
             ] }] })).toEqual({ status: 'incomplete', requiredSecretUses: [{ resourceId: 'secret', resourceRevision: 1, ...runtime }] });
+    });
+    it('scopes deploy requirements to launched purposes without hiding unknown routing', () => {
+        const project = (captures: unknown) => projectEnvironmentSecretBindingRequiredUsesV1({ runtimeInstallations: [runtime],
+            referencedSavedSecretRevisions: selectEnvironmentSecretCapturePurposesV1(captures, DEPLOYMENT_SECRET_SCOPE_PURPOSES_V1) });
+        expect(project([{ resourceId: 'secret', revision: 1, requiredBindings: [
+            { purpose: 'dataRole' }, { purpose: 'domainCredential' }, { purpose: 'variable', phase: 'runtime' } ] },
+        { resourceId: 'role-only', revision: 1, requiredBindings: [{ purpose: 'dataRole' }] }])).toEqual({ status: 'complete',
+            requiredSecretUses: [{ resourceId: 'secret', resourceRevision: 1, ...runtime }] });
+        expect(project([{ resourceId: 'legacy', revision: 1 }])).toEqual({ status: 'incomplete', requiredSecretUses: [] });
+        expect(project('malformed')).toEqual({ status: 'incomplete', requiredSecretUses: [] });
     });
 });
