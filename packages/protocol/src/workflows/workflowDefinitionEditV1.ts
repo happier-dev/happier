@@ -69,7 +69,7 @@ export function findWorkflowBlock(draft: Pick<WorkflowDefinitionDraftV1, 'blocks
 
 /** The list a block belongs to, so Add and Move know their scope. */
 export function findWorkflowBlockListRef(
-  draft: WorkflowDefinitionDraftV1,
+  draft: Pick<WorkflowDefinitionDraftV1, 'blocks'>,
   blockId: string,
 ): WorkflowBlockListRef | null {
   const search = (list: readonly WorkflowBlock[], ref: WorkflowBlockListRef): WorkflowBlockListRef | null => {
@@ -1097,20 +1097,19 @@ export const WorkflowBlockListRefV1Schema = lazyZodSchema(() => z.discriminatedU
   z.strictObject({ kind: z.literal('parallelBranch'), parallelId: WorkflowBlockIdSchema, branchId: WorkflowBlockIdSchema }),
 ]));
 
-type WorkflowSelectionEdit<TKind extends string, TSelection extends object> = {
-  [TField in keyof TSelection]-?: { kind: TKind; field: TField; value?: TSelection[TField] }
+type WorkflowSelectionEdit<TKind extends string, TSelection extends object, TTarget extends object> = {
+  [TField in keyof TSelection]-?: { kind: TKind; field: TField; value?: TSelection[TField] } & TTarget
 }[keyof TSelection];
+type WorkflowSelectionEditSchema<TKind extends string, TTarget extends object> = z.ZodMiniType<
+  WorkflowSelectionEdit<TKind, WorkflowStepExecutionSelection, TTarget>,
+  WorkflowSelectionEdit<TKind, z.input<typeof WorkflowStepExecutionSelectionSchema>, TTarget>>;
 
-function selectionEditSchema<TKind extends 'set_default' | 'set_step_setting'>(kind: TKind) {
-  const variants = Object.entries(WorkflowStepExecutionSelectionSchema.shape).map(([field, value]) => z.strictObject({
+/** One strict variant per selection field; each caller states its concrete edit type, so no generic conditional is cast. */
+function selectionEditUnion(kind: 'set_default' | 'set_step_setting') {
+  return z.union(Object.entries(WorkflowStepExecutionSelectionSchema.shape).map(([field, value]) => z.strictObject({
     kind: z.literal(kind), field: z.literal(field), value,
     ...(kind === 'set_step_setting' ? { blockId: WorkflowBlockIdSchema } : {}),
-  }));
-  return z.union(variants) as z.ZodMiniType<
-    WorkflowSelectionEdit<TKind, WorkflowStepExecutionSelection> & (TKind extends 'set_step_setting' ? { blockId: string } : object),
-    WorkflowSelectionEdit<TKind, z.input<typeof WorkflowStepExecutionSelectionSchema>>
-      & (TKind extends 'set_step_setting' ? { blockId: string } : object)
-  >;
+  })));
 }
 
 export const WorkflowDefinitionEditOpV1Schema = lazyZodSchema(() => z.union([
@@ -1120,9 +1119,9 @@ export const WorkflowDefinitionEditOpV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ kind: z.literal('move_block'), blockId: WorkflowBlockIdSchema, direction: z.enum(['up', 'down', 'in', 'out']) }),
   z.strictObject({ kind: z.literal('set_step_prompt'), blockId: WorkflowBlockIdSchema, text: z.string() }),
   z.strictObject({ kind: z.literal('set_block_name'), blockId: WorkflowBlockIdSchema, name: WorkflowBlockNameV1Schema }),
-  selectionEditSchema('set_step_setting'),
+  selectionEditUnion('set_step_setting') as WorkflowSelectionEditSchema<'set_step_setting', { blockId: string }>,
   z.strictObject({ kind: z.literal('set_step_setting'), blockId: WorkflowBlockIdSchema, field: z.literal('timeoutMs'), value: WorkflowStepSchema.shape.timeoutMs }),
-  selectionEditSchema('set_default'),
+  selectionEditUnion('set_default') as WorkflowSelectionEditSchema<'set_default', object>,
   z.strictObject({ kind: z.literal('set_inputs'), inputs: z.array(WorkflowInputDefinitionSchema) }),
   z.strictObject({ kind: z.literal('upsert_role'), role: WorkflowRoleV1Schema }),
   z.strictObject({ kind: z.literal('remove_role'), roleId: RoleOverrideV1Schema.shape.roleId }),
