@@ -143,6 +143,7 @@ export type RequesterSessionRecoveryRefusal = Readonly<{
   signal?: AbortSignal;
 }>;
 
+/** Returns only a context whose currentness was read by this resolution; consumers do not re-read it. */
 export type ResolveRequesterSessionRuntimeContext = (
   sessionId: string, attribution?: RequesterWorkAttributionV1, signal?: AbortSignal,
   onPreparationRefused?: (refusal: RequesterSessionRecoveryRefusal) => Promise<void>,

@@ -338,7 +338,7 @@ import {
     registerMachineConnectedAccountRpcHandlers,
     type ConnectedServicePoolSelectionRead,
 } from './machine/rpcHandlers.connectedAccounts';
-import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent,
+import { authorizeMachineRpcRequest,
     readMachineRpcAdmissionCurrent, doesWorkspaceSyncSourceRootMatchRouting, doesWorkspaceSyncSourceWriterTargetRootMatchRouting, doesWorkspaceSyncSeedRootMatchRouting,
     doesWorkspaceSyncTargetRequestMatchRouting, doesWorkspaceSyncTargetRoutingMatchWriterTarget,
     readWorkspaceSyncTargetMethod, admitSameMachineWorkspaceSyncTargetPhase, type MachineRpcAdmissionBoundary } from './machine/machineRpcAuthorization';
@@ -1608,17 +1608,11 @@ export class ApiMachineClient {
                 const installation = readInstallationIdentityIfExistsSync();
                 if (!credentials || credentials.token !== this.token || !accountId || !installation || !authorization.authentication || signal.aborted
                     || this.projectionSchedulingClosed) return null;
-                const context = { actorAccountId: accountId, custodianAccountId: accountId, machineId: this.machine.id,
-                    installationId: installation.installationId, role: 'manage' as const, encryptionMode: this.machine.encryptionMode ?? 'e2ee' };
-                const sessionDecision = { sessionId: authorization.sessionId, actor: authorization.actor,
-                    authentication: authorization.authentication };
+                // Home admitted this decision request (its approver and Session) before relaying it over
+                // the authenticated Machine socket; the daemon keeps only its own binding facts here.
                 const isCurrent = async () => !signal.aborted && !this.projectionSchedulingClosed
                     && sameStoredCredentials(credentials, await readStoredCredentialsForServerId(machineRuntimeServerId).catch(() => null))
-                    && readInstallationIdentityIfExistsSync()?.installationId === installation.installationId
-                    && await verifyMachineRpcAdmissionCurrent({ context,
-                        method: `${authorization.sessionId}:${RPC_METHODS.APPROVAL_REQUEST_DECIDE}`, sessionDecision,
-                        privateKey: installation.privateKey, daemonToken: credentials.token,
-                        serverHttpBaseUrl: readMachineRuntimeServerHttpBaseUrl(), signal });
+                    && readInstallationIdentityIfExistsSync()?.installationId === installation.installationId;
                 if (!await isCurrent()) return null;
                 const transport = await runWithServerHttpBaseUrl(readMachineRuntimeServerHttpBaseUrl(), () => resolveSessionTransportContext({
                     reason: 'session-control',

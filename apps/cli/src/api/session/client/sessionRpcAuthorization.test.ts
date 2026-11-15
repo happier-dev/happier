@@ -50,7 +50,7 @@ describe('installed Session API-root authorization diagnostics', () => {
         } });
         const authorize = createSessionRpcAuthorization({ sessionId: 'session', get localMachineId() { return state.machineId; },
             serverUrl: 'https://session-diagnostic.test', isClosed: () => state.closed,
-            readHomeServerIdentityId: () => state.homeId, readOwnerCredentials: async () => null });
+            readHomeServerIdentityId: () => state.homeId });
         const request = { method: `session:${SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND}`, params: {},
             callerAuthority: 'account_automation' as const, callerInputAuthorization: authorization };
         return { state, fetch, post, authorize, request };
@@ -110,23 +110,20 @@ describe('installed Session API-root authorization diagnostics', () => {
     });
 
     it.each(['requester_authority_unavailable', 'unrestricted_owner_required', 'installation_missing',
-        'owner_credentials_missing', 'currentness_rejected', 'requester_execution_unavailable'] as const)(
+        'requester_execution_unavailable'] as const)(
         'names raw requester execution refusal %s before its handler runs', async reason => {
             const { state, post } = setup();
             post.mockResolvedValue({ status: 200, data: { v: 1, ok: true } });
             const original = readFileSync(identityPath);
             const authorize = createSessionRpcAuthorization({ sessionId: 'session', localMachineId: state.machineId,
                 serverUrl: 'https://session-diagnostic.test', isClosed: () => state.closed,
-                readHomeServerIdentityId: () => state.homeId,
-                readOwnerCredentials: async () => reason === 'owner_credentials_missing'
-                    ? null : { token: 'never-log-owner-token', encryption: null } });
+                readHomeServerIdentityId: () => state.homeId });
             const rpc = new RpcHandlerManager({ scopePrefix: 'session', scopeKind: 'session', localMachineId: state.machineId,
                 encryptionMode: 'plain', authorizeRequest: authorize, logger: () => {} });
             let effects = 0;
             rpc.registerHandler(RPC_METHODS.WRITE_FILE, () => { effects += 1; return { ok: true }; });
             if (reason === 'installation_missing') rmSync(identityPath);
             if (reason === 'requester_execution_unavailable') writeFileSync(identityPath, 'never-log-corrupt-identity');
-            if (reason === 'currentness_rejected') post.mockResolvedValue({ status: 403, data: { error: 'never-log-body' } });
             const request = { method: `session:${RPC_METHODS.WRITE_FILE}`, params: {}, callerAuthority: 'present_user' as const,
                 ...(reason === 'requester_authority_unavailable' ? {} : { machineAdmission: {
                     actorAccountId: reason === 'unrestricted_owner_required' ? 'never-log-other' : 'never-log-owner',
@@ -141,19 +138,18 @@ describe('installed Session API-root authorization diagnostics', () => {
                 expect(result).toMatchObject({ errorCode: 'agent_isolation_unavailable', effectAttempted: false,
                     failureCause: { phase: `session.rpc.authorization.${reason}`, errorClass: 'Error', errorCode: null, httpStatus: null } });
                 expect(effects).toBe(0);
-                expect(post).toHaveBeenCalledTimes(reason === 'currentness_rejected' ? 2 : 0);
+                expect(post).not.toHaveBeenCalled();
                 expect(JSON.stringify([ownerResult, result])).not.toMatch(/never-log|srv_session_diagnostic/);
                 expect(JSON.stringify([ownerResult, result])).not.toContain(home);
             } finally { writeFileSync(identityPath, original); }
         });
 
-    it('admits a current raw owner through the real manager with one Home verification', async () => {
+    it('admits a current raw owner through the real manager on Home\'s receipt without re-verifying it', async () => {
         const { state, post } = setup();
         post.mockResolvedValue({ status: 200, data: { v: 1, ok: true } });
         const authorize = createSessionRpcAuthorization({ sessionId: 'session', localMachineId: state.machineId,
             serverUrl: 'https://session-diagnostic.test', isClosed: () => false,
-            readHomeServerIdentityId: () => state.homeId,
-            readOwnerCredentials: async () => ({ token: 'never-log-owner-token', encryption: null }) });
+            readHomeServerIdentityId: () => state.homeId });
         const rpc = new RpcHandlerManager({ scopePrefix: 'session', scopeKind: 'session', localMachineId: state.machineId,
             encryptionMode: 'plain', authorizeRequest: authorize, logger: () => {} });
         let effects = 0;
@@ -162,18 +158,17 @@ describe('installed Session API-root authorization diagnostics', () => {
             machineAdmission: { actorAccountId: 'never-log-owner', custodianAccountId: 'never-log-owner', machineId: state.machineId,
                 installationId: installation.installationId, role: 'use', encryptionMode: 'plain' } })).toMatchObject({ ok: true });
         expect(effects).toBe(1);
-        expect(post).toHaveBeenCalledTimes(1);
+        expect(post).not.toHaveBeenCalled();
     });
 
     // p03redesign.F5 flow shape (PLAN 2026-11-14-p03-redesign X0): each requester-isolated Session RPC already carries
-    // the server's per-request Machine admission; the CLI adds 0 signed re-verifies. it.fails until R5 lands (its lane flips it).
-    it.fails('p03redesign.F5: 20 server-admitted Session RPCs cost 0 CLI admission re-verifies', async () => {
+    // the server's per-request Machine admission; the CLI adds 0 signed re-verifies (R5).
+    it('p03redesign.F5: 20 server-admitted Session RPCs cost 0 CLI admission re-verifies', async () => {
         const { state, post } = setup();
         post.mockResolvedValue({ status: 200, data: { v: 1, ok: true } });
         const authorize = createSessionRpcAuthorization({ sessionId: 'session', localMachineId: state.machineId,
             serverUrl: 'https://session-diagnostic.test', isClosed: () => false,
-            readHomeServerIdentityId: () => state.homeId,
-            readOwnerCredentials: async () => ({ token: 'never-log-owner-token', encryption: null }) });
+            readHomeServerIdentityId: () => state.homeId });
         const rpc = new RpcHandlerManager({ scopePrefix: 'session', scopeKind: 'session', localMachineId: state.machineId,
             encryptionMode: 'plain', authorizeRequest: authorize, logger: () => {} });
         let effects = 0;
@@ -185,8 +180,6 @@ describe('installed Session API-root authorization diagnostics', () => {
                     installationId: installation.installationId, role: 'use', encryptionMode: 'plain' } })).toMatchObject({ ok: true });
         }
         expect(effects).toBe(requests);
-        // it.fails hides the assertion message, so the measured count is printed for the flow-budgets row.
-        console.info(`[p03redesign.F5] CLI admission re-verifies=${post.mock.calls.length} for ${requests} admitted Session RPCs`);
         expect(post.mock.calls.length, `F5 current: ${post.mock.calls.length} CLI re-verifies for ${requests} admitted RPCs`).toBe(0);
     });
 
@@ -198,8 +191,7 @@ describe('installed Session API-root authorization diagnostics', () => {
                     machineId: state.machineId, installationId: installation.installationId } } };
         const authorize = createSessionRpcAuthorization({ sessionId: 'session', localMachineId: state.machineId,
             serverUrl: 'https://session-diagnostic.test', isClosed: () => state.closed,
-            readHomeServerIdentityId: () => state.homeId, readOwnerCredentials: async () => null,
-            readSessionAttachmentRequester: () => requester });
+            readHomeServerIdentityId: () => state.homeId,             readSessionAttachmentRequester: () => requester });
         const rpc = new RpcHandlerManager({ scopePrefix: 'session', scopeKind: 'session', localMachineId: state.machineId,
             encryptionMode: 'plain', authorizeRequest: authorize, logger: () => {} });
         const admission = { actorAccountId: requester.identity.requester.accountId, custodianAccountId: 'never-log-owner',
@@ -216,7 +208,6 @@ describe('installed Session API-root authorization diagnostics', () => {
             const authorize = createSessionRpcAuthorization({ sessionId: 'session', localMachineId: state.machineId,
                 serverUrl: 'https://session-diagnostic.test', isClosed: () => false,
                 readHomeServerIdentityId: () => state.homeId,
-                readOwnerCredentials: async () => ({ token: 'never-log-owner-token', encryption: null }),
                 readSessionAttachmentRequester: method => registration?.readSessionAttachmentRequester(method) });
             const rpc = new RpcHandlerManager({ scopePrefix: 'session', scopeKind: 'session', localMachineId: state.machineId,
                 encryptionMode: 'plain', authorizeRequest: authorize, logger: () => {} });
@@ -233,7 +224,7 @@ describe('installed Session API-root authorization diagnostics', () => {
                         fileName: 'notes.txt', sizeBytes: 1, uploadLocation: 'workspace', workspaceRelativeDir: '.happier/attachments',
                         vcsIgnoreStrategy: 'none', vcsIgnoreWritesEnabled: false },
                 }, undefined, 'authenticated_home_socket')).toMatchObject({ success: true });
-                expect(post).toHaveBeenCalledTimes(1);
+                expect(post).not.toHaveBeenCalled();
             } finally { await registration.dispose(); }
         });
     });
@@ -261,7 +252,6 @@ describe('installed Session API-root authorization diagnostics', () => {
         const authorize = createSessionRpcAuthorization({ sessionId: 'session', localMachineId: state.machineId,
             serverUrl: 'https://session-diagnostic.test', isClosed: () => false,
             readHomeServerIdentityId: () => state.homeId,
-            readOwnerCredentials: async () => ({ token: 'never-log-owner-token', encryption: null }),
             // Model both an absent binding and the clear window between the
             // authorizer's read and the registrar's read of that same binding.
             readSessionAttachmentRequester: () => clearAfterAuthorization ? requester : null });

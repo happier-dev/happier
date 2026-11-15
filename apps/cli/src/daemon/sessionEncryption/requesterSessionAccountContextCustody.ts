@@ -69,7 +69,8 @@ export function createRequesterSessionAccountContextCustody(params: Readonly<{
     const context = (await resolve?.(sessionId, attribution, signal)) ?? null;
     if (context) {
       try {
-        if ((attribution && !isDeepStrictEqual(context.bootstrap.attribution, attribution)) || !(await context.isCurrent(signal))) {
+        // The resolver returns only a context whose currentness it just read.
+        if (attribution && !isDeepStrictEqual(context.bootstrap.attribution, attribution)) {
           throw new PluginError({ code: 'requester_session_not_current' });
         }
         return context;

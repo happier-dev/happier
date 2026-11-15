@@ -31,7 +31,7 @@ describe('RPC completion diagnostics', () => {
         const rpc = new RpcHandlerManager({ scopePrefix: 'session', scopeKind: 'session', encryptionMode: 'plain', logger,
             authorizeRequest: createSessionRpcAuthorization({ sessionId: 'session', serverUrl: 'https://home.invalid',
                 isClosed: () => false, readHomeServerIdentityId: () => null,
-                readOwnerCredentials: async () => null, readSessionAttachmentRequester: () => null }) });
+                readSessionAttachmentRequester: () => null }) });
         const handler = vi.fn(() => ({ ok: true }));
         rpc.registerHandler(method, handler);
         const response = await rpc.handleRequest({ method: `session:${method}`, traceId: requestId,

@@ -334,8 +334,7 @@ describe('OpenCode Voice authority through shared MCP', () => {
       const rpc = new RpcHandlerManager({ scopePrefix: session.sessionId, scopeKind: 'session', localMachineId: 'voice-machine',
         encryptionMode: 'plain', logger: () => {}, authorizeRequest: createSessionRpcAuthorization({
           sessionId: session.sessionId, localMachineId: 'voice-machine', serverUrl: account.endpointUrl,
-          isClosed: () => controller.signal.aborted, readHomeServerIdentityId: () => serverIdentityId,
-          readOwnerCredentials: async () => credentials }),
+          isClosed: () => controller.signal.aborted, readHomeServerIdentityId: () => serverIdentityId }),
         prepareRequesterAccountContext: input => prepareAccountContext({ authorization: input.authorization,
           purpose: input.purpose ?? { kind: 'external_action' }, ...(input.signal ? { signal: input.signal } : {}) }),
       });

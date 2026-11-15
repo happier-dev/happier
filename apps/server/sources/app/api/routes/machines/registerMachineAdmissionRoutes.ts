@@ -1,7 +1,7 @@
 import { z } from 'zod/mini';
 import { isDeepStrictEqual } from 'node:util';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { MachineInstallationProofV1Schema, verifyMachineInstallationProof, SessionApprovalDecisionCurrentnessV1Schema } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { MachineInstallationProofV1Schema, verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncTargetRoutingV1Schema,
@@ -24,8 +24,6 @@ import { inTx } from '@/storage/inTx';
 import { db } from '@/storage/db';
 import { RequesterSessionCurrentnessPurposeV1Schema } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { hasCurrentSessionScopedMachineAccessInTx } from '@/app/api/socket/sessionScopedBinding';
-import { resolveSessionAccessForOperation } from '@/app/session/access/sessionAccess';
-import { readCurrentCommittedSessionInputMachineTargetInTx } from '@/app/session/messages/sessionInputAdmission';
 import { readAdmittedExternalActionHandoffMachineInTx } from '@/app/auth/externalActionHandoffAdmission';
 import { readTeamOperationAuthenticationFromRequest } from '@/app/teams/actorContext';
 import type { Fastify } from '../../types';
@@ -41,7 +39,6 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                 context: SocketRpcMachineAdmissionContextV1Schema,
                 method: z.optional(z.string().check(z.minLength(1))),
                 purpose: z.optional(RequesterSessionCurrentnessPurposeV1Schema),
-                sessionDecision: z.optional(SessionApprovalDecisionCurrentnessV1Schema),
                 workspaceSyncSourceRouting: z.optional(WorkspaceSyncSourceRoutingV1Schema),
                 workspaceSyncTargetRouting: z.optional(WorkspaceSyncTargetRoutingV1Schema),
                 workspaceSyncSourceWriterTargetRouting: z.optional(WorkspaceSyncSourceWriterTargetRoutingV1Schema),
@@ -56,52 +53,6 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
         const { context, proof, purpose, custodySubjectAccountId, workspaceSyncSourceRouting, workspaceSyncTargetRouting,
             workspaceSyncSourceWriterTargetRouting: writerRouting, callerInputAuthorization, workspaceSyncSourceExecution, workspaceSyncSeedRouting } = request.body;
         const method = request.body.method ?? '';
-        const sessionDecision = request.body.sessionDecision;
-        if (sessionDecision) {
-            if (purpose || custodySubjectAccountId || workspaceSyncSourceRouting || workspaceSyncTargetRouting || writerRouting
-                || callerInputAuthorization || workspaceSyncSourceExecution || workspaceSyncSeedRouting
-                || method !== `${sessionDecision.sessionId}:${RPC_METHODS.APPROVAL_REQUEST_DECIDE}`
-                || context.actorAccountId !== request.userId || context.custodianAccountId !== request.userId
-                || context.machineId !== request.params.id || context.role !== 'manage') {
-                return reply.code(403).send({ error: 'access_denied' });
-            }
-            // One Machine read serves the installation proof and the Manage admission.
-            const machine = await db.machine.findUnique({ where: { id: request.params.id },
-                select: { ...buildMachineAdmissionFactsSelect(request.userId), installationPublicKey: true } });
-            if (!machine?.installationPublicKey || machine.accountId !== request.userId
-                || machine.installationId !== context.installationId || classifyMachineAvailabilityState(machine) !== 'available'
-                || !verifyMachineInstallationProof({ payload: { version: 1, machineId: machine.id,
-                    installationId: context.installationId, accountId: request.userId, rpcAdmission: { context, method, sessionDecision } },
-                    proof, publicKey: encodeBase64(machine.installationPublicKey, 'base64url') })) {
-                return reply.code(403).send({ error: 'access_denied' });
-            }
-            const current = await resolveMachineAdmissionFromFactsInTx(db, machine,
-                { actorAccountId: request.userId, machineId: machine.id, requiredRole: 'manage' });
-            if (current.kind !== 'admitted') return reply.code(403).send({ error: 'access_denied' });
-            const session = await db.session.findUnique({ where: { id: sessionDecision.sessionId }, select: { accountId: true } });
-            // A Manage admission of this Machine also decides the committed placement's (Use) admission.
-            const committedTarget = await readCurrentCommittedSessionInputMachineTargetInTx(db, sessionDecision.sessionId, { admitted: current });
-            const currentSessionMachineId = committedTarget?.accountId === request.userId
-                ? committedTarget.machineId
-                : await app.resolveCurrentSessionMachine?.({ accountId: request.userId, sessionId: sessionDecision.sessionId });
-            if (current.installationId !== context.installationId
-                || current.encryptionMode !== context.encryptionMode || session?.accountId !== request.userId
-                || currentSessionMachineId !== machine.id) {
-                return reply.code(403).send({ error: 'access_denied' });
-            }
-            // Reuse the deciding credential's exact evidence; the canonical Team
-            // qualifier checks the referenced authentication methods again.
-            const access = await resolveSessionAccessForOperation(db, { accountId: sessionDecision.actor.accountId,
-                sessionId: sessionDecision.sessionId, capability: 'submitAgentInput', authentication: {
-                    env: process.env, authority: 'present_user', tokenEpoch: sessionDecision.authentication.tokenEpoch,
-                    authenticationEvidence: sessionDecision.authentication.evidence?.evidence,
-                } });
-            const relationship = access.status === 'allowed' && access.access.level === 'owner' ? 'owner' : 'sharedApprover';
-            if (access.status !== 'allowed' || relationship !== sessionDecision.actor.relationship) {
-                return reply.code(403).send({ error: 'access_denied' });
-            }
-            return reply.send({ v: 1, ok: true });
-        }
         if (workspaceSyncSourceExecution?.originalActionEnvelope || workspaceSyncSourceExecution?.externalActionExecution.deploymentChildExecution) {
             const packet = workspaceSyncSourceExecution;
             const archiveMethod = packet.externalActionExecution.deploymentChildExecution

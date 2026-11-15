@@ -20,7 +20,7 @@ export { MachineInstallationPublicKeySchema, MachineInstallationPrivateKeySchema
     MachineInstallationPublicIdentityV1Schema, type MachineInstallationPublicIdentityV1 } from './installationKeySchemas.js';
 import { SocketRpcMachineAdmissionContextV1Schema } from '../machineAccessV1.js';
 import { ManagedActivityRpcRequestV1Schema } from '../managed/managedIntentV1.js';
-import { SessionActionRpcOriginV1Schema, SessionPermissionDecisionAuthenticationV1Schema, WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncTargetRoutingV1Schema, WorkspaceSyncSourceWriterTargetRoutingV1Schema, WorkspaceSyncSourceExecutionV1Schema, WorkspaceSyncSeedRoutingV1Schema } from '../../rpc/socket.js';
+import { SessionActionRpcOriginV1Schema, WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncTargetRoutingV1Schema, WorkspaceSyncSourceWriterTargetRoutingV1Schema, WorkspaceSyncSourceExecutionV1Schema, WorkspaceSyncSeedRoutingV1Schema } from '../../rpc/socket.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
 import { readDeploymentArchiveRpcEffectV1 } from '../../deployments/deploymentArchiveRpcV1.js';
 import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1 } from '../../deployments/deploymentActionIdsV1.js';
@@ -28,7 +28,6 @@ import { isSessionStopChildRootV1, isSessionStopChildV1 } from '../../actions/se
 import { isMachineSetupPlanRpcChildV1 } from '../managed/actionsV1.js';
 import { readSessionAgentReadinessChildActionV1 } from '../managed/actionIdsV1.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
-import { SessionPermissionAccountUserDecisionActorV1Schema } from '../../sessions/permissions/v1.js';
 import { ExternalActionActionIdV1Schema, ExternalActionRequestIdV1Schema, ExternalActionWorkflowOriginV1Schema, ExternalActionExecutionAuthorizationV1Schema } from '../../actions/externalActionApi.js';
 import {
     ContentPublicKeyFingerprintSchema,
@@ -56,14 +55,6 @@ export const RequesterSessionCurrentnessPurposeV1Schema = lazyZodSchema(() => z.
     sessionId: z.string().check(z.minLength(1)),
 }));
 export type RequesterSessionCurrentnessPurposeV1 = z.infer<typeof RequesterSessionCurrentnessPurposeV1Schema>;
-
-/** Existing Session decision actor, rechecked by the original installed executor. */
-export const SessionApprovalDecisionCurrentnessV1Schema = lazyZodSchema(() => z.strictObject({
-    sessionId: z.string().check(z.minLength(1)),
-    actor: SessionPermissionAccountUserDecisionActorV1Schema,
-    authentication: SessionPermissionDecisionAuthenticationV1Schema,
-}));
-export type SessionApprovalDecisionCurrentnessV1 = z.infer<typeof SessionApprovalDecisionCurrentnessV1Schema>;
 
 /** Named declaration boundary; runtime validation below remains the complete strict proof grammar. */
 export interface MachineInstallationProofPayloadV1 {
@@ -95,7 +86,6 @@ export interface MachineInstallationProofPayloadV1 {
         context: z.infer<typeof SocketRpcMachineAdmissionContextV1Schema>;
         method?: string;
         purpose?: RequesterSessionCurrentnessPurposeV1;
-        sessionDecision?: SessionApprovalDecisionCurrentnessV1;
         workspaceSyncSourceRouting?: z.infer<typeof WorkspaceSyncSourceRoutingV1Schema>;
         workspaceSyncTargetRouting?: z.infer<typeof WorkspaceSyncTargetRoutingV1Schema>;
         workspaceSyncSourceWriterTargetRouting?: z.infer<typeof WorkspaceSyncSourceWriterTargetRoutingV1Schema>;
@@ -159,7 +149,6 @@ export const MachineInstallationProofPayloadV1Schema: z.ZodMiniType<MachineInsta
         context: SocketRpcMachineAdmissionContextV1Schema,
         method: z.optional(z.string().check(z.minLength(1))),
         purpose: z.optional(RequesterSessionCurrentnessPurposeV1Schema),
-        sessionDecision: z.optional(SessionApprovalDecisionCurrentnessV1Schema),
         workspaceSyncSourceRouting: z.optional(WorkspaceSyncSourceRoutingV1Schema),
         workspaceSyncTargetRouting: z.optional(WorkspaceSyncTargetRoutingV1Schema),
         workspaceSyncSourceWriterTargetRouting: z.optional(WorkspaceSyncSourceWriterTargetRoutingV1Schema),
@@ -170,12 +159,6 @@ export const MachineInstallationProofPayloadV1Schema: z.ZodMiniType<MachineInsta
         managedTarget: z.optional(z.lazy(() => ManagedActivityRpcRequestV1Schema)),
         managedIdleDecision: z.optional(z.strictObject({ kind: z.literal('idle'), since: z.number().check(z.nonnegative()), confirmedAt: z.number().check(z.nonnegative()) })),
     }).check(z.superRefine((admission, ctx) => {
-        if (admission.sessionDecision && (admission.method !== `${admission.sessionDecision.sessionId}:${RPC_METHODS.APPROVAL_REQUEST_DECIDE}`
-            || admission.purpose || admission.custodySubjectAccountId || admission.workspaceSyncSourceRouting
-            || admission.workspaceSyncTargetRouting || admission.workspaceSyncSourceWriterTargetRouting || admission.workspaceSyncSourceExecution
-            || admission.workspaceSyncSeedRouting || admission.callerInputAuthorization || admission.managedTarget || admission.managedIdleDecision)) {
-            ctx.addIssue({ code: 'custom', message: 'Session approval currentness must bind only the exact decision' });
-        }
         if ((admission.method === undefined) === (admission.purpose === undefined)) {
             ctx.addIssue({ code: 'custom', message: 'Machine admission must bind exactly one method or currentness purpose' });
         }
@@ -378,7 +361,6 @@ export function buildMachineInstallationProofPayloadBytes(
                 },
                 method: normalized.rpcAdmission.method,
                 ...(normalized.rpcAdmission.purpose ? { purpose: normalized.rpcAdmission.purpose } : {}),
-                ...(normalized.rpcAdmission.sessionDecision ? { sessionDecision: normalized.rpcAdmission.sessionDecision } : {}),
                 ...(normalized.rpcAdmission.workspaceSyncSourceRouting ? {
                     workspaceSyncSourceRouting: normalized.rpcAdmission.workspaceSyncSourceRouting,
                 } : {}),

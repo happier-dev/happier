@@ -23,7 +23,6 @@ import {
   RequesterSessionCurrentnessPurposeV1Schema,
   type RequesterSessionCurrentnessPurposeV1,
 } from '@happier-dev/protocol/machines/identity/installationIdentity';
-import type { SessionApprovalDecisionCurrentnessV1 } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import {
   MachineAccessLossCustodyRequestV1Schema,
   MachineAdmissionVerifyResponseV1Schema,
@@ -574,7 +573,6 @@ export function doesMachineRpcTargetMatchAdmission(
 /** This read proves current access; the signed context is not a reusable admission ticket. */
 export type MachineRpcAdmissionCurrentInput = Readonly<{
   context: SocketRpcMachineAdmissionContextV1;
-  sessionDecision?: SessionApprovalDecisionCurrentnessV1;
   custodySubjectAccountId?: string;
   workspaceSyncSourceRouting?: WorkspaceSyncSourceRoutingV1;
   workspaceSyncSourceExecution?: WorkspaceSyncSourceExecutionV1;
@@ -991,9 +989,6 @@ export async function readMachineRpcAdmissionCurrentOrThrow(
       ...(seed ? { workspaceSyncSeedRouting: seed } : {}),
     };
     stage = 'proof_signing';
-    const sessionDecision = input.sessionDecision
-      ? { sessionDecision: input.sessionDecision }
-      : {};
     const proof = signMachineInstallationProof({
       payload: {
         version: 1,
@@ -1011,7 +1006,6 @@ export async function readMachineRpcAdmissionCurrentOrThrow(
           ...custody,
           ...routing,
           ...retainedRoot,
-          ...sessionDecision,
         },
       },
       privateKey: input.privateKey,
@@ -1027,7 +1021,6 @@ export async function readMachineRpcAdmissionCurrentOrThrow(
         ...custody,
         ...routing,
         ...retainedRoot,
-        ...sessionDecision,
       },
       {
         headers: {

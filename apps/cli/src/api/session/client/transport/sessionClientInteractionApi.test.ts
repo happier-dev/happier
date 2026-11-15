@@ -200,7 +200,7 @@ describe('createSessionClientInteractionApi diagnostics', () => {
       let registration: ReturnType<typeof registerSessionHandlers>;
       const authorize = createSessionRpcAuthorization({ sessionId: 's1', localMachineId: 'machine',
         serverUrl: 'https://attachment-home.test', isClosed: () => false,
-        readHomeServerIdentityId: () => 'home', readOwnerCredentials: async () => null,
+        readHomeServerIdentityId: () => 'home',
         readSessionAttachmentRequester: method => registration.readSessionAttachmentRequester(method) });
       const rpc = new RpcHandlerManager({ scopePrefix: 's1', scopeKind: 'session', localMachineId: 'machine',
         encryptionMode: 'plain', authorizeRequest: authorize, logger: () => {} });

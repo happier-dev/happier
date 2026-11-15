@@ -49,7 +49,7 @@ describe('Session native attachment registration', () => {
                 encryptionMode: 'plain', logger: () => {},
                 authorizeRequest: createSessionRpcAuthorization({ sessionId: 'session-a', localMachineId: 'machine-a',
                     serverUrl: 'https://attachment.test', isClosed: () => false,
-                    readHomeServerIdentityId: () => 'home-a', readOwnerCredentials: async () => null,
+                    readHomeServerIdentityId: () => 'home-a',
                     readSessionAttachmentRequester: method => registration.readSessionAttachmentRequester(method) }),
             });
             registration = registerSessionHandlers(rpc, '/owner-workspace', {
