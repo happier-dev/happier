@@ -3,7 +3,7 @@ import { createInterface } from 'node:readline';
 import { Duplex } from 'node:stream';
 
 import { spawnAuthorizedHostExecLaunchForHost, type HostAuthorizedPluginExecLaunch } from '@/plugins/runtime/invocation/services/exec';
-import { MANAGED_SERVICE_NUMERIC_CONTRACT } from '@/plugins/runtime/invocation/services/managedServiceSpecNormalization';
+import { computeManagedConnectionBackoffMs, DEFAULT_MANAGED_CONNECTION_POLICY } from '@happier-dev/connection-supervisor';
 import type { MachineServiceNativeRuntimeFactsV1 } from '@happier-dev/protocol/local/services/nativeRuntimeFactsV1';
 
 type Subscription = Readonly<{ dispose(): Promise<void> }>;
@@ -161,7 +161,8 @@ function createEngine(retired: () => void) {
     let connection: AbortController | undefined;
     let connecting: Promise<void> | undefined;
     let connectingSource: Registration | undefined;
-    let recovery: ReturnType<typeof setInterval> | undefined;
+    let recovery: ReturnType<typeof setTimeout> | undefined;
+    let recoveryAttempt = 0;
     let reconciling: Promise<void> | undefined;
     let inspectingSource: Registration | undefined;
     let scheduled = false;
@@ -173,7 +174,7 @@ function createEngine(retired: () => void) {
         if (value !== retained.value) { retained.value = value; registration.changed(rows); }
         retained.ready();
     };
-    const stopRecovery = () => { if (recovery) clearInterval(recovery); recovery = undefined; };
+    const stopRecovery = () => { if (recovery) clearTimeout(recovery); recovery = undefined; };
     const down = () => {
         if (closed) return;
         connection?.abort();
@@ -196,9 +197,16 @@ function createEngine(retired: () => void) {
             for (const resolve of retained.waiting) resolve();
             retained.waiting.clear();
         }
-        // Push cannot serve while disconnected; reuse the incumbent health cadence.
+        // Push cannot serve while disconnected: one reconnect on the shared
+        // connection-supervisor backoff; a failed attempt re-enters down().
         if (!recovery && registrations.size) {
-            recovery = setInterval(() => { void connect(); }, MANAGED_SERVICE_NUMERIC_CONTRACT.healthIntervalMs.defaultValue);
+            recoveryAttempt += 1;
+            recovery = setTimeout(() => { recovery = undefined; void connect(); }, computeManagedConnectionBackoffMs({
+                attempt: recoveryAttempt,
+                minMs: DEFAULT_MANAGED_CONNECTION_POLICY.backoffMinMs,
+                maxMs: DEFAULT_MANAGED_CONNECTION_POLICY.backoffMaxMs,
+                jitterRatio: DEFAULT_MANAGED_CONNECTION_POLICY.jitterRatio,
+            }));
             recovery.unref?.();
         }
     };
@@ -305,6 +313,7 @@ function createEngine(retired: () => void) {
                 stream = subscribed;
                 streamSource = source;
                 stopRecovery();
+                recoveryAttempt = 0;
                 for (const registration of registrations.keys()) for (const id of registration.ids) pending.add(id);
                 schedule();
             } catch { if (!closed) down(); }

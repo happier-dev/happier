@@ -25,6 +25,7 @@ import type { LiveWorkProducerV1, LiveWorkInventoryV1, LiveWorkItemV1 } from '@/
 import { timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
 import { createParkWatch } from '@/daemon/lifecycle/parkWatch';
 import type { WorkspaceSyncStatusWatchRequestV1, WorkspaceSyncStatusWatchResultV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { computeManagedConnectionBackoffMs, DEFAULT_MANAGED_CONNECTION_POLICY } from '@happier-dev/connection-supervisor';
 
 export type WorkspaceSyncResolvedRef = Readonly<{
   serverId?: string;
@@ -285,8 +286,6 @@ function areContentPoliciesEqual(left: WorkspaceContentPolicyV1, right: Workspac
     && left.extraIncludePatterns.every((pattern, index) => pattern === right.extraIncludePatterns[index]);
 }
 
-// Recovery only: successful observations park on the native manager index.
-const WORKSPACE_SYNC_STATUS_RECOVERY_INTERVAL_MS = 1_000;
 
 function areWorkspaceSyncStatusesEqual(left: WorkspaceSyncStatusV1, right: WorkspaceSyncStatusV1): boolean {
   return left.relationshipId === right.relationshipId
@@ -309,7 +308,8 @@ function areWorkspaceSyncStatusesEqual(left: WorkspaceSyncStatusV1, right: Works
     && left.errorCode === right.errorCode;
 }
 
-async function waitForStatusRecovery(signal: AbortSignal): Promise<void> {
+/** Recovery only (successful observations park on the native manager index): the shared connection backoff. */
+async function waitForStatusRecovery(signal: AbortSignal, attempt: number): Promise<void> {
   if (signal.aborted) return;
   await new Promise<void>((resolve) => {
     let timer: ReturnType<typeof setTimeout>;
@@ -318,7 +318,12 @@ async function waitForStatusRecovery(signal: AbortSignal): Promise<void> {
       signal.removeEventListener('abort', finish);
       resolve();
     };
-    timer = setTimeout(finish, WORKSPACE_SYNC_STATUS_RECOVERY_INTERVAL_MS);
+    timer = setTimeout(finish, computeManagedConnectionBackoffMs({
+      attempt,
+      minMs: DEFAULT_MANAGED_CONNECTION_POLICY.backoffMinMs,
+      maxMs: DEFAULT_MANAGED_CONNECTION_POLICY.backoffMaxMs,
+      jitterRatio: DEFAULT_MANAGED_CONNECTION_POLICY.jitterRatio,
+    }));
     timer.unref?.();
     signal.addEventListener('abort', finish, { once: true });
   });
@@ -671,6 +676,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
 
   private async observeStatus(id: string, signal: AbortSignal): Promise<void> {
     let stateIndex = '0';
+    let failedAttempts = 0;
     while (!signal.aborted && this.shouldObserveStatus(id)) {
       try {
         await this.lifecycle.start();
@@ -686,12 +692,14 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
           else if (this.statuses.delete(id)) this.notifyStatusWatch();
           stateIndex = nextStateIndex;
         }
+        failedAttempts = 0;
       } catch (error) {
         if (signal.aborted || this.shuttingDown || (error instanceof Error && error.name === 'AbortError')) return;
         // Runtime readiness owns engine availability errors. Preserve the
         // last known relationship projection and retry while demand remains.
         stateIndex = '0';
-        await waitForStatusRecovery(signal);
+        failedAttempts += 1;
+        await waitForStatusRecovery(signal, failedAttempts);
       }
     }
   }

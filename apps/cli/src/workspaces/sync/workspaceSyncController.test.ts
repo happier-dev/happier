@@ -3303,6 +3303,36 @@ describe('WorkspaceSyncController', () => {
     await controller.shutdown();
   });
 
+  it('[p03redesign.I6] retries an unavailable engine on the shared connection backoff, not every second', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const waitForChange = vi.fn(async () => { throw new Error('manager unavailable'); });
+    const controller = new WorkspaceSyncController({
+      adapter: completeAdapter({ waitForChange }),
+      lifecycle: lifecycle(),
+      rootOwnershipManager: rootOwnership(),
+      localMachineId: 'm1',
+      resolveWorkspaceRef: fixtureWorkspaceRef,
+    });
+    const abort = new AbortController();
+    try {
+      await controller.ensure(definition);
+      const iterator = controller.subscribe('r1', abort.signal)[Symbol.asyncIterator]();
+      void iterator.next().catch(() => undefined);
+      await vi.advanceTimersByTimeAsync(0);
+      const first = waitForChange.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect({ engineRetriesPerFiveMinutes: waitForChange.mock.calls.length - first })
+        .toEqual({ engineRetriesPerFiveMinutes: 9 });
+    } finally {
+      abort.abort();
+      random.mockRestore();
+      await vi.advanceTimersByTimeAsync(0);
+      vi.useRealTimers();
+      await controller.shutdown();
+    }
+  });
+
   it('serializes status observation behind an in-flight relationship command', async () => {
     let releasePause!: () => void;
     const pauseGate = new Promise<void>((resolve) => { releasePause = resolve; });

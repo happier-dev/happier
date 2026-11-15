@@ -529,6 +529,7 @@ describe('Compose exact native resource lifetime', () => {
 
     it('shares one proven engine subscription and outage recovery across 120 admitted services', async () => {
         vi.useFakeTimers();
+        let random: ReturnType<typeof vi.spyOn> | undefined;
         const requests: string[][] = [];
         const subscriptions: Array<Readonly<{ event(value: unknown): void; disconnected(): void }>> = [];
         let available = true;
@@ -625,28 +626,35 @@ describe('Compose exact native resource lifetime', () => {
             expect(captures[0].lifecycle.runtimeFacts!().healthSince).toBeUndefined();
             expect(requests.filter(request => request.includes('logs'))).toHaveLength(0);
             requests.length = 0;
-            await vi.advanceTimersByTimeAsync(15_000);
-            expect(subscriptions).toHaveLength(4);
+            // [p03redesign.I6] An engine outage reconnects on the shared
+            // connection-supervisor backoff (1 s doubling to 60 s), not every 5 s.
+            random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+            const beforeOutage = subscriptions.length;
+            await vi.advanceTimersByTimeAsync(5 * 60_000);
+            expect({ reconnectAttemptsPerFiveMinutes: subscriptions.length - beforeOutage })
+                .toEqual({ reconnectAttemptsPerFiveMinutes: 9 });
             expect(requests).toHaveLength(0);
             expect(vi.getTimerCount()).toBe(1);
             available = true;
             unhealthy = false;
-            await vi.advanceTimersByTimeAsync(5000);
-            expect(subscriptions).toHaveLength(5);
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(subscriptions).toHaveLength(beforeOutage + 10);
             expect(requests.filter(request => request.includes('inspect'))).toHaveLength(1);
             expect(handles.every(handle => handle.snapshot().state === 'healthy')).toBe(true);
             expect(vi.getTimerCount()).toBe(0);
             available = false;
-            subscriptions[4].disconnected();
+            subscriptions.at(-1)!.disconnected();
             await vi.advanceTimersByTimeAsync(0);
             expect(vi.getTimerCount()).toBe(1);
         } finally {
+            random?.mockRestore();
             await Promise.all(handles.map(handle => handle.dispose()));
         }
         expect(releases).toBe(2);
         expect(vi.getTimerCount()).toBe(0);
+        const settled = subscriptions.length;
         await vi.advanceTimersByTimeAsync(60_000);
-        expect(subscriptions).toHaveLength(5);
+        expect(subscriptions).toHaveLength(settled);
     });
 
     it('derives an interactive shell only from the admitted Compose service generation', async () => {
