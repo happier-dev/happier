@@ -92,6 +92,34 @@ describe('Environment detail in a split pane', () => {
         }
     });
 
+    it('lists preview Environments under their own Previews group, after the Environments it counts (lab d5)', async () => {
+        const detail = createDeploymentEnvironmentDetailV1();
+        const preview = { ...detail.environment, id: 'env-preview-142', purpose: 'preview' as const,
+            previewTemplateEnvironmentId: detail.environment.id, previewRepositoryId: 'repo-app',
+            previewPullRequestId: 'pr-142', previewTargetLinkId: 'link-preview' };
+        const transport: DeploymentReadTransportV1 = {
+            listEnvironments: async () => ({ ok: true, value: { items: [{ environment: detail.environment, title: 'Staging' },
+                { environment: preview, title: 'pr-142' }], nextCursor: null } }),
+            readEnvironment: async () => ({ ok: true, value: detail }),
+            readReceipt: async () => ({ ok: true, value: createDeploymentReceiptDetailV1() }),
+            listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+        };
+        const scope = { serverId: 'home', accountId: 'account-owner', projectSourceId: 'source-app' };
+        const controller = createDeploymentReadControllerV1({ scope, transport });
+        const screen = await renderScreen(<AccountNoticeInvestigationBoundary><ProjectDeploymentsView controller={controller}
+            demand={{ mounted: true, visible: true, focused: true }} lifetime={null} serverId={scope.serverId}
+            accountId={scope.accountId} sourceId={scope.projectSourceId} /></AccountNoticeInvestigationBoundary>);
+        try {
+            const ids = screen.tree.findAll((node: { props: Record<string, unknown> }) => typeof node.props.testID === 'string')
+                .map((node: { props: Record<string, unknown> }) => node.props.testID as string);
+            const group = ids.indexOf('project-deployments.rail.previews');
+            expect(group).toBeGreaterThan(ids.indexOf(`project-deployments.rail.row.${detail.environment.id}`));
+            expect(ids.indexOf('project-deployments.rail.row.env-preview-142')).toBeGreaterThan(group);
+        } finally {
+            await screen.unmount(); controller.retire();
+        }
+    });
+
     it.each([[true, 1], [false, 0]] as const)('reads the selected Environment while its pane is visible (%s) even when another pane has focus', async (visible, reads) => {
         const detail = createDeploymentEnvironmentDetailV1();
         const receipt = createDeploymentReceiptDetailV1();

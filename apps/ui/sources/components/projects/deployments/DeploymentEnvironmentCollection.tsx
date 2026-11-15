@@ -12,6 +12,7 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import {
   CollectionDraftRow,
   CollectionList,
+  CollectionListGroupLabel,
   CollectionNavigationRow,
 } from '@/components/ui/lists/collection/CollectionList';
 import { useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
@@ -30,6 +31,7 @@ import type { DeploymentReadControllerV1 } from '@happier-dev/deployments';
 import { deploymentActionRefusalRemedy, deploymentRailState } from './deploymentPresentation';
 import { useDeploymentCollection } from './useDeploymentReads';
 import { deploymentStepCaption } from './DeploymentStepStrip';
+import { formatDeploymentLiveAddress } from './deploymentLiveAddressFacts';
 
 type EnvironmentItem = DeploymentEnvironmentCollectionV1['items'][number];
 
@@ -83,11 +85,31 @@ export const DeploymentEnvironmentCollection = React.memo(
     const onSelect = props.onSelect;
     const selectRow = React.useCallback((row: typeof parts[number]) => onSelect(row.environmentId), [onSelect]);
     const rows = useDeploymentEnvironmentRowSelection(parts, row => row.environmentId, selectRow);
+    // Preview Environments (one per pull request) follow the Environments under their own group (lab d5), from the
+    // same collection read: the rail counts Environments, the group counts previews.
+    const environmentRows = React.useMemo(() => rows.filter(row => !row.preview), [rows]);
+    const previewRows = React.useMemo(() => rows.filter(row => row.preview), [rows]);
+    const renderRow = (row: typeof rows[number]) => (
+      <CollectionNavigationRow
+        surface="page"
+        key={row.environmentId}
+        testID={`project-deployments.rail.row.${row.environmentId}`}
+        title={row.title}
+        titleQualifier={row.titleQualifier}
+        subtitle={row.subtitle}
+        subtitleLeading={row.subtitleLeading}
+        needsYou={Boolean(row.state?.tone)}
+        detail={row.detail}
+        icon={<DeploymentEnvironmentMark platform={row.platformMark} />}
+        selected={!props.drafting && props.selectedId === row.environmentId}
+        onPress={row.onPress}
+      />
+    );
     return (
       <CollectionList
         testID="project-deployments.rail"
         title={t('projects.deployments.environments')}
-        count={props.items.length}
+        count={environmentRows.length}
         headerAction={props.onAdd || props.onSettings ? <View style={{ flexDirection: 'row' }}>
           {props.onSettings ? <IconButton testID="project-deployments.rail.settings" iconName="sliders-horizontal" variant="plain"
             accessibilityLabel={t('projects.deployments.defaultsEditor.projectTitle')}
@@ -123,22 +145,12 @@ export const DeploymentEnvironmentCollection = React.memo(
             }
           />
         ) : null}
-        {rows.map((row) => (
-          <CollectionNavigationRow
-            surface="page"
-            key={row.environmentId}
-            testID={`project-deployments.rail.row.${row.environmentId}`}
-            title={row.title}
-            titleQualifier={row.titleQualifier}
-            subtitle={row.subtitle}
-            subtitleLeading={row.subtitleLeading}
-            needsYou={Boolean(row.state?.tone)}
-            detail={row.detail}
-            icon={<DeploymentEnvironmentMark platform={row.platformMark} />}
-            selected={!props.drafting && props.selectedId === row.environmentId}
-            onPress={row.onPress}
-          />
-        ))}
+        {environmentRows.map(renderRow)}
+        {previewRows.length > 0 ? <>
+          <CollectionListGroupLabel testID="project-deployments.rail.previews" title={t('projects.deployments.previewsTitle')}
+            count={previewRows.length} mark={<Icon name="eye" size={16} color={theme.colors.text.secondary} />} />
+          {previewRows.map(renderRow)}
+        </> : null}
         {props.preparation ? <View style={styles.preparation}>{props.preparation}</View> : null}
         {props.paging && (props.paging.hasPrevious || props.paging.hasNext) ? (
           <View style={styles.paging}>
@@ -228,6 +240,8 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
       // last, the state word that needs the person and the steps of a deploy at work or stopped.
       runsOn: platform ?? machine,
       platform: platform !== null,
+      /** A pull request's preview of a template Environment: listed under the rail's Previews group. */
+      preview: environment.purpose === 'preview',
       /** A platform Environment's identity for its mark, known from the link before the platform's name is read. */
       platformMark: runtimeTargetLink?.source.kind === 'plugin' ? { pluginId: runtimeTargetLink.source.contribution.pluginId,
         title: platform ?? t('projects.deployments.platformLink.platform') } satisfies DeploymentPlatformIdentity : null,
@@ -254,7 +268,10 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
         // Healthy says where it runs and, with room, what is live there (lab d1 `d1r`: the rail leaves that to the detail).
         // A live version titled like its Environment (a Store app, a Compose service) would only repeat the row's name.
         : liveVersionTitle && presentation === 'row' && !isSameDeploymentName(liveVersionTitle, title)
-          ? [machine, liveVersionTitle].filter(Boolean).join(' · ') : where,
+          ? [machine, liveVersionTitle].filter(Boolean).join(' · ')
+          // A preview names where it runs and the address it serves at (lab d5 `vps-1 · pr-142.preview…`).
+          : environment.purpose === 'preview' && liveAddress
+            ? [machine, formatDeploymentLiveAddress(liveAddress)].filter(Boolean).join(' · ') : where,
       leading: latest ? { state: latest, testID: `${testIDPrefix}.${environment.id}.state` } : null,
       detail: formatRelativeTimeShort(environment.updatedAtMs, nowMs),
     };
