@@ -64,6 +64,7 @@ import { initializeServerSentry } from '@/app/monitoring/sentry';
 import { resolveInferredPublicServerAccess } from '@/app/integrations/publicUrl/publicServerUrlInference';
 import { startRetentionWorker } from '@/app/retention/runtime/startRetentionWorker';
 import { startVoiceProviderIdentityBackfillWorker } from '@/app/voice/providerIdentityBackfill/worker';
+import { startSessionMessageContentByteUpgrade } from '@/app/session/messages/sessionMessageContentByteUpgrade';
 import { startEnterpriseIdentitySyncWorker } from '@/app/teams/directory/runtime/worker';
 import {
     assertPersonalHomeBootAdmission,
@@ -488,6 +489,9 @@ export async function startServer(flavor: ServerFlavor, options?: StartServerOpt
                     retentionWorker.stop();
                 });
             }
+            // One-time 0.2 → 0.3 SessionMessage byte encoding; serves both forms while it runs, then ends.
+            const sessionMessageContentByteUpgrade = startSessionMessageContentByteUpgrade();
+            onShutdown('session-message-content-byte-upgrade', sessionMessageContentByteUpgrade.stop);
             // Exact record counts can monopolize the intentionally single-connection
             // SQLite runtime. They are operational metrics, so only collect them when
             // the metrics endpoint is enabled and the database can serve concurrent work.
