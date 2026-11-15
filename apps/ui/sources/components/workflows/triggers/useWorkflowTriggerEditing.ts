@@ -22,6 +22,7 @@ import {
     projectWorkflowTriggerRows,
     restoreWorkflowTriggerSnapshot,
     saveWorkflowTriggerDraft,
+    type WorkflowTriggerAcknowledgedDefinitions,
     type WorkflowTriggerDraft,
     type WorkflowTriggerSnapshot,
     type WorkflowTriggerSnapshotIdentity,
@@ -84,10 +85,14 @@ export function useWorkflowTriggerEditing(params: Readonly<{
     }, [identity]);
     const stateRef = React.useRef({ identity, set, draft, projectTarget: params.projectTarget });
     stateRef.current = { identity, set, draft, projectTarget: params.projectTarget };
-    const rowIdentities = React.useMemo(() => ({
-        clients: new Map<string, WorkflowTriggerSnapshotIdentity>(),
-        saved: new Map<AutomationTriggerId, WorkflowTriggerSnapshotIdentity>(),
-    }), [identity]);
+    const rowIdentities = React.useMemo(() => {
+        const acknowledgedDefinitions: WorkflowTriggerAcknowledgedDefinitions = new Map();
+        return {
+            clients: new Map<string, WorkflowTriggerSnapshotIdentity>(),
+            saved: new Map<AutomationTriggerId, WorkflowTriggerSnapshotIdentity>(),
+            acknowledgedDefinitions,
+        };
+    }, [identity]);
     const identify = React.useCallback((clientId: string, triggerId?: AutomationTriggerId) => {
         const existing = (triggerId ? rowIdentities.saved.get(triggerId) : undefined) ?? rowIdentities.clients.get(clientId);
         if (existing) return existing;
@@ -98,8 +103,8 @@ export function useWorkflowTriggerEditing(params: Readonly<{
     }, [rowIdentities]);
     const captureSnapshot = React.useCallback((draftOverride?: WorkflowTriggerDraft) => {
         const latest = stateRef.current;
-        return captureWorkflowTriggerSnapshot(latest.set, draftOverride ?? latest.draft, identify);
-    }, [identify]);
+        return captureWorkflowTriggerSnapshot(latest.set, draftOverride ?? latest.draft, identify, rowIdentities.acknowledgedDefinitions);
+    }, [identify, rowIdentities]);
     const restoreSnapshot = React.useCallback((snapshot: WorkflowTriggerSnapshot) => {
         if (identityRef.current !== identity) return null;
         const pending = pendingSave.current;
@@ -108,12 +113,12 @@ export function useWorkflowTriggerEditing(params: Readonly<{
             throw new WorkflowTriggerSnapshotRestoreError();
         }
         const latest = stateRef.current;
-        const restored = restoreWorkflowTriggerSnapshot(latest.set, snapshot);
+        const restored = restoreWorkflowTriggerSnapshot(latest.set, snapshot, rowIdentities.acknowledgedDefinitions);
         setDraft(restored);
         // A decoded Action snapshot must retain the same row identities as native
         // history, so Save acknowledgements bind its later Undo/Redo to saved rows.
-        return captureWorkflowTriggerSnapshot(latest.set, restored, identify);
-    }, [identity, identify, setDraft]);
+        return captureWorkflowTriggerSnapshot(latest.set, restored, identify, rowIdentities.acknowledgedDefinitions);
+    }, [identity, identify, rowIdentities, setDraft]);
     const identitiesRef = React.useRef({ rowIdentities, identify });
     identitiesRef.current = { rowIdentities, identify };
 
@@ -155,9 +160,28 @@ export function useWorkflowTriggerEditing(params: Readonly<{
                     row.triggerId = triggerId;
                     capturedIdentities.rowIdentities.saved.set(triggerId, row);
                 }
+                const beforeDefinitions = capturedIdentities.rowIdentities.acknowledgedDefinitions;
+                let acknowledgedDefinitions = beforeDefinitions;
+                const savedId = edit.kind === 'add' ? triggerId : edit.kind === 'update' || edit.kind === 'remove' ? edit.triggerId : undefined;
+                const previousDefinition = savedId ? beforeDefinitions.get(savedId) : undefined;
+                const previousRow = beforeSet?.triggers.find((row) => row.id === savedId);
+                const retainedDefinition = previousDefinition?.revision === previousRow?.revision ? previousDefinition?.trigger : undefined;
+                const acceptedTrigger = edit.kind === 'add' || edit.kind === 'update'
+                    ? edit.trigger ?? retainedDefinition : undefined;
+                const savedRow = acknowledgedSet?.triggers.find((row) => row.id === savedId);
+                if (savedId && savedRow && acceptedTrigger?.kind === 'pluginEvent') {
+                    acknowledgedDefinitions = new Map(beforeDefinitions).set(savedId, { revision: savedRow.revision, trigger: acceptedTrigger });
+                } else if (savedId && !savedRow && beforeDefinitions.has(savedId)) {
+                    const remaining = new Map(beforeDefinitions);
+                    remaining.delete(savedId);
+                    acknowledgedDefinitions = remaining;
+                }
+                // Public Event rows omit their private definition. The admitted input is
+                // the comparison baseline; retain the prior one for pending history rebases.
+                capturedIdentities.rowIdentities.acknowledgedDefinitions = acknowledgedDefinitions;
                 setState((latest) => latest.identity === captured.identity
                     ? { ...latest, draft: restoreWorkflowTriggerSnapshot(acknowledgedSet,
-                        captureWorkflowTriggerSnapshot(beforeSet, latest.draft, capturedIdentities.identify)) }
+                        captureWorkflowTriggerSnapshot(beforeSet, latest.draft, capturedIdentities.identify, beforeDefinitions), acknowledgedDefinitions) }
                     : latest);
             },
         }).finally(() => { if (pendingSave.current === pending) pendingSave.current = null; });

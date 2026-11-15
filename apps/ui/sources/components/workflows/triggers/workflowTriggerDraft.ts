@@ -44,6 +44,12 @@ export type WorkflowTriggerSnapshot = Readonly<Omit<WorkflowDraftTriggerSnapshot
     rows: readonly Readonly<WorkflowDraftTriggerSnapshotV1['rows'][number]>[];
 }>;
 
+/** Private inputs accepted in this editor, tied to the saved row they describe. */
+export type WorkflowTriggerAcknowledgedDefinitions = ReadonlyMap<AutomationTriggerId, Readonly<{
+    revision: number;
+    trigger: AutomationTriggerDefinition;
+}>>;
+
 export class WorkflowTriggerSnapshotRestoreError extends Error {
     readonly code = 'workflow_trigger_restore_requires_setup';
 
@@ -53,7 +59,8 @@ export class WorkflowTriggerSnapshotRestoreError extends Error {
     }
 }
 
-function readSavedTriggerDefinition(saved: WorkflowTriggerSetV1['triggers'][number]): AutomationTriggerDefinitionInput | null {
+function readSavedTriggerDefinition(saved: WorkflowTriggerSetV1['triggers'][number],
+    acknowledged?: WorkflowTriggerAcknowledgedDefinitions): AutomationTriggerDefinitionInput | null {
     switch (saved.kind) {
         case 'schedule': return { kind: saved.kind, schedule: saved.schedule, enabled: saved.enabled };
         case 'sessionLifecycle': return { kind: saved.kind, sourceSessionId: saved.sourceSessionId, events: saved.events,
@@ -61,7 +68,10 @@ function readSavedTriggerDefinition(saved: WorkflowTriggerSetV1['triggers'][numb
         case 'runLifecycle': return { kind: saved.kind, source: saved.source, condition: saved.condition, enabled: saved.enabled };
         case 'prComment':
         case 'ciFailed': return { kind: saved.kind, pullRequest: saved.pullRequest, enabled: saved.enabled };
-        case 'pluginEvent': return null;
+        case 'pluginEvent': {
+            const accepted = acknowledged?.get(saved.id);
+            return accepted?.revision === saved.revision ? { ...accepted.trigger, enabled: saved.enabled } : null;
+        }
     }
 }
 
@@ -70,13 +80,14 @@ export function captureWorkflowTriggerSnapshot(
     set: WorkflowTriggerSetV1 | null,
     draft: WorkflowTriggerDraft,
     identify: (clientId: string, triggerId?: AutomationTriggerId) => WorkflowTriggerSnapshotIdentity,
+    acknowledged?: WorkflowTriggerAcknowledgedDefinitions,
 ): WorkflowTriggerSnapshot {
     const rows: WorkflowTriggerSnapshot['rows'][number][] = [];
     for (const saved of set?.triggers ?? []) {
         if (draft.removes.includes(saved.id)) continue;
         const update = draft.updates[saved.id];
         const enabled = update?.enabled ?? saved.enabled;
-        const trigger = update?.trigger ? { ...update.trigger, enabled } : readSavedTriggerDefinition(saved);
+        const trigger = update?.trigger ? { ...update.trigger, enabled } : readSavedTriggerDefinition(saved, acknowledged);
         rows.push({ identity: identify(`saved:${saved.id}`, saved.id), trigger: trigger ? { ...trigger, enabled } : null, enabled });
     }
     for (const add of draft.adds) rows.push({ identity: identify(add.clientId), trigger: add.trigger, enabled: add.trigger.enabled });
@@ -89,7 +100,8 @@ export function captureWorkflowTriggerSnapshot(
 }
 
 /** Rebase a history snapshot onto the current saved set after any successful writes. */
-export function restoreWorkflowTriggerSnapshot(set: WorkflowTriggerSetV1 | null, snapshot: WorkflowTriggerSnapshot): WorkflowTriggerDraft {
+export function restoreWorkflowTriggerSnapshot(set: WorkflowTriggerSetV1 | null, snapshot: WorkflowTriggerSnapshot,
+    acknowledged?: WorkflowTriggerAcknowledgedDefinitions): WorkflowTriggerDraft {
     const adds: WorkflowTriggerDraftAdd[] = [];
     const updates: Record<string, WorkflowTriggerDraftUpdate> = {};
     const retained = new Set<AutomationTriggerId>();
@@ -105,7 +117,7 @@ export function restoreWorkflowTriggerSnapshot(set: WorkflowTriggerSetV1 | null,
         if (row.enabled !== saved.enabled) update.enabled = row.enabled;
         if (row.trigger) {
             const { enabled: _enabled, ...trigger } = row.trigger;
-            const savedInput = readSavedTriggerDefinition(saved);
+            const savedInput = readSavedTriggerDefinition(saved, acknowledged);
             const { enabled: _savedEnabled, ...savedDefinition } = savedInput ?? { enabled: saved.enabled };
             if (!sameStrictJsonValue(trigger, savedDefinition)) update.trigger = trigger;
         }

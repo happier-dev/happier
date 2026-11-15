@@ -13,6 +13,9 @@ import { WorkflowDefinitionArtifactHeaderV1Schema,
     WorkflowDefinitionArtifactBodyV1Schema} from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { AutomationTriggerIdSchema} from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { AutomationTriggerDetailSchema} from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
+import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
+import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol/automations/automationEventJsonBoundsV1';
+import { WorkflowDraftTriggerSnapshotV1Schema } from '@happier-dev/protocol/actions/workflowAuthoringAction';
 import {
     type AutomationTriggerDefinitionInput} from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import { createDeferred, flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -63,6 +66,12 @@ function SessionTriggersSection(props: Omit<React.ComponentProps<typeof SessionT
 const definitionId = '00000000-0000-4000-8000-000000000001';
 const projectTarget = { machineId: 'm1', directory: '/repo' };
 const trigger = { kind: 'schedule', enabled: true, schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: null } } as const;
+const privateEvent = { kind: 'pluginEvent', enabled: true, eventRef: { pluginId: 'acme.monitor', localId: 'message' },
+    sourceInstanceId: 'conversation:42', sourceContractVersion: 1, sourceConfig: { conversation: '42' },
+    displayLabel: 'Private conversation', filter: null, maximumObservationAgeMs: null,
+    observationTransport: { kind: 'socket', watcherMaterializationRef: {
+        machineId: 'm1', pluginId: 'acme.monitor', materializationId: 'monitor-1',
+    } } } as const satisfies AutomationTriggerDefinitionInput;
 const set = WorkflowTriggerSetV1Schema.parse({ automationId: 'set-1', revision: 1, enabled: true, health: 'available', project: projectTarget,
     target: { kind: 'workflow', ref: definitionId }, triggers: [{ ...trigger, id: 't1', revision: 1, createdAt: 1, updatedAt: 1,
         nextRunAt: null, triggerDefinitionEnvelope: null }] });
@@ -95,12 +104,26 @@ function listRows() {
         ...row, triggers: row.triggers.map(({ triggerDefinitionEnvelope: _envelope, ...trigger }) => trigger),
     })), nextCursor: null });
 }
-function persistedTrigger(id: string, value: AutomationTriggerDefinitionInput, revision = 1): AutomationDefinitionDetail['triggers'][number] {
+function persistedTrigger(id: string, value: AutomationTriggerDefinitionInput, revision = 1, automationId = 'set-1'): AutomationDefinitionDetail['triggers'][number] {
     const base = { ...value, id: AutomationTriggerIdSchema.parse(id), revision, createdAt: 1, updatedAt: 1, triggerDefinitionEnvelope: null };
     if (value.kind === 'schedule') return AutomationTriggerDetailSchema.parse({ ...base, nextRunAt: null });
     if (value.kind === 'sessionLifecycle') return AutomationTriggerDetailSchema.parse({ ...base,
         remainingOccurrences: value.policy.kind === 'everyMatch' ? null : value.policy.kind === 'nextMatches' ? value.policy.count : 1,
         status: { state: 'waiting', runId: null } });
+    // The server boundary stores private Event input in its revision-bound envelope.
+    if (value.kind === 'pluginEvent' && 'sourceInstanceId' in value && value.observationTransport.kind !== 'durablePush') {
+        const sourceSelectorId = AutomationSourceSelectorIdV1Schema.parse('00000000-0000-4000-8000-000000000042');
+        return AutomationTriggerDetailSchema.parse({ id, revision, enabled: value.enabled, createdAt: 1, updatedAt: 1,
+            kind: value.kind, eventRef: value.eventRef, sourceSelectorId, sourceContractVersion: value.sourceContractVersion,
+            observation: { kind: value.observationTransport.kind,
+                watcher: { ...value.observationTransport.watcherMaterializationRef, machineInstallationId: 'observer-installation' } },
+            sourceStatus: null, sourceCatalogStatus: null,
+            triggerDefinitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
+                binding: { v: 1, automationId, triggerId: AutomationTriggerIdSchema.parse(id), triggerRevision: revision,
+                    triggerKind: value.kind, eventRef: value.eventRef, sourceSelectorId },
+                definition: { v: 1, sourceInstanceId: value.sourceInstanceId, sourceConfig: value.sourceConfig,
+                    displayLabel: value.displayLabel, filter: value.filter, maximumObservationAgeMs: value.maximumObservationAgeMs } })) });
+    }
     throw new Error('Creation fixture supports schedules and Session lifecycle only');
 }
 function installRow(id: string) {
@@ -122,11 +145,11 @@ function installRow(id: string) {
             executionRecipe: input.executionRecipe ?? current.executionRecipe, templateVersion: current.templateVersion + 1,
             assignments: input.assignments.map(value => ({ ...value, enabled: value.enabled ?? true, priority: value.priority ?? 0, updatedAt: 1 })),
             triggers: input.triggers.map(value => {
-                if (value.kind === 'new') return persistedTrigger(value.triggerId, value.trigger);
+                if (value.kind === 'new') return persistedTrigger(value.triggerId, value.trigger, 1, id);
                 const trigger = current.triggers.find(candidate => candidate.id === value.triggerId);
                 if (!trigger) throw new Error('Missing retained trigger');
                 const updated = value.trigger ? persistedTrigger(trigger.id,
-                    { ...value.trigger, enabled: value.enabled ?? trigger.enabled }, trigger.revision + 1) : trigger;
+                    { ...value.trigger, enabled: value.enabled ?? trigger.enabled }, trigger.revision + 1, id) : trigger;
                 return { ...updated, ...(value.enabled === undefined ? {} : { enabled: value.enabled }),
                     revision: trigger.revision + (value.trigger || value.enabled !== undefined ? 1 : 0) };
             }) });
@@ -224,7 +247,7 @@ beforeEach(async () => {
             targetType: null, existingSessionId: null, templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1,
             executionRecipe: input.executionRecipe, assignments: input.assignments?.map(value => ({ ...value,
                 enabled: value.enabled ?? true, priority: value.priority ?? 0, updatedAt: 1 })) ?? [],
-            triggers: input.triggers.map(value => persistedTrigger(value.triggerId, value.trigger)) });
+            triggers: input.triggers.map(value => persistedTrigger(value.triggerId, value.trigger, 1, input.automationId)) });
         rows = [...rows, row];
         installRow(row.id);
         return { body: row };
@@ -250,6 +273,93 @@ afterEach(async () => {
 });
 
 describe('workflow trigger editing lifetime', () => {
+    it('settles a private Event Save and preserves Undo/Redo before and after acknowledgement', async () => {
+        const hook = await renderHook(() => useWorkflowTriggerEditing({ definitionId, sourceKey: 'private-save', projectTarget }));
+        const before = hook.getCurrent().captureSnapshot();
+        const next = editWorkflowTriggerDraft(hook.getCurrent().draft, { kind: 'add', clientId: 'private-event', trigger: privateEvent });
+        const after = hook.getCurrent().captureSnapshot(next);
+        await act(async () => hook.getCurrent().setDraft(next));
+        await act(async () => { hook.getCurrent().restoreSnapshot(before); });
+        expect(hook.getCurrent().dirty).toBe(false);
+        await act(async () => { hook.getCurrent().restoreSnapshot(after); });
+        expect(hook.getCurrent().draft.adds).toMatchObject([{ trigger: privateEvent }]);
+        await act(async () => { expect(await hook.getCurrent().save(definitionId, () => true)).toBe('saved'); });
+        expect(rows[0]?.triggers).toMatchObject([{ kind: 'pluginEvent' }]);
+        expect(hook.getCurrent().dirty).toBe(false);
+        expect(hook.getCurrent().captureSnapshot().rows).toMatchObject([{ trigger: privateEvent }]);
+        await act(async () => { hook.getCurrent().restoreSnapshot(before); });
+        expect(hook.getCurrent().draft.removes).toEqual([rows[0]!.triggers[0]!.id]);
+        // Agent history uses the strict wire snapshot, without editor-only acknowledgement state.
+        await act(async () => { hook.getCurrent().restoreSnapshot(WorkflowDraftTriggerSnapshotV1Schema.parse(after)); });
+        expect(hook.getCurrent().dirty).toBe(false);
+        await act(async () => { expect(await hook.getCurrent().save(definitionId, () => true)).toBe('saved'); });
+        expect(writes).toHaveLength(1);
+    });
+
+    it('keeps a newer private Event edit during Save and rebases history after its later Save', async () => {
+        const deferred = createDeferred<void>();
+        beforeWrite = () => deferred.promise;
+        const hook = await renderHook(() => useWorkflowTriggerEditing({ definitionId, sourceKey: 'private-newer', projectTarget }));
+        const next = editWorkflowTriggerDraft(hook.getCurrent().draft, { kind: 'add', clientId: 'private-event', trigger: privateEvent });
+        const original = hook.getCurrent().captureSnapshot(next);
+        await act(async () => hook.getCurrent().setDraft(next));
+        let saving!: ReturnType<ReturnType<typeof hook.getCurrent>['save']>;
+        await act(async () => { saving = hook.getCurrent().save(definitionId, () => true); });
+        const changed = { ...privateEvent, maximumObservationAgeMs: 60_000 };
+        await act(async () => hook.getCurrent().setDraft(editWorkflowTriggerDraft(hook.getCurrent().draft,
+            { kind: 'add', clientId: 'private-event', trigger: changed })));
+        await act(async () => { deferred.resolve(); expect(await saving).toBe('saved'); });
+        const savedId = rows[0]!.triggers[0]!.id;
+        const { enabled: _enabled, ...changedDefinition } = changed;
+        expect(hook.getCurrent().draft.updates).toEqual({ [savedId]: { trigger: changedDefinition } });
+        expect(hook.getCurrent().dirty).toBe(true);
+        const changedSnapshot = hook.getCurrent().captureSnapshot();
+        await act(async () => { expect(await hook.getCurrent().save(definitionId, () => true)).toBe('saved'); });
+        expect(hook.getCurrent().dirty).toBe(false);
+        await act(async () => { hook.getCurrent().restoreSnapshot(original); });
+        const { enabled: _originalEnabled, ...originalDefinition } = privateEvent;
+        expect(hook.getCurrent().draft.updates).toEqual({ [savedId]: { trigger: originalDefinition } });
+        await act(async () => { hook.getCurrent().restoreSnapshot(changedSnapshot); });
+        expect(hook.getCurrent().dirty).toBe(false);
+        expect(writes).toHaveLength(2);
+    });
+
+    it('retries only the unacknowledged private Event after a partial Save', async () => {
+        const hook = await renderHook(() => useWorkflowTriggerEditing({ definitionId, sourceKey: 'private-retry', projectTarget }));
+        await act(async () => {
+            let next = editWorkflowTriggerDraft(hook.getCurrent().draft, { kind: 'add', clientId: 'first', trigger: privateEvent });
+            next = editWorkflowTriggerDraft(next, { kind: 'add', clientId: 'second', trigger: { ...privateEvent,
+                eventRef: { ...privateEvent.eventRef, localId: 'reaction' } } });
+            hook.getCurrent().setDraft(next);
+        });
+        beforeWrite = async () => { if (writes.length === 2) throw new Error('disconnected'); };
+        await act(async () => { expect(await hook.getCurrent().save(definitionId, () => true)).toBe('failed'); });
+        expect(hook.getCurrent().draft.adds.map(add => add.clientId)).toEqual(['second']);
+        expect(hook.getCurrent().draft.updates).toEqual({});
+        beforeWrite = undefined;
+        await act(async () => { expect(await hook.getCurrent().save(definitionId, () => true)).toBe('saved'); });
+        expect(hook.getCurrent().dirty).toBe(false);
+        expect(rows[0]?.triggers).toHaveLength(2);
+        expect(writes).toHaveLength(3);
+    });
+
+    it('settles an enabled-only private Event Save without recreating its accepted private edit', async () => {
+        const hook = await renderHook(() => useWorkflowTriggerEditing({ definitionId, sourceKey: 'private-enabled', projectTarget }));
+        await act(async () => hook.getCurrent().setDraft(editWorkflowTriggerDraft(hook.getCurrent().draft,
+            { kind: 'add', clientId: 'private-event', trigger: privateEvent })));
+        await act(async () => { expect(await hook.getCurrent().save(definitionId, () => true)).toBe('saved'); });
+        const enabled = hook.getCurrent().captureSnapshot();
+        const savedId = rows[0]!.triggers[0]!.id;
+        await act(async () => hook.getCurrent().setDraft(editWorkflowTriggerDraft(hook.getCurrent().draft,
+            { kind: 'update', triggerId: savedId, enabled: false })));
+        await act(async () => { expect(await hook.getCurrent().save(definitionId, () => true)).toBe('saved'); });
+        expect(hook.getCurrent().dirty).toBe(false);
+        expect(hook.getCurrent().captureSnapshot().rows).toMatchObject([{ trigger: { ...privateEvent, enabled: false } }]);
+        await act(async () => { hook.getCurrent().restoreSnapshot(enabled); });
+        expect(hook.getCurrent().draft.updates).toEqual({ [savedId]: { enabled: true } });
+        expect(writes).toHaveLength(2);
+    });
+
     it.each(['add', 'update'] as const)('acknowledges an accepted %s even when subsequent Workflow reads fail', async operation => {
         if (operation === 'update') seed(set);
         const hook = await renderHook(() => useWorkflowTriggerEditing({ definitionId, sourceKey: 'save-ack', projectTarget }));
