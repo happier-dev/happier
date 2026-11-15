@@ -55,7 +55,7 @@ export function PluginUiMenuPresentation({ input, controls }: Readonly<{ input: 
     ];
     // The menu's own search field, keyboard and filtering (the same match the package uses) serve a searchable menu.
     return <DropdownMenu open={input.open} onOpenChange={open => { if (!open) input.onRequestClose(); }}
-        trigger={null} items={items} search={menu.search !== undefined} matchTriggerWidth={input.width === 'anchor'}
+        trigger={null} items={items} search={menu.search !== undefined} searchControl={menu.search} matchTriggerWidth={input.width === 'anchor'}
         placement={input.placement} popoverAnchorRef={input.anchorRef} popoverFocusReturnRef={input.focusReturnRef}
         popoverFollowScrollRef={input.followScrollRef} popoverAccessibilityLabel={input.sheet?.title ?? menu.accessibilityLabel}
         popoverSheetHeader={input.sheet?.header} popoverSheetFooter={input.sheet?.footer}

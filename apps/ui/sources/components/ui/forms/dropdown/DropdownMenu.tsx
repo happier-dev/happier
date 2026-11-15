@@ -212,6 +212,8 @@ export type DropdownMenuProps = Readonly<{
     /** When true, shows a search field and enables keyboard navigation on web. */
     search?: boolean;
     searchPlaceholder?: string;
+    /** Optional directory-owned query; ordinary menus retain their local search. */
+    searchControl?: Parameters<typeof useSelectableMenu>[0]['searchControl'];
     /** What an empty menu says: a sentence, or a composed empty state; `null` draws nothing. */
     emptyLabel?: React.ReactNode;
     placement?: PopoverPlacement;
@@ -675,6 +677,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
         onCreateItem: props.onCreateItem ?? null,
         allowEmptySelection: props.allowEmptySelection ?? false,
         enableTypeahead: props.search !== true,
+        searchControl: props.searchControl,
         onKeyboardSelectionChange: followKeyboardSelection,
         createItemFactory: createItemDisplay
             ? ((query) => {

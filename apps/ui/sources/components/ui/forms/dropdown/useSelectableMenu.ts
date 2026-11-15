@@ -53,8 +53,12 @@ export function useSelectableMenu(params: {
     open?: boolean;
     /** Titles for the named category keys; other categories stay untitled sections. */
     categoryTitles?: Readonly<Record<string, string>>;
+    /** The caller owns the query when searching a directory beyond the loaded rows. */
+    searchControl?: Readonly<{ value: string; onValueChange(value: string): void }>;
 }) {
-    const [searchQuery, setSearchQuery] = useState('');
+    const [localSearchQuery, setLocalSearchQuery] = useState('');
+    const searchQuery = params.searchControl?.value ?? localSearchQuery;
+    const onSearchChange = params.searchControl?.onValueChange;
     const inputRef = useRef<TextInput>(null);
 
     const allItemsRaw = useMemo(() => params.items, [params.items]);
@@ -123,7 +127,10 @@ export function useSelectableMenu(params: {
         getItemRowGroup,
     });
 
-    const handleSearchChange = useCallback((text: string) => setSearchQuery(text), []);
+    const handleSearchChange = useCallback((text: string) => {
+        if (onSearchChange) onSearchChange(text);
+        else setLocalSearchQuery(text);
+    }, [onSearchChange]);
 
     return {
         searchQuery,

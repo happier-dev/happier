@@ -157,7 +157,11 @@ function SubmenuHarness({ component: MenuComponent = Menu, onSelect }: Readonly<
 const PLAIN_MENU_ITEMS = ['Pin', 'Open in new tab', 'Open to the right', 'Open below', 'Move', 'Mention in composer',
     'Copy link', 'Rename', 'Select'].map(label => ({ id: label === 'Pin' ? 'pin' : label === 'Select' ? 'select' : label, label }));
 
-function PlainMenuHarness({ component: MenuComponent, onSelect }: Readonly<{ component: typeof Menu; onSelect: (id: string) => void }>) {
+function PlainMenuHarness({ component: MenuComponent, onSelect, searchItems }: Readonly<{
+    component: typeof Menu;
+    onSelect: (id: string) => void;
+    searchItems?: (query: string) => typeof PLAIN_MENU_ITEMS;
+}>) {
     const [open, setOpen] = React.useState(false);
     const [query, setQuery] = React.useState('');
     const context = React.useMemo(() => createSurfaceContext(), []);
@@ -165,7 +169,7 @@ function PlainMenuHarness({ component: MenuComponent, onSelect }: Readonly<{ com
     return <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
         <PluginUiPresentationHostProviderInternal host={host}>
             <MenuComponent open={open} onOpenChange={setOpen} trigger="More" triggerAccessibilityLabel="More actions"
-                testID="plugin-plain" items={PLAIN_MENU_ITEMS}
+                testID="plugin-plain" items={searchItems?.(query) ?? PLAIN_MENU_ITEMS}
                 search={{ value: query, onValueChange: setQuery }} onSelect={onSelect} />
         </PluginUiPresentationHostProviderInternal>
     </PluginUiProvider>;
@@ -316,6 +320,24 @@ describe('plugin Dropdown through the private presentation host (real RNW)', () 
             await act(async () => {});
             expect(onSelect).toHaveBeenCalledWith('select', expect.anything());
         });
+    });
+
+    it('lets the public menu owner supply search results absent from its loaded rows', async () => {
+        const onSelect = vi.fn();
+        const trigger = await renderDropdown(<PlainMenuHarness component={Menu} onSelect={onSelect}
+            searchItems={query => query === 'Remote' ? [{ id: 'remote', label: 'Remote team' }] : PLAIN_MENU_ITEMS} />, 'plugin-plain');
+        await act(async () => { dispatchPointerPress(trigger); await waitForPopoverCommit(); });
+        await vi.waitFor(() => expect(document.querySelector('[data-testid="dropdown-option-pin"]')).not.toBeNull());
+        expect(document.querySelector('[data-testid="dropdown-option-remote"]')).toBeNull();
+        const search = document.querySelector<HTMLInputElement>('input[placeholder="Search"]');
+        expect(search).not.toBeNull();
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(search, 'Remote');
+            search?.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        await vi.waitFor(() => expect(document.querySelector('[data-testid="dropdown-option-remote"]')).not.toBeNull());
+        await act(async () => { document.querySelector<HTMLElement>('[data-testid="dropdown-option-remote"]')!.click(); });
+        await vi.waitFor(() => expect(onSelect).toHaveBeenCalledWith('remote', expect.anything()));
     });
 
     it('pushes public submenu choices inside one phone menu and Back returns to the parent', async () => {
