@@ -5,10 +5,33 @@ import { createNativeCredentialComposerFixture } from './nativeCredentialCompose
 import { PluginConnectedAccountAuthenticationV2Schema } from '@happier-dev/protocol';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
+import { PluginError } from '@happier-dev/plugin-sdk';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('admitted restore native snapshot', () => {
+    it.each([true, false])('retains only the closed native snapshot cause (typed=%s)', async typed => {
+        const nativeCause = { grpcStatusCode: 14 };
+        const fixture = await createNativeCredentialComposerFixture({ nativeOptions: { snapshot: true,
+            onNativeRole: role => {
+                if (role !== 'snapshot') return;
+                if (typed) throw new PluginError({ code: 'native_snapshot_refused',
+                    details: { nativeCause, privateOutput: 'PRIVATE_SNAPSHOT_OUTPUT' } });
+                throw new Error('PRIVATE_SNAPSHOT_OUTPUT');
+            },
+        } });
+        try {
+            const driver = createManagedMachineAcquisitionDriver(fixture.driverInput);
+            const result = await driver.snapshotAdmitted({ machine: fixture.input.machine, label: 'Before restore', reason: 'Database restore',
+                options: { requestId: 'restore-operation', context: {
+                    operationAcceptance: { operationId: 'restore-operation', actionId: 'deployments.backups.restore', accept() {} },
+                } } });
+            expect(result).toMatchObject({ kind: 'unknown' });
+            if (typed) expect(result).toEqual({ kind: 'unknown', code: 'native_snapshot_refused', nativeCause });
+            else expect(result).not.toHaveProperty('nativeCause');
+            expect(JSON.stringify(result)).not.toContain('PRIVATE_SNAPSHOT_OUTPUT');
+        } finally { await fixture.cleanup(); }
+    });
     it('reports an absent optional role without native effects', async () => {
         const fixture = await createNativeCredentialComposerFixture();
         try {
@@ -28,7 +51,7 @@ describe('admitted restore native snapshot', () => {
         const owner = createConnectedAccountPurposeBindingOwner({ credentialOwnerAccountId: 'controller-account',
             store: { read: async () => ({ v: 1, bindings: [] }), update: unavailable, subscribe: () => ({ dispose() {} }) },
             selectTarget: unavailable,
-            resolveTarget: async target => target.kind === 'account' ? { account: target.account } : null,
+            resolveTarget: async target => target.kind === 'account' ? { displayName: 'Cloud account', account: target.account } : null,
             materializeAccount: async ({ account }) => ({ kind: 'environment', env: { TOKEN: account.accountId } }),
             resolveCredentialConfigurationRevision: async () => 'cloud-configuration',
             projectTargetAccounts: unavailable, assertTargetAccountMaterializable: unavailable });

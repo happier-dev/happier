@@ -622,7 +622,10 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 }));
             } catch (error) {
                 options.signal?.throwIfAborted();
-                return { kind: 'unknown', code: error instanceof ManagedMachineControllerError ? error.code : 'native_snapshot_outcome_unknown' };
+                const nativeCause = error instanceof ManagedMachineControllerError && error.details?.kind === 'managedNative'
+                    ? error.details.nativeCause : undefined;
+                return { kind: 'unknown', code: error instanceof ManagedMachineControllerError ? error.code : 'native_snapshot_outcome_unknown',
+                    ...(nativeCause ? { nativeCause } : {}) };
             }
         },
         async supportsNativeLifetimeRenewal(machine: ManagedMachineV1,
