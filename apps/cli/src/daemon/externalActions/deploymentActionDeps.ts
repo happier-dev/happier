@@ -5,7 +5,7 @@ import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/re
 type DeploymentDeps = ReturnType<typeof createDaemonDeploymentActionDeps>;
 type DaemonDeploymentDeps = Pick<DeploymentDeps,
   | 'deploymentAction' | 'deploymentRestore' | 'deploymentBackupAction' | 'projectReadinessRead'
-  | 'deploymentTemplateInstantiate' | 'prepareDeploymentTemplateInstantiation' | 'resolveEnvironmentApprovalScope'
+  | 'deploymentTemplateInstantiate' | 'deploymentMoveToRepository' | 'prepareDeploymentTemplateInstantiation' | 'resolveEnvironmentApprovalScope'
   | 'prepareDeploymentAction' | 'prepareDeploymentTeardown' | 'prepareHostReviewedChildren'
   | 'readSetupAppArtifact' | 'readPendingDeploymentRecovery'>
   & Required<Pick<ActionExecutorDeps, 'prepareDeploymentEnvironmentCreate'>>;
@@ -39,6 +39,7 @@ export function createRequesterBoundDeploymentActionDeps(
     projectReadinessRead: async (...args) => (await forContext(args[1])).projectReadinessRead(...args),
     prepareDeploymentEnvironmentCreate: async request => (await forContext(request.context)).prepareDeploymentEnvironmentCreate(request),
     deploymentTemplateInstantiate: async (...args) => (await forContext(args[1])).deploymentTemplateInstantiate(...args),
+    deploymentMoveToRepository: async (...args) => (await forContext(args[1])).deploymentMoveToRepository(...args),
     prepareDeploymentTemplateInstantiation: async request => (await forContext(request.context)).prepareDeploymentTemplateInstantiation(request),
     resolveEnvironmentApprovalScope: async request => (await forContext(request.context)).resolveEnvironmentApprovalScope!(request),
     prepareDeploymentAction: async request => (await forContext(request.context)).prepareDeploymentAction(request),
