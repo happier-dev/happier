@@ -81,6 +81,29 @@ it.each(['personal', 'shared'] as const)('saves a fresh %s secret through the ed
     expect(alert).not.toHaveBeenCalled();
 });
 
+it('explains a refused personal creation and keeps its draft available for retry', async () => {
+    let refuse = true;
+    home = await createSecretSettingsTestHarness({ settings: settingsParse({ secrets: [] }), handleRequest: async (path, init) => {
+        if (path !== '/v1/account/saved-secrets/resources' || init?.method !== 'POST' || !refuse) return null;
+        return Response.json({ error: 'conflict' }, { status: 409 });
+    } });
+    const { SecretsSettingsScreen } = await import('./SecretsSettingsScreen');
+    const screen = await renderScreen(<SecretsSettingsScreen />);
+    await screen.pressByTestIdAsync('saved-secret-add');
+    await act(async () => {
+        screen.changeTextByTestId('saved-secret-create-name', 'Retry credential');
+        screen.changeTextByTestId('saved-secret-create-value', 'synthetic-retry-fixture');
+    });
+    await screen.pressByTestIdAsync('saved-secret-create-submit');
+    await vi.waitFor(() => expect(screen.findByTestId('saved-secret-create-failure')).not.toBeNull());
+    expect(screen.findByTestId('saved-secret-create-value')?.props.value).toBe('synthetic-retry-fixture');
+    expect(home.creations).toHaveLength(0);
+    refuse = false;
+    await screen.pressByTestIdAsync('saved-secret-create-submit');
+    await vi.waitFor(() => expect(home?.creations).toHaveLength(1));
+    await vi.waitFor(() => expect(screen.findByTestId('saved-secret-create-editor')).toBeNull());
+});
+
 it('renames and replaces an imported private resource directly, but confirms deletion once', async () => {
     const secret = { id: 'personal-inline', name: 'Personal key', kind: 'apiKey' as const,
         encryptedValue: { _isSecretValue: true as const, value: 'original-personal-secret' }, createdAt: 1, updatedAt: 1 };

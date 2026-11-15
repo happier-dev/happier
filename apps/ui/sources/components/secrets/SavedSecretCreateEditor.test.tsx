@@ -310,7 +310,7 @@ describe('SavedSecretCreateEditor', () => {
 
         expect(onCreatePersonal).toHaveBeenCalledWith(
             { name: 'Local key', value: 'local-value' },
-            { onApprovalPending: requestApproval },
+            expect.objectContaining({ onApprovalPending: requestApproval }),
         );
         expect(createWrites()).toHaveLength(0);
         expect(onCreated).toHaveBeenCalledWith('personal-new', 'personal');
@@ -405,7 +405,7 @@ describe('SavedSecretCreateEditor', () => {
         expect(onCreatePersonal).toHaveBeenCalledWith(
             { name: 'Deploy token', source: { kind: 'external', contribution,
                 account: 'my-team.1password.com', reference: 'op://Deploy/Token/credential' } },
-            { onApprovalPending: requestApproval },
+            expect.objectContaining({ onApprovalPending: requestApproval }),
         );
         expect(createWrites()).toHaveLength(0);
         expect(onCreated).toHaveBeenCalledWith('personal-linked', 'personal');

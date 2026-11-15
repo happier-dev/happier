@@ -164,12 +164,17 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
                 ? { name: trimmedName, source: { kind: 'external', contribution: linkedSource.contribution,
                     account: linkAccount.trim(), reference: linkReference.trim() } }
                 : { name: trimmedName, value };
-            const createdId = await create(input, { onApprovalPending: props.requestApproval });
+            let approvalDeclined = false;
+            const createdId = await create(input, {
+                onApprovalPending: props.requestApproval,
+                onApprovalDeclined: () => { approvalDeclined = true; },
+            });
             if (currentScopeKey.current !== scopeKey) return;
             if (createdId) {
                 await finishCreated(createdId, scopeKey, 'personal');
                 return;
             }
+            if (!approvalDeclined) setFailure(t('secrets.catalog.operationFailed'));
         } catch {
             if (currentScopeKey.current !== scopeKey) return;
             setFailure(t('secrets.catalog.operationFailed'));
