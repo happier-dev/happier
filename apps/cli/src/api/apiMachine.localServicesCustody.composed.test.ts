@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { readFile, writeFile } from 'node:fs/promises';
 import axios from 'axios';
 import { afterEach, expect, it, vi } from 'vitest';
-import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { FeaturesResponseSchema, DeploymentEnvironmentListResultV1Schema } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { getActionSpec } from '@happier-dev/protocol/actions';
 import { normalizeActionsSettingsV1, setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
@@ -26,6 +26,13 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import nacl from 'tweetnacl';
+import { openExternalActionResponseV2, sealExternalActionRequestV2 } from '@happier-dev/protocol/actions';
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
+import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
+import type { ExternalActionRequesterHttpProjectionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 
 const boundary = vi.hoisted(() => ({
     control: null as Parameters<typeof startDaemonControlServer>[0] | null,
@@ -43,6 +50,85 @@ vi.mock('../../../server/sources/storage/db', () => ({
     getDbProviderFromEnv: () => 'postgres',
 }));
 afterEach(() => { boundary.control = null; boundary.database = null; vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+it.each((['plain', 'e2ee'] as const).flatMap(mode => (['http', 'socket'] as const).map(transport => ({ mode, transport }))))(
+    'retains the $mode shared inventory Action owner through installed Resource READ and OPEN ($transport)', async ({ mode, transport }) => {
+    const home = 'srv_shared_inventory_resource';
+    const features = FeaturesResponseSchema.parse({ features: { localServices: { enabled: true,
+        inventory: { enabled: true }, managed: { enabled: true } }, plugins: { enabled: true, ui: { enabled: true } } }, capabilities: {} });
+    const h = await createInstalledProjectAgentDaemonFixture(() => boundary.control, undefined, false, undefined, undefined, {
+        serverId: home, homeServerIdentityId: home, ordinaryAccountSession: true, externalActionAccountId: 'requester', agentIsolationEnabled: false,
+        resolveServerFeaturesSnapshot: async () => ({ status: 'ready', features }),
+        resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: home, machineId: 'machine' }),
+    });
+    try {
+        const getHome = vi.mocked(axios.get).getMockImplementation();
+        if (!getHome) throw new Error('Missing installed Home HTTP boundary');
+        vi.mocked(axios.get).mockImplementation(async (url, options) => {
+            if (new URL(String(url)).pathname === '/v1/deployments/environments') return { status: 200,
+                data: DeploymentEnvironmentListResultV1Schema.parse({ ok: true, items: [], nextCursor: null,
+                    coverage: 'complete', runtimeTargetLinks: [] }) };
+            return getHome(url, options);
+        });
+        const owner = h.daemon.externalActionIngressOwner;
+        if (!owner) throw new Error('Actual daemon did not produce its Account Action owner');
+        const target = { kind: 'machine' as const, machineId: 'machine' };
+        const input = { serverId: home, machineId: target.machineId };
+        const resource = { hostRead: 'machines.services.list' as const, input };
+        const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(27) };
+        const principal = { accountId: 'grantee', authentication: { kind: 'account' as const, tokenEpoch: 0 }, authority: 'present_user' as const };
+        const admission = { actorAccountId: principal.accountId, custodianAccountId: 'requester', machineId: target.machineId,
+            installationId: h.f.installation.installationId, role: 'manage' as const, encryptionMode: 'plain' as const };
+        const invoke = async (method?: typeof RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ | typeof RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN) => {
+            const binding = { actionId: 'machines.services.list' as const, accountId: principal.accountId,
+                serverIdentityId: home, authentication: principal.authentication, target, requestId: `shared-inventory-${method ?? 'finite'}` };
+            const operands = method ? { resourceContinuation: { method, params: { machineId: target.machineId, resource,
+                ...(method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN ? { subscriptionId: 'shared-inventory-watch' } : {}) } } } : {};
+            const envelope = mode === 'e2ee' ? sealExternalActionRequestV2({
+                projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, input, material,
+                randomBytes: nacl.randomBytes, ...operands,
+            }) : { v: 1 as const, requestId: binding.requestId, target, input, ...operands };
+            const authorization = sealManagedControllerActionCodecV1({
+                authorization: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'verified-shared-inventory-root', binding: {
+                    ...binding, custodianAccountId: admission.custodianAccountId, machineId: target.machineId,
+                    installationId: admission.installationId, admittedMachineRole: admission.role, accountEncryptionMode: mode,
+                    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                } }), material, installationPublicKey: Buffer.from(h.f.installation.publicKey, 'base64url'), randomBytes: nacl.randomBytes,
+            });
+            // Home signature/currentness is the transport boundary. It carries
+            // no requester credential; startup, crypto, RPC and Actions stay real.
+            Object.defineProperty(authorization, 'requesterHttpProjection', { value: {
+                accountId: principal.accountId, serverId: home, serverIdentityId: home, accountEncryptionMode: mode,
+                serverHttpBaseUrl: 'https://session-home.test',
+                isCurrent: async () => true,
+                createRequestHeaders: async () => ({}),
+            } satisfies ExternalActionRequesterHttpProjectionV1 });
+            const result = await executeExternalAction({ actionId: binding.actionId, envelope, principal, executionAuthorization: authorization,
+                currentMachineId: target.machineId, currentAccountId: admission.custodianAccountId, currentInstallationId: admission.installationId,
+                currentServerId: home, surface: 'ui', signal: h.signal, verifyExecutionAuthorization: async () => true,
+                ...(transport === 'socket' ? { machineAdmission: admission, verifyMachineAdmissionCurrent: async () => true } : {}),
+                externalActionMachineRequestPrivateKey: Buffer.from(h.f.installation.privateKey, 'base64url'),
+                executor: owner.executor, resolveTarget: createDaemonExternalActionTargetResolver({ credentials: h.f.bootstrap.credentials }),
+                invokeResource: (resourceMethod, request, context) => h.machine.invokeLocalMachineAction(resourceMethod, request, {
+                    signal: context.signal, localActionContext: context.localActionContext, rpcContext: context,
+                }),
+            });
+            return result.kind !== 'response' ? result : envelope.v === 2
+                ? openExternalActionResponseV2({ envelope: result.response, binding, material, request: envelope })
+                : result.response.v === 1 ? result.response.execution : null;
+        };
+        const finite = await invoke();
+        expect(finite, JSON.stringify(finite)).toMatchObject({ ok: true, result: { kind: 'snapshot' } });
+        const read = await invoke(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ);
+        const open = await invoke(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN);
+        expect([read, open], JSON.stringify({ read, open })).toMatchObject([
+            { ok: true, result: { ok: true } }, { ok: true, result: { ok: true } },
+        ]);
+    } finally {
+        await h.plugin.registry.uiResourceWatches?.close({ hostAccountId: 'grantee', subscriptionId: 'shared-inventory-watch' });
+        await h.machine.shutdown();
+    }
+});
 
 it('starts and restarts a native owner Service through Home admission and real daemon routes without member effects', async () => {
     const home = 'srv_machine_service_owner';

@@ -413,6 +413,21 @@ describe('retained Environment service recovery on first use', () => {
                 failureCause: expect.objectContaining({ errorCode: 'ENOENT' }),
             })] });
             expect(fixture.readHandle()).toBeNull();
+            const unavailableDemand = new AbortController();
+            let unavailableSubscription: { dispose(): void | Promise<void> } | undefined;
+            try {
+                const unavailable = await fixture.runtime.execute({ actionId: 'machines.services.list',
+                    input: { serverId: fixture.readInput.serverId, machineId: fixture.readInput.machineId },
+                    context: { ...fixture.context, machineServicesListResource: { observation: {
+                        signal: unavailableDemand.signal, invalidate() {}, retire() { unavailableDemand.abort(); },
+                        accept(subscription) { unavailableSubscription = subscription; },
+                    } } },
+                    canReadEnvironments: async ids => new Set(ids),
+                    observeEnvironmentAccessChanges: async () => ({ ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' }),
+                });
+                expect(unavailable, 'a failed-only Environment row still requires the access observer')
+                    .toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
+            } finally { unavailableDemand.abort(); await unavailableSubscription?.dispose(); }
             if (!publishAccess) throw new Error('Expected admitted Account access subscription');
             publishAccess({ kind: 'changes', environmentIds: ['unrelated-environment'] });
             expect(demand.signal.aborted).toBe(false);

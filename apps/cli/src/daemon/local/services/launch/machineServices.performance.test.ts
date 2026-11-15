@@ -30,6 +30,58 @@ import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSet
 import type { RpcHandler } from '@/api/rpc/types';
 
 describe('Machine Services exact demand cost', () => {
+    it('observes native inventory without Account credentials and retires before Environment disclosure needs observation', async () => {
+        const fixture = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController, runtimeOptions: { pluginIds: [] } });
+        const target = { serverId: 'home', machineId: 'machine' };
+        const metadata: MachineMetadataFieldReadV1 = { status: 'ready', metadataVersion: 1,
+            metadata: { serviceWatchesV1: { v: 1, watches: [] } } };
+        const runtime = createMachineServicesRuntime({ target, readMetadata: () => metadata,
+            captureMetadataPort() { throw new Error('Observation cannot write metadata'); } });
+        const demand = new AbortController();
+        let held: { dispose(): void | Promise<void> } | undefined;
+        let retired = 0;
+        let context: ActionExecutorContext = { surface: 'cli', authority: 'present_user', machineServicesListResource: {
+            observation: { signal: demand.signal, invalidate() {}, retire() { retired++; demand.abort(); },
+                accept(subscription) { held = subscription; } },
+        } };
+        const list = (input: typeof target & { environmentId?: string } = target) => runtime.execute({ actionId: 'machines.services.list', input, context,
+            canReadEnvironments: async ids => new Set(ids),
+            // The credentialed Account feed is unavailable; the native producer and disclosure remain real.
+            observeEnvironmentAccessChanges: async () => ({ ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' }),
+        });
+        try {
+            expect(await list({ ...target, environmentId: 'not-present' }), 'an explicit Environment observation cannot fall back to native inventory')
+                .toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
+            expect(await list()).toMatchObject({ kind: 'snapshot', services: [] });
+            const document = 'services:\n  web:\n    image: example/web\n';
+            const materializer = createDeploymentSourceMaterializationPort({ registry: createScmBackendRegistry([]), async admit() {
+                return { environmentId: 'environment', environmentInstanceId: 'instance', deploymentId: 'deployment',
+                    machineId: target.machineId, installationId: 'installation', deploymentRoot: join(fixture.happyHomeDir, 'deployments'),
+                    artifactDirectory: join(fixture.happyHomeDir, 'artifacts'), definition: { kind: 'stored' as const, contentRevision: 1,
+                        document, composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`,
+                        profiles: [], services: ['web'] }, async assertCurrent() {} };
+            } });
+            const release = await materializer.materialize({ environmentId: 'environment', deploymentId: 'deployment' });
+            await release.commit();
+            await fixture.registry.projectManagedServices.superviseProject({ kind: 'environment', ...target,
+                environmentId: release.environmentId, environmentInstanceId: release.environmentInstanceId, deploymentId: release.deploymentId,
+                release, composeService: 'web', serviceId: 'instance/web', specIdentity: 'web', isCurrent: () => true,
+                releaseObservation: async () => {}, nativeEffects: { keys: [] }, processSpec: { mode: { kind: 'native', observationOnly: true,
+                    builtinLifecycle: { async inspect() { return { phase: 'running', readiness: 'not_reported', endpoint: null }; },
+                        async stop() { throw new Error('Observation cannot stop native work'); } } } },
+            });
+            await vi.waitFor(() => expect(retired).toBe(1));
+            await held?.dispose();
+            const nextDemand = new AbortController();
+            context = { ...context, machineServicesListResource: { observation: { signal: nextDemand.signal, invalidate() {}, retire() { nextDemand.abort(); },
+                accept(subscription) { held = subscription; } } } };
+            expect(await list(), 'an Environment row still needs its live access observer').toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
+            nextDemand.abort();
+        } finally {
+            demand.abort(); await held?.dispose(); await runtime.dispose(); await fixture.dispose();
+        }
+    });
+
     it('opens a cold Machine Resource quietly and consumes changed rows and intent without speculative reads or accounting', async () => {
         const fixture = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController, runtimeOptions: { pluginIds: [] } });
         const target = { serverId: 'home', machineId: 'machine' };

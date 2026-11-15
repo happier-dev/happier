@@ -860,11 +860,12 @@ async function executeExternalActionRequest(input: Readonly<{
   const originalRootCurrentness = originalAuthorization
     ? async () => !input.signal?.aborted && input.isInstallationCurrent?.() !== false
     : undefined;
-  if (admittedAuthorization && requesterContext) {
-    // HTTP projection is immutable. Preserve its private Account ports while
-    // carrying the existing exact executor; no caller-supplied factory is read.
+  if (admittedAuthorization && (requesterContext || managedControllerCodec && logsOperands.resourceContinuation)) {
+    // Resources retain the finite Action's selected owner, including native
+    // codecs without Account credentials, rather than selecting a launcher factory.
+    // HTTP projection is immutable; preserve its private ports on the local carrier.
     admittedAuthorization = Object.defineProperties({ ...admittedAuthorization }, Object.getOwnPropertyDescriptors(admittedAuthorization));
-    Object.defineProperty(admittedAuthorization, 'requesterAccountExecutor', { value: requesterContext.executor, enumerable: false });
+    Object.defineProperty(admittedAuthorization, 'requesterAccountExecutor', { value: requesterContext?.executor ?? input.executor, enumerable: false });
   }
   if (admittedAuthorization && 'credentialId' in admittedAuthorization.binding
     && (hasProtectedTokenContentAccess || admittedAuthorization.binding.actionId === 'deployments.deploy')) {

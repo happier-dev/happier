@@ -7236,6 +7236,12 @@ list. Ordinary transport/runtime failure ends with `unavailable` diagnostics
 and preserves admitted last-good rows as stale; actual read-authority retirement
 uses the existing withdrawal channel. A successful empty access set or an
 explicit Environment read denial removes those unreadable Environment rows.
+When the Account Environment observer is unavailable, an unscoped native-only
+snapshot may retain its native producer watch. An explicit Environment selection
+or any disclosed Environment row, including a failed-restoration row, still
+requires that observer. A matching Environment producer change retires the
+native-only watch before it can continue as an Environment observation; the
+next read applies the same admitted disclosure rules.
 These are development-source contracts; source tests do not prove a loaded journey.
 
 Native Resource hooks and hosted bridge subscriptions retain the same read,

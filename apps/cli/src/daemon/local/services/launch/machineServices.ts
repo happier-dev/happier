@@ -358,6 +358,7 @@ export function createMachineServicesRuntime(input: Readonly<{
                 const preflight = 'preflight' in parsed.data ? parsed.data.preflight : undefined;
                 const selection = { environmentId, composeService, preflight };
                 let projection: Awaited<ReturnType<typeof projectServices>> | undefined;
+                let environmentObservationUnavailable: ActionExecuteFailure | undefined;
                 const matchesPreflight = createMachineServicePreflightMatcher(preflight);
                 const observation = request.actionId === 'machines.services.list' ? request.context.machineServicesListResource?.observation : undefined;
                 if (observation) {
@@ -392,6 +393,12 @@ export function createMachineServicesRuntime(input: Readonly<{
                             if ((selected || wasSelected)
                                 && (target.serverId === change.serverId
                                     || homeServerIdentityId !== null && homeServerIdentityId === change.homeServerIdentityId)) {
+                                // Native-only demand has no Environment disclosure to retain.
+                                // A new Environment fact requires a fresh observation admission.
+                                if (environmentObservationUnavailable && change.handle.kind === 'environment') {
+                                    observation.retire();
+                                    return;
+                                }
                                 // The transport needs a digest hint, not another
                                 // list snapshot: hash only this producer's change.
                                 invalidate(`sha256:${revision([change.handle.serviceId, change.row])}`);
@@ -426,14 +433,27 @@ export function createMachineServicesRuntime(input: Readonly<{
                                 }
                             });
                             establishing = false;
-                            if ('errorCode' in access) { await dispose(); return access; }
-                            accessSubscription = access;
-                            if (released) await access.dispose();
+                            if ('errorCode' in access) {
+                                if (access.errorCode !== 'admission_unavailable' || environmentId) { await dispose(); return access; }
+                                environmentObservationUnavailable = access;
+                            } else {
+                                accessSubscription = access;
+                                if (released) await access.dispose();
+                            }
+                        }
+                        if (environmentObservationUnavailable) {
+                            // Disclosure still belongs to the canonical projection, including
+                            // failed-only Environment rows without a live native handle.
+                            projection = await projectServices(request, serviceId, selection);
+                            if (projection.rows.some(row => row.environmentId !== undefined)) {
+                                await dispose();
+                                return environmentObservationUnavailable;
+                            }
                         }
                         if (observation.signal.aborted) { await dispose(); return machineServiceAdmissionFailure('service.observation.closed'); }
                     } finally { await lease.release(); }
                 }
-                projection = await projectServices(request, serviceId, selection);
+                projection ??= await projectServices(request, serviceId, selection);
                 if (request.actionId === 'machines.services.list') result = { kind: 'snapshot', services: projection.rows,
                     ...(preflight ? { coverage: 'managed_services' as const } : {}) };
                 else {
