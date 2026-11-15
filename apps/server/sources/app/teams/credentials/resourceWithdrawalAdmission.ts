@@ -3,6 +3,10 @@ import { acquireTeamMutationLockInTx } from "../actorContext";
 import { acquireTeamMutationAccountAdmissionInTx } from "../memberships/sessionAccessEffects";
 
 /** Admit withdrawal's complete publication audience before Team/resource locks.
+ * Serializing (not exclusive): it orders withdrawal against credential consumers,
+ * which admit at the same strength, while ordinary KEY SHARE writers of these
+ * wide Team/Home-admin audiences cannot starve it. The resource row lock still
+ * excludes binding and material writers.
  * The identity census is not authority: reread the resource after admission. */
 export async function admitTeamCredentialWithdrawalInTx(
     tx: Tx,
@@ -15,7 +19,7 @@ export async function admitTeamCredentialWithdrawalInTx(
     const recheck = await acquireTeamMutationAccountAdmissionInTx(tx, {
         teamId: identity.teamId,
         accountIds: [input.actorAccountId, identity.custodianAccountId, ...input.additionalPublicationAccountIds ?? []],
-        intent: "exclusive",
+        intent: "serializing",
     });
     await acquireTeamMutationLockInTx(tx, identity.teamId);
     await recheck();
