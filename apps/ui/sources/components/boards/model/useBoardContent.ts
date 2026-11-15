@@ -582,9 +582,9 @@ function useBoardFacts(membership: BoardMembership, homes: BoardHomes, enabled =
         }
         return [...byKey.values()];
     }, [members, runRows, homes.activeServerId]);
-    // Run reachability consumes held Machine rows; only actual Machine cards demand managed inventory.
-    const managedHomes = React.useMemo(() => [...new Set(members.filter(member => member.available && member.ref.kind === 'machine')
-        .map(member => member.ref.qualifiedId.serverId))], [members]);
+    // Run and Machine cards consume the same Home-owned managed inventory.
+    const managedHomes = React.useMemo(() => [...new Set(machineMembers
+        .map(member => member.ref.qualifiedId.serverId))], [machineMembers]);
     const { machinesByEnrolledMachineIdByServerId, bindings: machineScopeBindings } = useManagedMachineInventory(managedHomes);
     const reachabilityRevision = useMachineReachabilityRevision(machineMembers.length > 0);
     const machineGroups = React.useMemo(() => {
@@ -656,7 +656,7 @@ function useBoardFacts(membership: BoardMembership, homes: BoardHomes, enabled =
     const workSummaries = useMachineWorkSummaries(workTargets);
     const sessionContext = React.useMemo(() => ({}), [lifetime, sessionRefs, homes.activeServerId]);
     const runContext = React.useMemo(() => ({}), [runRows, homes.activeServerId, lifetime, machineMembers, machines,
-        machineScopeBindings, reachabilityRevision, runWindow.status, runWindow.failure, runWindow.hasMore, runWindow.loadMoreFailed]);
+        machineScopeBindings, machinesByEnrolledMachineIdByServerId, reachabilityRevision, runWindow.status, runWindow.failure, runWindow.hasMore, runWindow.loadMoreFailed]);
     const machineContext = React.useMemo(() => ({}), [machineCounts, homes.activeServerId, lifetime, machineMembers, machines,
         machineSourceStates, machineScopeBindings, machinesByEnrolledMachineIdByServerId, reachabilityRevision]);
 

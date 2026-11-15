@@ -433,6 +433,14 @@ describe('board cards', () => {
         expect(project(members, facts)[0]?.status).toMatchObject({ bucket: 'idle', word: 'managedPower.asleep' });
         const starting = { ...managed, submittedNativeEffect: { intent: 'start' as const, intentRevision: 2, requestId: 'start', controller: managed.controller } };
         expect(project(members, { ...facts, managedMachine: () => starting })[0]?.status).toMatchObject({ bucket: 'working', word: 'managedWake.starting' });
+        const runRef = { kind: 'workflow_run', qualifiedId: { serverId: 'home-a', id: 'run' } } as const;
+        const row = workflowRunRowFromSummary(createWorkflowRunSummaryFixture({ state: 'running', machineId: guest.id }), null);
+        const runFacts: BoardCardFacts = { ...facts, workflowRun: () => row,
+            machineScope: () => ({ serverId: 'home-a', accountId: 'owner' }) };
+        const runMembers = [member(runRef)];
+        expect(project(runMembers, runFacts)[0]?.status).toMatchObject({ bucket: 'idle', word: 'managedPower.asleep' });
+        expect(project(runMembers, { ...runFacts, managedMachine: () => starting })[0]?.status)
+            .toMatchObject({ bucket: 'working', word: 'managedWake.starting' });
     });
     it('names why an online Machine needs the person in its state word, not its presence', () => {
         const ref = { kind: 'machine', qualifiedId: { serverId: 'home-a', id: 'mbp' } } as const;

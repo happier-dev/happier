@@ -65,13 +65,13 @@ export function installBoardLibraryTestHarness() {
                 return { ...answer, body: await response.json(), status: response.status };
             } });
         },
-        async connect(serverUrl: string, accountId = 'account-a') {
+        async connect(serverUrl: string, accountId = 'account-a', serverIdentityId?: string) {
             await home.reset();
             installHomeGovernanceBoundaries(home);
             await loadSyncSingletonForTests();
             // Metro's lazy require is a loader boundary. Supply the real evaluated module.
             executorLoader = await installRealActionExecutorModuleLoader();
-            const serverId = await home.addHome({ name: 'Board Home', serverUrl, accountId });
+            const serverId = await home.addHome({ name: 'Board Home', serverUrl, accountId, serverIdentityId });
             home.answer(serverId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
             home.answer(serverId, `POST ${AUTOMATION_QUERY_PATH}`, { body: { automations: [], nextCursor: null } });
             await restore(serverUrl, accountId);

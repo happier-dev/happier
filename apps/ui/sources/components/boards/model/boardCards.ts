@@ -5,6 +5,7 @@ import type { PluginWorkItemV1 } from '@happier-dev/protocol/plugins/contributio
 
 import {
     resolveWorkStatusTone,
+    resolveManagedMachineWorkStatus,
     isWorkStatusNeedsYou,
     type WorkStatusPresentation,
 } from '@/components/work/status/resolveWorkStatusTone';
@@ -120,10 +121,14 @@ function readMachineSessionContribution(serverId: string, row: SessionListRender
 }
 
 function readRunMachine(ref: BoardItemRefV1, summary: WorkflowRunSummaryV1, facts: BoardCardFacts) {
-    const machine = facts.machine({ kind: 'machine', qualifiedId: { serverId: ref.qualifiedId.serverId, id: summary.machineId } });
+    const machineRef = { kind: 'machine', qualifiedId: { serverId: ref.qualifiedId.serverId, id: summary.machineId } } as const;
+    const machine = facts.machine(machineRef);
+    const managedMachine = facts.managedMachine?.(machineRef);
     const reachability = machine ? resolveMachineReachability(facts.machineScope?.(ref.qualifiedId.serverId), machine, facts.nowMs) : 'unknown';
-    return { machine, context: { machineReachable: reachability === 'unknown' ? undefined : reachability === 'reachable',
-        machineName: machine ? getMachineDisplayName(machine) : null } };
+    return { machine, managedMachine, context: { machineReachable: reachability === 'unknown' ? undefined : reachability === 'reachable',
+        machineName: machine ? getMachineDisplayName(machine) : null,
+        machineStatus: resolveManagedMachineWorkStatus({ machineId: summary.machineId, revokedAt: machine?.revokedAt,
+            online: reachability === 'unknown' ? null : reachability === 'reachable', managedMachine }) } };
 }
 
 /**
@@ -447,6 +452,7 @@ function createBoardProjection<T>(project: (member: BoardMember, facts: BoardCar
             let refreshAt: number | null = null;
             let machineOnline: boolean | null = null;
             let runMachine: Machine | null = null;
+            let runManagedMachine: ManagedMachineV1 | null | undefined;
             switch (member.ref.kind) {
                 case 'task': {
                     const task = facts.task?.(member.ref);
@@ -478,6 +484,7 @@ function createBoardProjection<T>(project: (member: BoardMember, facts: BoardCar
                     if (row?.summary && facts.accountScopedHome(member.ref.qualifiedId.serverId)) {
                         const current = readRunMachine(member.ref, row.summary, facts);
                         runMachine = current.machine;
+                        runManagedMachine = current.managedMachine;
                         machineOnline = current.context.machineReachable ?? null;
                     }
                     break;
@@ -493,7 +500,7 @@ function createBoardProjection<T>(project: (member: BoardMember, facts: BoardCar
             }
             const counts = member.ref.kind === 'machine' ? facts.machineSessionCounts.get(member.key) : undefined;
             const inputs = [source, member.available, member.picked, facts.accountScopedHome(member.ref.qualifiedId.serverId),
-                machineOnline, runMachine, counts?.needsYou ?? 0, counts?.running ?? 0,
+                machineOnline, runMachine, runManagedMachine, counts?.needsYou ?? 0, counts?.running ?? 0,
                 member.ref.kind === 'machine' ? facts.managedMachine?.(member.ref) : undefined,
                 facts.missingEntityReason?.(member.ref) ?? null, workSummary];
             if (member.ref.kind === 'task') {
