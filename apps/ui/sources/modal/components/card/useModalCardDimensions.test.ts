@@ -54,6 +54,12 @@ describe('resolveModalCardDimensions', () => {
         });
     });
 
+    it('never lets a preferred minimum width run a card past a phone window\'s sheet gutter', () => {
+        // 308 px window: the md minimum (320) would cut both of the card's sides off.
+        expect(resolveModalCardDimensions({ width: 308, height: 844 }).width).toBe(276);
+        expect(resolveModalCardDimensions({ width: 308, height: 844 }, { size: 'dialog' }).width).toBe(276);
+    });
+
     it('still fits within narrow windows when an explicit width is requested', () => {
         expect(resolveModalCardDimensions(
             { width: 360, height: 680 },

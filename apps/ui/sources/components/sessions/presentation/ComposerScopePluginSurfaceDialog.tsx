@@ -11,7 +11,8 @@ import { PluginSurfaceStateTitleContext } from '@/components/plugins/shared/plug
 import { SelectionList } from '@/components/ui/selectionList';
 import type { CustomModalInjectedProps } from '@/modal';
 
-const dialogFrameStyle = { minWidth: 280, maxWidth: 720 } as const;
+// The modal card owns the width (its preset, fitted to the window); the surface only caps how wide it reads.
+const dialogFrameStyle = { maxWidth: 720 } as const;
 const contentDialogFillStyle = { ...dialogFrameStyle, flex: 1 } as const;
 
 export function ComposerScopePluginSurfaceDialog(props: CustomModalInjectedProps & Readonly<{

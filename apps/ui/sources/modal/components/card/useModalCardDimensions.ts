@@ -97,11 +97,19 @@ export function resolveModalCardDimensions(
         ? Math.max(0, Math.floor(windowDimensions.width - viewportMargin.horizontal * 2))
         : preset.maxWidth;
 
+    // Like the height minimum below, the preset's minimum width is a preference: once the window width is known the
+    // card keeps at least a sheet's gutter on both sides, so a phone narrower than the minimum never cuts its edges off.
+    const fittedWidth = hasWindowWidth
+        ? Math.min(
+            clamp(availableWidth, preset.minWidth, preset.maxWidth),
+            Math.max(0, windowDimensions.width - 2 * HAPPIER_PAGE_METRICS.sheetInsetPx),
+        )
+        : clamp(availableWidth, preset.minWidth, preset.maxWidth);
     const width = options.width != null
         ? (hasWindowWidth
             ? Math.min(availableWidth, options.width)
             : clamp(options.width, preset.minWidth, preset.maxWidth))
-        : clamp(availableWidth, preset.minWidth, preset.maxWidth);
+        : fittedWidth;
 
     const availableHeight = hasWindowHeight
         ? Math.min(
