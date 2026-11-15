@@ -21,7 +21,7 @@ import { writeRuntimeDescriptorSessionState } from './bindings/runtimeDescriptor
  *   another machine, so its work state, commands, capabilities and intents are
  *   still true after the move.
  * - `clear` drops them so the incoming Agent republishes its own. Session-global
- *   facts — identity, workspace, permission intent, history, cursors, terminal —
+ *   facts — identity, workspace, permission and capability selection, history, cursors, terminal —
  *   are carried in both modes.
  */
 export type CurrentAgentSessionViewStatePolicyV1 = 'carry' | 'clear';
@@ -56,7 +56,8 @@ const AGENT_SCOPED_CURRENT_METADATA_KEYS: readonly string[] = Object.freeze([
   'tools',
   'agentRuntimeCapabilitiesV1',
   'agentRuntimeFacetsV1',
-  'mcpSelectionV1',
+  // The Session's MCP selection is deliberate intent and survives. Only the
+  // departing runtime's applied-selection marker must be republished.
   'mcpSelectionRestartRequiredV1',
   // Mode/model/config catalogs and applied values belonging to the source Agent.
   'acpSessionModesV1',

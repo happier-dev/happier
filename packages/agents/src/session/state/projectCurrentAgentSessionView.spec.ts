@@ -160,7 +160,13 @@ describe('projectCurrentAgentSessionView — state disposition (§8)', () => {
     tools: ['Bash'],
     agentRuntimeCapabilitiesV1: { v: 1 },
     agentRuntimeFacetsV1: { v: 1 },
-    mcpSelectionV1: { v: 1 },
+    mcpSelectionV1: {
+      v: 1,
+      managedServersEnabled: false,
+      happierToolsEnabled: false,
+      forceIncludeServerIds: ['selected-server'],
+      forceExcludeServerIds: ['excluded-server'],
+    },
     mcpSelectionRestartRequiredV1: { v: 1 },
     externalAgentObservationV1: { v: 1 },
     sessionUsageLimitRecoveryV1: { v: 1 },
@@ -208,6 +214,8 @@ describe('projectCurrentAgentSessionView — state disposition (§8)', () => {
     'replaySeedV1',
     'readStateV1',
     'tag',
+    // Deliberate Session capability intent survives an Agent change.
+    'mcpSelectionV1',
   ] as const;
 
   const CLEARED_KEYS = [
@@ -220,7 +228,6 @@ describe('projectCurrentAgentSessionView — state disposition (§8)', () => {
     'tools',
     'agentRuntimeCapabilitiesV1',
     'agentRuntimeFacetsV1',
-    'mcpSelectionV1',
     'mcpSelectionRestartRequiredV1',
     'externalAgentObservationV1',
     'sessionUsageLimitRecoveryV1',
