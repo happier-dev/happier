@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { FastifyRequest } from 'fastify';
 import tweetnacl from 'tweetnacl';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { PluginManifestV2Schema } from "@happier-dev/protocol";
 import { ManagedMachinePresetRecipientCensusResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { MachineSetupSourcesApplyInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -26,6 +27,7 @@ import { authorizeMachinePresetCreationSaveInTx } from './machinePresetSave';
 import { resolveMachineSetup } from './machineSetup';
 import { getManagedMachine, listManagedMachines, readManagedResourceDependenciesInTx } from './managedRead';
 import { archiveTeamInTx, restoreTeamInTx } from '@/app/teams/lifecycle';
+import { setMachineAccessGrantInTx } from '@/app/machines/machineAccess';
 import { createEmptyMachineSetupDesiredV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { createReleaseLessDeclarationV1, mergeReleaseLessDeclarationV2 } from "@/app/plugins/availability/currentDeclaration";
 import { admitManagedAcquire } from "./managedAcquire";
@@ -1472,6 +1474,27 @@ describe("Machine preset relational owner", () => {
             accountId: member, homeId, id: definition.id, revision: 0,
         }))).resolves.toMatchObject({ kind: 'ready', delegated: true, custodianAccountId: owner });
         expect(await db.machineGrant.count({ where: { principalKind: 'account', machineId: controller.machineId, accountId: member } })).toBe(0);
+
+        await db.machine.update({ where: { id: controller.machineId }, data: {
+            metadata: encodePlainMachineStoredContent({}),
+            dataEncryptionKey: Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
+        } });
+        expect(await inTx(tx => setMachineAccessGrantInTx(tx, {
+            machineId: controller.machineId, actorAccountId: owner,
+            principal: { kind: 'team', teamId: team.id }, level: 'admin',
+        }))).toMatchObject({ kind: 'saved' });
+        await expect(inTx(tx => resolveMachinePresetForAcquireInTx(tx, {
+            accountId: member, homeId, id: definition.id, revision: 0,
+        }))).resolves.toMatchObject({ kind: 'ready', delegated: true, custodianAccountId: owner });
+        await db.managedMachinePreset.update({ where: { id: definition.id }, data: { teamAcquireDelegated: false } });
+        await expect(inTx(tx => resolveMachinePresetForAcquireInTx(tx, {
+            accountId: member, homeId, id: definition.id, revision: 0,
+        }))).resolves.toMatchObject({ kind: 'ready', delegated: false, custodianAccountId: owner });
+        await db.managedMachinePreset.update({ where: { id: definition.id }, data: { teamAcquireDelegated: true } });
+        await db.teamMembership.delete({ where: { teamId_accountId: { teamId: team.id, accountId: owner } } });
+        await expect(inTx(tx => resolveMachinePresetForAcquireInTx(tx, {
+            accountId: member, homeId, id: definition.id, revision: 0,
+        }))).rejects.toMatchObject({ code: 'permission_denied' });
 
         await db.teamMembership.update({ where: { teamId_accountId: { teamId: team.id, accountId: member } },
             data: { status: 'suspended' } });

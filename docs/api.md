@@ -2806,8 +2806,10 @@ grant, scheduler, capacity reservation or automatic retry.
 For a delegated Team acquire, Home signs the preset owner's reviewed delegation
 into the execution binding. The custodian's controller uses its own native
 credentials; the member receives no credential access and needs no private
-approval Artifact on that controller. Ordinary controller managers retain their
-own approval policy. A definitive dispatch refusal retires an unsubmitted
+approval Artifact on that controller. This explicit delegation also applies to
+a member with Manage on a foreign custodian's controller. Managers acquiring a
+nondelegated preset retain their own approval policy. A definitive dispatch
+refusal retires an unsubmitted
 creation through the existing cancellation owner and releases its preset slot.
 Submitted or acknowledgement-unknown work retains its slot and recovery state.
 

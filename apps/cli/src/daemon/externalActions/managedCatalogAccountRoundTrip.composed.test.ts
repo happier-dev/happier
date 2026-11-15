@@ -138,7 +138,6 @@ import { browserControlActionId } from '../../../../ui/sources/sync/domains/brow
 import type { BrowserCommandV1 } from '@happier-dev/protocol/browser/control/v1';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
-import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import axios from 'axios';
 import { createNativeSoftwareInstallFixture } from '@/testkit/machines/nativeSoftwareInstall';
 import { createFakeSocket, getSocketHandler } from '../../../../server/sources/app/api/testkit/socketHarness';
@@ -3424,7 +3423,9 @@ describe('managed catalog original Account transport', () => {
     { memberMode: 'e2ee', credentialKind: 'account', identityKind: 'dedicatedDaemonUser' },
     { memberMode: 'e2ee', credentialKind: 'terminal', identityKind: 'dedicatedDaemonUser' },
     { memberMode: 'e2ee', credentialKind: 'account', identityKind: 'dedicatedDaemonUser', requireChildReview: true },
-  ] as const)('delivers a named delegated preset acquire through installed controller admission ($credentialKind/$memberMode/$identityKind/$requireChildReview)', async (vector) => {
+    { memberMode: 'e2ee', credentialKind: 'terminal', identityKind: 'dedicatedDaemonUser', teamManage: true },
+    { memberMode: 'e2ee', credentialKind: 'terminal', identityKind: 'dedicatedDaemonUser', teamManage: true, requireChildReview: true },
+  ] as const)('delivers a named delegated preset acquire through installed controller admission ($credentialKind/$memberMode/$identityKind, requireChildReview=$requireChildReview, teamManage=$teamManage)', async (vector) => {
     const { memberMode, credentialKind, identityKind } = vector;
     const requireChildReview = 'requireChildReview' in vector && vector.requireChildReview;
     const machineKey = new Uint8Array(32).fill(49);
@@ -3438,7 +3439,7 @@ describe('managed catalog original Account transport', () => {
       { teamId: team.id, accountId: member.id, role: 'member' }] });
     const homeId = await getOrCreateServerIdentityId();
     const installation = tweetnacl.sign.keyPair();
-    const fixtureId = `${credentialKind}-${memberMode}-${identityKind}-${requireChildReview ? 'require' : 'default'}`;
+    const fixtureId = `${credentialKind}-${memberMode}-${identityKind}-${requireChildReview ? 'require' : 'default'}-${'teamManage' in vector && vector.teamManage ? 'delegated-manage' : 'delegated'}`;
     const controller = { machineId: `named-preset-controller-${fixtureId}`, installationId: `named-preset-installation-${fixtureId}` };
     const nativeLaunches: unknown[] = [];
     // The external provider refuses acquisition; all Home/controller owners stay real.
@@ -3452,6 +3453,10 @@ describe('managed catalog original Account transport', () => {
       dataEncryptionKey: Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'), active: true, lastActiveAt: new Date(),
       operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } },
       operationProtocolCapabilitiesRevision: 1, pluginMaterializationRevision: BigInt(1) } });
+    if ('teamManage' in vector && vector.teamManage) {
+      expect(await inTx(tx => setMachineAccessGrantInTx(tx, { machineId: controller.machineId, actorAccountId: owner.id,
+        principal: { kind: 'team', teamId: team.id }, level: 'admin' }))).toMatchObject({ kind: 'saved' });
+    }
     await db.pluginMachineMaterialization.create({ data: { accountId: owner.id, serverIdentityId: homeId,
       machineId: controller.machineId, materializationId: controller.installationId, pluginId: manifest.id,
       version: manifest.version, sourceClass: 'bundledFirstParty', portableRelease: false,
@@ -3506,13 +3511,16 @@ describe('managed catalog original Account transport', () => {
       resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({ serverUrl,
         resolveCurrentServerIdentityId: () => homeId, resolveCurrentMachineId: () => controller.machineId }),
       acquireRuntimeRegistryLease: async () => ({ registry: provisioner.runtimeRegistry, source: 'active', durableRevision: 1, release: async () => {} }) });
+    const controllerPolicy = 'teamManage' in vector && vector.teamManage
+      ? normalizeActionsSettingsV1({ ...policy, approvalWaivedSurfaces: { ...policy.approvalWaivedSurfaces,
+        'machines.managed.acquire': [] } }) : policy;
     const daemonExecutor = (admitted?: RequesterAccountActionContext) => createCliActionExecutorFromCredentials({
       credentials: installedCredentials, readCredentials: async () => installedCredentials,
       machineId: controller.machineId, serverId: configuration.activeServerId, serverApiUrl: serverUrl, serverIdentityId: homeId,
       externalActionMachineRequestPrivateKey: installation.secretKey, externalActionMachineInstallationId: controller.installationId,
       managedMachineAction: native,
-      actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1(admitted?.accountSettingsContext.settings.actionsSettingsV1 ?? policy),
-        getAccountSettings: () => admitted?.accountSettingsContext.settings ?? AccountSettingsSchema.parse({ actionsSettingsV1: policy }) } });
+      actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1(admitted?.accountSettingsContext.settings.actionsSettingsV1 ?? controllerPolicy),
+        getAccountSettings: () => admitted?.accountSettingsContext.settings ?? AccountSettingsSchema.parse({ actionsSettingsV1: controllerPolicy }) } });
     registerExternalActionRoutes(app, { dispatch: createExternalActionDaemonDispatcher({ io: channel.server, forwardRpc: async request => {
       const { ExternalActionDaemonDispatchRequestSchema } = await import('@happier-dev/protocol/actions');
       const admitted = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
@@ -3546,20 +3554,40 @@ describe('managed catalog original Account transport', () => {
       const claim = await app.inject({ method: 'POST', url: PluginAvailabilityActionHttpPathsV1['account.plugins.availability.collectionWriters.claim'],
         headers: { authorization: `Bearer ${ownerToken}` }, payload: { manifest } });
       expect(claim.statusCode, claim.payload).toBe(200);
-      expect(await makeExecutor({ token: ownerToken, encryption: null }).execute('machines.presets.create', {
-        id: presetId, homeId, name: 'Reusable preset', owner: { kind: 'team', teamId: team.id }, controller,
-        launch: { provider: { pluginId: manifest.id, localId: 'vm' }, schemaVersion: 1, name: 'Saved launch', choices: {} },
-        retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, teamAcquireDelegated: true,
-      }, context)).toMatchObject({ ok: true, result: { kind: 'saved' } });
+      const { sealManagedMachinePresetContentV1, createManagedMachinePresetAcquireOverrideV1,
+        projectManagedMachinePresetForRecipientV1 } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetContentV1');
+      const { ManagedMachinePresetGetResultV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetV1');
+      const launch = { provider: { pluginId: manifest.id, localId: 'vm' }, schemaVersion: 1, name: 'Saved launch', choices: {} };
+      const presetContent = sealManagedMachinePresetContentV1({ presetId, mode: 'plain', content: { v: 1, name: 'Reusable preset', launch } });
+      const savedPreset = await makeExecutor({ token: ownerToken, encryption: null }).execute('machines.presets.create', {
+        id: presetId, homeId, owner: { kind: 'team', teamId: team.id }, controller,
+        contentEncryptionMode: 'plain', ...presetContent, teamAcquireDelegated: true,
+        retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+      }, context);
+      expect(savedPreset, savedPreset.ok ? undefined : JSON.stringify({ errorCode: savedPreset.errorCode,
+        error: savedPreset.error, details: savedPreset.details })).toMatchObject({ ok: true, result: { kind: 'saved' } });
       const memberExecutor = makeExecutor({ token: memberToken, encryption: memberMode === 'plain' ? null : { type: 'dataKey', machineKey, publicKey } });
+      const readPreset = await memberExecutor.execute('machines.presets.get', { homeId, id: presetId }, context);
+      expect(readPreset).toMatchObject({ ok: true, result: { kind: 'found' } });
+      if (!readPreset.ok) throw new Error('Expected shared preset');
+      const projectedPreset = ManagedMachinePresetGetResultV1Schema.parse(readPreset.result);
+      if (projectedPreset.kind !== 'found' || projectedPreset.preset.contentEncryptionMode !== 'plain') throw new Error('Expected plain author preset');
+      const recipientProjection = projectManagedMachinePresetForRecipientV1({ content: projectedPreset.preset.content,
+        recipients: projectedPreset.preset.recipients, recipientAccountId: member.id });
       for (const name of [undefined, 'fix-g1-provider-1112']) {
         const requestId = `${name ? 'named' : 'default'}-delegated-acquire-${fixtureId}`;
-        const result = await memberExecutor.execute('machines.managed.acquire', {
-          selection: { kind: 'preset', homeId, id: presetId, revision: 0, ...(name ? { name } : {}) },
-          retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+        const presetContentOverride = createManagedMachinePresetAcquireOverrideV1({ presetId, mode: 'plain',
+          projection: recipientProjection,
+          ...(name ? { launchName: name } : {}),
           enrollmentIdentity: identityKind === 'guestProcess' ? { kind: 'guestProcess', role: 'sandbox' }
             : { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'server', adminAccessAtCreation: 'none' },
-        }, { ...context, actionRequestId: requestId });
+        });
+        if (!presetContentOverride) throw new Error('Expected sealed acquisition choices');
+        const acquireInput = {
+          selection: { kind: 'preset', homeId, id: presetId, revision: 0 }, presetContentOverride,
+          retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+        };
+        const result = await memberExecutor.execute('machines.managed.acquire', acquireInput, { ...context, actionRequestId: requestId });
         if (requireChildReview) {
           // An admitted parent never waives explicit child Require or moves
           // the requester's private Ask into the controller's Account.
