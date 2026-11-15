@@ -1110,6 +1110,14 @@ describe('Project Open RPC', () => {
             targetMachineId: 'machine', targetRootPath: targetRoot },
         });
         if (admitted.kind !== 'matched') throw new Error(`TARGET admission failed: ${admitted.kind}`);
+        // Production order: the remote SOURCE's relationship owner stages both
+        // endpoints and the graph at Home before it signs TARGET prepare.
+        const targetKey = { kind: 'workspace-ref' as const, serverId: homeId, id: capture.input.targetWorkspaceRefId };
+        const graphKey = { kind: 'relationship-graph' as const };
+        rows.push({ key: targetKey, revision: 0, content: cipher.seal({ key: targetKey, value: { id: targetKey.id, serverId: homeId,
+          machineId: 'machine', rootPath: targetRoot, createdAtMs: 1 } }) },
+        { key: graphKey, revision: 0, content: cipher.seal({ key: graphKey,
+          value: { relationships: [{ ...prepare.transientRelationship, enabled: false }] } }) });
         const handler = targetHandlers.get(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE);
         if (!handler) throw new Error('TARGET prepare was not registered');
         await handler(prepare, { ...context, workspaceSyncPrivateExecution: admitted.capture });
