@@ -19,7 +19,7 @@ import {
     type ProviderAccountUsageCacheState,
 } from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageCache';
 import { openProviderAccountUsageSnapshot } from '@/sync/domains/connectedServices/accountUsage/openProviderAccountUsageSnapshot';
-import { getUsageProjectionNextReadAtMs, observeUsageProjection } from '@/sync/api/account/usageQueryInvalidation';
+import { observeUsageProjection } from '@/sync/api/account/usageQueryInvalidation';
 import {
     buildProviderAccountUsageScopeKey,
     readProviderAccountUsageSnapshotForMode,
@@ -154,13 +154,13 @@ function createUsageRowObserver(input: Readonly<{
                         if (!current()) return;
                         const opened = await readProviderAccountUsageSnapshot({ ...input, mode, recordId,
                             signal: requestController.signal });
-                        entry = { snapshot: opened, nextFetchAtMs: getUsageProjectionNextReadAtMs(),
+                        entry = { snapshot: opened, nextFetchAtMs: Number.POSITIVE_INFINITY,
                             loading: false, hadError: false };
                     } catch (error) {
                         if (!current()) return;
                         const denied = error instanceof HappyError && (error.status === 401 || error.status === 403);
                         entry = { snapshot: denied ? null : previous?.snapshot ?? null,
-                            nextFetchAtMs: getUsageProjectionNextReadAtMs(),
+                            nextFetchAtMs: Number.POSITIVE_INFINITY,
                             loading: false, hadError: !denied && Boolean(previous?.snapshot) };
                     } finally {
                         reading = null;

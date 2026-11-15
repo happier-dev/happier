@@ -65,14 +65,6 @@ export function usageAccountingChangeAffectsQueries(queries: readonly UsageQuery
             || (resolveUsageQueryPeriod(query, Date.now()).endMs ?? Number.POSITIVE_INFINITY) > change.observedFromMs));
 }
 
-/** Quota pushes, foreground and explicit recovery invalidate reads; only a predecessor's positive producer deadline schedules acquisition. */
-export function getUsageProjectionNextReadAtMs(input: Readonly<{
-    legacyStaleAfterMs?: number;
-}> = {}): number {
-    return input.legacyStaleAfterMs !== undefined && input.legacyStaleAfterMs > 0
-        ? Date.now() + Math.trunc(input.legacyStaleAfterMs) : Number.POSITIVE_INFINITY;
-}
-
 /** Detailed Profile/Settings and Machine changes arrive through their material-input subscriptions. */
 export function isUsageProjectionHomeAccountChange(event: HomeAccountChangeEvent, observesMaterialInputs = false,
     recordIds?: readonly (string | null | undefined)[]): boolean {

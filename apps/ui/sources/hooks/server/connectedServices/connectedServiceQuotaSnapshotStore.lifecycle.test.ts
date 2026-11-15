@@ -243,30 +243,31 @@ describe('connectedServiceQuotaSnapshotStore polling lifecycle', () => {
     });
 
 
-    it('stops fetching quota snapshots while the app is backgrounded and refetches on return', async () => {
+    it('reads once while a quota view stays open, never by client clock, and once on return to foreground', async () => {
+        // Ruling 2026-11-04 (5): quota freshness follows producer pushes and demand, not a client deadline.
         const snapshot = { v: 1 as const, serviceId: ctx.serviceId, profileId: ctx.profileId,
-            fetchedAt: 1, staleAfterMs: 30_000, planLabel: null, accountLabel: null, meters: [] };
+            fetchedAt: 1, staleAfterMs: 60_000, planLabel: null, accountLabel: null, meters: [] };
         getSnapshotPlain.mockImplementation(async () => plainQuotaResponse(snapshot));
         const key = buildQuotaSnapshotScopeKey(ctx.credentialScope, ctx.serviceId, ctx.profileId);
 
         const release = retainQuotaSnapshotPolling(key, ctx);
         await vi.advanceTimersByTimeAsync(0);
         await vi.waitFor(() => expect(getQuotaSnapshotEntry(key)).toMatchObject({ loading: false, read: true }));
+        await vi.advanceTimersByTimeAsync(5 * 60_000);
+        await flushHookEffects();
         expect(getSnapshotPlain).toHaveBeenCalledTimes(1);
-
-        await vi.advanceTimersByTimeAsync(30_000);
-        await vi.waitFor(() => expect(getSnapshotPlain).toHaveBeenCalledTimes(2));
-        await vi.waitFor(() => expect(getQuotaSnapshotEntry(key)).toMatchObject({ loading: false, read: true }));
 
         documentBoundary.visibilityState = 'hidden';
         documentBoundary.dispatchEvent(new Event('visibilitychange'));
-        await vi.advanceTimersByTimeAsync(30_000 * 4);
-        expect(getSnapshotPlain).toHaveBeenCalledTimes(2);
+        await vi.advanceTimersByTimeAsync(5 * 60_000);
+        expect(getSnapshotPlain).toHaveBeenCalledTimes(1);
 
         documentBoundary.visibilityState = 'visible';
         documentBoundary.dispatchEvent(new Event('visibilitychange'));
         await vi.advanceTimersByTimeAsync(0);
-        await vi.waitFor(() => expect(getSnapshotPlain).toHaveBeenCalledTimes(3));
+        await vi.waitFor(() => expect(getSnapshotPlain).toHaveBeenCalledTimes(2));
+        await vi.advanceTimersByTimeAsync(5 * 60_000);
+        expect(getSnapshotPlain).toHaveBeenCalledTimes(2);
 
         release();
     });

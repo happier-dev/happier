@@ -8,7 +8,7 @@ import {
 } from '@/sync/api/account/apiConnectedServicesQuotasV3';
 import { openConnectedServiceQuotaViewSnapshot } from '@/sync/domains/connectedServices/openConnectedServiceQuotaViewSnapshot';
 import { connectedServiceProfileKey } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
-import { getUsageProjectionNextReadAtMs, observeUsageProjection } from '@/sync/api/account/usageQueryInvalidation';
+import { observeUsageProjection } from '@/sync/api/account/usageQueryInvalidation';
 import {
     connectedServiceQuotaRecoveryCreditConsume,
 } from '@/sync/ops/connectedServiceQuotaRecoveryCredits';
@@ -286,8 +286,7 @@ async function runLoad(key: string, ctx: QuotaSnapshotLoadContext, signal?: Abor
                 if (!isCurrent() || !isScopeActive(ctx.credentialScope)) return null;
                 const opened = normalizePlanLabel(read?.snapshot ?? null);
                 entry.snapshot = opened ?? (entry.refreshing ? entry.snapshot : null);
-                entry.nextFetchAtMs = getUsageProjectionNextReadAtMs({
-                    legacyStaleAfterMs: read?.metadata.staleAfterMs });
+                entry.nextFetchAtMs = Number.POSITIVE_INFINITY;
                 if (entry.refreshSinceFetchedAt !== null && read && read.metadata.refreshRequestedAt === undefined) {
                     entry.refreshing = false;
                     entry.refreshSinceFetchedAt = null;
@@ -310,8 +309,7 @@ async function runLoad(key: string, ctx: QuotaSnapshotLoadContext, signal?: Abor
                 })
                 : null);
             entry.snapshot = opened ?? (entry.refreshing ? entry.snapshot : null);
-            entry.nextFetchAtMs = getUsageProjectionNextReadAtMs({
-                legacyStaleAfterMs: sealed?.metadata.staleAfterMs });
+            entry.nextFetchAtMs = Number.POSITIVE_INFINITY;
             if (entry.refreshSinceFetchedAt !== null && sealed && sealed.metadata.refreshRequestedAt === undefined) {
                 entry.refreshing = false;
                 entry.refreshSinceFetchedAt = null;
@@ -320,7 +318,7 @@ async function runLoad(key: string, ctx: QuotaSnapshotLoadContext, signal?: Abor
         } catch (error) {
             if (!isCurrent() || !isScopeActive(ctx.credentialScope)) return null;
             entry.error = sanitizeEndpointErrorMessage(error) ?? t('common.error');
-            entry.nextFetchAtMs = getUsageProjectionNextReadAtMs();
+            entry.nextFetchAtMs = Number.POSITIVE_INFINITY;
             if (!entry.snapshot) entry.snapshot = null;
             return null;
         } finally {

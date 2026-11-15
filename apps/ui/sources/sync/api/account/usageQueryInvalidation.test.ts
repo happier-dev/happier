@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createMachineFixture as createUnansweredMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishMachineActivity, type MachineActivityFacts } from '@/sync/domains/machines/machineActivity';
 import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
-import { isUsageQuotaHomeAccountChange, getUsageProjectionNextReadAtMs, getUsageQueryMachineInvalidationKey, getUsageQueryPoolMachineSelection, observeUsageProjection, subscribeUsageQueryStateInvalidation } from './usageQueryInvalidation';
+import { isUsageQuotaHomeAccountChange, getUsageQueryMachineInvalidationKey, getUsageQueryPoolMachineSelection, observeUsageProjection, subscribeUsageQueryStateInvalidation } from './usageQueryInvalidation';
 import { clearMachineRequestReachabilityForScope, recordMachineRequestFailed, withdrawMachinePresenceForScope } from '@/sync/domains/machines/reachability/machineReachability';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { installConnectedAccountDescriptorProjection } from '@/sync/domains/connectedServices/connectedServiceRegistry';
@@ -57,22 +57,6 @@ it.each(['failed', 'withdrawn'] as const)('projects %s reachability evidence sep
         expect(getUsageQueryPoolMachineSelection({}, [], scope))
             .toEqual({ status: 'unsupported', errorCode: 'no_machine' });
     } finally { clearMachineRequestReachabilityForScope(scope); }
-});
-
-it('honors a positive predecessor acquisition deadline without adding a local floor', async () => {
-    vi.useFakeTimers();
-    const staleAfterMs = 100;
-    let reads = 0;
-    const deadline = getUsageProjectionNextReadAtMs({ legacyStaleAfterMs: staleAfterMs });
-    const observation = observeUsageProjection({ serverId: 'predecessor-quota-deadline.test', initialReadCompleted: true,
-        busy: () => false, read: async () => { reads++; },
-        nextReadAtMs: () => reads === 0 ? deadline : Number.POSITIVE_INFINITY });
-    try {
-        await vi.advanceTimersByTimeAsync(staleAfterMs - 1);
-        expect(reads).toBe(0);
-        await vi.advanceTimersByTimeAsync(1);
-        expect(reads).toBe(1);
-    } finally { observation.dispose(); vi.useRealTimers(); }
 });
 
 it('routes material allowance pushes to their admitted records and keeps recovery full', async () => {
@@ -164,7 +148,7 @@ it('keeps a current-server quota reader idle and recovers on relevant pushes', a
     const serverId = 'idle-current-usage.test';
     const observation = observeUsageProjection({ serverId, initialReadCompleted: true,
         busy: () => false, read: async () => { reads++; },
-        nextReadAtMs: () => getUsageProjectionNextReadAtMs() });
+        nextReadAtMs: () => Number.POSITIVE_INFINITY });
     try {
         for (let index = 0; index < 30; index++) {
             publishHomeAccountChange(serverId, ['unrelated-session'], { changeKinds: ['session'] });

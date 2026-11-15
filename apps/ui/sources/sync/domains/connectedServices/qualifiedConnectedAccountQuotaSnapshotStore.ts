@@ -17,7 +17,7 @@ import {
     readConnectedServiceSettingsErrorCode,
     resolveConnectedServiceSettingsErrorMessage,
 } from '@/components/settings/connectedServices/connectedServiceSettingsErrors';
-import { getUsageProjectionNextReadAtMs, observeUsageProjection } from '@/sync/api/account/usageQueryInvalidation';
+import { observeUsageProjection } from '@/sync/api/account/usageQueryInvalidation';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readQuotaProfileChanges } from './quotaProfileChanges';
 
@@ -281,7 +281,7 @@ async function runLoad(
             if (credentialMutation) {
                 // Authentication already succeeded. Only establish its identity here;
                 // quota acquisition remains with the existing observed load lifecycle.
-                entry.nextFetchAtMs = getUsageProjectionNextReadAtMs();
+                entry.nextFetchAtMs = Number.POSITIVE_INFINITY;
                 if (!entry.snapshot) {
                     entry.loadAttempted = false;
                     entry.observation?.invalidate();
@@ -333,7 +333,7 @@ async function runLoad(
                     })
                     : error;
             }
-            entry.nextFetchAtMs = getUsageProjectionNextReadAtMs();
+            entry.nextFetchAtMs = Number.POSITIVE_INFINITY;
             if (entry.refreshSinceFetchedAt !== null && read && !entry.producerRefreshPending) {
                 entry.refreshing = false;
                 entry.refreshSinceFetchedAt = null;
@@ -353,7 +353,7 @@ async function runLoad(
             }
             entry.producerRefreshPending = false;
             entry.error = resolveConnectedServiceSettingsErrorMessage(error);
-            entry.nextFetchAtMs = getUsageProjectionNextReadAtMs();
+            entry.nextFetchAtMs = Number.POSITIVE_INFINITY;
             return null;
         } finally {
             if (isCurrent()) {

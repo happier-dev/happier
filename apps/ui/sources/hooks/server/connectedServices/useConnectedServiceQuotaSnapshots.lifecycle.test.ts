@@ -36,14 +36,15 @@ describe('useConnectedServiceQuotaSnapshots predecessor acquisition lifecycle', 
         boundary.plainRead.mockImplementation(async () => plainQuotaResponse(makeQuotaSnapshot({ serviceId: 'anthropic', meterId: 'current-window' })));
         await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
         await flushHookEffects({ cycles: 8, turns: 8 });
-        expect({ reads: boundary.plainRead.mock.calls.length, renders }).toEqual({ reads: shared ? 2 : 1, renders: 0 });
+        // No client-clock acquisition for any reader (ruling 2026-11-04 (5)); pushes and reopen read.
+        expect({ reads: boundary.plainRead.mock.calls.length, renders }).toEqual({ reads: 1, renders: 0 });
         expect(hook.getCurrent()).toBe(held);
         await peer?.unmount();
         visible = true;
         await hook.rerender();
         await flushHookEffects({ cycles: 8, turns: 8 });
         expect(hook.getCurrent().snapshotsByKey['anthropic/work']?.meters[0]?.meterId).toBe('current-window');
-        expect(boundary.plainRead).toHaveBeenCalledTimes(shared ? 3 : 2);
+        expect(boundary.plainRead).toHaveBeenCalledTimes(2);
         expect(boundary.control).not.toHaveBeenCalled();
         await hook.unmount();
     });
@@ -100,7 +101,7 @@ describe('useConnectedServiceQuotaSnapshots predecessor acquisition lifecycle', 
         expect(hook.getCurrent().snapshotsByKey['anthropic/work']?.meters[0]?.meterId).toBe('current-home');
     });
 
-    it('retains predecessor acquisition cadence while sharing readers and stops after final release', async () => {
+    it('shares one read across readers, adds no client-clock read, and stops after final release', async () => {
         vi.useFakeTimers();
         const { useConnectedServiceQuotaSnapshots } = await import('./useConnectedServiceQuotaSnapshots');
         const read = () => useConnectedServiceQuotaSnapshots([{ serviceId: 'anthropic', profileId: 'work' }]);
@@ -108,13 +109,13 @@ describe('useConnectedServiceQuotaSnapshots predecessor acquisition lifecycle', 
         await flushHookEffects({ cycles: 8, turns: 8 });
         expect(boundary.plainRead).toHaveBeenCalledTimes(1);
         await first.unmount();
-        await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(5 * 60_000); });
         await flushHookEffects({ cycles: 8, turns: 8 });
-        expect(boundary.plainRead).toHaveBeenCalledTimes(2);
+        expect(boundary.plainRead).toHaveBeenCalledTimes(1);
         expect(second.getCurrent().snapshotsByKey['anthropic/work']).not.toBeNull();
         await second.unmount();
         await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
-        expect(boundary.plainRead).toHaveBeenCalledTimes(2);
+        expect(boundary.plainRead).toHaveBeenCalledTimes(1);
     });
 
     it('preserves retained data after failure without timed retries and recovers on a quota push', async () => {
@@ -126,8 +127,10 @@ describe('useConnectedServiceQuotaSnapshots predecessor acquisition lifecycle', 
         const { useConnectedServiceQuotaSnapshots } = await import('./useConnectedServiceQuotaSnapshots');
         const hook = await renderHook(() => useConnectedServiceQuotaSnapshots([{ serviceId: 'anthropic', profileId: 'work' }]), { wrapper: Wrapper });
         await flushHookEffects({ cycles: 8, turns: 8 });
-        await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+        await act(async () => { publishHomeAccountChange(getActiveServerSnapshot().serverId,
+            [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1], { changeKinds: ['account'] }); });
         await flushHookEffects({ cycles: 8, turns: 8 });
+        await vi.waitFor(() => expect(hook.getCurrent().errorsByKey['anthropic/work']).not.toBeNull());
         expect(hook.getCurrent().snapshotsByKey['anthropic/work']).toEqual(snapshot);
         expect(hook.getCurrent().errorsByKey['anthropic/work']).not.toBeNull();
         expect(hook.getCurrent().loadingByKey['anthropic/work']).toBe(false);
