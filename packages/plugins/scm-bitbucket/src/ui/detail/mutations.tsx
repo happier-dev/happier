@@ -12,6 +12,7 @@ import {
   Text,
   Action,
   projectPluginActionControlExecutionV1,
+  isPluginActionConfirmationDeclined,
   useReviewCommentProposalsForEntry,
   usePluginTranslation,
   type PluginActionExecution,
@@ -106,15 +107,6 @@ const REPLY_REVIEW_COMMENT_ACTION = Object.freeze({
 });
 
 /**
- * The host code that proves the user was asked and said no.
- *
- * It settles before the Action handler is entered, so it is the one rejection this panel may
- * describe as having written nothing. Every other failure code is reported as an incomplete
- * write, because the generic transport cannot tell a refused dispatch from a handler that ran.
- */
-const CURRENT_INTENT_REJECTED = 'plugin_action_current_intent_rejected';
-
-/**
  * The facts that are true of every write before its own result is read.
  *
  * Every dispatch can end in the host's own refusal, an unknown outcome or a transport failure, and
@@ -137,7 +129,7 @@ function projectExecutionEnvelope(
     };
   }
   if (execution.status === 'error') {
-    return execution.code === CURRENT_INTENT_REJECTED
+    return isPluginActionConfirmationDeclined(execution)
       ? {
         tone: 'neutral',
         title: text(

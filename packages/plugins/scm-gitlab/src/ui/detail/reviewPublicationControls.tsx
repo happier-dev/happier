@@ -10,6 +10,7 @@ import {
   Text,
   Action,
   projectPluginActionControlExecutionV1,
+  isPluginActionConfirmationDeclined,
   usePluginTranslation,
   type PluginActionExecution,
   type PluginTranslate,
@@ -40,7 +41,6 @@ import {
   type GitlabMergeRequestReviewPublicationInputV1,
   type GitlabReviewPublicationResultV1,
 } from '../../triage/mutations/contracts.js';
-import { GITLAB_CURRENT_INTENT_REJECTED_CODE } from './mutations.js';
 
 export type GitlabStringReviewProposalV1 = ReviewCommentProposalWithBodyV1;
 export type GitlabReviewProposalReadV1 = ReviewCommentProposalReadV1;
@@ -173,7 +173,7 @@ function publicationMayHaveChanged(execution: PluginActionExecution<unknown>): b
   if (execution.status === 'error') {
     // Only the host's current-intent rejection proves the Action handler never ran. Any other
     // error may have followed dispatch, so the aggregate must perform its canonical exact get.
-    return execution.code !== GITLAB_CURRENT_INTENT_REJECTED_CODE;
+    return !isPluginActionConfirmationDeclined(execution);
   }
   if (execution.status !== 'success') return false;
   const parsed = GitlabReviewPublicationResultV1Schema.safeParse(execution.result);
@@ -291,7 +291,7 @@ function PublicationOutcome({ execution }: Readonly<{
     );
   }
   if (execution.status === 'error') {
-    if (execution.code === GITLAB_CURRENT_INTENT_REJECTED_CODE) {
+    if (isPluginActionConfirmationDeclined(execution)) {
       return (
         <Banner
           tone="neutral"

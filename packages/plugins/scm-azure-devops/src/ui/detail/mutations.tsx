@@ -10,6 +10,7 @@ import {
   Text,
   Action,
   projectPluginActionControlExecutionV1,
+  isPluginActionConfirmationDeclined,
   usePluginTranslation,
   type PluginActionExecution,
   type PluginTranslate,
@@ -92,15 +93,6 @@ const THREAD_STATUS_ACTION = Object.freeze({
   pluginId: AZURE_DEVOPS_PLUGIN_ID,
   localId: AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.threadStatus,
 });
-
-/**
- * The host code that proves the user was asked and said no.
- *
- * It settles before the Action handler is entered, so it is the one rejection this panel may
- * describe as having written nothing. Every other failure code is reported as an incomplete
- * write, because the generic transport cannot tell a refused dispatch from a handler that ran.
- */
-const CURRENT_INTENT_REJECTED = 'plugin_action_current_intent_rejected';
 
 /** The four pull-request-scoped writes this panel reports on. */
 type AzureEntryMutationV1 = 'complete' | 'abandon' | 'reactivate' | 'requestReview';
@@ -223,7 +215,7 @@ function projectExecutionEnvelope(
     };
   }
   if (execution.status === 'error') {
-    return execution.code === CURRENT_INTENT_REJECTED
+    return isPluginActionConfirmationDeclined(execution)
       ? {
         tone: 'neutral',
         title: text(

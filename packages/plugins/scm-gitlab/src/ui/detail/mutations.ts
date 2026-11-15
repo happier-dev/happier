@@ -31,7 +31,7 @@
  * button whose every press fails.
  */
 
-import type { PluginActionExecution } from '@happier-dev/plugin-ui';
+import { isPluginActionConfirmationDeclined, type PluginActionExecution } from '@happier-dev/plugin-ui';
 import type {
   TriageDetailSurfaceInputV1,
   TriageSourceFailureV1,
@@ -316,16 +316,6 @@ export function buildGitlabMergeRequestMarkReadyInputV1(
 }
 
 /**
- * The host code that proves the user was asked and said no.
- *
- * It settles before the Action handler is entered, so it is the one rejection
- * this surface may describe as having written nothing. Every other error code is
- * reported as an incomplete write, because the generic transport cannot tell a
- * refused dispatch from a handler that ran.
- */
-export const GITLAB_CURRENT_INTENT_REJECTED_CODE = 'plugin_action_current_intent_rejected';
-
-/**
  * The effect a write actually achieved. These are kept apart rather than
  * collapsed into "done" because GitLab distinguishes them and a person acts on
  * the difference: a `scheduled` merge has not merged, and telling someone
@@ -421,7 +411,7 @@ export function projectGitlabWriteOutcomeV1(
     // host error — a refused surface, a transport fault, a handler that threw
     // after dispatching — is reported as an INCOMPLETE write, because the generic
     // transport cannot tell a refused dispatch from a handler that ran.
-    return execution.code === GITLAB_CURRENT_INTENT_REJECTED_CODE
+    return isPluginActionConfirmationDeclined(execution)
       ? Object.freeze({ kind: 'declined' as const })
       : Object.freeze({
         kind: 'rejected' as const,

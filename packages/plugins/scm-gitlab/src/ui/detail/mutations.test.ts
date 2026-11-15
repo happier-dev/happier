@@ -19,7 +19,6 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 
 import { GITLAB_CONNECTED_ACCOUNT_PURPOSE } from '../../triage/contribution.js';
 import {
-  GITLAB_CURRENT_INTENT_REJECTED_CODE,
   buildGitlabMergeRequestCloseInputV1,
   buildGitlabMergeRequestMarkReadyInputV1,
   buildGitlabMergeRequestMergeInputV1,
@@ -345,7 +344,7 @@ describe('projectGitlabWriteOutcomeV1', () => {
     // rejection this surface may describe as having written nothing.
     expect(projectGitlabWriteOutcomeV1('merge', {
       status: 'error',
-      code: GITLAB_CURRENT_INTENT_REJECTED_CODE,
+      code: 'plugin_action_current_intent_rejected',
       message: 'declined',
       retryable: false,
     })).toEqual({ kind: 'declined' });
@@ -354,7 +353,7 @@ describe('projectGitlabWriteOutcomeV1', () => {
   it('preserves the mounted host confirmation decline through the public SDK settlement', () => {
     const execution = projectPluginActionRejectionV1(new PluginError({
       code: 'denied',
-      diagnostics: [{ code: GITLAB_CURRENT_INTENT_REJECTED_CODE, severity: 'error' }],
+      diagnostics: [{ code: 'plugin_action_current_intent_rejected', severity: 'error' }],
     }), (_key, fallback) => fallback ?? 'Host refusal');
     const outcome = projectGitlabWriteOutcomeV1('reviewerChange', execution);
     expect(outcome).toEqual({ kind: 'declined' });
