@@ -11631,7 +11631,11 @@ title and facts above its tabs. These are author props consumed by bundled plugi
 or promised by the [authoring guide](../apps/docs/content/docs/plugins/ui/react-native.mdx).
 The host's Workflow interaction anchors use `HostCollection.retainedRowKeys`
 through the host entry, excluded from the governed author barrel; the renderer is
-the same Collection owner. Author `Form` hints omit `allowCustomValue`; the host's
+the same Collection owner. API governance classifies `HostCollection` and
+`HostCollectionProps` as host-only in `scripts/api-governance/authorExports.mjs`.
+The prepared-declaration projector omits them from author records in both source
+and extracted-candidate checks; unclassified root exports still require an author
+source spec. Author `Form` hints omit `allowCustomValue`; the host's
 shared input controls retain that canonical Action hint for custom-entry choices.
 Cards show only supplied descriptions and have no divided footer band. Truly
 title-only cards remain compact. Existing `WidgetFrame` exposes independent

@@ -1,5 +1,7 @@
 import { resolve } from 'node:path';
 
+import { isAuthorPackageSymbol } from './authorExports.mjs';
+
 import {
   createPublicSurfaceProgram,
   projectEntrypointExportRows,
@@ -70,7 +72,7 @@ export function projectPreparedDeclarationSurface({
     program,
     packageRoot,
     entrypoints: reportEntrypoints,
-  });
+  }).filter((row) => isAuthorPackageSymbol(packageJson.name, row));
   return Object.freeze({
     entrypoints,
     // Return only the projected data. Keeping the compiler program here pins

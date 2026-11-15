@@ -456,6 +456,7 @@ Declaration: `dist/index.d.ts`
 - value `HappierBadge` from `dist/index.d.ts`
 - value `HappierBanner` from `dist/index.d.ts`
 - type `HappierBannerPoint` from `dist/index.d.ts`
+- value `HappierBodyEdgeContext` from `dist/index.d.ts`
 - value `HappierBrandMark` from `dist/index.d.ts`
 - type `HappierBrandMarkProps` from `dist/index.d.ts`
 - value `HappierBreadcrumb` from `dist/index.d.ts`
@@ -747,6 +748,7 @@ Declaration: `dist/index.d.ts`
 - type `HappierLocalDateTimePickerMode` from `dist/index.d.ts`
 - type `HappierLocalDateTimePickerRequest` from `dist/index.d.ts`
 - value `HappierMarkdown` from `dist/index.d.ts`
+- type `HappierMarkdownEditorRequest` from `dist/index.d.ts`
 - type `HappierMarkdownProps` from `dist/index.d.ts`
 - type `HappierMarkdownRenderInput` from `dist/index.d.ts`
 - type `HappierMaterialRole` from `dist/index.d.ts`
@@ -1155,6 +1157,9 @@ Declaration: `dist/index.d.ts`
 - type `HeatmapProps` from `dist/index.d.ts`
 - value `HorizontalScrollEdgeMask` from `dist/index.d.ts`
 - type `HorizontalScrollEdgeMaskProps` from `dist/index.d.ts`
+- type `HostPeopleDirectory` from `dist/index.d.ts`
+- type `HostPeopleDirectoryRequest` from `dist/index.d.ts`
+- type `HostPerson` from `dist/index.d.ts`
 - type `HostTaskShareRef` from `dist/index.d.ts`
 - type `HostTaskShareSheet` from `dist/index.d.ts`
 - value `HostedAnchoredMenu` from `dist/index.d.ts`
@@ -1217,6 +1222,8 @@ Declaration: `dist/index.d.ts`
 - type `LocalDateTimeFieldProps` from `dist/index.d.ts`
 - type `LocalDateTimeValue` from `dist/index.d.ts`
 - value `Markdown` from `dist/index.d.ts`
+- value `MarkdownEditor` from `dist/index.d.ts`
+- type `MarkdownEditorProps` from `dist/index.d.ts`
 - type `MarkdownImageResolver` from `dist/index.d.ts`
 - type `MarkdownImageSource` from `dist/index.d.ts`
 - type `MarkdownInlineReference` from `dist/index.d.ts`
@@ -1250,6 +1257,11 @@ Declaration: `dist/index.d.ts`
 - type `NavigationListRowProps` from `dist/index.d.ts`
 - type `NavigationListSearchProps` from `dist/index.d.ts`
 - type `NavigationListStatus` from `dist/index.d.ts`
+- type `OfferedChoice` from `dist/index.d.ts`
+- value `OfferedChoiceFeedbackInput` from `dist/index.d.ts`
+- type `OfferedChoiceFeedbackInputProps` from `dist/index.d.ts`
+- value `OfferedChoices` from `dist/index.d.ts`
+- type `OfferedChoicesProps` from `dist/index.d.ts`
 - value `OutcomeFunnel` from `dist/index.d.ts`
 - type `OutcomeFunnelProps` from `dist/index.d.ts`
 - type `OutcomeFunnelStep` from `dist/index.d.ts`
@@ -1298,6 +1310,10 @@ Declaration: `dist/index.d.ts`
 - type `PluginUiCollectionQueryPager` from `dist/index.d.ts`
 - type `PluginUiCollectionQueryResult` from `dist/index.d.ts`
 - type `PluginUiCollectionQuerySnapshot` from `dist/index.d.ts`
+- type `PluginUiCollectionTableField` from `dist/index.d.ts`
+- type `PluginUiCollectionTableQuery` from `dist/index.d.ts`
+- type `PluginUiCollectionTableQuerySnapshot` from `dist/index.d.ts`
+- type `PluginUiCollectionTableSort` from `dist/index.d.ts`
 - type `PluginUiDataClient` from `dist/index.d.ts`
 - type `PluginUiEphemeralSharedScope` from `dist/index.d.ts`
 - type `PluginUiEphemeralSharedValueLease` from `dist/index.d.ts`
@@ -1324,6 +1340,7 @@ Declaration: `dist/index.d.ts`
 - value `ProgressRing` from `dist/index.d.ts`
 - type `ProgressRingProps` from `dist/index.d.ts`
 - type `PropertyChoice` from `dist/index.d.ts`
+- type `PropertyChoiceDirectory` from `dist/index.d.ts`
 - type `PropertyEditor` from `dist/index.d.ts`
 - value `PropertyList` from `dist/index.d.ts`
 - type `PropertyListItem` from `dist/index.d.ts`
@@ -1390,6 +1407,10 @@ Declaration: `dist/index.d.ts`
 - type `ScreenProps` from `dist/index.d.ts`
 - value `ScrollArea` from `dist/index.d.ts`
 - type `ScrollAreaProps` from `dist/index.d.ts`
+- value `SecretValueControls` from `dist/index.d.ts`
+- type `SecretValueControlsProps` from `dist/index.d.ts`
+- value `SecretValueText` from `dist/index.d.ts`
+- type `SecretValueTextProps` from `dist/index.d.ts`
 - value `Select` from `dist/index.d.ts`
 - type `SelectOption` from `dist/index.d.ts`
 - type `SelectProps` from `dist/index.d.ts`
@@ -1489,6 +1510,7 @@ Declaration: `dist/index.d.ts`
 - type `TreeItem` from `dist/index.d.ts`
 - type `TreeProps` from `dist/index.d.ts`
 - value `Treemap` from `dist/index.d.ts`
+- value `USAGE_METER_METRICS` from `dist/index.d.ts`
 - type `UiSurfaceComponent` from `dist/index.d.ts`
 - type `UpdatedSelectionV1` from `dist/index.d.ts`
 - value `UsageAgentMoons` from `dist/index.d.ts`
@@ -1529,6 +1551,12 @@ Declaration: `dist/index.d.ts`
 - value `UsageMachines` from `dist/index.d.ts`
 - type `UsageMachinesLabels` from `dist/index.d.ts`
 - type `UsageMachinesModel` from `dist/index.d.ts`
+- value `UsageMeterRow` from `dist/index.d.ts`
+- type `UsageMeterRowProps` from `dist/index.d.ts`
+- type `UsageMeterSize` from `dist/index.d.ts`
+- value `UsageMeterStack` from `dist/index.d.ts`
+- type `UsageMeterStackProps` from `dist/index.d.ts`
+- type `UsageMeterTone` from `dist/index.d.ts`
 - type `UsageMoonsLabels` from `dist/index.d.ts`
 - type `UsageMoonsModel` from `dist/index.d.ts`
 - value `UsageNinetyPlanets` from `dist/index.d.ts`
@@ -1647,6 +1675,7 @@ Declaration: `dist/index.d.ts`
 - value `createHappierTreemapHitGrid` from `dist/index.d.ts`
 - value `createInitialHappierListMultiSelectionState` from `dist/index.d.ts`
 - value `createListMultiSelectionStore` from `dist/index.d.ts`
+- value `createPluginCollectionTableQuery` from `dist/index.d.ts`
 - value `createPluginListFilterFieldRegistryV1` from `dist/index.d.ts`
 - value `defineEntityFilterFieldV1` from `dist/index.d.ts`
 - value `defineHappierScene` from `dist/index.d.ts`
@@ -1698,6 +1727,7 @@ Declaration: `dist/index.d.ts`
 - value `isHappierTabSelected` from `dist/index.d.ts`
 - value `isHappierWidgetFrameSourceDescriptor` from `dist/index.d.ts`
 - value `isHappierWidgetFrameSourceShown` from `dist/index.d.ts`
+- value `isPluginActionConfirmationDeclined` from `dist/index.d.ts`
 - value `joinHappierFacts` from `dist/index.d.ts`
 - value `layoutHappierSunburst` from `dist/index.d.ts`
 - value `layoutHappierTreemap` from `dist/index.d.ts`
@@ -1721,6 +1751,7 @@ Declaration: `dist/index.d.ts`
 - value `planHappierSelectOptions` from `dist/index.d.ts`
 - value `pointIntersectsCompanionNoDragRegions` from `dist/index.d.ts`
 - value `projectCompanionRelease` from `dist/index.d.ts`
+- value `projectPluginActionControlExecutionV1` from `dist/index.d.ts`
 - value `projectPluginActionRejectionV1` from `dist/index.d.ts`
 - value `projectPublicUsageChartModels` from `dist/index.d.ts`
 - value `projectPublicUsageRecords` from `dist/index.d.ts`
@@ -1787,6 +1818,7 @@ Declaration: `dist/index.d.ts`
 - value `resolveHappierListMultiSelectionKeyboardIntent` from `dist/index.d.ts`
 - value `resolveHappierListMultiSelectionPointerAction` from `dist/index.d.ts`
 - value `resolveHappierListMultiSelectionRange` from `dist/index.d.ts`
+- value `resolveHappierMarkdownEditorRequest` from `dist/index.d.ts`
 - value `resolveHappierMenuContent` from `dist/index.d.ts`
 - value `resolveHappierMenuKeyAction` from `dist/index.d.ts`
 - value `resolveHappierMenuRadioGroups` from `dist/index.d.ts`
@@ -1888,6 +1920,7 @@ Declaration: `dist/index.d.ts`
 - value `useHappierTextSelectability` from `dist/index.d.ts`
 - value `useHappierTreeInteraction` from `dist/index.d.ts`
 - value `useHappierTreeRowLineHeight` from `dist/index.d.ts`
+- value `useHostPeopleDirectory` from `dist/index.d.ts`
 - value `useHostTaskShareSheet` from `dist/index.d.ts`
 - value `useListMultiSelectionController` from `dist/index.d.ts`
 - value `useListMultiSelectionRow` from `dist/index.d.ts`
@@ -1944,6 +1977,7 @@ Declaration: `dist/advanced/index.d.ts`
 - type `HappierRenderableImageSource` from `dist/advanced/index.d.ts`
 - value `PluginHostApiProvider` from `dist/advanced/index.d.ts`
 - type `PluginHostApiProviderProps` from `dist/advanced/index.d.ts`
+- type `PluginUiActionBindingCommit` from `dist/advanced/index.d.ts`
 - type `PluginUiDetailsPaneHost` from `dist/advanced/index.d.ts`
 - type `PluginUiDetailsPanePresentation` from `dist/advanced/index.d.ts`
 - value `PluginUiHostPresentationScope` from `dist/advanced/index.d.ts`
@@ -1962,6 +1996,7 @@ Declaration: `dist/advanced/index.d.ts`
 - type `PluginUiWidgetAreaPresentation` from `dist/advanced/index.d.ts`
 - type `SessionPartClaims` from `dist/advanced/index.d.ts`
 - type `SessionPartKind` from `dist/advanced/index.d.ts`
+- value `createPluginUiActionBindingPresentation` from `dist/advanced/index.d.ts`
 - value `createPluginUiHostApiResourceClient` from `dist/advanced/index.d.ts`
 - value `createPluginUiResourceStore` from `dist/advanced/index.d.ts`
 - value `createSessionPartClaims` from `dist/advanced/index.d.ts`
@@ -1973,6 +2008,7 @@ Declaration: `dist/advanced/index.d.ts`
 - value `useClaimedPluginUiSurfaceNotice` from `dist/advanced/index.d.ts`
 - value `useFindSurfaceRegistrationWithHost` from `dist/advanced/index.d.ts`
 - value `useOptionalPluginUiScrollActivityTracker` from `dist/advanced/index.d.ts`
+- value `usePluginUiSurfaceBridge` from `dist/advanced/index.d.ts`
 - value `useSessionPartClaim` from `dist/advanced/index.d.ts`
 
 ### `./ansi`
@@ -2417,6 +2453,7 @@ Declaration: `dist/components/index.d.ts`
 - value `HappierBadge` from `dist/components/index.d.ts`
 - value `HappierBanner` from `dist/components/index.d.ts`
 - type `HappierBannerPoint` from `dist/components/index.d.ts`
+- value `HappierBodyEdgeContext` from `dist/components/index.d.ts`
 - value `HappierBrandMark` from `dist/components/index.d.ts`
 - type `HappierBrandMarkProps` from `dist/components/index.d.ts`
 - value `HappierBreadcrumb` from `dist/components/index.d.ts`
@@ -2708,6 +2745,7 @@ Declaration: `dist/components/index.d.ts`
 - type `HappierLocalDateTimePickerMode` from `dist/components/index.d.ts`
 - type `HappierLocalDateTimePickerRequest` from `dist/components/index.d.ts`
 - value `HappierMarkdown` from `dist/components/index.d.ts`
+- type `HappierMarkdownEditorRequest` from `dist/components/index.d.ts`
 - type `HappierMarkdownProps` from `dist/components/index.d.ts`
 - type `HappierMarkdownRenderInput` from `dist/components/index.d.ts`
 - type `HappierMaterialRole` from `dist/components/index.d.ts`
@@ -3176,6 +3214,8 @@ Declaration: `dist/components/index.d.ts`
 - type `LocalDateTimeFieldProps` from `dist/components/index.d.ts`
 - type `LocalDateTimeValue` from `dist/components/index.d.ts`
 - value `Markdown` from `dist/components/index.d.ts`
+- value `MarkdownEditor` from `dist/components/index.d.ts`
+- type `MarkdownEditorProps` from `dist/components/index.d.ts`
 - type `MarkdownImageResolver` from `dist/components/index.d.ts`
 - type `MarkdownImageSource` from `dist/components/index.d.ts`
 - type `MarkdownInlineReference` from `dist/components/index.d.ts`
@@ -3209,6 +3249,11 @@ Declaration: `dist/components/index.d.ts`
 - type `NavigationListRowProps` from `dist/components/index.d.ts`
 - type `NavigationListSearchProps` from `dist/components/index.d.ts`
 - type `NavigationListStatus` from `dist/components/index.d.ts`
+- type `OfferedChoice` from `dist/components/index.d.ts`
+- value `OfferedChoiceFeedbackInput` from `dist/components/index.d.ts`
+- type `OfferedChoiceFeedbackInputProps` from `dist/components/index.d.ts`
+- value `OfferedChoices` from `dist/components/index.d.ts`
+- type `OfferedChoicesProps` from `dist/components/index.d.ts`
 - value `OutcomeFunnel` from `dist/components/index.d.ts`
 - type `OutcomeFunnelProps` from `dist/components/index.d.ts`
 - type `OutcomeFunnelStep` from `dist/components/index.d.ts`
@@ -3255,6 +3300,7 @@ Declaration: `dist/components/index.d.ts`
 - value `ProgressRing` from `dist/components/index.d.ts`
 - type `ProgressRingProps` from `dist/components/index.d.ts`
 - type `PropertyChoice` from `dist/components/index.d.ts`
+- type `PropertyChoiceDirectory` from `dist/components/index.d.ts`
 - type `PropertyEditor` from `dist/components/index.d.ts`
 - value `PropertyList` from `dist/components/index.d.ts`
 - type `PropertyListItem` from `dist/components/index.d.ts`
@@ -3318,6 +3364,10 @@ Declaration: `dist/components/index.d.ts`
 - type `ScreenProps` from `dist/components/index.d.ts`
 - value `ScrollArea` from `dist/components/index.d.ts`
 - type `ScrollAreaProps` from `dist/components/index.d.ts`
+- value `SecretValueControls` from `dist/components/index.d.ts`
+- type `SecretValueControlsProps` from `dist/components/index.d.ts`
+- value `SecretValueText` from `dist/components/index.d.ts`
+- type `SecretValueTextProps` from `dist/components/index.d.ts`
 - value `Select` from `dist/components/index.d.ts`
 - type `SelectOption` from `dist/components/index.d.ts`
 - type `SelectProps` from `dist/components/index.d.ts`
@@ -3415,6 +3465,7 @@ Declaration: `dist/components/index.d.ts`
 - type `TreeItem` from `dist/components/index.d.ts`
 - type `TreeProps` from `dist/components/index.d.ts`
 - value `Treemap` from `dist/components/index.d.ts`
+- value `USAGE_METER_METRICS` from `dist/components/index.d.ts`
 - type `UpdatedSelectionV1` from `dist/components/index.d.ts`
 - value `UsageAgentMoons` from `dist/components/index.d.ts`
 - value `UsageAgentRiver` from `dist/components/index.d.ts`
@@ -3454,6 +3505,12 @@ Declaration: `dist/components/index.d.ts`
 - value `UsageMachines` from `dist/components/index.d.ts`
 - type `UsageMachinesLabels` from `dist/components/index.d.ts`
 - type `UsageMachinesModel` from `dist/components/index.d.ts`
+- value `UsageMeterRow` from `dist/components/index.d.ts`
+- type `UsageMeterRowProps` from `dist/components/index.d.ts`
+- type `UsageMeterSize` from `dist/components/index.d.ts`
+- value `UsageMeterStack` from `dist/components/index.d.ts`
+- type `UsageMeterStackProps` from `dist/components/index.d.ts`
+- type `UsageMeterTone` from `dist/components/index.d.ts`
 - type `UsageMoonsLabels` from `dist/components/index.d.ts`
 - type `UsageMoonsModel` from `dist/components/index.d.ts`
 - value `UsageNinetyPlanets` from `dist/components/index.d.ts`
@@ -3710,6 +3767,7 @@ Declaration: `dist/components/index.d.ts`
 - value `resolveHappierListMultiSelectionKeyboardIntent` from `dist/components/index.d.ts`
 - value `resolveHappierListMultiSelectionPointerAction` from `dist/components/index.d.ts`
 - value `resolveHappierListMultiSelectionRange` from `dist/components/index.d.ts`
+- value `resolveHappierMarkdownEditorRequest` from `dist/components/index.d.ts`
 - value `resolveHappierMenuContent` from `dist/components/index.d.ts`
 - value `resolveHappierMenuKeyAction` from `dist/components/index.d.ts`
 - value `resolveHappierMenuRadioGroups` from `dist/components/index.d.ts`
@@ -3841,7 +3899,12 @@ Declaration: `dist/data/index.d.ts`
 - type `PluginUiCollectionQueryPager` from `dist/data/index.d.ts`
 - type `PluginUiCollectionQueryResult` from `dist/data/index.d.ts`
 - type `PluginUiCollectionQuerySnapshot` from `dist/data/index.d.ts`
+- type `PluginUiCollectionTableField` from `dist/data/index.d.ts`
+- type `PluginUiCollectionTableQuery` from `dist/data/index.d.ts`
+- type `PluginUiCollectionTableQuerySnapshot` from `dist/data/index.d.ts`
+- type `PluginUiCollectionTableSort` from `dist/data/index.d.ts`
 - type `PluginUiDataClient` from `dist/data/index.d.ts`
+- value `createPluginCollectionTableQuery` from `dist/data/index.d.ts`
 - value `usePluginAccountKv` from `dist/data/index.d.ts`
 - value `usePluginCollectionQuery` from `dist/data/index.d.ts`
 - value `usePluginUiDataClient` from `dist/data/index.d.ts`
@@ -3952,6 +4015,9 @@ Declaration: `dist/hostApi/index.d.ts`
 - type `ComposerViewStateV1` from `dist/hostApi/index.d.ts`
 - type `ComposersService` from `dist/hostApi/index.d.ts`
 - type `FindSurfaceRegistration` from `dist/hostApi/index.d.ts`
+- type `HostPeopleDirectory` from `dist/hostApi/index.d.ts`
+- type `HostPeopleDirectoryRequest` from `dist/hostApi/index.d.ts`
+- type `HostPerson` from `dist/hostApi/index.d.ts`
 - type `HostTaskShareRef` from `dist/hostApi/index.d.ts`
 - type `HostTaskShareSheet` from `dist/hostApi/index.d.ts`
 - type `PluginActionExecution` from `dist/hostApi/index.d.ts`
@@ -3979,11 +4045,14 @@ Declaration: `dist/hostApi/index.d.ts`
 - type `ReviewCommentProposalWithBodyV1` from `dist/hostApi/index.d.ts`
 - type `SessionStateReadV1` from `dist/hostApi/index.d.ts`
 - type `SessionStatesReadV1` from `dist/hostApi/index.d.ts`
+- value `isPluginActionConfirmationDeclined` from `dist/hostApi/index.d.ts`
+- value `projectPluginActionControlExecutionV1` from `dist/hostApi/index.d.ts`
 - value `projectPluginActionRejectionV1` from `dist/hostApi/index.d.ts`
 - value `useComposer` from `dist/hostApi/index.d.ts`
 - value `useComposerView` from `dist/hostApi/index.d.ts`
 - value `useExecutePluginAction` from `dist/hostApi/index.d.ts`
 - value `useFindSurfaceRegistration` from `dist/hostApi/index.d.ts`
+- value `useHostPeopleDirectory` from `dist/hostApi/index.d.ts`
 - value `useHostTaskShareSheet` from `dist/hostApi/index.d.ts`
 - value `useLivePluginResource` from `dist/hostApi/index.d.ts`
 - value `useLivePluginResourceProjection` from `dist/hostApi/index.d.ts`

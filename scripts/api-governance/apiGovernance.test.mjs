@@ -629,6 +629,29 @@ test('the plugin-ui author census excludes host presentation exports while retai
   }
 });
 
+test('the plugin-ui author census excludes classified host root symbols but rejects unclassified exports', async () => {
+  const root = await createEntrypointFixture('@happier-dev/plugin-ui');
+  try {
+    const declaration = await readFile(join(root, 'dist/index.d.ts'), 'utf8');
+    await writeFixtureFile(root, 'dist/index.d.ts', `${declaration}\nexport declare const HostCollection: unique symbol;\nexport type HostCollectionProps = { retainedRowKeys: readonly string[] };\n`);
+    const result = await runApiGovernance({ profileId: 'plugin-ui', packageRoot: root, write: true });
+    assert.equal(result.status, 'current');
+    const census = JSON.parse(await readFile(join(root, 'api-surface.json'), 'utf8'));
+    assert.deepEqual(census.symbols.map((entry) => entry.exportName), ['run']);
+    for (const record of ['API.md', 'api-declarations.md']) {
+      assert.doesNotMatch(await readFile(join(root, record), 'utf8'), /HostCollection/u);
+    }
+    // Excluding the whole host barrel would silently admit an accidental export.
+    await writeFixtureFile(root, 'dist/index.d.ts', `${declaration}\nexport declare const AccidentalAuthorExport: unique symbol;\n`);
+    await assert.rejects(
+      runApiGovernance({ profileId: 'plugin-ui', packageRoot: root, check: true }),
+      /source specs are missing prepared declaration export \.:AccidentalAuthorExport:value/u,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('the plugin-ui profile requires an author-owned source spec for every public entrypoint', async () => {
   const root = await createEntrypointFixture();
   try {
