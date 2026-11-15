@@ -1,8 +1,11 @@
 import axios from '@/api/client/credentialAxios';
+import { createHttpStatusError } from '@/api/client/httpStatusError';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { resolveExternalActionServerRequestHeaders, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ExternalActionHttpErrorSchema, projectExternalActionHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionHttpError';
+import { ManagedErrorV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachineSetupTargetUnavailableFailureV1 } from '@happier-dev/protocol/actions/operations/v1';
 
 /** Setup is Machine administration; these diagnostics contain no native or Account data. */
@@ -34,6 +37,14 @@ export async function requestMachineSetupHome(input: Readonly<{
   const response = await axios.post<unknown>(`${input.runtime.serverHttpBaseUrl}${input.path}`, input.body, {
     headers: headers.headers, ...(input.signal ? { signal: input.signal } : {}), validateStatus: () => true,
   });
-  if (response.status < 200 || response.status >= 300) throw Object.assign(new Error('machine_setup_request_failed'), { code: 'machine_setup_request_failed' });
+  if (response.status < 200 || response.status >= 300) {
+    const managed = ManagedErrorV1Schema.safeParse(response.data);
+    const external = ExternalActionHttpErrorSchema.safeParse(response.data);
+    const failure: ActionExecuteFailure = managed.success
+      ? { ok: false, errorCode: managed.data.code, error: managed.data.code }
+      : external.success ? projectExternalActionHttpFailureV1(external.data)
+        : { ok: false, errorCode: 'machine_setup_request_failed', error: 'machine_setup_request_failed' };
+    throw Object.assign(createHttpStatusError(response.status, failure.error, failure.errorCode), failure);
+  }
   return response.data;
 }

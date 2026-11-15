@@ -22,6 +22,44 @@ describe('admitted Machine setup snapshot lifetime', () => {
     nativeTerminal.autoExit = false;
   });
   it.each([
+    { status: 401, body: { error: 'invalid_token', authorizationRefusal: 'verification_purpose' }, code: 'invalid_token' },
+    { status: 409, body: { code: 'preset_archived' }, code: 'preset_archived' },
+    { status: 500, body: { code: 'private_server_code', message: 'PRIVATE_HOME_RESPONSE' }, code: 'machine_setup_request_failed' },
+  ])('preserves closed Home refusal and HTTP status in preset Plan ($status)', async ({ status, body, code }) => {
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt', accountEncryptionMode: 'plain' });
+    // HTTP is the boundary; the Plan Action, signing, and failure projection remain real.
+    const home = vi.spyOn(axios, 'post').mockImplementation(async url => {
+      expect(new URL(String(url)).pathname).toBe('/v1/machines/setup/resolve');
+      return { status, data: body };
+    });
+    onTestFinished(() => home.mockRestore());
+    const result = await fixture.createExecutor(fixture.credentials).execute('machines.setup.plan', {
+      homeId: 'srv_home', machineId: fixture.machine.id, mode: 'effects',
+      sources: [{ kind: 'accountPresetOpaque', presetId: 'saved-preset', presetRevision: 1, contentEncryptionMode: 'plain' },
+        { kind: 'direct', setup: {} }],
+    }, fixture.context('machines.setup.plan'));
+    expect(result).toMatchObject({ ok: false, errorCode: code,
+      failureCause: { phase: 'machines.setup.plan', httpStatus: status } });
+    if (status === 401) expect(result).toMatchObject({ details: {
+      error: 'invalid_token', authorizationRefusal: 'verification_purpose',
+    } });
+    expect(JSON.stringify(result)).not.toContain('PRIVATE_HOME_RESPONSE');
+    expect(JSON.stringify(result)).not.toContain('private_server_code');
+    expect(fixture.rootLaunches).toEqual([]);
+    expect(fixture.metadataWrites).toEqual([]);
+  });
+  it('preserves network failure codes when preset Plan cannot reach Home', async () => {
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt', accountEncryptionMode: 'plain' });
+    const home = vi.spyOn(axios, 'post').mockRejectedValue(Object.assign(new Error('Connection reset'), { code: 'ECONNRESET' }));
+    onTestFinished(() => home.mockRestore());
+    expect(await fixture.createExecutor(fixture.credentials).execute('machines.setup.plan', {
+      homeId: 'srv_home', machineId: fixture.machine.id, mode: 'effects',
+      sources: [{ kind: 'accountPresetOpaque', presetId: 'saved-preset', presetRevision: 1, contentEncryptionMode: 'plain' },
+        { kind: 'direct', setup: {} }],
+    }, fixture.context('machines.setup.plan'))).toMatchObject({ ok: false, errorCode: 'ECONNRESET',
+      failureCause: { httpStatus: null } });
+  });
+  it.each([
     { exitCode: 0, reportFailure: 'lost', reportState: 'terminal' },
     { exitCode: 0, reportFailure: 'refused', reportState: 'terminal' },
     { exitCode: 23, reportFailure: 'lost', reportState: 'terminal' },
