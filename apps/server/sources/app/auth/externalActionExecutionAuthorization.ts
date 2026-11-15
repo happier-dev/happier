@@ -3459,7 +3459,8 @@ export async function verifyExternalActionDomainExecutionRequest(
     } else if (verified.createPreparationAdmission || verified.deploymentPreparationSourceRead
         || verified.deploymentTargetRetentionAdmission || verified.deploymentReviewedSetupRead
         || verified.acceptedDeploymentReceipt?.read || verified.acceptedDeploymentReceipt?.platformMaterial
-        || verified.acceptedDeploymentReceipt && (verified.signedChildPurpose.deploymentWorkspaceRead || verified.signedChildPurpose.deploymentReferenceRead)
+        || verified.acceptedDeploymentReceipt && verified.signedChildPurpose.deploymentWorkspaceRead
+        || verified.signedChildPurpose.deploymentReferenceRead
         || verified.actionMaterialAdmission || verified.actionBrokerAdmission) {
         // verifyCommon already consumed the one purpose + admitted-job result.
     } else if (domainPreparation === true) {

@@ -1268,6 +1268,58 @@ describe('deployment children retain their controller Action authority', () => {
         }, { authentication: 'real' });
     });
 
+    it('admits a saved-reference read during the root review before any receipt exists', async () => {
+        // DB-MOVE cutover (COR3B-DATA-1115): Environment A references B's export.
+        // The Deploy review renders A's runtime bindings before Home accepts a
+        // receipt; the signed root and its reviewed child are the admission.
+        const f = await fixture('account', 'account', { readableEnvironment: true });
+        const reference = await db.deploymentEnvironment.create({ data: {
+            projectSourceId: f.environment.projectSourceId, createdByAccountId: f.account.id,
+            protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', controllerMachineId: f.controller.id,
+            ...await f.content('deployment-environment.v1'),
+        } });
+        const foreign = await fixture('account', 'account', { readableEnvironment: true });
+        await db.deployment.delete({ where: { id: f.receipt.id } });
+        const target = f.authorization.binding.target;
+        const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: f.authorization,
+            serverId, serverIdentityId: serverId, serverHttpBaseUrl: 'http://home.test', target,
+            installationId: f.controller.installationId, privateKey: f.controller.keys.secretKey, rootAdmitted: true });
+        if (!authorization) throw new Error('Expected admitted root HTTP projection');
+        const action = 'deployments.environments.get';
+        await withAuthenticatedTestApp(app => { registerDeploymentRoutes(app); artifactsRoutes(app); machinesRoutes(app); registerAccountEncryptionRoutes(app); }, async app => {
+            const readReference = (environment: { id: string; contentArtifactId: string | null }) => invokeHostReviewedChildV1({
+                parent: { actionId: 'deployments.deploy', input: f.input },
+                context: { runtimeAccountId: f.account.id, externalActionTarget: target,
+                    externalActionExecutionAuthorization: authorization, surface: 'cli' },
+                child: { action, role: 'deployment.reference', input: { serverId, environmentId: environment.id } },
+                admittedReview: { action, role: 'deployment.reference', surface: 'cli' }, environmentId: environment.id,
+                execute: async (_input, context) => {
+                    const responses = [];
+                    for (const path of [`/v1/deployments/environments/${environment.id}?serverId=${serverId}`,
+                        `/v1/artifacts/${environment.contentArtifactId}`]) {
+                        const headers = await context.externalActionExecutionAuthorization?.requesterHttpProjection?.createRequestHeaders({
+                            effectActionId: action, method: 'GET', path });
+                        if (!headers) throw new Error('Expected signed child read');
+                        responses.push(await app.inject({ method: 'GET', url: path,
+                            headers: { ...currentAccountStoredContentCompatibilityHeaders, ...headers } }));
+                    }
+                    return responses;
+                } });
+            const own = await readReference(reference);
+            if (!Array.isArray(own)) throw new Error('Expected reference read results');
+            expect(own.map(response => response.statusCode)).toEqual([200, 200]);
+            // The reviewed child admits the transport only; another person's
+            // Environment stays refused by the ordinary resource owner.
+            const refused = await readReference(foreign.environment);
+            if (!Array.isArray(refused)) throw new Error('Expected reference read results');
+            for (const response of refused) {
+                expect([403, 404], response.body).toContain(response.statusCode);
+                expect(response.json()).not.toHaveProperty('environment');
+                expect(response.json()).not.toHaveProperty('artifact');
+            }
+        }, { authentication: 'real' });
+    });
+
     it('refuses another Account saved-reference Environment and Artifact without content custody', async () => {
         const f = await fixture('account', 'account', { readableEnvironment: true });
         const target = f.authorization.binding.target;

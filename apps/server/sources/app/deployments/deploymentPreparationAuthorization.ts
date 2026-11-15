@@ -21,6 +21,7 @@ import { loadDeploymentEnvironmentInTx, lockDeploymentEnvironmentInTx, readCreat
     type DeploymentEnvironmentRow } from './deploymentEnvironmentService';
 import { admitDeploymentMachineInTx, type DeploymentAuthentication } from './deploymentAdmission';
 import { readPreviewCompanionMainInTx } from './previewEnvironmentRelation';
+import { deploymentInProgressStates, readAcceptedDeploymentReceiptInTx } from './deploymentAcceptedExecution';
 import { DeploymentDomainAddAdmissionInputV1Schema, DeploymentEnvironmentCreateStorageInputV1Schema, DeploymentTargetLinkInputV1Schema,
     DeploymentDeployAdmissionInputV1Schema, DeploymentEnvironmentGetInputV1Schema, DeploymentEnvironmentListInputV1Schema, DeploymentDomainCapturedPlacementsV1Schema,
     DeploymentTargetLinksListInputV1Schema,
@@ -1591,7 +1592,8 @@ async function isOtherDeploymentPreparationAuthorizedInTx(tx: Tx, binding: Exter
 
 /** Saved references are private Environment content. The host's reviewed child
  * retains the selected operand; Home consumes it without rediscovering bindings
- * or granting the root's accepted-content custody to the referenced Source. */
+ * or granting the root's accepted-content custody to the referenced Source.
+ * This owner decides the read's currentness; ordinary routes retain access. */
 export async function readDeploymentReferenceHttpPurpose(tx: Tx,
     binding: ExternalActionExecutionAuthorizationBindingV1, effectActionId: string,
     proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown; reviewedChild?: ReviewedActionChildHttpProofV1 }>,
@@ -1606,6 +1608,10 @@ export async function readDeploymentReferenceHttpPurpose(tx: Tx,
         || proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return false;
     const input = { serverId: binding.serverIdentityId, environmentId: child.environmentId };
     if (child.inputDigest !== computeActionInputApprovalDigestV1(DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, input)) return false;
+    // The signed root is the admission while its Deploy review renders runtime
+    // bindings, before Home accepts a receipt; once accepted, the job must still run.
+    if (await readAcceptedDeploymentReceiptInTx(tx, binding, undefined,
+        { state: { notIn: deploymentInProgressStates() } })) return false;
     if (transports.isEnvironmentRead()) return sameStrictJsonValue(proof.routeInput, input);
     if (transports.isCurrentnessRead()) return proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, {});
     const artifactId = transports.readArtifactId();
