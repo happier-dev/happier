@@ -278,14 +278,16 @@ describe('exact Workflow recovery observation', () => {
       sessionId: 'c111111111111111111111111', localInputId: 'input-1' } },
       terminalParent: cancelled, cancellationRequested: cancelled })).toEqual({ kind: 'unresolved', code: 'session_not_found' });
   });
-  it.each(['local', 'remote', 'wrong-machine', 'missing-machine', 'missing-witness'] as const)
+  it.each(['local', 'remote', 'mapped', 'wrong-machine', 'missing-machine', 'missing-witness'] as const)
   ('recovers Session continuation only from its retained Machine and selected Agent projection (%s)', async scenario => {
     const sessionId = 'c111111111111111111111111';
     const selectedMachineId = scenario === 'local' ? 'machine-1' : 'participant-machine';
     const session = createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain', active: true,
       metadata: JSON.stringify({ ...(scenario === 'missing-machine' ? {} : {
         machineId: scenario === 'wrong-machine' ? 'machine-1' : selectedMachineId,
-      }), path: '/repo', flavor: 'codex' }) });
+      }), path: scenario === 'mapped' ? 'stack-state/agent-qa-fin2/workspace' : '/repo',
+        ...(scenario === 'mapped' ? { sessionWorkspaceLocationV1: { v: 1, machineId: selectedMachineId,
+          agentPath: 'stack-state/agent-qa-fin2/workspace', machinePath: '/repo' } } : {}), flavor: 'codex' }) });
     vi.spyOn(axios, 'get').mockImplementation(async (url) => {
       const path = new URL(String(url)).pathname;
       if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
@@ -298,6 +300,9 @@ describe('exact Workflow recovery observation', () => {
       if (path.endsWith('/pending')) return { status: 200, data: { pending: [], version: 0 } };
       throw new Error(`Unexpected HTTP boundary: ${path}`);
     });
+    if (scenario === 'mapped') expect(await resolveWorkflowSessionConversation({
+      credentials: { token: 'token', encryption: null }, sessionId, machineId: selectedMachineId,
+    })).toMatchObject({ directory: '/repo' });
     const roster = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
       projection: { v: 2, generation: 1, agentsById: { codex: { id: 'codex', capabilities: {
         sessions: { open: ['resume'], delivery: ['newTurn'], cancel: true },
@@ -320,10 +325,10 @@ describe('exact Workflow recovery observation', () => {
         machineId: selectedMachineId, directory: '/repo', checkoutRootPath: '/repo',
       } } }), execution: { kind: 'session', sessionId, localInputId: 'input-1' } },
       getRun: async () => { throw new Error('No invented Run'); },
-    })).toEqual({ activity: 'unknown', canReattach: scenario === 'local' || scenario === 'remote',
-      canContinueConversation: scenario === 'local' || scenario === 'remote' });
+    })).toEqual({ activity: 'unknown', canReattach: scenario === 'local' || scenario === 'remote' || scenario === 'mapped',
+      canContinueConversation: scenario === 'local' || scenario === 'remote' || scenario === 'mapped' });
     expect(replacementAware).not.toHaveBeenCalled();
-    if (scenario !== 'local' && scenario !== 'remote') expect(exact).not.toHaveBeenCalled();
+    if (scenario !== 'local' && scenario !== 'remote' && scenario !== 'mapped') expect(exact).not.toHaveBeenCalled();
   });
   it.each(['remote', 'refused', 'wrong-machine', 'missing-witness'] as const)
   ('cancels a retained remote Session input only after verifying its frozen Machine (%s)', async scenario => {

@@ -1,3 +1,4 @@
+import { deriveActivitySummaryFromAgentState } from '@/api/session/deriveActivitySummaryFromAgentState';
 import { expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -76,6 +77,50 @@ it('receipts a native approval without applying it, then applies the exact offer
         expect(audit.methods.filter(method => method === 'approval/decide')).toHaveLength(1);
         expect(audit.methods.filter(method => method === 'turn/start')).toHaveLength(1);
     } finally { events.dispose(); await fixture.dispose(); }
+});
+
+it('retains Allow once approval after the native tool and turn complete', async () => {
+    const scratch = await mkdtemp(join(tmpdir(), 'muse-allow-once-'));
+    const recordingPath = join(scratch, 'recording.json');
+    // Lifecycle begins with resume; reuse the existing create-handshake composition.
+    const lifecycle = readMuseRecord(JSON.parse(await readFile(new URL('./testkit/fixtures/lifecycle.json', import.meta.url), 'utf8')));
+    const advanced = readMuseRecord(JSON.parse(await readFile(new URL('./testkit/fixtures/advanced.json', import.meta.url), 'utf8')));
+    if (!Array.isArray(lifecycle.rows) || !Array.isArray(advanced.rows)) throw new Error('Missing captured native rows');
+    const advancedRows = advanced.rows;
+    const sessionIdentity = (value: JsonValue | undefined) => readMuseRecord(readMuseRecord(readMuseRecord(readMuseRecord(value).message).result).session).sessionId;
+    const sourceId = sessionIdentity(lifecycle.rows[5]);
+    const targetId = sessionIdentity(advancedRows[8]);
+    if (typeof sourceId !== 'string' || typeof targetId !== 'string') throw new Error('Missing captured Session identity');
+    const turnRows: JsonValue[] = JSON.parse(JSON.stringify(lifecycle.rows.slice(12, 49)).replaceAll(sourceId, targetId));
+    await writeFile(recordingPath, JSON.stringify({ rows: [0, 1, 2, 6, 7, 8].map(index => advancedRows[index]).concat(turnRows) }));
+    const fixture = await createAdmittedMuseSessionFixture({ native: { scenario: 'approval-local-persistent', recordingPath,
+        nativePolicyPath: join(scratch, 'policy.json'), decisionAckPath: join(scratch, 'ack') },
+        readActiveTurnAdmissionWitness: () => ({ inputId: 'allow-input', turnId: 'allow-turn', userMessageSeq: null, userMessageSeqs: [],
+            causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' } }) });
+    const events = createAgentSessionRuntimeHarness();
+    try {
+        const session = await fixture.open({ kind: 'create', sessionId: 'host-admitted-muse', cwd: process.cwd() });
+        session.watch(events.recordRuntimeEvent);
+        await session.send({ inputIds: ['allow-input'], input: { text: 'Run the captured harmless command.' },
+            delivery: { kind: 'newTurn', turnId: 'allow-turn' } });
+        await fixture.waitForAudit(audit => audit.receiptCount === 1);
+        const entry = Object.entries(fixture.host.getAgentStateSnapshot()?.requests ?? {})[0];
+        const nativeChoices = entry?.[1].nativeChoices;
+        if (!entry || !nativeChoices) throw new Error('Expected native approval');
+        const [id] = entry;
+        expect(deriveActivitySummaryFromAgentState(fixture.host.getAgentStateSnapshot()).pendingPermissionRequestCount).toBe(1);
+        const response = invokeHomeRpc(fixture, RPC_METHODS.SESSION_PERMISSION_RESPOND, { id, approved: true, decision: 'approved',
+            nativeChoice: { requirementId: nativeChoices.requirementId, choiceId: 'allow_once' } });
+        await events.until('turn-complete');
+        const cleanup = fixture.permissionHandler.cancelByPluginTurn('happier.agent.muse', 'allow-turn', 'turn completed');
+        await writeFile(join(scratch, 'ack'), 'release');
+        expect(await response).toBeUndefined();
+        await cleanup;
+        expect(deriveActivitySummaryFromAgentState(fixture.host.getAgentStateSnapshot()).pendingPermissionRequestCount).toBe(0);
+        expect(fixture.host.getAgentStateSnapshot()?.completedRequests?.[id]).toMatchObject({ status: 'approved', decision: 'approved' });
+        await fixture.closeSession();
+        expect(fixture.host.getAgentStateSnapshot()?.completedRequests?.[id]).toMatchObject({ status: 'approved', decision: 'approved' });
+    } finally { events.dispose(); await fixture.dispose(); await rm(scratch, { recursive: true, force: true }); }
 });
 
 it('offers host MCP catalog consent and applies its captured native grant exactly once', async () => {

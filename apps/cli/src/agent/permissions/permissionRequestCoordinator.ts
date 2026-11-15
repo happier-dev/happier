@@ -21,7 +21,7 @@ import type {
     PermissionResponseClaimRejoin,
     PermissionResponseClaimSettlement,
 } from './agentStateRequestStore';
-import { isSameAgentStateRequestOccurrence } from './agentStateRequestStore';
+import { isSameAgentStateRequestArguments, isSameAgentStateRequestOccurrence } from './agentStateRequestStore';
 import {
     isPermissionRequestOwnedByPlugin,
     isPermissionRequestOwnedByPluginTurn,
@@ -678,7 +678,7 @@ export class PermissionRequestCoordinator<TResult> {
                     && delivered.requestId === entry.requestId
                     && deepEqual(delivered.responseTarget, entry.responseTarget)
                     && completed.tool === entry.toolName
-                    && deepEqual(completed.arguments, entry.toolInput)
+                    && isSameAgentStateRequestArguments(completed.arguments, entry.toolInput)
                     && completed.createdAt === entry.createdAt
                     && completed.turnId === entry.turnId
                     && completed.source === entry.source
@@ -933,7 +933,9 @@ export class PermissionRequestCoordinator<TResult> {
     }>): Promise<void> {
         const entriesToRetire = new Set(params.entries);
         const markedEntries = params.entries.filter(
-            (entry) => !entry.cancelReason,
+            // Native settlement already establishes the outcome even while its
+            // command ACK is draining. Cleanup must not invalidate that answer.
+            (entry) => !entry.cancelReason && !entry.observedCompletion,
         );
         for (const entry of markedEntries) {
             entry.cancelReason = params.reason;

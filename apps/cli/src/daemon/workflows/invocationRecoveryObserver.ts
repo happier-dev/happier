@@ -1,3 +1,4 @@
+import { resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
 import type { StoredCredentials } from '@/persistence';
 import { resolveSessionRuntimeSnapshot } from '@/daemon/sessions/runtimeSnapshot/resolveSessionRuntimeSnapshot';
 import { resolveSessionConfigOptionOverridesFromMetadataSnapshot } from '@/agent/runtime/sessionConfigOptionOverrideSync';
@@ -119,6 +120,9 @@ export async function resolveWorkflowSessionConversation(params: Readonly<{
       expected: { kind: 'object' }, observed: { kind: 'unset' } });
     return null;
   }
+  const directory = resolveSessionWorkspaceRootForMachine({
+    metadata, machineId: authorized.machineId, candidatePath: metadata.path,
+  }).machinePath;
   const backend = resolveBackendTargetFromSessionMetadata(metadata);
   const declaredTarget = backend ? parseBackendTargetKeyV2(buildBackendTargetKeyV2(backend)) : null;
   const agentTarget = declaredTarget?.kind === 'agent' ? declaredTarget : undefined;
@@ -162,12 +166,12 @@ export async function resolveWorkflowSessionConversation(params: Readonly<{
   // the exact applied selection when a restart is required.
   selection.capabilitySelection = readAppliedSessionCapabilitySelectionFromMetadataV1(metadata);
   const { permissionMode, modelSelection } = resolveSessionRuntimeSnapshot({
-    incomingOptions: { existingSessionId: target.sessionId, directory: metadata.path },
+    incomingOptions: { existingSessionId: target.sessionId, directory },
     persistedMetadata: metadata,
   }).snapshot;
   const sessionRoles = readSessionRolesV1(metadata);
   return {
-    sessionId: target.sessionId, machineId: authorized.machineId, directory: metadata.path,
+    sessionId: target.sessionId, machineId: authorized.machineId, directory,
     ...(target.rawSession.origin ? { origin: target.rawSession.origin } : {}),
     ...(target.rawSession.workDepth === undefined ? {} : { workDepth: target.rawSession.workDepth }),
     ...(agentTarget ? { agentTarget } : {}),

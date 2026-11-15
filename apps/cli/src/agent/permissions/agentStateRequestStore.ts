@@ -14,6 +14,7 @@ import type { PermissionRequestPushSender } from '@/agent/permissions/BasePermis
 import { logger } from '@/ui/logger';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { deepEqual } from '@/utils/deterministicJson';
+import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 import { isAgentStateRequestCoveredByCompletedRequests, type AgentStateRequestCoverageOptions } from '@happier-dev/agents';
 import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 import { SessionPermissionApprovalReviewerClaimV1Schema, SessionPermissionAccountUserDecisionActorV1Schema, SessionPermissionExternalHumanDecisionActorV1Schema, SessionPermissionIdempotencyKeyV1Schema, SessionPermissionSourceRefV1Schema, SessionPermissionSourceRevisionOrEpochV1Schema } from '@happier-dev/protocol/sessions/permissions/v1';
@@ -1806,6 +1807,14 @@ type AgentStateUpdateWithResponseDispatch = Readonly<{
     responseDispatch?: AgentStateResponseTargetDispatch | null;
 }>;
 
+/**
+ * Committed Agent state stores request arguments through the transcript redactor while a local
+ * occurrence keeps the Agent's raw input, so arguments are compared in redacted form.
+ */
+export function isSameAgentStateRequestArguments(left: unknown, right: unknown): boolean {
+    return deepEqual(redactTranscriptSecrets(left), redactTranscriptSecrets(right));
+}
+
 /** Compare occurrence custody across pending and completed request projections. */
 export function isSameAgentStateRequestOccurrence(left: unknown, right: unknown): boolean {
     const first = clonePlainObjectToNullProto(left);
@@ -1815,7 +1824,7 @@ export function isSameAgentStateRequestOccurrence(left: unknown, right: unknown)
         // Retirement lifetime does not mint a new occurrence; older stored rows omit it.
         const { currentHandler: _currentHandler, lifetime: _lifetime, ...metadata } = readAgentStateRequestMetadata(record);
         return {
-            tool: record.tool, arguments: record.arguments, createdAt: record.createdAt,
+            tool: record.tool, arguments: redactTranscriptSecrets(record.arguments), createdAt: record.createdAt,
             kind: typeof record.kind === 'string' ? record.kind
                 : resolveAgentRequestKind(typeof record.tool === 'string' ? record.tool : ''),
             ...metadata,
