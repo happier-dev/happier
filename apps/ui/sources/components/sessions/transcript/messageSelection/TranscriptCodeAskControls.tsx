@@ -5,6 +5,7 @@ import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneSco
 import { usePaneMainColumn } from '@/components/appShell/panes/mainColumn/usePaneMainColumn';
 import { AskSelectionControls } from '@/components/ui/code/selection/AskSelectionControls';
 import type { AskSelection } from '@/components/ui/code/selection/useAskSelection';
+import { normalizeExclusiveRangeEnd } from '@/components/ui/code/selection/domSelectionRange';
 import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { Modal } from '@/modal';
@@ -86,7 +87,7 @@ function TranscriptCodeAskControlsContent(
     const selection = window.getSelection?.();
     if (!selection || selection.rangeCount === 0 || selection.isCollapsed)
       return null;
-    const range = selection.getRangeAt(0);
+    const range = normalizeExclusiveRangeEnd(selection.getRangeAt(0));
     const isBlock = (element: DomElement) =>
       element.dataset?.happierCodeBlock === 'true';
     const block = closestElement(range.startContainer as DomNode, isBlock);

@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Platform } from 'react-native';
 
 import type { AskSelection } from './useAskSelection';
+import { normalizeExclusiveRangeEnd } from './domSelectionRange';
 import { readDiffLineFromDomNode } from '../diff/diffTextSelection';
 import { PIERRE_DIFF_HOST_SELECTOR } from '../diff/pierre/pierreDomLine';
 import type { LanguageIntelligenceRange } from '@happier-dev/protocol/machines/languageIntelligence';
@@ -50,7 +51,7 @@ function composedContains(root: Node, node: Node | null): boolean {
 
 /** The selection's real endpoints, reaching into the open shadow roots under `root` (StaticRange otherwise retargets to the host). */
 function readSelectionEndpoints(selection: Selection, root: Element, shadowHostSelector: string | undefined) {
-    const range = selection.getRangeAt(0);
+    const range = normalizeExclusiveRangeEnd(selection.getRangeAt(0));
     const getComposedRanges = (selection as SelectionWithComposedRanges).getComposedRanges;
     const shadowRoots = shadowHostSelector && typeof getComposedRanges === 'function'
         ? Array.from(root.querySelectorAll(shadowHostSelector)).flatMap((host) => host.shadowRoot ? [host.shadowRoot] : [])
@@ -66,7 +67,9 @@ function readSelectionEndpoints(selection: Selection, root: Element, shadowHostS
     } catch {
         inner = null;
     }
-    return { start: composed.startContainer, end: composed.endContainer, collapsed: composed.collapsed, range: inner ?? range };
+    const resolved = inner ? normalizeExclusiveRangeEnd(inner) : null;
+    return { start: resolved?.startContainer ?? composed.startContainer, end: resolved?.endContainer ?? composed.endContainer,
+        collapsed: composed.collapsed, range: resolved ?? range };
 }
 
 /** The same composed selection endpoints, restricted to current-file code text for range formatting. */

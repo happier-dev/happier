@@ -2,6 +2,7 @@ import type { AgentTextMessage, UserTextMessage } from '@happier-dev/session-cor
 import { parseSessionMessageRefV1, type SessionMessageRefV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageRefV1';
 import { resolveCommittedMessageRef } from '../messageActions/resolveCommittedMessageRef';
 import type { AskSelection } from '@/components/ui/code/selection/useAskSelection';
+import { normalizeExclusiveRangeEnd } from '@/components/ui/code/selection/domSelectionRange';
 import type { MarkdownRenderedSelection } from '@/components/markdown/MarkdownView';
 
 export type TranscriptPassageSourceInput = Readonly<{
@@ -33,18 +34,16 @@ export function readNativeTranscriptPassageQuote(selection: MarkdownRenderedSele
 
 type DomNode = Readonly<{ parentElement?: DomElement | null; nodeType?: number }>;
 type DomElement = DomNode & Readonly<{ id?: string; dataset?: Readonly<Record<string, string | undefined>> }>;
-type Box = Readonly<{ left: number; top: number; width: number; height: number }>;
 type Selection = Readonly<{
     isCollapsed: boolean; rangeCount: number; toString(): string;
-    getRangeAt(index: number): Readonly<{ startContainer: DomNode; endContainer: DomNode;
-        getClientRects(): ArrayLike<Box>; getBoundingClientRect(): Box }>;
+    getRangeAt(index: number): Range;
 }>;
 
 export type TranscriptPassageSelection = AskSelection & Readonly<{ source: SessionMessageRefV1 }>;
 
 export function readTranscriptPassageSelection(selection: Selection | null | undefined, listIdPrefix: string): TranscriptPassageSelection | null {
     if (!selection || selection.isCollapsed || selection.rangeCount !== 1) return null;
-    const range = selection.getRangeAt(0);
+    const range = normalizeExclusiveRangeEnd(selection.getRangeAt(0));
     const closest = (node: DomNode, match: (element: DomElement) => boolean) => {
         let element: DomElement | null | undefined = node.nodeType === 1 ? node : node.parentElement;
         while (element) {
