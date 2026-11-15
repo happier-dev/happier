@@ -12327,6 +12327,44 @@ describe("external Action execution authorization", () => {
         } finally { await currentnessChannel.close(); get.mockRestore(); post.mockRestore(); await app.close(); }
     });
 
+    it('lets an admitted Account Stop on a Session target retire its own control projection through the owner tuple', async () => {
+        // MACH-QA-GRANTS #160: a requester's admitted canonical Stop reached the
+        // exact Session, then its owner-tuple retirement PATCH was refused 401.
+        const fixture = await createFixture({ qualifiedPat: false });
+        const { app } = await createApp(fixture.team.id, false, async () => fixture.machine.id, undefined, false, registerSessionPatchRoute);
+        try {
+            const session = await db.session.create({ data: { accountId: fixture.account.id, tag: crypto.randomUUID(),
+                encryptionMode: 'plain', metadata: '{}', active: true } });
+            const foreign = await db.session.create({ data: { accountId: fixture.account.id, tag: crypto.randomUUID(),
+                encryptionMode: 'plain', metadata: '{}', active: true } });
+            for (const sessionId of [session.id, foreign.id]) await db.accessKey.create({ data: { accountId: fixture.account.id,
+                machineId: fixture.machine.id, sessionId, data: 'opaque-stop-key' } });
+            const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+            const authorization = await mint(app, fixture, 'session.stop', { ...fixture.envelope, requestId: crypto.randomUUID(),
+                target: { kind: 'session', sessionId: session.id }, input: { sessionId: session.id } }, token);
+            const target = authorization.binding.target;
+            // The Session route's restricted binding supplies its exact route Session, as the HTTP adapter does.
+            const verifyHttp = (method: string, path: string, body?: unknown) => verifyExternalActionDomainExecutionRequest({
+                authorizationToken: authorization.token, effectActionId: 'session.stop',
+                encodedTarget: encodeExternalActionResolvedTargetV1(target), method, path, body,
+                sessionRouteTarget: { kind: 'session', sessionId: path.split('/')[3]! },
+                machineSignature: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                    effectActionId: 'session.stop', target, installationId: fixture.machine.installationId!,
+                    requestId: authorization.binding.requestId, method, path, body, privateKey: fixture.keyPair.secretKey }),
+            });
+            const stopRetirement = { mode: 'owner', metadataLayoutVersion: 1,
+                expectedOwnerMetadata: { t: 'plain', v: { v: 1 } },
+                sharedMetadata: { ciphertext: JSON.stringify({ v: 1 }), expectedVersion: 0 },
+                ownerMetadata: { t: 'plain', v: { v: 1 } },
+                agentState: { ciphertext: null, expectedVersion: 0 } };
+            expect(await verifyHttp('GET', `/v2/sessions/${session.id}`)).not.toBeNull();
+            expect(await verifyHttp('PATCH', `/v2/sessions/${session.id}`, stopRetirement)).not.toBeNull();
+            expect(await verifyHttp('PATCH', `/v2/sessions/${foreign.id}`, stopRetirement)).toBeNull();
+            expect(await verifyHttp('PATCH', `/v2/sessions/${session.id}`, { ...stopRetirement, mode: 'shared_editor' })).toBeNull();
+            expect(await verifyHttp('PATCH', `/v2/sessions/${session.id}`, { metadata: 'untyped' })).toBeNull();
+        } finally { await app.close(); }
+    });
+
     it('bounds transition phase proofs to the named Session lifecycle and cutover purposes', async () => {
         const fixture = await createFixture({ qualifiedPat: false });
         const { app } = await createApp(fixture.team.id);

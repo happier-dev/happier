@@ -2140,6 +2140,13 @@ function isSessionOwnerMetadataHttpPatch(proof: ExternalActionExecutionRequestPr
     return patch.success && patch.data.mode === 'owner';
 }
 
+/** A Session-target Stop retires its own control projection through the owner tuple writer. */
+function isSessionStopRetirementHttpPurpose(verified: VerifiedExternalActionExecutionRequest,
+    proof: ExternalActionExecutionRequestProof): boolean {
+    return verified.binding.actionId === 'session.stop' && verified.effectActionId === verified.binding.actionId
+        && verified.target.kind === 'session' && isSessionOwnerMetadataHttpPatch(proof, verified.target.sessionId);
+}
+
 /** Original lifecycle roots consume the same readable recursive subtree as Session listing. */
 async function isInstalledSessionLifecycleHttpPurpose(verified: VerifiedSignedChildRequest,
     proof: ExternalActionExecutionRequestProof): Promise<boolean> {
@@ -3613,7 +3620,7 @@ export async function verifyExternalActionDomainExecutionRequest(
         // Keep this composed read out of generic read-root Session admission.
         // Native directory/roster routes still own current actor and resource access.
         if (!isDiscussionCandidateReadHttpPurpose(verified, proof, snapshotBatch)) return refuse('discussion_candidate_purpose');
-    } else if (isSessionStateFieldActionHttpPurpose(verified, proof)) {
+    } else if (isSessionStateFieldActionHttpPurpose(verified, proof) || isSessionStopRetirementHttpPurpose(verified, proof)) {
         // The existing Session routes retain actor access, tuple CAS and publisher policy.
     } else if ((subtreeObservationHttpPurpose = await isInstalledSessionSubtreeObservationHttpPurpose(verified, proof, snapshotBatch)) !== null) {
         if (!subtreeObservationHttpPurpose) return refuse('session_subtree_observation_purpose');
