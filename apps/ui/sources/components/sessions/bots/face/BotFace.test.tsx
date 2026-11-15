@@ -11,6 +11,7 @@ import { readReanimatedFrameCallbacks, resetReanimatedFrameCallbacks } from '@/d
 import { PluginUiScrollActivityProvider } from '@happier-dev/plugin-ui/advanced';
 import { createNearViewportTracker } from '@/components/widgets/nearViewport';
 import { standardCleanup } from '@/dev/testkit';
+import { reactNativeWebAppState } from '@/dev/testkit/mocks/reactNative';
 
 vi.mock('react-native', async () =>
   (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(),
@@ -682,4 +683,82 @@ it.each([3, 12])('hides %s resting Lively faces in the commit that hides them, w
   await screen.update(faces(false));
   await act(async () => {});
   expect(commits).toBe(1);
+});
+
+it.each([3, 12])('stops %s resting Lively faces when the app is hidden without rendering them, and resumes on return', async (count) => {
+  vi.useFakeTimers();
+  let commits = 0;
+  const screen = await mount(
+    <React.Profiler id="faces" onRender={() => { commits += 1; }}>
+      {Array.from({ length: count }, (_, index) => (
+        <BotFace key={index} identity={{ ...identity, seed: index }} style="solid" size={24} mood="quiet" motion motionMode="lively" />
+      ))}
+    </React.Profiler>,
+  );
+  try {
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(vi.getTimerCount()).toBe(1);
+    commits = 0;
+    // The OS app state is the host boundary `useHostActivelyViewed` watches on web and native.
+    await act(async () => { reactNativeWebAppState.emit('background'); });
+    expect(vi.getTimerCount()).toBe(0);
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(commits).toBe(0);
+    await act(async () => { reactNativeWebAppState.emit('active'); });
+    expect(vi.getTimerCount()).toBe(1);
+  } finally {
+    await act(async () => { reactNativeWebAppState.emit('active'); });
+  }
+});
+
+it('holds a face mid-moment while the app is hidden, without rendering it or swapping in its loop, and finishes on return', async () => {
+  let commits = 0;
+  const face = (mood: 'quiet' | 'working') => (
+    <React.Profiler id="face" onRender={() => { commits += 1; }}>
+      <BotFace identity={identity} style="pixel" size={24} mood={mood} motion motionMode="reactions" />
+    </React.Profiler>
+  );
+  const screen = await mount(face('quiet'));
+  try {
+    await screen.update(face('working'));
+    expect(driveMotionFrames(0, 5)).toBeGreaterThan(0);
+    commits = 0;
+    await act(async () => { reactNativeWebAppState.emit('background'); });
+    expect(driveMotionFrames(100, 120)).toBe(0);
+    expect(commits).toBe(0);
+    await act(async () => { reactNativeWebAppState.emit('active'); });
+    expect(driveMotionFrames(2100, 5)).toBeGreaterThan(0);
+  } finally {
+    await act(async () => { reactNativeWebAppState.emit('active'); });
+  }
+});
+
+it('hides a working Lively face playing its loop without rendering it or cancelling into a still face render', async () => {
+  vi.useFakeTimers();
+  let commits = 0;
+  let loops = 0;
+  const screen = await renderScreen(
+    <React.Profiler id="face" onRender={() => { commits += 1; }}>
+      <BotFace identity={identity} style="solid" size={24} mood="working" motion motionMode="lively" />
+    </React.Profiler>, {
+      createNodeMock: node => node.type === 'canvas' ? canvas : {
+        getBoundingClientRect: () => ({ left: 0, top: 0, width: 24, height: 24 }),
+        animate: () => { loops++; return { cancel: () => { loops--; }, currentTime: 0 }; },
+      },
+    });
+  try {
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+    expect(loops).toBeGreaterThan(0);
+    commits = 0;
+    await act(async () => { reactNativeWebAppState.emit('background'); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(loops).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(commits).toBe(0);
+    await act(async () => { reactNativeWebAppState.emit('active'); });
+    expect(loops).toBeGreaterThan(0);
+  } finally {
+    await act(async () => { reactNativeWebAppState.emit('active'); });
+    await screen.unmount();
+  }
 });

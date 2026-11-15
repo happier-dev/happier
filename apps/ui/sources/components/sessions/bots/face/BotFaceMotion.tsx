@@ -4,6 +4,7 @@ import Animated, { runOnJS, useAnimatedStyle, useFrameCallback, useSharedValue, 
 import type { BotMotion } from '@happier-dev/protocol/account/settings/accountSettings';
 
 import { createSessionFinishedRippleObserver } from '@/components/atmosphere/sessionFinishedRippleObserver';
+import { readHostActivelyViewed, useHostActivelyViewedEffect } from '@/utils/runtime/useHostActivelyViewed';
 
 import type { BotFaceMood } from './botFaceGeometry';
 import type { BotFaceMutter } from './botFaceGeometry';
@@ -174,7 +175,9 @@ export function BotFaceMotion(props: Readonly<{
     frame.setActive(true);
   }, [currentPose, elapsed, frame, from, reaction]);
   latest.current = { eligible, start };
-  React.useEffect(() => {
+  // Hiding the app only pauses the frame clock: a moment holds where it is and resumes on return, so no face renders
+  // (or swaps in its loop) for nobody. Losing on-screen eligibility still ends the moment at rest.
+  useHostActivelyViewedEffect((viewed) => {
     if (!eligible) {
       reaction.set(null);
       elapsed.set(0);
@@ -189,7 +192,7 @@ export function BotFaceMotion(props: Readonly<{
       if (mouths.from !== restingMouth.current || mouths.to !== restingMouth.current) setMouths(restMouths);
       if (!presented) restingFade.set(1);
     }
-    frame.setActive(eligible && playing);
+    frame.setActive(eligible && viewed && playing);
     return () => frame.setActive(false);
   }, [currentPose, elapsed, eligible, frame, lastLook, lastPose, playing, presented, reaction, restingFade]);
   /**
@@ -218,10 +221,12 @@ export function BotFaceMotion(props: Readonly<{
   React.useEffect(() => {
     const changed = previousMood.current !== props.mood;
     previousMood.current = props.mood;
-    if (activityEligible && changed && (props.mood === 'working' || props.mood === 'needsYou'
+    const viewed = readHostActivelyViewed();
+    const reacting = activityEligible && viewed;
+    if (reacting && changed && (props.mood === 'working' || props.mood === 'needsYou'
       || (props.mood === 'failed' && props.failedAt == null))) start(props.mood);
     // Keep learning while hidden, Still or reduced, so a missed finish is never replayed.
-    observe({ enabled: true, visible: activityEligible, states: new Map([[id, {
+    observe({ enabled: true, visible: reacting, states: new Map([[id, {
       lastTurnCompletedAt: props.completedAt ?? null,
       failedAt: props.failedAt,
       pendingApproval: props.mood === 'needsYou',
@@ -230,7 +235,7 @@ export function BotFaceMotion(props: Readonly<{
       const before = displayedMouth.current;
       displayedMouth.current = props.mood;
       if (mouths.from !== before || mouths.to !== props.mood) setMouths({ from: before, to: props.mood });
-      const fade = presented && before !== props.mood;
+      const fade = presented && viewed && before !== props.mood;
       restingFade.set(fade ? 0 : 1);
       if (fade) restingFade.set(withTiming(1, { duration: botFaceMotionTokens.stillCrossFadeMs }));
     }

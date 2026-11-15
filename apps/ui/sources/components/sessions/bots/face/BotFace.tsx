@@ -3,6 +3,7 @@ import { PixelRatio, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { PlanetCanvas } from '@/components/atmosphere/PlanetCanvas';
+import { useHostActivelyViewedEffect } from '@/utils/runtime/useHostActivelyViewed';
 import type { BotMotion } from '@happier-dev/protocol/account/settings/accountSettings';
 
 import { botFaceHeroPose, botFaceMoodMouth, type BotFaceMood, type BotFaceMutter } from './botFaceGeometry';
@@ -221,8 +222,8 @@ function BotFaceHero(props: Readonly<{ frame: Frame; visible: boolean; mode: Bot
     brain.current?.setMood(mood, fact);
   }, [mood]);
   const breath = useSharedValue(0);
-  React.useEffect(() => {
-    if (!lively) { cancelAnimation(breath); breath.set(0); return; }
+  useHostActivelyViewedEffect((viewed) => {
+    if (!lively || !viewed) { cancelAnimation(breath); breath.set(0); return; }
     breath.set(withRepeat(withTiming(1, { duration: botFaceMotionTokens.alive.heroBreath.periodMs / 2, easing: Easing.inOut(Easing.sin) }), -1, true));
     return () => cancelAnimation(breath);
   }, [breath, lively]);

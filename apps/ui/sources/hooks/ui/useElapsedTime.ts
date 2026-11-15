@@ -1,14 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
+import { useHostActivelyViewedEffect } from '@/utils/runtime/useHostActivelyViewed';
 
 export function useElapsedTime(date: Date | number | null | undefined, ticking = true): number {
     const [elapsedSeconds, setElapsedSeconds] = useState(0);
     const presented = useLayoutPresentationActive();
-    const viewed = useHostActivelyViewed();
-    const active = ticking && presented && viewed;
 
-    useEffect(() => {
+    useHostActivelyViewedEffect((viewed) => {
+        const active = ticking && presented && viewed;
         // Handle null/undefined dates
         if (!date) {
             setElapsedSeconds(0);
@@ -39,7 +38,7 @@ export function useElapsedTime(date: Date | number | null | undefined, ticking =
         return () => {
             clearInterval(interval);
         };
-    }, [date, active]);
+    }, [date, ticking, presented]);
 
     return elapsedSeconds;
 }

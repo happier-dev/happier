@@ -2,6 +2,8 @@ import * as React from 'react';
 import { View } from 'react-native';
 import Animated, { cancelAnimation, useAnimatedStyle, useSharedValue, withDelay, withRepeat, withSequence, withTiming, type SharedValue } from 'react-native-reanimated';
 
+import { useHostActivelyViewedEffect } from '@/utils/runtime/useHostActivelyViewed';
+
 import { botFaceLoopPhase, type BotFaceLook, type BotFaceLoop } from './botFaceIdle';
 
 /**
@@ -16,7 +18,9 @@ export function BotFaceLoopPlayer(props: Readonly<{
 }>) {
   const { loop, seed } = props;
   const shown = useSharedValue(-1);
-  React.useEffect(() => {
+  // Nobody viewing the app: the UI-thread loop stops on its current drawing; viewing it again resumes in phase.
+  useHostActivelyViewedEffect((viewed) => {
+    if (!viewed) return;
     const { periodMs, frames } = loop;
     const n = frames.length;
     const hold = (k: number) => (k + 1 < n ? frames[k + 1]!.atMs : periodMs) - frames[k]!.atMs;

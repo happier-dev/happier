@@ -13,7 +13,7 @@ import { useMotionPreferences } from '@/components/instrument';
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { hapticsSuccess } from '@/components/ui/theme/haptics';
 import { t } from '@/text';
-import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
+import { useHostActivelyViewedEffect } from '@/utils/runtime/useHostActivelyViewed';
 import { usageSeriesColor } from '../usageAccent';
 import {
   usageWitnessedResetWatch,
@@ -47,7 +47,6 @@ export function UsageResetCelebration(
   }>,
 ) {
   const motion = useMotionPreferences();
-  const viewed = useHostActivelyViewed();
   const [burstId, setBurstId] = React.useState<string | null>(null);
   const readingsKey = JSON.stringify(
     props.windows.map((entry) => [
@@ -59,7 +58,7 @@ export function UsageResetCelebration(
   const windowsRef = React.useRef(props.windows);
   windowsRef.current = props.windows;
   const animate = props.burst && motion.level !== 'minimal';
-  React.useEffect(() => {
+  useHostActivelyViewedEffect((viewed) => {
     const witnessed = usageWitnessedResetWatch.observe(
       windowsRef.current,
       viewed,
@@ -79,7 +78,7 @@ export function UsageResetCelebration(
     // Reduced motion keeps the confirmation and the haptic; only the burst goes.
     if (Platform.OS !== 'web') void hapticsSuccess();
     if (animate) setBurstId(`${witnessed[0]!.key}:${witnessed[0]!.resetAtMs}`);
-  }, [readingsKey, viewed, animate]);
+  }, [readingsKey, animate]);
   const finish = React.useCallback(() => setBurstId(null), []);
   if (!burstId) return null;
   return <ResetBurst key={burstId} onDone={finish} testID={props.testID} />;

@@ -23,7 +23,7 @@ import { createWorkflowInvocationRoute } from '@/sync/domains/workflows/workflow
 import { subscribeVisibleWorkflowRunListInvalidation } from '@/sync/domains/workflows/workflowRunListInvalidation';
 import { formatWorkflowProblemMessage } from '@/components/workflows/presentation/workflowProblemPresentation';
 import type { WorkflowRunInvocationFact, WorkflowRunInvocations } from '@/sync/store/domains/workflowRuns';
-import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
+import { useHostActivelyViewedEffect } from '@/utils/runtime/useHostActivelyViewed';
 import { t } from '@/text';
 
 import type { WorkflowDocumentPresentation } from './workflowDocumentPresentation';
@@ -84,19 +84,18 @@ function WorkflowTestStepOutput(props: StepProps & Readonly<{ serverId: string |
     const router = useRouter();
     const lifetime = useActiveServerAccountScopeLifetime();
     const visible = useDestinationVisibility();
-    const activelyViewed = useHostActivelyViewed();
     const fact = storage((state) => selectWorkflowTestStep(state.workflowRunInvocationsByRunId[workflowRunStoreKey(props.runId)], props.definition, props.blockId));
     const read = storage((state) => selectWorkflowTestStepRead(state.workflowRunInvocationsByRunId[workflowRunStoreKey(props.runId)], props.definition, props.blockId));
     const invocationId = read?.id;
     const contentRevision = read?.contentRevision;
-    React.useEffect(() => {
+    useHostActivelyViewedEffect((activelyViewed) => {
         if (!invocationId || !lifetime || !visible || !activelyViewed) return;
         const controller = new AbortController();
         const retirement = lifetime.onRetire(() => controller.abort());
         void readWorkflowRunInvocationProgress({ runId: props.runId, invocationId, accountLifetime: lifetime, signal: controller.signal })
             .catch(error => { if (!controller.signal.aborted && lifetime.isCurrent()) props.onReadFailure(error); });
         return () => { controller.abort(); retirement.dispose(); };
-    }, [activelyViewed, contentRevision, invocationId, lifetime, props.onReadFailure, props.readAttempt, props.runId, visible]);
+    }, [contentRevision, invocationId, lifetime, props.onReadFailure, props.readAttempt, props.runId, visible]);
     if (!fact?.opened || fact.opened.index.contentRevision !== fact.contentRevision) return null;
     const progress = fact.opened.progress;
     const output = progress.result === undefined ? progress.reason?.message : typeof progress.result === 'string'
@@ -122,11 +121,10 @@ function WorkflowTestStepOutput(props: StepProps & Readonly<{ serverId: string |
 export function useWorkflowTestRunPresentation(input: Readonly<{ runId: string | null; definition: WorkflowDefinitionV1 | null; editable: boolean }>): WorkflowDocumentPresentation {
     const lifetime = useActiveServerAccountScopeLifetime();
     const visible = useDestinationVisibility();
-    const activelyViewed = useHostActivelyViewed();
     const [refresh, setRefresh] = React.useState(0);
     const [failure, setFailure] = React.useState<unknown>(null);
     const [pending, setPending] = React.useState(false);
-    React.useEffect(() => {
+    useHostActivelyViewedEffect((activelyViewed) => {
         const runId = input.runId;
         if (runId === null || !visible || !activelyViewed) return;
         if (lifetime === null) return;
@@ -141,7 +139,7 @@ export function useWorkflowTestRunPresentation(input: Readonly<{ runId: string |
             .catch((error: unknown) => { if (isCurrent()) setFailure(error); })
             .finally(() => { if (isCurrent()) setPending(false); });
         return () => { controller.abort(); retirement.dispose(); unsubscribe(); };
-    }, [activelyViewed, input.runId, lifetime, refresh, visible]);
+    }, [input.runId, lifetime, refresh, visible]);
 
     return React.useMemo(() => ({
         editable: input.editable,

@@ -292,6 +292,59 @@ describe('useHostActivelyViewed', () => {
         }
     });
 
+    it.each([3, 12])('stops and restarts %s gated effects across a hide without rendering their components', async (count) => {
+        const fake = installHost({});
+        try {
+            const { useHostActivelyViewedEffect } = await import('./useHostActivelyViewed');
+            const work = { renders: 0, running: 0, starts: 0 };
+
+            function Consumer(): React.ReactElement | null {
+                work.renders += 1;
+                useHostActivelyViewedEffect((viewed) => {
+                    if (!viewed) return;
+                    work.running += 1;
+                    work.starts += 1;
+                    return () => { work.running -= 1; };
+                }, []);
+                return null;
+            }
+
+            await renderScreen(<>{Array.from({ length: count }, (_, index) => <Consumer key={index} />)}</>);
+            expect(work).toEqual({ renders: count, running: count, starts: count });
+
+            act(() => { fake.setVisibility('hidden'); });
+            // Every gated effect stopped; no component rendered to learn of the hide.
+            expect(work).toEqual({ renders: count, running: 0, starts: count });
+
+            act(() => { fake.setVisibility('visible'); });
+            expect(work).toEqual({ renders: count, running: count, starts: count * 2 });
+        } finally {
+            fake.restore();
+        }
+    });
+
+    it('re-runs a gated effect with the current host fact when its own dependencies change', async () => {
+        const fake = installHost({ tauri: true, focused: false });
+        try {
+            const { useHostActivelyFocusedEffect } = await import('./useHostActivelyViewed');
+            const observed: Array<readonly [number, boolean]> = [];
+
+            function Consumer(props: Readonly<{ value: number }>): React.ReactElement | null {
+                useHostActivelyFocusedEffect((focused) => { observed.push([props.value, focused]); }, [props.value]);
+                return null;
+            }
+
+            const screen = await renderScreen(<Consumer value={1} />);
+            act(() => { fake.setFocused(true); });
+            await screen.update(<Consumer value={2} />);
+            // A visibility-only change leaves the focus projection alone.
+            act(() => { fake.setVisibility('hidden'); });
+            expect(observed).toEqual([[1, false], [1, true], [2, true]]);
+        } finally {
+            fake.restore();
+        }
+    });
+
     it('publishes app-state transitions on native', async () => {
         const fake = installHost({ platformOS: 'ios' });
         try {

@@ -3,7 +3,7 @@ import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/use
 import { resolveMachineDaemonReadServerId } from '@/sync/domains/machines/useMachineDaemonReadTarget';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
-import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
+import { useHostActivelyViewedEffect } from '@/utils/runtime/useHostActivelyViewed';
 
 import {
     type LocalServiceInventorySnapshot,
@@ -117,15 +117,14 @@ export function useLocalServiceInventoryStateController(
     // or a dropped socket. Coming back into view is the one moment where the user can see stale
     // rows, so returning to the foreground re-reads the daemon's current inventory and restarts
     // the watch through the same store owner — no second cadence, no timer and no forced scan.
-    const activelyViewed = useHostActivelyViewed();
-    const wasActivelyViewedRef = React.useRef(activelyViewed);
-    React.useEffect(() => {
+    const wasActivelyViewedRef = React.useRef(true);
+    useHostActivelyViewedEffect((activelyViewed) => {
         const returnedToView = activelyViewed && !wasActivelyViewedRef.current;
         wasActivelyViewedRef.current = activelyViewed;
         if (returnedToView && enabled && storeKey && binding?.isCurrent()) {
             revalidateLocalServiceInventoryStore(storeKey);
         }
-    }, [activelyViewed, binding, enabled, storeKey]);
+    }, [binding, enabled, storeKey]);
 
     return React.useMemo(
         () => ({ state, applySnapshot, refresh }),

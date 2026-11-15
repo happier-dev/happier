@@ -11,7 +11,7 @@ import { useStoredPictureRecord } from './useStoredPictureRecord';
 import { atmospherePictureLocalId, atmospherePlace, atmosphereSurfaceKey, isAtmosphereShown, resolveAtmosphere, selectAtmosphereSettings, type AtmosphereTarget, type ResolvedAtmosphere } from './resolveAtmosphere';
 import { useAtmosphereDisplaySample } from './atmosphereStage';
 import { usePublicProfileAtmospherePreviewValue } from '@/sync/store/settingsPreview';
-import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
+import { useHostActivelyViewedEffect } from '@/utils/runtime/useHostActivelyViewed';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { readProjectAtmosphere } from '@/sync/store/domains/projectAccountRows';
@@ -64,9 +64,7 @@ export function useAtmosphere(surface: AtmosphereTarget, enabled = true) {
         ? pictures.find(picture => picture.id === pictureRef.id) : undefined;
     const stored = useStoredPictureRecord(localId, builtin ? builtinThumbnailLocalId(builtin.id) : undefined);
     const [failedAcquisition, setFailedAcquisition] = React.useState<typeof builtin>(undefined);
-    const activelyViewed = useHostActivelyViewed();
     const presented = useLayoutPresentationActive();
-    const acquisitionDemand = activelyViewed && presented;
 
     const shown = React.useRef<ResolvedAtmosphere<(typeof pictures)[number]> | null>(null);
     const resolved = React.useMemo(() => resolveAtmosphere({ surface: target, home: resolvedContext ? home : { ...home, source: 'none' },
@@ -81,15 +79,16 @@ export function useAtmosphere(surface: AtmosphereTarget, enabled = true) {
     // picture after that read settles; a cache hit needs no second IndexedDB read or preparation.
     const needsAcquisition = stored.status !== 'loading' && (resolved.fallbackReason === 'picture-unavailable'
         || stored.status === 'present' && stored.record.localId !== localId);
-    React.useEffect(() => {
-        if (!builtin || !acquisitionDemand || !needsAcquisition) return;
+    // Acquisition is demanded while the page is presented and the app is viewed; a hide renders no stage.
+    useHostActivelyViewedEffect((viewed) => {
+        if (!builtin || !viewed || !presented || !needsAcquisition) return;
         let disposed = false;
         setFailedAcquisition(undefined);
         void pictureStore.ensureBuiltin(builtin).catch(() => {
             if (!disposed) setFailedAcquisition(builtin);
         });
         return () => { disposed = true; };
-    }, [builtin, acquisitionDemand, needsAcquisition]);
+    }, [builtin, presented, needsAcquisition]);
     shown.current = resolved;
     return resolved;
 }

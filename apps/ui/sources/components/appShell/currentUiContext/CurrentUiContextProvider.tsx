@@ -30,7 +30,7 @@ import { CurrentUiContextCommandsProvider, CurrentUiContextWorkspaceCommandsBoun
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import { useMachine, useSessionDisplayNameSource, useSetting } from '@/sync/store/hooks';
 import { projectParameterFreeRoute } from '@/track/parameterFreeRouteProjection';
-import { readHostActivelyViewed, useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
+import { readHostActivelyViewed, subscribeToHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import {
     CURRENT_UI_CONTEXT_BOUNDED_INCOMPLETENESS_V1,
@@ -181,8 +181,8 @@ function retireCurrentUiContextMountRecord(
  * enrichment through their incumbent publication path on native foreground.
  */
 export function useCurrentUiContextMountLifecycleActive(): boolean {
-    const hostActivelyViewed = useHostActivelyViewed();
-    return !retiresCurrentUiContextMountWhenNotViewed() || hostActivelyViewed;
+    // Web and Tauri never retire the record, so their constant fact renders nobody when the host hides.
+    return React.useSyncExternalStore(subscribeToHostActivelyViewed, readCurrentUiContextMountLifecycleActive, () => true);
 }
 
 function createMountRecord(input: Readonly<{
@@ -300,8 +300,7 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
     const localCommandsRef = React.useRef(localCommands);
     localCommandsRef.current = localCommands;
     const localOwner = React.useRef(Object.freeze({})).current;
-    const hostActivelyViewed = useHostActivelyViewed();
-    const mountLifecycleActive = !retiresCurrentUiContextMountWhenNotViewed() || hostActivelyViewed;
+    const mountLifecycleActive = useCurrentUiContextMountLifecycleActive();
     const routeSegments = useCurrentRouteSegments();
     const route = React.useMemo(
         () => projectParameterFreeRoute(routeSegments),
@@ -414,13 +413,16 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
     }, [notifyReaderListeners]);
 
     React.useLayoutEffect(() => {
-        if (!retiresCurrentUiContextMountWhenNotViewed() || hostActivelyViewed) return;
+        if (mountLifecycleActive) return;
         const record = currentMountRecordRef.current;
         if (record === null) return;
         retireCurrentUiContextMountRecord(record);
         currentMountRecordRef.current = null;
         dispatchMountRecord({ kind: 'clear', owner: record.owner });
-    }, [hostActivelyViewed]);
+    }, [mountLifecycleActive]);
+
+    // Reads withdraw while nobody views the host; readers learn of it from the host itself, not a provider render.
+    React.useLayoutEffect(() => subscribeToHostActivelyViewed(notifyReaderListeners), [notifyReaderListeners]);
 
     const readCurrentUiContext = React.useCallback((): CurrentUiContextSnapshotV1 | null => {
         if (!readHostActivelyViewed()) return null;
@@ -609,7 +611,7 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
         committedSnapshotRef.current = { snapshot, sessionId: sessionActive ? sessionRouteId : null, mountRecord,
             visibleModalId, modalVisible: visibleModalKind !== null };
         notifyReaderListeners();
-    }, [hostActivelyViewed, mountRecord, notifyReaderListeners, sessionActive, sessionRouteId, snapshot, visibleModalId, visibleModalKind]);
+    }, [mountRecord, notifyReaderListeners, sessionActive, sessionRouteId, snapshot, visibleModalId, visibleModalKind]);
 
     return (
         <CurrentUiContextBridge publisher={mountPublisher} reader={reader}>

@@ -57,6 +57,7 @@ vi.mock('@/utils/runtime/useHostActivelyViewed', async () => {
     };
     return {
         readHostActivelyViewed,
+        subscribeToHostActivelyViewed,
         useHostActivelyViewed: (): boolean => ReactModule.useSyncExternalStore(
             subscribeToHostActivelyViewed,
             readHostActivelyViewed,
@@ -643,6 +644,24 @@ describe('CurrentUiContextProvider', () => {
         });
         expect(reader.readCurrentUiContext()?.entity).toEqual({ kind: 'issue', label: 'Issue A' });
         expect(reader.resolveCurrentUiCommand(commandId)).not.toBeNull();
+    });
+
+    it('withdraws and restores web reads across a hide by notifying readers, without rendering the provider', async () => {
+        nativeAppState.platformOS = 'web';
+        setHostVisibility('visible');
+        let commits = 0;
+        let reader: CurrentUiContextReader | null = null;
+        await renderScreen(React.createElement(React.Profiler, { id: 'provider', onRender: () => { commits += 1; } },
+            React.createElement(CurrentUiContextTestProvider, null,
+                React.createElement(CurrentUiContextReaderProbe, { onReader: (next) => { reader = next; } }))));
+        const current = requireCurrentUiContextReader(reader);
+        const reads: Array<boolean> = [];
+        current.subscribe(() => { reads.push(current.readCurrentUiContext() !== null); });
+        commits = 0;
+        await act(async () => { setHostVisibility('hidden'); });
+        await act(async () => { setHostVisibility('visible'); });
+        expect(reads).toEqual([false, true]);
+        expect(commits).toBe(0);
     });
 
     it('provides VoiceSessionRuntime its non-null reader through the AppShell provider wiring', async () => {

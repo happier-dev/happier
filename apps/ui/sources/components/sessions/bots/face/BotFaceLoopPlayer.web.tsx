@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
 
+import { useHostActivelyViewedLayoutEffect } from '@/utils/runtime/useHostActivelyViewed';
+
 import { botFaceLoopPhase, type BotFaceLook, type BotFaceLoop } from './botFaceIdle';
 
 type Animator = { animate?: (keyframes: Keyframe[], options: KeyframeAnimationOptions) => Animation };
@@ -18,7 +20,9 @@ export function BotFaceLoopPlayer(props: Readonly<{
 }>) {
   const { loop, seed } = props;
   const layers = React.useRef<(Animator | null)[]>([]);
-  React.useLayoutEffect(() => {
+  // Nobody viewing the app: no compositor loop (the first drawing stays); viewing it again resumes in phase.
+  useHostActivelyViewedLayoutEffect((viewed) => {
+    if (!viewed) return;
     const { periodMs, frames } = loop;
     const phase = botFaceLoopPhase(loop, seed, Date.now());
     const playing = loop.drawings.map((_, drawing) => {

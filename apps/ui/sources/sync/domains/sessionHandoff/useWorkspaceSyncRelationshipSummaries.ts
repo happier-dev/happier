@@ -15,7 +15,7 @@ import {
 } from './workspaceSyncStatusStore';
 import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
 import { useProjectAccountRows, useProjectAccountWorkspaceRef } from '@/sync/domains/workspaces/projectAccountRows';
-import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
+import { useHostActivelyViewedEffect } from '@/utils/runtime/useHostActivelyViewed';
 import { resolveWorkspaceSyncRelationshipStateLabel, type WorkspaceSyncRelationshipStateLabelKey } from './workspaceSyncPresentation';
 
 function scopeFor(summary: WorkspaceSyncRelationshipSummary): WorkspaceSyncStatusScope {
@@ -83,9 +83,7 @@ export function useWorkspaceSyncRelationshipSummaries(
         [baseSummaries, workspaceRefId],
     );
     const [revision, incrementRevision] = React.useReducer((value: number) => value + 1, 0);
-    const activelyViewed = useHostActivelyViewed();
-
-    React.useEffect(() => {
+    useHostActivelyViewedEffect((activelyViewed) => {
         if (!activelyViewed) return;
         const idleScopes: WorkspaceSyncStatusScope[] = [];
         const unsubscribers = scopedBaseSummaries.map((summary) => {
@@ -100,7 +98,7 @@ export function useWorkspaceSyncRelationshipSummaries(
         });
         if (idleScopes.length > 0) void refreshWorkspaceSyncStatuses(idleScopes).catch(() => undefined);
         return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
-    }, [activelyViewed, scopedBaseSummaries]);
+    }, [scopedBaseSummaries]);
 
     return React.useMemo(() => {
         return scopedBaseSummaries.map((summary) => ({

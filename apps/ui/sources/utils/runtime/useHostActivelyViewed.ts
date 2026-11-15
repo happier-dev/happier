@@ -108,6 +108,54 @@ export function useHostActivelyViewed(): boolean {
     return React.useSyncExternalStore(subscribeToHostActivelyViewed, readHostActivelyViewed, () => true);
 }
 
+type HostGatedEffect = (hostFact: boolean) => void | (() => void);
+
+/**
+ * Re-runs `effect` (cleanup first) whenever the host fact changes, and whenever `deps` change, without
+ * rendering the caller. A component whose host fact only starts or stops work (a timer, a poll, a clock,
+ * a frame loop) uses this instead of reading the fact into render: hiding the app then costs no render
+ * anywhere, and the work still stops in the same tick. A host transition runs the effect as of the
+ * latest committed render, exactly what a render on that transition would have run.
+ */
+function useHostGatedEffect(
+    useEffectHook: typeof React.useEffect,
+    read: () => boolean,
+    effect: HostGatedEffect,
+    deps: React.DependencyList,
+): void {
+    const latest = React.useRef(effect);
+    React.useLayoutEffect(() => {
+        latest.current = effect;
+    });
+    useEffectHook(() => {
+        let current = read();
+        let cleanup = latest.current(current);
+        const unsubscribe = subscribeToHostActivelyViewed(() => {
+            const next = read();
+            if (next === current) return;
+            current = next;
+            cleanup?.();
+            cleanup = latest.current(next);
+        });
+        return () => {
+            unsubscribe();
+            cleanup?.();
+        };
+        // The caller's deps are the effect's deps; the host fact arrives through the subscription.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, deps);
+}
+
+/** `useEffect` that also re-runs on host visibility changes, receiving the current fact, without a render. */
+export function useHostActivelyViewedEffect(effect: HostGatedEffect, deps: React.DependencyList): void {
+    useHostGatedEffect(React.useEffect, readHostActivelyViewed, effect, deps);
+}
+
+/** The layout-phase form of {@link useHostActivelyViewedEffect}, for effects that must settle before paint. */
+export function useHostActivelyViewedLayoutEffect(effect: HostGatedEffect, deps: React.DependencyList): void {
+    useHostGatedEffect(React.useLayoutEffect, readHostActivelyViewed, effect, deps);
+}
+
 /**
  * Whether host motion may run right now.
  *
@@ -125,4 +173,9 @@ export function readHostActivelyFocused(): boolean {
 
 export function useHostActivelyFocused(): boolean {
     return React.useSyncExternalStore(subscribeToHostActivelyViewed, readHostActivelyFocused, () => true);
+}
+
+/** {@link useHostActivelyViewedEffect} for the focused projection. */
+export function useHostActivelyFocusedEffect(effect: HostGatedEffect, deps: React.DependencyList): void {
+    useHostGatedEffect(React.useEffect, readHostActivelyFocused, effect, deps);
 }

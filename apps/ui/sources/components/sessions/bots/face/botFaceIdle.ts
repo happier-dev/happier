@@ -1,5 +1,7 @@
 import type { BotMotion } from '@happier-dev/protocol/account/settings/accountSettings';
 
+import { readHostActivelyViewed, subscribeToHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
+
 import type { BotFaceMood, BotFaceMutter } from './botFaceGeometry';
 import { botFaceMotionTokens, type BotFaceIdleGesture } from './botFaceMotionTokens';
 
@@ -10,9 +12,9 @@ import { botFaceMotionTokens, type BotFaceIdleGesture } from './botFaceMotionTok
  * R7 idle gestures and R9's working mutter.
  *
  * Cost contract: the clock steps only faces that are moving, due an event or newly passed by the pointer, at 30 Hz, and
- * otherwise sleeps on one timer until the earliest scheduled event. A face registers only while it is visible, its host
- * is viewed and its mode is Lively or Reactions only, so Still, Reduce motion, hidden and offscreen faces schedule
- * nothing. In Reactions only a resting face has no events at all; only the pointer wakes it. A settled Lively face hands
+ * otherwise sleeps on one timer until the earliest scheduled event. A face registers only while it is visible and its
+ * mode is Lively or Reactions only, so Still, Reduce motion and offscreen faces schedule nothing; while nobody views the
+ * app the clock itself holds no timer and no pointer listener, so hiding the app renders no face. In Reactions only a resting face has no events at all; only the pointer wakes it. A settled Lively face hands
  * its looks, nods and mutter to a precomputed loop of its own brain (`botFaceRestLoop`) that the platform's animation
  * driver plays, so only its R7 idle gestures (finite moments) stay scheduled; the pointer, focus or a new mood takes it
  * back, and it hands off again where its live drawing meets the loop's.
@@ -294,10 +296,24 @@ function sleep(now: number) {
   if (next < Infinity) timer = setTimeout(tick, Math.max(0, next - now));
 }
 function wake() {
-  if (ticking || faces.size === 0) return;
+  if (ticking || faces.size === 0 || !readHostActivelyViewed()) return;
   if (timer !== null) clearTimeout(timer);
   ticking = true;
   timer = setTimeout(tick, 0);
+}
+
+/** One host watch while faces are registered: hiding the app stops the clock, viewing it again resumes it. */
+let hostWatch: (() => void) | null = null;
+function onHostViewedChange() {
+  if (readHostActivelyViewed()) {
+    for (const brain of faces) if (brain.face.locate) { listen(true); break; }
+    wake();
+    return;
+  }
+  if (timer !== null) clearTimeout(timer);
+  timer = null;
+  ticking = false;
+  listen(false);
 }
 
 /**
@@ -313,7 +329,8 @@ export function registerBotFaceBrain(face: BotFaceBrainFace): BotFaceBrainHandle
   const loopOwner = loops.get(loopKey) ?? { consumers: 0, loops: new Map() };
   loopOwner.consumers++;
   loops.set(loopKey, loopOwner);
-  if (face.locate) listen(true);
+  hostWatch ??= subscribeToHostActivelyViewed(onHostViewedChange);
+  if (face.locate && readHostActivelyViewed()) listen(true);
   wake();
   return {
     setMood(mood, fact) {
@@ -335,6 +352,8 @@ export function registerBotFaceBrain(face: BotFaceBrainFace): BotFaceBrainHandle
       if (!faces.delete(brain)) return;
       if (--loopOwner.consumers === 0) loops.delete(loopKey);
       if (faces.size > 0) return;
+      hostWatch?.();
+      hostWatch = null;
       if (timer !== null) clearTimeout(timer);
       timer = null;
       ticking = false;

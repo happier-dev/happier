@@ -5,7 +5,7 @@ import { buildAuthenticatedAccountEntryHref } from '@/components/navigation/acco
 import { HOME_LOGIN_APPROVALS_HTTP_PATH_V1, createHomeLoginRequesterFingerprintV1 } from '@happier-dev/protocol/auth/accountDirectory';
 import { Platform, StyleSheet, View } from 'react-native';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
+import { readHostActivelyViewed, useHostActivelyViewedEffect } from '@/utils/runtime/useHostActivelyViewed';
 import { subscribeHomeAccountChange, subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 import {
@@ -168,10 +168,8 @@ export function HomeDeviceApprovalSection({ homes }: Readonly<{ homes: readonly 
     const homesRef = React.useRef(homes);
     homesRef.current = homes;
     const presented = useLayoutPresentationActive();
-    const viewed = useHostActivelyViewed();
-    const visible = presented && viewed;
-    const visibleRef = React.useRef(visible);
-    visibleRef.current = visible;
+    const presentedRef = React.useRef(presented);
+    presentedRef.current = presented;
     const pendingEnrollment = React.useSyncExternalStore(
         subscribePendingDirectoryHomeEnrollment,
         getPendingDirectoryHomeEnrollment,
@@ -249,7 +247,7 @@ export function HomeDeviceApprovalSection({ homes }: Readonly<{ homes: readonly 
         void operation.finally(() => {
             if (approvalRefreshPromiseRef.current === operation) {
                 approvalRefreshPromiseRef.current = null;
-                if (approvalReloadRequestedRef.current && mountedRef.current && visibleRef.current) {
+                if (approvalReloadRequestedRef.current && mountedRef.current && presentedRef.current && readHostActivelyViewed()) {
                     approvalReloadRequestedRef.current = false;
                     void loadRef.current('background');
                 }
@@ -268,16 +266,17 @@ export function HomeDeviceApprovalSection({ homes }: Readonly<{ homes: readonly 
         };
     }, []);
 
-    React.useEffect(() => {
-        if (!visible) return;
+    // Visible means presented and viewed; the host half re-runs these effects without rendering the section.
+    useHostActivelyViewedEffect((viewed) => {
+        if (!presented || !viewed) return;
         const mode = observedLoadRef.current === load ? 'background' : 'interactive';
         observedLoadRef.current = load;
         // Foreground revalidation keeps the existing hydrated/error presentation.
         void load(mode, true);
-    }, [load, visible]);
+    }, [load, presented]);
 
-    React.useEffect(() => {
-        if (!visible) return;
+    useHostActivelyViewedEffect((viewed) => {
+        if (!presented || !viewed) return;
         const matchesHome = (serverId: string) => homes.some(home => areServerProfileIdentifiersEquivalent(resolveServerProfileScopeId(home), serverId));
         const stopChanges = subscribeHomeAccountChange(event => {
             if (!matchesHome(event.serverId)) return;
@@ -294,10 +293,10 @@ export function HomeDeviceApprovalSection({ homes }: Readonly<{ homes: readonly 
             if (matchesHome(event.serverId)) void load('background', true);
         });
         return () => { stopChanges(); stopCredentials(); };
-    }, [homes, load, visible]);
+    }, [homes, load, presented]);
 
-    React.useEffect(() => {
-        if (!visible || state.items.length === 0) return;
+    useHostActivelyViewedEffect((viewed) => {
+        if (!presented || !viewed || state.items.length === 0) return;
         const expiresAtMs = state.items.reduce(
             (earliest, { approval }) => Math.min(earliest, approval.expiresAtMs),
             Infinity,
@@ -306,7 +305,7 @@ export function HomeDeviceApprovalSection({ homes }: Readonly<{ homes: readonly 
         // deadline; creation, decisions and reconnects use the Account push above.
         const timeout = setTimeout(() => { void load('background', true); }, Math.max(0, expiresAtMs - Date.now()));
         return () => clearTimeout(timeout);
-    }, [load, state.items, visible]);
+    }, [load, state.items, presented]);
 
     const decide = React.useCallback(async (item: PendingApproval, decision: HomeDeviceApprovalDecision) => {
         const key = `${item.home.id}:${item.approval.approvalId}`;

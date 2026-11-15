@@ -3,7 +3,7 @@ import type { StyleProp, TextStyle } from 'react-native';
 
 import { Text } from '@/components/ui/text/Text';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
+import { useHostActivelyViewedLayoutEffect } from '@/utils/runtime/useHostActivelyViewed';
 
 import { formatMachineCountdown } from '@/components/machines/durationWords';
 
@@ -14,19 +14,17 @@ import { formatMachineCountdown } from '@/components/machines/durationWords';
  */
 export function useGuardRemainingMs(stopAt: number): number {
     const presented = useLayoutPresentationActive();
-    const hostViewed = useHostActivelyViewed();
-    const active = presented && hostViewed;
     const [now, setNow] = React.useState(() => Date.now());
     const remaining = stopAt - now;
     const fast = remaining < 10 * 60_000;
-    React.useLayoutEffect(() => {
-        if (!active) return;
+    useHostActivelyViewedLayoutEffect((hostViewed) => {
+        if (!presented || !hostViewed) return;
         const current = Date.now();
         setNow(current);
         if (stopAt <= current) return;
         const timer = setInterval(() => setNow(Date.now()), fast ? 1000 : 30_000);
         return () => clearInterval(timer);
-    }, [active, stopAt, fast, remaining <= 0]);
+    }, [presented, stopAt, fast, remaining <= 0]);
     return remaining;
 }
 

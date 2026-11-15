@@ -12,7 +12,7 @@ import {
 
 import { useVoiceLevelSharedValue } from '@/components/voice/surface/useVoiceLevelSharedValue';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import { useHostActivelyFocused } from '@/utils/runtime/useHostActivelyViewed';
+import { useHostActivelyFocusedEffect } from '@/utils/runtime/useHostActivelyViewed';
 import { voiceRuntimeLevelStore } from '@/voice/runtime/levels/voiceRuntimeLevelStore';
 
 import { resolveVoiceEnergyActive } from './resolveVoiceEnergyActive';
@@ -217,7 +217,6 @@ export function VoiceEnergyProvider(props: Readonly<{
     children: React.ReactNode;
 }>) {
     const reduced = useReducedMotionPreference();
-    const runtimeMotionActive = useHostActivelyFocused();
     const audioAmplitudePresent = React.useSyncExternalStore(subscribeAmplitudePresence, hasAudioAmplitude, () => false);
     // Two calls, two literal channels. `useVoiceLevelSharedValue` samples the
     // store only at mount and re-binds just the subscription, so a dynamic
@@ -285,10 +284,12 @@ export function VoiceEnergyProvider(props: Readonly<{
     const runtime = props.activation ?? null;
     const attemptActive = runtime?.attemptActive ?? true;
     const micCaptureActive = runtime?.micCaptureActive ?? (preview !== null);
-    const gatesOpen = runtimeMotionActive && (runtime?.providerReady ?? true)
+    // Host focus is the remaining gate. It reaches the two effects below through the host watch, so a window
+    // losing focus stops the clock without rendering this provider.
+    const gatesOpenWhenFocused = (runtime?.providerReady ?? true)
         && motionAllowed && hasVisibleConsumer;
-    const active = resolveVoiceEnergyActive({
-        runtimeMotionActive,
+    const activeWhenFocused = resolveVoiceEnergyActive({
+        runtimeMotionActive: true,
         providerReady: runtime?.providerReady ?? true,
         motionAllowed,
         hasVisibleConsumer,
@@ -423,11 +424,13 @@ export function VoiceEnergyProvider(props: Readonly<{
 
     // No cleanup: `useFrameCallback` unregisters the worklet on unmount itself,
     // and a `setActive(false)` here would only add a redundant transition.
-    React.useEffect(() => {
-        frame.setActive(active);
-    }, [active, audioAmplitudePresent, frame]);
+    useHostActivelyFocusedEffect((focused) => {
+        frame.setActive(focused && activeWhenFocused);
+    }, [activeWhenFocused, audioAmplitudePresent, frame]);
 
-    React.useEffect(() => {
+    useHostActivelyFocusedEffect((focused) => {
+        const active = focused && activeWhenFocused;
+        const gatesOpen = focused && gatesOpenWhenFocused;
         if (active || !motionAllowed) return;
 
         /*
@@ -460,7 +463,7 @@ export function VoiceEnergyProvider(props: Readonly<{
         // ease rather than a cut.
         history.set(EMPTY_HISTORY);
     }, [
-        active, arrival, flow, gatesOpen, history,
+        activeWhenFocused, arrival, flow, gatesOpenWhenFocused, history,
         level, luminosity, motionAllowed, respiration, stateLuminosity,
     ]);
 

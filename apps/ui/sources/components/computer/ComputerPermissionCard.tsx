@@ -8,7 +8,7 @@ import { ITEM_GROUP_CONTAINER_HORIZONTAL_PADDING_PX } from '@/components/ui/list
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SystemPermissionRow, type SystemPermissionRowState } from '@/components/systemPermissions/SystemPermissionRow';
 import { t } from '@/text';
-import { useHostActivelyFocused } from '@/utils/runtime/useHostActivelyViewed';
+import { useHostActivelyFocusedEffect } from '@/utils/runtime/useHostActivelyViewed';
 import { resolveComputerRecovery } from '@/sync/domains/computer/targets';
 
 export { needsComputerPermission } from '@/sync/domains/computer/targets';
@@ -59,20 +59,19 @@ export function ComputerPermissionCard(props: Readonly<{
     // The OS offers no grant-change event, so the natural boundary is the person's return: once the
     // pane was opened on the machine, coming back to Happier re-reads its grants exactly once. A second
     // return re-reads only after the pane is opened again; Check again stays for everything else.
-    const focused = useHostActivelyFocused();
-    const wasFocused = React.useRef(focused);
+    const wasFocused = React.useRef(true);
     const awaitingReturn = React.useRef(false);
     React.useEffect(() => {
         awaitingReturn.current = props.openSettings === 'opened';
     }, [props.openSettings]);
     const onCheckAgain = props.onCheckAgain;
-    React.useEffect(() => {
+    useHostActivelyFocusedEffect((focused) => {
         const returned = focused && !wasFocused.current;
         wasFocused.current = focused;
         if (!returned || !awaitingReturn.current) return;
         awaitingReturn.current = false;
         onCheckAgain();
-    }, [focused, onCheckAgain]);
+    }, [onCheckAgain]);
     return (
         <View style={stylesheet.root} testID={testID} accessibilityLiveRegion="polite">
             <SurfaceStateCard

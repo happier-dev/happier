@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
+import { useHostActivelyViewedEffect } from '@/utils/runtime/useHostActivelyViewed';
 
 import {
     ENROLLMENT_POLL_IDLE_DELAY_MS,
@@ -94,10 +94,9 @@ function reconcilePolling(): void {
  * External Directory enrollment has no event transport before Home sign-in. */
 export function useAccountDirectoryActivePolling(callback: PollingCallback, enabled = true): void {
     const presented = useLayoutPresentationActive();
-    const viewed = useHostActivelyViewed();
     const callbackRef = React.useRef(callback);
     callbackRef.current = callback;
-    React.useEffect(() => {
+    useHostActivelyViewedEffect((viewed) => {
         if (!enabled || !presented || !viewed) return;
         const invoke = () => callbackRef.current();
         callbacks.add(invoke);
@@ -106,5 +105,5 @@ export function useAccountDirectoryActivePolling(callback: PollingCallback, enab
             callbacks.delete(invoke);
             reconcilePolling();
         };
-    }, [enabled, presented, viewed]);
+    }, [enabled, presented]);
 }

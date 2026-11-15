@@ -21,7 +21,7 @@ import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
-import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
+import { useHostActivelyViewedEffect } from '@/utils/runtime/useHostActivelyViewed';
 
 import type { McpServerSignIn, McpSignInView } from './useMcpServerSignIn';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
@@ -54,14 +54,12 @@ function formatLeft(ms: number): string {
 function useTimeLeft(expiresAtMs: number): string {
   const [now, setNow] = React.useState(() => Date.now());
   const presented = useLayoutPresentationActive();
-  const viewed = useHostActivelyViewed();
-  const active = presented && viewed;
-  React.useEffect(() => {
-    if (!active) return;
+  useHostActivelyViewedEffect((viewed) => {
+    if (!presented || !viewed) return;
     setNow(Date.now());
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
-  }, [expiresAtMs, active]);
+  }, [expiresAtMs, presented]);
   return formatLeft(expiresAtMs - now);
 }
 

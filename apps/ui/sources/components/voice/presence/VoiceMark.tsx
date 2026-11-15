@@ -16,7 +16,7 @@ import type { VoiceAttemptControlProjection } from '@/components/voice/attempt/u
 import { useVoiceEnergyIfMounted, useVoiceEnergyPresenceIfMounted } from '@/components/voice/light/useVoiceEnergy';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
+import { useHostActivelyViewedEffect, useHostActivelyViewedLayoutEffect } from '@/utils/runtime/useHostActivelyViewed';
 
 import { VoiceMarkCanvas } from './VoiceMarkCanvas';
 import { resolveVoiceMarkGeometry } from './voiceMarkGeometry';
@@ -104,8 +104,8 @@ export const VoiceMarkArt = React.memo(function VoiceMarkArt(props: Readonly<{
     const reduced = useReducedMotionPreference() || props.preview !== undefined
         || (props.presentationOnly === true && props.still !== false);
     const presented = useLayoutPresentationActive();
-    const viewed = useHostActivelyViewed();
-    const animationActive = presented && viewed;
+    // Whether anyone views the app reaches the three animation effects below through the host watch, so a hide
+    // settles the mark without rendering it.
     const live = props.pose !== 'mic';
     const planetTheme = props.theme ?? (theme.dark ? 'dark' : 'light');
 
@@ -149,7 +149,8 @@ export const VoiceMarkArt = React.memo(function VoiceMarkArt(props: Readonly<{
     );
     const from = poses.displayed?.key === geometryKey ? poses.displayed.geometry : sourceGeometry;
     // Declared before the morph effect so a leave arriving with the return to `mic` claims it first.
-    React.useEffect(() => {
+    useHostActivelyViewedEffect((viewed) => {
+        const animationActive = presented && viewed;
         if (eventId === null || eventId === playedEventId.current) return;
         playedEventId.current = eventId;
         cancelAnimation(gather);
@@ -173,8 +174,9 @@ export const VoiceMarkArt = React.memo(function VoiceMarkArt(props: Readonly<{
             morph.value = 0;
             leave.value = 0;
         });
-    }, [animationActive, eventId, eventKind, gather, leave, morph, reduced]);
-    React.useEffect(() => {
+    }, [presented, eventId, eventKind, gather, leave, morph, reduced]);
+    useHostActivelyViewedEffect((viewed) => {
+        const animationActive = presented && viewed;
         const target = previewMorph ?? (live ? 1 : 0);
         if (reduced || !animationActive) {
             cancelAnimation(morph);
@@ -195,7 +197,7 @@ export const VoiceMarkArt = React.memo(function VoiceMarkArt(props: Readonly<{
         }
         // `eventId`: a newer fact can supersede a leave before it lands (its hand-back to the rest
         // glyph never runs). The morph settles from wherever the dots are instead of staying away.
-    }, [animationActive, eventId, gather, leave, live, morph, previewMorph, reduced]);
+    }, [presented, eventId, gather, leave, live, morph, previewMorph, reduced]);
     React.useLayoutEffect(() => {
         if (nextKey === planetLookKey(poses.to)) return;
         cancelAnimation(poseProgress);
@@ -209,9 +211,9 @@ export const VoiceMarkArt = React.memo(function VoiceMarkArt(props: Readonly<{
     // Restart only after React commits the captured geometry to both painters. Resetting in the
     // admission effect would briefly repaint the previous geometry at progress zero.
     const committedStart = React.useRef(poses.displayed);
-    React.useLayoutEffect(() => {
+    useHostActivelyViewedLayoutEffect((viewed) => {
         if (!poses.displayed) return;
-        if (reduced || !animationActive) {
+        if (reduced || !presented || !viewed) {
             committedStart.current = poses.displayed;
             cancelAnimation(poseProgress);
             poseProgress.value = 1;
@@ -221,7 +223,7 @@ export const VoiceMarkArt = React.memo(function VoiceMarkArt(props: Readonly<{
         committedStart.current = poses.displayed;
         poseProgress.value = 0;
         poseProgress.value = withTiming(1, POSE_TIMING);
-    }, [animationActive, poseProgress, poses.displayed, reduced]);
+    }, [presented, poseProgress, poses.displayed, reduced]);
 
     return (
         <View
