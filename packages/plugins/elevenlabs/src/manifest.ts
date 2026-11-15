@@ -288,8 +288,8 @@ export const ELEVENLABS_PLUGIN = definePlugin({
               effect: 'read',
               request: {
                 origin: 'https://api.elevenlabs.io',
-                pathTemplate: '/v1/voices',
-                queryTemplate: [],
+                pathTemplate: '/v2/voices',
+                queryTemplate: [{ name: 'page_size', value: '100' }, { name: 'include_total_count', value: 'false' }],
                 headerTemplate: [{ name: 'accept', value: 'application/json' }],
                 bodyTemplate: { kind: 'none' },
                 method: 'GET',
@@ -299,8 +299,14 @@ export const ELEVENLABS_PLUGIN = definePlugin({
                 contentTypes: [],
               },
               parameters: {
-                schema: { type: 'object', properties: {}, additionalProperties: false },
-                mapping: [],
+                schema: { type: 'object', properties: {
+                  nextPageToken: { type: 'string', minLength: 1 },
+                  voiceId: { type: 'string', minLength: 1, maxLength: 256 },
+                }, additionalProperties: false },
+                mapping: [
+                  { parameter: 'nextPageToken', target: { kind: 'query', name: 'next_page_token' } },
+                  { parameter: 'voiceId', target: { kind: 'query', name: 'voice_ids' } },
+                ],
               },
               response: { maxBytes: 2097152, contentTypes: ['application/json'] },
             },

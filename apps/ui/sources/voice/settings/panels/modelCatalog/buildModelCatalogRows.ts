@@ -86,6 +86,7 @@ export type BuildModelCatalogRowsParams = Readonly<{
   actionError?: Readonly<{
     packId: string;
     operation: 'install' | 'remove';
+    message?: string;
   }> | null;
   /** Currently-selected STT default pack id (may be a legacy id), or null. */
   selectedSttPackId: string | null;
@@ -215,7 +216,7 @@ function buildRowsForKind(
       languages: entry.languages ?? null,
       archiveBytes: entry.archiveSizeBytes ?? null,
       inUse: !statusUnavailable && typeof status?.inUse === 'boolean' ? status.inUse : null,
-      lastError: status?.lastError ?? null,
+      lastError: actionFailed ? actionError?.message ?? status?.lastError ?? null : status?.lastError ?? null,
       isDefault: defaultPackId === entry.packId,
       canInstall: entry.publicationAvailable
         && (actionFailed

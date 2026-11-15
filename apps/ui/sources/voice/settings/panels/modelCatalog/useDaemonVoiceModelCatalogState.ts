@@ -28,7 +28,8 @@ import {
 import {
     createDaemonVoiceModelCatalogObservation,
     getDaemonVoiceModelCatalogObservation,
-    readDaemonVoiceModelCatalogErrorCode as readErrorCode,
+    readDaemonVoiceModelCatalogFailure,
+    type DaemonVoiceModelCatalogObservationState,
     type DaemonVoiceModelCatalogErrorCode,
 } from './daemonVoiceModelCatalogObservation';
 export type { DaemonVoiceModelCatalogErrorCode } from './daemonVoiceModelCatalogObservation';
@@ -37,6 +38,8 @@ export type DaemonVoiceModelCatalogState = Readonly<{
     /** Per-pack daemon status snapshots, keyed-by-pack-id in the consumer. */
     statuses: readonly DaemonVoiceInferenceModelStatus[];
     errorCode: DaemonVoiceModelCatalogErrorCode;
+    message?: DaemonVoiceModelCatalogObservationState['message'];
+    failureCause?: DaemonVoiceModelCatalogObservationState['failureCause'];
     loading: boolean;
     /** Pack id of an in-flight install/remove action, or null when idle. */
     actionPackId: string | null;
@@ -45,6 +48,8 @@ export type DaemonVoiceModelCatalogState = Readonly<{
         packId: string;
         operation: 'install' | 'remove';
         errorCode: Exclude<DaemonVoiceModelCatalogErrorCode, null>;
+        message?: string;
+        failureCause?: DaemonVoiceModelCatalogObservationState['failureCause'];
     }> | null;
 }>;
 
@@ -107,7 +112,7 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
     }, [machineId]);
     const [actionState, setActionState] = React.useState<CatalogActionState>({ actionPackId: null, actionError: null });
     const state = React.useMemo<DaemonVoiceModelCatalogState>(() => ({
-        statuses: observed.statuses, errorCode: observed.errorCode, loading: observed.loading, ...actionState,
+        ...observed, ...actionState,
     }), [observed, actionState]);
     const refreshSequenceRef = React.useRef(0);
     const nextActionTokenRef = React.useRef(0);
@@ -260,7 +265,7 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
             isCurrent: () => actionStillOwnsState() && !actionAbortController.signal.aborted,
             cancel: () => actionAbortController.abort() });
         setCancellationCommand(command);
-        observation.publish({ ...observation.getSnapshot(), errorCode: null });
+        observation.publish({ ...observation.getSnapshot(), errorCode: null, message: undefined, failureCause: undefined });
         setActionState((current) => ({
             ...current,
             actionPackId: packId,
@@ -272,10 +277,10 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
         } catch (error) {
             if (!actionStillOwnsState()) return;
             if (actionAbortController.signal.aborted) return;
-            const errorCode = readErrorCode(error) ?? 'internal_error';
+            const failure = readDaemonVoiceModelCatalogFailure(error);
             setActionState((current) => ({
                 ...current,
-                actionError: { packId, operation, errorCode },
+                actionError: { packId, operation, ...failure },
             }));
         } finally {
             retirement.dispose();

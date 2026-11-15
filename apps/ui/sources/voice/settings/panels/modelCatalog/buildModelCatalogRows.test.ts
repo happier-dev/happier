@@ -349,12 +349,13 @@ describe('buildModelCatalogRows', () => {
     const sttPack = listModelPackCatalogEntries('stt_sherpa')[0]!.packId;
     const row = buildModelCatalogRows({
       statuses: [status(sttPack, { installState: 'not_installed' })],
-      actionError: { packId: sttPack, operation: 'install' },
+      actionError: { packId: sttPack, operation: 'install', message: 'model loader failed' },
       selectedSttPackId: null,
       selectedTtsPackId: null,
     }).stt.find((candidate) => candidate.packId === sttPack)!;
 
     expect(row.state).toBe('error');
+    expect(row.lastError).toBe('model loader failed');
     expect(row.canInstall).toBe(true);
     expect(row.canRemove).toBe(true);
   });

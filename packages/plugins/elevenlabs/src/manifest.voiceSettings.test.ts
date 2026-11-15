@@ -119,6 +119,18 @@ describe('ElevenLabs public Voice settings declaration', () => {
       .toBe(ELEVENLABS_PROCESSING_DISCLOSURE_FALLBACK);
   });
 
+  it('declares the paginated provider voice endpoint and exact voice lookup', () => {
+    expect(ingestPluginManifestV2(PLUGIN_MANIFEST)).toMatchObject({ ok: true });
+    const voices = PLUGIN_MANIFEST.contributes.voiceProviders[0].credentials?.hostMediated?.operations.find(operation => operation.id === 'voices');
+    expect(voices).toMatchObject({
+      request: { pathTemplate: '/v2/voices', queryTemplate: [{ name: 'page_size', value: '100' }, { name: 'include_total_count', value: 'false' }] },
+      parameters: { mapping: [
+        { parameter: 'nextPageToken', target: { kind: 'query', name: 'next_page_token' } },
+        { parameter: 'voiceId', target: { kind: 'query', name: 'voice_ids' } },
+      ] },
+    });
+  });
+
   it('declares bounded cursor pagination for provisioning tool discovery', () => {
     const declaration = PLUGIN_MANIFEST.contributes.voiceProviders[0];
     const toolsOperation = declaration.credentials?.hostMediated?.operations.find(

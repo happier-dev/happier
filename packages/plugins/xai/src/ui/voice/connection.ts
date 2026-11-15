@@ -1,3 +1,5 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
+
 import { Platform } from 'react-native';
 
 import type {
@@ -43,6 +45,15 @@ function providerError(code: 'provider_response_invalid' | 'voice_connection_bac
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+// Close reasons are remote prose, unlike the error envelope's diagnostic code.
+// Retain only public provider codes; code-shaped text can still be a credential.
+function readPublicCloseReason(value: unknown): string | null {
+  switch (value) {
+    case 'rate_limit_exceeded': case 'invalid_request_error': case 'server_error': case 'invalid_token': return value;
+    default: return null;
+  }
 }
 
 type ReactNativeWebSocketConstructor = new (
@@ -155,8 +166,15 @@ export function createXaiWebSocketDriver(input: XaiWebSocketDriverInput) {
         });
         listen(ws, 'close', (raw) => {
           const event = record(raw);
-          settle(() => reject(providerError('provider_response_invalid')));
-          if (!closing) handlers.onRemoteClose(`xai_websocket_closed:${String(event?.code ?? 'unknown')}`);
+          if (closing) return;
+          const nativeErrorReason = readPublicCloseReason(event?.reason);
+          const error = providerError('provider_response_invalid');
+          const failureCause = { ...projectActionFailureCauseV1(error, 'xai.websocket.close', { allowUnknownErrorCode: false }),
+            ...(typeof event?.code === 'number' && Number.isInteger(event.code) ? { nativeErrorCode: String(event.code) } : {}),
+            ...(nativeErrorReason ? { nativeErrorReason } : {}) };
+          settle(() => reject(Object.assign(error, { failureCause })));
+          handlers.onControl({ type: 'error', event_id: 'xai_websocket_close', error: { code: 'provider_response_invalid' }, failureCause });
+          handlers.onRemoteClose(`xai_websocket_closed:${String(event?.code ?? 'unknown')}`);
         });
         listen(ws, 'message', (raw) => {
           const data = record(raw)?.data;

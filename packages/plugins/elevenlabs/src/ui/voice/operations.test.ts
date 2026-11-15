@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { VoiceAccountOperationService } from '@happier-dev/plugin-sdk/voice';
+
+
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
 import { createElevenLabsAutoprovision } from './autoprovision.js';
@@ -112,6 +115,27 @@ function provisionAccountRequest<T extends Readonly<{ operationId: string; param
 }
 
 describe('ElevenLabs public account operations', () => {
+  it('loads every provider page using its continuation token', async () => {
+    const request = vi.fn(async (input: Parameters<VoiceAccountOperationService['request']>[0]) => ({ status: 200,
+      finalUrl: 'https://api.elevenlabs.io/v2/voices', headers: {}, body: new TextEncoder().encode(JSON.stringify(
+        input.parameters.nextPageToken ? { voices: [{ voice_id: 'last', name: 'Last' }], has_more: false, next_page_token: null }
+          : { voices: [{ voice_id: 'first', name: 'First' }], has_more: true, next_page_token: 'page-two' })) }));
+    const result = await listElevenLabsVoicesWithAccountOperations({ accountOperations: { request }, signal: new AbortController().signal });
+    expect(result.map(voice => voice.id)).toEqual(['first', 'last']);
+    expect(request.mock.calls.map(([input]) => input.parameters)).toEqual([{}, { nextPageToken: 'page-two' }]);
+  });
+
+  it('retains every valid voice beyond the former 500 row cutoff', async () => {
+    const voices = Array.from({ length: 501 }, (_, i) => ({ voice_id: `voice_${i}`, name: `Voice ${i}` }));
+    const result = await listElevenLabsVoicesWithAccountOperations({
+      accountOperations: { request: async () => ({ status: 200, finalUrl: 'https://example.test/voices', headers: {},
+        body: new TextEncoder().encode(JSON.stringify({ voices: [...voices, { voice_id: '', name: 'invalid' }] })) }) },
+
+      signal: new AbortController().signal,
+    });
+    expect(result).toHaveLength(501);
+    expect(result).toContainEqual(expect.objectContaining({ id: 'voice_500' }));
+  });
   it('requires updating a pre-Inbox agent and registers the canonical Inbox tool before the next conversation', async () => {
     const agentId = 'agent_inbox';
     let agent: Record<string, unknown> = {

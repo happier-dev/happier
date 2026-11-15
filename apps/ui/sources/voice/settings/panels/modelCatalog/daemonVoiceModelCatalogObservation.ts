@@ -1,3 +1,4 @@
+import { readActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { listModelPackCatalogEntries, resolveCanonicalModelPackId } from '@happier-dev/protocol/voice/modelPacks/catalog';
 import type { DaemonVoiceInferenceModelStatus } from '@happier-dev/protocol/daemon/voiceInference';
 import {
@@ -18,6 +19,8 @@ export type DaemonVoiceModelCatalogErrorCode = Extract<DaemonVoiceInferenceClien
 export type DaemonVoiceModelCatalogObservationState = Readonly<{
     statuses: readonly DaemonVoiceInferenceModelStatus[];
     errorCode: DaemonVoiceModelCatalogErrorCode;
+    message?: string;
+    failureCause?: ActionFailureCauseV1;
     loading: boolean;
     /** The full discovery catalog still needs a read; partial rows may be current. */
     stale: boolean;
@@ -28,13 +31,20 @@ const EMPTY_OBSERVATION: DaemonVoiceModelCatalogObservationState = {
 };
 const CANONICAL_MODEL_PACK_IDS = listModelPackCatalogEntries().map(entry => entry.packId);
 
-export function readDaemonVoiceModelCatalogErrorCode(error: unknown): DaemonVoiceModelCatalogErrorCode {
+export function readDaemonVoiceModelCatalogErrorCode(error: unknown): Exclude<DaemonVoiceModelCatalogErrorCode, null> {
     const code = readDaemonVoiceInferenceClientErrorCode(error);
     switch (code) {
         case 'feature_disabled': case 'machine_unreachable': case 'runtime_unavailable':
         case 'unsupported_runtime_family': case 'request_timeout': case 'internal_error': return code;
         default: return 'internal_error';
     }
+}
+
+/** Keep the daemon client's existing message and content-free diagnostic together. */
+export function readDaemonVoiceModelCatalogFailure(error: unknown) {
+    const failureCause = error && typeof error === 'object' && 'failureCause' in error ? readActionFailureCauseV1(error.failureCause) : undefined;
+    return { errorCode: readDaemonVoiceModelCatalogErrorCode(error),
+        message: error instanceof Error ? error.message : undefined, failureCause };
 }
 
 /** One actual model observation and in-flight read, independent of its UI or Action consumer. */
@@ -54,6 +64,7 @@ export function createDaemonVoiceModelCatalogObservation(target: Readonly<{
             next = { ...next, statuses: retainKeyedRows(snapshot.statuses, next.statuses, status => resolveCanonicalModelPackId(status.packId)) };
         }
         if (snapshot.statuses === next.statuses && snapshot.errorCode === next.errorCode
+            && snapshot.message === next.message && JSON.stringify(snapshot.failureCause) === JSON.stringify(next.failureCause)
             && snapshot.loading === next.loading && snapshot.stale === next.stale) return;
         snapshot = next;
         for (const listener of listeners) listener();
@@ -114,7 +125,7 @@ export function createDaemonVoiceModelCatalogObservation(target: Readonly<{
             return statuses;
         }).catch((error: unknown) => {
             if (sequence === requestSequence && current() && !controller.signal.aborted) {
-                publish({ ...snapshot, errorCode: readDaemonVoiceModelCatalogErrorCode(error), loading: false, stale: true });
+                publish({ ...snapshot, ...readDaemonVoiceModelCatalogFailure(error), loading: false, stale: true });
             }
             if (controller.signal.aborted) return null;
             throw error;

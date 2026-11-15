@@ -16,6 +16,7 @@ import type {
   VoiceTranscriptLadderObservation,
   VoiceTurnControlAction,
 } from '@happier-dev/plugin-sdk/voice/client';
+import { ActionFailureCauseV1Schema } from '@happier-dev/plugin-sdk/errors';
 import { z } from 'zod/mini';
 
 import type { XaiRealtimeSettingsV1 } from '../../protocol/voice/settings.js';
@@ -164,9 +165,11 @@ export function createXaiRealtimeProtocolAdapter(input: Readonly<{
           // End this failed host attempt through canonical user-action recovery;
           // xAI may keep its socket open after rejecting the request.
           const providerCode = normalizeVoiceFailureCode(code);
+          const cause = ActionFailureCauseV1Schema.safeParse(event.failureCause);
           result.push({ type: 'provider_error',
             code: code === 'rate_limit_exceeded' ? 'rate_limited' : 'provider_response_invalid',
             ...(providerCode ? { providerCode } : {}),
+            ...(cause.success ? { failureCause: cause.data } : {}),
             terminal: true });
         }
       }

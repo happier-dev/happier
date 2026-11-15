@@ -54,7 +54,6 @@ import { readVoiceProviderSettingsConfig } from '@/sync/domains/settings/voiceSe
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import { projectHostedModeAvailabilityReadiness, resolveVoicePassiveSetupReadiness } from '@/voice/registry/readiness';
 import { DaemonVoiceInferenceClient } from '@/voice/runtime/daemonInference/DaemonVoiceInferenceClient';
-import { readDaemonVoiceInferenceClientErrorCode } from '@/voice/runtime/daemonInference/daemonVoiceInferenceErrors';
 import { resolveLocalNeuralExecutionPolicy } from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
 import { resolveDaemonSpeechPcmCaptureAvailability } from '@/voice/runtime/daemonInference/resolveDaemonSpeechPcmCaptureAvailability';
 import { readPassiveBrowserWebSpeechCapability } from './browserWebSpeechCapability';
@@ -62,7 +61,7 @@ import { projectLocalConversationProviderReadiness, projectLocalConversationRead
 import { resolveVoiceProviderAvailability } from './resolveVoiceProviderAvailability';
 import { resolveVoiceDaemonDirectRouteAvailability, resolveVoiceDaemonModelAvailabilityFromCatalogState, resolveVoiceDaemonModelKindAvailabilityFromCatalogState, resolveVoiceProviderLocalAvailability } from './voiceProviderLocalAvailability';
 import type { VoiceExecutionMachinePresentation } from '@/voice/credentials/useExecutionMachinePresentation';
-import { captureDaemonVoiceModelCatalogObservation } from './panels/modelCatalog/daemonVoiceModelCatalogObservation';
+import { captureDaemonVoiceModelCatalogObservation, readDaemonVoiceModelCatalogErrorCode } from './panels/modelCatalog/daemonVoiceModelCatalogObservation';
 
 export type VoiceRawSpeechReadinessTarget = Readonly<{
     providerId: string;
@@ -186,9 +185,7 @@ export async function inspectVoiceSettingsSemanticReadiness(input: Readonly<{
                 client: new DaemonVoiceInferenceClient(), packIds, requireNewObservation: true, isCurrent: input.isCurrent, signal: context.signal,
             }) ?? [];
         } catch (error) {
-            const code = readDaemonVoiceInferenceClientErrorCode(error);
-            modelError = code === 'feature_disabled' || code === 'machine_unreachable' || code === 'runtime_unavailable'
-                || code === 'unsupported_runtime_family' || code === 'request_timeout' ? code : 'internal_error';
+            modelError = readDaemonVoiceModelCatalogErrorCode(error);
         }
     }
     const modelAvailability = resolveVoiceDaemonModelAvailabilityFromCatalogState({ loading: false, errorCode: modelError,

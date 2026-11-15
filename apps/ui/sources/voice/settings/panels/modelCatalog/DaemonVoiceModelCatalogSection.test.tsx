@@ -181,8 +181,8 @@ describe('DaemonVoiceModelCatalogSection', () => {
     it('leaves loading and renders unavailable when the selected daemon does not serve speech RPCs', async () => {
         respond = () => { throw createRpcCallError({ error: 'RPC method not available', errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE }); };
         const tree = await renderSection();
-        await waitForTestEvent(tree.subscribe, () => tree.root.findAllByProps({ testID: 'voice-model-catalog-status' })[0]?.props.kind, kind => kind === 'unavailable');
-        expect(tree.root.findByProps({ testID: 'voice-model-catalog-status' }).props.kind).toBe('unavailable');
+        await waitForTestEvent(tree.subscribe, () => tree.root.findAllByProps({ testID: 'voice-model-catalog-status' })[0]?.props.kind, kind => kind === 'error');
+        expect(tree.root.findByProps({ testID: 'voice-model-catalog-status' }).props.kind).toBe('error');
         expect(modelRows(tree)).toHaveLength(0);
 
         catalogReply([]);
@@ -196,7 +196,7 @@ describe('DaemonVoiceModelCatalogSection', () => {
     it.each([
         ['machine_unreachable', 'Can’t reach your Voice machine right now.', true],
         ['feature_disabled', 'Speech models are turned off on this server.', false],
-        ['runtime_unavailable', 'Your Voice machine can’t run speech models.', false],
+        ['runtime_unavailable', 'Speech models couldn’t be loaded.', true],
         ['request_timeout', 'Your Voice machine didn’t answer in time.', true],
         ['internal_error', 'Speech models couldn’t be loaded.', true],
     ] as const)('says once why the catalog is unavailable (%s) instead of an unknown state on every model', async (code, message, retryable) => {
@@ -212,6 +212,7 @@ describe('DaemonVoiceModelCatalogSection', () => {
         expect(tree.root.findByProps({ testID: 'voice-model-catalog-status' }).props.kind).not.toBe('loading');
         const line = tree.root.findByProps({ testID: 'voice-model-catalog-status' });
         expect(line.props.title).toBe(message);
+        if (code !== 'feature_disabled') expect(line.props.detail).toBe('daemon model request failed');
         expect(modelRows(tree)).toHaveLength(0);
         expect(requests.some(request => request.method.endsWith('.install'))).toBe(false);
         if (!retryable) { expect(line.props.action).toBeUndefined(); return; }

@@ -97,7 +97,7 @@ function parseVoiceCatalog(value: unknown): readonly VoiceProviderCatalogItem[] 
     ? (value as Record<string, unknown>).voices
     : null;
   if (!Array.isArray(rows)) throw providerError('provider_response_invalid');
-  return Object.freeze(rows.slice(0, 500).flatMap((raw) => {
+  return Object.freeze(rows.flatMap((raw) => {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
     const record = raw as Record<string, unknown>;
     const id = typeof (record.voice_id ?? record.id) === 'string' ? String(record.voice_id ?? record.id).trim() : '';

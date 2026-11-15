@@ -46,7 +46,6 @@ function resolveCatalogStateLine(
             return { kind: 'unavailable', title: t('settingsVoice.pages.advanced.speechModelsOff'), retryable: false };
         case 'machine_unreachable':
             return { kind: 'error', title: t('settingsVoice.pages.advanced.speechModelsUnreachable'), retryable: true };
-        case 'runtime_unavailable':
         case 'unsupported_runtime_family':
             return { kind: 'unavailable', title: t('settingsVoice.pages.advanced.speechModelsUnsupported'), retryable: false };
         case 'request_timeout':
@@ -148,6 +147,7 @@ export function DaemonVoiceModelCatalogSection(props: Readonly<{
                     size="line"
                     kind={stateLine.kind}
                     title={stateLine.title}
+                    detail={state.message}
                     action={stateLine.retryable
                         ? { label: t('common.retry'), onPress: handleRetryStatus, testID: 'voice-model-catalog-retry' }
                         : undefined}

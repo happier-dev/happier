@@ -1,8 +1,21 @@
 import { describe, expect, it, vi } from 'vitest';
 
+
+
 import { createXaiRealtimeCredentialOperations } from './operations.js';
 
 describe('xAI Realtime credential broker', () => {
+  it('retains every valid voice beyond the former 500 row cutoff', async () => {
+    const voices = Array.from({ length: 501 }, (_, i) => ({ voice_id: `voice_${i}`, name: `Voice ${i}` }));
+    const result = await createXaiRealtimeCredentialOperations().fetchCatalogWithAccountOperations({
+      accountOperations: { request: async () => ({ status: 200, finalUrl: 'https://api.x.ai/v1/tts/voices', headers: {},
+        body: new TextEncoder().encode(JSON.stringify({ voices: [...voices, { voice_id: '', name: 'invalid' }] })) }) },
+      catalog: 'voices',
+      signal: new AbortController().signal,
+    });
+    expect(result).toHaveLength(501);
+    expect(result.at(-1)?.id).toBe('voice_500');
+  });
   it('mints browser auth through the account operation boundary without receiving the source credential', async () => {
     const request = vi.fn(async () => Object.freeze({
       status: 200,

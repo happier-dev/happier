@@ -91,7 +91,7 @@ function parseVoices(value: unknown): readonly VoiceProviderCatalogItem[] {
   const voices = readVoiceCatalogEntries(value);
   if (!voices) throw providerError('provider_response_invalid');
   const rows: VoiceProviderCatalogItem[] = [];
-  for (const raw of voices.slice(0, 500)) {
+  for (const raw of voices) {
     if (!raw || typeof raw !== 'object') continue;
     const record = raw as Record<string, unknown>;
     const id = stringValue(record.voice_id, 256);
@@ -158,18 +158,27 @@ export async function listElevenLabsVoicesWithAccountOperations(input: Readonly<
   accountOperations: VoiceAccountOperationService;
   signal: AbortSignal;
 }>): Promise<readonly VoiceProviderCatalogItem[]> {
-  const response = await input.accountOperations.request({
-    operationId: 'voices',
-    parameters: {},
-    signal: input.signal,
-  });
-  assertProviderHttpSuccess(response.status);
-  try {
-    return parseVoices(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(response.body)));
-  } catch (error) {
-    if ((error as Readonly<{ code?: unknown }>).code === 'provider_response_invalid') throw error;
-    throw providerError('provider_response_invalid');
-  }
+  // ElevenLabs v2 uses has_more + next_page_token; v1 refuses workspaces
+  // above 500 voices. Each page retains the host operation's response budget.
+  const voices: unknown[] = [];
+  let nextPageToken: string | undefined;
+  do {
+    const response = await input.accountOperations.request({
+      operationId: 'voices', parameters: nextPageToken ? { nextPageToken } : {}, signal: input.signal,
+    });
+    assertProviderHttpSuccess(response.status);
+    let json: unknown;
+    try { json = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(response.body)); }
+    catch { throw providerError('provider_response_invalid'); }
+    const entries = readVoiceCatalogEntries(json);
+    if (!entries) throw providerError('provider_response_invalid');
+    for (const entry of entries) voices.push(entry);
+    const page = json as Record<string, unknown>;
+    if (page.has_more !== true) break;
+    if (typeof page.next_page_token !== 'string' || !page.next_page_token.trim()) throw providerError('provider_response_invalid');
+    nextPageToken = page.next_page_token;
+  } while (true);
+  return parseVoices({ voices });
 }
 
 function desiredElevenLabsToolConfig(tool: Readonly<{
@@ -280,7 +289,7 @@ async function assertProvisionVoiceOwnedByAccount(
   call: ElevenLabsProvisionCall,
   voiceId: string,
 ): Promise<void> {
-  const json = await callElevenLabsProvisionStage(call, 'validate_voice', 'voices', {});
+  const json = await callElevenLabsProvisionStage(call, 'validate_voice', 'voices', { voiceId });
   const entries = readVoiceCatalogEntries(json);
   if (!entries) throw providerError('provider_response_invalid', 'validate_voice');
   const owned = entries.some((entry) => entry

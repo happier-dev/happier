@@ -51,6 +51,14 @@ describe('xAI Realtime protocol adapter', () => {
       .toContainEqual({ type: 'response_finished', responseId: 'person-response' });
   });
 
+  it('retains the transport close cause through canonical protocol decoding', () => {
+    const adapter = createXaiRealtimeProtocolAdapter({ prepare: async () => ({ kind: 'declined', code: 'unused' }) });
+    const failureCause = { phase: 'xai.websocket.close', errorClass: 'Error', errorCode: null, httpStatus: null,
+      nativeErrorCode: '1008', nativeErrorReason: 'invalid_request_error' };
+    expect(adapter.decodeControl({ type: 'error', event_id: 'xai_websocket_close', error: { code: 'invalid_request_error' }, failureCause }))
+      .toContainEqual(expect.objectContaining({ type: 'provider_error', terminal: true, failureCause }));
+  });
+
   it.each([
     ['rate_limit_exceeded', { type: 'provider_error', code: 'rate_limited', providerCode: 'rate_limit_exceeded', terminal: true }],
     ['server_error', { type: 'provider_error', code: 'provider_response_invalid', providerCode: 'server_error', terminal: true }],

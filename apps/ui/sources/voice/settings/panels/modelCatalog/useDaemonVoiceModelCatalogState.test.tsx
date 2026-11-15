@@ -908,9 +908,9 @@ describe('useDaemonVoiceModelCatalogState', () => {
 
     it('surfaces the daemon error code when the status request fails', async () => {
         respond = request => request.method.endsWith('.list')
-            ? DaemonVoiceInferenceModelsListResponseSchema.parse({ ok: false, error: 'daemon model request failed', errorCode: 'machine_unreachable' }) : modelStatus([]);
+            ? DaemonVoiceInferenceModelsListResponseSchema.parse({ ok: false, error: 'daemon model request failed', errorCode: 'machine_unreachable', failureCause: { phase: 'voice.runtime', errorClass: 'Error', errorCode: null, httpStatus: null, nativeErrorCode: 'loader_failed' } }) : modelStatus([]);
         const tree = await mount();
-        expect(state(tree).errorCode).toBe('machine_unreachable');
+        expect(state(tree)).toMatchObject({ errorCode: 'machine_unreachable', message: 'daemon model request failed', failureCause: { nativeErrorCode: 'loader_failed' } });
     });
 
     it('collapses an unrecognized daemon failure code to internal_error', async () => {
@@ -1012,7 +1012,7 @@ describe('useDaemonVoiceModelCatalogState', () => {
         void action.then(() => { settled = true; });
         await settle();
         expect(settled).toBe(true);
-        expect(state(tree)).toMatchObject({ actionPackId: null, actionError: { packId: STT_PACK, operation: 'install', errorCode: 'internal_error' } });
+        expect(state(tree)).toMatchObject({ actionPackId: null, actionError: { packId: STT_PACK, operation: 'install', errorCode: 'internal_error', message: 'daemon model request failed' } });
         expect(listingRequests()).toHaveLength(2);
         await act(async () => pending.resolve(modelList([status()])));
         await settle();

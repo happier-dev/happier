@@ -40,9 +40,42 @@ function jsonEventWithExactUtf8Bytes(totalBytes: number): string {
 }
 
 describe('xAI WebSocket driver', () => {
+  it.each(['rate_limit_exceeded', 'invalid_request_error'])('preserves safe close cause %s before and after opening', async (reason) => {
+    for (const opened of [false, true]) {
+      const socket = new FakeWebSocket('wss://example.test');
+      const onControl = vi.fn();
+      const driver = createXaiWebSocketDriver({ auth: { kind: 'subprotocol_token', value: 'secret', placement: 'websocket_subprotocol', expiresAtMs: Date.now() + 60000 },
+        model: 'test', conversationId: null, sessionUpdate: {}, createWebSocket: () => socket });
+      const opening = driver.open({ signal: new AbortController().signal, onControl, onTransport: vi.fn(), onRemoteClose: vi.fn() });
+      const failure = opened ? null : expect(opening).rejects.toMatchObject({ failureCause: { nativeErrorCode: '1008', nativeErrorReason: reason } });
+      if (opened) { socket.readyState = 1; socket.emit('open'); await opening; }
+      socket.emit('close', { code: 1008, reason });
+      if (failure) await failure;
+      else expect(onControl).toHaveBeenCalledWith(expect.objectContaining({ type: 'error', failureCause: expect.objectContaining({ nativeErrorCode: '1008', nativeErrorReason: reason }) }));
+      await driver.close({ code: 'user_stop' });
+    }
+  });
   afterEach(() => {
     platform.OS = 'web';
     vi.unstubAllGlobals();
+  });
+
+  it.each(['Bearer private-token /Users/private', 'xai-client-secret.private'])('omits private close reason %s and suppresses failures after a user stop', async (reason) => {
+    const socket = new FakeWebSocket('wss://example.test');
+    const onControl = vi.fn(); const onRemoteClose = vi.fn();
+    const driver = createXaiWebSocketDriver({ auth: { kind: 'subprotocol_token', value: 'secret', placement: 'websocket_subprotocol', expiresAtMs: Date.now() + 60000 },
+      model: 'test', conversationId: null, sessionUpdate: {}, createWebSocket: () => socket });
+    const opening = driver.open({ signal: new AbortController().signal, onControl, onTransport: vi.fn(), onRemoteClose });
+    socket.readyState = 1; socket.emit('open'); await opening;
+    socket.emit('close', { code: 1008, reason });
+    const event = onControl.mock.calls[0]?.[0];
+    expect(event.failureCause).not.toHaveProperty('nativeErrorReason');
+    expect(JSON.stringify(event)).not.toContain('private');
+    onControl.mockClear(); onRemoteClose.mockClear();
+    await driver.close({ code: 'user_stop' });
+    socket.emit('close', { code: 1000, reason: 'normal_close' });
+    expect(onControl).not.toHaveBeenCalled();
+    expect(onRemoteClose).not.toHaveBeenCalled();
   });
 
   it.each(['web', 'ios', 'android'])('opens the portable %s transport with the platform auth placement', async (os) => {
