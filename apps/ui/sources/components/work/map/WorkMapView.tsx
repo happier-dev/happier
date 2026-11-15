@@ -14,6 +14,7 @@ import {
 import { projectPluginUiHostPalette, projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { SurfaceCard } from '@/components/ui/cards/SurfaceCard';
 import { Text } from '@/components/ui/text/Text';
+import { useLocalSetting } from '@/sync/store/settingsReadHooks';
 import { projectWorkColors } from '@/components/work/status/workStatusTreatment';
 import { workTextStyle } from '@/components/work/workTextStyle';
 import type { Theme } from '@/theme';
@@ -84,6 +85,9 @@ export type WorkMapViewProps<TNode extends HappierWorkMapNode> = Omit<
 /** The one Work map renderer (`HappierWorkMapView`) in core's theme and text. */
 export function WorkMapView<TNode extends HappierWorkMapNode>(props: WorkMapViewProps<TNode>): React.ReactElement {
     const theme = useWorkTheme();
+    // The map decides when a name drops under its mark in text widths, so it reads the size core's text draws at.
+    const textScale = useLocalSetting('uiFontScale');
+    const host = React.useMemo<HappierWorkHost>(() => Object.freeze({ ...WORK_HOST, textScale }), [textScale]);
     const { onOpen, ...mapProps } = props;
     // The shared renderer forwards React Native's own press event; its portable type only narrows
     // what a plugin author may read.
@@ -91,5 +95,5 @@ export function WorkMapView<TNode extends HappierWorkMapNode>(props: WorkMapView
         () => (onOpen ? (node, event) => onOpen(node, event as GestureResponderEvent) : undefined),
         [onOpen],
     );
-    return <HappierWorkMapView<TNode> {...mapProps} onOpen={handleOpen} theme={theme} host={WORK_HOST} />;
+    return <HappierWorkMapView<TNode> {...mapProps} onOpen={handleOpen} theme={theme} host={host} />;
 }

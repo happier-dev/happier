@@ -117,11 +117,12 @@ function WorkflowTriggerPopover(props: React.ComponentProps<typeof TriggerPopove
                 detail={overrides.length > 0 ? t('workflows.triggers.editor.rolesChanged', { count: overrides.length })
                     : t('workflows.start.rolesYour')}
                 onPress={() => setRolesOpen(true)} /> : null}
-            {visibility.status !== 'ready' ? <SurfaceFreshnessLine busy={visibility.status === 'loading'}
-                tone={visibility.status === 'failed' ? 'warning' : 'neutral'}
-                reason={visibility.status === 'failed' ? t('workflows.start.visibility.loadFailed') : t('common.loading')}
-                {...(visibility.status === 'failed' ? { action: { label: t('common.retry'), onPress: visibility.retry } } : {})} />
-                : visibility.teams.length === 0 ? null
+            {/* Most workflows are shared with no Team, so the row usually never exists: while the grants load the
+                popover draws nothing here rather than a "Loading…" line that leaves and shrinks it (07 §7). */}
+            {visibility.status === 'failed' ? <SurfaceFreshnessLine tone="warning"
+                reason={t('workflows.start.visibility.loadFailed')}
+                action={{ label: t('common.retry'), onPress: visibility.retry }} />
+                : visibility.status === 'loading' || visibility.teams.length === 0 ? null
                     : visibility.teams.length === 1 && selectedTeam ? <Item title={t('workflows.triggers.editor.visibleTo')}
                         subtitle={visibilityDescription} detail={selectedTeam.name ?? selectedTeam.id} mode="info" />
                         : <FieldSelect testID={`${rolesTestID}-visible-to`} title={t('workflows.triggers.editor.visibleTo')}

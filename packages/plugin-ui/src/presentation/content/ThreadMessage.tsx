@@ -16,6 +16,11 @@ export type HappierThreadMessageProps = Readonly<{
   space: Readonly<{ s2: number; s8: number; s10: number; s12: number; s16: number }>;
   selectionColors: Readonly<{ background: string; foreground: string }>;
   onPointerEnter?: () => void;
+  /**
+   * A move inside the frame: a host whose hover ignores the enter that scrolling content under a resting
+   * pointer fires reveals on the first real move instead, so the frame must pass moves through.
+   */
+  onPointerMove?: () => void;
   onPointerLeave?: () => void;
   /** Touch hosts open the row's actions on a long press (a phone row keeps no action column). */
   onLongPress?: () => void;
@@ -31,7 +36,7 @@ export function HappierThreadMessage(props: HappierThreadMessageProps): ReactEle
   const Root = props.onLongPress ? Pressable : View;
   return <Root testID={props.testID}
     {...(props.onLongPress ? { onLongPress: props.onLongPress, delayLongPress: 450 } : {})}
-    onPointerEnter={props.onPointerEnter} onPointerLeave={props.onPointerLeave}
+    onPointerEnter={props.onPointerEnter} onPointerMove={props.onPointerMove} onPointerLeave={props.onPointerLeave}
     style={[
       messageStyle,
       { gap: space.s10, paddingHorizontal: space.s16, paddingTop: space.s12, paddingBottom: space.s2 },

@@ -397,6 +397,29 @@ describe('Run a workflow trigger inputs', () => {
         await act(async () => { screen.findByTestId('event-workflow-trigger:saved:event-row-switch')!.props.onValueChange(false); });
         expect(change).toHaveBeenCalledWith({ adds: [], updates: { 'event-row': { enabled: false } }, removes: [] });
     });
+    it('draws no Loading line while a saved workflow\'s Team grants load, so the popover keeps its size (07 §7)', async () => {
+        const { createWorkflowDefinitionFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
+        const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+        const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+        let grantsRequested = false;
+        // The grants read stays in flight: the state that used to draw a trailing "Loading…" row.
+        home.answer(serverId, '/v1/artifacts/saved-workflow/access/grants', { select: () => {
+            grantsRequested = true;
+            return new Promise(() => {});
+        } });
+        const connection = await restoreServerAccountForTest({ serverUrl: getActiveServerSnapshot().serverUrl,
+            accountId: 'account-a', request: home.request,
+            credentials: { token: createAccountTokenForTests('account-a', { currentAccount: true }) } });
+        onTestFinished(() => connection.dispose());
+        const definition = createWorkflowDefinitionFixture({});
+        const screen = await renderScreen(<WorkflowTriggerSection testIDPrefix="grants-workflow" set={null}
+            workflowDefinitionId="saved-workflow"
+            draft={{ adds: [], updates: {}, removes: [] }} onChangeDraft={vi.fn()} status="ready" onRetry={vi.fn()}
+            stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={definition.inputs} {...{ definition }} />);
+        await screen.pressByTestIdAsync('grants-workflow-triggers-add');
+        await vi.waitFor(() => expect(grantsRequested).toBe(true));
+        expect(screen.getTextContent()).not.toContain('common.loading');
+    });
     it.each([false, true])('only offers Roles for used roles and preserves the editor on Back: used=%s', async (used) => {
         const { createWorkflowDefinitionFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
         const { PromptLibraryRowsListResponseV1Schema, sealPromptLibraryContentV1 } = await import('@happier-dev/protocol/prompts/library/promptLibraryRowsV1');

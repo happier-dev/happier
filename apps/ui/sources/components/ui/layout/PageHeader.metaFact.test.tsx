@@ -86,3 +86,24 @@ it('copies the whole id when the id fact is tapped', async () => {
         expect(written).toEqual([NATIVE_NAME]);
     } finally { restoreAuth(); }
 });
+
+it('keeps as much of a data-named title at 200% text as at the default: the line stop is measured in text', async () => {
+  const { storage } = await import('@/sync/domains/state/storageStore');
+  const previous = storage.getState().localSettings;
+  const titleLines = async () => {
+    screen = await renderScreen(<PageHeader testID="header" title="QA-RUNS-A-1114 READY219 review owners" />);
+    const title = screen.root.findAll((node) => typeof node.type === 'string'
+      && node.props?.accessibilityRole === 'header' && node.props?.numberOfLines !== undefined)[0];
+    const lines = title?.props.numberOfLines;
+    await screen.unmount();
+    screen = null;
+    return lines;
+  };
+  try {
+    expect(await titleLines()).toBe(2);
+    storage.setState({ localSettings: { ...previous, uiFontScale: 2 } });
+    expect(await titleLines()).toBe(8);
+  } finally {
+    storage.setState({ localSettings: previous });
+  }
+});

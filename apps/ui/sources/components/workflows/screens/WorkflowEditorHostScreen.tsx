@@ -874,6 +874,8 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         // admits with no metadata rather than an empty title the schema refuses.
         const title = (testSource?.metadata.title ?? draft.name).trim();
         const captureProvenance = testSource === null ? draft.captureProvenance : testSource.metadata.captureProvenance;
+        // The review's text travels with the request, so the review keeps reading it while the start settles.
+        const reviewedDescription = (testSource === null ? snapshotRef.current?.description ?? '' : testSource.metadata.description ?? '').trim();
         const start = () => runNow.runNow({
             runId,
             ...(retained !== null ? {
@@ -881,6 +883,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                 ...(retained.project === undefined ? {} : { project: retained.project }),
             } : {
                 ...(title.length === 0 ? {} : { metadata: { title,
+                    ...(reviewedDescription.length === 0 ? {} : { description: reviewedDescription }),
                     ...(captureProvenance === undefined ? {} : { captureProvenance }),
                 } }),
                 executionTarget: admittedTarget,
@@ -1046,7 +1049,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         rawTextValues: inputRawTextValues,
         onChangeRawTextValues: setInputRawTextValues,
         workflowName: runRetained?.input.metadata?.title ?? testSource?.metadata.title ?? runReviewDraft.name,
-        preview: (runRetained !== null ? '' : testSource?.metadata.description ?? (testSource === null ? description : '')) || (retainedDefinition?.blocks ?? testSource?.definition.blocks ?? runReviewDraft.blocks).map((block) => workflowBlockReferenceLabel(block)).join('\n'),
+        preview: (runRetained !== null ? runRetained.input.metadata?.description ?? '' : testSource?.metadata.description ?? (testSource === null ? description : '')) || (retainedDefinition?.blocks ?? testSource?.definition.blocks ?? runReviewDraft.blocks).map((block) => workflowBlockReferenceLabel(block)).join('\n'),
         ...(planReview ? { preview: readWorkflowPlanResult(planReview.value)?.document, notice: t('workflows.review.planRunNotice') } : {}),
         ...(testSource === null && !retainedTest ? {} : { notice: t('workflows.testRun.savedNotice') }),
         // A retained request is described by what it sent, not by how the draft compares now.
@@ -1066,14 +1069,10 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
             // The sent Where is shown without a setter; only a new start chooses again.
             ...(runRetained?.project ? {} : { onChange: (target: WorkflowAuthoringTarget) => { if (isWorkflowProjectTarget(target)) setProjectTarget(target); } }),
             testID: 'workflow-start-where-chip', testIDPrefix: 'workflow-start-where',
-        }), ...(runRetained === null ? [] : [{ ...createExecutionRunStartContentChip({
-            // The page's Run as belongs to the next start; the review names what this request runs in.
-            ...getWorkflowContextChipDefinition('runAs'), pending: true,
-            label: runRetained.input.executionTarget?.kind === 'detached_run' ? t('workflows.start.targetsBackground') : t('workflows.start.targetsSessions'),
-            testID: 'workflow-start-run-as-chip', revision: runRetained.input.executionTarget?.kind ?? 'session',
-            renderContent: <Item title={t('workflows.start.targetsTitle')} showChevron={false}
-                subtitle={runRetained.input.executionTarget?.kind === 'detached_run' ? t('workflows.page.sections.aBackgroundRun') : t('workflows.page.sections.aSession')} />,
-        }) }]), ...(ownedPlanOriginId ? [{ ...createExecutionRunStartContentChip({ ...getWorkflowContextChipDefinition('planReport'), pending: true,
+        }),
+        // The page's Run as belongs to the next start; the review's "Each step runs in" row already names what a
+        // sent request runs in (the composer's reviewed target), so Start adds no second chip saying it again.
+        ...(ownedPlanOriginId ? [{ ...createExecutionRunStartContentChip({ ...getWorkflowContextChipDefinition('planReport'), pending: true,
             label: t('workflows.review.reportBackTitle', { session: planOriginName }), title: t('workflows.review.reportBackTitle', { session: planOriginName }),
             testID: 'workflow-plan-report-chip', revision: String([reportShown, runRetained !== null]), renderContent: <Item
                 title={t('workflows.review.reportBackTitle', { session: planOriginName })} subtitle={t('workflows.review.reportBackBody', { session: planOriginName })}

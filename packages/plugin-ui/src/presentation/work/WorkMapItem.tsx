@@ -57,7 +57,7 @@ type WorkMapItemProps<TNode extends HappierWorkMapNode> = Readonly<{
   /** The renderer's gap after the leading slot, and that slot's least width before it is measured. */
   leadingGap: number;
   leadingMinWidth: number;
-  /** The readable width a name keeps beside its leading (the map's lane floor). */
+  /** The readable width a name keeps beside its leading (a card: the narrowest lane's name width, in text). */
   copyFloor: number;
   framePadding: number;
   scale: number;

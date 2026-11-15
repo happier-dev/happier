@@ -1193,8 +1193,12 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     // phone page folds Open workflow there too, so no lone bordered button sits under the view switch.
     // `detailsPaneAvailable` already excludes an embedded Run.
     const compactActions = phonePage || (detailsPaneAvailable && props.selectedInvocationId !== null);
-    // A failed Run's Run again never folds: it is the way forward, so it stays in reach beside the failure.
-    const runAgainFolded = compactActions && runAgainAction !== null && primaryAction !== 'run_again';
+    // Run workflow again never folds where the state shows it as its action (07 §6.1, M15): a failed Run (the
+    // way forward beside the failure) and a Completed one with a result to open (Open result + Run workflow
+    // again, lab run-A_completed). Elsewhere it is a `⋯` entry while the header is narrow.
+    const runAgainIsStateAction = primaryAction === 'run_again' || props.run.state === 'failed'
+        || terminalOutcome?.kind === 'open_result';
+    const runAgainFolded = compactActions && runAgainAction !== null && !runAgainIsStateAction;
     const anotherRoundFolded = compactActions && anotherRoundAction !== null;
     const secondaryElements = [resumeAction, runAgainFolded ? null : runAgainAction, anotherRoundFolded ? null : anotherRoundAction, outcomeAction,
         remedyAction]

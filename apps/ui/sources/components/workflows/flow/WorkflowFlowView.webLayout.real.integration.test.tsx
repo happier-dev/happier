@@ -248,6 +248,38 @@ describe('Flow readability in the actual browser layout (FF-N3DEEP)', () => {
         expect(texts[0].width + 1, JSON.stringify({ text: texts[0], card })).toBeGreaterThanOrEqual(Math.min(HAPPIER_WORK_MAP_LANE_MIN_WIDTH, card.width - 24));
     });
 
+    it('keeps a narrow lane card\'s name beside its ordinal and mark, wrapping there (lab map-M1, QA-DESIGN-R2 M1)', async () => {
+        // Three lanes in a Run map beside an open details pane: each lane is about 190 px. Beside an ordinal and
+        // its mark the name has well over the narrowest lane's name width, so it wraps there instead of dropping
+        // under the mark and leaving "2 ⚡" alone on the card's first line.
+        const step = (id: string, name: string): WorkflowBlock => ({ kind: 'step', id, name,
+            document: { text: name, references: [], attachments: [] }, input: [], result: { kind: 'text' } });
+        const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: [{
+            kind: 'parallel', id: 'lanes', failurePolicy: 'collect_outcomes', branches: [
+                { id: 'one', blocks: [step('wait', 'Wait for you')] },
+                { id: 'two', blocks: [step('validate', 'Validate workflow')] },
+                { id: 'three', blocks: [step('again', 'Validate workflow again')] },
+            ] }] };
+        const projection = projectWorkflowFlow(definition);
+        host = document.createElement('div');
+        document.body.appendChild(host);
+        root = createRoot(host);
+        await act(async () => root!.render(<View testID="flow-pane" style={{ width: 600 }}>
+            <WorkflowFlowView projection={projection} selectedNodeId={null} testIDPrefix="flow" />
+        </View>));
+        const layout = await measureWebLayout(host, { viewport: { width: 1440, height: 800 },
+            texts: ['Validate workflow', 'Validate workflow again'], settle: replay => act(replay) });
+        for (const [nodeId, name] of [['validate', 'Validate workflow'], ['again', 'Validate workflow again']] as const) {
+            const card = layout.rect(`flow-node-${nodeId}`);
+            expect(card.width, nodeId).toBeLessThan(220);
+            const [text] = layout.textRects(name);
+            expect(text?.clipped, name).toBe(false);
+            // Beside the mark: the name starts right of the ordinal and mark, on the card's first line.
+            expect(text!.left - card.left, JSON.stringify({ text, card })).toBeGreaterThan(40);
+            expect(text!.top - card.top, JSON.stringify({ text, card })).toBeLessThan(24);
+        }
+    });
+
     it.each([200, 240])('drops a numbered step\'s name under its ordinal and mark rather than clip a word (%spx map, large text)', async mapWidth => {
         // A phone at 200% text gives the Run map about this width. Beside the step's ordinal and Agent mark
         // the name would have less than its readable width, so it takes the card's full width under them.

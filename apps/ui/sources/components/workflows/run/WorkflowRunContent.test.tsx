@@ -4459,6 +4459,19 @@ describe('WorkflowRunContent', () => {
     expect(screen.findAllByTestId('workflow-run-see-failures')).toHaveLength(0);
     await screen.pressByTestIdAsync('workflow-run-open-result');
     expect(onSelectInvocation).toHaveBeenCalledWith('inv-implement');
+    await screen.unmount();
+
+    // With the result open beside the Run, the Completed state still shows Run workflow again next to Open
+    // result (07 §6.1, M15; lab run-A_completed); the `⋯` never repeats it.
+    const opened = await renderContent({
+      run: createWorkflowRunSummaryFixture({ id: 'run-1', state: 'succeeded' }),
+      definition, invocations, finalOutputInvocationId: 'inv-implement', resultLabel: 'All checks green',
+      onSelectInvocation, selectedInvocationId: 'inv-implement', onRunAgain: vi.fn(),
+    });
+    expect(opened.findAllByType(ToolbarButton).map((button) => button.props.testID))
+      .toEqual(expect.arrayContaining(['workflow-run-run-again', 'workflow-run-open-result']));
+    expect(opened.findAllByType(ItemRowActions).flatMap((menu) => menu.props.actions.map((action: { id: string }) => action.id)))
+      .not.toContain('workflow-run-run-again');
   });
 
   it('keeps a structured final output in its result pane instead of printing it under the outcome', async () => {

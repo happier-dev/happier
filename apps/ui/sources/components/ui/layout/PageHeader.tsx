@@ -10,7 +10,9 @@ import {
     type HappierPageHeaderMetaIdHost,
     type HappierPageHeaderProps,
     type HappierPageHeaderTextRender,
+    useHappierTextPresentation,
 } from '@happier-dev/plugin-ui/presentation';
+import { useLocalSetting } from '@/sync/store/settingsReadHooks';
 
 import { RoundButton, RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
 import { Typography } from '@/constants/Typography';
@@ -343,20 +345,37 @@ export function PageHeaderActionButton(props: Readonly<{ action: PageHeaderPrima
     );
 }
 
-/** The most lines a page title takes before it ends in an ellipsis. */
+/** The most lines a page title takes before it ends in an ellipsis, at the default text size. */
 const PAGE_TITLE_MAX_LINES = 2;
+
+/**
+ * A data-named title keeps as much of its name at a larger text size as at the default. Each line holds 1/s of
+ * the characters at text scale s, and the title's own column narrows too (the header's actions grow by s beside
+ * it), so the stop grows with s²: at 200% a title that read whole on two lines still reads whole (QA-DESIGN-R2 M2).
+ */
+function PageTitleText(props: Readonly<{ header: boolean; style: React.ComponentProps<typeof Text>['style']; children: React.ReactNode }>) {
+    const { metricScale } = useHappierTextPresentation({ textScale: useLocalSetting('uiFontScale') });
+    return (
+        <Text accessibilityRole={props.header ? 'header' : undefined}
+            numberOfLines={Math.max(PAGE_TITLE_MAX_LINES, Math.ceil(PAGE_TITLE_MAX_LINES * metricScale * metricScale))} style={props.style}>
+            {props.children}
+        </Text>
+    );
+}
 
 /** Core's text owner for the shared header (font families and text scaling), for hosts drawing it directly. */
 export const renderPageHeaderText: HappierPageHeaderTextRender = (input) => input.role === 'meta' && input.mono ? (
     <MetaIdFact value={input.text} />
+) : input.role === 'pageTitle' || input.role === 'heroTitle' ? (
+    // An entity named by data (a Session titled by its first prompt) can be any length: the title stops
+    // (PageTitleText), and the DOM text and screen readers still carry all of it.
+    <PageTitleText header={input.header === true} style={input.role === 'heroTitle' ? stylesheet.heroTitle : stylesheet.title}>
+        {input.text}
+    </PageTitleText>
 ) : (
     <Text
         accessibilityRole={input.header ? 'header' : undefined}
-        // An entity named by data (a Session titled by its first prompt) can be any length: the title
-        // stops at two lines, and the DOM text and screen readers still carry all of it.
-        numberOfLines={input.role === 'pageTitle' || input.role === 'heroTitle' ? PAGE_TITLE_MAX_LINES : undefined}
-        style={input.role === 'heroTitle' ? stylesheet.heroTitle : input.role === 'pageTitle' ? stylesheet.title
-            : input.role === 'meta' ? stylesheet.metaText : stylesheet.description}
+        style={input.role === 'meta' ? stylesheet.metaText : stylesheet.description}
     >
         {input.text}
     </Text>

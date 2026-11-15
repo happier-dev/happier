@@ -986,12 +986,45 @@ describe('editor workflow composer', () => {
         expect(screen.root.findByType(WorkflowEditorBody).props.executionTarget).toBe('detached_run');
         await screen.pressByTestIdAsync('workflow-editor-run-now');
         // The review names the runtime the sent request runs in, not the page's choice for the next start.
-        const runAs = screen.root.findByType(WorkflowRunComposer).props.extraActionChips?.find((chip) => chip.key === 'workflow-start-run-as');
-        expect(runAs?.collapsedContentPopover?.label).toBe('workflows.start.targetsSessions');
+        expect(screen.root.findAll((node) => node.props?.testID === 'workflow-run-inputs-review-target' && node.props.subtitle !== undefined)[0]
+            ?.props.subtitle).toBe('workflows.page.sections.aSession');
+        expect(screen.root.findByType(WorkflowRunComposer).props.extraActionChips?.some((chip) => chip.key === 'workflow-start-run-as')).toBe(false);
         const beforeRuntimeChangeRetry = startRequests().length;
         await screen.pressByTestIdAsync('workflow-run-inputs-run');
         await vi.waitFor(() => expect(startRequests().length).toBeGreaterThan(beforeRuntimeChangeRetry));
         expect(startRequests().every((request) => JSON.stringify(request) === JSON.stringify(original))).toBe(true);
+    });
+
+    it('keeps the review\'s description through Start: the request carries it and the retained review reads it', async () => {
+        appliedHome.serverUrl = 'https://workflow.example';
+        appliedHome.serverId = (await addComposerHome('Workflow Home', appliedHome.serverUrl)).id;
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        getStorage().setState({ profileScope: { serverId: getActiveServerSnapshot().serverId, accountId: 'account-a' } });
+        home.answer(appliedHome.serverId, '/v3/automations', { body: { automations: [], nextCursor: null } });
+        home.answer(appliedHome.serverId, storageRoute, { status: 404, body: { error: 'run_not_found' } });
+        const definitionId = '8fab3a81-5e64-4000-8000-000000000012';
+        const definition = createWorkflowDefinitionFixture({ inputs: [], blocks: [{ kind: 'wait', id: 'review',
+            document: { text: 'Saved contents', references: [], attachments: [] } }] });
+        await createWorkflowDefinition({ definitionId, definition,
+            metadata: { title: 'Check the release build', description: 'Builds the release candidate before you tag it.' } });
+        home.requests.splice(0);
+        home.answer(appliedHome.serverId, `/v1/artifacts/${definitionId}/access/grants`, { body: { artifactId: definitionId,
+            ownerAccountId: 'account-a', access: 'owner', grants: [] } });
+        runFailure = { errorCode: 'workflow_outcome_unresolved', error: 'Lost reply' };
+        runStart.mockImplementation(async () => null);
+        const screen = await renderScreen(<AppPaneProvider><WorkflowEditorHostScreen source={{ kind: 'saved', definitionId }} /></AppPaneProvider>, {
+            createNodeMock: () => ({ measureInWindow: (receive: (x: number, y: number, width: number, height: number) => void) => receive(600, 100, 160, 40) }),
+        });
+        const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
+        const { WorkflowRunComposer } = await import('../run/WorkflowRunComposer');
+        await act(async () => { screen.root.findByType(WorkflowEditorBody).props.onChangeProjectTarget?.({ machineId: 'machine-1', directory: '/repo' }); });
+        await screen.pressByTestIdAsync('workflow-editor-run-now');
+        await vi.waitFor(() => expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
+        expect(screen.root.findByType(WorkflowRunComposer).props.preview).toBe('Builds the release candidate before you tag it.');
+        await screen.pressByTestIdAsync('workflow-run-inputs-run');
+        await vi.waitFor(() => expect(screen.root.findByType(WorkflowRunComposer).props.retainedRequest).not.toBeNull());
+        expect(startRequests()[0]?.metadata?.description).toBe('Builds the release candidate before you tag it.');
+        expect(screen.root.findByType(WorkflowRunComposer).props.preview).toBe('Builds the release candidate before you tag it.');
     });
 
     it('reviews an unresolved saved-revision Test as the revision it sent, after leaving and a newer save', async () => {

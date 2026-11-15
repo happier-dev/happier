@@ -206,6 +206,8 @@ export type HappierWorkTextProps = Readonly<{
  */
 export type HappierWorkHost = Readonly<{
   Text: ComponentType<HappierWorkTextProps>;
+  /** The scale the host's `Text` draws roles at (the user's text size); omitted, the environment's. */
+  textScale?: number;
 }>;
 
 /** The step a role draws with, in its strong face when asked. */

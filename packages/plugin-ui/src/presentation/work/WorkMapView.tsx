@@ -5,6 +5,7 @@ import { WorkMapItem } from './WorkMapItem.js';
 import { createMapSelection } from './mapSelection.js';
 import type { HappierGestureResponderEvent, HappierLayoutChangeEvent } from '../portableTypes.js';
 import { formatHappierWorkMapNodeName, type HappierWorkMap, type HappierWorkMapNode } from './workMap.js';
+import { useHappierTextPresentation } from '../text/Text.js';
 import type { HappierWorkStatusTone } from './workStatus.js';
 import {
   resolveHappierWorkHost,
@@ -249,10 +250,18 @@ export type WorkMapStyles = ReturnType<typeof createWorkMapStyles>;
 export function HappierWorkMapView<TNode extends HappierWorkMapNode>(props: HappierWorkMapViewProps<TNode>): ReactElement {
   const { testIDPrefix } = props;
   const theme = useHappierWorkTheme(props.theme);
-  const { Text } = resolveHappierWorkHost(props.host);
+  const host = resolveHappierWorkHost(props.host);
+  const { Text } = host;
   const density = props.density ?? 'regular';
   const compact = density === 'compact';
   const g = GEOMETRY[density];
+  // A lane card's name keeps its mark beside it while it has the width the narrowest lane gives a name beside
+  // one mark (lab map-M1 wraps "Retry states and copy" there, QA-DESIGN-R2 M1). The width is measured in text:
+  // at a larger text size the name needs proportionally more before it drops under its mark. A full-width
+  // card keeps the lane floor, so one long word never clips beside an ordinal and Agent mark.
+  const { metricScale } = useHappierTextPresentation({ ...(host.textScale === undefined ? {} : { textScale: host.textScale }) });
+  const laneCardCopyFloor = (HAPPIER_WORK_MAP_LANE_MIN_WIDTH - (g.markX - g.mark / 2 + g.cardPaddingRight + 2 * CARD_BORDER_WIDTH)
+    - g.mark - g.cardGap) * metricScale;
   const styles = useMemo(() => createWorkMapStyles(theme, density), [theme, density]);
   const [selection] = useState(() => createMapSelection(props.selectedNodeId));
   useLayoutEffect(() => { selection.select(props.selectedNodeId); }, [selection, props.selectedNodeId]);
@@ -457,7 +466,7 @@ export function HappierWorkMapView<TNode extends HappierWorkMapNode>(props: Happ
         inLane={inLane}
         compressed={compressedNode}
         copyRoom={copyRoom}
-        copyFloor={HAPPIER_WORK_MAP_LANE_MIN_WIDTH}
+        copyFloor={appearance === 'card' && inLane ? laneCardCopyFloor : HAPPIER_WORK_MAP_LANE_MIN_WIDTH}
         leadingGap={leadingGap}
         leadingMinWidth={appearance === 'card' ? g.mark : GLYPH_MIN_WIDTH}
         framePadding={framePadding}
