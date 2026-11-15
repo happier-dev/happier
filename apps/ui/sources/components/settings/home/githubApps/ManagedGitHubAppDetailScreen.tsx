@@ -7,10 +7,10 @@ import { useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { SettingAnchor, SettingRow, SettingSection } from '@/components/settings/shell/SettingRow';
 import { HOME_GITHUB_APP_SETTINGS, TEAM_GITHUB_APP_SETTINGS } from '@/components/settings/identity/identitySettings';
@@ -72,13 +72,25 @@ export const ManagedGitHubAppDetailContent = React.memo(function ManagedGitHubAp
         setNotice(message);
         announceAccessibilityMessage(message);
     };
-    if (state.kind === 'loading') return <ItemGroup><Item title={t('common.loading')} leftElement={<ActivitySpinner />} showChevron={false} /></ItemGroup>;
+    if (state.kind === 'loading') return <ItemGroup><ItemLoadStateRows testID="github-app-loading" state={{ kind: 'loading' }} rows={2} accessibilityLabel={t('identityAdministration.githubApps')} /></ItemGroup>;
     if (state.kind === 'unavailable') {
-        const message = managedGitHubAppFailureMessage(state.failure.code);
-        return <ItemGroup description={message}><Item title={message} detail={state.failure.retryable ? t('common.retry') : undefined} onPress={state.failure.retryable ? refresh : undefined} showChevron={false} /></ItemGroup>;
+        // The People page's failed-read row: a read that failed says what could not be read.
+        return (
+            <ItemGroup>
+                <ItemLoadStateRows
+                    testID="github-app"
+                    state={{
+                        kind: 'failed',
+                        reason: t('identityAdministration.githubAppsReadFailed'),
+                        onRetry: state.failure.retryable ? refresh : undefined,
+                        homeServerIds: [scope.serverId],
+                    }}
+                />
+            </ItemGroup>
+        );
     }
     const registration = state.registrations.find((item) => item.id === props.registrationId);
-    if (!registration) return <ItemGroup><Item title={t('identityAdministration.error')} showChevron={false} /></ItemGroup>;
+    if (!registration) return <ItemGroup><Item testID="github-app-missing" title={t('identityAdministration.errorMissing')} mode="info" showChevron={false} /></ItemGroup>;
     const installations = state.installations.filter((item) => item.registrationId === registration.id);
     const verify = async () => {
         if (!props.surface.mutationsAvailable || pending !== null) return;

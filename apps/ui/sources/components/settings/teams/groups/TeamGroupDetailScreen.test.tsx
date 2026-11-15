@@ -995,6 +995,30 @@ describe('TeamGroupDetailScreen', () => {
         expect(ids).not.toContain('team-group-add-member');
     });
 
+    it('does not call an archived Group empty "yet": its banner already says why no one is in it', async () => {
+        const serverId = await addManagedHome();
+        harness.answer(serverId, GROUP_GET_PATH, {
+            body: teamGroupFixture({
+                capabilities: MANAGED_GROUP_CAPABILITIES,
+                archivedAt: 1_700_000_000_000,
+                memberCount: 0,
+            }),
+        });
+        // An archived Group has no effective members; the Home answers an empty roster.
+        harness.answer(serverId, GROUP_MEMBERS_LIST_PATH, { body: { items: [], nextCursor: null } });
+
+        const screen = await renderGroupDetail(serverId);
+        await waitForTestId(screen, 'team-group-archived');
+        await waitForTestId(screen, 'team-group-restore');
+        await vi.waitFor(() => {
+            expect(harness.requestsFor(GROUP_MEMBERS_LIST_PATH).length).toBeGreaterThan(0);
+            expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-group-members-loading');
+        });
+
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-group-members-empty');
+        expect(screen.getTextContent()).not.toContain('No members in this Group yet');
+    });
+
     it('withholds a second Group restore while its shared UI confirmation is unresolved', async () => {
         const serverId = await addManagedHome();
         harness.answer(serverId, TEAM_GET_PATH, {

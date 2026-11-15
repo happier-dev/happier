@@ -703,7 +703,9 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
             ));
         }
 
-        if (members.rows.length === 0 && members.status === 'ready') {
+        // An archived Group has no effective members; its banner already says why, so its roster
+        // is not called empty "yet".
+        if (members.rows.length === 0 && members.status === 'ready' && !archived) {
             add('members-empty', () => (
                 <ItemGroup
                     title={t('teams.groups.membersSection')}

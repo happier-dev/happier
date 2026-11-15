@@ -148,24 +148,20 @@ const HomeTeams = React.memo(function HomeTeams(
             return result;
         }
 
-        if (directory.rows.length === 0 && directory.partial) {
-            // The Home could not list its Teams: the section and its create action stay, and the
-            // unknown list says so with its next action, never as an empty Home.
+        // The Home could not list its Teams: the People page's failed-read row, with Retry when
+        // asking again can help and quiet while the page's banner says the Home is unreachable.
+        const directoryFailure = {
+            kind: 'failed' as const,
+            reason: t('homeGovernance.invite.teamsFailed'),
+            onRetry: directoryRetryable ? directory.refresh : undefined,
+            homeServerIds: [serverId],
+        };
+        const directoryFailed = directory.rows.length === 0 && directory.partial;
+        if (directoryFailed) {
+            // The section and its create action stay; the unknown list is never an empty Home.
             add('unavailable', () => (
-                <ItemGroup
-                    title={t('homeGovernance.teams')}
-                    description={t('homeGovernance.unavailableBody')}
-                    action={createAction}
-                >
-                    <SurfaceStateCard
-                        testID="home-teams-unavailable"
-                        kind="error"
-                        size="line"
-                        title={t('homeGovernance.unavailableTitle')}
-                        action={directoryRetryable
-                            ? { testID: 'home-teams-retry', label: t('homeGovernance.retry'), onPress: directory.refresh }
-                            : undefined}
-                    />
+                <ItemGroup title={t('homeGovernance.teams')} action={createAction}>
+                    <ItemLoadStateRows testID="home-teams" state={directoryFailure} />
                 </ItemGroup>
             ));
         } else if (directory.rows.length === 0) {
@@ -197,7 +193,8 @@ const HomeTeams = React.memo(function HomeTeams(
             }
         }
 
-        if (offerArchived) {
+        // Archived Teams are a second read of the same Home: not offered under a list it did not send.
+        if (offerArchived && !directoryFailed) {
             add('toggle-archived', () => (
                 // A quiet button under the list, as on a Team's Groups (lab `tsGroups-A`), not a row.
                 <ItemGroup surface="none">
@@ -249,7 +246,7 @@ const HomeTeams = React.memo(function HomeTeams(
                             testID="home-teams-archived"
                             state={{
                                 kind: 'failed',
-                                reason: t('homeGovernance.unavailableBody'),
+                                reason: t('homeGovernance.invite.teamsFailed'),
                                 onRetry: archivedRetryable ? archived.refresh : undefined,
                                 homeServerIds: [serverId],
                             }}
@@ -262,13 +259,7 @@ const HomeTeams = React.memo(function HomeTeams(
         if (directory.partial && directory.rows.length > 0) {
             add('retry', () => (
                 <ItemGroup>
-                    <SurfaceStateCard
-                        testID="home-teams-partial"
-                        kind="error"
-                        size="line"
-                        title={t('homeGovernance.unavailableBody')}
-                        action={{ testID: 'home-teams-retry', label: t('homeGovernance.retry'), onPress: directory.refresh }}
-                    />
+                    <ItemLoadStateRows testID="home-teams" state={directoryFailure} />
                 </ItemGroup>
             ));
         } else if (directory.hasMore) {

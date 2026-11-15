@@ -117,6 +117,19 @@ function requestsFor(operation: string) {
 }
 
 describe('managed GitHub App installation operations', () => {
+    it('says a failed read as a read, and a missing App as missing, never as a change that did not go through', async () => {
+        runtimeFetchMock.mockImplementation(async () => new Response(JSON.stringify({ error: 'unavailable' }), { status: 503 }));
+        const failed = await renderScreen(<ManagedGitHubAppDetailContent surface={surface} registrationId="registration-1" />);
+        await vi.waitFor(() => expect(failed.getTextContent()).toContain('identityAdministration.githubAppsReadFailed'));
+        expect(failed.getTextContent()).not.toContain('identityAdministration.error');
+        await failed.unmount();
+
+        projection = { ...projection, registrations: [], installations: [] };
+        runtimeFetchMock.mockImplementation(async () => new Response(JSON.stringify(projection), { status: 200 }));
+        const missing = await renderScreen(<ManagedGitHubAppDetailContent surface={surface} registrationId="registration-1" />);
+        await vi.waitFor(() => expect(missing.getTextContent()).toContain('identityAdministration.errorMissing'));
+    });
+
     it('keeps organization information non-interactive and requires the named removal control and confirmation', async () => {
         const screen = await renderScreen(<ManagedGitHubAppDetailContent surface={surface} registrationId="registration-1" />);
         const organization = screen.findHostByTestId('github-app-installation:installation-1');

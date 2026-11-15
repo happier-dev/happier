@@ -16,12 +16,12 @@ import {
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { SettingAnchor, SettingRow, SettingSection } from "@/components/settings/shell/SettingRow";
 import { HOME_GITHUB_APP_EDITOR_SETTINGS, TEAM_GITHUB_APP_EDITOR_SETTINGS } from "@/components/settings/identity/identitySettings";
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
@@ -333,8 +333,24 @@ export const ManagedGitHubAppEditorContent = React.memo(function ManagedGitHubAp
         tag: 'ManagedGitHubAppEditorScreen.beforeRemove',
     });
 
-    if (props.registrationId && apps.state.kind === 'loading') return <ItemGroup><Item title={t('common.loading')} leftElement={<ActivitySpinner />} showChevron={false} /></ItemGroup>;
-    if (props.registrationId && !registration) return <ItemGroup><Item title={t('identityAdministration.error')} showChevron={false} /></ItemGroup>;
+    if (props.registrationId && apps.state.kind === 'loading') return <ItemGroup><ItemLoadStateRows testID="github-app-editor-loading" state={{ kind: 'loading' }} rows={2} accessibilityLabel={t('identityAdministration.githubAppEditTitle')} /></ItemGroup>;
+    if (props.registrationId && apps.state.kind === 'unavailable') {
+        // The People page's failed-read row: a read that failed says what could not be read.
+        return (
+            <ItemGroup>
+                <ItemLoadStateRows
+                    testID="github-app-editor"
+                    state={{
+                        kind: 'failed',
+                        reason: t('identityAdministration.githubAppsReadFailed'),
+                        onRetry: apps.state.failure.retryable ? refreshApps : undefined,
+                        homeServerIds: [scope.serverId],
+                    }}
+                />
+            </ItemGroup>
+        );
+    }
+    if (props.registrationId && !registration) return <ItemGroup><Item testID="github-app-missing" title={t('identityAdministration.errorMissing')} mode="info" showChevron={false} /></ItemGroup>;
     const edit = Boolean(registration);
     // Manual setup is the only path that needs this: the manifest flow writes its
     // own `redirect_url`. The Home derives the value and never persists it, so it

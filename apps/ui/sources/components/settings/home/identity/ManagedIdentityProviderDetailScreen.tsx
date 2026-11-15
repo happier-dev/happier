@@ -15,6 +15,7 @@ import {
 } from '@/components/settings/identity/signInConnectionStatus';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Modal } from '@/modal';
 import { t } from '@/text';
@@ -114,24 +115,27 @@ const DetailContent = React.memo(function DetailContent(props: Readonly<{
     }, [copyFeedback, writeClipboard]);
 
     if (state.kind === 'loading') {
-        return <ItemGroup><SurfaceStateCard testID="identity-provider-loading" kind="loading" size="line" title={t('common.loading')} /></ItemGroup>;
+        return <ItemGroup><ItemLoadStateRows testID="identity-provider-loading" state={{ kind: 'loading' }} rows={2} accessibilityLabel={t('homeGovernance.signInProviders.companySignIn')} /></ItemGroup>;
     }
     if (state.kind === 'unavailable') {
+        // The People page's failed-read row: a read that failed says what could not be read.
         return (
             <ItemGroup>
-                <SurfaceStateCard
-                    testID="identity-provider-unavailable"
-                    kind="error"
-                    size="line"
-                    title={identityAdministrationFailureMessage(state.failure.code)}
-                    action={state.failure.retryable ? { testID: 'identity-provider-retry', label: t('common.retry'), onPress: refresh } : undefined}
+                <ItemLoadStateRows
+                    testID="identity-provider"
+                    state={{
+                        kind: 'failed',
+                        reason: t('identityAdministration.companySignInReadFailed'),
+                        onRetry: state.failure.retryable ? refresh : undefined,
+                        homeServerIds: [props.context.scope.serverId],
+                    }}
                 />
             </ItemGroup>
         );
     }
     const provider = state.items.find((item) => item.id === props.providerId);
     if (!provider) {
-        return <ItemGroup><SurfaceStateCard testID="identity-provider-missing" kind="error" size="line" title={t('identityAdministration.error')} /></ItemGroup>;
+        return <ItemGroup><Item testID="identity-provider-missing" title={t('identityAdministration.errorMissing')} mode="info" showChevron={false} /></ItemGroup>;
     }
 
     const runLifecycle = async (actionId: 'identity.providers.enable' | 'identity.providers.disable') => {

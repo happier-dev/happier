@@ -13,6 +13,7 @@ import {
 import { Item } from '@/components/ui/lists/Item';
 import { identityProviderKindMark } from '@/components/settings/teams/identity/identityAdministrationPresentation';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -94,7 +95,7 @@ export const ManagedIdentityProvidersSection = React.memo(function ManagedIdenti
     if (state.kind === 'loading') {
         return (
             <SettingSection section={HOME_SIGN_IN_PROVIDERS_SETTINGS.sectionRefs.homeConnections}><ItemGroup title={title} action={props.addAction?.(false)} description={t('homeGovernance.signInProviders.companySignInDescription')}>
-                <SurfaceStateCard testID="home-identity-providers-loading" kind="loading" size="line" title={t('common.loading')} />
+                <ItemLoadStateRows testID="home-identity-providers-loading" state={{ kind: 'loading' }} rows={1} accessibilityLabel={title} />
                 {props.connectionRows}
                 {props.deploymentRows}
             </ItemGroup></SettingSection>
@@ -102,19 +103,20 @@ export const ManagedIdentityProvidersSection = React.memo(function ManagedIdenti
     }
 
     if (state.kind === 'unavailable') {
+        // The People page's failed-read row: what could not be read, Retry when asking again can
+        // help, and quiet while the page's banner already says the Home is unreachable. The
+        // section's connections come from the same Home, so they do not say it a second time.
         return (
-            <SettingSection section={HOME_SIGN_IN_PROVIDERS_SETTINGS.sectionRefs.homeConnections}><ItemGroup title={title} action={props.addAction?.(false)}>
-                <SurfaceStateCard
+            <SettingSection section={HOME_SIGN_IN_PROVIDERS_SETTINGS.sectionRefs.homeConnections}><ItemGroup title={title} action={props.addAction?.(false)} description={t('homeGovernance.signInProviders.companySignInDescription')}>
+                <ItemLoadStateRows
                     testID="home-identity-providers-unavailable"
-                    kind="error"
-                    size="line"
-                    title={t('identityAdministration.error')}
-                    reason={state.failure.retryable ? t('teams.unavailable.offline') : undefined}
-                    action={state.failure.retryable
-                        ? { testID: 'home-identity-providers-retry', label: t('common.retry'), onPress: refresh }
-                        : undefined}
+                    state={{
+                        kind: 'failed',
+                        reason: t('identityAdministration.companySignInReadFailed'),
+                        onRetry: state.failure.retryable ? refresh : undefined,
+                        homeServerIds: [serverId],
+                    }}
                 />
-                {props.connectionRows}
                 {props.deploymentRows}
             </ItemGroup></SettingSection>
         );

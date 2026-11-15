@@ -3,6 +3,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { StatusDot } from '@/components/ui/status/StatusDot';
@@ -14,7 +15,6 @@ import { identityConnectionNextStepLabel, sortIdentityConnectionsForAdministrati
 import { WorkosMark } from '@/components/settings/identity/WorkosMark';
 import { eligibleProviderUnavailableReason } from '@/components/settings/teams/identity/eligibleProviderAvailability';
 import { useIdentityAdministration } from '@/components/settings/teams/identity/useIdentityAdministration';
-import { identityAdministrationFailureMessage } from '@/components/settings/identity/identityAdministrationFailure';
 import { ManagedIdentityProvidersSection } from './ManagedIdentityProvidersSection';
 import type { HomeAdministrationContext } from '../governance/homeAdministrationContext';
 import { homeAdministrationIdentityConnectionPath, homeAdministrationIdentityProviderCreatePath, homeAdministrationWorkosSetupPath } from '../governance/homeAdministrationRoutes';
@@ -36,10 +36,22 @@ export function HomeIdentityProvidersCollection(props: Readonly<{ context: HomeA
     const canCreateWorkos = workos?.availability.status === 'available' && workos.availability.setupChoice.kind === 'create_managed';
     const platformMissing = workos?.availability.status === 'unavailable' && workos.availability.code === 'workos_platform_unavailable';
     const connections = state.kind === 'ready' ? sortIdentityConnectionsForAdministration(state.items.filter((connection) => connection.provider.kind === 'workos_sso')) : [];
-    const rows = state.kind === 'loading' ? <SurfaceStateCard testID="home-workos-connections-loading" kind="loading" size="line" title={t('common.loading')} />
-        : state.kind === 'unavailable' ? <SurfaceStateCard testID="home-workos-connections-unavailable" kind="error" size="line" title={identityAdministrationFailureMessage(state.failure.code)} action={state.failure.retryable ? { label: t('common.retry'), onPress: refresh } : undefined} />
+    // A failed read of the connections is the People page's failed-read row, never mutation copy.
+    const readFailed = (testID: string) => (
+        <ItemLoadStateRows
+            testID={testID}
+            state={{
+                kind: 'failed',
+                reason: t('identityAdministration.companySignInReadFailed'),
+                onRetry: state.kind !== 'loading' && state.failure?.retryable ? refresh : undefined,
+                homeServerIds: [context.scope.serverId],
+            }}
+        />
+    );
+    const rows = state.kind === 'loading' ? <ItemLoadStateRows testID="home-workos-connections-loading" state={{ kind: 'loading' }} rows={1} accessibilityLabel={t('homeGovernance.signInProviders.companySignIn')} />
+        : state.kind === 'unavailable' ? readFailed('home-workos-connections-unavailable')
         : connections.length === 0 && !state.failure ? null : <>
-            {state.failure ? <SurfaceStateCard testID="home-workos-connections-stale" kind="error" size="line" title={identityAdministrationFailureMessage(state.failure.code)} action={{ label: t('common.retry'), onPress: refresh }} /> : null}
+            {state.failure ? readFailed('home-workos-connections-stale') : null}
             {connections.map((connection) => {
                 const status = teamIdentityConnectionStatus(connection.state);
                 const tone = signInConnectionStatusTone(status);

@@ -22,7 +22,6 @@ import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { StatusPill } from '@/components/ui/status/StatusPill';
-import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ITEM_SUBTITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -30,7 +29,6 @@ import type { HomeSettingsRead } from '@/hooks/home/useHomeSettings';
 import { t } from '@/text';
 
 import type { HomeAdministrationContext } from '../governance/homeAdministrationContext';
-import { homeGovernanceFailureNotice } from '../governance/homeGovernanceLabels';
 import {
   HomeSecretSettingRow,
   KEEP_HOME_SECRET,
@@ -609,19 +607,15 @@ export const HomeSignInPlatformsSection = React.memo(
         >
           {platforms === null ? (
             home.failure ? (
-              <SurfaceStateCard
-                testID="home-sign-in-platforms-error"
-                kind="error"
-                size="line"
-                title={t('homeSettings.page.loadFailed')}
-                reason={
-                  homeGovernanceFailureNotice(home.failure, { effect: 'read' })
-                    .body
-                }
-                action={{
-                  testID: 'home-sign-in-platforms-retry',
-                  label: t('homeGovernance.retry'),
-                  onPress: home.reload,
+              // The People page's failed-read row: what could not be read, quiet while the
+              // page's banner already says the Home is unreachable.
+              <ItemLoadStateRows
+                testID="home-sign-in-platforms"
+                state={{
+                  kind: 'failed',
+                  reason: t('homeSettings.page.loadFailed'),
+                  onRetry: () => { void home.reload(); },
+                  homeServerIds: [context.scope.serverId],
                 }}
               />
             ) : (

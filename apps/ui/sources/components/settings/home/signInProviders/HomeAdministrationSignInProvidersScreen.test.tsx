@@ -196,6 +196,26 @@ describe('Sign-in providers page', () => {
         expect(routerPush).toHaveBeenLastCalledWith(`/settings/home/${serverId}/sign-in-providers/connections/new`);
     });
 
+    it('says a failed Home read once per section, as a read, without repeating it in child rows', async () => {
+        const serverId = await harness.addHome({ name: 'Company Home', serverUrl: 'https://company-home-outage.example', accountId: 'owner-1' });
+        harness.answer(serverId, '/v1/home/governance/get', { body: homeGovernanceProjectionFixture() });
+        harness.answer(serverId, '/v1/home/settings/get', { body: homeSettingsProjectionFixture() });
+        harness.answer(serverId, '/v1/identity/providers/list', { status: 503, body: { error: 'unavailable' } });
+        harness.answer(serverId, '/v1/home/identity/connections/list', { status: 503, body: { error: 'unavailable' } });
+        harness.answer(serverId, '/v1/identity/github-apps/list', { status: 503, body: { error: 'unavailable' } });
+        const screen = await renderScreen(<HomeAdministrationSignInProvidersScreen serverId={serverId} />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('home-identity-providers-unavailable')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-github-apps-unavailable')).not.toBeNull());
+        const text = screen.getTextContent();
+        expect(text).toContain('identityAdministration.companySignInReadFailed');
+        expect(text).toContain('identityAdministration.githubAppsReadFailed');
+        // A read is never presented as a change that did not go through.
+        expect(text).not.toContain('identityAdministration.error');
+        // The section already says its read failed: its connection rows do not say it again.
+        expect(screen.findByTestId('home-workos-connections-unavailable')).toBeNull();
+        expect(screen.findByTestId('home-identity-providers-unavailable-retry')).not.toBeNull();
+    });
+
     it('shows current Team accepted-sign-in policy on the shared active connection and opens its existing owner', async () => {
         const serverId = await harness.addHome({ name: 'Company Home', serverUrl: 'https://company-team-policy.example', accountId: 'owner-1', teamsEnabled: true });
         const team = teamSummaryFixture({ capabilities: teamCapabilitiesFixture({ manageAuthentication: true }), policy: teamPolicyFixture({

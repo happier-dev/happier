@@ -108,16 +108,14 @@ const MemberGroupsSection = React.memo(function MemberGroupsSection(props: Reado
     return (
         <ItemGroup title={t('teams.members.detailGroups')}>
             {groups.rows.map((group) => {
+                // The Home lists only effective Groups, so an archived Group is never here.
                 const managedBy = groupManagementLabel(group);
-                const archived = group.archivedAt !== null;
                 return (
                     <Item
                         key={group.id}
                         testID={`team-member-group:${group.id}`}
                         title={groupDisplayNames.get(group.id) ?? t('common.unavailable')}
-                        subtitle={[managedBy, archived ? t('teams.directory.archivedBadge') : null]
-                            .filter((part): part is string => part !== null)
-                            .join(' · ') || undefined}
+                        subtitle={managedBy ?? undefined}
                         onPress={() => router.push(teamGroupDetailPath(context.address, group.id))}
                     />
                 );

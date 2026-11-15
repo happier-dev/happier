@@ -715,26 +715,24 @@ describe("Team Groups (SQLite integration)", () => {
         })).toBe(0);
     });
 
-    it("pages the effective Groups for one membership lifetime, including archived Groups", async () => {
+    it("pages the effective Groups for one membership lifetime, leaving out archived Groups", async () => {
         const { team, ownerAccountId } = await teamWithOwner("Member detail groups");
         const alpha = await createGroup(team.id, ownerAccountId, "Alpha");
         const beta = await createGroup(team.id, ownerAccountId, "Beta");
+        const gamma = await createGroup(team.id, ownerAccountId, "Gamma");
         await createGroup(team.id, ownerAccountId, "Not assigned");
         const person = await memberOf(team.id);
-        await inTx((tx) => addTeamGroupMemberForActorInTx(tx, {
-            teamId: team.id,
-            actorAccountId: ownerAccountId,
-            groupId: alpha.id,
-            accountId: person.accountId,
-            historyAccess: "from_membership",
-        }));
-        await inTx((tx) => addTeamGroupMemberForActorInTx(tx, {
-            teamId: team.id,
-            actorAccountId: ownerAccountId,
-            groupId: beta.id,
-            accountId: person.accountId,
-            historyAccess: "from_membership",
-        }));
+        for (const group of [alpha, beta, gamma]) {
+            await inTx((tx) => addTeamGroupMemberForActorInTx(tx, {
+                teamId: team.id,
+                actorAccountId: ownerAccountId,
+                groupId: group.id,
+                accountId: person.accountId,
+                historyAccess: "from_membership",
+            }));
+        }
+        // An archived Group keeps its rows for restore, but its roster and count are empty
+        // (structural membership), so member detail must not list it either.
         await inTx((tx) => archiveTeamGroupForActorInTx(tx, {
             teamId: team.id,
             actorAccountId: ownerAccountId,
@@ -749,7 +747,7 @@ describe("Team Groups (SQLite integration)", () => {
         }));
         expect(first.ok).toBe(true);
         if (!first.ok) return;
-        const expectedById = [alpha, beta].sort((left, right) => left.id.localeCompare(right.id));
+        const expectedById = [alpha, gamma].sort((left, right) => left.id.localeCompare(right.id));
         expect(first.value.items.map((group) => group.id)).toEqual([expectedById[0]!.id]);
 
         const second = await inTx((tx) => listTeamMemberGroupsForActorInTx(tx, {
@@ -762,8 +760,6 @@ describe("Team Groups (SQLite integration)", () => {
         expect(second.ok).toBe(true);
         if (!second.ok) return;
         expect(second.value.items.map((group) => group.id)).toEqual([expectedById[1]!.id]);
-        expect([...first.value.items, ...second.value.items]
-            .find((group) => group.id === beta.id)?.archivedAt).not.toBeNull();
         expect(second.value.nextCursor).toBeNull();
 
         const other = await memberOf(team.id);

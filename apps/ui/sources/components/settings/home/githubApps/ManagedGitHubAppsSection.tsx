@@ -6,6 +6,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SettingAnchor, SettingSection } from '@/components/settings/shell/SettingRow';
 import { HOME_SIGN_IN_PROVIDERS_SETTINGS } from '../signInProviders/homeSignInProvidersSettings';
@@ -22,7 +23,6 @@ import {
     homeAdministrationSignInProvidersPath,
 } from '../governance/homeAdministrationRoutes';
 import { HOME_GITHUB_APP_OWNER, useManagedGitHubApps } from './useManagedGitHubApps';
-import { managedGitHubAppFailureMessage } from './ManagedGitHubAppFailure';
 
 export function managedGitHubAppDisplayName(registration: ManagedGitHubAppRegistrationV1): string {
     return registration.githubAppSlug
@@ -51,11 +51,23 @@ export const ManagedGitHubAppsSection = React.memo(function ManagedGitHubAppsSec
     const settings = props.surface.owner.kind === 'home' ? HOME_SIGN_IN_PROVIDERS_SETTINGS.settings : TEAM_AUTHENTICATION_SETTINGS.settings;
     const section = props.surface.owner.kind === 'home' ? HOME_SIGN_IN_PROVIDERS_SETTINGS.sectionRefs.githubApps : TEAM_AUTHENTICATION_SETTINGS.sectionRefs.connections;
     if (state.kind === 'loading') {
-        return <SettingSection section={section}><ItemGroup title={t('identityAdministration.githubApps')}><SurfaceStateCard kind="loading" size="line" title={t('common.loading')} /></ItemGroup></SettingSection>;
+        return <SettingSection section={section}><ItemGroup title={t('identityAdministration.githubApps')}><ItemLoadStateRows testID="managed-github-apps-loading" state={{ kind: 'loading' }} rows={1} accessibilityLabel={t('identityAdministration.githubApps')} /></ItemGroup></SettingSection>;
     }
     if (state.kind === 'unavailable') {
-        const message = managedGitHubAppFailureMessage(state.failure.code);
-        return <SettingSection section={section}><ItemGroup title={t('identityAdministration.githubApps')}><SurfaceStateCard testID="managed-github-apps-unavailable" kind="error" size="line" title={message} action={state.failure.retryable ? { label: t('common.retry'), onPress: refresh } : undefined} /></ItemGroup></SettingSection>;
+        // The People page's failed-read row: a read that failed says what could not be read.
+        return (
+            <SettingSection section={section}><ItemGroup title={t('identityAdministration.githubApps')}>
+                <ItemLoadStateRows
+                    testID="managed-github-apps-unavailable"
+                    state={{
+                        kind: 'failed',
+                        reason: t('identityAdministration.githubAppsReadFailed'),
+                        onRetry: state.failure.retryable ? refresh : undefined,
+                        homeServerIds: [props.surface.scope.serverId],
+                    }}
+                />
+            </ItemGroup></SettingSection>
+        );
     }
     return (
         <SettingAnchor setting={settings.githubApps}><ItemGroup

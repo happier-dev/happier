@@ -17,6 +17,7 @@ import { SettingAnchor, SettingRow } from '@/components/settings/shell/SettingRo
 import { HOME_MANAGED_OIDC_SETTINGS, TEAM_MANAGED_OIDC_SETTINGS } from '@/components/settings/identity/identitySettings';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
@@ -518,10 +519,23 @@ const HomeManagedOidcProviderEditorAdapter = React.memo(function HomeManagedOidc
         ? providers.state.items.find((item) => item.id === props.providerId && item.kind === 'oidc') ?? null
         : null;
     if (props.providerId && providers.state.kind === 'unavailable') {
-        return <ItemGroup description={providers.state.failure.retryable ? t('teams.unavailable.offline') : t('identityAdministration.error')}><Item title={t('identityAdministration.error')} detail={providers.state.failure.retryable ? t('common.retry') : undefined} onPress={providers.state.failure.retryable ? providers.refresh : undefined} showChevron={false} /></ItemGroup>;
+        // The People page's failed-read row: a read that failed says what could not be read.
+        return (
+            <ItemGroup>
+                <ItemLoadStateRows
+                    testID="identity-provider-editor"
+                    state={{
+                        kind: 'failed',
+                        reason: t('identityAdministration.companySignInReadFailed'),
+                        onRetry: providers.state.failure.retryable ? providers.refresh : undefined,
+                        homeServerIds: [props.context.scope.serverId],
+                    }}
+                />
+            </ItemGroup>
+        );
     }
     if (props.providerId && providers.state.kind === 'ready' && !provider) {
-        return <ItemGroup><Item title={t('identityAdministration.error')} showChevron={false} /></ItemGroup>;
+        return <ItemGroup><Item testID="identity-provider-missing" title={t('identityAdministration.errorMissing')} mode="info" showChevron={false} /></ItemGroup>;
     }
     return <ManagedOidcProviderEditorContent
         scope={props.context.scope}

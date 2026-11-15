@@ -90,7 +90,7 @@ describe('ManagedGitHubAppsSection', () => {
         })]);
     });
 
-    it('presents a typed lifecycle failure through the canonical localized owner', async () => {
+    it('presents a failed list read as a read, never as a change that did not go through', async () => {
         harness.answer(serverId, listPath, { status: 409, body: { error: 'github_installation_unverified' } });
         const screen = await renderScreen(<ManagedGitHubAppsSection
             surface={{
@@ -107,7 +107,8 @@ describe('ManagedGitHubAppsSection', () => {
         />, { wrapper: SettingsPage });
 
         await vi.waitFor(() => expect(screen.findByTestId('managed-github-apps-unavailable')).not.toBeNull());
-        expect(screen.getTextContent()).toContain('identityAdministration.error');
+        expect(screen.getTextContent()).toContain('identityAdministration.githubAppsReadFailed');
+        expect(screen.getTextContent()).not.toContain('identityAdministration.error');
         expect(screen.getTextContent()).not.toContain('github_installation_unverified');
     });
 });

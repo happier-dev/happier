@@ -328,7 +328,9 @@ export async function listTeamMemberGroupsForActorInTx(
     const rows = await tx.teamGroup.findMany({
         where: {
             teamId: input.teamId,
-            memberships: { some: { teamMembershipId: input.membershipId } },
+            // Effective Groups only: an archived Group keeps its rows for restore, but its roster
+            // and count leave them out, so member detail does too.
+            memberships: { some: { teamMembershipId: input.membershipId, ...EFFECTIVE_TEAM_GROUP_MEMBERSHIP_WHERE } },
             ...(after ? { id: { gt: after.id } } : {}),
         },
         orderBy: { id: "asc" },

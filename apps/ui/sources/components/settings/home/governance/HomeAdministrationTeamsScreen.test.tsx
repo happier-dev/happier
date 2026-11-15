@@ -284,6 +284,13 @@ describe('HomeAdministrationTeamsScreen', () => {
         // The unknown list is stated once, inside the section, never as an empty Home.
         expect(ids.filter((id) => id === 'home-teams-retry')).toHaveLength(1);
         expect(ids).not.toContain('home-teams-empty');
+        // One outage reads one way: the People page's failed-read row, in the words of what
+        // could not be read, and no archive toggle under a list the Home did not send.
+        const text = screen.getTextContent();
+        expect(text).toContain('homeGovernance.invite.teamsFailed');
+        expect(text).not.toContain('homeGovernance.unavailableBody');
+        expect(text).not.toContain('homeGovernance.unavailableTitle');
+        expect(ids).not.toContain('home-teams-toggle-archived');
     });
 
     it('keeps archived administered Teams reachable for restore', async () => {
