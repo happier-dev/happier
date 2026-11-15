@@ -52,6 +52,33 @@ describe('requestConnectedServiceSessionRestartSignal', () => {
     expect(onSignalFailure).toHaveBeenCalledWith(error);
   });
 
+  it.each(['refused', 'transport_failed'] as const)('retains custody when the hosted Session end is %s', async outcome => {
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const onSignalFailure = vi.fn();
+    const onProcessAlreadyMissing = vi.fn();
+    const records: unknown[] = [];
+    const transportError = new Error('Host transport unavailable');
+    await expect(requestConnectedServiceSessionRestartSignal({
+      pid: 123, delayMs: 0, preferProcessGroup: true,
+      // The host end port is the IPC boundary; neither outcome proves process absence.
+      hostedSession: { end: async () => {
+        if (outcome === 'transport_failed') throw transportError;
+        return false;
+      } },
+      onSignalFailure, onProcessAlreadyMissing,
+      restartDiagnostic: { trigger: 'refresh_triggered_restart', sessionId: 'hosted-session' },
+      recordRestartDiagnostic: record => records.push(record),
+    })).rejects.toBeInstanceOf(Error);
+    expect(kill).not.toHaveBeenCalled();
+    expect(onProcessAlreadyMissing).not.toHaveBeenCalled();
+    expect(onSignalFailure).toHaveBeenCalledExactlyOnceWith(expect.any(Error));
+    if (outcome === 'transport_failed') expect(onSignalFailure).toHaveBeenCalledWith(transportError);
+    expect(records).toEqual([
+      expect.objectContaining({ status: 'requested', processGroupPid: null }),
+      expect.objectContaining({ status: 'signal_failed', processGroupPid: null }),
+    ]);
+  });
+
   it('treats an already-missing process as a completed restart request', async () => {
     const error = new Error('no such process');
     const kill = vi.spyOn(process, 'kill').mockImplementation(() => {

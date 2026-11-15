@@ -104,7 +104,11 @@ import type { ChildExit } from '../sessions/onChildExited';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { SessionHost } from '@/agent/runtime/lifecycle/sessionHost';
 import { SESSION_HOLDER_ADOPT_ENV_KEY } from '@/subprocess/supervision/sessionHolder';
-import { SESSION_HOST_HANDOVER_EXIT_CODE } from '@/session/transport/rpc/localSessionRpcChannel';
+import { SESSION_HOST_HANDOVER_EXIT_CODE, type SessionHostLaunchRecordV1 } from '@/session/transport/rpc/localSessionRpcChannel';
+import { PluginAgentContributionV2Schema } from '@happier-dev/protocol';
+import { createRunnerAgentSessionBootstrapAuthorization } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
+import { SessionHostLaunchAccountChangedError } from '@/agent/runtime/lifecycle/sessionHostCredentialHold';
+import { PLUGIN_MANIFEST as codexManifest } from '../../../../../packages/plugins/codex/src/manifest';
 
 import { createSessionRunnerRespawnManager } from '../processSupervision/sessionRunnerRespawn';
 import { createSparedHeldAgentCustody } from '../processSupervision/sparedHeldAgents';
@@ -112,6 +116,7 @@ import type { OwnerRemainderPort } from '../processes/endOwnerRemainder';
 import { createOnChildExited } from '../sessions/onChildExited';
 
 import { createDaemonSessionHost, createSessionHostPlacement } from './daemonSessionHost';
+import { requestConnectedServiceSessionRestartSignal } from '../connectedServices/sessionAuthSwitch/requestConnectedServiceSessionRestartSignal';
 import axios from 'axios';
 import { createAccountScopedCryptoMaterialSnapshotV1, convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
   SessionMetadataTuplePatchV1Schema } from '@happier-dev/protocol';
@@ -156,6 +161,7 @@ async function createHarness(startupFailure?: Error) {
   peerHelper.path ??= resolvePeerHelper();
   const releaseSessions: Array<() => void> = [];
   const hostedEnvironments: Array<Readonly<Record<string, string | undefined>>> = [];
+  const hostedLaunches: SessionHostLaunchRecordV1[] = [];
   const hosts: InProcessHost[] = [];
   census.startHost = async () => {
     const hostProcess = new EventEmitter();
@@ -169,8 +175,9 @@ async function createHarness(startupFailure?: Error) {
       }
     });
     const host = await startSessionHost({
-      runSessionCommand: async () => {
+      runSessionCommand: async (_argv, launch) => {
         hostedEnvironments.push({ ...sessionProcessEnvironment() });
+        hostedLaunches.push(launch);
         if (startupFailure) {
           endSessionCommand(reportSessionRunnerFailure(startupFailure));
           return;
@@ -224,12 +231,14 @@ async function createHarness(startupFailure?: Error) {
   });
   // One spawn at a time, so each report reaches the Session that spawn just tracked.
   let spawnQueue: Promise<unknown> = Promise.resolve();
-  const spawnSession = (sessionId: string, extraEnv: Record<string, string> = {}) => {
-    const run = spawnQueue.then(() => spawnOneSession(sessionId, extraEnv));
+  type LaunchFacts = Pick<Parameters<typeof spawnRegularProcessAndWaitForWebhook>[0],
+    'sessionHostLaunchAccount' | 'runnerAgentSessionBootstrapAuthorization'>;
+  const spawnSession = (sessionId: string, extraEnv: Record<string, string> = {}, launch: LaunchFacts = {}) => {
+    const run = spawnQueue.then(() => spawnOneSession(sessionId, extraEnv, launch));
     spawnQueue = run.catch(() => undefined);
     return run;
   };
-  const spawnOneSession = async (sessionId: string, extraEnv: Record<string, string>) => {
+  const spawnOneSession = async (sessionId: string, extraEnv: Record<string, string>, launch: LaunchFacts) => {
     const before = new Set([...tracked.keys(), ...accepted.map(session => session.trackingKey)]);
     const pending = spawnRegularProcessAndWaitForWebhook({
       args: ['codex', '--happy-starting-mode', 'remote', '--started-by', 'daemon'], directory: testHome, options: { directory: testHome }, trackedSpawnOptions: { directory: testHome },
@@ -240,6 +249,7 @@ async function createHarness(startupFailure?: Error) {
       onChildExited,
       spawnLifecycleCallbacks: callbacks, cleanupSpawnResources: () => {}, logDebug: () => {}, warn: () => {},
       sessionHost,
+      ...launch,
     });
     const record = await vi.waitFor(() => {
       const added = [...tracked.values(), ...accepted].find(session => !before.has(session.trackingKey));
@@ -253,7 +263,7 @@ async function createHarness(startupFailure?: Error) {
     return { record, result: await pending };
   };
   return {
-    tracked, exits, hosts, hostedEnvironments, releaseSessions, spawnSession,
+    tracked, exits, hosts, hostedEnvironments, hostedLaunches, releaseSessions, spawnSession,
     setExitObserver: (observer: (pid: number, exit: ChildExit) => Promise<void>) => { observeExit = observer; },
     releaseAll: () => { for (const release of releaseSessions.splice(0)) release(); },
     /** Daemon restart: hand the reattached Sessions of a live host to this daemon's session host. */
@@ -287,6 +297,37 @@ describe('session host launch', () => {
       errorMessage: result.errorMessage, errorDetail: result.errorDetail });
     expect(projected).toMatchObject({ type: 'error', code: 'spawn_failed', launchError: { failureCause } });
     expect(JSON.stringify(projected)).not.toContain('PRIVATE_BODY');
+  });
+  it('ends a Session admitted for another Account with its typed account_changed cause in the public spawn failure', { timeout: 120_000 }, async () => {
+    const harness = await createHarness(new SessionHostLaunchAccountChangedError());
+    const { result } = await harness.spawnSession('account-changed');
+    if (result.type !== 'error') throw new Error('Expected startup refusal');
+    expect(projectSessionSpawnFailure({ errorCode: result.errorCode, errorMessage: result.errorMessage, errorDetail: result.errorDetail }))
+      .toMatchObject({ type: 'error', launchError: { failureCause: { phase: 'authentication', failureReason: 'account_changed' } } });
+  });
+  it('sends the admitted launch record (Account, epoch, Machine, Settings floor, runner bootstrap) with the host add', { timeout: 120_000 }, async () => {
+    const definition = PluginAgentContributionV2Schema.parse(codexManifest.contributes.agents?.[0]);
+    const issued = await createRunnerAgentSessionBootstrapAuthorization({
+      happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing,
+      descriptor: { v: 1, pluginId: codexManifest.id, pluginVersion: codexManifest.version, agentId: definition.id,
+        backendId: 'codex', occurrenceId: 'recorded-admitted-runtime',
+        sourceCustody: { kind: 'bundled_first_party', packagedRuntime: { kind: 'pinned_runner_snapshot', snapshotId: 'recorded' } },
+        agentDeclaration: { provenance: 'first_party', source: { kind: 'bundled' }, definition } },
+    });
+    const account = { accountId: 'account-a', credentialEpoch: 1, machineId: 'machine-1', settingsVersion: 7 };
+    const harness = await createHarness();
+    // The record reaches the host at add time. The later report runs the recorded descriptor's own
+    // adoption checks, which this fixture does not satisfy; only the add is asserted here.
+    const launched = harness.spawnSession('launch-record', {}, {
+      sessionHostLaunchAccount: account, runnerAgentSessionBootstrapAuthorization: issued.authorization }).catch(() => null);
+    await vi.waitFor(() => expect(harness.hostedLaunches).toHaveLength(1), { timeout: 60_000 });
+    expect(harness.hostedLaunches[0]).toEqual({ account,
+      runnerBootstrap: { path: issued.authorization.bootstrapFilePath, bootstrap: issued.authorization.bootstrap } });
+    // Facts only (exact shape above): no bearer or Settings read key crosses the host channel.
+    await launched;
+    harness.releaseAll();
+    await harness.hosts.at(-1)!.host.whenEnded;
+    await issued.cleanupBootstrapFile();
   });
   it('launches the host with the daemon\'s Home and server identity, even when the daemon environment lacks them', { timeout: 120_000 }, async () => {
     const harness = await createHarness();
@@ -356,6 +397,63 @@ describe.skipIf(process.platform === 'win32')('daemon session host placement', (
     harness.releaseAll();
     await b.record.hostedSession!.observed;
     expect(harness.exits.map(({ exit }) => exit.trackingKey)).toEqual([a.record.trackingKey, b.record.trackingKey]);
+  });
+
+  it.each(['launched', 'reattached'] as const)('refreshes only the selected Session in a shared host (%s)', { timeout: 120_000 }, async placement => {
+    const first = await createHarness();
+    const a = await first.spawnSession('refresh-a');
+    const b = await first.spawnSession('refresh-b');
+    const liveHost = first.hosts.at(-1)!;
+    const launchesBeforeRefresh = census.hostLaunches;
+    let daemon = first;
+    let selected = a.record;
+    let peer = b.record;
+    if (placement === 'reattached') {
+      daemon = await createHarness();
+      const reattached: TrackedSession[] = [a.record, b.record].map(record => ({
+        trackingKey: record.trackingKey, pid: record.pid, happySessionId: record.happySessionId,
+        startedBy: 'daemon', processStartTimeMs: 1_000, processCommand: HOST_COMMAND,
+        reattachedFromDiskMarker: true, spawnOptions: { directory: testHome },
+      }));
+      for (const session of reattached) daemon.tracked.set(session.trackingKey, session);
+      expect(daemon.adoptReattached(reattached)).toBe(2);
+      [selected, peer] = [reattached[0]!, reattached[1]!];
+    }
+    // Model the OS signal boundary without ever signalling this test process.
+    // The old PID restart path terminates the real in-process host and its peers.
+    const processKill = process.kill.bind(process);
+    const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (signal === 'SIGTERM' && Math.abs(pid) === process.pid) {
+        liveHost.process.emit('SIGTERM');
+        return true;
+      }
+      return processKill(pid, signal);
+    });
+    try {
+      await expect(requestConnectedServiceSessionRestartSignal({
+        pid: selected.pid, delayMs: 0, preferProcessGroup: true,
+        hostedSession: selected.hostedSession,
+        onSignalFailure: error => { throw error; },
+      })).resolves.toEqual({ status: 'requested' });
+      expect(kill.mock.calls.filter(([, signal]) => signal === 'SIGTERM')).toEqual([]);
+      await selected.hostedSession!.observed;
+      expect(daemon.exits.map(({ exit }) => exit.trackingKey)).toEqual([selected.trackingKey]);
+      expect(liveHost.exit).not.toHaveBeenCalled();
+
+      const replacement = await daemon.spawnSession('refresh-a');
+      expect(replacement.result).toMatchObject({ type: 'success', sessionId: 'refresh-a' });
+      expect(replacement.record.trackingKey).not.toBe(selected.trackingKey);
+      expect(replacement.record.pid).toBe(peer.pid);
+      expect(census.hostLaunches).toBe(launchesBeforeRefresh);
+      expect(daemon.exits.map(({ exit }) => exit.trackingKey)).toEqual([selected.trackingKey]);
+      first.releaseAll();
+      daemon.releaseAll();
+      await Promise.all([peer.hostedSession!.observed, replacement.record.hostedSession!.observed]);
+    } finally {
+      kill.mockRestore();
+      first.releaseAll();
+      daemon.releaseAll();
+    }
   });
 
   it.each(['plain', 'e2ee'] as const)('Stop retires only its Session while the shared host stays alive (%s)', { timeout: 120_000 }, async accountMode => {

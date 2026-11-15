@@ -115,6 +115,11 @@ export async function requestConnectedServiceSessionRestartSignal(params: Readon
   pid: number;
   delayMs: number;
   preferProcessGroup?: boolean;
+  /**
+   * The Session runs in the daemon's session host (`pid` is the host's): the host ends only this
+   * Session, the same as a runner receiving SIGTERM. A signal to `pid` would end every hosted Session.
+   */
+  hostedSession?: Readonly<{ end(): Promise<boolean> }>;
   shouldSignal?: () => boolean | Promise<boolean>;
   onSignalFailure: (error: unknown) => void;
   onProcessAlreadyMissing?: () => void;
@@ -123,7 +128,8 @@ export async function requestConnectedServiceSessionRestartSignal(params: Readon
   nowMs?: () => number;
 }>): Promise<ConnectedServiceSessionRestartSignalResult> {
   const nowMs = params.nowMs ?? Date.now;
-  const processGroupPid = params.preferProcessGroup === true ? params.pid : null;
+  const hostedSession = params.hostedSession;
+  const processGroupPid = params.preferProcessGroup === true && !hostedSession ? params.pid : null;
   const recordDiagnostic = (status: ConnectedServiceDaemonRestartDiagnosticStatus) => {
     if (!params.restartDiagnostic) return;
     recordConnectedServiceDaemonRestartDiagnostic({
@@ -141,6 +147,19 @@ export async function requestConnectedServiceSessionRestartSignal(params: Readon
     if (params.shouldSignal && !await params.shouldSignal()) {
       recordDiagnostic('skipped_stale_owner');
       return { status: 'skipped_stale_owner' };
+    }
+    if (hostedSession) {
+      try {
+        // A refused or unavailable host end does not prove that its Session is gone.
+        if (!await hostedSession.end()) throw new Error('Hosted Session end was not confirmed');
+      } catch (error) {
+        recordDiagnostic('requested');
+        recordDiagnostic('signal_failed');
+        params.onSignalFailure(error);
+        throw error;
+      }
+      recordDiagnostic('requested');
+      return { status: 'requested' };
     }
     if (params.preferProcessGroup === true) {
       let processGroupSignaled = false;
