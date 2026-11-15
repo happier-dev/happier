@@ -181,8 +181,8 @@ export async function main(argv = process.argv) {
   const cleanup = () => {
     if (!shouldCleanup || !containerId) return;
     try {
-      // `--rm` should handle this, but SIGINT/early exits can leave containers behind.
-      spawnSync('docker', ['rm', '-f', containerId], { stdio: 'ignore', env: dockerEnv(), timeout: dockerCommandTimeoutMs });
+      // Forced removal bypasses `--rm` volume cleanup; remove our anonymous DB volumes too.
+      spawnSync('docker', ['rm', '-f', '-v', containerId], { stdio: 'ignore', env: dockerEnv(), timeout: dockerCommandTimeoutMs });
     } catch {
       // ignore
     }

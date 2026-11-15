@@ -22,18 +22,23 @@ describe('extended-db container ownership', () => {
     }
   });
 
-  it('cleans up only the exact container returned by its own successful docker run', async () => {
+  it.each([
+    { db: 'postgres', keep: false },
+    { db: 'mysql', keep: false },
+    { db: 'postgres', keep: true },
+    { db: 'mysql', keep: true },
+  ])('cleans up only disposable $db containers and volumes (keep=$keep)', async ({ db, keep }) => {
     const id = 'a'.repeat(64);
     vi.mocked(spawnSync).mockImplementation((command, args) => ({
       status: 0, signal: null, pid: 1, output: [], stderr: '',
       stdout: command !== 'docker' ? '' : args?.[0] === 'run' ? id
         : args?.[0] === 'inspect' ? 'healthy' : args?.[0] === 'port' ? '127.0.0.1:54321' : '',
     }));
-    await runExtendedDbDockerScript.main(['node', 'runner', '--db', 'postgres', '--mode', 'contract', '--name', 'c31-owned']);
+    await runExtendedDbDockerScript.main(['node', 'runner', '--db', db, '--mode', 'contract', '--name', 'c31-owned', ...(keep ? ['--keep'] : [])]);
     const contract = vi.mocked(spawnSync).mock.calls.find(([, args]) => Array.isArray(args) && args.includes('test:db-contract'));
     expect(contract?.[2]?.env).toMatchObject({ HAPPIER_DB_CONTRACT_CONTAINER_ID: id });
     const removals = vi.mocked(spawnSync).mock.calls.filter(([command, args]) => command === 'docker' && args?.[0] === 'rm');
-    expect(removals.map(([, args]) => args)).toEqual([['rm', '-f', id]]);
+    expect(removals.map(([, args]) => args)).toEqual(keep ? [] : [['rm', '-f', '-v', id]]);
   });
 
   it('leaves an existing same-name container alone when docker run fails', async () => {
