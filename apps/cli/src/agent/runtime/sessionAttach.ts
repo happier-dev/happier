@@ -1,4 +1,5 @@
 import { decodeBase64 } from '@/api/encryption';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { AgentState, Metadata } from '@/api/types';
 import type {
   SessionOwnerMetadataEnvelopeV1,
@@ -36,9 +37,10 @@ function readNonNegativeIntegerProperty(payload: unknown, key: string): number |
 }
 
 export async function readSessionAttachFromEnv(): Promise<SessionAttachSecret | null> {
-  const rawPath = typeof process.env.HAPPIER_SESSION_ATTACH_FILE === 'string' ? process.env.HAPPIER_SESSION_ATTACH_FILE.trim() : '';
+  const environment = sessionProcessEnvironment();
+  const rawPath = typeof environment.HAPPIER_SESSION_ATTACH_FILE === 'string' ? environment.HAPPIER_SESSION_ATTACH_FILE.trim() : '';
   if (!rawPath) return null;
-  delete process.env.HAPPIER_SESSION_ATTACH_FILE;
+  delete environment.HAPPIER_SESSION_ATTACH_FILE;
 
   return await readSessionAttachFromFile(rawPath);
 }

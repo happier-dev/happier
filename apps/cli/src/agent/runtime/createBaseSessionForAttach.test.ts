@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -18,6 +18,46 @@ const envScope = createEnvKeyScope([
 ]);
 
 describe('createBaseSessionForAttach', () => {
+  it('attaches concurrent hosted Sessions from their own launch handoffs', async () => {
+    const dir = await createTempDir('happy-hosted-attach-');
+    envScope.patch({ HAPPIER_HOME_DIR: dir, HAPPIER_SESSION_ATTACH_FILE: undefined });
+    try {
+      vi.resetModules();
+      const { createBaseSessionForAttach } = await import('./createBaseSessionForAttach');
+      const { runAddedHostedSession } = await import('./lifecycle/hostedSessionScope');
+      const attachDir = join(dir, 'tmp', 'session-attach');
+      await mkdir(attachDir, { recursive: true });
+      const environments = await Promise.all(['plain', 'e2ee'].map(async (encryptionMode, index) => {
+        const filePath = join(attachDir, `attach-${index}.json`);
+        await writeFile(filePath, JSON.stringify({
+          v: 2, encryptionMode, lastObservedMessageSeq: index + 11,
+          ...(encryptionMode === 'e2ee' ? {
+            encryptionKeyBase64: Buffer.alloc(32, 7).toString('base64'), encryptionVariant: 'dataKey',
+          } : {}),
+        }), { mode: 0o600 });
+        return { HAPPIER_SESSION_ATTACH_FILE: filePath };
+      }));
+      const sessions = await Promise.all(environments.map((environment, index) =>
+        runAddedHostedSession({ environment, workingDirectory: dir,
+          end: () => { throw new Error('Attach must not terminate its host'); } },
+        () => createBaseSessionForAttach({ existingSessionId: `hosted-${index}`,
+          metadata: createTestMetadata(), state: { controlledByUser: false } })),
+      ));
+      expect(sessions).toMatchObject([
+        { id: 'hosted-0', encryptionMode: 'plain', seq: 11 },
+        { id: 'hosted-1', encryptionMode: 'e2ee', seq: 12, encryptionKey: new Uint8Array(32).fill(7) },
+      ]);
+      for (const [index, environment] of environments.entries()) {
+        expect(environment.HAPPIER_SESSION_ATTACH_FILE).toBeUndefined();
+        await expect(stat(join(attachDir, `attach-${index}.json`)))
+          .rejects.toMatchObject({ code: 'ENOENT' });
+      }
+      expect(process.env.HAPPIER_SESSION_ATTACH_FILE).toBeUndefined();
+    } finally {
+      envScope.restore();
+      await removeTempDir(dir);
+    }
+  });
   it.each(['plain', 'e2ee'] as const)('bootstraps the admitted birth Agent before constructing its %s Session client', async (encryptionMode) => {
     const { createBaseSessionForAttach } = await import('./createBaseSessionForAttach');
     const correspondence = buildSessionCreationCorrespondence({
