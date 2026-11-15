@@ -966,6 +966,9 @@ describe('workflow library page anatomy', () => {
         expect(screen.findHostByTestId('workflows-home:idle')).toBeNull();
         // F5 (owner 2026-11-12): the page's toolbar owns the one scope and search beside the column.
         expect(screen.findHostByTestId('workflows-home:search')).not.toBeNull();
+        // ov-B (list-detail lab; LAB-PARITY-ALL-1114 → QA-SHELL-1114): the column already lists Built-in, so the page
+        // beside it does not repeat that list.
+        expect(screen.findAll((node) => node.props.testID === 'workflows-home:builtins')).toHaveLength(0);
         expect(screen.findHostByTestId('workflows-home:scope-line')).not.toBeNull();
         // One primary: New workflow opens the blank draft.
         await screen.pressByTestIdAsync('workflows-home:new');

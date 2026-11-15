@@ -59,6 +59,7 @@ import { WorkflowRunStripView } from './WorkflowRunStripView';
 import { WorkflowsLibraryHeaderActions } from './WorkflowsLibraryHeaderActions';
 import { WorkflowExamplesSection } from './WorkflowExamplesSection';
 import { WorkflowBuiltinsSection } from './WorkflowBuiltinsSection';
+import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { useWorkflowAgentAuthoring } from '../authoring/useWorkflowAgentAuthoring';
 import { buildWorkflowAgentAuthoringSeed } from '@/sync/domains/workflows/workflowAgentAuthoringSeed';
 import { formatNextScheduledRun, formatTriggerSetSummary } from '../triggers/formatTriggerSummary';
@@ -140,6 +141,7 @@ export function WorkflowsLibraryHome(): React.ReactElement {
     const ownLibraryView = useWorkflowLibraryView(focused && lent === null);
     const libraryView = lent?.libraryView ?? ownLibraryView;
     const { library, filter, needle, searchQuery: query } = libraryView;
+    const columnListsBuiltins = useAppShellColumn().columnVisible;
     const spaceHeader = useWorkflowLibrarySpaceHeader(ownLibraryView, 'workflows-home-space', 'section');
     React.useEffect(() => {
         const definitionId = library.deletedDefinitionId;
@@ -335,7 +337,8 @@ export function WorkflowsLibraryHome(): React.ReactElement {
                                 empty={empty}
                             />
                         <AddressedAccountTriggersSlot />
-                        <WorkflowBuiltinsSection isVisible={libraryView.isVisible} />
+                        {/* ov-B: beside the Workflows column, which lists Built-in, the page does not repeat it. */}
+                        {columnListsBuiltins ? null : <WorkflowBuiltinsSection isVisible={libraryView.isVisible} />}
                         {/* Secondary on a returning library: one compact row, the whole catalog one press away. */}
                         <WorkflowExamplesSection presentation="strip" />
                     </PageContentColumn>
@@ -616,6 +619,7 @@ async function exportDefinition(definitionId: string): Promise<void> {
  * examples use the same catalog as the returning home and column picker (08 §6).
  */
 function WorkflowsFirstVisit(props: Readonly<{ onNewWorkflow: () => void; onImport: () => void; onCreateWithAgent: () => void }>) {
+    const columnListsBuiltins = useAppShellColumn().columnVisible;
     return (
         <ItemList pageColumn="wide">
             <PageContentColumn>
@@ -628,7 +632,7 @@ function WorkflowsFirstVisit(props: Readonly<{ onNewWorkflow: () => void; onImpo
                     primaryAction={{ label: t('workflows.newWorkflow'), onPress: props.onNewWorkflow, testID: 'workflows-home:firstVisit:new' }}
                     secondaryAction={{ label: t('workflows.authoring.create'), onPress: props.onCreateWithAgent, testID: 'workflows-home:firstVisit:agent' }}
                 />
-                <WorkflowBuiltinsSection />
+                {columnListsBuiltins ? null : <WorkflowBuiltinsSection />}
                 <WorkflowExamplesSection />
                 <View style={styles.importLine}>
                     <Text style={styles.importPrompt}>{t('workflows.destination.importPrompt')}</Text>
