@@ -20,7 +20,7 @@ import { APPEARANCE_SETTINGS } from '@/components/settings/appearance/appearance
 import { MachineSummaryAppearanceSection } from '@/components/machines/summary/MachineSummaryAppearanceSection';
 import { formatMachineDuration } from '@/components/machines/durationWords';
 import { PolicyValueSelect } from '@/components/machines/policy/PolicyValueSelect';
-import { parsePolicyDuration } from '@/components/machines/policy/policyDuration';
+import { formatPolicyDurationInput, parsePolicyDuration } from '@/components/machines/policy/policyDuration';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { useSettingActionFeedback } from '@/components/settings/shell/useSettingActionFeedback';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
@@ -165,7 +165,7 @@ export const MachineDefaultsView = React.memo(function MachineDefaultsView() {
       >
         {categories.map((model) =>
           compact ? (
-            <CategoryPushRow key={model.category} model={model} providers={providerList(providerNames[model.category])} />
+            <CategoryPushRow key={model.category} model={model} />
           ) : (
             <CategoryDisclosure
               key={model.category}
@@ -178,6 +178,7 @@ export const MachineDefaultsView = React.memo(function MachineDefaultsView() {
         )}
       </ItemGroup>
       <SettingSection section={MACHINES_DEFAULTS_SETTINGS.sectionRefs.reminders}>
+        <ItemGroup title={t('managedRetention.deletionRemindersTitle')}>
         <SettingRow
           testID="settings.machineDefaults.deletionReminderLeadTime"
           setting={MACHINES_DEFAULTS_SETTINGS.settings.deletionReminderLeadTime}
@@ -197,7 +198,7 @@ export const MachineDefaultsView = React.memo(function MachineDefaultsView() {
             onCustom={() => fireAndForget((async () => {
               const title = t('managedRetention.deletionReminderLeadTime');
               const raw = await Modal.prompt(title, t('managedRetention.deletionReminderCustomBody'), {
-                defaultValue: `${reminderLeadTimeMs} ms`, confirmText: t('common.save'),
+                defaultValue: formatPolicyDurationInput(reminderLeadTimeMs), confirmText: t('common.save'),
               });
               if (raw === null) return;
               const value = parsePolicyDuration(raw, { unit: 'ms', minimum: 0 });
@@ -209,6 +210,7 @@ export const MachineDefaultsView = React.memo(function MachineDefaultsView() {
             })(), { tag: 'MachineDefaultsView.reminder.custom' })}
           />}
         />
+        </ItemGroup>
       </SettingSection>
       {/* A rare, consequential switch: after the policies people tune (lab m-defaults). */}
       <ItemGroup title={t('managedMachines.creation.sectionTitle')}>
@@ -245,7 +247,7 @@ function describeReminderLeadTime(ms: number): string {
 
 const CategoryPushRow = React.memo(function CategoryPushRow(
   // `showDivider` comes from the group (its last row draws none).
-  props: Readonly<{ model: CategoryModel; providers: string | undefined; showDivider?: boolean }>,
+  props: Readonly<{ model: CategoryModel; showDivider?: boolean }>,
 ) {
   const router = useRouter();
   return (
@@ -253,7 +255,8 @@ const CategoryPushRow = React.memo(function CategoryPushRow(
       testID={`settings.machineDefaults.${props.model.category}`}
       setting={props.model.setting}
       showDivider={props.showDivider}
-      subtitle={[props.providers?.trim(), describeRetentionPolicy(props.model.policy)].filter(Boolean).join(' · ')}
+      // A phone row says its value (lab m-defaults Ap); the category's own page names the services it covers.
+      subtitle={describeRetentionPolicy(props.model.policy)}
       onPress={() => {
         const result = runGuardedNavigation(() =>
           router.push(categoryHref(props.model.category) as never),

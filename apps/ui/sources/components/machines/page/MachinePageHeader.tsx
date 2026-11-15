@@ -110,6 +110,8 @@ export function composeMachinePageHeaderFacts(input: Readonly<{
     machine: Machine;
     online: boolean | null;
     managedMeta: readonly PageHeaderMetaFact[] | undefined;
+    /** A created machine's power word (Asleep, Starting…) from its presence owner: it leads the facts in place of Online. */
+    managedPowerWord?: string | null;
     encryptionMode: 'e2ee' | 'plain' | null;
     replacedByMachineLabel: string | null;
     /** The machine's published host facts (plan 20): cores and memory, and when it booted. */
@@ -122,9 +124,10 @@ export function composeMachinePageHeaderFacts(input: Readonly<{
 }>): PageHeaderMetaFact[] {
     const { machine } = input;
     // The shared runtime sentence already names an unavailable or native-transition state.
-    const facts: PageHeaderMetaFact[] = [...(!input.online ? [] : [{
+    const presence = input.managedPowerWord || (input.online ? t('machineDetailPage.online') : null);
+    const facts: PageHeaderMetaFact[] = [...(!presence ? [] : [{
         key: 'presence',
-        text: t('machineDetailPage.online'),
+        text: presence,
         testID: 'machine-detail-presence',
     }]), ...(input.managedMeta ?? [])];
     // What the Machine does for Environments follows its presence (lab J13 "Online · Controller · Hetzner"): each role
@@ -256,16 +259,20 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
             environmentId: environment.environmentId }));
     }, [router, target.serverId]);
     const runtimePresence = machine ? describeMachineRuntimePresence(machine, undefined, props.managedIdentity?.presence, machineAccountScope) : null;
+    // A created machine says its power word once, first in its facts (lab m-detail "Asleep · disk kept"), not as a
+    // sentence under its name.
+    const managedPowerWord = props.managedIdentity?.presence && runtimePresence?.showStatus ? runtimePresence.label || null : null;
     const meta = React.useMemo(() => machine ? composeMachinePageHeaderFacts({
         machine,
         online: target.online && !runtimePresence?.showStatus,
+        managedPowerWord,
         managedMeta: props.managedIdentity?.meta,
         encryptionMode,
         replacedByMachineLabel: replacement.replacedByMachineLabel,
         hostFacts: published?.host ?? null,
         roleEnvironments,
         onOpenEnvironment: openRoleEnvironment,
-    }) : [], [language, encryptionMode, machine, props.managedIdentity?.meta, published?.host, replacement.replacedByMachineLabel, target.online, runtimePresence?.showStatus, roleEnvironments, openRoleEnvironment]);
+    }) : [], [language, encryptionMode, machine, managedPowerWord, props.managedIdentity?.meta, published?.host, replacement.replacedByMachineLabel, target.online, runtimePresence?.showStatus, roleEnvironments, openRoleEnvironment]);
 
     // Entity-header anatomy: presence in the meta, every machine action in one `⋯`.
     const { onRename, renaming } = props;
@@ -313,7 +320,7 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
             // Start session and the rest stay beside the Machine's identity, not folded into a phone's bar menu.
             actionsPlacement="page"
             title={machine ? machineName : t('machineDetailPage.placeholderTitle')}
-            description={machine && (published || runtimePresence?.showStatus) ? (
+            description={machine && !managedPowerWord && (published || runtimePresence?.showStatus) ? (
                 <MachineWorkingCountsProvider>
                     <MachineSentence serverId={target.serverId} machineId={machine.id} attention={published?.attention ?? null}
                         online={target.online && !runtimePresence?.showStatus} offlineLine={runtimePresence?.label ?? ''}

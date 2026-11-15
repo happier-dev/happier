@@ -49,16 +49,20 @@ it.each([false, true])('gives the machine its identity glyph and whole name row 
     await waitForHomeGovernance(() => {
         expect(screen.getTextContent()).toContain('Studio');
     });
-    expect(screen.getTextContent()).toContain('studio.internal');
-    const row = screen.findByTestId(`settings.machines.row.${profileId}.studio-machine`)!;
+    const row = screen.tree.findAll(node => typeof node.type !== 'string'
+        && node.props.testID === `settings.machines.row.${profileId}.studio-machine` && 'title' in node.props)[0]!;
+    // One line in the rail: the host stays in the row's accessible name, not on a second line.
+    expect(screen.getTextContent()).not.toContain('studio.internal');
+    expect(row.props.accessibilityLabel).toContain('studio.internal');
     const { Icon } = await import('@/components/ui/icons/Icon');
     expect(row.findAll(node => node.type === Icon).some(node => node.props.name === (isThisComputer ? 'laptop' : 'hard-drives'))).toBe(true);
     expect(row.props.rightElement).toBeUndefined();
-    expect(screen.findByTestId(`settings.machines.row.${profileId}.studio-machine.summary`)).not.toBeNull();
-    // The word the summary says for an offline machine; the glyph already says what kind of machine it is.
-    expect(screen.getTextContent()).toContain('settingsOverview.machineOffline');
+    // An offline machine has no live summary: its one word stands at the row's end; the glyph says what kind it is.
+    expect(screen.findByTestId(`settings.machines.row.${profileId}.studio-machine.summary`)).toBeNull();
+    expect(row.props.detail).toBe('machineDetailPage.offline');
+    expect(row.props.accessibilityLabel).toContain('settingsOverview.machineOffline');
     expect(screen.getTextContent()).not.toContain('Linux');
-    expect(screen.getTextContent()).toContain('managedRetention.pageDescriptionShort');
+    expect(screen.getTextContent()).not.toContain('managedRetention.pageDescriptionShort');
     expect(screen.getTextContent()).toContain('settings.overview');
     expect(screen.getTextContent()).not.toContain('allMachines.rowTitle');
     // React Test Renderer erases the component's props at its instance boundary.

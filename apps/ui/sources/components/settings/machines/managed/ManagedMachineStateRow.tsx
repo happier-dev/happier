@@ -43,6 +43,13 @@ export const ManagedMachineStateRow = React.memo(
       pendingAction?: ManagedLifecycleAction;
       /** Mute an ended resource's name and mark; its cause stays readable and its recovery actions stay primary. */
       ended?: boolean;
+      /**
+       * The page header already says the state's word (an enrolled machine's power word): the row leads with its
+       * line instead, so the word is said once.
+       */
+      leadWithLine?: boolean;
+      /** When the state was observed ("As of 4:45 PM"): quiet meta on the row's own line. */
+      asOf?: string;
       testID: string;
     }>,
   ) {
@@ -82,19 +89,22 @@ export const ManagedMachineStateRow = React.memo(
         : presentation.tone === 'danger'
           ? theme.colors.state.danger.foreground
           : null;
+    const leadWithLine = props.leadWithLine === true && !tint && Boolean(presentation.line);
     return (
       <Item
         testID={props.testID}
-        title={props.name}
+        title={leadWithLine ? presentation.line : props.name}
         titleStyle={props.ended ? styles.ended : undefined}
         subtitle={
-          tint && presentation.cause ? (
+          leadWithLine ? props.asOf
+          : tint && presentation.cause ? (
             <Text style={styles.line}>
               <Text style={{ color: tint }}>{presentation.cause}</Text>
               {presentation.detail ? ` ${presentation.detail}` : null}
+              {props.asOf ? ` · ${props.asOf}` : null}
             </Text>
           ) : (
-            presentation.line
+            [presentation.line, props.asOf].filter(Boolean).join(' · ') || undefined
           )
         }
         subtitleLines={0}

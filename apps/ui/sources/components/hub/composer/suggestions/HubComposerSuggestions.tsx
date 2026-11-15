@@ -119,7 +119,8 @@ export const HubComposerSuggestionList = React.memo(function HubComposerSuggesti
             placement: entry.suggestion.fill.placement });
     }, [onFill, presented, router]);
 
-    // Desktop keeps the three-column rhythm; phones keep every suggestion in one swipe row.
+    // Desktop keeps the three-column rhythm; phones keep every suggestion in one swipe row. A lone suggestion takes
+    // the whole column, so its title reads on one line instead of wrapping in a third of it.
     const { width: windowWidth } = useWindowDimensions();
     const [columnWidth, setColumnWidth] = React.useState<number | null>(null);
     const onLayout = React.useCallback((event: LayoutChangeEvent) => {
@@ -130,7 +131,7 @@ export const HubComposerSuggestionList = React.memo(function HubComposerSuggesti
     const swipeRow = availableWidth < SUGGESTION_GRID_MIN_WIDTH_PX;
     const width = swipeRow
         ? tileCount * SUGGESTION_PHONE_TILE_WIDTH_PX + (tileCount - 1) * SUGGESTION_GAP_PX
-        : (tileCount * (availableWidth - (SUGGESTION_COLUMNS - 1) * SUGGESTION_GAP_PX)) / SUGGESTION_COLUMNS
+        : tileCount === 1 ? availableWidth : (tileCount * (availableWidth - (SUGGESTION_COLUMNS - 1) * SUGGESTION_GAP_PX)) / SUGGESTION_COLUMNS
             + (tileCount - 1) * SUGGESTION_GAP_PX;
 
     if (tiles.length === 0) return null;

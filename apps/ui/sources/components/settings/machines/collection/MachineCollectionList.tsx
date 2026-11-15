@@ -64,7 +64,6 @@ import { useTeamBinding } from '@/hooks/teams/useTeamBinding';
 import { MANAGED_PROVISIONER_MARK_SIZE, ManagedPresetMark } from '@/components/settings/machines/managed/useManagedProvisionerPresentation';
 import { useMachinesDoor } from '@/components/machines/page/machinesDoor';
 import { useMachineResourceFleetAttention } from '@/sync/domains/machines/resources/useMachineResourceFleetAttention';
-import { Text } from '@/components/ui/text/Text';
 import { useMachineSummarySettingValue } from '@/components/machines/summary/useMachineSummarySetting';
 import { MachineListRowSummary } from '@/components/machines/summary/MachineListRowSummary';
 import { MachineResourceLiveDemand } from '@/sync/domains/machines/resources/useMachineResourceLiveDemand';
@@ -206,33 +205,38 @@ const MachineListRow = React.memo(function MachineListRow(props: Readonly<{
     const summaryMetrics = useMachineSummarySettingValue().metrics.length;
     const summaryRef = React.useRef<View>(null);
     const quietWord = row.reason ?? row.presenceWord ?? row.ownership;
+    // The rail's one word: a native word (Asleep) as the presence owner says it; a machine that is simply offline
+    // says Offline, its last-seen time staying in the accessible name and on its page.
+    const railWord = row.reason ?? (row.kind === 'managed' || row.presenceSource?.managedPresence ? row.presenceWord
+        : row.fleetPresence?.online === false ? t('machineDetailPage.offline') : row.presenceWord) ?? row.ownership;
+    // Only a reachable machine with instruments chosen has a live summary to show.
+    const liveSummary = row.kind === 'machine' && row.online && summaryMetrics > 0;
     return (
         rail ? (
-            // The name has the whole row, on any width. What the machine reports stands on the line beneath it: its
-            // live summary or its one word, then the host when the name is a different one. The glyph says the platform.
+            // One line (lab m-defaults rail): the name, then its one word at the row's end. A machine whose live summary
+            // is shown keeps that summary on the line beneath; the host and platform stay in the accessible name.
             <Item
                 rowRole="catalogRow"
                 key={machineCollectionRowKey(row)}
                 testID={row.kind === 'managed' ? `settings.machines.managed.${row.serverId}.${row.managedId}` : `settings.machines.row.${row.serverId}.${row.machineId}`}
                 title={row.titleParts.name}
                 titleQualifier={row.titleParts.hint}
-                // With no instruments chosen and nothing to say, the row is its name alone.
-                subtitle={summaryMetrics === 0 && !quietWord && !row.host ? undefined : (
+                detail={liveSummary ? undefined : railWord ?? undefined}
+                subtitle={liveSummary ? (
                     <MachineResourceLiveDemand
-                        machineKeys={[{ serverId: row.serverId, machineId: row.kind === 'machine' ? row.machineId : row.enrolledMachineId ?? '' }]}
-                        detail="summary" enabled={row.kind === 'machine' && row.online && summaryMetrics > 0} viewportRef={summaryRef}>
+                        machineKeys={[{ serverId: row.serverId, machineId: row.machineId }]}
+                        detail="summary" enabled viewportRef={summaryRef}>
                     {measure => <View ref={summaryRef} collapsable={false} onLayout={measure} style={railRowStyles.line}>
                         <MachineListRowSummary
-                            testID={`settings.machines.row.${row.serverId}.${row.kind === 'managed' ? row.managedId : row.machineId}.summary`}
+                            testID={`settings.machines.row.${row.serverId}.${row.machineId}.summary`}
                             serverId={row.serverId}
-                            machineId={row.kind === 'machine' ? row.machineId : row.enrolledMachineId ?? null}
+                            machineId={row.machineId}
                             online={row.online}
                             quietWord={quietWord}
                         />
-                        {row.host ? <Text variant="meta" numberOfLines={1} style={railRowStyles.host}>{row.host}</Text> : null}
                     </View>}
                     </MachineResourceLiveDemand>
-                )}
+                ) : undefined}
                 accessibilityLabel={[row.title, statusLine(row, true)].filter(Boolean).join(', ')}
                 icon={(
                     <HappierCollectionListMark rowRole="catalogRow">
@@ -374,13 +378,13 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
         <ThisComputerCollectionRow rail={rail} selected={rail && selectedKey === 'thisComputer'} replace={replaceConfiguration} />
     ) : null;
 
-    // Machine defaults (D21) open from the top of the list, above the machines they apply to.
+    // Machine defaults (D21) open from the top of the list, above the machines they apply to. Its name alone, as
+    // Updates and Activity beside it (owner 11-11: no value; its page says what it governs).
     const defaultsRow = (
         <Item
             rowRole="catalogRow"
             testID="settings.machines.defaults"
             title={t('managedRetention.defaults')}
-            subtitle={t('managedRetention.pageDescriptionShort')}
             icon={(
                 <HappierCollectionListMark rowRole="catalogRow">
                     <Icon name="gear" size={20} color={theme.colors.text.secondary} />
@@ -439,8 +443,6 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
     // Readable rows remain visible while a new Machine's own reserved slot waits for its name.
     const loading = (total === 0 && viewModel.isLoadingMachines) || collection.firstAnswerPending;
     const empty = !loading && total === 0;
-    // The header counts machines, the same rows its groups count; presets and retired creations are not machines.
-    const machineCount = unfiltered.machineCount;
     const managedReadFailures = readManagedMachineReadFailures(viewModel);
     const renderManagedReadFailures = () => managedReadFailures.map(group => {
         const entry = viewModel.managedInventory?.entries[group.serverId];
@@ -565,8 +567,9 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
         <>
         <CollectionList
             testID="settings.machines.rail"
+            // No header count (lab m-defaults rail): each group says how many it lists, and the fleet total (which counts
+            // archived creations' enrollments too) belongs to All machines, where it doesn't contradict visible groups.
             title={t('settings.machines')}
-            count={loading ? null : machineCount}
             headerAction={<AddMachineMenu options={addOptions} replaceInCollection={replaceConfiguration} />}
             search={searchable ? {
                 value: query,
@@ -917,7 +920,6 @@ export const MachineCollectionRail = React.memo(function MachineCollectionRail()
 
 const railRowStyles = StyleSheet.create((theme) => ({
     line: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8, minWidth: 0 },
-    host: { flexShrink: 1, minWidth: 0, color: theme.colors.text.tertiary },
 }));
 
 const stylesheet = StyleSheet.create(() => ({

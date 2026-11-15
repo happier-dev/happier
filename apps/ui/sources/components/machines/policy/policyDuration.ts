@@ -27,3 +27,16 @@ export function parsePolicyDuration(raw: string, options: Readonly<{
     return value >= options.minimum && value <= (options.maximum ?? Number.MAX_SAFE_INTEGER)
         && value % (options.step ?? 1) === 0 ? value : null;
 }
+
+const PREFILL_UNITS = [['d', MILLISECONDS.d], ['h', MILLISECONDS.h], ['min', MILLISECONDS.min], ['s', MILLISECONDS.s]] as const;
+
+/**
+ * A Custom prompt's pre-filled value in the same grammar `parsePolicyDuration` reads: the largest unit that holds the
+ * stored milliseconds exactly ("2 d", "90 min"), so a person edits a duration, never a raw millisecond count.
+ */
+export function formatPolicyDurationInput(ms: number): string {
+    const value = BigInt(Math.max(0, Math.trunc(ms)));
+    if (value === 0n) return '0 min';
+    const unit = PREFILL_UNITS.find(([, size]) => value % size === 0n);
+    return unit ? `${value / unit[1]} ${unit[0]}` : `${value} ms`;
+}

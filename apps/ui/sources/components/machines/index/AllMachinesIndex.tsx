@@ -301,16 +301,18 @@ function AllMachinesIndexBody() {
 
     // After the machines, outside their sheet (lab `rm` F leads with Needs you and the table): the person's own
     // dashboard (plan 60 AGW-19), a sheetless section whose cards keep the table's edges (lab `rw` D) and do not repeat
-    // what Needs you says; a fleet with no machine has nothing to bind it to. Then, where the machine list does not
-    // stand beside the page, the collection's configuration.
+    // what Needs you says; a fleet with no machine has nothing to bind it to.
     const fleetFirstOnline = presetMachineKey(items.find(item => item.kind === 'machine' && item.online));
     const fleetFirst = presetMachineKey(items.find(item => item.kind === 'machine'));
     const fleetOnline = items.flatMap(item => item.kind === 'machine' && item.online ? [presetMachineKey(item)!] : []).join('\n');
     const fleetPresenceLoaded = viewModel.visibleMachineGroups.every(group => group.status === 'idle');
     const fleet = React.useMemo(() => ({ firstOnline: parsePresetMachineKey(fleetFirstOnline), first: parsePresetMachineKey(fleetFirst),
         onlineKeys: fleetOnline ? fleetOnline.split('\n') : [], presenceLoaded: fleetPresenceLoaded }), [fleetFirst, fleetFirstOnline, fleetOnline, fleetPresenceLoaded]);
+    // Where no machine list stands beside the page (a phone), the collection's configuration (Defaults, the archive,
+    // pools, presets) follows the machines it governs, before the person's widgets (lab m-defaults Ap).
     const after = (
         <>
+            {besideList ? null : <MachineCollectionList variant="configuration" viewModel={viewModel} addOptions={addOptions} />}
             {items.length > 0 ? (
                 <MachineAttentionStatedAbove entries={view === 'list' ? attention.entries : cardAttentionEntries}>
                     <ItemGroup header="none" surface="none" style={stylesheet.afterMachines}>
@@ -318,7 +320,6 @@ function AllMachinesIndexBody() {
                     </ItemGroup>
                 </MachineAttentionStatedAbove>
             ) : null}
-            {besideList ? null : <MachineCollectionList variant="configuration" viewModel={viewModel} addOptions={addOptions} />}
         </>
     );
 

@@ -35,6 +35,15 @@ describe('machine page header facts', () => {
     expect(composeMachinePageHeaderFacts({ ...input, managedMeta: [] }).map(fact => fact.key)).not.toContain('host');
     expect(composeMachinePageHeaderFacts({ ...input, managedMeta: undefined })).toContainEqual({ key: 'host', text: 'lima-generated-host' });
   });
+  it('leads a created machine\'s facts with its power word, once, before its kind (lab m-detail)', () => {
+    const facts = composeMachinePageHeaderFacts({ machine: createMachineFixture(), online: false, managedPowerWord: 'Asleep',
+      managedMeta: [{ key: 'managed-kind', text: 'Lima machine' }], encryptionMode: null, replacedByMachineLabel: null });
+    expect(facts.slice(0, 2)).toEqual([
+      { key: 'presence', text: 'Asleep', testID: 'machine-detail-presence' },
+      { key: 'managed-kind', text: 'Lima machine' },
+    ]);
+    expect(facts.filter(fact => fact.text === 'Asleep')).toHaveLength(1);
+  });
   it('says whose machine it is right after presence when it is shared with you, and never for your own', () => {
     const facts = (isShared: boolean, owner: string) =>
       composeMachinePageHeaderFacts({

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { MachineResourcesPolicyState } from '@/sync/domains/machines/resources/useMachineResourcesPolicy';
 import { formatElapsedDuration } from '@/components/machines/durationWords';
-import { parsePolicyDuration } from '@/components/machines/policy/policyDuration';
+import { formatPolicyDurationInput, parsePolicyDuration } from '@/components/machines/policy/policyDuration';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -28,7 +28,7 @@ export function AgentToolsSection(props: Readonly<{ settings: MachineResourcesPo
                     : t('machineGuard.tools.milliseconds', { milliseconds: value })}
             presets={[null, 300_000, 600_000, 1_800_000]} editable={props.editable} failed={failure('idle')}
             custom={{ title: t('machineGuard.tools.customIdle.title'), body: t('machineGuard.tools.customIdle.body'), invalid: t('machineGuard.tools.customIdle.invalid'),
-                defaultValue: `${policy.toolIdleCloseMs ?? 300_000} ms`, parse: raw => parsePolicyDuration(raw, { unit: 'ms', minimum: 1000 }) }}
+                defaultValue: formatPolicyDurationInput(policy.toolIdleCloseMs ?? 300_000), parse: raw => parsePolicyDuration(raw, { unit: 'ms', minimum: 1000 }) }}
             onChange={toolIdleCloseMs => save('idle', { toolIdleCloseMs })} />
         <GuardSelectRow<number | null> testID="machine-guard-browser-limit" title={t('machineGuard.tools.browserTitle')}
             subtitle={t('machineGuard.tools.browserHelp')} label={t('machineGuard.tools.browserTitle')}

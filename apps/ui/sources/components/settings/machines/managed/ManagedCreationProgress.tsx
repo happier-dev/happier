@@ -136,6 +136,9 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
             : !observationChecks ? undefined
             : <RoundButton title={t('managedMachines.inspect.checkNow')} display="inverted" size="small"
                 loading={props.checking === true} testID="managed-machine.observation-check" onPress={checkNow} />} /> : null;
+    // With nothing to retry or check on it, the observation's time is the state row's own quiet meta, not a second row.
+    const asOfOnStateRow = machine.observation && !staleRead && !observationChecks
+        ? t('surfaceState.asOf', { time: formatAsOfTime(machine.observation.observedAt) }) : undefined;
     const installationRetry = canRetryInstallation && props.handlers?.reinstall ?
         <RoundButton title={installationActionLabel} display="secondary" size="small"
             testID="managed-machine.installation-retry" onPress={props.handlers.reinstall} /> : undefined;
@@ -189,13 +192,16 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
                 mark={props.mark ?? <Icon name="desktop" />}
                 state={state} provider={props.provider} handlers={props.handlers ?? {}}
                 pendingAction={props.starting ? 'start' : props.checking ? 'checkNow' : undefined}
+                // A joined machine's header already says its power word (`managedMachineHeaderPresence`).
+                leadWithLine={Boolean(machine.enrolledMachineId)}
+                {...(asOfOnStateRow ? { asOf: asOfOnStateRow } : {})}
                 ended={machine.allocation === 'confirmed-absent'} testID="managed-machine.progress" />
             {/* Without an operation to report, the install is a step of this same resource, not a second copy of its row. */}
             {installationRetryOnly && !failure ? <Item title={t('managedMachines.creation.install')} mode="info" showChevron={false}
                 testID="managed-machine.installation" rightElement={installationRetry} /> : null}
             {mayBill && machine.allocation !== 'confirmed-absent' && (machine.allocation === 'may-exist' || machine.cleanup) ? <Item title={t('managedMachines.creation.mayBill')}
                 mode="info" showChevron={false} titleLines={0} testID="managed-machine.possible-cost" /> : null}
-            {observationRow}
+            {asOfOnStateRow ? null : observationRow}
         </ItemGroup> : observationRow && !operationTells && (staleRead || observationChecks) ? <ItemGroup>{observationRow}</ItemGroup> : null}
         {needsRecovery && (machine.resource || machine.recovery) ? <ItemGroup title={t('managedMachines.detail.recoveryTitle')} testID="managed-machine.recovery">
             {machine.resource ? <Item title={t('managedMachines.detail.nativeIdentity')} mode="info" showChevron={false}

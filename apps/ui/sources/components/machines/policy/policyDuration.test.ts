@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { parseCustomGuardGrace, parseCustomGuardMinutes } from '../guard/guardPresentation';
 import { parseCustomStorageDays } from '../storage/storageTidyChoices';
 import { parseCustomSustainMinutes } from '../vitals/machineAlertsPresentation';
-import { parsePolicyDuration } from './policyDuration';
+import { formatPolicyDurationInput, parsePolicyDuration } from './policyDuration';
 
 describe('machine Custom duration input', () => {
     it('requires an explicit unit on every duration field', () => {
@@ -41,6 +41,17 @@ describe('machine Custom duration input', () => {
     it('retains the existing unit aliases', () => {
         for (const suffix of ['s', 'sec', 'secs', 'second', 'seconds', 'm', 'min', 'mins', 'minute', 'minutes', 'h', 'hour', 'hours', 'd', 'day', 'days']) {
             expect(parsePolicyDuration(`1 ${suffix}`, { unit: 'ms', minimum: 0 })).not.toBeNull();
+        }
+    });
+
+    it('pre-fills a Custom prompt with the largest exact unit, which parses back to the same value', () => {
+        expect(formatPolicyDurationInput(172_800_000)).toBe('2 d');
+        expect(formatPolicyDurationInput(5_400_000)).toBe('90 min');
+        expect(formatPolicyDurationInput(3_600_000)).toBe('1 h');
+        expect(formatPolicyDurationInput(1_500)).toBe('1500 ms');
+        expect(formatPolicyDurationInput(0)).toBe('0 min');
+        for (const ms of [0, 1_500, 30_000, 5_400_000, 172_800_000]) {
+            expect(parsePolicyDuration(formatPolicyDurationInput(ms), { unit: 'ms', minimum: 0 })).toBe(ms);
         }
     });
 });

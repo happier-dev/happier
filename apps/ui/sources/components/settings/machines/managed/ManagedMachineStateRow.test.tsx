@@ -21,6 +21,22 @@ afterEach(() => standardCleanup());
 const { ManagedCreationProgress } = await import('./ManagedCreationProgress');
 // Pages render under the app shell, which owns the Account's one Investigate owner (D5).
 const { AccountNoticeInvestigationBoundary } = await import('@/hooks/inbox/AccountNoticeInvestigationProvider');
+/** The state row's own row (its owner component carries the same testID but no title). */
+async function stateRowItem(screen: Awaited<ReturnType<typeof renderTestScreen>>) {
+  return screen.tree.findAll(node => typeof node.type !== 'string' && node.props.testID === 'managed-machine.progress'
+    && 'title' in node.props && 'subtitle' in node.props)[0];
+}
+
+/** Freshness that has nothing to retry or check is the state row's own meta, never a second row. */
+async function expectFreshnessOnStateRow(screen: Awaited<ReturnType<typeof renderTestScreen>>) {
+  const { t } = await import('@/text');
+  expect(screen.tree.findAll(node => typeof node.type === 'string' && node.props.testID === 'managed-machine.observation')).toHaveLength(0);
+  // A tinted cause renders its line as text runs; a plain line is the row's subtitle string.
+  const subtitle = (await stateRowItem(screen))?.props.subtitle;
+  expect(subtitle).toBeTruthy();
+  expect(typeof subtitle === 'string' ? subtitle : screen.getTextContent()).toContain(t('surfaceState.asOf', { time: '' }).trim());
+}
+
 const renderScreen: typeof renderTestScreen = (element, options = {}) => renderTestScreen(element, { ...options,
     wrapper: ({ children }) => <AccountNoticeInvestigationBoundary>{children}</AccountNoticeInvestigationBoundary> });
 
@@ -298,7 +314,7 @@ describe('created machine resource rows (UIR5)', () => {
     const machine = await boundMachine();
     const checkNow = vi.fn();
     const screen = await renderScreen(<ManagedCreationProgress machine={machine} handlers={{ checkNow }} />);
-    expect(testIds(screen, 'managed-machine.observation')).toHaveLength(1);
+    await expectFreshnessOnStateRow(screen);
     expect(testIds(screen, 'managed-machine.observation-check')).toHaveLength(0);
     expect(testIds(screen, 'managed-machine.progress:checkNow')).toHaveLength(1);
     expect(screen.findByTestId('managed-machine.progress:checkNow')?.props.accessibilityState?.busy).toBe(false);
@@ -311,7 +327,7 @@ describe('created machine resource rows (UIR5)', () => {
     const healthy = await renderScreen(<ManagedCreationProgress machine={await boundMachine({ enrolledMachineId: undefined,
       observation: { observedAt: 5, availability: 'present', power: 'running', storage: 'retained' } })}
       handlers={{ checkNow }} />);
-    expect(testIds(healthy, 'managed-machine.observation')).toHaveLength(1);
+    await expectFreshnessOnStateRow(healthy);
     expect(testIds(healthy, 'managed-machine.observation-check')).toHaveLength(0);
     expect(testIds(healthy, 'managed-machine.progress:checkNow')).toHaveLength(1);
     await healthy.pressByTestIdAsync('managed-machine.progress:checkNow');
@@ -333,7 +349,10 @@ describe('created machine resource rows (UIR5)', () => {
     const machine = await boundMachine({ observation: { observedAt: 5, availability: 'present', power: 'stopped', storage: 'retained' } });
     const screen = await renderScreen(<ManagedCreationProgress machine={machine} handlers={{ start }} />);
     expect(testIds(screen, 'managed-machine.progress:start')).toHaveLength(1);
-    expect(testIds(screen, 'managed-machine.observation')).toHaveLength(1);
+    await expectFreshnessOnStateRow(screen);
+    // The header already says Asleep: the joined machine's row leads with its line, never the word again.
+    const { t: translate } = await import('@/text');
+    expect((await stateRowItem(screen))?.props.title).toBe(translate('managedPower.stoppedStorage'));
     await screen.update(<ManagedCreationProgress machine={machine} handlers={{ start }} starting />);
     expect(screen.findByTestId('managed-machine.progress:start')?.props.accessibilityState?.busy).toBe(true);
     await screen.update(<ManagedCreationProgress machine={machine} handlers={{ start }} starting={false} />);
@@ -435,6 +454,6 @@ describe('created machine resource rows (UIR5)', () => {
     expect(testIds(screen, 'managed-machine.progress')).toHaveLength(1);
     expect(screen.getTextContent()).toContain(t(stateKey));
     expect(screen.getTextContent()).not.toContain(label);
-    expect(testIds(screen, 'managed-machine.observation')).toHaveLength(1);
+    await expectFreshnessOnStateRow(screen);
   });
 });
