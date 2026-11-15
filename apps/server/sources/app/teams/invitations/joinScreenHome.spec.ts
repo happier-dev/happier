@@ -57,6 +57,27 @@ describe('resolveTeamJoinLinkTarget', () => {
     });
   });
 
+  it('renders links at the web app the Home reports, its default included, when no address is set', async () => {
+    // Reach names the default web app as where this Home's links open; mail must build its links there
+    // too rather than calling the same Home linkless.
+    const result = await resolveTeamJoinLinkTarget(
+      {},
+      {
+        read: async () => null,
+        write: async () => ({ status: 'unchanged' as const, continuity: { revision: 1, contentKey: 'v1:n:' + 'a'.repeat(64) } }),
+      },
+      async () => ({
+        v: 1,
+        homeServerIdentityId: 'home-identity-1',
+        canonicalServerUrl: 'https://home.example.test',
+        revision: 1,
+        endpoints: [{ kind: 'https', url: 'https://home.example.test' }],
+      }),
+    );
+    expect(result.applicationOrigin).toBe('https://cloud.happier.dev');
+    expect(result.serverId).toBe('home-identity-1');
+  });
+
   it('fails closed when descriptor publication is unavailable', async () => {
     const result = await resolveTeamJoinLinkTarget(
       { HAPPIER_WEBAPP_URL: 'https://app.example.test' },

@@ -1,7 +1,7 @@
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import {
     resolveConfiguredCanonicalServerUrl,
-    resolveEffectiveWebappUrl,
+    resolveEffectiveWebappBaseUrl,
 } from "@/app/serverUrls/effectiveServerUrls";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 import { isPersonalHomeRuntimePurpose } from '@/app/runtime/personalHomeRuntimePurpose';
@@ -105,8 +105,9 @@ export async function resolveTeamJoinLinkTarget(
     homeTarget: string | null;
     serverId: string | null;
 }>> {
-    const applicationOrigin = resolveEffectiveWebappUrl(env) ?? null;
-    if (!applicationOrigin || !continuityStore) {
+    // The web app the Home reports in Reach, its default included: one answer for where links open.
+    const applicationOrigin = resolveEffectiveWebappBaseUrl(env);
+    if (!continuityStore) {
         return { applicationOrigin: null, homeTarget: null, serverId: null };
     }
     let descriptor: HomeConnectionDescriptorV1 | undefined;
