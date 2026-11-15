@@ -23,6 +23,7 @@ import { linkEntryToSession, unlinkEntryFromSession, type TriageEntrySessionLink
 import { readTriageSessionLinksPageV1, readTriageSessionLinksForEntriesV1, readTriageSessionLinksForSessionsV1 } from './readEntrySessionLinks.js';
 import { INTERNAL_TASK_SOURCE_RECORD_V1, isInternalTaskConfiguredInstanceV1 } from '../internalTasks/configuration.js';
 import { isInternalTaskReferenceV1 } from '../internalTasks/identity.js';
+import { INTERNAL_TASK_DESCRIPTOR_V1 } from '../internalTasks/contribution.js';
 import { readInternalTaskSessionLinks, type TaskList } from '../internalTasks/source.js';
 
 export type TriageSourceSessionLinkV1 = Readonly<{
@@ -50,7 +51,7 @@ function sourceRelationKinds(source: TriageAdmittedSourceV1): readonly string[] 
 type RelationSelection = Readonly<{ entryRef?: TriageEntryRefV1; sourceInstanceId?: string; sessionId?: string; sessionIds?: readonly string[]; kindId?: string }>;
 type RelationLaneIdentity = Pick<TriageSourceSessionLinksLaneV1, 'source' | 'sourceInstanceId' | 'displayLabel'>;
 type RelationScope =
-    | Readonly<{ kind: 'ready'; row: CorpusSourceInstanceRowV1; source: TriageAdmittedSourceV1; lane: RelationLaneIdentity;
+    | Readonly<{ kind: 'ready'; row: CorpusSourceInstanceRowV1; source: TriageAdmittedSourceV1 | undefined; lane: RelationLaneIdentity;
         roleKinds: readonly string[]; fallbackKinds: readonly string[] }>
     | Readonly<{ kind: 'diagnostic'; lane: RelationLaneIdentity; health: TriageSourceSessionLinksLaneV1['health'] }>;
 
@@ -173,14 +174,16 @@ export function createTriageSourceSessionRelations(
                 displayLabel: row.configured.locator?.displayLabel ?? source?.descriptor.displayName ?? row.sourceQualifiedId };
             if (row.sourceQualifiedId !== renderSourceQualifiedId(lane.source)) return { kind: 'diagnostic', lane,
                 health: { kind: 'failed', failure: { class: 'unsupportedContract', code: 'sourceIdentityMismatch' } } };
-            if (source === undefined) return { kind: 'diagnostic', lane, health: {
+            // Native task relations are Account data, not a daemon operation.
+            const descriptor = isInternalTaskConfiguredInstanceV1(row.configured) ? INTERNAL_TASK_DESCRIPTOR_V1 : source?.descriptor;
+            if (descriptor === undefined) return { kind: 'diagnostic', lane, health: {
                 kind: 'failed', failure: { class: 'unsupportedContract', code: 'sessionLinksSourceNotAdmitted' },
             } };
             const requestedKind = input.entryRef?.kindId ?? input.kindId;
-            const requestedKinds = source.descriptor.kinds.map(kind => kind.id).filter(kindId => requestedKind === undefined || requestedKind === kindId);
+            const requestedKinds = descriptor.kinds.map(kind => kind.id).filter(kindId => requestedKind === undefined || requestedKind === kindId);
             if (requestedKinds.length === 0) return { kind: 'diagnostic', lane,
                 health: { kind: 'failed', failure: { class: 'unsupportedContract', code: 'sessionLinksKindUnsupported' } } };
-            const ownedKinds = sourceRelationKinds(source);
+            const ownedKinds = source === undefined ? descriptor.sessionRelations?.kindIds ?? [] : sourceRelationKinds(source);
             return { kind: 'ready', row, source, lane, roleKinds: requestedKinds.filter(kindId => ownedKinds.includes(kindId)),
                 fallbackKinds: requestedKinds.filter(kindId => !ownedKinds.includes(kindId)) };
         });
@@ -288,7 +291,8 @@ export function createTriageSourceSessionRelations(
                 if (roleKinds.length === 0) continue;
                 const roleLane = { ...lane, kindIds: roleKinds };
                 const operation = source?.operations?.readSessionLinks;
-                if (operation === undefined || source.operations?.linkSession === undefined) {
+                const nativeAccountRead = isInternalTaskConfiguredInstanceV1(row.configured);
+                if (!nativeAccountRead && (operation === undefined || source?.operations?.linkSession === undefined)) {
                     lanes.push({ ...roleLane, health: { kind: 'failed', failure: { class: 'unsupportedContract', code: 'sessionLinksRolesUnsupported' } } });
                     continue;
                 }
@@ -299,9 +303,9 @@ export function createTriageSourceSessionRelations(
                         ...(entry === undefined ? {} : { localRef: { kindId: entry.kindId, collisionScope: entry.collisionScope, entryId: entry.entryId } }),
                         ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
                     } as const;
-                    const parsed = TriageSourceReadSessionLinksResultV1Schema.safeParse(readTaskList !== undefined && isInternalTaskConfiguredInstanceV1(row.configured)
-                        ? await readInternalTaskSessionLinks(sourceInput, context, await readTaskList())
-                        : await context.services.actions.executeAdmittedTargetedOperation(operation, sourceInput, options));
+                    const parsed = TriageSourceReadSessionLinksResultV1Schema.safeParse(nativeAccountRead
+                        ? await readInternalTaskSessionLinks(sourceInput, context, await readTaskList?.())
+                        : await context.services.actions.executeAdmittedTargetedOperation(operation!, sourceInput, options));
                     if (!parsed.success) {
                         lanes.push({ ...roleLane, health: { kind: 'failed', failure: { class: 'unsupportedContract', code: 'sessionLinksInvalidResult' } } });
                         continue;

@@ -61,8 +61,8 @@ export async function observeTriageSourceSessionLinks(
                 for (const scope of selectedScopes) {
                     if (controller.signal.aborted || disposed) break;
                     if (scope.kind !== 'ready' || scope.roleKinds.length === 0) continue;
-                    const operation = scope.source.operations?.readSessionLinks;
-                    if (operation === undefined || scope.source.operations?.linkSession === undefined) continue;
+                    const operation = scope.source?.operations?.readSessionLinks;
+                    if (operation === undefined || scope.source?.operations?.linkSession === undefined) continue;
                     const entry = 'entryRef' in selection ? selection.entryRef : undefined;
                     try {
                         const observation = await context.services.actions.observeAdmittedTargetedOperation(operation, {
