@@ -1,13 +1,8 @@
-import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
-import { readObservedAccountEncryptionCurrentnessWitness } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { randomBytes } from 'node:crypto';
 import { backfillAutomationManagedTargetsV1 } from '@happier-dev/protocol/actions/executor/workflowTriggerAccountHost';
 import { listAutomationDefinitionDetails, updateAutomationDefinition } from '@/api/automations';
-import {
-  createAutomationAccountEncryptionMaterialSnapshotV1,
-  resolveValidatedAutomationAccountEncryptionV1,
-} from '@/plugins/runtime/automations/automationAccountCurrentness';
+import { resolveAutomationWorkerAccountEncryption } from '@/plugins/runtime/automations/automationAccountCurrentness';
 import { createAutomationAssignmentCache } from './automationAssignmentCache';
 import { createAutomationRunLifecycleObservers } from './automationRunLifecycleObservers';
 import {
@@ -54,31 +49,6 @@ export type AutomationWorkerHandle = Readonly<{
   pause: () => void;
   resume: () => void;
 }>;
-
-/** One daemon Account-currentness/material owner shared by Automation execution and Workflow preflight. */
-export async function resolveAutomationWorkerAccountEncryption(params: Readonly<{
-  token: string;
-  credentials?: StoredCredentials;
-  signal?: AbortSignal;
-}>) {
-  const controller = params.signal ? null : new AbortController();
-  const signal = params.signal ?? controller!.signal;
-  return await resolveValidatedAutomationAccountEncryptionV1({
-    signal,
-    resolveAccountEncryptionCurrentness: async (currentnessSignal) =>
-      await (readObservedAccountEncryptionCurrentnessWitness({ token: params.token,
-        serverBaseUrl: resolveServerHttpBaseUrl(), ...(currentnessSignal ? { signal: currentnessSignal } : {}) })
-        ?? fetchAccountEncryptionCurrentness({ token: params.token,
-          ...(params.credentials ? { credentials: params.credentials } : {}),
-          ...(currentnessSignal ? { signal: currentnessSignal } : {}),
-        })),
-    resolveAccountEncryptionMaterial: async () => (
-      params.credentials
-        ? createAutomationAccountEncryptionMaterialSnapshotV1(params.credentials)
-        : null
-    ),
-  });
-}
 
 function toClaimableRunPayload(claimResult: AutomationClaimRunResponse): ClaimableRunPayload | null {
   if (claimResult.run === null) {

@@ -30,7 +30,7 @@ import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { captureServerHttpBaseUrl, resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { configuration } from '@/configuration';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
-import { resolveAutomationWorkerAccountEncryption } from '@/daemon/automation/automationWorker';
+import { resolveAutomationWorkerAccountEncryption } from '@/plugins/runtime/automations/automationAccountCurrentness';
 import {
   acquireAuthoritativePluginRuntimeRegistryLease,
   readAuthoritativePluginSlotOccurrence,

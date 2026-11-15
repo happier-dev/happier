@@ -20,7 +20,8 @@ import type { RequesterWorkAttributionV1 } from '@happier-dev/protocol/machines/
 import { SessionTurnsProjectionV1Schema, buildSessionTurnsProjectionV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import { createWorkflowRunActionOwner } from '../../../../apps/cli/src/session/actions/workflowRunActions';
 import { createAutomationClaimClient } from '../../../../apps/cli/src/daemon/automation/automationClaimClient';
-import { resolveAutomationWorkerAccountEncryption, startAutomationWorker } from '../../../../apps/cli/src/daemon/automation/automationWorker';
+import { startAutomationWorker } from '../../../../apps/cli/src/daemon/automation/automationWorker';
+import { resolveAutomationWorkerAccountEncryption } from '../../../../apps/cli/src/plugins/runtime/automations/automationAccountCurrentness';
 import { createCliWorkflowTriggerActions } from '../../../../apps/cli/src/session/actions/workflowTriggers';
 import { createWorkflowRequesterCustody, listWorkflowRequesterCredentialScopes, reconcileWorkflowRequesterCredentialScope,
     retainWorkflowRequesterCredentials } from '../../../../apps/cli/src/daemon/workflows/requesterCustody';

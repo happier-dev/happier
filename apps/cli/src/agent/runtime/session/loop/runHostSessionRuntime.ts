@@ -66,7 +66,7 @@ import { createWorkflowRunStorageClient } from '@/daemon/workflows/workflowRunSt
 import { readAppliedParentConnectedServices } from '@/daemon/controlClient';
 import type { ExecutionRunAppliedParentSelection } from '@/agent/runtime/bridges/executionRun/runtime/openInputs';
 import { filterSuppressedConnectedServiceBindings } from '@/providers/spawn/authorize';
-import { resolveAutomationWorkerAccountEncryption } from '@/daemon/automation/automationWorker';
+import { resolveAutomationWorkerAccountEncryption } from '@/plugins/runtime/automations/automationAccountCurrentness';
 import { findTranscriptEncryptedMessageByLocalIdV2 } from '@/api/session/transcriptMessageLookup';
 import { openSessionMessageContent } from '@/session/transport/encryption/sessionEncryptionContext';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';

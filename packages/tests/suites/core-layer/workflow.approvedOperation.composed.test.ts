@@ -62,7 +62,8 @@ import { createCliApprovalsArtifactStore } from '../../../../apps/cli/src/sessio
 import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalActionTargetResolver } from '../../../../apps/cli/src/daemon/externalActions/daemonExternalActionTargetResolver';
 import { runWithServerHttpBaseUrl } from '../../../../apps/cli/src/api/client/serverHttpBaseUrl';
 import { readHttpStatus } from '../../../../apps/cli/src/api/client/httpStatusError';
-import { resolveAutomationWorkerAccountEncryption, startAutomationWorker } from '../../../../apps/cli/src/daemon/automation/automationWorker';
+import { startAutomationWorker } from '../../../../apps/cli/src/daemon/automation/automationWorker';
+import { resolveAutomationWorkerAccountEncryption } from '../../../../apps/cli/src/plugins/runtime/automations/automationAccountCurrentness';
 import { prepareExternalActionRequesterAccountAuthorization, prepareExternalActionRequesterAccountAuthorizationWithEnvelope,
     dispatchOriginalAccountAction,
     projectExternalActionRequesterHttpAuthorization,

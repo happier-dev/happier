@@ -26,7 +26,8 @@ import { automationAccountCurrentnessSelect, deriveAutomationAccountCurrentnessW
 import { createProductionWorkflowRunCoordinator } from '../../cli/src/daemon/workflows/production';
 import { createWorkflowAcceptedAuthorizationCurrentness } from '../../cli/src/daemon/workflows/daemonRuntime';
 import { createWorkflowRunStorageClient } from '../../cli/src/daemon/workflows/workflowRunStorageClient';
-import { startAutomationWorker, resolveAutomationWorkerAccountEncryption } from '../../cli/src/daemon/automation/automationWorker';
+import { startAutomationWorker } from '../../cli/src/daemon/automation/automationWorker';
+import { resolveAutomationWorkerAccountEncryption } from '../../cli/src/plugins/runtime/automations/automationAccountCurrentness';
 import { preflightWorkflowSessionInputAdmissionV2 } from '../../cli/src/daemon/workflows/stepExecution';
 import { createCliActionExecutorFromCredentials } from '../../cli/src/session/actions/createCliActionExecutorFromCredentials';
 import { createGitWorkflowWorkspaceTestDependencies } from '../../cli/src/daemon/workflows/workflowWorkspace.testkit';

@@ -58,12 +58,10 @@ import { CLI_UPDATE_SYSTEM_TASK_KIND, createCliUpdateRemoteTaskKind } from './ki
 import { readCliUpdateFactsForThisCli } from '@/cli/runtime/update/cliUpdateFacts';
 import { projectPath } from '@/projectPath';
 import { configuration } from '@/configuration';
-import { readDaemonStatusSnapshot } from '@/daemon/statusSnapshot';
-import { runDaemonServiceCommands } from '@/daemon/service/apply';
-import { resolveDaemonServiceCliRuntimeFromEnv } from '@/daemon/service/cli';
-import { planDaemonServiceLifecycle, type DaemonServiceLifecycleAction } from '@/daemon/service/plan';
+import type { DaemonServiceLifecycleAction } from '@/daemon/service/plan';
 
 async function readLiveDaemonServiceStatusSnapshot(_params: DaemonServiceTaskParams): Promise<DaemonServiceStatusSnapshot> {
+  const { readDaemonStatusSnapshot } = await import('@/daemon/statusSnapshot');
   const status = await readDaemonStatusSnapshot();
   return {
     serviceInstalled: status.service.installed === true,
@@ -80,6 +78,10 @@ async function readLiveDaemonServiceStatusSnapshot(_params: DaemonServiceTaskPar
 }
 
 async function runLiveDaemonServiceLifecycleAction(_params: DaemonServiceTaskParams, action: Exclude<DaemonServiceLifecycleAction, 'status'>): Promise<void> {
+  // Service install/uninstall planning loads only when a lifecycle task runs (never in a Session host start).
+  const [{ resolveDaemonServiceCliRuntimeFromEnv }, { planDaemonServiceLifecycle }, { runDaemonServiceCommands }] = await Promise.all([
+    import('@/daemon/service/cli'), import('@/daemon/service/plan'), import('@/daemon/service/apply'),
+  ]);
   const runtime = resolveDaemonServiceCliRuntimeFromEnv({ mode: 'user' });
   const plan = planDaemonServiceLifecycle({
     platform: runtime.platform,

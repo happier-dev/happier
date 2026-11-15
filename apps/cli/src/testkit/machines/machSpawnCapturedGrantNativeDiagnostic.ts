@@ -61,7 +61,7 @@ import { createProductionDaemonWorkflowRuntime } from '@/daemon/workflows/daemon
 import { createPlainWorkflowRunKeyCensusFixture, createWorkflowRunStorageTestkit, type WorkflowRunStorageTestkitOperation } from '@/daemon/workflows/workflowRunStorage.testkit';
 import type { WorkflowClaimForCoordination } from '@/daemon/workflows/worker';
 import { projectAutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
-import { resolveAutomationWorkerAccountEncryption } from '@/daemon/automation/automationWorker';
+import { resolveAutomationWorkerAccountEncryption } from '@/plugins/runtime/automations/automationAccountCurrentness';
 import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { createWorkflowRunMachineTransport } from '@/daemon/workflows/workflowMachineTransport';
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';

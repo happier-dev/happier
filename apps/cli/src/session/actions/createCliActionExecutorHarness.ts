@@ -30,7 +30,7 @@ import { consumeDeferredCliApprovalResult, subscribeCliApprovalChanges, type Cli
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
 import { createLiveCliApprovalOrigin } from './approvals/liveOrigin';
-import { carriesNativeConfirmation } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { carriesNativeConfirmation } from '@/daemon/actionOperations/nativeConfirmation';
 import type { ArtifactRequestAuthorizationHeaders } from '@/api/artifacts/accountArtifactStore';
 import { createCliApprovalsArtifactStore } from './approvals/artifactStore';
 import { resolveExternalActionServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';

@@ -15,7 +15,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { acquireRequesterAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
-import { resolveAutomationWorkerAccountEncryption } from '@/daemon/automation/automationWorker';
+import { resolveAutomationWorkerAccountEncryption } from '@/plugins/runtime/automations/automationAccountCurrentness';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 describe('Action operation snapshot producer compatibility', () => {

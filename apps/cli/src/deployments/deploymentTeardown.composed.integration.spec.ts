@@ -44,7 +44,7 @@ import { registerWorkflowRunStorageRoutes } from '../../../server/sources/app/ap
 import { createS0DeploymentDaemonIngress } from './deploymentDaemonIngress.testkit';
 import { createProductionDaemonWorkflowRuntime } from '@/daemon/workflows/daemonRuntime';
 import { createAutomationClaimClient } from '@/daemon/automation/automationClaimClient';
-import { resolveAutomationWorkerAccountEncryption } from '@/daemon/automation/automationWorker';
+import { resolveAutomationWorkerAccountEncryption } from '@/plugins/runtime/automations/automationAccountCurrentness';
 import { createWorkflowRunStorageClient } from '@/daemon/workflows/workflowRunStorageClient';
 import { materializeWorkflowAcceptedSnapshotV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1,
     serializeWorkflowStoredContentEnvelopeV1, WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows';

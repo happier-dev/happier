@@ -60,7 +60,7 @@ import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportD
 import { createProductionDaemonWorkflowRuntime } from '@/daemon/workflows/daemonRuntime';
 import { createWorkflowRunStorageTestkit, type WorkflowRunStorageTestkitOperation } from '@/daemon/workflows/workflowRunStorage.testkit';
 import type { WorkflowClaimForCoordination } from '@/daemon/workflows/worker';
-import { resolveAutomationWorkerAccountEncryption } from '@/daemon/automation/automationWorker';
+import { resolveAutomationWorkerAccountEncryption } from '@/plugins/runtime/automations/automationAccountCurrentness';
 import { createWorkflowRunMachineTransport } from '@/daemon/workflows/workflowMachineTransport';
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { logger } from '@/ui/logger';

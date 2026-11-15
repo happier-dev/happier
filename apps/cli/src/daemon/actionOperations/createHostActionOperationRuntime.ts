@@ -32,13 +32,8 @@ import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/cry
 import { isDeploymentTargetLinkActionIdV1, DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { MachineServiceAdoptInputV1Schema } from '@happier-dev/protocol/local/services/adoptionV1';
 import { ProjectOpenReceiptPersistenceError, type ProjectOpenReceiptPersistence } from './projectOpenReceiptPersistence';
+import { carriesNativeConfirmation, type ConfirmationContext } from './nativeConfirmation';
 
-type ConfirmationContext = Pick<ActionExecutorContext, 'presentUserConfirmation' | 'externalActionExecutionAuthorization' | 'approvedActionReplay'>;
-
-export function carriesNativeConfirmation(actionId: string, context?: ConfirmationContext): boolean {
-  return Boolean(context?.externalActionExecutionAuthorization && context.presentUserConfirmation?.inputDigest
-    && context.presentUserConfirmation.actionId === actionId);
-}
 
 export type PendingDeploymentObservationRequest = Readonly<{
   input: DeploymentDeployIntentInputV1;
