@@ -10,7 +10,7 @@ import { buildTerminalHostProbeHandleFromMetadata } from '@/terminal/runtime/ter
 import { incompleteStopSession, type StopSessionResult } from './stopSessionContract';
 import { verifySessionMetadataMutationCurrentness, type SessionMetadataMutationCurrentness } from '@/session/metadata/updateSessionMetadataWithRetry';
 import type { TerminalControlServiceabilityRetirementTarget } from './retireTerminalControlServiceability';
-import { readRetiredPlainRunnerObservation } from './plainRunnerRetirement';
+import { isUnrecordedPlainRunner, readRetiredPlainRunnerObservation } from './plainRunnerRetirement';
 import { readTerminalHostAttachmentState } from '@/terminal/attachment/terminalAttachmentInfo';
 import { configuration } from '@/configuration';
 
@@ -68,14 +68,10 @@ export async function recoverStrandedTerminalControlServiceability(params: Reado
     let target: TerminalControlServiceabilityRetirementTarget;
     if (typeof pid !== 'number' || !Number.isSafeInteger(pid) || pid <= 0) {
       const expectedPlainRetirement = readRetiredPlainRunnerObservation(metadata);
-      // Failed startup can leave an inactive Session before any runner or
-      // control projection exists. There is nothing to retire in that case.
-      const inactiveWithoutRunner = rawSession.active === false
-        && pid === undefined && metadata.hostProcessStartTimeMs === undefined
-        && (metadata.terminal === undefined
-          || parsedTerminal.success && parsedTerminal.data.controlServiceabilityV1 === undefined);
-      if (expectedPlainRetirement === null && !inactiveWithoutRunner) return incompleteStopSession('missing_topology_proof');
-      if (params.stoppedAt === undefined || expectedPlainRetirement === null) {
+      // The server's active bit can outlive the runner. Explicit Stop settles
+      // these records through the same writer, without requiring a newer exit projection.
+      if (expectedPlainRetirement === null && !isUnrecordedPlainRunner(metadata)) return incompleteStopSession('missing_topology_proof');
+      if (params.stoppedAt === undefined) {
         const attachment = await readTerminalHostAttachmentState({
           happyHomeDir: configuration.happyHomeDir, sessionId: params.sessionId,
         });

@@ -12173,6 +12173,13 @@ retained preview record or compatibility adapter is introduced. The inspected
 
 ## Session Stop failure diagnostics (unreleased 0.3)
 
+The owning daemon also settles explicit Stop for untracked plain Sessions whose
+runner tuple and control projection are absent, including older Voice carriers.
+The existing retirement writer persists the stopped lifecycle after checking
+that no terminal attachment remains; a replacement runner or projection prevents
+retiring that replacement. A retained server `active` bit alone does not require
+a historical exit projection. This changes no wire or persisted metadata shape.
+
 Incomplete daemon Stop receipts optionally retain the existing sanitized Action
 `failureCause` and `effectAttempted` facts. The native receipt remains closed;
 its nested cause uses the existing closed Action diagnostic schema. The command

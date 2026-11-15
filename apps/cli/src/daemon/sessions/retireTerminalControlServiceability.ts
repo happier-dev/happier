@@ -14,13 +14,14 @@ import type { TrackedSession } from '../types';
 import { resolveTrackedSessionRunnerIdentity } from './sessionReportCorrelation';
 
 import { clearTerminalControlServiceabilityProjection } from '../startup/terminalControlServiceabilityProjection';
-import { readRetiredPlainRunnerObservation } from './plainRunnerRetirement';
+import { isUnrecordedPlainRunner, readRetiredPlainRunnerObservation } from './plainRunnerRetirement';
 
 export type ExactTerminalControlServiceabilityRetirement = 'retired' | 'superseded';
 export type RetainedPlainRunnerRetirement = ExactTerminalControlServiceabilityRetirement | 'deferred';
 export type TerminalControlServiceabilityRetirementTarget = Readonly<{ attachmentId: string; terminalMode: TerminalMode; expectedRunner?: never; expectedPlainRetirement?: never }>
     | Readonly<{ attachmentId?: never; terminalMode: 'plain'; expectedRunner: Readonly<{ pid: number; startTimeMs?: number; sessionEndObserved?: Promise<void> }>; expectedPlainRetirement?: never }>
-    | Readonly<{ attachmentId?: never; terminalMode: 'plain'; expectedRunner?: never; expectedPlainRetirement: number }>;
+    // null selects an unrecorded plain runner; a number selects a retained exit observation.
+    | Readonly<{ attachmentId?: never; terminalMode: 'plain'; expectedRunner?: never; expectedPlainRetirement: number | null }>;
 
 /** The existing marker is the recovery obligation; a live or unrecorded runner cannot defer publication. */
 export async function readRetainedPlainRunnerExitMarker(tracked: TrackedSession): Promise<DaemonSessionMarker | null> {
@@ -69,6 +70,7 @@ export async function retireExactTerminalControlServiceability(params: Readonly<
 }> & TerminalControlServiceabilityRetirementTarget): Promise<ExactTerminalControlServiceabilityRetirement> {
     const matchesRetirementTarget = (metadata: Readonly<Record<string, unknown>>) => {
         if (params.expectedPlainRetirement !== undefined) {
+            if (params.expectedPlainRetirement === null) return isUnrecordedPlainRunner(metadata);
             return readRetiredPlainRunnerObservation(metadata) === params.expectedPlainRetirement;
         }
         if (!params.expectedRunner) return true;
@@ -139,10 +141,10 @@ export async function retireExactTerminalControlServiceability(params: Readonly<
                 // historical host projection. A current descriptor or a newer
                 // metadata runner cannot lend authority to this mutation.
                 const terminal = metadata.terminal;
-                // A mode-only terminal descriptor already has no control projection.
-                // Retain the incumbent legacy path when terminal metadata is absent.
-                if (terminal && typeof terminal === 'object' && !Array.isArray(terminal)
-                    && !('controlServiceabilityV1' in terminal)) {
+                // An unrecorded runner or mode-only descriptor has no projection
+                // to clear. Explicit Stop only needs to publish its lifecycle.
+                if (params.expectedPlainRetirement === null || (terminal && typeof terminal === 'object' && !Array.isArray(terminal)
+                    && !('controlServiceabilityV1' in terminal))) {
                     projectionAlreadyAbsent = true;
                     return withStoppedLifecycle(metadata);
                 }

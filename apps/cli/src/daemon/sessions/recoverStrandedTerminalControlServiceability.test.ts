@@ -68,29 +68,31 @@ function params(input: Readonly<{
 describe('recoverStrandedTerminalControlServiceability', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it.each(['retired', 'unproven', 'replacement', 'replacement observation', 'failed-start', 'archived-failed-start', 'inactive-live-runner'] as const)(
+  it.each(['retired', 'unproven', 'unproven-plain', 'unproven-replacement', 'replacement', 'replacement observation', 'failed-start', 'archived-failed-start', 'inactive-live-runner'] as const)(
     'settles Stop from current plain runner evidence (%s)', async state => {
       await withConfiguredDaemonTestHome({ prefix: 'stop-topology-' }, async ({ homeDir }) => {
         const failedStart = state === 'failed-start' || state === 'archived-failed-start';
+        const unrecorded = state === 'unproven' || state === 'unproven-plain' || state === 'unproven-replacement';
         const base = { ...createTestMetadata({ machineId: 'machine-current' }),
           systemSessionV1: SessionSystemSessionV1Schema.parse({ v: 1, key: 'voice_conversation', hidden: true }),
+          ...(state === 'unproven-plain' ? { terminal: { mode: 'plain' } } : {}),
         };
         const metadata = state === 'inactive-live-runner' ? { ...base, hostPid: process.pid }
-          : state === 'unproven' || failedStart ? base : await retireObservedSessionRunnerMetadata({
+          : unrecorded || failedStart ? base : await retireObservedSessionRunnerMetadata({
           metadata: { ...base, hostPid: 999_123_456, hostProcessStartTimeMs: 1, lifecycleState: 'running' },
           expectedRunner: { pid: 999_123_456, startTimeMs: 1 },
           trackedSession: { trackingKey: legacyPidSessionTrackingKey(999_123_456), pid: 999_123_456, startedBy: 'daemon' }, sessionId: 'session-1', happyHomeDir: homeDir,
         });
         const input = params({ evaluateLiveness: async () => ({ paneAlive: false, observedAt: 1 }), metadata });
         const raw = await input.fetchSession();
-        raw.active = state === 'unproven';
+        raw.active = unrecorded;
         raw.archivedAt = state === 'archived-failed-start' ? 200 : null;
         // The real owner detail retains its explicit recipient role across migration.
         raw.share = null;
         // Home HTTP is the boundary. Stop, recovery, owner-envelope opening,
         // currentness and the fenced retirement writer remain real.
         vi.spyOn(axios, 'get').mockImplementation(async url => ({ status: 200,
-          data: String(url).includes('/v2/sessions/') ? { session: state === 'replacement'
+          data: String(url).includes('/v2/sessions/') ? { session: state === 'replacement' || state === 'unproven-replacement'
             ? { ...raw, metadata: JSON.stringify({ machineId: 'machine-current', hostPid: 1234,
                 terminal: { mode: 'plain' } }) }
             : state === 'replacement observation' ? { ...raw, metadata: JSON.stringify({ machineId: 'machine-current',
@@ -130,10 +132,10 @@ describe('recoverStrandedTerminalControlServiceability', () => {
           }),
         });
         const stopped = await stop('session-1');
-        expect(stopped, retirementFailure).toEqual(state === 'retired' || failedStart ? { status: 'stopped' }
-          : { status: 'incomplete', reason: state === 'unproven' ? 'missing_topology_proof'
-            : state === 'inactive-live-runner' ? 'tracked_runner_absent' : 'attachment_mismatch' });
-        if (state === 'retired') {
+        const settles = state === 'retired' || state === 'unproven' || state === 'unproven-plain' || failedStart;
+        expect(stopped, retirementFailure).toEqual(settles ? { status: 'stopped' }
+          : { status: 'incomplete', reason: state === 'inactive-live-runner' ? 'tracked_runner_absent' : 'attachment_mismatch' });
+        if (settles) {
           expect(tryDecryptSessionOwnerMetadataView({ credentials: input.credentials,
             accountEncryptionMode: 'plain', rawSession: raw })).toMatchObject({ lifecycleState: 'stopped' });
           const writes = patch.mock.calls.length;
@@ -223,7 +225,7 @@ describe('recoverStrandedTerminalControlServiceability', () => {
     const probe = vi.spyOn(process, 'kill');
     for (const [machineId, pid, active, expectedAttachmentId, expected] of [
       ['machine-other', 4321, false, undefined, null],
-      ['machine-current', undefined, true, undefined, { status: 'incomplete', reason: 'missing_topology_proof' }],
+      ['machine-current', undefined, true, undefined, { status: 'stopped' }],
       ['machine-current', 0, false, undefined, { status: 'incomplete', reason: 'missing_topology_proof' }],
       ['machine-current', '4321', false, undefined, { status: 'incomplete', reason: 'missing_topology_proof' }],
       ['machine-current', 4321, false, 'attachment-old', { status: 'incomplete', reason: 'attachment_mismatch' }],

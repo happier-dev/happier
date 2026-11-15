@@ -5,6 +5,14 @@ import { readTerminalHostAttachmentState } from '@/terminal/attachment/terminalA
 import { clearTerminalControlServiceabilityProjection } from '../startup/terminalControlServiceabilityProjection';
 import type { TrackedSession } from '../types';
 
+/** Startup and older exit writers can leave no runner tuple or control projection. */
+export function isUnrecordedPlainRunner(metadata: Readonly<Record<string, unknown>>): boolean {
+  if (metadata.hostPid !== undefined || metadata.hostProcessStartTimeMs !== undefined) return false;
+  if (metadata.terminal === undefined) return true;
+  const terminal = SessionTerminalMetadataSchema.safeParse(metadata.terminal);
+  return terminal.success && terminal.data.mode === 'plain' && terminal.data.controlServiceabilityV1 === undefined;
+}
+
 /** A retired plain projection is process absence, never an attachment's retirement. */
 export function readRetiredPlainRunnerObservation(metadata: Readonly<Record<string, unknown>>): number | null {
   if (metadata.hostPid !== undefined || metadata.hostProcessStartTimeMs !== undefined) return null;
