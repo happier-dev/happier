@@ -20,12 +20,11 @@ export function resolveCockpitTrackRevealTarget(tabIds: readonly string[], activ
 }
 
 /**
- * How wide each tab of a scrolling phone bar's track is, so a whole number of tabs fills the visible track and its
- * edge falls between two tabs, never through one: no glyph stub of a half-shown tab at rest (phone row rule,
- * PHONE-ROWS-HUNT). Null until the track is measured; tabs keep their own width meanwhile.
+ * How wide a scrolling phone bar's visible track is: a whole number of tabs at their own width, so its edge falls
+ * between two tabs (no glyph stub of a half-shown tab at rest, PHONE-ROWS-HUNT) and its tabs keep the spacing of every
+ * other bar (owner 11-15, MOBILE-FIX-1115 H1); the capsule takes back the remainder. Null until the room is measured.
  */
-export function resolveCockpitTrackItemWidth(input: Readonly<{ viewport: number; minWidth: number }>): number | null {
-    if (!(input.viewport > 0) || !(input.minWidth > 0)) return null;
-    const whole = Math.max(1, Math.floor(input.viewport / input.minWidth));
-    return input.viewport / whole;
+export function resolveCockpitTrackViewportWidth(input: Readonly<{ room: number; minWidth: number }>): number | null {
+    if (!(input.room > 0) || !(input.minWidth > 0)) return null;
+    return Math.min(input.room, Math.max(1, Math.floor(input.room / input.minWidth)) * input.minWidth);
 }

@@ -31,11 +31,7 @@ export function resolveDetailPhonePlacement<T extends PhonePlacementItem>(
 export function resolveDetailPhoneBarFit<T extends PhonePlacementItem>(
     placement: ReturnType<typeof resolveDetailPhonePlacement<T>>, slotCount: number | null,
     overflowBehavior: 'more' | 'scroll' = 'scroll',
-    /**
-     * Slots the selected tab's name takes beyond its icon: with labels off it still names itself (owner 11-06), so a
-     * bar that fits only as icons scrolls instead of clipping that name.
-     */
-    options?: Readonly<{ selectedLabelSlots?: number; activeId?: string | null }>,
+    options?: Readonly<{ activeId?: string | null }>,
 ) {
     const fitAt = (availableSize: number | null) => {
         const fit = resolveNavigationOverflow(placement.bottom, placement.placements.overflow,
@@ -54,7 +50,7 @@ export function resolveDetailPhoneBarFit<T extends PhonePlacementItem>(
         // With page tabs at the top, the bottom bar holds only companions: an open page stays checked in More.
         return item && placement.topPages.length > 0 && item.navigation.kind !== 'companion' ? null : item;
     };
-    const availableSize = slotCount === null ? null : Math.max(0, slotCount - (options?.selectedLabelSlots ?? 0));
+    const availableSize = slotCount;
     let fit = fitAt(availableSize);
     let visitor = visitorOf(fit.shown);
     if (visitor && availableSize !== null && fit.mode !== 'scroll') {

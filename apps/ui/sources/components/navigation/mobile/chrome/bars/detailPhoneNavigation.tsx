@@ -47,7 +47,6 @@ export function detailNavigationTab(item: Pick<PhoneMenuItem, 'id' | 'title' | '
     const count = item.count?.trim();
     const short = count === undefined ? undefined : TAB_STATUS_COUNT.exec(count)?.[0];
     return { id: item.id, label: item.title, icon: item.icon, sfSymbol: sfSymbolForCockpitTabIcon(item.icon),
-        namesItselfWhenSelected: true,
         disabled: Boolean(item.disabledReason), unavailableReason: item.disabledReason ?? undefined,
         ...(count === undefined || count === '' ? {} : {
             accessibilityLabel: `${item.title}, ${count}`,
@@ -88,8 +87,7 @@ export function useDetailPhoneBarPresentation<T extends PhoneMenuItem>(input: Re
     // Folded into a page's own bar, More is the bar: it lists every item, and nothing can be pinned to a bar not shown.
     const folded = React.useContext(CockpitBarFoldedContext);
     // More is never replaced (owner 11-10): an open item from More rides the bar just before it.
-    const fit = resolveDetailPhoneBarFit(input.placement, slotCount, input.overflowBehavior,
-        { selectedLabelSlots: metrics.showLabels ? 0 : 1, activeId: folded ? null : input.activeId });
+    const fit = resolveDetailPhoneBarFit(input.placement, slotCount, input.overflowBehavior, { activeId: folded ? null : input.activeId });
     const behindMore = folded ? placements.ordered.filter(item => placements.effectivePlacements[item.id] !== 'hidden') : fit.behindMore;
     // Only a folded bar has no tabs, so only there does More name the open item.
     const foldedActive = folded ? behindMore.find(item => item.id === input.activeId)
@@ -240,7 +238,7 @@ export function DetailPhoneMoreMenu(props: Readonly<{
         matchTriggerWidth={false} placement="top" trigger={({ open: expanded, toggle }) => props.native
             ? <View collapsable={false} testID={props.nativeAnchorTestID} style={{ width: 0, height: 0 }} />
             : <CockpitTabBarAction testID={`${prefix}-tab-more`} label={props.activeTrigger?.title ?? t('common.more')}
-                // Folded into a page's own bar, More stands for the open tab: it names it, as the bar's selected tab does.
-                {...(props.activeTrigger === null ? {} : { visibleLabel: props.activeTrigger.name, namesItselfWhenSelected: true })}
+                // Folded into a page's own bar, More stands for the open tab: with labels on it names it, as a tab does.
+                {...(props.activeTrigger === null ? {} : { visibleLabel: props.activeTrigger.name })}
                 icon={props.activeTrigger?.icon ?? 'dots-three'} selected={props.activeTrigger !== null} expanded={expanded} onPress={toggle} />} />;
 }

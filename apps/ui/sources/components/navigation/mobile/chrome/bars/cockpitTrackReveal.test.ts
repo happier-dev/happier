@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveCockpitTrackItemWidth, resolveCockpitTrackRevealTarget, resolveCockpitTrackRevealX } from './cockpitTrackReveal';
+import { resolveCockpitTrackViewportWidth, resolveCockpitTrackRevealTarget, resolveCockpitTrackRevealX } from './cockpitTrackReveal';
 
 describe('a scrolling phone bar keeps its selected tab in view', () => {
     const viewport = 300;
@@ -31,17 +31,17 @@ describe('what a scrolling phone bar brings into view', () => {
 });
 
 describe('a scrolling phone bar shows whole tabs at rest', () => {
-    it('widens the track tabs so a whole number of them fills the visible track (no glyph stub at its edge)', () => {
+    // MOBILE-FIX-1115 H1 (owner 11-15): a scrolling bar spaces its tabs like every other bar. The track shows a whole
+    // number of tabs at their own width and gives the remainder back to the capsule, instead of widening each tab.
+    it('narrows the visible track to a whole number of tabs at their own width (no glyph stub at its edge)', () => {
         // 320 wide: 119 px of track for 50 px tabs held two whole tabs and a 19 px stub of the third.
-        const width = resolveCockpitTrackItemWidth({ viewport: 119, minWidth: 50 });
-        expect(width).not.toBeNull();
-        expect(119 / width!).toBeCloseTo(2);
-        expect(width!).toBeGreaterThanOrEqual(50);
+        expect(resolveCockpitTrackViewportWidth({ room: 119, minWidth: 50 })).toBe(100);
+        expect(resolveCockpitTrackViewportWidth({ room: 300, minWidth: 50 })).toBe(300);
     });
     it('keeps one whole tab when the track is narrower than two', () => {
-        expect(resolveCockpitTrackItemWidth({ viewport: 70, minWidth: 50 })).toBe(70);
+        expect(resolveCockpitTrackViewportWidth({ room: 70, minWidth: 50 })).toBe(50);
     });
-    it('leaves tabs at their own width until the track is measured', () => {
-        expect(resolveCockpitTrackItemWidth({ viewport: 0, minWidth: 50 })).toBeNull();
+    it('leaves the track at its own width until it is measured', () => {
+        expect(resolveCockpitTrackViewportWidth({ room: 0, minWidth: 50 })).toBeNull();
     });
 });

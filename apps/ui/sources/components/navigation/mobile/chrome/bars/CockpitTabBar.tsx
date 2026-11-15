@@ -1,6 +1,6 @@
 import * as React from 'react';
-import { Platform, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent, type StyleProp, type ViewStyle } from 'react-native';
-import { HappierPressable, HAPPIER_FOCUS_RING_DELEGATED_STYLE } from '@happier-dev/plugin-ui/presentation';
+import { Platform, View, useWindowDimensions, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent, type StyleProp, type ViewStyle } from 'react-native';
+import { HappierPressable, HAPPIER_FOCUS_RING_DELEGATED_STYLE, useHappierTabSelection } from '@happier-dev/plugin-ui/presentation';
 import { ScrollView } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -19,7 +19,7 @@ import { resolveHorizontalScrollEdgeMaskRamps, resolveHorizontalScrollEdgeMaskSt
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { usePublishCockpitBarScrolls } from './cockpitBarScrollState';
-import { resolveCockpitTrackItemWidth, resolveCockpitTrackRevealTarget, resolveCockpitTrackRevealX } from './cockpitTrackReveal';
+import { resolveCockpitTrackRevealTarget, resolveCockpitTrackRevealX, resolveCockpitTrackViewportWidth } from './cockpitTrackReveal';
 import { CockpitBarFoldedContext } from '../pageBarChromeFold';
 
 
@@ -110,11 +110,6 @@ export type CockpitTabBarTabDefinition<TSurface extends string> = Readonly<{
         }>) => React.ReactNode;
     }>;
     badge?: CockpitTabBadge;
-    /**
-     * A detail bar's tab names itself while selected even with labels off (owner 11-06, phone detail bars): its
-     * tabs are a page's own sections, not the app's fixed destinations. The main and Session bars stay icon-only (R1).
-     */
-    namesItselfWhenSelected?: boolean;
     /** The announced name when it says more than the visible label ("Companion, 1 waiting for you"). */
     accessibilityLabel?: string;
     disabled?: boolean;
@@ -174,10 +169,13 @@ function cockpitTabBarScrolls(props: Pick<CockpitTabBarProps<string>, 'layout' |
 }
 
 /** Shared controls with captured chrome inputs, including static placement previews. */
-export function CockpitTabBarView<TSurface extends string>(props: CockpitTabBarProps<TSurface> & Readonly<{
+export function CockpitTabBarView<TSurface extends string>(controlled: CockpitTabBarProps<TSurface> & Readonly<{
     bottomInset: number;
     metrics: TabBarMetrics;
 }>) {
+    // The pressed tab shows before its owner builds the surface (`useHappierTabSelection`).
+    const [activeSurface, onSurfacePress] = useHappierTabSelection(controlled.activeSurface, controlled.onSurfacePress);
+    const props = { ...controlled, activeSurface, onSurfacePress };
     const { theme } = useUnistyles();
     const { metrics } = props;
     // The phone bar is shell chrome too: the same quiet ink at rest, the primary ink for the open tab.
@@ -229,7 +227,8 @@ export function CockpitTabBarView<TSurface extends string>(props: CockpitTabBarP
                     </View>
                     {renderTabBadge(tab.badge, `${props.tabTestIdPrefix}${tab.id}-badge`)}
                 </View>
-                {metrics.showLabels || (active && tab.namesItselfWhenSelected === true) ? (
+                {/* Every bar reads the one tab-labels setting (owner 11-15, superseding 11-06's named selected detail tab). */}
+                {metrics.showLabels ? (
                     <Text style={[styles.label, active ? styles.labelActive : styles.labelInactive]}>
                         {tab.label}
                     </Text>
@@ -258,7 +257,7 @@ export function CockpitTabBarView<TSurface extends string>(props: CockpitTabBarP
                     </>
                 ) : (
                     <>
-                        {props.tabs.map(renderTab)}
+                        {props.tabs.map(tab => renderTab(tab))}
                         {props.trailing}
                     </>
                 )}
@@ -278,7 +277,7 @@ const TRACK_EDGE_FADE = { fadeSize: 16 } as const;
  * colour to paint over the bar's glass, and the last item read as hidden under the "+" beside it.
  */
 const TrackRevealContext = React.createContext<((id: string, x: number, width: number) => void) | null>(null);
-/** Each track tab's width once the track is measured: a whole number of tabs fills it (`resolveCockpitTrackItemWidth`). */
+/** Each track tab's width: the bar's own tab width, so a scrolling bar spaces its tabs like every other bar. */
 const TrackItemWidthContext = React.createContext<number | null>(null);
 
 /** Reports where a tab sits in the track, so the track can bring the selected one into view. */
@@ -321,8 +320,12 @@ function CockpitTabBarTrack(props: Readonly<{ children: React.ReactNode; activeI
         fades.onScroll(event);
     };
     const [nativeWidth, setNativeWidth] = React.useState(0);
-    const [viewportWidth, setViewportWidth] = React.useState(0);
-    const itemWidth = resolveCockpitTrackItemWidth({ viewport: viewportWidth, minWidth: props.tabMinWidth });
+    // The room the track has, measured while it is unconstrained, and the window it was measured on: a constrained
+    // track measures only itself, so a new window width lets it take its room again before it is narrowed once more.
+    const windowWidth = useWindowDimensions().width;
+    const [room, setRoom] = React.useState<Readonly<{ width: number; window: number }> | null>(null);
+    const trackWidth = room !== null && room.window === windowWidth
+        ? resolveCockpitTrackViewportWidth({ room: room.width, minWidth: props.tabMinWidth }) : null;
     const edges = React.useMemo(() => ({ top: false, bottom: false, left: fades.visibility.left, right: fades.visibility.right }),
         [fades.visibility.left, fades.visibility.right]);
     const webMask = React.useMemo(() => Platform.OS === 'web' ? resolveHorizontalScrollEdgeMaskStyle(edges, TRACK_EDGE_FADE) : undefined, [edges]);
@@ -330,7 +333,10 @@ function CockpitTabBarTrack(props: Readonly<{ children: React.ReactNode; activeI
     const onViewportLayout = (event: LayoutChangeEvent) => {
         fades.onViewportLayout(event);
         viewport.current = event.nativeEvent.layout.width;
-        setViewportWidth(event.nativeEvent.layout.width);
+        if (trackWidth === null) {
+            const width = event.nativeEvent.layout.width;
+            setRoom(current => current?.width === width && current.window === windowWidth ? current : { width, window: windowWidth });
+        }
         reveal();
         if (Platform.OS !== 'web') setNativeWidth(event.nativeEvent.layout.width);
     };
@@ -339,13 +345,13 @@ function CockpitTabBarTrack(props: Readonly<{ children: React.ReactNode; activeI
             ref={scrollRef}
             horizontal
             showsHorizontalScrollIndicator={false}
-            style={webMask ?? undefined}
+            style={[webMask ?? null, trackWidth === null ? null : { width: trackWidth }]}
             contentContainerStyle={styles.trackContent}
             onContentSizeChange={(width, height) => { fades.onContentSizeChange(width, height); reveal(); }}
             onScroll={onScroll}
             scrollEventThrottle={32}
         >
-            <TrackItemWidthContext.Provider value={itemWidth}>
+            <TrackItemWidthContext.Provider value={props.tabMinWidth}>
                 <TrackRevealContext.Provider value={report}>{props.children}</TrackRevealContext.Provider>
             </TrackItemWidthContext.Provider>
         </ScrollView>
@@ -366,8 +372,6 @@ type CockpitTabBarActionProps = Readonly<{
     expanded?: boolean;
     /** The open surface lives behind this action (a tool opened from More): it reads as the active tab. */
     selected?: boolean;
-    /** Standing for the open item, it names it with labels off, as a selected tab with `namesItselfWhenSelected` does. */
-    namesItselfWhenSelected?: boolean;
     /** The visible name when the accessible `label` carries more (a count read after the name). */
     visibleLabel?: string;
     onPress: () => void;
@@ -408,7 +412,7 @@ export const CockpitTabBarActionView = React.forwardRef<View, CockpitTabBarActio
             <View style={styles.iconContainer}>
                 <ChromeGlyph name={props.icon} size={metrics.iconSize} active={props.selected === true} />
             </View>
-            {metrics.showLabels || (props.selected === true && props.namesItselfWhenSelected === true) ? (
+            {metrics.showLabels ? (
                 <Text style={[styles.label, props.selected ? styles.labelActive : styles.labelInactive]}>{props.visibleLabel ?? props.label}</Text>
             ) : null}
         </HappierPressable>

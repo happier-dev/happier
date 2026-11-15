@@ -7,7 +7,7 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { RepositoryTreeToolbar } from '@/components/workspaces/files/repositoryTree/RepositoryTreeToolbar';
 import { RepositoryTreeCreateMenu, type RepositoryTreeCreateMenuItemId } from '@/components/workspaces/files/repositoryTree/RepositoryTreeCreateMenu';
-import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
+import { readDisplayedMachineName } from '@/utils/sessions/machineDisplayNames';
 import { selectScmChangedFiles } from '@/scm/scmStatusFiles';
 import { SearchResultsList } from '@/components/workspaces/files/repositoryTree/SearchResultsList';
 import { Modal } from '@/modal';
@@ -671,7 +671,9 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
     }, [allowCreateActions, createFolder, handleTreeOpenFile, machineRpcTargetAvailable, props.buildFileMenuContext, props.fileHref, rowActions, rowShareTarget, transferActionsAvailable, uploadInto]);
 
     // This pane has no header of its own, so its + menu ends the toolbar (the session pane's header carries it).
-    const machineName = props.machineName ?? (machine ? getMachineDisplayName(machine).trim() || null : null);
+    // Only a real name goes into "Couldn't list files on {machine}": a Machine still loading has a placeholder title,
+    // never a name (owner 11-15, MOBILE-FIX-1115 H4: "Couldn't list files on Loading…").
+    const machineName = props.machineName ?? readDisplayedMachineName(machine);
     const createMenuSelectRef = React.useRef(onSelectCreateMenuItem);
     createMenuSelectRef.current = onSelectCreateMenuItem;
     const selectCreateMenuItem = React.useCallback((itemId: RepositoryTreeCreateMenuItemId) => createMenuSelectRef.current(itemId), []);

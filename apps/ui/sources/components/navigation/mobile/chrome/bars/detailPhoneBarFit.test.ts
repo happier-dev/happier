@@ -7,13 +7,12 @@ const items = (count: number): PhonePlacementItem[] => Array.from({ length: coun
 }));
 
 describe('phone detail bar fit', () => {
-    it('counts the room the selected tab’s name takes when labels are off, so a bar that only fits as icons scrolls', () => {
+    it('fits a bar whose icons and More fill the slots, whatever the selected tab', () => {
         const placement = resolveDetailPhonePlacement(items(8), undefined, 'bottom');
-        // Eight icons and More fit nine slots exactly.
-        expect(resolveDetailPhoneBarFit(placement, 9).mode).toBe('fit');
-        // The selected tab says its name (owner 11-06), which takes one more slot: the bar scrolls instead of clipping it.
-        expect(resolveDetailPhoneBarFit(placement, 9, 'scroll', { selectedLabelSlots: 1 }).mode).toBe('scroll');
-        expect(resolveDetailPhoneBarFit(placement, 10, 'scroll', { selectedLabelSlots: 1 }).mode).toBe('fit');
+        // Eight icons and More fit nine slots exactly; one more item scrolls. No slot is held for a selected tab's
+        // name: labels follow the one setting (owner 11-15, MOBILE-FIX-1115 H1).
+        expect(resolveDetailPhoneBarFit(placement, 9, 'scroll', { activeId: 'tab-0' }).mode).toBe('fit');
+        expect(resolveDetailPhoneBarFit(resolveDetailPhonePlacement(items(9), undefined, 'bottom'), 9).mode).toBe('scroll');
     });
 
     // Owner 11-10: More is never replaced. An item opened from More rides the bar just before More while it is open.

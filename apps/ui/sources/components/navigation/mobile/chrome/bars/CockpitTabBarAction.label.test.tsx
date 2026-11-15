@@ -36,36 +36,22 @@ const visibleText = (screen: Awaited<ReturnType<typeof renderScreen>>) =>
     );
 
 describe('CockpitTabBarAction label', () => {
-  // QA-F-LISTS READY172 (390): folded into a detail's pinned footer, More stands for the open tab but showed only its
-  // glyph with labels off, while the bar's own selected detail tab names itself.
-  const metrics = resolveTabBarMetrics('regular', false);
-
-  it('names the open item it stands for when the bar names its selected tab, with labels off', async () => {
+  // Owner 11-15 (MOBILE-FIX-1115 H1): folded into a page's own bar, More stands for the open item and reads the one
+  // tab-labels setting like every tab: its name shows with labels on, its glyph alone with labels off.
+  it('names the open item it stands for with labels on', async () => {
     const screen = await renderScreen(
-      <CockpitTabBarActionView
-        testID="more"
-        label="Overview"
-        icon="info"
-        selected
-        namesItselfWhenSelected
-        metrics={metrics}
-        onPress={() => {}}
-      />,
+      <CockpitTabBarActionView testID="more" label="Overview, 2 failing" visibleLabel="Overview" icon="info" selected
+        metrics={resolveTabBarMetrics('regular', true)} onPress={() => {}} />,
     );
     expect(visibleText(screen)).toContain('Overview');
+    expect(visibleText(screen)).not.toContain('Overview, 2 failing');
   });
 
-  it('stays a glyph while it is only More', async () => {
+  it('stays a glyph with labels off, even while it stands for the open item', async () => {
     const screen = await renderScreen(
-      <CockpitTabBarActionView
-        testID="more"
-        label="More"
-        icon="dots-three"
-        namesItselfWhenSelected
-        metrics={metrics}
-        onPress={() => {}}
-      />,
+      <CockpitTabBarActionView testID="more" label="Overview" icon="info" selected
+        metrics={resolveTabBarMetrics('regular', false)} onPress={() => {}} />,
     );
-    expect(visibleText(screen)).not.toContain('More');
+    expect(visibleText(screen)).not.toContain('Overview');
   });
 });
