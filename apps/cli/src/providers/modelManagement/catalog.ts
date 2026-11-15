@@ -7,7 +7,7 @@ import {
   createProviderCatalogRefreshFingerprint,
   type ProviderCatalogRefreshResult,
 } from '../probe/catalog';
-import type { ResolvedProviderProbeRpcRequest } from '../probe/rpc';
+import { ProviderProbeRpcResolutionError, type ResolvedProviderProbeRpcRequest } from '../probe/rpc';
 import type { ProviderRuntimeStateStore } from '../runtimeState';
 import type {
   ProviderCurrentModelObservation,
@@ -150,7 +150,10 @@ export function createProviderModelLoadCatalogPort<TTicket>(dependencies: Readon
       let resolved: ModelLoadResolvedCatalogRequest;
       try {
         resolved = await resolveExact(input);
-      } catch {
+      } catch (cause) {
+        if (cause instanceof ProviderProbeRpcResolutionError) {
+          return { status: 'error', error: cause.error };
+        }
         const error: ProviderErrorV1 = createProviderErrorV1('provider_endpoint_unavailable', {
           connectionId: input.connectionId,
           machineId: input.machineId,

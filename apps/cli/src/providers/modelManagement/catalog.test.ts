@@ -10,6 +10,8 @@ import {
 } from '@happier-dev/protocol';
 
 import { createProviderCatalogRefreshFingerprint } from '../probe/catalog';
+import { ProviderProbeRpcResolutionError } from '../probe/rpc';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import {
   createProviderModelLoadCatalogPort,
   readProviderModelLoadCatalogObservation,
@@ -102,6 +104,16 @@ function state(input: Readonly<{
 }
 
 describe('provider model-load exact catalog observation', () => {
+  it.each(['provider_authorization_changed', 'provider_connection_not_found'] as const)('CC7 retains the typed resolution refusal %s', async (code) => {
+    const error = createProviderErrorV1(code, { connectionId: 'connection-a', machineId: 'machine-a' });
+    const port = createProviderModelLoadCatalogPort({
+      resolveSaved: async () => { throw new ProviderProbeRpcResolutionError(error); },
+      runtimeStore: { read: async () => state() },
+      refresh: async () => { throw new Error('Refused resolution must not refresh'); },
+    });
+    expect(await port.refresh({ connectionId: 'connection-a', machineId: 'machine-a', ticket: { revision: 1 },
+      signal: new AbortController().signal, scope: { lifetime: { wallDeadlineAtMs: 60_000 } } })).toEqual({ status: 'error', error });
+  });
   it('returns load evidence only from the exact fresh authorization-bound generation', () => {
     expect(readProviderModelLoadCatalogObservation({
       state: state(), resolved, modelId: 'model-a',

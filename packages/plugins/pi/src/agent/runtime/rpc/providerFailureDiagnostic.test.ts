@@ -7,6 +7,15 @@ import {
 } from './providerFailureDiagnostic';
 
 describe('readPiProviderFailureDiagnostic', () => {
+  it.each([401, 403])('CC6 projects a code-less HTTP %s through the shared cause owner', (status) => {
+    const record = { type: 'turn_failed', errorMessage: `${status} Provider refused the request` };
+    expect(readPiProviderFailureDiagnostic(record)).toMatchObject({
+      failureCause: { failureReason: 'authentication_required', httpStatus: status },
+    });
+    expect(readPiPromptRejectionDiagnostic(record.errorMessage)).toMatchObject({
+      failureCause: { failureReason: 'authentication_required', httpStatus: status },
+    });
+  });
   it('preserves and classifies provider timeouts as retryable', () => {
     expect(readPiProviderFailureDiagnostic({
       type: 'message_end',
@@ -22,6 +31,7 @@ describe('readPiProviderFailureDiagnostic', () => {
       code: 'provider_timeout',
       sanitizedPreview: 'Request timed out.',
       piRetryable: true,
+      failureCause: expect.objectContaining({ phase: 'turn', failureReason: 'unknown' }),
     });
   });
 

@@ -207,7 +207,6 @@ function projectDecodedProviderFailureCause(
   fields: ReturnType<typeof readProviderFailureFields>,
   phase: 'turn' | 'turn_start',
 ) {
-  if (!fields.code) return undefined;
   // Project the decoded code/status, never the provider body or prompt echo.
   const evidence = {
     ...record,
