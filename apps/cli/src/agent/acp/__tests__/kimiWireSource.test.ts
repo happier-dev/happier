@@ -9,6 +9,22 @@ import { createKimiWireSource } from '../../../../../../packages/plugins/kimi/sr
 
 // Minimal wire 1.5 records follow the pinned official 2.4.1 fixture shapes.
 describe('Kimi wire source parent identity', () => {
+  it.each([false, true])('reports missing native state as a typed continuity cause (index exists: %s)', async indexExists => {
+    await withTempDir('kimi-missing-index-', async directory => {
+      if (indexExists) await writeFile(join(directory, 'session_index.jsonl'), '');
+      const host: AgentAcpProviderTurnSourceHost = {
+        sessionId: 'missing', cwd: directory, env: { KIMI_CODE_HOME: directory },
+        signal: new AbortController().signal,
+        followJournal: async () => { throw new Error('Missing state must fail before following'); },
+        registerContinuation: () => false, beginContinuation: () => null, releaseToolCalls() {}, fail() {},
+      };
+      await expect(createKimiWireSource()(host)).rejects.toMatchObject({
+        code: 'provider_session_state_unavailable_for_resume',
+        failureCause: { code: 'provider_session_state_unavailable_for_resume', phase: 'thread_open',
+          failureReason: 'unclassified_provider_error', providerErrorCode: 'kimi_session_state_not_found' },
+      });
+    });
+  });
   it.each([
     { delayedParent: false, unadmittedNativeParent: false, unadmittedDescendant: false, admittedDescendant: false },
     { delayedParent: true, unadmittedNativeParent: false, unadmittedDescendant: false, admittedDescendant: false },

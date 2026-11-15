@@ -19,7 +19,7 @@ export const KIMI_CONNECTED_ACCOUNT_LAUNCH = {
     providerSupportStatus: 'supported',
     config: { supported: true, modes: ['linked', 'copied', 'isolated'], entries: [{ path: 'config.toml', mode: 'force_copied' }] },
     state: { supported: true, modes: ['isolated', 'shared'],
-      entries: [{ path: 'sessions', mode: 'linked', createIfMissing: 'directory' }, { path: 'session_index.jsonl', mode: 'linked' }],
+      entries: [{ path: 'sessions', mode: 'linked', createIfMissing: 'directory' }, { path: 'session_index.jsonl', mode: 'linked', createIfMissing: 'file' }],
       sharedStatePrivacyRiskAcknowledgementRequired: true, symlinkUnavailableDegradePolicy: 'block_continuity' },
     authIsolation: { mode: 'materialized_home', secretEntries: ['config.toml'] },
   },

@@ -17,6 +17,16 @@ function record(value: unknown): Record<string, unknown> | null {
         ? value as Record<string, unknown> : null;
 }
 
+function missingSessionState(cause?: unknown): Error {
+    return Object.assign(new Error('Kimi native session state is unavailable for resume', { cause }), {
+        code: 'provider_session_state_unavailable_for_resume',
+        failureCause: {
+            code: 'provider_session_state_unavailable_for_resume', phase: 'thread_open',
+            failureReason: 'unclassified_provider_error', providerErrorCode: 'kimi_session_state_not_found',
+        },
+    });
+}
+
 /** Resolve only a usable active-session entry; corrupt unrelated index rows cannot own this session. */
 async function sessionWirePath(home: string, cwd: string, sessionId: string): Promise<string> {
     let directory: string | undefined;
@@ -41,7 +51,7 @@ async function sessionWirePath(home: string, cwd: string, sessionId: string): Pr
             directory = entry.sessionDir;
         }
     } finally { lines.close(); input.destroy(); }
-    if (!directory) throw new Error('Kimi did not record the active session in its local index');
+    if (!directory) throw missingSessionState();
     const root = await realpath(join(home, 'sessions'));
     const actual = await realpath(directory);
     const within = relative(root, actual);
@@ -77,7 +87,12 @@ export function createKimiWireSource(): AcpProviderTurnSourceFactory {
         const home = resolveConfiguredPath(env.KIMI_CODE_HOME?.trim() || join(userHome, '.kimi-code'), {
             cwd: host.cwd, homeDir: userHome,
         });
-        const path = await sessionWirePath(home, host.cwd, host.sessionId);
+        const path = await sessionWirePath(home, host.cwd, host.sessionId).catch((error: unknown) => {
+            if (error !== null && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+                throw missingSessionState(error);
+            }
+            throw error;
+        });
         let version = await journalVersion(path);
         if (version !== null && version !== '1.5') throw new Error(`Unsupported Kimi journal protocol: ${version}`);
         let failure: Error | null = null;

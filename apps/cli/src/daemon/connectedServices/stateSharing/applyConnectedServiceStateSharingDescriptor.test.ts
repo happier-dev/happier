@@ -366,11 +366,14 @@ describe('applyConnectedServiceStateSharingDescriptor', () => {
   });
 
 
-  it.each(['shared', 'isolated'] as const)('prepares declared missing history directories only for effective shared state: %s', async (stateMode) => {
+  it.each([
+    { stateMode: 'shared', kind: 'directory' }, { stateMode: 'isolated', kind: 'directory' },
+    { stateMode: 'shared', kind: 'file' }, { stateMode: 'isolated', kind: 'file' },
+  ] as const)('prepares declared missing history $kind only for effective $stateMode state', async ({ stateMode, kind }) => {
     const root = await mkdtemp(join(tmpdir(), 'happier-first-shared-state-'));
     const sourceRoot = join(root, 'native');
     const targetRoot = join(root, 'private');
-    const entries = [{ path: 'antigravity-acp/conversations', mode: 'linked', createIfMissing: 'directory' }] as const;
+    const entries = [{ path: 'antigravity-acp/conversations', mode: 'linked', createIfMissing: kind }] as const;
     try {
       await applyConnectedServiceStateSharingDescriptor({
         descriptor: { ...createDescriptor({ stateEntries: entries }), state: {

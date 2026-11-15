@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, open, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep, win32 } from 'node:path';
 
 import { parse, stringify, TomlError, type TomlTable, type TomlValue } from 'smol-toml';
@@ -752,6 +752,10 @@ export async function applyConnectedServiceStateSharingDescriptor(
       const destinationPath = join(targetRoot, entryName);
       if (descriptorEntry.createIfMissing === 'directory') {
         await mkdir(sourcePath, { recursive: true, mode: 0o700 });
+      } else if (descriptorEntry.createIfMissing === 'file') {
+        await mkdir(dirname(sourcePath), { recursive: true, mode: 0o700 });
+        const file = await open(sourcePath, 'a', 0o600);
+        await file.close();
       }
       if (descriptorEntry.mode === 'env_redirect') {
         await mkdir(destinationPath, { recursive: true });

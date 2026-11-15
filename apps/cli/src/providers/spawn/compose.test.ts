@@ -18,6 +18,7 @@ import { AGENT_STATE_SHARING_DESCRIPTOR as OH_MY_PI_STATE_SHARING } from '../../
 import { AGENT_STATE_SHARING_DESCRIPTOR as CODEX_STATE_SHARING } from '../../../../../packages/plugins/codex/src/agent/definition';
 import { AGENT_STATE_SHARING_DESCRIPTOR as CLAUDE_STATE_SHARING } from '../../../../../packages/plugins/claude/src/agent/definition';
 import { geminiConnectedServiceStateSharingDescriptor as GEMINI_STATE_SHARING } from '../../../../../packages/plugins/gemini/src/agent/connectedServices/descriptor';
+import { KIMI_CONNECTED_ACCOUNT_LAUNCH } from '../../../../../packages/plugins/kimi/src/agent/connectedAccount';
 
 import {
   composeProviderBindingMaterialization,
@@ -26,6 +27,28 @@ import {
 } from './compose';
 
 describe('provider binding host materialization', () => {
+  it('retains a first Kimi session index across Stop and resume without truncating it', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'happier-kimi-provider-resume-'));
+    const compose = () => composeProviderBindingMaterialization({
+      materialization: { v: 1, kind: 'configFile', nativeHome: true, env: [],
+        files: [{ relativePath: 'config.toml', utf8: '' }] },
+      nativeHome: { descriptor: { providerId: 'kimi', ...KIMI_CONNECTED_ACCOUNT_LAUNCH.stateSharingDescriptor },
+        sourceEnvironment: { KIMI_CODE_HOME: join(base, 'native') }, homeDir: base },
+      materializationBaseDir: join(base, 'materialized'), sessionId: 'kimi-session',
+    });
+    try {
+      const initial = await compose();
+      if (initial.launchMaterialization.kind !== 'configFile') throw new Error('Expected native home');
+      const index = 'session_index.jsonl';
+      await writeFile(join(initial.launchMaterialization.rootPath, index), 'native session index\n');
+      initial.cleanup?.();
+      const resumed = await compose();
+      try {
+        if (resumed.launchMaterialization.kind !== 'configFile') throw new Error('Expected native home');
+        expect(await readFile(join(resumed.launchMaterialization.rootPath, index), 'utf8')).toBe('native session index\n');
+      } finally { resumed.cleanup?.(); }
+    } finally { await rm(base, { recursive: true, force: true }); }
+  });
   it('retains FX v2 journals across disposed Provider launches without retaining Provider configuration', async () => {
     const base = await mkdtemp(join(tmpdir(), 'happier-fx-provider-resume-'));
     const source = join(base, 'native');
