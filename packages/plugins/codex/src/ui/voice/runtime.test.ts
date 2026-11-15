@@ -554,7 +554,9 @@ describe('Codex Agent-session realtime Voice leaf', () => {
       label: 'unknown provider diagnostic',
       result: {
         status: 'failed' as const,
-        diagnostic: { code: 'upstream_rejected', severity: 'error' as const },
+        diagnostic: { code: 'upstream_rejected', severity: 'error' as const,
+          details: { failureCause: { phase: 'codex.realtime.start', errorClass: 'JsonRpcApplicationError',
+            errorCode: '-32602', httpStatus: 429 } } },
       },
       expectedCode: 'upstream_rejected',
       expectedMessage: 'voice_agent_realtime_failed:upstream_rejected',
@@ -617,6 +619,9 @@ describe('Codex Agent-session realtime Voice leaf', () => {
     })).rejects.toMatchObject({
       code: expectedCode,
       message: expectedMessage,
+      ...(expectedCode === 'upstream_rejected' ? { failureCause: {
+        phase: 'codex.realtime.start', errorClass: 'JsonRpcApplicationError', errorCode: '-32602', httpStatus: 429,
+      } } : {}),
     });
     expect(runtime.encodeTextTurn('delegate this')).toEqual([]);
     expect(runtime.encodePostCancelControls).toBeUndefined();

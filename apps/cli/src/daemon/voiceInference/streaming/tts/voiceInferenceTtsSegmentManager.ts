@@ -234,6 +234,7 @@ export function createVoiceInferenceTtsSegmentManager(
       segmentIndex: segment.textSegment.index,
       errorCode: normalizedError.errorCode,
       error: normalizedError.error,
+      failureCause: normalizedError.failureCause,
       retryable: normalizedError.errorCode !== 'cancelled',
     };
     notify(session);

@@ -23,6 +23,7 @@ import { VoiceModelPackRuntimeV1Schema } from '@happier-dev/protocol/voice/model
 import { VoiceModelPackSupportArtifactV1Schema } from '@happier-dev/protocol/voice/modelPacks/artifactRolesV1';
 import type { DaemonVoiceInferenceAudioOutput, DaemonVoiceInferenceModelRuntimeState, DaemonVoiceInferenceNormalizationDecision, DaemonVoiceInferenceSttStreamEvent, DaemonVoiceInferenceSttStreamPcmFormat, ModelPackManifest, VoiceModelPackRuntimeV1, VoiceModelPackSupportArtifactV1 } from '@happier-dev/protocol';
 import { z } from 'zod/mini';
+import { ActionFailureCauseV1Schema, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 export const VOICE_INFERENCE_WORKER_IPC_VERSION = 1 as const;
 
@@ -108,6 +109,7 @@ export type VoiceInferenceWorkerResponseFrame =
       /** Mirrors the daemon-side voice-inference error `code` so the proxy can rethrow cleanly. */
       code: string;
       message: string;
+      failureCause?: ActionFailureCauseV1;
     }>
   /** Unsolicited readiness snapshot the child pushes on engine state transitions. */
   | Readonly<{
@@ -276,7 +278,7 @@ const VoiceInferenceWorkerResultPayloadSchema = z.discriminatedUnion('kind', [
 
 const VoiceInferenceWorkerResponseFrameSchema = z.union([
   z.object({ kind: z.literal('result'), id: z.string(), result: VoiceInferenceWorkerResultPayloadSchema }),
-  z.object({ kind: z.literal('error'), id: z.string(), code: z.string(), message: z.string() }),
+  z.object({ kind: z.literal('error'), id: z.string(), code: z.string(), message: z.string(), failureCause: z.optional(ActionFailureCauseV1Schema) }),
   z.object({
     kind: z.literal('snapshot'),
     packId: z.string(),

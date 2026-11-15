@@ -876,7 +876,7 @@ function createDefaultTerminalHostOwner(params: CreateDefaultPluginTerminalHostS
             const expectedStatus = lifecycle === 'borrowed' ? 'retired' : 'destroyed';
             if ((mustDestroyExactHost || lifecycle === 'borrowed') && disposition.status !== expectedStatus) {
                 const failure = disposition.status === 'parked' ? disposition.reason : disposition.status;
-                throw new Error(`Exact terminal-host disposal did not complete: ${failure}`);
+                throw Object.assign(new Error(`Exact terminal-host disposal did not complete: ${failure}`), { failureCause: disposition.failureCause });
             }
         },
     });

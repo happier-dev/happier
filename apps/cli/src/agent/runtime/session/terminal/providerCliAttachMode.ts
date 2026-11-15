@@ -169,7 +169,7 @@ export function createNativeAgentProviderAttachModeBinding<TRuntime extends Runt
                     if (metadata) await reportMetadata({ sessionId: params.session.sessionId, metadata });
                 },
             });
-            if (result.status !== 'retired') throw new Error('Borrowed native client cleanup is incomplete');
+            if (result.status !== 'retired') throw Object.assign(new Error('Borrowed native client cleanup is incomplete'), { failureCause: result.failureCause });
             if (externalClient === current) externalClient = null;
             current.completeRetirement();
         })();

@@ -7,6 +7,8 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 const { createMachineFixture, createSessionFixture, createDeferred } = await import("@/dev/testkit");
 const { createPlainArtifactHomeFixture } = await import('@/dev/testkit/harness/artifactStoreBoundary');
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { DaemonVoiceInferenceStatusResponseSchema } from '@happier-dev/protocol/daemon/voiceInference';
 const { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import("@/sync/api/capabilities/serverFeaturesClient");
 const { storage } = await import("@/sync/domains/state/storage");
 const { getActiveServerSnapshot } = await import("@/sync/domains/server/serverRuntime");
@@ -38,8 +40,7 @@ const initialSessions = storage.getState().sessions;
 let account: Awaited<ReturnType<typeof createPlainArtifactHomeFixture>>;
 function selectMachine(machineId: string | null) {
   const machine = machineId ? createMachineFixture({ id: machineId, activeAt: Date.now() }) : null;
-  storage.setState({ machines: machine ? { ...initialMachines, [machine.id]: machine } : {},
-    machineListByServerId: { ...initialMachineLists, [account.home.id]: machine ? [machine] : [] } });
+  storage.getState().applyMachines(machine ? [machine] : [], true, { sourceServerId: account.home.id });
   storage.getState().applySettingsLocal({ voice: { ...storage.getState().settings.voice, executionMachine: {
     ...storage.getState().settings.voice.executionMachine, mode: 'fixed', machineId: machineId ?? 'missing-machine',
   } } });
@@ -109,6 +110,15 @@ describe('DaemonVoiceInferenceClient', () => {
       message: 'daemon_voice_inference_feature_disabled',
     });
     expect(machineRpcWithServerScopeMock).not.toHaveBeenCalled();
+  });
+
+  it.each([429, 503])('retains the daemon inference cause with status %s at the client boundary', async status => {
+    const failureCause = projectActionFailureCauseV1(Object.assign(new TypeError('private inference response'), { status }), 'voice.inference');
+    machineRpcWithServerScopeMock.mockResolvedValue(DaemonVoiceInferenceStatusResponseSchema.parse({
+      ok: false, errorCode: 'internal_error', error: 'daemon_voice_inference_internal_error', failureCause,
+    }));
+    const { DaemonVoiceInferenceClient } = await import('./DaemonVoiceInferenceClient');
+    await expect(new DaemonVoiceInferenceClient().getStatus()).rejects.toMatchObject({ code: 'internal_error', failureCause });
   });
 
   it('runs machine-only model status without creating a voice-home session or requiring a directory', async () => {

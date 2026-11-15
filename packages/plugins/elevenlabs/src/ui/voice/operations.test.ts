@@ -1635,9 +1635,12 @@ describe('ElevenLabs public account operations', () => {
     })).rejects.toMatchObject({ code: 'provider_response_invalid' });
   });
 
-  it('classifies an unauthorized bounded account operation as unavailable credentials', async () => {
+  it.each([
+    { status: 401, code: 'credential_unavailable' },
+    { status: 429, code: 'rate_limited' },
+  ])('retains HTTP $status on a classified account-operation refusal', async ({ status, code }) => {
     const request = vi.fn(async () => ({
-      status: 401,
+      status,
       finalUrl: 'https://api.elevenlabs.io/v1/convai/conversation/get-signed-url?agent_id=agent_1',
       headers: { 'content-type': 'application/json' },
       body: new TextEncoder().encode('private provider response'),
@@ -1649,8 +1652,9 @@ describe('ElevenLabs public account operations', () => {
       connectionType: 'websocket',
       signal: new AbortController().signal,
     })).rejects.toMatchObject({
-      code: 'credential_unavailable',
-      message: 'credential_unavailable',
+      code,
+      message: code,
+      status,
     });
   });
 

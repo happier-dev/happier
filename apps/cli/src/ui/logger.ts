@@ -7,6 +7,8 @@
 
 import chalk from 'chalk'
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { configuration } from '../configuration'
 import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync, watch, type FSWatcher } from 'node:fs'
 import { randomUUID } from 'node:crypto'
@@ -93,6 +95,7 @@ function describeErrorForLog(error: object): Record<string, unknown> {
     ...(stack ? { stack } : {}),
     ...(typeof code === 'string' || typeof code === 'number' ? { code } : {}),
     ...(cause === undefined ? {} : { cause }),
+    failureCause: readSessionRuntimeFailureCause(error) ?? projectActionFailureCauseV1(error, 'cli.log'),
   }
 }
 
@@ -664,10 +667,7 @@ export class Logger {
           timestamp: new Date().toISOString(),
           level,
           message: `${message} ${args.map(a => {
-            if (a instanceof Error) return a.stack || a.message
             if (typeof a === 'object') {
-              // Check for Error-like objects (cross-realm Errors where instanceof fails)
-              if (a && 'stack' in (a as object)) return (a as Error).stack || String(a)
               try { return JSON.stringify(a, createErrorAwareLogReplacer(), 2) } catch { return String(a) }
             }
             return String(a)
@@ -684,7 +684,6 @@ export class Logger {
   private logToFile(prefix: string, message: string, args: readonly unknown[], allowRemote = true): void {
     const unredactedLogLine = `${prefix} ${message} ${args.map(arg => {
       if (typeof arg === 'string') return arg
-      if (arg instanceof Error) return arg.stack || arg.message
       try {
         return JSON.stringify(arg, createErrorAwareLogReplacer())
       } catch {

@@ -7,9 +7,31 @@ import type { CapabilityDetectRequest, ChecklistId } from './types';
 import { executionRunsCapability } from './registry/toolExecutionRuns';
 import { createEnvKeyScope } from '../testkit/env/envScope';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
+import { readCapabilityInvokeFailure } from '@happier-dev/protocol/capabilities';
 
 describe('createCapabilitiesService', () => {
+  it.each([
+    ['rpc', (details: Record<string, JsonValue>) => Object.assign(new RpcError('private diagnostic', 'agent_startup_model_reconciliation_failed'), { details })],
+    ['plugin', (details: Record<string, JsonValue>) => new PluginError({ code: 'agent_startup_model_reconciliation_failed', message: 'private diagnostic', details })],
+    ['native', (details: Record<string, JsonValue>) => Object.assign(new Error('private diagnostic'), { code: 'agent_startup_model_reconciliation_failed', details })],
+  ] as const)('retains the original runtime cause through capability serialization (%s)', async (_shape, makeError) => {
+    const failureCause = { phase: 'client_start', failureReason: 'model_selection_required', retryable: false } as const;
+    const service = createCapabilitiesService({ capabilities: [{
+      descriptor: { id: 'cli.fixture', kind: 'cli', methods: { probeModels: {} } },
+      detect: async () => ({}),
+      invoke: async () => { throw makeError({ failureCause, environment: { TOKEN: 'private' } }); },
+    }], checklists: { [CHECKLIST_IDS.NEW_SESSION]: [], [CHECKLIST_IDS.MACHINE_DETAILS]: [] },
+      buildContext: async () => ({ cliSnapshot: null }) });
+    const response = await service.invoke({ id: 'cli.fixture', method: 'probeModels' });
+    expect(response).toMatchObject({ ok: false, error: {
+      code: 'agent_startup_model_reconciliation_failed', failureCause,
+    } });
+    if (response.ok) throw new Error('Expected the native preparation refusal');
+    expect(readCapabilityInvokeFailure({ ...response.error, errorCode: response.error.code })).toMatchObject({ failureCause });
+    expect(JSON.stringify(response)).not.toContain('private');
+  });
+
   it('keeps parent facts outside requester execution and merges a mixed inventory after one physical execution', async () => {
     let inRequester = false;
     let physicalExecutions = 0;
@@ -53,7 +75,10 @@ describe('createCapabilitiesService', () => {
           message: 'private setup diagnostic', retryable: false,
           details: { reason, phase: 'native_execution_preparation', environment: { TOKEN: 'private' }, output: 'private' } }); },
       })).toEqual({ ok: false, error: { code: 'agent_isolation_unavailable', message: 'agent_isolation_unavailable',
-        retryable: false, details: { reason, phase: 'native_execution_preparation' } } });
+        retryable: false, details: { reason, phase: 'native_execution_preparation' }, failureCause: {
+          phase: 'client_start', failureReason: 'unknown',
+          actionCause: { phase: 'capabilities.invoke', errorClass: 'Error', errorCode: null, httpStatus: null },
+        } } });
     });
 
   it.each([
@@ -67,7 +92,11 @@ describe('createCapabilitiesService', () => {
     }], checklists: { [CHECKLIST_IDS.NEW_SESSION]: [], [CHECKLIST_IDS.MACHINE_DETAILS]: [] },
       buildContext: async () => ({ cliSnapshot: null }) });
     expect(await service.invoke({ id: 'cli.fixture', method: 'probeModels' })).toEqual({
-      ok: false, error: { code: 'agent_isolation_unavailable', message: 'agent_isolation_unavailable', retryable: false },
+      ok: false, error: { code: 'agent_isolation_unavailable', message: 'agent_isolation_unavailable', retryable: false,
+        failureCause: { phase: 'client_start', failureReason: 'unknown',
+          actionCause: { phase: 'capabilities.invoke', errorClass: failure instanceof RpcError ? 'RpcError' : 'Error',
+            errorCode: null, httpStatus: null } },
+      },
     });
   });
 

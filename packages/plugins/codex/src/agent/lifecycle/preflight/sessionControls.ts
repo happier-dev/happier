@@ -1,4 +1,5 @@
 import type { AgentPassiveRealtimeSetupResultV1 } from '@happier-dev/plugin-sdk/agents';
+import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 import type {
   AgentPreflightSessionControlsContributionV1,
   AgentPreflightSessionControlsProbeContextV1,
@@ -83,8 +84,9 @@ function readPassiveCodexAccountAuthentication(value: unknown): 'authenticated' 
 
 function passiveRealtimeResult(
   status: AgentPassiveRealtimeSetupResultV1['status'],
+  failureCause?: AgentPassiveRealtimeSetupResultV1['failureCause'],
 ): AgentPassiveRealtimeSetupResultV1 {
-  return { v: 1, status };
+  return { v: 1, status, ...(failureCause ? { failureCause } : {}) };
 }
 
 function usesCodexAppServer(context: Pick<AgentPreflightSessionControlsProbeContextV1, 'accountSettings' | 'runtimeDescriptorV1' | 'runtimeKindOverride'>): boolean {
@@ -165,7 +167,7 @@ async function probeCodexPassiveRealtimeSetup(
           case 'feature_missing':
             return passiveRealtimeResult('runtime_incompatible');
           case 'authentication_required':
-            return passiveRealtimeResult('authentication_required');
+            return passiveRealtimeResult('authentication_required', featureInspection.failureCause);
           case 'feature_disabled':
             return passiveRealtimeResult('feature_disabled');
           case 'inspection_aborted':
@@ -176,13 +178,14 @@ async function probeCodexPassiveRealtimeSetup(
           case 'feature_state_ambiguous':
           case 'feature_pagination_invalid':
           case 'feature_pagination_incomplete':
-            return passiveRealtimeResult('unavailable');
+            return passiveRealtimeResult('unavailable', featureInspection.failureCause);
         }
       },
     );
   } catch (error) {
     return passiveRealtimeResult(
       isCodexAuthenticationError(error) ? 'authentication_required' : 'unavailable',
+      projectActionFailureCauseV1(error, 'capabilities.preflight.passive_realtime_setup', { allowUnknownErrorCode: false }),
     );
   }
 }
@@ -205,11 +208,14 @@ export const CODEX_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
       return controls?.refreshError
         ? { availableModels: controls.models ?? [], refreshError: true, source: controls.models === null ? 'unavailable' : 'dynamic',
           ...(controls.observedAt === undefined ? {} : { observedAt: controls.observedAt }),
-          ...(controls.refreshErrorMessage === undefined ? {} : { refreshErrorMessage: controls.refreshErrorMessage }) }
+          ...(controls.refreshErrorMessage === undefined ? {} : { refreshErrorMessage: controls.refreshErrorMessage }),
+          ...(controls.failureCause ? { failureCause: controls.failureCause } : {}) }
         : controls?.models ?? null;
     }
     const controls = await readCodexPreflightSessionControls(context);
-    if (!controls?.modelsObserved) return null;
+    if (!controls?.modelsObserved) return controls?.modelFailureCause
+      ? { availableModels: [], source: 'unavailable', refreshError: true, failureCause: controls.modelFailureCause }
+      : null;
     if (!controls.availableModels.length) return [];
     return [{ id: 'default', name: 'Default' }, ...controls.availableModels.filter(model => model.id !== 'default')];
   },

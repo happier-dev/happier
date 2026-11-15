@@ -1,6 +1,7 @@
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { AgentPreflightJsonRpcRequestClientV1 } from '@happier-dev/plugin-sdk/agents/runtime';
-import type { ProbedCatalogOptionValue } from '@happier-dev/protocol/capabilities';
+import type { AgentModelsProbeObservation, ProbedCatalogOptionValue } from '@happier-dev/protocol/capabilities';
+import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { normalizeSessionConfigOptionValue, readSessionConfigOptionsFromSessionResponse, readSessionModelStateFromConfigOptions, readSessionModelStateFromSessionResponse, resolveSessionModelConfigOption, type SessionConfigOption } from '@/agent/acp/sessionSettings/sessionSettingsState';
 import type { AcpProbeBackend } from '@/agent/acp/runtime/acpRuntimeBackendContract';
 import { startAcpProbeSession } from './startAcpProbeSession';
@@ -17,6 +18,7 @@ type AcpSessionControlsProbeResult = Readonly<{
   modelConfigOptionId?: string;
   refreshError?: boolean;
   refreshErrorMessage?: string;
+  failureCause?: AgentModelsProbeObservation['failureCause'];
   observedAt?: number;
 }>;
 
@@ -123,7 +125,14 @@ async function applyStandaloneConfigOptionOverrides(params: Readonly<{
   signal?: AbortSignal;
   setOption: (id: string, value: string) => Promise<unknown>;
   onConfigOptionsAccepted?: (configOptions: ReadonlyArray<SessionConfigOption>) => void;
-}>) {
+}>): Promise<Readonly<{
+  configOptions: readonly SessionConfigOption[] | null;
+  applied: boolean;
+  observedAt?: number;
+  refreshError?: boolean;
+  refreshErrorMessage?: string;
+  failureCause?: AgentModelsProbeObservation['failureCause'];
+}>> {
   let configOptions = params.configOptions;
   let applied = false;
   let observedAt: number | undefined;
@@ -154,6 +163,7 @@ async function applyStandaloneConfigOptionOverrides(params: Readonly<{
     } catch (error) {
       params.signal?.throwIfAborted();
       return { configOptions, applied, observedAt, refreshError: true as const,
+        failureCause: projectSessionRuntimeFailureCause(error, 'client_start', 'capabilities.preflight.config'),
         ...(error instanceof Error ? { refreshErrorMessage: error.message } : {}) };
     }
   }
@@ -169,7 +179,7 @@ export async function probeAcpSessionControlsFromBackend(params: Readonly<{
 }>): Promise<AcpSessionControlsProbeResult> {
   const { sessionId } = await startAcpProbeSession(params);
   let modelCatalogObserved = Array.isArray(params.backend.getSessionModelState?.()?.availableModels);
-  const { configOptions, applied, observedAt, refreshError, refreshErrorMessage } = await applyStandaloneConfigOptionOverrides({
+  const { configOptions, applied, observedAt, refreshError, refreshErrorMessage, failureCause } = await applyStandaloneConfigOptionOverrides({
     ...params, configOptions: readSessionConfigOptionsFromSessionResponse({ configOptions: params.backend.getSessionConfigOptionsState?.() }),
     modelConfigOptionId: params.backend.getSessionModelConfigOptionId?.() ?? null,
     setOption: async (configId, value) => {
@@ -189,6 +199,7 @@ export async function probeAcpSessionControlsFromBackend(params: Readonly<{
     ...(modelConfigOptionId === undefined ? {} : { modelConfigOptionId }),
     ...(refreshError ? { refreshError } : {}),
     ...(refreshErrorMessage === undefined ? {} : { refreshErrorMessage }),
+    ...(failureCause ? { failureCause } : {}),
     ...(observedAt === undefined ? {} : { observedAt }),
   };
 }
@@ -201,7 +212,7 @@ export async function probeAcpSessionControls(params: AcpPreflightSessionParams)
     const configModelState = readSessionModelStateFromConfigOptions({ configOptions: initialConfigOptions }, params.modelConfigOptionId);
     let models: unknown = legacyModelState?.availableModels ?? configModelState?.availableModels ?? asRecord(session.models)?.availableModels ?? null;
     let modelsDerivedFromConfigOptions = legacyModelState === null && configModelState !== null;
-    const { configOptions, applied, observedAt, refreshError, refreshErrorMessage } = await applyStandaloneConfigOptionOverrides({
+    const { configOptions, applied, observedAt, refreshError, refreshErrorMessage, failureCause } = await applyStandaloneConfigOptionOverrides({
       ...params, configOptions: initialConfigOptions,
       onConfigOptionsAccepted: (next) => {
         const state = readSessionModelStateFromConfigOptions({ configOptions: next }, params.modelConfigOptionId);
@@ -227,6 +238,7 @@ export async function probeAcpSessionControls(params: AcpPreflightSessionParams)
       ...(modelConfigOptionId === undefined ? {} : { modelConfigOptionId }),
       ...(refreshError ? { refreshError } : {}),
       ...(refreshErrorMessage === undefined ? {} : { refreshErrorMessage }),
+      ...(failureCause ? { failureCause } : {}),
       ...(observedAt === undefined ? {} : { observedAt }),
     };
   });

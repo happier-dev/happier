@@ -1314,6 +1314,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                     ...(controls.modelConfigOptionId === undefined ? {} : { modelConfigOptionId: controls.modelConfigOptionId }),
                     ...(controls.refreshError ? { refreshError: true } : {}),
                     ...(controls.refreshErrorMessage === undefined ? {} : { refreshErrorMessage: controls.refreshErrorMessage }),
+                    ...(controls.failureCause ? { failureCause: controls.failureCause } : {}),
                     ...(controls.observedAt === undefined ? {} : { observedAt: controls.observedAt }),
                 };
             });
@@ -1406,7 +1407,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
         callback: ((context: Awaited<ReturnType<typeof createContext>>) => Promise<T> | T) | undefined,
         probeParams: PreflightSessionControlsProbeParams,
     ): Promise<T | null> => callback
-        ? withProbeLifetime(probeParams, async (scopedParams) => callback(await createContext(scopedParams))).catch(unavailablePreflightResult)
+        ? withProbeLifetime(probeParams, async (scopedParams) => callback(await createContext(scopedParams)))
         : Promise.resolve(null);
     return Object.freeze({
         ...(params.resolvePluginSettings ? { resolveProbePluginSettings: params.resolvePluginSettings } : {}),
@@ -1503,7 +1504,8 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                         ?? (Array.isArray(controls.models) && controls.models.length === 0 ? [] : null);
                     return controls.refreshError ? { availableModels: availableModels ?? [], refreshError: true, source: availableModels === null ? 'unavailable' : 'dynamic',
                         ...(controls.observedAt === undefined ? {} : { observedAt: controls.observedAt }),
-                        ...(controls.refreshErrorMessage === undefined ? {} : { refreshErrorMessage: controls.refreshErrorMessage }) } : availableModels;
+                        ...(controls.refreshErrorMessage === undefined ? {} : { refreshErrorMessage: controls.refreshErrorMessage }),
+                        ...(controls.failureCause ? { failureCause: controls.failureCause } : {}) } : availableModels;
                 }, probeParams),
                 probeModesRaw: async (probeParams: PreflightSessionControlsProbeParams) => await invoke(async (context) => {
                     const { normalizeAcpModesSnapshot } = await import('@/capabilities/probes/agentModesProbe');
@@ -1516,6 +1518,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                     return controls.configOptions === null ? null : { configOptions: controls.configOptions,
                         ...(controls.refreshError ? { refreshError: true } : {}),
                         ...(controls.refreshErrorMessage === undefined ? {} : { refreshErrorMessage: controls.refreshErrorMessage }),
+                        ...(controls.failureCause ? { failureCause: controls.failureCause } : {}),
                         ...(controls.modelConfigOptionId === undefined ? {} : { modelConfigOptionId: controls.modelConfigOptionId }) };
                 }, probeParams),
             } : {}),

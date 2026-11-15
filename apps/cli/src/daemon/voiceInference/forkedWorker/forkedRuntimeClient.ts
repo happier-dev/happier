@@ -428,7 +428,8 @@ export function createForkedVoiceInferenceRuntimeClient(
       pendingById.set(id, {
         resolve: (responseFrame) => {
           if (responseFrame.kind === 'error') {
-            finish(() => reject(createVoiceInferenceError(responseFrame.code, responseFrame.message)));
+            finish(() => reject(Object.assign(createVoiceInferenceError(responseFrame.code, responseFrame.message),
+              responseFrame.failureCause ? { failureCause: responseFrame.failureCause } : {})));
             return;
           }
           finish(() => {

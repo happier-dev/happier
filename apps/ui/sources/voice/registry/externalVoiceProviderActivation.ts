@@ -8,6 +8,7 @@ import { buildQualifiedPluginContributionKey, createPluginContributionIdentity, 
 import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { deriveVoiceCredentialBindingIdentityV1, VoiceProviderContributionSchema, type VoiceProviderContribution } from '@happier-dev/protocol/plugins/contributions/voice';
 import { readVoiceProviderCredentialRemediationCode } from '@happier-dev/protocol/voice/providerOperations';
+import { readSafeVoiceRuntimeFailureFacts } from '@/voice/runtime/voiceRuntimeFailureCode';
 import { VoiceRealtimeJsonValueSchema, type VoiceRealtimeJsonValue } from '@happier-dev/protocol/voice/realtime/events';
 import type { RecipientContractV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
 import { listVoiceToolActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
@@ -624,7 +625,7 @@ export function createExternalProtocol(
         providerConfigByAttemptId.delete(preflightInput.attemptId);
         const remediationCode = readVoiceProviderCredentialRemediationCode(error);
         if (remediationCode) {
-          return { kind: 'declined', code: remediationCode };
+          return { kind: 'declined', code: remediationCode, ...readSafeVoiceRuntimeFailureFacts(error) };
         }
         throw error;
       }

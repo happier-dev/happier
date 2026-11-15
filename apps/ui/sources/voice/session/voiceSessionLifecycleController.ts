@@ -21,6 +21,7 @@ import {
 } from '@/voice/runtime/input/VoiceCaptureAdmissionController';
 import {
     readSafeVoiceRuntimeFailureCode,
+    readSafeVoiceRuntimeFailureFacts,
     recordVoiceRuntimeFailure,
 } from '@/voice/runtime/voiceRuntimeFailureCode';
 import { createVoiceMachineError, type VoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
@@ -140,6 +141,7 @@ function createUnavailableConfiguredProviderSnapshot(
         errorMessage: failure.reason,
         errorRecoveryAction: failure.recoveryAction,
         errorPresentation: failure.presentation,
+        ...(failure.failureCause ? { errorFailureCause: failure.failureCause } : {}),
     };
 }
 
@@ -244,8 +246,9 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         const providerId = publishedSnapshot.adapterId ?? 'voice';
         void waitingPlayback.setWaitingCue(!disposed
             && storage.getState().settings.voice.audibleWaitingCue === true
-            && (phase === 'transcribing' || phase === 'thinking'), playWaitingCue).catch(() => {
-                recordVoiceRuntimeFailure(providerId, 'provider_error', 'tts_failed', 'audio_playback_failed');
+            && (phase === 'transcribing' || phase === 'thinking'), playWaitingCue).catch((error) => {
+                recordVoiceRuntimeFailure(providerId, 'provider_error', 'tts_failed', 'audio_playback_failed',
+                    undefined, undefined, readSafeVoiceRuntimeFailureFacts(error).failureCause);
             });
     };
 
@@ -1156,13 +1159,10 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                 // Cancelling a local cleanup wait is plain idle. A typed RPC
                 // refusal still means the preceding Stop was not acknowledged.
                 if (isAbortError(error) && failureCode === null) return;
-                const failure = createVoiceMachineError({ kind: 'service_temporarily_unavailable', reason: 'voice_previous_session_stop_failed' });
-                retirementFailure = { adapterId: request.providerId, sessionId: request.sessionId,
-                    status: 'error', mode: 'idle', canStop: false,
-                    errorCode: failure.kind, errorMessage: failure.reason,
-                    errorRecoveryAction: failure.recoveryAction, errorPresentation: failure.presentation };
+                const failure = createVoiceMachineError({ kind: 'service_temporarily_unavailable', reason: 'voice_previous_session_stop_failed', cause: error });
+                retirementFailure = createUnavailableConfiguredProviderSnapshot(request.providerId, request.sessionId, failure);
                 recordVoiceRuntimeFailure(request.providerId, 'unstarted', 'service_temporarily_unavailable',
-                    failureCode ?? 'voice_previous_session_stop_failed');
+                    failureCode ?? 'voice_previous_session_stop_failed', undefined, undefined, failure.failureCause);
             } finally {
                 if (pendingStart === request) pendingStart = null;
                 publishSnapshot();

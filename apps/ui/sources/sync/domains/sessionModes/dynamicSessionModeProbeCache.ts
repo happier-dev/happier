@@ -70,10 +70,10 @@ function readTransientUnavailable(key: string, nowMs = Date.now()): DynamicSessi
 }
 
 export function readDynamicSessionModeProbeCache(key: string): DynamicSessionModeProbeCacheEntry | null {
-    const transientUnavailable = readTransientUnavailable(key);
-    if (transientUnavailable) return transientUnavailable;
     const snap: ProbedResourceSnapshot<PreflightSessionModeList> = persistedCache.getSnapshot(key);
     const failure = snap.error instanceof ProbedResourceError ? snap.error.failure : undefined;
+    const transientUnavailable = readTransientUnavailable(key);
+    if (transientUnavailable) return { ...transientUnavailable, ...failure };
     if (snap.dataUpdatedAt !== null && snap.data) {
         return {
             kind: 'success',
@@ -108,8 +108,9 @@ export function writeDynamicSessionModeProbeCacheUnavailable(
     key: string,
     value: PreflightSessionModeList,
     nowMs = Date.now(),
+    failure?: ProbedResourceFailure,
 ): void {
-    persistedCache.writeError(key, new Error('dynamic-session-mode-probe-unavailable'), nowMs);
+    persistedCache.writeError(key, new ProbedResourceError('dynamic-session-mode-probe-unavailable', failure), nowMs);
     transientUnavailableByKey.set(key, {
         updatedAt: nowMs,
         expiresAt: nowMs + DYNAMIC_SESSION_MODE_PROBE_ERROR_BACKOFF_MS,

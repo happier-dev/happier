@@ -4,6 +4,7 @@ import { ProbedCatalogOptionSchema } from './probedCatalogOption.js';
 import { SpawnFailureV1Schema } from '../machines/processes/spawnFailureV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { NonBlankOpaqueIdentifierSchema } from '../strings/opaqueIdentifier.js';
+import { SessionRuntimeFailureCauseV1Schema } from '../sessions/control/runtimeIssueV1.js';
 
 /** Native preflight observations, distinct from the public inventory projection. */
 export const AgentProbeModelSchema = lazyZodSchema(() => z.strictObject({
@@ -33,6 +34,7 @@ export const AgentModelsProbeObservationSchema = lazyZodSchema(() => z.strictObj
   observedAt: z.optional(z.number().check(z.nonnegative())),
   refreshError: z.optional(z.boolean()),
   refreshErrorMessage: z.optional(z.string()),
+  failureCause: z.optional(SessionRuntimeFailureCauseV1Schema),
   spawnFailure: z.optional(SpawnFailureV1Schema),
   cacheable: z.optional(z.boolean()),
   runtimeDescriptorV1Accepted: z.optional(z.boolean()),
@@ -58,5 +60,6 @@ export const AgentConfigOptionsProbeObservationSchema = lazyZodSchema(() => z.st
   modelConfigOptionId: z.optional(NonBlankOpaqueIdentifierSchema),
   refreshError: z.optional(z.boolean()),
   refreshErrorMessage: z.optional(z.string()),
+  failureCause: z.optional(SessionRuntimeFailureCauseV1Schema),
 }));
 export type AgentConfigOptionsProbeObservation = z.output<typeof AgentConfigOptionsProbeObservationSchema>;

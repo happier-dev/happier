@@ -247,6 +247,7 @@ describe('requestSessionStop', () => {
         status: 'physical_stop_unconfirmed',
         reason: 'target_daemon_unavailable',
       },
+      failureCause: { phase: 'stop.owner_rpc', errorClass: 'Error', errorCode: null, httpStatus: null },
     });
     expect(stopDaemonSessionMock).not.toHaveBeenCalled();
     expect(listSessionMarkersMock).not.toHaveBeenCalled();
@@ -330,6 +331,7 @@ describe('requestSessionStop', () => {
       sessionId,
       stopped: false,
       stopOutcome: { status: 'physical_stop_unconfirmed', reason: 'transport_ambiguous' },
+      failureCause: { phase: 'stop.local_daemon', errorClass: 'Error', errorCode: null, httpStatus: null },
     });
 
     expect(isPidSafeHappySessionProcessMock).not.toHaveBeenCalled();
@@ -662,6 +664,8 @@ describe('requestSessionStop', () => {
         status: 'stopped_cleanup_incomplete',
         reason: 'terminal_control_serviceability_retirement_failed',
       },
+      failureCause: { phase: 'terminal_host.disposition.retirement', errorClass: 'Error',
+        errorCode: 'account_encryption_currentness_unavailable', httpStatus: null },
     });
     expect(disposeTerminalHostMock).toHaveBeenCalledTimes(1);
   });

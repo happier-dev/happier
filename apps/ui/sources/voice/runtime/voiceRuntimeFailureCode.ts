@@ -2,8 +2,8 @@ import { log } from '@/log';
 import { normalizeVoiceFailureCode } from '@happier-dev/protocol/voice/providerOperations';
 import { readRpcErrorCode } from '@/sync/runtime/rpcErrors';
 import { isVoiceTextTurnRejectedBeforeEffectError } from '@/voice/session/types';
-import { ActionFailureCauseV1Schema, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { SessionRuntimeFailureCauseV1Schema, SessionRuntimeIssueV1Schema, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { ActionFailureCauseV1Schema, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readSessionRuntimeFailureCause, SessionRuntimeIssueV1Schema, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type {
   VoiceConversationSessionMetadataCommitReason,
 } from '@/voice/persistence/voiceConversationSession';
@@ -78,12 +78,14 @@ export function recordVoiceRuntimeFailure(
   reason: string,
   diagnosticReason?: unknown,
   providerCode?: string,
+  failureCause?: VoiceRuntimeFailureCause,
 ): void {
   log.log(`[voiceRuntimeFailure] ${JSON.stringify({
     providerId,
     outcome,
     kind,
     reason,
+    ...readSafeVoiceRuntimeFailureFacts({ failureCause }),
     ...(providerCode === undefined ? {} : { providerCode }),
     ...(diagnosticReason === undefined
       ? {}
@@ -146,14 +148,24 @@ export function readSafeVoiceRuntimeFailureFacts(error: unknown): Readonly<{
 }> {
   const cause = isVoiceTextTurnRejectedBeforeEffectError(error) ? error.cause : error;
   if (!cause || typeof cause !== 'object') return {};
-  const runtimeIssue = 'runtimeIssueV1' in cause ? SessionRuntimeIssueV1Schema.safeParse(cause.runtimeIssueV1) : null;
-  const actionCause = 'failureCause' in cause ? ActionFailureCauseV1Schema.safeParse(cause.failureCause) : null;
-  const sessionCause = !actionCause?.success && 'failureCause' in cause
-    ? SessionRuntimeFailureCauseV1Schema.safeParse(cause.failureCause) : null;
-  const failureCause = runtimeIssue?.success && runtimeIssue.data.failureCause
-    ? runtimeIssue.data.failureCause
-    : actionCause?.success ? actionCause.data : sessionCause?.success
-      ? (({ providerErrorMessage: _privateMessage, ...safeCause }) => safeCause)(sessionCause.data) : undefined;
+  let failureCause: VoiceRuntimeFailureCause | undefined;
+  // Capture and machine wrappers retain the original error as their immediate cause.
+  const candidates = [cause, 'cause' in cause ? cause.cause : undefined];
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== 'object') continue;
+    const runtimeIssue = 'runtimeIssueV1' in candidate ? SessionRuntimeIssueV1Schema.safeParse(candidate.runtimeIssueV1) : null;
+    const actionCause = 'failureCause' in candidate ? ActionFailureCauseV1Schema.safeParse(candidate.failureCause) : null;
+    const sessionCause = readSessionRuntimeFailureCause(candidate);
+    failureCause = runtimeIssue?.success && runtimeIssue.data.failureCause
+      ? runtimeIssue.data.failureCause
+      : actionCause?.success ? actionCause.data : sessionCause
+        ? (({ providerErrorMessage: _privateMessage, ...safeCause }) => safeCause)(sessionCause) : undefined;
+    if (failureCause) break;
+  }
+  if (!failureCause) {
+    const nativeError = candidates.find(candidate => candidate instanceof Error);
+    if (nativeError) failureCause = projectActionFailureCauseV1(nativeError, 'voice.runtime', { allowUnknownErrorCode: false });
+  }
   return {
     ...(failureCause ? { failureCause } : {}),
     ...('effectAttempted' in cause && typeof cause.effectAttempted === 'boolean' ? { effectAttempted: cause.effectAttempted } : {}),

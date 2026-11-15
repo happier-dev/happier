@@ -5,12 +5,43 @@ import {
   readSafeVoiceRuntimeFailureCode,
   readSafeVoiceRuntimeFailureDiagnosticReason,
   recordVoiceRuntimeFailure,
+  readSafeVoiceRuntimeFailureFacts,
 } from './voiceRuntimeFailureCode';
 import { createVoiceTextTurnRejectedBeforeEffectError } from '@/voice/session/types';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 describe('voiceRuntimeFailureCode', () => {
   beforeEach(() => {
     log.clear();
+  });
+
+  it.each([429, 503])('records producer cause facts for HTTP %s without provider content', status => {
+    const failureCause = projectActionFailureCauseV1(Object.assign(new TypeError('private provider payload'), { status }), 'voice.preflight');
+    recordVoiceRuntimeFailure('realtime_codex', 'declined', 'provider_error', 'provider_unavailable', undefined, undefined, failureCause);
+    expect(log.getLogs()[0]).toContain(JSON.stringify(failureCause));
+    expect(log.getLogs()[0]).not.toContain('private provider payload');
+  });
+
+  it.each(['capture', 'machine'] as const)('reads an existing cause through the %s error carrier', carrier => {
+    const failureCause = projectActionFailureCauseV1(Object.assign(new TypeError('private capture response'), { status: 503 }), 'voice.capture');
+    const original = Object.assign(new Error('private response'), { failureCause });
+    const error = carrier === 'capture' ? { kind: 'provider_error', reason: 'stt_failed', cause: original }
+      : new Error('tts_failed', { cause: original });
+    expect(readSafeVoiceRuntimeFailureFacts(error)).toMatchObject({ failureCause });
+  });
+
+  it.each([
+    { name: 'HTTP TypeError', error: Object.assign(new TypeError('Bearer private-response'), { status: 429 }),
+      expected: { errorClass: 'TypeError', errorCode: null, httpStatus: 429 } },
+    { name: 'filesystem refusal', error: Object.assign(new Error('private path /secret'), { code: 'EACCES' }),
+      expected: { errorClass: 'Error', errorCode: 'EACCES', httpStatus: null } },
+    { name: 'private exception code', error: Object.assign(new Error('private provider prose'), { code: 'PRIVATE_CUSTOM_CODE' }),
+      expected: { errorClass: 'Error', errorCode: null, httpStatus: null } },
+  ])('projects safe native facts from a raw $name', ({ error, expected }) => {
+    const facts = readSafeVoiceRuntimeFailureFacts(error);
+    expect(facts).toEqual({ failureCause: { phase: 'voice.runtime', ...expected } });
+    expect(JSON.stringify(facts)).not.toMatch(/private|Bearer|secret|PRIVATE_CUSTOM_CODE/);
+    expect(readSafeVoiceRuntimeFailureFacts({ status: 429 })).toEqual({});
   });
 
   it.each(['agent_signed_out', 'VOICE_AGENT_TARGET_SESSION_UNSUPPORTED'])(

@@ -1082,6 +1082,25 @@ describe('Codex app-server realtime V3 adapter', () => {
     ).toHaveLength(1);
   });
 
+  it.each([
+    { method: 'thread/realtime/start', status: 429, resultStatus: 'failed', phase: 'codex.realtime.start' },
+    { method: 'thread/realtime/start', status: 503, resultStatus: 'failed', phase: 'codex.realtime.start' },
+    { method: 'experimentalFeature/list', status: 429, resultStatus: 'unavailable', phase: 'codex.realtime.feature_inspection' },
+    { method: 'experimentalFeature/list', status: 503, resultStatus: 'unavailable', phase: 'codex.realtime.feature_inspection' },
+  ])('retains HTTP $status at native realtime $method rejection', async ({ method: failureMethod, status, resultStatus, phase }) => {
+    const error = Object.assign(jsonRpcApplicationError(failureMethod), { status });
+    const fixture = createClientFixture({ request: async method => {
+      if (method === failureMethod) throw error;
+      if (method === 'experimentalFeature/list') return featurePage([{ name: 'realtime_conversation', enabled: true }]);
+      return {};
+    } });
+    const conversation = createConversation(fixture);
+    const result = await conversation.start({ transport: { kind: 'webrtc', offerSdp: 'offer' } });
+    expect(result).toMatchObject({ status: resultStatus, diagnostic: { details: { failureCause: {
+      phase, errorClass: 'JsonRpcApplicationError', errorCode: '-32602', httpStatus: status,
+    } } } });
+  });
+
   it('keeps the thread immediately reusable after a synchronous proven rejection', async () => {
     let rejectNextStart = true;
     const fixture = createClientFixture({

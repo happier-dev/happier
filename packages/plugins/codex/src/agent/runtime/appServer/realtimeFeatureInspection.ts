@@ -1,3 +1,5 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
+
 const REALTIME_FEATURE = 'realtime_conversation';
 const FEATURE_PAGE_LIMIT = 100;
 const MAX_FEATURE_PAGES = 100;
@@ -19,6 +21,7 @@ export type CodexRealtimeFeatureInspection =
   | Readonly<{ status: 'enabled' }>
   | Readonly<{
       status: 'unavailable';
+      failureCause?: ReturnType<typeof projectActionFailureCauseV1>;
       code:
         | 'feature_not_advertised'
         | 'inspection_aborted'
@@ -130,9 +133,9 @@ export async function inspectCodexRealtimeFeature(params: Readonly<{
       }
       pageValue = pageOutcome;
     } catch (error) {
-      return params.isAuthenticationError?.(error)
-        ? { status: 'unavailable', code: 'authentication_required' }
-        : { status: 'unavailable', code: 'feature_list_unavailable' };
+      return { status: 'unavailable', code: params.isAuthenticationError?.(error)
+        ? 'authentication_required' : 'feature_list_unavailable',
+        failureCause: projectActionFailureCauseV1(error, 'codex.realtime.feature_inspection', { allowUnknownErrorCode: false }) };
     }
 
     const page = readFeaturePage(pageValue);

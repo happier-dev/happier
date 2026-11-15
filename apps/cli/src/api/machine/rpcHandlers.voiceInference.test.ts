@@ -765,6 +765,7 @@ describe('registerMachineVoiceInferenceRpcHandlers', () => {
       ok: false,
       errorCode: 'invalid_audio_input',
       error: expect.any(String),
+      failureCause: { phase: 'voice.inference', errorClass: 'Error', errorCode: null, httpStatus: null },
     });
 
     vi.useRealTimers();
@@ -893,6 +894,7 @@ describe('registerMachineVoiceInferenceRpcHandlers', () => {
       ok: false,
       errorCode: 'unsupported_codec',
       error: expect.any(String),
+      failureCause: { phase: 'voice.inference', errorClass: 'Error', errorCode: null, httpStatus: null },
     });
 
 	    await expect(sttTranscribe?.({
@@ -909,6 +911,7 @@ describe('registerMachineVoiceInferenceRpcHandlers', () => {
       ok: false,
       errorCode: 'invalid_audio_input',
       error: expect.any(String),
+      failureCause: { phase: 'voice.inference', errorClass: 'Error', errorCode: null, httpStatus: null },
     });
 
     expect(transcribeAudio).toHaveBeenCalledTimes(1);
@@ -934,6 +937,7 @@ describe('registerMachineVoiceInferenceRpcHandlers', () => {
       ok: false,
       errorCode: code,
       error,
+      failureCause: { phase: 'voice.inference', errorClass: 'Error', errorCode: null, httpStatus: null },
     });
   });
 
@@ -960,6 +964,7 @@ describe('registerMachineVoiceInferenceRpcHandlers', () => {
       ok: false,
       errorCode: 'internal_error',
       error: expect.any(String),
+      failureCause: { phase: 'voice.inference', errorClass: 'Error', errorCode: null, httpStatus: null },
     });
     expect(corruptedTimestampObserved).toBe(true);
   });

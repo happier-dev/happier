@@ -693,23 +693,24 @@ export function createVoiceInferenceSpeechStreamManager(
       } catch (error) {
         const response = errorResponse(error);
         if (session.mode === 'runtime') {
+          const failureCause = response.failureCause;
           const code = DaemonVoiceInferenceSttAppendDiagnosticSchema.shape.code.safeParse(
-            error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined,
+            failureCause && 'nativeErrorCode' in failureCause
+              ? failureCause.nativeErrorCode ?? failureCause.errorCode : failureCause?.errorCode,
+          );
+          const exceptionClass = DaemonVoiceInferenceSttAppendDiagnosticSchema.shape.exceptionClass.safeParse(
+            failureCause?.errorClass === 'Error' && error instanceof Error
+              ? error.name : failureCause?.errorClass,
           );
           response.diagnostic = {
             operation: 'appendPcm16',
             streamId: session.streamId,
-            exceptionClass: error instanceof TypeError ? 'TypeError'
-              : error instanceof RangeError ? 'RangeError'
-                : error instanceof SyntaxError ? 'SyntaxError'
-                  : error instanceof ReferenceError ? 'ReferenceError'
-                    : error instanceof URIError ? 'URIError'
-                      : error instanceof EvalError ? 'EvalError'
-                        : error instanceof AggregateError ? 'AggregateError'
-                          : error instanceof Error ? 'Error' : 'Unknown',
+            exceptionClass: exceptionClass.success ? exceptionClass.data : error instanceof Error ? 'Error' : 'Unknown',
             code: code.success ? code.data : null,
           };
-          logger.warnLocalFile('[VoiceInference] Native streaming STT append failed', response.diagnostic);
+          logger.warnLocalFile('[VoiceInference] Native streaming STT append failed', {
+            diagnostic: response.diagnostic, failureCause: response.failureCause,
+          });
         }
         if (!hasState(session, 'closed')) {
           await closeSession(session, { cancelWorker: true });

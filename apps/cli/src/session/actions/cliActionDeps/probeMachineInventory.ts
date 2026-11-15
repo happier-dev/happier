@@ -24,7 +24,10 @@ export function createMachineInventoryProbe(params: Pick<Parameters<typeof creat
       const failure = readCapabilityInvokeFailure(error);
       const errorCode = failure?.errorCode ?? 'agent_inventory_probe_failed';
       return { ok: false, errorCode, error: errorCode,
-        ...(failure?.retryable === undefined ? {} : { details: { retryable: failure.retryable } }) };
+        ...(failure?.retryable === undefined && !failure?.failureCause ? {} : { details: {
+          ...(failure?.retryable === undefined ? {} : { retryable: failure.retryable }),
+          ...(failure?.failureCause ? { failureCause: failure.failureCause } : {}),
+        } }) };
     };
     try {
       // Selected Accounts use the same catalog owner as the shared picker.

@@ -1,6 +1,8 @@
 import type { TerminalHostAdapter, TerminalHostHandle, TerminalHostLivenessV1 } from '@happier-dev/agents';
 
 import { sanitizeTerminalHostDiagnosticText } from '../../terminalHost/sanitizeTerminalHostDiagnosticText';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { logger } from '@/ui/logger';
 
 export type TerminalHostRecoveryProbeResult =
   | Readonly<{ status: 'alive'; liveness: TerminalHostLivenessV1; probeCount: number }>
@@ -33,6 +35,9 @@ async function probeOnce(input: Readonly<{
   try {
     return await input.adapter.evaluateLiveness(input.handle);
   } catch (error) {
+    logger.debug('[TERMINAL HOST] Recovery liveness probe failed', {
+      failureCause: projectActionFailureCauseV1(error, 'terminal_host.recovery_liveness', { allowUnknownErrorCode: false }),
+    });
     return {
       paneAlive: false,
       probeInconclusive: true,

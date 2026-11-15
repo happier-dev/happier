@@ -1,4 +1,5 @@
 import { DAEMON_VOICE_INFERENCE_CLIENT_ERROR_CODES } from './daemonVoiceInferenceErrors';
+import { readSafeVoiceRuntimeFailureFacts, type VoiceRuntimeFailureCause } from '@/voice/runtime/voiceRuntimeFailureCode';
 
 export type DaemonSpeechStreamTransportKind =
     | 'binary_tunnel'
@@ -74,6 +75,7 @@ export type DaemonSpeechStreamDiagnosticsSnapshot = Readonly<{
         message: string;
         step?: DaemonSpeechStreamStartStep;
         errorClass?: string;
+        failureCause?: VoiceRuntimeFailureCause;
     }> | null;
 }>;
 
@@ -104,6 +106,7 @@ function readAllowlistedFailureValue(value: unknown, allowlist: ReadonlySet<stri
 
 function readStartFailure(error: unknown, context?: Readonly<{ step: DaemonSpeechStreamStartStep }>): NonNullable<DaemonSpeechStreamDiagnosticsSnapshot['lastStartFailure']> {
     const record = error && typeof error === 'object' ? error as Record<string, unknown> : null;
+    const { failureCause } = readSafeVoiceRuntimeFailureFacts(error);
     const message = readAllowlistedFailureValue(record?.message, RETAINED_START_FAILURE_MESSAGES)
         ?? readAllowlistedFailureValue(error, RETAINED_START_FAILURE_MESSAGES)
         ?? 'redacted_start_failure';
@@ -114,6 +117,7 @@ function readStartFailure(error: unknown, context?: Readonly<{ step: DaemonSpeec
             step: context.step,
             errorClass: readAllowlistedFailureValue(record?.name, RETAINED_START_FAILURE_ERROR_CLASSES) ?? 'unknown',
         } : {}),
+        ...(failureCause ? { failureCause } : {}),
     });
 }
 

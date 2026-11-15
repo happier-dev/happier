@@ -61,6 +61,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         retryable?: boolean;
         refreshErrorMessage?: string;
         requestDisposition?: ProbedResourceFailure['requestDisposition'];
+        failureCause?: ProbedResourceFailure['failureCause'];
         onRefresh?: () => void;
         /** The catalog has not answered yet, so a model missing from it is not known to be unknown. */
         namesPending: boolean;
@@ -195,7 +196,8 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
             }
             setModelDiscoveryFailed(entry?.kind === 'error' || (entry?.kind === 'success' && entry.errorUpdatedAt !== undefined));
             setSpawnFailure(entry?.spawnFailure ?? null);
-            setFailure({ reason: entry?.reason, errorCode: entry?.errorCode, retryable: entry?.retryable, requestDisposition: entry?.requestDisposition });
+            setFailure({ reason: entry?.reason, errorCode: entry?.errorCode, retryable: entry?.retryable,
+                requestDisposition: entry?.requestDisposition, failureCause: entry?.failureCause });
         };
         if (cacheEntry?.kind === 'success') {
             applyEntry(cacheEntry);

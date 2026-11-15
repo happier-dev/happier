@@ -70,7 +70,7 @@ import { markVoiceConversationAssistantTurnInterrupted } from '@/voice/transcrip
 import { createTtsPlaybackClock } from '@/voice/output/ttsPlaybackTiming';
 import { warmDaemonVoiceInferenceOnVoiceHomeAttach } from '@/voice/runtime/daemonInference/warmDaemonVoiceInferenceOnVoiceHomeAttach';
 import { readDaemonVoiceInferenceClientErrorCode } from '@/voice/runtime/daemonInference/daemonVoiceInferenceErrors';
-import { readSafeVoiceRuntimeFailureCode, recordVoiceRuntimeFailure } from '@/voice/runtime/voiceRuntimeFailureCode';
+import { readSafeVoiceRuntimeFailureCode, readSafeVoiceRuntimeFailureFacts, recordVoiceRuntimeFailure } from '@/voice/runtime/voiceRuntimeFailureCode';
 import {
   isVoiceBargeInEnabled,
   isLocalVoiceProviderSelected,
@@ -965,7 +965,7 @@ function startNativePermissionInput(admission: LocalVoiceCaptureAdmission, captu
       }
       if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
       if (failure) {
-        recordVoiceRuntimeFailure('local_conversation', 'provider_error', 'provider_error', readSafeVoiceRuntimeFailureCode(failure) ?? 'provider_error');
+        recordVoiceRuntimeFailure('local_conversation', 'provider_error', 'provider_error', readSafeVoiceRuntimeFailureCode(failure) ?? 'provider_error', undefined, undefined, readSafeVoiceRuntimeFailureFacts(failure).failureCause);
         await readNativeTurnMessage(admission, captureAttempt,
           `${t('approvals.decisionError')} ${t('voice.readiness.permissionTapRequired')}`, false, () => true, () => {});
       } else if (result.ok && !pendingTurn) {
@@ -1019,7 +1019,7 @@ async function runVoiceTurnWithSendFailureHandling(
         throw error;
       } else if (code !== 'claude_error_during_execution'
         || await responseInput?.waitForResponseSettlement() !== 'denied') throw error;
-      recordVoiceRuntimeFailure('local_conversation', 'provider_error', 'provider_error', code);
+      recordVoiceRuntimeFailure('local_conversation', 'provider_error', 'provider_error', code, undefined, undefined, readSafeVoiceRuntimeFailureFacts(error).failureCause);
     }
     beginAutomaticCurrentUiContextUpdates(sessionId);
     if (admission && captureAttempt) await resumeNativeVoiceListening(admission, captureAttempt);
@@ -1610,6 +1610,7 @@ export async function toggleLocalVoiceTurn(
           surfaceRecoverableVoiceCaptureError({
             controlSessionId,
             reason: `daemon_voice_inference_${readDaemonVoiceInferenceClientErrorCode(error)}`,
+            cause: error,
           });
         },
       },

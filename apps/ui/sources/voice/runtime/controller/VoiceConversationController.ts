@@ -84,7 +84,7 @@ export type VoiceConversationControllerMachinePort = Readonly<{
   }>): void;
   connected(input: Readonly<{ controlSessionId: string; attemptId: number }>): void;
   ending(input: Readonly<{ controlSessionId: string; attemptId: number }>): void;
-  disconnected(input: Readonly<{ controlSessionId: string; attemptId: number; code?: string }>): void;
+  disconnected(input: Readonly<{ controlSessionId: string; attemptId: number; code?: string; failureCause?: VoiceRuntimeFailureCause }>): void;
   failed(input: Readonly<{
     controlSessionId: string;
     attemptId: number;
@@ -142,7 +142,7 @@ export type VoiceConversationControllerDeps = Readonly<{
       attemptId: number;
       request: VoiceRealtimeJsonValue;
       signal: AbortSignal;
-    }>): Promise<void | Readonly<{ kind: 'declined'; code: string }>>;
+    }>): Promise<void | Extract<VoiceRealtimePreparation, { kind: 'declined' }>>;
     release(input: Readonly<{
       controlSessionId: string;
       attemptId: number;
@@ -461,7 +461,7 @@ export function createVoiceConversationController(
     if (failures.length) throw failures[0];
   };
 
-  const settleDisconnected = (attempt: Attempt, code?: string): void => {
+  const settleDisconnected = (attempt: Attempt, code?: string, failureCause?: VoiceRuntimeFailureCause): void => {
     if (attempt.terminalSettled || current !== attempt) return;
     attempt.terminalSettled = true;
     releaseTerminalOwnership(attempt);
@@ -469,6 +469,7 @@ export function createVoiceConversationController(
       controlSessionId: attempt.controlSessionId,
       attemptId: attempt.id,
       ...(code ? { code } : {}),
+      ...(failureCause ? { failureCause } : {}),
     });
   };
 
@@ -623,6 +624,8 @@ export function createVoiceConversationController(
           await settleReconnectFailure(
             attempt,
             normalizeVoiceRuntimeFailureCode(preparation.code),
+            undefined,
+            preparation.failureCause,
           );
           return;
         }
@@ -777,6 +780,7 @@ export function createVoiceConversationController(
               event.code,
               undefined,
               event.providerCode,
+              event.failureCause,
             );
             await deps.onCanonicalEvent(event, attempt.abortController.signal);
             continue;
@@ -1006,7 +1010,7 @@ export function createVoiceConversationController(
       if (providerPreflight?.kind === 'declined') {
         const failureCode = normalizeVoiceRuntimeFailureCode(providerPreflight.code);
         await closeAttempt(attempt, { code: 'error', detail: failureCode });
-        settleDisconnected(attempt, failureCode);
+        settleDisconnected(attempt, failureCode, providerPreflight.failureCause);
         return { status: 'declined', code: failureCode };
       }
       if (deps.resources?.preflight) {
@@ -1052,7 +1056,7 @@ export function createVoiceConversationController(
       if (preparation.kind === 'declined') {
         const failureCode = normalizeVoiceRuntimeFailureCode(preparation.code);
         await closeAttempt(attempt, { code: 'error', detail: failureCode });
-        settleDisconnected(attempt, failureCode);
+        settleDisconnected(attempt, failureCode, preparation.failureCause);
         return { status: 'declined', code: failureCode };
       }
       recordPreparedSessionPolicy(attempt, preparation);
@@ -1073,7 +1077,7 @@ export function createVoiceConversationController(
         if (resourcePreparation?.kind === 'declined') {
           const failureCode = normalizeVoiceRuntimeFailureCode(resourcePreparation.code);
           await closeAttempt(attempt, { code: 'error', detail: failureCode });
-          settleDisconnected(attempt, failureCode);
+          settleDisconnected(attempt, failureCode, resourcePreparation.failureCause);
           return { status: 'declined', code: failureCode };
         }
         // Resource owners may project an acquiring-mic state while preparing;

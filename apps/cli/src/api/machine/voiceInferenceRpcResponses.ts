@@ -1,3 +1,6 @@
+import type { DaemonVoiceInferenceErrorCode } from '@happier-dev/protocol';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+
 export type VoiceInferenceSchemaParser<T> = Readonly<{
   safeParse: (value: unknown) => { success: true; data: T } | { success: false };
   parse: (value: unknown) => T;
@@ -52,6 +55,7 @@ export function toVoiceInferenceError(error: unknown) {
     ok: false as const,
     errorCode,
     error: toVoiceInferencePublicErrorMessage(errorCode),
+    failureCause: projectActionFailureCauseV1(error, 'voice.inference', { allowUnknownErrorCode: false }),
   };
 }
 
@@ -62,4 +66,3 @@ export function parseVoiceInferenceResponse<T>(schema: VoiceInferenceSchemaParse
   }
   return schema.parse(toVoiceInferenceError(new Error('invalid_voice_inference_response')));
 }
-import type { DaemonVoiceInferenceErrorCode } from '@happier-dev/protocol';

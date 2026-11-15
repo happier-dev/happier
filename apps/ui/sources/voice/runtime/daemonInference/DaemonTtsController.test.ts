@@ -13,6 +13,7 @@ import { createVoicePlaybackController } from '@/voice/runtime/playback/VoicePla
 const { createPlainArtifactHomeFixture } = await import('@/dev/testkit/harness/artifactStoreBoundary');
 const { storage } = await import("@/sync/domains/state/storage");
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 const { getActiveServerSnapshot } = await import("@/sync/domains/server/serverRuntime");
 const { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import("@/sync/api/capabilities/serverFeaturesClient");
 import {
@@ -113,7 +114,7 @@ beforeEach(async () => {
     });
     network.setRpcResponder(async request => await daemonRpc(request));
     const machine = createMachineFixture({ id: 'tts-machine', activeAt: Date.now() });
-    storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [account.home.id]: [machine] } });
+    storage.getState().applyMachines([machine], true, { sourceServerId: account.home.id });
     storage.getState().applySettingsLocal({ experiments: true, featureToggles: {
         voice: true, 'execution.runs': true, 'voice.agent': true, 'voice.daemonInference': true,
     }, voice: { ...storage.getState().settings.voice, executionMachine: {
@@ -137,6 +138,21 @@ afterEach(async () => {
 });
 
 describe('DaemonTtsController', () => {
+    it.each([429, 503])('retains the daemon synthesis event cause with status %i', async (status) => {
+        const failureCause = projectActionFailureCauseV1(Object.assign(new TypeError('private synthesis failure'), { status }), 'voice.inference.tts');
+        const controller = new DaemonTtsController({
+            client: createDaemonClientAtRpcBoundary({ startSegmentedTts: async () => ({
+                streamId: 'tts-stream-error', generation: 0, segmentCount: 1,
+                next: async () => ({ type: 'error', streamId: 'tts-stream-error', generation: 0,
+                    errorCode: 'runtime_unavailable', error: 'runtime unavailable', failureCause }),
+                ackSegment: async () => {}, cancel: async () => {},
+            }) }),
+            playAudioBytesWithStopper: async () => { throw new Error('failed synthesis must not play audio'); },
+        });
+        await expect(controller.speak({ text: 'Hello.', packId: 'pack', voiceId: null, speed: 1,
+            registerPlaybackStopper: () => () => {}, onSpeaking: () => {} }))
+            .rejects.toMatchObject({ code: 'runtime_unavailable', failureCause });
+    });
     it('stops audio whose platform target registers after an interruption', async () => {
         const preparing = createDeferred<void>();
         const finishPreparing = createDeferred<void>();

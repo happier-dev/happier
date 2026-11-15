@@ -213,7 +213,9 @@ describe('resolveProfileProbeEnvironment', () => {
             }]);
             expect(acquisitions).toBe(1);
           } else if (role === 'use') {
-            expect(result).toMatchObject({ ok: false, error: { code: 'profile-preflight-failed' } });
+            expect(result).toMatchObject({ ok: false, error: { code: 'profile-preflight-failed', failureCause: {
+              phase: 'client_start', actionCause: { phase: 'capabilities.preflight.profile' },
+            } } });
             expect(await runProbe()).toMatchObject({ ok: false, error: { code: 'profile-preflight-failed' } });
             expect(acquisitions).toBe(0);
             expect(observed).toEqual([]);

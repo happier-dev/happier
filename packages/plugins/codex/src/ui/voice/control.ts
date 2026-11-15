@@ -1,4 +1,5 @@
 /** Codex V3 realtime control codec and canonical event projection. */
+import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 import type {
   VoiceRealtimeCanonicalEvent,
   VoiceRealtimeJsonValue,
@@ -155,7 +156,8 @@ export function createCodexV3ControlDecoder(input: Readonly<{
       // The existing host control-event pump classifies this typed rejection
       // and closes media plus the bound attachment through its lifecycle owner.
       diagnoseOnce('codex_v3_upstream_error');
-      throw Object.assign(new Error('codex_v3_upstream_error'), { code: 'upstream_rejected' });
+      throw Object.assign(new Error('codex_v3_upstream_error'), { code: 'upstream_rejected',
+        failureCause: projectActionFailureCauseV1(record(event.error ?? null) ?? event, 'codex.realtime.control', { allowUnknownErrorCode: false }) });
     }
     if (event.type !== 'turn.done') {
       if (!KNOWN_INERT_EVENT_TYPES.has(event.type)) {

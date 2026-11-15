@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { TerminalHostAdapter, TerminalHostHandle } from './_types';
 import { probeTerminalHostForRecovery } from './recoveryLiveness';
+import { logger } from '@/ui/logger';
 
 const handle: TerminalHostHandle = {
   kind: 'zellij',
@@ -27,6 +28,22 @@ function buildAdapter(evaluateLiveness: TerminalHostAdapter['evaluateLiveness'])
 }
 
 describe('terminal host recovery liveness', () => {
+  it.each([
+    { error: Object.assign(new Error('private-native-details'), { code: 'EACCES' }), code: 'EACCES', status: null },
+    { error: Object.assign(new TypeError('private-native-details'), { response: { status: 429 } }), code: null, status: 429 },
+    { error: Object.assign(new Error('private-native-details'), { code: 'private-error-code' }), code: null, status: null },
+  ])('retains sanitized diagnostic cause for an inconclusive native probe ($code/$status)', async ({ error, code, status }) => {
+    const diagnostic = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+    try {
+      const result = await probeTerminalHostForRecovery({ handle, adapter: buildAdapter(async () => { throw error; }) });
+      expect(result.status).toBe('inconclusive');
+      expect(diagnostic).toHaveBeenCalledWith('[TERMINAL HOST] Recovery liveness probe failed', {
+        failureCause: { phase: 'terminal_host.recovery_liveness', errorClass: error.name, errorCode: code, httpStatus: status },
+      });
+      expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('private-');
+    } finally { diagnostic.mockRestore(); }
+  });
+
   it('keeps repeated probe failures inconclusive instead of inventing death evidence', async () => {
     const adapter = buildAdapter(vi.fn(async () => {
       throw new Error('list-panes timed out');

@@ -421,6 +421,45 @@ describe('requestSessionStop machine transport', () => {
       stopOutcome: { status: 'stopped_cleanup_incomplete', reason: 'terminal_control_serviceability_retirement_failed' } });
   });
 
+  it.each(['owner_rpc', 'read_account_currentness'] as const)(
+    'retains a native %s failure through the public Stop result', async phase => {
+      const error = Object.assign(new Error('private transport details'), { code: 'EACCES' });
+      const get = vi.mocked(axios.get).getMockImplementation()!;
+      if (phase === 'read_account_currentness') vi.mocked(axios.get).mockImplementation(async (...args) => {
+        if (String(args[0]).endsWith('/v1/account/encryption/currentness')) throw error;
+        return await get(...args);
+      });
+      const result = await requestSessionStop({ stopIntent: 'explicit_stop', credentials, idOrPrefix: sessionId,
+        invokeMachineRpc: async () => { throw error; },
+      });
+      expect(result).toMatchObject({ ok: true, stopped: false,
+        failureCause: { phase: `stop.${phase}`, errorClass: 'Error',
+          errorCode: phase === 'owner_rpc' ? 'EACCES' : 'account_encryption_currentness_unavailable', httpStatus: null },
+        stopOutcome: { status: 'physical_stop_unconfirmed', reason: phase === 'owner_rpc' ? 'target_daemon_unavailable' : 'unexpected_error' },
+      });
+    });
+
+  it.each([
+    { error: Object.assign(new Error('private-read-details'), { code: 'EACCES' }), code: 'EACCES', status: null },
+    { error: Object.assign(new TypeError('private-read-details'), { response: { status: 429 } }), code: null, status: 429 },
+    { error: Object.assign(new Error('private-read-details'), { code: 'private-error-code' }), code: null, status: null },
+  ])('logs the sanitized cause of an optional inactivity read ($code/$status)', async ({ error, code, status }) => {
+    boundary.mode = 'no_runtime';
+    const get = vi.mocked(axios.get).getMockImplementation()!;
+    afterPhysicalStop = () => vi.mocked(axios.get).mockImplementation(async (...args) => {
+      if (String(args[0]).includes(`/v2/sessions/${sessionId}`)) throw error;
+      return await get(...args);
+    });
+    const diagnostic = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+    const result = await requestSessionStop({ stopIntent: 'explicit_stop', credentials, idOrPrefix: sessionId });
+    expect(result).toMatchObject({ ok: true, stopped: false, stopOutcome: { reason: 'target_session_not_found' } });
+    expect(diagnostic).toHaveBeenCalledWith('[SESSION STOP] Could not read Session inactivity', {
+      failureCause: { phase: 'stop.session_inactivity_read', errorClass: error.name, errorCode: code, httpStatus: status },
+    });
+    const record = diagnostic.mock.calls.find(([message]) => message === '[SESSION STOP] Could not read Session inactivity');
+    expect(JSON.stringify(record)).not.toContain('private-');
+  });
+
   it('routes layout-one Stop through the Account-owned locality instead of caller-local control', async () => {
     boundary.mode = 'stopped';
     vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
@@ -739,6 +778,8 @@ describe('requestSessionStop machine transport', () => {
     await expect(result).resolves.toEqual({
       ok: true, sessionId, stopped: false,
       stopOutcome: { status: 'physical_stop_unconfirmed', reason: 'transport_ambiguous' },
+      failureCause: { phase: 'stop.owner_rpc', errorClass: mode === 'disconnect' ? 'RpcError' : 'Error',
+        errorCode: mode === 'disconnect' ? 'RPC_OUTCOME_UNKNOWN' : null, httpStatus: null },
     });
     expect(calls.filter((event) => event === SOCKET_RPC_EVENTS.CALL)).toHaveLength(1);
     expect(stdout).not.toHaveBeenCalled();

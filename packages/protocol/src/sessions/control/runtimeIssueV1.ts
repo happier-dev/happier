@@ -457,7 +457,7 @@ export function projectSessionRuntimeFailureCause(
 ): SessionRuntimeIssueV1['failureCause'] {
   if (error === undefined) return undefined;
   return readSessionRuntimeFailureCause(error, phase)
-    ?? readSessionRuntimeFailureCause({ failureCause: projectActionFailureCauseV1(error, actionPhase) }, phase);
+    ?? readSessionRuntimeFailureCause({ failureCause: projectActionFailureCauseV1(error, actionPhase, { allowUnknownErrorCode: false }) }, phase);
 }
 
 /** The source distinguishes native Agent sign-in refusals from Provider endpoint credentials. */

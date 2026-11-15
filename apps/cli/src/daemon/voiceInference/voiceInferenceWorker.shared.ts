@@ -1,4 +1,5 @@
 import { assertPackIdFilesystemSafe } from '@happier-dev/protocol/voice/modelPacks/pathSafety';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DaemonVoiceInferenceModelStatus, ModelPackManifest, VoiceModelPackRuntimeV1, VoiceModelPackSupportArtifactV1 } from '@happier-dev/protocol';
 
 import type { VoiceInferenceRuntime } from './voiceInferenceRuntimeTypes';
@@ -46,7 +47,10 @@ export function createRuntimeUnavailableError(error: unknown): Error {
   if (readVoiceInferenceErrorCode(error) === 'runtime_unavailable' && error instanceof Error) {
     return error;
   }
-  return createVoiceInferenceError('runtime_unavailable', 'voice_inference_runtime_unavailable');
+  return Object.assign(createVoiceInferenceError('runtime_unavailable', 'voice_inference_runtime_unavailable'), {
+    cause: error,
+    failureCause: projectActionFailureCauseV1(error, 'voice.inference.runtime', { allowUnknownErrorCode: false }),
+  });
 }
 
 export function normalizeVoiceInferenceInputMimeType(inputMimeType: string): string {

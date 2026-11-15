@@ -420,6 +420,23 @@ describe('createVoiceInferenceTtsSegmentManager', () => {
     });
   });
 
+  it.each([
+    { error: new TypeError('private native detail'), errorClass: 'TypeError', errorCode: null },
+    { error: Object.assign(new Error('private file path'), { code: 'EACCES' }), errorClass: 'Error', errorCode: 'EACCES' },
+  ])('preserves native synthesis causes in the parsed stream event ($errorClass)', async ({ error, errorClass, errorCode }) => {
+    nativeRuntime = { ...nativeRuntime, synthesizeTts: async () => { throw error; } };
+    const manager = createVoiceInferenceTtsSegmentManager({ voiceInferenceWorker: worker, streamRoot: await createTempDir() });
+    managers.push(manager);
+    const started = await manager.start({ requestId: 'cause', text: 'hello', packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+      voiceId: null, speed: null, output: { codec: 'wav', mimeType: 'audio/wav' } });
+    if (!started.ok) throw new Error('start failed');
+    const response = DaemonVoiceInferenceTtsStreamNextResponseSchema.parse(await manager.next({ streamId: started.streamId, generation: started.generation }));
+    expect(response).toMatchObject({ ok: true, event: { type: 'error', failureCause: {
+      phase: 'voice.inference', errorClass, errorCode, httpStatus: null,
+    } } });
+    expect(JSON.stringify(response)).not.toContain('private');
+  });
+
   it('uses the canonical public normalizer for runtime-family synthesis failures', async () => {
     const root = await createTempDir();
     const manager = createVoiceInferenceTtsSegmentManager({

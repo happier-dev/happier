@@ -1,4 +1,6 @@
 /** @moduleRealm client */
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type {
     AgentSessionRealtimeAvailability,
     AgentSessionRealtimeStartInput,
@@ -295,7 +297,7 @@ export type VoiceMicrophoneMode = 'host_webrtc' | 'host_pcm' | 'provider_managed
 
 export type VoiceRealtimePreflight =
     | Readonly<{ kind: 'ready' }>
-    | Readonly<{ kind: 'declined'; code: string }>
+    | Readonly<{ kind: 'declined'; code: string; failureCause?: ActionFailureCauseV1 | NonNullable<SessionRuntimeIssueV1['failureCause']> }>
     | Readonly<{ kind: 'aborted' }>;
 
 export type VoiceRealtimePreparation =
@@ -314,7 +316,7 @@ export type VoiceRealtimePreparation =
             inputCommitRequired?: boolean;
         }>;
     }>
-    | Readonly<{ kind: 'declined'; code: string }>
+    | Readonly<{ kind: 'declined'; code: string; failureCause?: ActionFailureCauseV1 | NonNullable<SessionRuntimeIssueV1['failureCause']> }>
     | Readonly<{ kind: 'aborted' }>;
 
 export type VoiceTurnControlAction =

@@ -22,6 +22,8 @@ import {
 } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS } from '@/components/sessions/new/modules/newSessionCapabilityProbeTimeoutMs';
 import type { ProbedResourceFailure } from '@/sync/runtime/probedResources/createPersistentProbedResourceCache';
+import { readCapabilityInvokeFailure } from '@happier-dev/protocol/capabilities';
+import { readSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import {
     scheduleProbedResourceRetryAfterDelay,
     scheduleProbedResourceRetryAfterExpiry,
@@ -49,6 +51,7 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
         errorCode?: string;
         retryable?: boolean;
         requestDisposition?: ProbedResourceFailure['requestDisposition'];
+        failureCause?: ProbedResourceFailure['failureCause'];
         onRefresh: () => void;
     }>;
 }> {
@@ -158,7 +161,8 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
         }
 
         const cacheEntry = readDynamicConfigOptionsProbeCache(cacheKey);
-        setFailure({ reason: cacheEntry?.reason, errorCode: cacheEntry?.errorCode, retryable: cacheEntry?.retryable, requestDisposition: cacheEntry?.requestDisposition });
+        setFailure({ reason: cacheEntry?.reason, errorCode: cacheEntry?.errorCode, retryable: cacheEntry?.retryable,
+            requestDisposition: cacheEntry?.requestDisposition, failureCause: cacheEntry?.failureCause });
         const cached = cacheEntry?.kind === 'success' ? cacheEntry.value : null;
         const scopeStable = lastCacheKeyRef.current !== null && lastCacheKeyRef.current === cacheKey;
         lastCacheKeyRef.current = cacheKey;
@@ -225,19 +229,23 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
                     ...(response.errorCode ? { errorCode: response.errorCode } : {}),
                     ...(response.retryable === undefined ? {} : { retryable: response.retryable }),
                     ...(response.requestDisposition ? { requestDisposition: response.requestDisposition } : {}),
+                    ...(response.failureCause ? { failureCause: response.failureCause } : {}),
                 } };
-                if (!response.response.ok) return null;
+                if (!response.response.ok) return { failure: { reason: 'error',
+                    ...readCapabilityInvokeFailure({ ...response.response.error, errorCode: response.response.error.code }) } };
                 const result = response.response.result;
                 if (!result || typeof result !== 'object' || Array.isArray(result)) return null;
                 const record = result as Record<string, unknown>;
                 const source = typeof record.source === 'string' ? record.source : null;
+                const failureCause = readSessionRuntimeFailureCause(record);
+                const failure: ProbedResourceFailure | undefined = failureCause ? { failureCause } : undefined;
                 if (source === 'unavailable') {
-                    return { value: [], cacheable: false, unavailable: true };
+                    return { value: [], cacheable: false, unavailable: true, failure };
                 }
                 const normalized = normalizeAcpConfigOptionsArray(record.configOptions);
                 if (!normalized) return null;
                 const cacheable = source !== 'static';
-                return { value: normalized, cacheable,
+                return { value: normalized, cacheable, failure,
                     ...(record.refreshError === true ? { refreshError: true } : {}),
                     ...(typeof record.refreshErrorMessage === 'string' ? { refreshErrorMessage: record.refreshErrorMessage } : {}),
                     ...(typeof record.modelConfigOptionId === 'string' && record.modelConfigOptionId.trim()
@@ -257,7 +265,8 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
             const nextUnavailable = attempt?.unavailable === true;
 
             if (attempt?.refreshError) {
-                writeDynamicConfigOptionsProbeCacheError(cacheKey, commitNowMs, { reason: 'error' });
+                const refreshFailure: ProbedResourceFailure = { reason: 'error', ...probeFailure };
+                writeDynamicConfigOptionsProbeCacheError(cacheKey, commitNowMs, refreshFailure);
                 const observed = configOptionsRef.current ?? value;
                 if (observed) {
                     setConfigOptions(observed);
@@ -267,7 +276,7 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
                     ...(attempt.refreshErrorMessage === undefined ? {} : { refreshErrorMessage: attempt.refreshErrorMessage }),
                     rejectedConfigOptionOverrides: probeContextCapabilityParams?.configOptionOverrides ?? {},
                 });
-                setFailure({ reason: 'error' });
+                setFailure(refreshFailure);
                 setUnavailable(false);
                 setProbePhase('idle');
                 return;
@@ -285,7 +294,7 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
             }
 
             if (value && attempt?.cacheable === false && nextUnavailable) {
-                writeDynamicConfigOptionsProbeCacheUnavailable(cacheKey, commitNowMs);
+                writeDynamicConfigOptionsProbeCacheUnavailable(cacheKey, commitNowMs, probeFailure);
                 setConfigOptions(value);
                 setModelConfigOptionId(undefined);
                 setUnavailable(true);
@@ -310,7 +319,9 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
             if (cached) {
                 const cachedUnavailable = cacheEntry?.kind === 'success' && cacheEntry.unavailable === true;
                 if (cachedUnavailable) {
-                    writeDynamicConfigOptionsProbeCacheUnavailable(cacheKey, commitNowMs);
+                    writeDynamicConfigOptionsProbeCacheUnavailable(cacheKey, commitNowMs, probeFailure);
+                } else if (probeFailure) {
+                    writeDynamicConfigOptionsProbeCacheError(cacheKey, commitNowMs, probeFailure);
                 } else {
                     writeDynamicConfigOptionsProbeCacheSuccess(cacheKey, cached, commitNowMs, cacheEntry?.kind === 'success' ? cacheEntry.modelConfigOptionId : undefined);
                 }
@@ -325,7 +336,8 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
             const stale = configOptionsRef.current;
             const staleUpdatedAt = refreshedAtRef.current;
             if (stale && staleUpdatedAt) {
-                writeDynamicConfigOptionsProbeCacheSuccess(cacheKey, stale, commitNowMs, modelConfigOptionIdRef.current);
+                if (probeFailure) writeDynamicConfigOptionsProbeCacheError(cacheKey, commitNowMs, probeFailure);
+                else writeDynamicConfigOptionsProbeCacheSuccess(cacheKey, stale, commitNowMs, modelConfigOptionIdRef.current);
                 setConfigOptions(stale);
                 setUnavailable(false);
                 setRefreshedAt(commitNowMs);

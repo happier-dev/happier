@@ -7,7 +7,9 @@ import { log } from '@/log';
 import { z } from 'zod/mini';
 import { RawRecordSchema } from '@happier-dev/session-core/raw';
 import { SessionMessageRoleSchema } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
+import { UsageTimingBoundsV1Schema } from '@happier-dev/protocol/usage/usageTimingV1';
 import { persistSessionTranscriptMessage, readStoredSessionMessages } from '@happier-dev/session-core/messages';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import type { PersistSessionTranscriptMessageInput } from "@happier-dev/session-core/messages";
 import { normalizeRawMessage, type NormalizedMessage } from "@happier-dev/session-core/raw";
@@ -27,6 +29,7 @@ const acknowledgements = new Map<string, { id: string; seq: number; localId: str
 const wireSchema = z.strictObject({
   content: z.strictObject({ t: z.literal('plain'), v: RawRecordSchema }),
   localId: z.string().check(z.minLength(1)), messageRole: SessionMessageRoleSchema,
+  usageTimingV1: z.optional(z.nullable(UsageTimingBoundsV1Schema)),
 });
 let beforeAcknowledgement: (request: TranscriptRequest) => void | Promise<void>;
 const pendingWriterOperations: Promise<unknown>[] = [];
@@ -1665,27 +1668,41 @@ describe('canonical voice transcript refusals are named', () => {
     }]);
   });
 
-  it('names an authoritative final whose only write fails', async () => {
-    beforeAcknowledgement = async () => { throw Object.assign(new Error('write rejected'), { code: 'voice_transcript_write_failed' }); };
+  it.each([
+    { operation: 'canonical', status: 429 },
+    { operation: 'spoken', status: 503 },
+    { operation: 'continuation', status: 429 },
+  ] as const)('retains the $operation transcript write cause with HTTP $status', async ({ operation, status }) => {
+    const failureCause = projectActionFailureCauseV1(Object.assign(new TypeError('private transcript write response'), { status }), 'voice.transcript.persist');
+    const refusal = Object.assign(new Error('write rejected'), { code: 'voice_transcript_write_failed', failureCause });
+    beforeAcknowledgement = async () => { throw refusal; };
     const persistFinal = writeTranscript;
     const projector = createVoiceTranscriptProjector({
       getState: storage.getState,
       persistFinal,
     });
     projector.beginCanonicalAttempt('carrier');
-    projector.projectCanonicalEvent({
-      conversationSessionId: 'carrier',
-      source: { pluginId: 'happier.voice.openai', contributionId: 'realtime-openai' },
-      event: event({ type: 'voice.transcript.final', text: 'authoritative words' }),
-    });
+    if (operation === 'canonical') {
+      projector.projectCanonicalEvent({
+        conversationSessionId: 'carrier',
+        source: { pluginId: 'happier.voice.openai', contributionId: 'realtime-openai' },
+        event: event({ type: 'voice.transcript.final', text: 'authoritative words' }),
+      });
+    } else if (operation === 'spoken') {
+      await expect(projector.persistSpokenAssistantText({ conversationSessionId: 'carrier', text: 'authoritative words' })).rejects.toBe(refusal);
+    } else {
+      await expect(projector.projectNoteText({ conversationSessionId: 'carrier', text: 'Voice continued.',
+        continuation: { v: 1, deviceId: 'device', conversation: { serverId: 'home', sessionId: 'carrier' } } })).rejects.toBe(refusal);
+    }
 
     await waitForTestEvent((listener) => log.onChange(listener), readNamedDrops,
-      (drops) => drops.some((drop) => drop.kind === 'transcript_persist_failed'));
+      (drops) => drops.some((drop) => drop.kind === (operation === 'continuation' ? 'continuation_persist_failed' : 'transcript_persist_failed')));
     expect(readNamedDrops()).toEqual([{
-      providerId: 'happier.voice.openai/realtime-openai',
+      providerId: operation === 'canonical' ? 'happier.voice.openai/realtime-openai' : 'voice.transcript',
       outcome: 'transcript_dropped',
-      kind: 'transcript_persist_failed',
+      kind: operation === 'continuation' ? 'continuation_persist_failed' : 'transcript_persist_failed',
       reason: 'voice_transcript_write_failed',
+      failureCause,
     }]);
   });
 });

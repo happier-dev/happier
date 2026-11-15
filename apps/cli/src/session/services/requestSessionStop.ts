@@ -34,7 +34,7 @@ import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
-import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, projectActionFailureCauseV1, type ActionExecuteFailure, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { runTracedExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
 import { recordSessionStopIntent, resolveSessionExplicitControlIntent } from './sessionExplicitStopIntent';
 import type { SessionStopIntent } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
@@ -53,6 +53,7 @@ type RequestSessionStopResult = (
 type StopSessionAttemptResult = StopSessionResult | Readonly<{
   status: 'incomplete';
   reason: 'transport_ambiguous' | 'marker_fallback_failed' | 'target_daemon_unavailable';
+  failureCause?: ActionFailureCauseV1;
 }>;
 
 /**
@@ -76,7 +77,12 @@ async function readSessionInactive(params: Readonly<{
     sessionId: params.sessionId,
     ...(params.signal ? { signal: params.signal } : {}),
     ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
-  }).catch(() => null);
+  }).catch((error: unknown) => {
+    logger.debug('[SESSION STOP] Could not read Session inactivity', {
+      failureCause: projectActionFailureCauseV1(error, 'stop.session_inactivity_read', { allowUnknownErrorCode: false }),
+    });
+    return null;
+  });
   return session ? session.active === false : null;
 }
 
@@ -184,6 +190,7 @@ async function stopSessionOnOwningMachine(params: Readonly<{
       ? result.data
       : { status: 'incomplete', reason: 'target_daemon_unavailable' };
   } catch (error) {
+    const failureCause = projectActionFailureCauseV1(error, 'stop.owner_rpc');
     const rpcErrorCode = readRpcErrorCode(error);
     const disposition = readMachineRpcRequestDisposition(error);
     const transportErrorCode = error && typeof error === 'object' && 'code' in error
@@ -198,20 +205,21 @@ async function stopSessionOnOwningMachine(params: Readonly<{
         ? rpcErrorCode
         : undefined,
       transportErrorCode: transportErrorCode === 'MACHINE_RPC_TIMEOUT' ? transportErrorCode : undefined,
+      failureCause,
     });
     if (disposition === 'outcomeUnknown' || rpcErrorCode === RPC_ERROR_CODES.OUTCOME_UNKNOWN) {
-      return { status: 'incomplete', reason: 'transport_ambiguous' };
+      return { status: 'incomplete', reason: 'transport_ambiguous', failureCause };
     }
     if (rpcErrorCode === RPC_ERROR_CODES.FORBIDDEN
       || rpcErrorCode === RPC_ERROR_CODES.TEAM_AUTHENTICATION_REQUIRED
       || rpcErrorCode === RPC_ERROR_CODES.TEAM_AUTHENTICATION_UNAVAILABLE
       || rpcErrorCode === RPC_ERROR_CODES.UPDATE_REQUIRED) {
-      return { ok: false, errorCode: rpcErrorCode, error: rpcErrorCode };
+      return { ok: false, errorCode: rpcErrorCode, error: rpcErrorCode, failureCause };
     }
     if (Object.values(RPC_ERROR_CODES).some((code) => code === rpcErrorCode)) {
-      return { status: 'incomplete', reason: 'target_daemon_unavailable' };
+      return { status: 'incomplete', reason: 'target_daemon_unavailable', failureCause };
     }
-    return { status: 'incomplete', reason: 'target_daemon_unavailable' };
+    return { status: 'incomplete', reason: 'target_daemon_unavailable', failureCause };
   }
 }
 
@@ -248,7 +256,12 @@ async function stopSessionViaMarkersBestEffort(params: Readonly<{
   }
   const deviceLocalSecretStorage = await readOrCreateDeviceLocalSecretStorage({
     path: configuration.deviceLocalSecretKeyFile,
-  }).catch(() => null);
+  }).catch((error: unknown) => {
+    logger.debug('[SESSION STOP] Marker recovery device storage is unavailable', {
+      failureCause: projectActionFailureCauseV1(error, 'stop.marker_device_storage', { allowUnknownErrorCode: false }),
+    });
+    return null;
+  });
 
   const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>(
     markers.map((marker) => {
@@ -261,7 +274,10 @@ async function stopSessionViaMarkersBestEffort(params: Readonly<{
               : {}),
             ...(deviceLocalSecretStorage ? { deviceLocalSecretStorage } : {}),
           });
-        } catch {
+        } catch (error) {
+          logger.debug('[SESSION STOP] Marker recovery launch options are unavailable', {
+            failureCause: projectActionFailureCauseV1(error, 'stop.marker_launch_options', { allowUnknownErrorCode: false }),
+          });
           spawnOptions = undefined;
         }
       }
@@ -324,7 +340,12 @@ async function readExactTerminalAttachmentId(sessionId: string): Promise<string 
   const state = await readTerminalHostAttachmentState({
     happyHomeDir: configuration.happyHomeDir,
     sessionId,
-  }).catch(() => ({ status: 'unreadable' as const, reason: 'io_error' as const }));
+  }).catch((error: unknown) => {
+    logger.debug('[SESSION STOP] Exact attachment recovery evidence is unavailable', {
+      failureCause: projectActionFailureCauseV1(error, 'stop.attachment_recovery_read', { allowUnknownErrorCode: false }),
+    });
+    return { status: 'unreadable' as const, reason: 'io_error' as const };
+  });
   return state.status === 'present' && state.info.version !== 1
     ? state.info.attachmentId
     : null;
@@ -337,7 +358,11 @@ async function cleanupStoppedSessionMarkersBestEffort(sessionId: string): Promis
       .filter((marker) => marker.happySessionId === sessionId)
       .map((marker) => removeSessionMarkerIfOwned({ trackingKey: marker.trackingKey, happySessionId: marker.happySessionId,
         processStartTimeMs: marker.processStartTimeMs, processCommandHash: marker.processCommandHash,
-      }).catch(() => undefined)),
+      }).catch((error: unknown) => {
+        logger.debug('[SESSION STOP] Stopped Session marker cleanup is incomplete', {
+          failureCause: projectActionFailureCauseV1(error, 'stop.marker_cleanup', { allowUnknownErrorCode: false }),
+        });
+      })),
   );
 }
 
@@ -525,8 +550,9 @@ export async function requestSessionStop(params: Readonly<{
       physicalStopResult = signal
         ? await stopDaemonSession(resolved.sessionId, { signal })
         : await stopDaemonSession(resolved.sessionId);
-    } catch {
-      physicalStopResult = { status: 'incomplete', reason: 'transport_ambiguous' };
+    } catch (error) {
+      physicalStopResult = { status: 'incomplete', reason: 'transport_ambiguous',
+        failureCause: projectActionFailureCauseV1(error, 'stop.local_daemon') };
     }
     // A transport failure may mean the daemon accepted Stop but the response was lost. Retry only
     // when a v2 attachment supplies immutable host identity; plain/legacy/unreadable paths retain
@@ -543,7 +569,8 @@ export async function requestSessionStop(params: Readonly<{
           ? { expectedTerminalAttachmentId: exactAttachmentIdBeforeDaemonStop }
           : {}),
       }).catch(
-        (): StopSessionAttemptResult => ({ status: 'incomplete', reason: 'marker_fallback_failed' }),
+        (error: unknown): StopSessionAttemptResult => ({ status: 'incomplete', reason: 'marker_fallback_failed',
+          failureCause: projectActionFailureCauseV1(error, 'stop.local_markers') }),
       );
     }
     if (physicalStopResult.status !== 'stopped') {
@@ -568,7 +595,11 @@ export async function requestSessionStop(params: Readonly<{
       ...(signal ? { signal } : {}),
     });
     if (stopped) {
-      await cleanupStoppedSessionMarkersBestEffort(resolved.sessionId).catch(() => undefined);
+      await cleanupStoppedSessionMarkersBestEffort(resolved.sessionId).catch((error: unknown) => {
+        logger.debug('[SESSION STOP] Stopped Session marker inventory is unavailable', {
+          failureCause: projectActionFailureCauseV1(error, 'stop.marker_inventory_cleanup', { allowUnknownErrorCode: false }),
+        });
+      });
       return {
         ok: true,
         sessionId: resolved.sessionId,
@@ -585,16 +616,19 @@ export async function requestSessionStop(params: Readonly<{
       },
     };
   } catch (error) {
+    const failureCause = projectActionFailureCauseV1(error, `stop.${phase}`);
     // Keep exception messages, request payloads and credentials out of this diagnostic.
     logger.infoFile('[SESSION STOP] Stop request failed', {
       sessionId: resolved.sessionId,
       phase,
       classification: classifyServerEndpointError(error),
+      failureCause,
     });
     return {
       ok: true,
       sessionId: resolved.sessionId,
       stopped: false,
+      failureCause,
       stopOutcome: {
         status: 'physical_stop_unconfirmed',
         reason: 'unexpected_error',

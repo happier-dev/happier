@@ -15,6 +15,7 @@ import { createXaiVoiceRuntimeEnvironment, XaiVoiceWebSocket } from '@/dev/testk
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { log } from '@/log';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { VoiceRealtimeProtocolAdapter } from '@/voice/runtime/protocol/VoiceRealtimeProtocolAdapter';
 import { createRealtimeToolBarrier } from '@/voice/tools/realtimeToolBarrier';
 import { createVoiceConversationRuntimeMachine } from '@/voice/runtime/machine/VoiceConversationRuntimeMachine';
@@ -787,6 +788,7 @@ describe('VoiceConversationController', () => {
     'resource prepare',
     'provider prepare',
   ] as const)('normalizes typed %s decline codes at every controller output', async (boundary) => {
+    const failureCause = projectActionFailureCauseV1(Object.assign(new TypeError('private provider response'), { status: 429 }), 'voice.preflight');
     for (const [code, expectedCode] of [
       ['machine unavailable at /Users/private/repository', 'voice_connection_failed'],
       ['VOICE_AGENT_TARGET_MACHINE_OFFLINE', 'VOICE_AGENT_TARGET_MACHINE_OFFLINE'],
@@ -797,15 +799,15 @@ describe('VoiceConversationController', () => {
       const adapter = createAdapter({
         releasePrepared,
         ...(boundary === 'provider preflight'
-          ? { preflight: async () => ({ kind: 'declined' as const, code }) }
+          ? { preflight: async () => ({ kind: 'declined' as const, code, failureCause }) }
           : {}),
         ...(boundary === 'provider prepare'
-          ? { prepare: async () => ({ kind: 'declined' as const, code }) }
+          ? { prepare: async () => ({ kind: 'declined' as const, code, failureCause }) }
           : {}),
       });
       const resources = boundary === 'resource prepare'
         ? {
-            prepare: vi.fn(async () => ({ kind: 'declined' as const, code })),
+            prepare: vi.fn(async () => ({ kind: 'declined' as const, code, failureCause })),
             release: vi.fn(async () => {}),
           }
         : undefined;
@@ -829,6 +831,7 @@ describe('VoiceConversationController', () => {
         controlSessionId: `decline-${boundary}`,
         attemptId: 1,
         code: expectedCode,
+        failureCause,
       });
       expect(releasePrepared).toHaveBeenCalledWith({
         controlSessionId: `decline-${boundary}`,

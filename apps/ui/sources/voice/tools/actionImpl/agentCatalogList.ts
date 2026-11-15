@@ -52,6 +52,7 @@ import { readMachineAgentsForScope, refreshMachineAgents } from '@/agents/machin
 import { captureServerCredentialAccountScopeLifetime, resolveServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
 import { findMachineAgentForBackendTargetKey } from '@/agents/machineAgents/machineAgentCatalog';
 import { resolveMachineAgentExecutionStateV1 } from '@happier-dev/protocol/capabilities/machineAgentInventory';
+import type { CapabilityInvokeFailure } from '@happier-dev/protocol/capabilities/invokeFailure';
 
 function normalizeId(raw: unknown): string {
   return String(raw ?? '').trim();
@@ -171,6 +172,7 @@ type VoiceToolModelListResult = Readonly<{
   source: 'preflight' | 'static' | 'unavailable';
   unavailable?: true;
   refreshError?: true;
+  failureCause?: CapabilityInvokeFailure['failureCause'];
 }>;
 
 async function projectVoiceToolProviderModels(params: Readonly<{
@@ -273,6 +275,7 @@ async function projectVoiceToolProviderModels(params: Readonly<{
       supportsFreeform: params.base.supportsFreeform || supportsProviderFreeform,
       source: params.base.source,
       ...(params.base.refreshError ? { refreshError: true as const } : {}),
+      ...(params.base.failureCause ? { failureCause: params.base.failureCause } : {}),
       ...(!hasProviderModels && params.base.unavailable === true ? { unavailable: true as const } : {}),
     };
   } finally {
@@ -523,6 +526,7 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
       return await withProviderProjection({
         ...buildVoiceToolPreflightModelResult({ shouldExposeAgentId, agentId, machineId, list, limit }),
         ...(failed ? { refreshError: true as const } : {}),
+        ...(entry?.failureCause ? { failureCause: entry.failureCause } : {}),
       });
     }
   }

@@ -8,7 +8,7 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { CODEX_PREFLIGHT_SESSION_CONTROLS } from './sessionControls.js';
-import { AgentProbeModelSchema } from '@happier-dev/protocol/capabilities';
+import { AgentPassiveRealtimeSetupResultV1Schema, AgentProbeModelSchema } from '@happier-dev/protocol/capabilities';
 
 function createPreflightContext(params: Readonly<{
   accountSettings?: Readonly<Record<string, JsonValue>> | null;
@@ -187,17 +187,27 @@ describe('CODEX_PREFLIGHT_SESSION_CONTROLS', () => {
     expect(fixture.commands).toEqual([]);
   });
 
-  it.each(['rejected', 'malformed', 'empty'] as const)('preserves %s model discovery at the host probe boundary', async (outcome) => {
+  it.each([
+    { outcome: 'rejected', status: 429 },
+    { outcome: 'rejected', status: 503 },
+    { outcome: 'malformed', status: null },
+    { outcome: 'empty', status: null },
+  ] as const)('preserves $outcome model discovery at the host probe boundary ($status)', async ({ outcome, status }) => {
     const fixture = createPreflightContext({
       request: async (method) => {
         if (method === 'initialize') return {};
         if (method !== 'model/list') return [];
-        if (outcome === 'rejected') throw new Error('provider unavailable');
+        if (outcome === 'rejected') throw Object.assign(new TypeError('private provider unavailable'), { status, code: 'private_customer_token' });
         return outcome === 'malformed' ? { unexpected: [] } : [];
       },
     });
-    await expect(CODEX_PREFLIGHT_SESSION_CONTROLS.probeModels(fixture.context))
-      .resolves.toEqual(outcome === 'empty' ? [] : null);
+    const result = await CODEX_PREFLIGHT_SESSION_CONTROLS.probeModels(fixture.context);
+    if (outcome === 'rejected') {
+      expect(result).toMatchObject({ availableModels: [], source: 'unavailable', refreshError: true, failureCause: {
+        phase: 'codex.models.list', errorClass: 'TypeError', errorCode: null, httpStatus: status,
+      } });
+      expect(JSON.stringify(result)).not.toMatch(/private provider|private_customer_token/);
+    } else expect(result).toEqual(outcome === 'empty' ? [] : null);
   });
 
   it('declares exact app-server probes with host-owned diagnostics and cache policy', () => {
@@ -295,6 +305,25 @@ describe('CODEX_PREFLIGHT_SESSION_CONTROLS', () => {
       args: ['app-server', '--listen', 'stdio://', '--enable', 'realtime_conversation'],
     })]);
     expect(fixture.notifications).toEqual([{ method: 'initialized', params: undefined }]);
+  });
+
+  it.each((['account/read', 'experimentalFeature/list'] as const).flatMap(failedMethod =>
+    [false, true].map(authentication => ({ failedMethod, authentication })),
+  ))('retains passive native failures from $failedMethod (authentication: $authentication)', async ({ failedMethod, authentication }) => {
+    const fixture = createPreflightContext({ request: async method => {
+      if (method === failedMethod) throw Object.assign(new TypeError('credential-bearing native failure'),
+        authentication ? { code: 'unauthorized' } : {});
+      if (method === 'initialize') return {};
+      if (method === 'account/read') return { requiresOpenaiAuth: true, account: { type: 'apiKey' } };
+      throw new Error(`Unexpected request: ${method}`);
+    } });
+    const result = await CODEX_PREFLIGHT_SESSION_CONTROLS.probePassiveRealtimeSetup(fixture.context);
+    expect(result).toMatchObject({ v: 1, status: authentication ? 'authentication_required' : 'unavailable', failureCause: {
+      phase: failedMethod === 'experimentalFeature/list' ? 'codex.realtime.feature_inspection' : 'capabilities.preflight.passive_realtime_setup',
+      errorClass: 'TypeError', errorCode: null, httpStatus: null,
+    } });
+    expect(AgentPassiveRealtimeSetupResultV1Schema.parse(result)).toEqual(result);
+    expect(JSON.stringify(result)).not.toContain('credential-bearing');
   });
 
   it('fails closed without opening an app-server scope when settings select ACP', async () => {

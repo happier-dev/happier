@@ -40,6 +40,27 @@ describe('Action failure error adapter', () => {
 });
 
 describe('Action failure cause projection', () => {
+  it.each([
+    { error: Object.assign(new Error('private provider response'), { code: 'private-vendor-code', status: 429 }),
+      expected: { phase: 'voice.provider', errorClass: 'Error', errorCode: null, httpStatus: 429 } },
+    { error: new TypeError('private wrapper', { cause: Object.assign(new Error('private response'), {
+      code: 'private-vendor-code', status: 503,
+    }) }), expected: { phase: 'voice.provider', errorClass: 'TypeError', errorCode: null, httpStatus: 503 } },
+    { error: Object.assign(new Error('private provider response'), { code: 'ECONNRESET', status: 429 }),
+      expected: { phase: 'voice.provider', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: 429 } },
+    { error: Object.assign(new Error('private wrapper', { cause: Object.assign(new Error('private response'), { status: 503 }) }),
+      { code: 'EACCES' }), expected: { phase: 'voice.provider', errorClass: 'Error', errorCode: 'EACCES', httpStatus: 503 } },
+    { error: Object.assign(new Error('private wrapper', { cause: Object.assign(new Error('private response'), { status: 429 }) }),
+      { code: 'EACCES', status: 401 }), expected: { phase: 'voice.provider', errorClass: 'Error', errorCode: 'EACCES', httpStatus: 401 } },
+    { error: Object.assign(new Error('private wrapper'), { failureCause: {
+      phase: 'voice.provider.open', errorClass: 'TypeError', errorCode: 'provider_refused', httpStatus: 429,
+    } }), expected: { phase: 'voice.provider.open', errorClass: 'TypeError', errorCode: 'provider_refused', httpStatus: 429 } },
+  ])('projects external failures without copying arbitrary native codes ($expected.errorClass/$expected.httpStatus)', ({ error, expected }) => {
+    const cause = projectActionFailureCauseV1(error, 'voice.provider', { allowUnknownErrorCode: false });
+    expect(cause).toEqual(expected);
+    expect(JSON.stringify(cause)).not.toContain('private');
+  });
+
   it('retains the original Action cause after a Session wrapper crosses another Action boundary', () => {
     const actionCause = { phase: 'providers.source_open', errorClass: 'TypeError', errorCode: 'ECONNRESET', httpStatus: 503 } as const;
     const failureCause = { phase: 'authentication', failureReason: 'unknown', actionCause };

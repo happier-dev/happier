@@ -38,6 +38,7 @@ import type { SpokenActionTurnOrigin } from '@/voice/tools/executeSpokenAction';
 import {
   normalizeVoiceRuntimeFailureCode,
   readSafeVoiceRuntimeFailureCode,
+  readSafeVoiceRuntimeFailureFacts,
   recordVoiceRuntimeFailure,
   type VoiceRuntimeFailureDiagnosticReason,
   type VoiceRuntimeFailureCause,
@@ -207,9 +208,10 @@ export function createBundledRealtimeProviderRuntime(
     reason: string,
     diagnosticReason?: VoiceRuntimeFailureDiagnosticReason,
     providerCode?: string,
+    failureCause?: VoiceRuntimeFailureCause,
   ): void => {
     startOutcomeNamed = true;
-    recordVoiceRuntimeFailure(providerId, outcome, kind, reason, diagnosticReason, providerCode);
+    recordVoiceRuntimeFailure(providerId, outcome, kind, reason, diagnosticReason, providerCode, failureCause);
   };
   /**
    * Guards already recorded for the current Start, keyed by attempt and guard.
@@ -223,11 +225,12 @@ export function createBundledRealtimeProviderRuntime(
     attemptId: number,
     kind: string,
     reason: string,
+    failureCause?: VoiceRuntimeFailureCause,
   ): void => {
     const key = `${attemptId}:${kind}`;
     if (recordedTranscriptDrops.has(key)) return;
     recordedTranscriptDrops.add(key);
-    recordVoiceRuntimeFailure(providerId, 'transcript_dropped', kind, reason);
+    recordVoiceRuntimeFailure(providerId, 'transcript_dropped', kind, reason, undefined, undefined, failureCause);
   };
   let bargeInCoordinator: ReturnType<typeof createRealtimeBargeInCoordinator> | null = null;
   let activeTranscriptAttempt: ActiveTranscriptAttempt | null = null;
@@ -820,8 +823,8 @@ export function createBundledRealtimeProviderRuntime(
       },
       ending: ({ controlSessionId, attemptId }: Readonly<{ controlSessionId: string; attemptId: number }>) =>
         host.machine.transitionToEnding(controlSessionId, providerId, attemptId),
-      disconnected: ({ controlSessionId, attemptId, code }: Readonly<{
-        controlSessionId: string; attemptId: number; code?: string;
+      disconnected: ({ controlSessionId, attemptId, code, failureCause }: Readonly<{
+        controlSessionId: string; attemptId: number; code?: string; failureCause?: VoiceRuntimeFailureCause;
       }>) => {
         clearHostedLeaseNotices();
         activeHostedLease = null;
@@ -831,8 +834,8 @@ export function createBundledRealtimeProviderRuntime(
         let declineError: ReturnType<typeof host.createMachineError> | null = null;
         if (code) {
           const kind = resolveVoiceMachineErrorKind(code);
-          recordMachinePortFailure('declined', kind, code);
-          declineError = host.createMachineError({ kind, reason: code });
+          recordMachinePortFailure('declined', kind, code, undefined, undefined, failureCause);
+          declineError = host.createMachineError({ kind, reason: code, ...(failureCause ? { cause: { failureCause } } : {}) });
         }
         host.machine.transitionToDisconnected(controlSessionId, providerId, declineError, attemptId);
       },
@@ -850,7 +853,7 @@ export function createBundledRealtimeProviderRuntime(
         closeLevelWriters();
         retireUnpreparedResourceAttempt(attemptId);
         const kind = resolveVoiceMachineErrorKind(code);
-        recordMachinePortFailure('failed', kind, code, diagnosticReason, providerCode);
+        recordMachinePortFailure('failed', kind, code, diagnosticReason, providerCode, failureCause);
         host.machine.setError(
           controlSessionId,
           providerId,
@@ -1349,12 +1352,13 @@ export function createBundledRealtimeProviderRuntime(
                 retiringTranscriptDrain,
               );
             },
-            () => {
+            (error) => {
               clearRebind();
               recordTranscriptDrop(
                 attemptId,
                 'transcript_carrier_rebind_failed',
                 'voice_transcript_carrier_rebind_failed',
+                readSafeVoiceRuntimeFailureFacts(error).failureCause,
               );
             },
           );
@@ -1640,6 +1644,9 @@ export function createBundledRealtimeProviderRuntime(
           'unstarted',
           'target_selection_rejected',
           readSafeVoiceRuntimeFailureCode(error) ?? 'voice_target_selection_failed',
+          undefined,
+          undefined,
+          readSafeVoiceRuntimeFailureFacts(error).failureCause,
         );
         throw error;
       }

@@ -7,6 +7,7 @@ import type { ChildProcess } from 'node:child_process';
 import { describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { SessionMetadataTuplePatchV1Schema, V2SessionByIdResponseSchema } from '@happier-dev/protocol';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 const inventory = vi.hoisted(() => ({ socketPath: '', inheritedSpawns: 0, startedServers: [] as string[],
     tmuxEnabled: false, tmuxSessions: new Map<string, string>(), tmuxLaunchScripts: [] as string[] }));
@@ -500,6 +501,31 @@ describe('plugin terminal-host creation rollback', () => {
             }
         })));
     });
+    it('preserves a failed exact disposal through the canonical Action failure reader', async () => {
+        await withTempDir('terminal-disposal-cause-', async happyHomeDir => await withHerdrApi(async api => {
+            inventory.socketPath = api.socketPath;
+            const service = createDefaultPluginTerminalHostService({ happyHomeDir,
+                hasCapability: capability => capability === 'terminalHost', readSessionId: () => 'disposal-cause-session',
+                herdrRuntime: { herdrSessionName: 'work', herdrSocketPath: api.socketPath } });
+            const handle = await service.createOrAttachHost({ preference: 'herdr', sessionName: 'work',
+                workingDirectory: happyHomeDir, isolatedEnv: true,
+                launch: { kind: 'agent-cli', agentId: 'claude', args: ['--version'], env: { HAPPIER_CLAUDE_PATH: process.execPath } } });
+            api.faults.set('pane.close', 'error');
+            try {
+                const failure = await service.dispose(handle, { kind: 'destroy_owned_host', reason: 'session_closed' })
+                    .then(() => undefined, (error: unknown) => error);
+                expect(failure).toBeInstanceOf(Error);
+                expect(projectActionFailureCauseV1(failure, 'action.stop')).toMatchObject({
+                    phase: 'terminal_host.disposition.destroy', errorClass: 'Error',
+                });
+                expect(api.panes.has('managed')).toBe(true);
+            } finally {
+                api.faults.delete('pane.close');
+                await service.dispose(handle, { kind: 'destroy_owned_host', reason: 'session_closed' });
+            }
+        }));
+    });
+
     it('retries private cleanup after positive exact physical disposal without destroying the host twice', async () => {
         await withTempDir('prepared-host-cleanup-', async happyHomeDir => await withHerdrApi(async api => {
             inventory.socketPath = api.socketPath;

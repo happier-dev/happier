@@ -5,6 +5,7 @@ import { AgentModelsProbeObservationSchema, AgentSessionModesProbeObservationSch
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import type { MachineCapabilitiesInvokeResult } from '@/sync/ops/capabilities';
 import { createFrontDoorActionExecute } from './frontDoorRuntimeActionExecutor';
+import { readSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
 /** Existing inventory Actions are the only public preflight transport front door. */
 export async function invokeAgentInventoryProbeAction(params: Readonly<{
@@ -32,9 +33,11 @@ export async function invokeAgentInventoryProbeAction(params: Readonly<{
         if (!result.ok) {
             const details = result.details && typeof result.details === 'object' && !Array.isArray(result.details)
                 ? result.details as Record<string, unknown> : null;
+            const failureCause = readSessionRuntimeFailureCause(result);
             return { supported: false,
                 errorCode: result.errorCode,
                 ...(typeof details?.retryable === 'boolean' ? { retryable: details.retryable } : {}),
+                ...(failureCause ? { failureCause } : {}),
                 reason: result.errorCode === 'action_outcome_unknown' || details?.reason === 'outcomeUnknown' ? 'outcomeUnknown'
                     : details?.reason === 'not-supported' ? 'not-supported' : 'error',
                 ...(details?.requestDisposition === 'outcomeUnknown' || details?.requestDisposition === 'notSent'

@@ -3,6 +3,7 @@ import {
     type DaemonVoiceInferenceErrorCode,
 } from '@happier-dev/protocol/daemon/voiceInference';
 import { isRpcMethodNotAvailableError } from '@happier-dev/protocol/rpcErrors';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 const DAEMON_VOICE_INFERENCE_CLIENT_TRANSPORT_ERROR_CODES = [
     'feature_disabled',
@@ -37,6 +38,7 @@ export function readDaemonVoiceInferenceClientErrorCode(error: unknown): DaemonV
 export function createDaemonVoiceInferenceClientError(
     code: DaemonVoiceInferenceClientErrorCode,
     message = `daemon_voice_inference_${code}`,
-): Error & Readonly<{ code: DaemonVoiceInferenceClientErrorCode }> {
-    return Object.assign(new Error(message), { code });
+    failureCause?: ActionFailureCauseV1,
+): Error & Readonly<{ code: DaemonVoiceInferenceClientErrorCode; failureCause?: ActionFailureCauseV1 }> {
+    return Object.assign(new Error(message), { code, ...(failureCause ? { failureCause } : {}) });
 }

@@ -1,5 +1,6 @@
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { resolveModelDisplayName } from '@happier-dev/plugin-sdk/agents';
+import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 
 import { isCodexAppServerFastServiceTier } from '../serviceTier.js';
 import { resolveCodexModelCostTier } from '../../../models/modelTiers.js';
@@ -43,6 +44,7 @@ export type CodexAppServerSessionControlsSnapshot = Readonly<{
     currentModeId: string | null;
     availableModels: SessionModelOption[];
     modelsObserved: boolean;
+    modelFailureCause?: ReturnType<typeof projectActionFailureCauseV1>;
     currentModelId: string | null;
     configOptions: SessionConfigOption[];
 }>;
@@ -446,6 +448,9 @@ export async function readCodexAppServerSessionControls(params: Readonly<{
         currentModeId,
         availableModels,
         modelsObserved,
+        ...(modelsSettled.status === 'rejected' ? {
+            modelFailureCause: projectActionFailureCauseV1(modelsSettled.reason, 'codex.models.list', { allowUnknownErrorCode: false }),
+        } : {}),
         currentModelId,
         configOptions: [],
     };

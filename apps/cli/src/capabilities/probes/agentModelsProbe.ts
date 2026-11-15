@@ -43,6 +43,7 @@ import { isDynamicModelProbeEnabled } from '@/providers/probe/nativeCatalogCrede
 import { SpawnFailureError, type SpawnFailure } from '@/processes/spawnFailure/classifySpawnFailure';
 import { SpawnFailureV1Schema } from '@happier-dev/protocol/machines/processes/spawnFailureV1';
 import { NonBlankOpaqueIdentifierSchema } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import { projectSessionRuntimeFailureCause, readSessionRuntimeFailureCause, SessionRuntimeFailureCauseV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { z } from 'zod/mini';
 
 type ProbedAgentModelOptionValue = ProbedCatalogOptionValue;
@@ -69,6 +70,7 @@ const ProbeModelsObservationSchema = lazyZodSchema(() => z.object({
   observedAt: z.optional(z.number().check(z.nonnegative())),
   refreshError: z.optional(z.boolean()),
   refreshErrorMessage: z.optional(z.string()),
+  failureCause: z.optional(SessionRuntimeFailureCauseV1Schema),
   spawnFailure: z.optional(SpawnFailureV1Schema),
   source: z.optional(z.enum(['dynamic', 'static', 'unavailable'])),
   // A native inventory was read, but some eligibility could not be established.
@@ -507,8 +509,10 @@ async function probeAgentModels(params: {
       ? buildUnavailable(params.agentId)
       : resolveDynamicProbeFailureFallback(params.agentId);
     let spawnFailure: SpawnFailure | undefined;
+    let failureCause: ProbedAgentModelsResult['failureCause'];
     const observeFailure = (error: unknown) => {
       if (error instanceof SpawnFailureError) spawnFailure = error.spawnFailure;
+      failureCause = projectSessionRuntimeFailureCause(error, 'client_start', 'capabilities.preflight.models');
       return null;
     };
     const failedResult = (cold: ProbedAgentModelsResult, ttlMs = PROBE_MODELS_FAILURE_TTL_MS, catalogObserved = false): ProbedAgentModelsResult => {
@@ -519,9 +523,11 @@ async function probeAgentModels(params: {
       // A native inventory refusal also replaces rows from an older auth route.
       const acceptedScopeObservation = params.configOptionOverrides
         && Object.keys(params.configOptionOverrides).length > 0 && cold.source === 'dynamic' && cold.observedAt !== undefined;
-      const { spawnFailure: _previousFailure, refreshErrorMessage: _previousMessage, ...observation } = catalogObserved || acceptedScopeObservation ? cold : lastGood ?? cold;
+      const { spawnFailure: _previousFailure, refreshErrorMessage: _previousMessage, failureCause: _previousCause, ...observation } = catalogObserved || acceptedScopeObservation ? cold : lastGood ?? cold;
+      const currentFailureCause = cold.failureCause ?? failureCause;
       const result = { ...observation, refreshError: true, cacheable: false,
         ...(cold.refreshErrorMessage === undefined ? {} : { refreshErrorMessage: cold.refreshErrorMessage }),
+        ...(currentFailureCause ? { failureCause: currentFailureCause } : {}),
         ...(spawnFailure ? { spawnFailure } : {}) };
       agentModelsProbeCache.setSuccess(cacheKey, result, { nowMs: Date.now(), ttlMs });
       return result;
@@ -550,26 +556,28 @@ async function probeAgentModels(params: {
           const controls = await probeAcpSessionControlsFromBackend({ backend, timeoutMs, signal: params.signal,
             configOptionOverrides: params.configOptionOverrides });
           return { models: normalizeAcpModelsSnapshot(controls.models, null), refreshError: controls.refreshError,
-            refreshErrorMessage: controls.refreshErrorMessage, observedAt: controls.observedAt };
+            refreshErrorMessage: controls.refreshErrorMessage, failureCause: controls.failureCause, observedAt: controls.observedAt };
         },
       });
       if (configuredAcpProbe.kind === 'present') {
-        const { models, refreshError, refreshErrorMessage, observedAt } = configuredAcpProbe.result;
+        const { models, refreshError, refreshErrorMessage, failureCause, observedAt } = configuredAcpProbe.result;
         if (models) {
           const res: ProbedAgentModelsResult = { ...fallback, availableModels: models, source: 'dynamic',
             ...(observedAt === undefined ? refreshError ? {} : { observedAt: Date.now() } : { observedAt }) };
-          if (refreshError) return failedResult({ ...res, ...(refreshErrorMessage === undefined ? {} : { refreshErrorMessage }) });
+          if (refreshError) return failedResult({ ...res, ...(refreshErrorMessage === undefined ? {} : { refreshErrorMessage }),
+            ...(failureCause ? { failureCause } : {}) });
           agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
           return res;
         }
-        return failedResult({ ...fallback, ...(refreshErrorMessage === undefined ? {} : { refreshErrorMessage }) });
+        return failedResult({ ...fallback, ...(refreshErrorMessage === undefined ? {} : { refreshErrorMessage }),
+          ...(failureCause ? { failureCause } : {}) });
       }
 
       const preflightModelsAdapter = await resolvePreflightSessionControlsProbeAdapter(params.agentId, params.catalogEntry);
       const probeModelsRaw = preflightModelsAdapter?.probeModelsRaw;
       if (probeModelsRaw) {
         let catalogObserved = false;
-        let provenance: Partial<Pick<ProbedAgentModelsResult, 'observedAt' | 'refreshError' | 'refreshErrorMessage' | 'source' | 'spawnFailure'>> = {};
+        let provenance: Partial<Pick<ProbedAgentModelsResult, 'observedAt' | 'refreshError' | 'refreshErrorMessage' | 'failureCause' | 'source' | 'spawnFailure'>> = {};
         const probePreflightModelsOnce = async (): Promise<ProbedAgentModel[] | null> => {
           provenance = {};
           catalogObserved = false;
@@ -598,14 +606,18 @@ async function probeAgentModels(params: {
             env,
             acquireEnvironment,
           })).catch(observeFailure);
-          const envelope = ProbeModelsObservationSchema.safeParse(modelsRaw);
+          const declaredCause = readSessionRuntimeFailureCause(modelsRaw, 'client_start');
+          const envelope = ProbeModelsObservationSchema.safeParse(declaredCause
+            ? Object.assign({}, modelsRaw, { failureCause: declaredCause }) : modelsRaw);
           if (envelope.success) {
             catalogObserved = envelope.data.catalogObserved === true;
             spawnFailure = envelope.data.spawnFailure;
+            failureCause = envelope.data.failureCause;
             provenance = {
               ...(envelope.data.observedAt !== undefined ? { observedAt: envelope.data.observedAt } : {}),
               ...(envelope.data.refreshError !== undefined ? { refreshError: envelope.data.refreshError } : {}),
               ...(envelope.data.refreshErrorMessage === undefined ? {} : { refreshErrorMessage: envelope.data.refreshErrorMessage }),
+              ...(envelope.data.failureCause ? { failureCause: envelope.data.failureCause } : {}),
               ...(envelope.data.spawnFailure ? { spawnFailure: envelope.data.spawnFailure } : {}),
               ...(envelope.data.source ? { source: envelope.data.source } : {}),
             };

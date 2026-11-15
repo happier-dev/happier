@@ -21,10 +21,30 @@ import type { ApiClient } from '@/api/api';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { AgentInventoryProbeInputSchema } from '@happier-dev/protocol/actions/actionSpecs';
+import { createCapabilitiesService } from '@/capabilities/service';
+import { CHECKLIST_IDS } from '@/capabilities/checklistIds';
 
 afterAll(async () => { await pluginReloadController.shutdown(); });
 
 describe('native Agent preflight home directory intent', () => {
+    it('retains a declared native model diagnostic through the Session observation owner', async () => {
+        const projected = projectAgentPreflightSessionControlsCatalogEntry({ agentId: 'opencode', systemTools: [],
+            preflightSessionControls: { probeModels: async () => ({ availableModels: [], source: 'unavailable', refreshError: true,
+                failureCause: { phase: 'codex.models.list', errorClass: 'TypeError', errorCode: null, httpStatus: 429 },
+            }) }, retirementSignal: new AbortController().signal, isCurrent: () => true,
+        });
+        const adapter = await projected.getPreflightSessionControlsProbeAdapter?.();
+        if (!adapter) throw new Error('Missing real model preflight adapter');
+        const result = await invokeCliPreflightMethod('opencode', 'probeModels', { bypassCache: true }, {
+            agentCatalogEntry: preflightCatalogEntryFixture('opencode', adapter),
+            accountContext: { credentials: null, accountSettings: null },
+        }, {});
+        expect(result).toMatchObject({ ok: true, result: { source: 'unavailable', failureCause: {
+            phase: 'client_start', httpStatus: 429,
+            actionCause: { phase: 'codex.models.list', errorClass: 'TypeError', errorCode: null, httpStatus: 429 },
+        } } });
+    });
+
     it('expands the default home in the executing process and preserves an explicit directory', async () => {
         const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-preflight-home-')));
         const nativeHome = join(root, 'native-home');
@@ -77,8 +97,8 @@ describe('native Agent preflight home directory intent', () => {
             await rm(root, { recursive: true, force: true });
         }
     }, 60_000);
-    it.each(['files_ambient', 'files_explicit', 'environment', 'native', 'prepared'] as const)(
-        'uses the selected materialization environment in a real catalog process (%s)', async (mode) => {
+    it.each(['files_ambient', 'files_explicit', 'environment', 'native', 'prepared', 'refused', 'passive'] as const)(
+        'uses the selected materialization environment in native preflight (%s)', async (mode) => {
         const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-preflight-account-env-')));
         const observed = join(root, 'observed.json');
         const nativeHome = join(root, 'native-home');
@@ -113,11 +133,14 @@ describe('native Agent preflight home directory intent', () => {
                     environmentUses: [{ purpose: 'primary', environmentKey: 'ACME_TOKEN' }],
                     environmentUnsetUses: [{ purpose: 'primary', environmentKey: 'ACME_TOKEN' }],
                 },
-                materializeAccount: async ({ request }) => request.kind === 'httpHeaders'
+                materializeAccount: async ({ request }) => {
+                    if (mode === 'refused') throw new TypeError('credential-bearing materialization error');
+                    return request.kind === 'httpHeaders'
                     ? { kind: 'httpHeaders', headers: { authorization: 'Bearer fake-selected-token' } }
                     : request.kind === 'environment'
-                    ? { kind: 'environment', env: mode === 'environment' ? { ACME_TOKEN: 'fake-selected-token' } : {} }
-                    : { kind: 'files', files: mode.startsWith('files_') ? { 'auth.json': auth } : {} },
+                    ? { kind: 'environment', env: mode === 'environment' || mode === 'passive' ? { ACME_TOKEN: 'fake-selected-token' } : {} }
+                    : { kind: 'files', files: mode.startsWith('files_') ? { 'auth.json': auth } : {} };
+                },
             });
             const plugins = account.plugins.map(plugin => mode !== 'prepared' ? plugin : {
                 ...plugin, files: { ...plugin.files,
@@ -154,11 +177,14 @@ describe('native Agent preflight home directory intent', () => {
             const projected = projectAgentPreflightSessionControlsCatalogEntry({ agentId,
                 systemTools: [{ id: 'native-env', title: 'Native environment', executableNames: [executable] }],
                 preflightSessionControls: { catalogs: { command: { toolId: 'native-env', args: [] },
-                    parseOutput: () => ({ commands: [], skills: [] }) } },
+                    parseOutput: () => ({ commands: [], skills: [] }) },
+                    ...(mode === 'passive' ? { probePassiveRealtimeSetup: async () => { throw new TypeError('private native setup failure'); } } : {}),
+                },
                 retirementSignal: new AbortController().signal, isCurrent: () => true,
             });
             if (mode === 'prepared') expect.soft(AgentInventoryProbeInputSchema.safeParse({ modelId: 'chosen-native-model' }).success).toBe(true);
-            const response = await runWithServerHttpBaseUrl('https://preflight-account.example.test', () => invokeCliPreflightMethod(agentId, 'probeCatalogs', {
+            const method = mode === 'passive' ? 'probePassiveRealtimeSetup' : 'probeCatalogs';
+            const probe = () => runWithServerHttpBaseUrl('https://preflight-account.example.test', () => invokeCliPreflightMethod(agentId, method, {
                 cwd: root, bypassCache: true,
                 ...(mode === 'prepared' ? { modelId: 'chosen-native-model' } : {}),
                 ...(mode === 'files_ambient' ? {} : { environmentVariables: { ACME_TOKEN: 'fake-explicit-token' } }),
@@ -174,6 +200,26 @@ describe('native Agent preflight home directory intent', () => {
                 createAgentInvocationServices: runtime.registry.createAgentInvocationServices,
                 agentRuntimeCacheKey: runtime.registry.readPluginOccurrenceId?.('acme.foreground') ?? undefined,
             }, {}));
+            const service = createCapabilitiesService({ capabilities: [{
+                descriptor: { id: `cli.${agentId}`, kind: 'cli', methods: { [method]: {} } },
+                detect: async () => ({}), invoke: probe,
+            }], checklists: { [CHECKLIST_IDS.NEW_SESSION]: [], [CHECKLIST_IDS.MACHINE_DETAILS]: [] },
+                buildContext: async () => ({ cliSnapshot: null }) });
+            const response = await service.invoke({ id: `cli.${agentId}`, method });
+            if (mode === 'passive') {
+                expect(response, JSON.stringify(response)).toMatchObject({ ok: true, result: { v: 1, status: 'unavailable', failureCause: {
+                    phase: 'capabilities.preflight.passive_realtime_setup', errorClass: 'TypeError', errorCode: null, httpStatus: null,
+                } } });
+                expect(JSON.stringify(response)).not.toContain('private native setup failure');
+                return;
+            }
+            if (mode === 'refused') {
+                expect(response).toMatchObject({ ok: false, error: { failureCause: { phase: 'client_start', actionCause: {
+                    phase: 'capabilities.preflight.credentials', errorClass: 'TypeError',
+                } } } });
+                expect(JSON.stringify(response)).not.toContain('credential-bearing');
+                return;
+            }
             expect(response, JSON.stringify(response)).toMatchObject({ ok: true });
             const environment = JSON.parse(await readFile(observed, 'utf8')) as { key: string | null; home: string | null; cwd: string; args: string[]; auth: number[] | null };
             expect(environment.cwd).toBe(root);
@@ -208,6 +254,9 @@ describe('native Agent preflight home directory intent', () => {
                         agentRuntimeCacheKey: runtime.registry.readPluginOccurrenceId?.('acme.foreground') ?? undefined,
                     }, {}));
                     if (modelId === undefined) {
+                        expect(models).toMatchObject({ ok: false, error: { failureCause: {
+                            phase: 'client_start', failureReason: 'model_selection_required', retryable: false,
+                        } } });
                         // The Machine transport carries the real preparation result;
                         // no internal catalog or Action logic is replaced.
                         const inventory = createCliActionInventoryDeps({ token: 'fake-account-token', sessionId: '', mode: 'plain', ctx: null,
@@ -219,7 +268,9 @@ describe('native Agent preflight home directory intent', () => {
                             probe: { connectedServices: { v: 2, bindingsByServiceId: {
                                 'acme.preflight-account/credential': { source: 'connected', profileId: 'selected-account' },
                             } } } }, { surface: 'cli', authority: 'present_user' })).toMatchObject({
-                            ok: false, errorCode: 'model_selection_required', details: { retryable: false },
+                            ok: false, errorCode: 'model_selection_required', details: { retryable: false, failureCause: {
+                                phase: 'client_start', failureReason: 'model_selection_required', retryable: false,
+                            } },
                         });
                     } else {
                         expect(models).toMatchObject({ ok: true, result: { availableModels: [], source: 'unavailable',

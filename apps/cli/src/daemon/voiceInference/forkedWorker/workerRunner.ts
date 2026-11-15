@@ -15,6 +15,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { DaemonVoiceInferenceModelRuntimeState } from '@happier-dev/protocol';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { resolveVoiceInferenceWorkerMaxFrameBytes } from '../voiceInferenceWorkerConfig';
 import type { VoiceInferenceRuntime, VoiceInferenceStreamingTranscriptionSession } from '../voiceInferenceRuntimeTypes';
@@ -346,7 +347,8 @@ export function createVoiceInferenceWorkerRunner(
         return;
       }
       const { code, message } = toErrorCodeAndMessage(error);
-      send({ kind: 'error', id: frame.id, code, message });
+      send({ kind: 'error', id: frame.id, code, message,
+        failureCause: projectActionFailureCauseV1(error, `voice.inference.${frame.kind}`, { allowUnknownErrorCode: false }) });
     } finally {
       abortControllersById.delete(frame.id);
     }

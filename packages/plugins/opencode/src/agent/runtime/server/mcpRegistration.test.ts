@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
+import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
+import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions';
 import { createHappierMcpToolNamingResolver } from '../../../../../../../apps/cli/src/mcp/runtime/projectMcpToolNames';
 
 import {
   buildOpenCodeSessionMcpProjection,
   canonicalizeOpenCodeProjectedMcpToolName,
   disconnectOpenCodeMcpServers,
+  OpenCodeMcpRegistrationError,
   registerOpenCodeMcpServers,
   resolveOpenCodeProjectedMcpToolName,
 } from './mcpRegistration.js';
@@ -38,14 +41,14 @@ function projection(mcpServers: unknown) {
 }
 
 describe('registerOpenCodeMcpServers', () => {
-  it('retains sanitized V2 HTTP refusal fields through projection, transport and registration', async () => {
+  it.each([400, 429, 503])('retains sanitized V2 HTTP %s refusal through transport and registration', async (status) => {
     const harness = createRegistrationHarness();
     const transport = createOpenCodeServerTransport({ managedService: { request: async input => {
       expect(input.method).toBe('PUT');
       expect(input.pathAndQuery).toContain('/api/experimental/mcp/');
       const body = JSON.parse(new TextDecoder().decode(input.body));
       expect(body.config.command).toEqual(['/fixture']);
-      return { ok: false, status: 400, statusText: 'Bad Request', headers: {},
+      return { ok: false, status, statusText: 'Bad Request', headers: {},
         body: new Response('invalid MCP config; Authorization: Bearer diagnostic-secret').body };
     } } });
     const result = await registerOpenCodeMcpServers({ ctx: harness.ctx,
@@ -55,10 +58,20 @@ describe('registerOpenCodeMcpServers', () => {
     expect(result.requiredHappier.status).toBe('failed');
     const fields = JSON.parse(JSON.stringify(harness.debug.mock.calls.at(-1)?.[1]));
     expect(fields.error).toMatchObject({ name: 'OpenCodeServerHttpError',
-      code: 'opencode_server_request_failed', operation: 'mcp_registration', status: 400,
+      code: 'opencode_server_request_failed', operation: 'mcp_registration', status,
       message: expect.stringContaining('invalid MCP config') });
     expect(JSON.stringify(fields)).not.toContain('diagnostic-secret');
     expect(fields.error).not.toHaveProperty('stack');
+    if (result.requiredHappier.status !== 'failed') throw new Error('Expected required MCP registration failure');
+    // runtimeController wraps this required registration failure before the
+    // host projects the Session issue; its owned code must not mask HTTP status.
+    const wrapped = new OpenCodeMcpRegistrationError(result.requiredHappier.error);
+    expect(projectActionFailureCauseV1(wrapped, 'opencode.mcp.registration')).toMatchObject({
+      errorCode: 'opencode_mcp_registration_failed', httpStatus: status,
+    });
+    const sessionCause = projectSessionRuntimeFailureCause(wrapped, 'client_start', 'opencode.mcp.registration');
+    expect(sessionCause).toMatchObject({ actionCause: { httpStatus: status } });
+    expect(JSON.stringify(sessionCause)).not.toContain('diagnostic-secret');
   });
 
   it('keeps unchanged names independent of a later unavailable alias inventory', async () => {

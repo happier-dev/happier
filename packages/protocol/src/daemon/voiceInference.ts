@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
+import { ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
 
 import { TransferSessionIdSchema } from '../transfers/sessions/transferSessionIds.js';
 import {
@@ -205,6 +206,7 @@ export const DaemonVoiceInferenceErrorSchema = lazyZodSchema(() => z.object({
   error: z.string().check(z.minLength(1)),
   retryable: z.optional(z.boolean()),
   diagnostic: z.optional(DaemonVoiceInferenceSttAppendDiagnosticSchema),
+  failureCause: z.optional(ActionFailureCauseV1Schema),
 }));
 export type DaemonVoiceInferenceError = z.infer<typeof DaemonVoiceInferenceErrorSchema>;
 
@@ -379,6 +381,7 @@ export const DaemonVoiceInferenceTtsStreamEventSchema = lazyZodSchema(() => z.di
     errorCode: DaemonVoiceInferenceErrorCodeSchema,
     error: z.string().check(z.minLength(1)),
     retryable: z._default(z.boolean(), false),
+    failureCause: z.optional(ActionFailureCauseV1Schema),
   }),
 ]));
 export type DaemonVoiceInferenceTtsStreamEvent = z.infer<typeof DaemonVoiceInferenceTtsStreamEventSchema>;

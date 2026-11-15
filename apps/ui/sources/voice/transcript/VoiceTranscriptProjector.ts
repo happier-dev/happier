@@ -15,7 +15,9 @@ import type { NormalizedMessage, RawRecord } from "@happier-dev/session-core/raw
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import {
     readSafeVoiceRuntimeFailureCode,
+    readSafeVoiceRuntimeFailureFacts,
     recordVoiceRuntimeFailure,
+    type VoiceRuntimeFailureCause,
 } from '@/voice/runtime/voiceRuntimeFailureCode';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import type { VoiceTranscriptTurn } from './voiceTranscriptEvents';
@@ -313,6 +315,7 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
                 'transcript_persist_failed',
                 readSafeVoiceRuntimeFailureCode(error) ?? 'voice_transcript_persist_failed',
                 source,
+                readSafeVoiceRuntimeFailureFacts(error).failureCause,
             ),
         });
     };
@@ -517,6 +520,7 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
         kind: string,
         reason: string,
         sourceOverride?: RealtimeConversationTurnSource | null,
+        failureCause?: VoiceRuntimeFailureCause,
     ): void => {
         let named = namedCanonicalDropsByConversation.get(conversationSessionId);
         if (!named) {
@@ -533,6 +537,9 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
             'transcript_dropped',
             kind,
             reason,
+            undefined,
+            undefined,
+            failureCause,
         );
     };
 
@@ -597,7 +604,8 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
                 return message;
             } catch (error) {
                 recordVoiceRuntimeFailure('voice.transcript', 'transcript_dropped', 'continuation_persist_failed',
-                    readSafeVoiceRuntimeFailureCode(error) ?? 'voice_continuation_persist_failed');
+                    readSafeVoiceRuntimeFailureCode(error) ?? 'voice_continuation_persist_failed',
+                    undefined, undefined, readSafeVoiceRuntimeFailureFacts(error).failureCause);
                 throw error;
             }
         })();
@@ -623,7 +631,8 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
                 return message;
             } catch (error) {
                 nameCanonicalTranscriptDrop(conversationSessionId, 'transcript_persist_failed',
-                    readSafeVoiceRuntimeFailureCode(error) ?? 'voice_transcript_persist_failed');
+                    readSafeVoiceRuntimeFailureCode(error) ?? 'voice_transcript_persist_failed',
+                    undefined, readSafeVoiceRuntimeFailureFacts(error).failureCause);
                 throw error;
             }
         },

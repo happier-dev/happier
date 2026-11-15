@@ -52,7 +52,7 @@ afterEach(async () => {
     modelCache.resetDynamicModelProbeCacheForTests();
 });
 
-type NativeReply = 'hold' | 'lost' | 'success' | 'unavailable' | 'absent' | 'preflight-refused';
+type NativeReply = 'hold' | 'lost' | 'success' | 'unavailable' | 'absent' | 'preflight-refused' | 'preflight-flat-refused';
 async function preflightHome(options: Readonly<{ holdLost?: boolean; inventory?: 'config' }> = {}) {
     const issued: string[] = [];
     const cancelled: unknown[] = [];
@@ -101,9 +101,17 @@ async function preflightHome(options: Readonly<{ holdLost?: boolean; inventory?:
                 return;
             }
             if (reply === 'absent') { ack({ ok: false, error: 'not found', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND }); return; }
+            if (reply === 'preflight-flat-refused') {
+                ack({ ok: true, result: await socketRpcCodec.encodeResponse({ mode: 'plain' }, {
+                    ok: false, error: 'Selected credential could not be prepared.', errorCode: 'connected-service-preflight-failed',
+                    failureCause: { phase: 'client_start', failureReason: 'model_selection_required', retryable: false },
+                }, decoded.callId) });
+                return;
+            }
             if (reply === 'preflight-refused') {
                 ack({ ok: true, result: await socketRpcCodec.encodeResponse({ mode: 'plain' }, {
-                    ok: false, error: { code: 'connected-service-preflight-failed', message: 'Selected credential could not be prepared.' },
+                    ok: false, error: { code: 'connected-service-preflight-failed', message: 'Selected credential could not be prepared.',
+                        failureCause: { phase: 'client_start', failureReason: 'model_selection_required', retryable: false } },
                 }, decoded.callId) });
                 return;
             }
@@ -126,14 +134,15 @@ async function preflightHome(options: Readonly<{ holdLost?: boolean; inventory?:
         async dispose() { await serverScopedRpcSocketPool.stopAll(); await new Promise<void>(resolve => relay.close(() => resolve())); } };
 }
 
-it('retains the capability refusal through the real Action, bridge and New Session model resource', async () => {
+it.each(['preflight-refused', 'preflight-flat-refused'] as const)('retains the capability refusal through the real Action, bridge and New Session model resource (%s)', async reply => {
     const f = await preflightHome();
-    f.mode.set('refused-machine', 'preflight-refused');
+    f.mode.set('refused-machine', reply);
     try {
         const result = await createDefaultActionExecutor().execute('agents.models.list', {
             agentId: 'external.agent/reader', machineId: 'refused-machine', probe: { cwd: '/repo' },
         }, { surface: 'ui', serverId: f.home.id });
-        expect(ActionExecuteFailureSchema.parse(result)).toMatchObject({ errorCode: 'connected-service-preflight-failed' });
+        expect(ActionExecuteFailureSchema.parse(result)).toMatchObject({ errorCode: 'connected-service-preflight-failed',
+            details: { failureCause: { phase: 'client_start', failureReason: 'model_selection_required', retryable: false } } });
         expect(await discoverMachineModels({ cacheKey: 'typed-preflight-refusal', agentType: 'external.agent/reader',
             machineId: 'refused-machine', serverId: f.home.id, capabilityParams: { cwd: '/repo' }, bypassCache: true,
         })).toMatchObject({ kind: 'error', reason: 'error', errorCode: 'connected-service-preflight-failed' });

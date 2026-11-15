@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { PluginManifestV2Schema } from '@happier-dev/protocol';
+import { AgentConfigOptionsProbeObservationSchema, AgentModelsProbeObservationSchema } from '@happier-dev/protocol/capabilities';
 import { ANTIGRAVITY_PLUGIN } from '@happier-dev/plugins-antigravity';
 import { resolveInstallablesRegistry, type InstallableDependencyDescriptor } from '@happier-dev/protocol/installables';
 import { createStablePluginManagedDependenciesHost } from '@/plugins/runtime/invocation/services/managedDependencies';
@@ -423,6 +424,32 @@ async function commitNativePluginFixture(params: Readonly<{ happyHomeDir: string
 }
 
 describe('admitted declarative ACP catalog producer', () => {
+  it.each(['models', 'config'] as const)('retains the cause when a %s probe cannot open its native session', async (kind) => {
+    await withTempDir('draft-acp-config-startup-refusal-', async (dir) => {
+      const fixture = writeFixture(dir, 'authRequired');
+      const managedExecutable = { kind: 'managedDependency', id: 'fixture-acp' } as const;
+      const projected = projectAgentPreflightSessionControlsCatalogEntry({ agentId: 'generic',
+        preflightSessionControls: {
+          catalogs: { kind: 'acp', command: { executable: managedExecutable, args: [] } },
+          jsonRpcCommands: [{ executable: managedExecutable, args: [] }],
+        },
+        systemTools: [], managedExecutableRefs: [managedExecutable],
+        resolveReadyManagedExecutable: async () => ({ command: process.execPath, args: [fixture.script], release() {} }),
+        retirementSignal: new AbortController().signal, isCurrent: () => true,
+      });
+      const params = { agentId: 'generic', cwd: dir,
+        catalogEntry: { id: 'generic', cliSubcommand: 'generic', vendorResumeSupport: 'unsupported', ...projected },
+        timeoutMs: 10_000 } as const;
+      const result = kind === 'models' ? await probeAgentModelsBestEffort(params) : await probeAgentConfigOptionsBestEffort(params);
+      expect(result).toMatchObject({ source: 'unavailable', failureCause: {
+        phase: 'client_start', actionCause: { phase: kind === 'models' ? 'capabilities.preflight.models' : 'capabilities.preflight.config',
+          errorClass: 'JsonRpcApplicationError', errorCode: '-32000' },
+      } });
+      const observation = kind === 'models' ? AgentModelsProbeObservationSchema.parse(result) : AgentConfigOptionsProbeObservationSchema.parse(result);
+      expect(observation).toMatchObject({ failureCause: result.failureCause });
+    });
+  });
+
   it.each(['generic', 'codex', 'opencode'] as const)('keeps a rejected scope with no observed model catalog unavailable (%s)', async (agentId) => {
     await withTempDir('draft-acp-unknown-error-', async (dir) => {
       const fixture = writeFixture(dir, 'scopeUnobservedError');
@@ -447,7 +474,10 @@ describe('admitted declarative ACP catalog producer', () => {
         cwd: dir, timeoutMs: 10_000, accountSettings: { codexBackendMode: 'acp', opencodeBackendMode: 'acp' },
         configOptionOverrides: { provider: 'gateway' } });
       expect(result).toMatchObject({ source: 'unavailable', availableModels: [], refreshError: true,
-        refreshErrorMessage: 'Native scope selection refused' });
+        refreshErrorMessage: 'Native scope selection refused', failureCause: { phase: 'client_start', actionCause: {
+          phase: 'capabilities.preflight.config', errorClass: 'JsonRpcApplicationError', errorCode: '-32600',
+        } } });
+      expect(AgentModelsProbeObservationSchema.parse(result)).toMatchObject({ failureCause: result.failureCause });
     });
   });
 
@@ -468,7 +498,9 @@ describe('admitted declarative ACP catalog producer', () => {
             : scenario === 'scopeLegacy' ? [{ id: 'legacy-native', name: 'Legacy native model' }] : []);
           if (scenario === 'scopeWithdrawThenError') {
             expect(controls).toMatchObject({ refreshError: true, refreshErrorMessage: 'Native region selection refused',
-              configOptions: [{ id: 'region', currentValue: 'initial' }] });
+              configOptions: [{ id: 'region', currentValue: 'initial' }], failureCause: { phase: 'client_start', actionCause: {
+                phase: 'capabilities.preflight.config', errorCode: surface === 'raw' ? '-32600' : null,
+              } } });
           } else {
             expect(controls.refreshError, scenario).not.toBe(true);
           }
@@ -596,8 +628,11 @@ describe('admitted declarative ACP catalog producer', () => {
       const models = await probeAgentModelsBestEffort({ ...params, bypassCache: true });
       if (scenario === 'fxScopeAuthError') {
         const refreshErrorMessage = 'fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.';
-        expect(config).toMatchObject({ source: 'dynamic', refreshError: true, refreshErrorMessage, configOptions: createFxConfigOptionsFixture() });
-        expect(models).toMatchObject({ source: 'dynamic', refreshError: true, refreshErrorMessage });
+        expect(config).toMatchObject({ source: 'dynamic', refreshError: true, refreshErrorMessage, configOptions: createFxConfigOptionsFixture(),
+          failureCause: { phase: 'client_start', actionCause: { phase: 'capabilities.preflight.config', errorCode: '-32600' } } });
+        expect(models).toMatchObject({ source: 'dynamic', refreshError: true, refreshErrorMessage,
+          failureCause: { phase: 'client_start', actionCause: { phase: 'capabilities.preflight.config', errorCode: '-32600' } } });
+        expect(AgentConfigOptionsProbeObservationSchema.parse(config)).toMatchObject({ failureCause: config.failureCause });
         expect(models.availableModels.some((model) => model.id === 'gpt-6.1-sol')).toBe(true);
       } else {
         expect(config).toMatchObject({ source: 'dynamic', configOptions: [

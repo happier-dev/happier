@@ -5,6 +5,7 @@ import type {
   RuntimeDescriptorV1,
 } from './projections.js';
 import type { ManagedExecutableRef } from '@happier-dev/protocol';
+import type { AgentModelsProbeObservation } from '@happier-dev/protocol/capabilities';
 import type { JsonValue } from '../identity.js';
 import type { PluginJsonRpcClient } from '../services/io.js';
 import type { ManagedServiceHandle, ManagedServiceSpec } from '../managed-services/contract.js';
@@ -644,6 +645,7 @@ export type AgentPreflightSessionControlsProbeContextV1 =
       observedAt?: number;
       refreshError?: boolean;
       refreshErrorMessage?: string;
+      failureCause?: AgentModelsProbeObservation['failureCause'];
     }>>;
     /** Resolves only a manifest-declared system tool; no executable or process handle is exposed. */
     resolveDeclaredSystemTool(input: Readonly<{ toolId: string }>): Promise<Readonly<{ executablePath: string }>>;

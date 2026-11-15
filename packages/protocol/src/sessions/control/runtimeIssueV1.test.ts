@@ -13,6 +13,19 @@ import {
 } from './runtimeIssueV1.js';
 
 describe('runtime authentication recovery', () => {
+  it.each([
+    { code: 'private_customer_token', expectedCode: null },
+    { code: 'ECONNRESET', expectedCode: 'ECONNRESET' },
+  ])('projects only closed raw exception codes into Session causes ($code)', ({ code, expectedCode }) => {
+    const error = Object.assign(new TypeError('PRIVATE_NATIVE_CONTEXT'), { code, status: 429 });
+    const result = projectSessionRuntimeFailureCause(error, 'client_start', 'capabilities.preflight.models');
+    expect(result).toMatchObject({ phase: 'client_start', httpStatus: 429, actionCause: {
+      phase: 'capabilities.preflight.models', errorClass: 'TypeError', errorCode: expectedCode, httpStatus: 429,
+    } });
+    expect(result?.providerErrorCode).toBe(expectedCode ?? undefined);
+    expect(JSON.stringify(result)).not.toMatch(/PRIVATE_NATIVE_CONTEXT|private_customer_token/);
+  });
+
   it('projects raw native failures once while retaining an existing Session cause unchanged', () => {
     expect(projectSessionRuntimeFailureCause(undefined, 'turn_start')).toBeUndefined();
     const error = new TypeError('PRIVATE_NATIVE_CONTEXT', { cause: Object.assign(new Error('PRIVATE_NATIVE_DETAIL'), { code: 'ECONNRESET' }) });
@@ -45,6 +58,8 @@ describe('runtime authentication recovery', () => {
     expect(readSessionRuntimeFailureCause({ failureCause: actionCause }, 'client_start')).toEqual({
       phase: 'client_start', failureReason: 'unknown', actionCause, providerErrorCode: 'ECONNRESET',
     });
+    expect(projectSessionRuntimeFailureCause({ failureCause: { ...actionCause, errorCode: 'authored_native_code' } }, 'client_start'))
+      .toMatchObject({ actionCause: { ...actionCause, errorCode: 'authored_native_code' } });
   });
   it('retains broker source evidence using the authentication phase supplied by the launch owner', () => {
     const failureCause = { phase: 'providers.source_open', errorClass: 'TypeError', errorCode: 'ECONNRESET', httpStatus: 503 };

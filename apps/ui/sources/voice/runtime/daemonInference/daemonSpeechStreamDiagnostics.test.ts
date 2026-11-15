@@ -1,14 +1,36 @@
 import { describe, expect, it, vi } from 'vitest';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { createDaemonSpeechStreamDiagnostics } from './daemonSpeechStreamDiagnostics';
 
 describe('daemonSpeechStreamDiagnostics', () => {
+    it.each([
+        { name: 'producer-authored cause', error: Object.assign(new Error('private wrapper token=secret'), {
+            code: 'internal_error', failureCause: projectActionFailureCauseV1(Object.assign(new TypeError('private upstream response'), { status: 503 }), 'voice.stt'),
+        }), expected: { phase: 'voice.stt', errorClass: 'TypeError', errorCode: null, httpStatus: 503 } },
+        { name: 'raw HTTP 429 with private code', error: Object.assign(new TypeError('private response token=secret'), { status: 429, code: 'PRIVATE_CUSTOM_CODE' }),
+            expected: { phase: 'voice.runtime', errorClass: 'TypeError', errorCode: null, httpStatus: 429 } },
+        { name: 'raw HTTP 503 with private code', error: Object.assign(new Error('private response token=secret'), { status: 503, code: 'PRIVATE_CUSTOM_CODE' }),
+            expected: { phase: 'voice.runtime', errorClass: 'Error', errorCode: null, httpStatus: 503 } },
+    ])('retains canonical cause in the snapshot and warning for $name', ({ error, expected }) => {
+        const warn = vi.fn();
+        const diagnostics = createDaemonSpeechStreamDiagnostics({ warn });
+        diagnostics.recordStartFailure(error, { step: 'sender_start' });
+        expect(diagnostics.snapshot().lastStartFailure).toMatchObject({
+            message: 'redacted_start_failure', step: 'sender_start', failureCause: expected,
+        });
+        const warning = warn.mock.calls[0]![0] as string;
+        expect(JSON.parse(warning.slice(warning.indexOf('{')))).toMatchObject({ failureCause: expected });
+        expect(JSON.stringify(diagnostics.snapshot()) + warning).not.toMatch(/private|secret|PRIVATE_CUSTOM_CODE/);
+    });
+
     it('logs only closed start failure facts and redacts an arbitrary error class', () => {
         const warn = vi.fn();
         const diagnostics = createDaemonSpeechStreamDiagnostics({ warn });
         const failure = Object.assign(new TypeError('private transcript token=secret'), { code: 'internal_error' });
         diagnostics.recordStartFailure(failure, { step: 'create_sender' });
-        const safe = { code: 'internal_error', message: 'redacted_start_failure', step: 'create_sender', errorClass: 'TypeError' };
+        const safe = { code: 'internal_error', message: 'redacted_start_failure', step: 'create_sender', errorClass: 'TypeError',
+            failureCause: projectActionFailureCauseV1(failure, 'voice.runtime', { allowUnknownErrorCode: false }) };
         expect(diagnostics.snapshot().lastStartFailure).toEqual(safe);
         expect(warn).toHaveBeenLastCalledWith('[daemonVoiceInference] streaming STT start failed ' + JSON.stringify(safe));
 
@@ -45,7 +67,7 @@ describe('daemonSpeechStreamDiagnostics', () => {
             sensitiveContext: { token: 'must-not-be-retained' },
         }));
 
-        expect(diagnostics.snapshot().lastStartFailure).toEqual({
+        expect(diagnostics.snapshot().lastStartFailure).toMatchObject({
             code: 'VOICE_CONVERSATION_TARGET_MISSING',
             message: 'voice_conversation_spawn_target_missing',
         });
@@ -66,7 +88,7 @@ describe('daemonSpeechStreamDiagnostics', () => {
             },
         ));
 
-        expect(diagnostics.snapshot().lastStartFailure).toEqual({
+        expect(diagnostics.snapshot().lastStartFailure).toMatchObject({
             code: 'stream_transport_unavailable',
             message: 'daemon_voice_inference_stream_transport_unavailable',
         });
@@ -78,7 +100,7 @@ describe('daemonSpeechStreamDiagnostics', () => {
         unsafeFailure.stack = 'stack with token=must-not-be-retained';
         diagnostics.recordStartFailure(unsafeFailure);
 
-        expect(diagnostics.snapshot().lastStartFailure).toEqual({
+        expect(diagnostics.snapshot().lastStartFailure).toMatchObject({
             code: 'stream_transport_unavailable',
             message: 'redacted_start_failure',
         });
@@ -101,7 +123,7 @@ describe('daemonSpeechStreamDiagnostics', () => {
 
         diagnostics.recordStartFailure(Object.assign(new Error('provider-private-message'), { code }));
 
-        expect(diagnostics.snapshot().lastStartFailure).toEqual({
+        expect(diagnostics.snapshot().lastStartFailure).toMatchObject({
             code,
             message: 'redacted_start_failure',
         });
@@ -115,7 +137,7 @@ describe('daemonSpeechStreamDiagnostics', () => {
             { code: 'unsafe code: token=secret' },
         ));
 
-        expect(diagnostics.snapshot().lastStartFailure).toEqual({
+        expect(diagnostics.snapshot().lastStartFailure).toMatchObject({
             code: null,
             message: 'redacted_start_failure',
         });
@@ -130,7 +152,7 @@ describe('daemonSpeechStreamDiagnostics', () => {
             code: 'token:secret',
         }));
 
-        expect(diagnostics.snapshot().lastStartFailure).toEqual({
+        expect(diagnostics.snapshot().lastStartFailure).toMatchObject({
             code: null,
             message: 'redacted_start_failure',
         });

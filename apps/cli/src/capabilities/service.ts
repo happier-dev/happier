@@ -12,6 +12,7 @@ import type {
 } from './types';
 import { CapabilityError, readCapabilityRefusalDetails } from './errors';
 import { readCapabilityInvokeFailure } from '@happier-dev/protocol/capabilities';
+import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks';
 import type { DetectCliSnapshot } from './snapshots/cliSnapshot';
 import type { AgentSessionFactorySource } from '@/agent/catalog/runtimeEntry';
@@ -240,10 +241,12 @@ export function createCapabilitiesService(opts: {
                     }) : null
             );
             const details = readCapabilityRefusalDetails(e);
+            const failureCause = projectSessionRuntimeFailureCause(e, 'client_start', 'capabilities.invoke');
             if (failure) return { ok: false, error: { code: failure.errorCode, message: failure.errorCode,
                 ...(failure.retryable === undefined ? {} : { retryable: failure.retryable }),
-                ...(details ? { details } : {}) } };
-            return { ok: false, error: { message: 'invoke-failed', code: 'invoke-failed' } };
+                ...(details ? { details } : {}), ...(failureCause ? { failureCause } : {}) } };
+            return { ok: false, error: { message: 'invoke-failed', code: 'invoke-failed',
+                ...(failureCause ? { failureCause } : {}) } };
         }
     };
 

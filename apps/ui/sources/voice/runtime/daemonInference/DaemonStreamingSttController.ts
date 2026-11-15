@@ -90,7 +90,8 @@ function resolveDaemonStreamingSttStartErrorReason(error: unknown): string {
 function createDaemonStreamingSttFinishResponseError(
     response: Extract<DaemonVoiceInferenceSttStreamFinishResponse, { ok: false }>,
 ): Error & Readonly<{ code: string }> {
-    return Object.assign(new Error(response.error), { code: response.errorCode });
+    return Object.assign(new Error(response.error), { code: response.errorCode,
+        ...(response.failureCause ? { failureCause: response.failureCause } : {}) });
 }
 
 function classifyDaemonStreamingSttFinalizationFailure(error: unknown) {
@@ -102,26 +103,31 @@ function classifyDaemonStreamingSttFinalizationFailure(error: unknown) {
             return createVoiceMachineError({
                 kind: 'stt_timeout',
                 reason: 'daemon_streaming_stt_finish_timeout',
+                cause: error,
             });
         case 'request_timeout':
             return createVoiceMachineError({
                 kind: 'stt_timeout',
                 reason: 'daemon_streaming_stt_request_timeout',
+                cause: error,
             });
         case 'daemon_speech_stream_invalid_ack':
             return createVoiceMachineError({
                 kind: 'provider_error',
                 reason: 'daemon_streaming_stt_invalid_ack',
+                cause: error,
             });
         case 'daemon_speech_stream_stale_finish':
             return createVoiceMachineError({
                 kind: 'provider_error',
                 reason: 'daemon_streaming_stt_stale_finish',
+                cause: error,
             });
         default:
             return createVoiceMachineError({
                 kind: 'provider_error',
                 reason: 'daemon_streaming_stt_finalization_failed',
+                cause: error,
             });
     }
 }
@@ -307,6 +313,7 @@ export function createDaemonStreamingSttController(
                             if (active === admittedHandle) active = null;
                             const failure = createVoiceMachineError({
                                 kind: 'provider_error',
+                                cause: error,
                                 reason: error && typeof error === 'object' && 'code' in error
                                     && error.code === 'daemon_speech_stream_backpressure'
                                     ? 'daemon_streaming_stt_pcm_backpressure'
@@ -387,6 +394,7 @@ export function createDaemonStreamingSttController(
             const failure = createVoiceMachineError({
                 kind: 'provider_error',
                 reason: resolveDaemonStreamingSttStartErrorReason(error),
+                cause: error,
             });
             // Keep the actual transport/start exception available to local diagnostics
             // without disclosing it in the machine projection or serialized state.

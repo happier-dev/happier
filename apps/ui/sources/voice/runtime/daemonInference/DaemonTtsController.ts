@@ -347,6 +347,7 @@ export class DaemonTtsController {
                     throw createDaemonVoiceInferenceClientError(
                         toDaemonTtsControllerErrorCode(event.errorCode),
                         event.error,
+                        event.failureCause,
                     );
                 }
                 receivedSegments += 1;

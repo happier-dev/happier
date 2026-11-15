@@ -1,4 +1,5 @@
 import type { PluginDiagnosticData } from '@happier-dev/plugin-sdk';
+import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 import {
   AgentSessionRealtimeStartRequestV1Schema,
   AgentSessionRealtimeStartResultV1Schema,
@@ -69,24 +70,26 @@ type Attempt = {
   handle: AgentSessionRealtimeHandle;
 };
 
-function diagnostic(code: string, message: string): PluginDiagnosticData {
-  return { code, severity: 'error', message };
+function diagnostic(code: string, message: string, failureCause?: ReturnType<typeof projectActionFailureCauseV1>): PluginDiagnosticData {
+  return { code, severity: 'error', message, ...(failureCause ? { details: { failureCause } } : {}) };
 }
 
 function unavailable(
   reason: Extract<AgentSessionRealtimeAvailability, { status: 'unavailable' }>['reason'],
   code: string,
   message: string,
+  failureCause?: ReturnType<typeof projectActionFailureCauseV1>,
 ): AgentSessionRealtimeAvailability {
   return {
     status: 'unavailable',
     reason,
-    diagnostic: diagnostic(code, message),
+    diagnostic: diagnostic(code, message, failureCause),
   };
 }
 
 function authenticationRequiredDiagnostic(
   error: unknown,
+  phase = 'codex.realtime.authentication',
 ): PluginDiagnosticData | null {
   const classification = classifyCodexConnectedServiceAuthFailure({
     providerErrorPath: true,
@@ -105,6 +108,7 @@ function authenticationRequiredDiagnostic(
   return diagnostic(
     'codex_realtime_authentication_required',
     'The selected Codex session must be connected again.',
+    projectActionFailureCauseV1(error, phase, { allowUnknownErrorCode: false }),
   );
 }
 
@@ -176,9 +180,9 @@ function mapFeatureInspectionToAvailability(
     case 'currentness_lost':
       return unavailable('session_unavailable', 'codex_realtime_thread_changed', 'The selected Codex session changed during readiness inspection.');
     case 'authentication_required':
-      return unavailable('authentication_required', 'codex_realtime_authentication_required', 'The selected Codex session must be connected again.');
+      return unavailable('authentication_required', 'codex_realtime_authentication_required', 'The selected Codex session must be connected again.', inspection.failureCause);
     case 'feature_list_unavailable':
-      return unavailable('feature_unavailable', 'codex_realtime_feature_list_unavailable', 'The selected Codex runtime could not verify Codex Realtime Voice.');
+      return unavailable('feature_unavailable', 'codex_realtime_feature_list_unavailable', 'The selected Codex runtime could not verify Codex Realtime Voice.', inspection.failureCause);
     case 'feature_list_invalid':
       return unavailable('feature_unavailable', 'codex_realtime_feature_list_invalid', 'The selected Codex runtime returned an invalid feature list.');
     case 'feature_state_invalid':
@@ -277,11 +281,12 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
         }
         target.stopStatus = 'succeeded';
         return null;
-      } catch {
+      } catch (error) {
         target.stopStatus = 'failed';
         return diagnostic(
           'codex_realtime_stop_failed',
           'Codex Realtime Voice could not confirm upstream stop.',
+          projectActionFailureCauseV1(error, 'codex.realtime.stop', { allowUnknownErrorCode: false }),
         );
       }
     })();
@@ -470,6 +475,7 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
             'feature_unavailable',
             'codex_realtime_launch_enablement_unavailable',
             'The selected Codex runtime could not launch with Codex Realtime Voice enabled.',
+            projectActionFailureCauseV1(error, 'codex.realtime.client', { allowUnknownErrorCode: false }),
           ),
         };
       }
@@ -478,6 +484,7 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
           'unsupported_runtime',
           'codex_realtime_runtime_unavailable',
           'The selected Codex app-server runtime is unavailable.',
+          projectActionFailureCauseV1(error, 'codex.realtime.client', { allowUnknownErrorCode: false }),
         ),
       };
     }
@@ -596,10 +603,11 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
         }, { ...(options?.signal ? { signal: options.signal } : {}), timeoutMs: null }), options?.signal);
         if (response === CODEX_OPERATION_ABORTED) return { status: 'aborted' };
         if (!isExactEmptyResponse(response)) throw new Error('Invalid Codex context response');
-      } catch {
+      } catch (error) {
         if (options?.signal?.aborted) return { status: 'aborted' };
         return { status: 'unavailable', diagnostic: diagnostic('codex_realtime_context_unavailable',
-          'Codex Realtime Voice could not admit current Session instructions.') };
+          'Codex Realtime Voice could not admit current Session instructions.',
+          projectActionFailureCauseV1(error, 'codex.realtime.context', { allowUnknownErrorCode: false })) };
       }
       if (options?.signal?.aborted) return { status: 'aborted' };
       if (params.isDisposed() || params.isRuntimeExited?.() === true || params.getThreadId() !== threadId) {
@@ -770,12 +778,13 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
           failInvalidNotification(target);
           return;
         }
-        const eventDiagnostic = authenticationRequiredDiagnostic(record)
+        const eventDiagnostic = authenticationRequiredDiagnostic(record, 'codex.realtime.upstream')
           ?? diagnostic(
             'codex_realtime_upstream_error',
             target.phase === 'active'
               ? 'Codex Realtime Voice reported an upstream error.'
               : 'Codex Realtime Voice reported an upstream error during startup.',
+            projectActionFailureCauseV1(record, 'codex.realtime.upstream', { allowUnknownErrorCode: false }),
         );
         if (target.phase === 'active') {
           target.phase = 'terminal';
@@ -914,7 +923,7 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
           maybeSettleStarted(target);
         },
         (error: unknown) => {
-          const authDiagnostic = authenticationRequiredDiagnostic(error);
+          const authDiagnostic = authenticationRequiredDiagnostic(error, 'codex.realtime.start');
           if (
             target.phase === 'negotiating'
             && isCodexAppServerApplicationRejectionForMethod(
@@ -925,6 +934,7 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
             const rejectionDiagnostic = authDiagnostic ?? diagnostic(
               'codex_realtime_start_rejected',
               'The selected Codex runtime rejected Realtime Voice before admission.',
+              projectActionFailureCauseV1(error, 'codex.realtime.start', { allowUnknownErrorCode: false }),
             );
             settleStart(target, {
               status: authDiagnostic ? 'unavailable' : 'failed',
@@ -937,6 +947,7 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
               authDiagnostic ?? diagnostic(
                 'codex_realtime_start_failed',
                 'Codex Realtime Voice failed after upstream admission became ambiguous.',
+                projectActionFailureCauseV1(error, 'codex.realtime.start', { allowUnknownErrorCode: false }),
               ),
             );
           }

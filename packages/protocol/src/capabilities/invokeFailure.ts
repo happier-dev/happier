@@ -2,9 +2,14 @@ import { readRecord } from '../inputs/inputRecords.js';
 import { isPluginError } from '../plugins/errors.js';
 import { createProviderErrorV1, ProviderErrorCodeV1Schema } from '../providers/errors.js';
 import { readRpcErrorCode } from '../rpc/errors.js';
+import { readSessionRuntimeFailureCause, type SessionRuntimeIssueV1 } from '../sessions/control/runtimeIssueV1.js';
 
 /** Content-free failure evidence; retryability is the producer's, never a reader heuristic. */
-export type CapabilityInvokeFailure = Readonly<{ errorCode: string; retryable?: boolean }>;
+export type CapabilityInvokeFailure = Readonly<{
+  errorCode: string;
+  retryable?: boolean;
+  failureCause?: NonNullable<SessionRuntimeIssueV1['failureCause']>;
+}>;
 
 export function readCapabilityInvokeFailure(error: unknown): CapabilityInvokeFailure | null {
   const record = readRecord(error);
@@ -16,5 +21,7 @@ export function readCapabilityInvokeFailure(error: unknown): CapabilityInvokeFai
   const retryable = typeof record.retryable === 'boolean' ? record.retryable
     : typeof details.retryable === 'boolean' ? details.retryable
     : providerCode.success ? createProviderErrorV1(providerCode.data).retryable : undefined;
-  return { errorCode: code.trim(), ...(retryable === undefined ? {} : { retryable }) };
+  const failureCause = readSessionRuntimeFailureCause(error);
+  return { errorCode: code.trim(), ...(retryable === undefined ? {} : { retryable }),
+    ...(failureCause ? { failureCause } : {}) };
 }

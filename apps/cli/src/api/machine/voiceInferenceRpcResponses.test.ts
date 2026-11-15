@@ -10,6 +10,7 @@ describe('voiceInferenceRpcResponses', () => {
       ok: false,
       errorCode: 'unsupported_runtime_family',
       error: 'voice_inference_unsupported_runtime_family',
+      failureCause: { phase: 'voice.inference', errorClass: 'Error', errorCode: null, httpStatus: null },
     });
   });
 
@@ -20,6 +21,7 @@ describe('voiceInferenceRpcResponses', () => {
       ok: false,
       errorCode: 'request_timeout',
       error: 'voice_inference_request_timeout',
+      failureCause: { phase: 'voice.inference', errorClass: 'Error', errorCode: null, httpStatus: null },
     });
   });
 
@@ -30,6 +32,7 @@ describe('voiceInferenceRpcResponses', () => {
       ok: false,
       errorCode: 'output_too_large',
       error: 'voice_inference_output_too_large',
+      failureCause: { phase: 'voice.inference', errorClass: 'Error', errorCode: null, httpStatus: null },
     });
   });
 });

@@ -22,27 +22,61 @@ const { createSdkHandleConnection } = await import(/* @vite-ignore */ hostConnec
 }>;
 
 describe('createElevenLabsSdkConnection', () => {
-  it('turns a synchronous vendor send exception into a typed terminal failure without exposing vendor text', async () => {
+  it.each([1006, 1013])('retains native socket close %s from real SDK startup', async (closeCode) => {
+    class ProviderSocket extends EventTarget {
+      constructor() {
+        super();
+        queueMicrotask(() => this.dispatchEvent(Object.assign(new Event('close'), {
+          code: closeCode, reason: 'private-provider-close-reason',
+        })));
+      }
+      close() {}
+    }
+    vi.stubGlobal('WebSocket', ProviderSocket);
+    const handle = createElevenLabsConversationHandle({ tools: [], loadConversationSdk: () => import('@elevenlabs/client') });
+    const connection = createElevenLabsSdkConnection({ createSdkHandleConnection, handle,
+      startConfig: { textOnly: true, signedUrl: 'wss://fixture.invalid' }, duckGain: 0.18 });
+    try {
+      await expect(connection.connect(new AbortController().signal)).rejects.toMatchObject({
+        message: 'voice_service_unavailable', failureCause: {
+          phase: 'elevenlabs.session.start', errorClass: 'Error', nativeErrorCode: String(closeCode),
+        },
+      });
+    } finally {
+      await connection.close({ code: 'user_stop' });
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it.each([
+    { error: new TypeError('private-vendor-send-error'),
+      cause: { phase: 'elevenlabs.control.send', errorClass: 'TypeError', errorCode: null, httpStatus: null } },
+    { error: Object.assign(new Error('private-vendor-send-error'), { response: { status: 429 } }),
+      cause: { phase: 'elevenlabs.control.send', errorClass: 'Error', errorCode: null, httpStatus: 429 } },
+    { error: Object.assign(new Error('private-vendor-send-error'), { code: 'private-vendor-code', status: 429 }),
+      cause: { phase: 'elevenlabs.control.send', errorClass: 'Error', errorCode: null, httpStatus: 429 } },
+    { error: Object.assign(new Error('private-vendor-send-error'), { failureCause: {
+      phase: 'elevenlabs.control.publish', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: 429 } }),
+      cause: { phase: 'elevenlabs.control.publish', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: 429 } },
+  ])('retains the vendor send cause $cause without exposing vendor text', async ({ error, cause }) => {
     // Vendor session is the external boundary; keep the real handle and host connection beneath it.
     const handle = createElevenLabsConversationHandle({ tools: [], loadConversationSdk: async () => ({
       Conversation: { startSession: async () => ({
         getId: () => 'failed-send', endSession: async () => {}, setMicMuted: () => {}, setVolume: () => {},
-        sendUserMessage: () => { throw new TypeError('private-vendor-send-error'); }, sendContextualUpdate: () => {},
+        sendUserMessage: () => { throw error; }, sendContextualUpdate: () => {},
       }) },
     }) as unknown as Pick<typeof import('@elevenlabs/client'), 'Conversation'> });
     const connection = createElevenLabsSdkConnection({ createSdkHandleConnection, handle, startConfig: {}, duckGain: 0.18 });
     try {
       await connection.connect(new AbortController().signal);
       await expect(connection.sendControl({ type: 'voice.user_text', text: 'hello' }))
-        .rejects.toMatchObject({ message: 'voice_service_unavailable', failureCause: {
-          phase: 'elevenlabs.control.send', errorClass: 'TypeError', errorCode: null, httpStatus: null } });
+        .rejects.toMatchObject({ message: 'voice_service_unavailable', failureCause: cause });
       const control = connection.controlEvents(new AbortController().signal)[Symbol.asyncIterator]();
       const failure = (await control.next()).value;
       const { createElevenLabsVoiceProviderRuntime } = await import('../runtime.js');
       const runtime = createElevenLabsVoiceProviderRuntime({ loadConversationSdk: () => import('@elevenlabs/client') });
       expect(runtime.protocol.decodeControl(failure)).toEqual([{ type: 'provider_error', terminal: true,
-        code: 'voice_service_unavailable', failureCause: { phase: 'elevenlabs.control.send',
-          errorClass: 'TypeError', errorCode: null, httpStatus: null } }]);
+        code: 'voice_service_unavailable', failureCause: cause }]);
       expect(JSON.stringify(failure)).not.toContain('private-vendor');
       await runtime.dispose();
     } finally {

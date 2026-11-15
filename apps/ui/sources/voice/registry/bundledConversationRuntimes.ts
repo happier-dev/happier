@@ -9,6 +9,7 @@ import { createPluginRegistrationScope, type PluginRuntimeRegistration } from '@
 import { createBundledVoiceRecipientContract } from '@/voice/credentials/voiceRecipientContract';
 import {
   readSafeVoiceRuntimeFailureCode,
+  readSafeVoiceRuntimeFailureFacts,
   recordVoiceRuntimeFailure,
 } from '@/voice/runtime/voiceRuntimeFailureCode';
 
@@ -224,6 +225,9 @@ export async function createBundledConversationRuntimes(input: Readonly<{
         'unregistered',
         'adapter_unavailable',
         readSafeVoiceRuntimeFailureCode(error) ?? 'voice_bundled_runtime_activation_failed',
+        undefined,
+        undefined,
+        readSafeVoiceRuntimeFailureFacts(error).failureCause,
       );
       void Promise.resolve(scope?.unwind()).catch(() => undefined);
     }

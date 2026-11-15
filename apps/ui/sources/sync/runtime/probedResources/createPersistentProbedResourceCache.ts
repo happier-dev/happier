@@ -1,6 +1,7 @@
 import { ProbedResourceCache, type ProbedResourceSnapshot } from '@happier-dev/protocol/common/probedResourceCache';
 import { MMKV } from 'react-native-mmkv';
 import type { RpcRequestDisposition } from '@happier-dev/sync-client';
+import type { CapabilityInvokeFailure } from '@happier-dev/protocol/capabilities';
 
 import { subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
@@ -13,6 +14,7 @@ export type ProbedResourceFailure = Readonly<{
     errorCode?: string;
     retryable?: boolean;
     requestDisposition?: RpcRequestDisposition;
+    failureCause?: CapabilityInvokeFailure['failureCause'];
 }>;
 
 export class ProbedResourceError extends Error {

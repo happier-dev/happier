@@ -63,6 +63,7 @@ export async function probeAgentInventory(
             error: res.errorCode ?? (res.reason === 'not-supported' ? 'unsupported_method' : 'agent_inventory_probe_failed'),
         }),
         details: { reason: res.reason, ...(res.retryable === undefined ? {} : { retryable: res.retryable }),
+            ...(res.failureCause ? { failureCause: res.failureCause } : {}),
             ...(res.requestDisposition ? { requestDisposition: res.requestDisposition } : {}) },
     } };
     const failed = (errorCode = 'agent_inventory_probe_failed'): Readonly<{ ok: false; failure: ActionExecuteFailure }> => ({ ok: false,
@@ -70,8 +71,11 @@ export async function probeAgentInventory(
     if (!res.response.ok) {
         const failure = readCapabilityInvokeFailure({ ...res.response.error, errorCode: res.response.error.code });
         const result = failed(failure?.errorCode);
-        return failure?.retryable === undefined ? result : { ok: false, failure: {
-            ...result.failure, details: { retryable: failure.retryable },
+        return failure?.retryable === undefined && !failure?.failureCause ? result : { ok: false, failure: {
+            ...result.failure, details: {
+                ...(failure?.retryable === undefined ? {} : { retryable: failure.retryable }),
+                ...(failure?.failureCause ? { failureCause: failure.failureCause } : {}),
+            },
         } };
     }
     const result = res.response.result;

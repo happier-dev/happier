@@ -1,4 +1,7 @@
-import type { ModelPackManifest } from '@happier-dev/protocol';
+import { DaemonVoiceInferenceErrorSchema, type ModelPackManifest } from '@happier-dev/protocol';
+import { toVoiceInferenceError } from '@/api/machine/voiceInferenceRpcResponses';
+import { createRuntimeUnavailableError } from '../voiceInferenceWorker.shared';
+import { createVoiceInferenceWorkerRunner } from './workerRunner';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { TerminationEvent } from '@/subprocess/supervision/types';
@@ -109,6 +112,43 @@ function invokeWarmOrPrime(
 describe('forked voice inference runtime client', () => {
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it.each([
+    { kind: 'synthesize' as const, error: new TypeError('private native detail'),
+      cause: { phase: 'voice.inference.synthesize', errorClass: 'TypeError', errorCode: null, httpStatus: null } },
+    { kind: 'transcribe' as const, error: Object.assign(new Error('private file path'), { code: 'EACCES' }),
+      cause: { phase: 'voice.inference.transcribe', errorClass: 'Error', errorCode: 'EACCES', httpStatus: null } },
+    { kind: 'synthesize' as const, error: Object.assign(new Error('private provider detail'), {
+      failureCause: { phase: 'voice.native.load', errorClass: 'TypeError', errorCode: 'ECONNREFUSED', httpStatus: 503 },
+    }), cause: { phase: 'voice.native.load', errorClass: 'TypeError', errorCode: 'ECONNREFUSED', httpStatus: 503 } },
+    { kind: 'transcribe' as const, error: () => createRuntimeUnavailableError(Object.assign(new Error('private loader path'), { code: 'ENOENT' })),
+      cause: { phase: 'voice.inference.runtime', errorClass: 'Error', errorCode: 'ENOENT', httpStatus: null } },
+    { kind: 'transcribe' as const, error: Object.assign(new TypeError('private provider detail'), { code: 'privatecode', response: { status: 429 } }),
+      cause: { phase: 'voice.inference.transcribe', errorClass: 'TypeError', errorCode: null, httpStatus: 429 } },
+  ])('retains the native cause through runner, IPC client and RPC schema ($kind/$cause.errorClass)', async ({ kind, error, cause }) => {
+    const nativeError = typeof error === 'function' ? error() : error;
+    let acceptRequest!: (chunk: Buffer) => void;
+    const fake = createFakeChannel({ onRequest: frame => acceptRequest(encodeVoiceInferenceWorkerFrame(frame)) });
+    const runner = createVoiceInferenceWorkerRunner({
+      transport: { onData: listener => { acceptRequest = listener; }, write: fake.emitRaw, onClose: () => {} },
+      // Native inference is the system boundary; framing, dispatch and RPC projection stay real.
+      loadRuntime: async () => ({ synthesizeTts: async () => { throw nativeError; }, transcribeAudio: async () => { throw nativeError; } }),
+    });
+    const client = createForkedVoiceInferenceRuntimeClient({ channelFactory: async () => fake.channel });
+    try {
+      const common = { requestId: 'cause', packId: 'pack-1', packDir: '/tmp/pack-1', manifest };
+      const operation = kind === 'synthesize'
+        ? client.synthesizeTts({ ...common, text: 'hello', voiceId: null, speed: null, output: { codec: 'wav', mimeType: 'audio/wav' } })
+        : client.transcribeAudio({ ...common, filePath: '/tmp/input.wav', inputMimeType: 'audio/wav', language: null,
+          normalization: { inputTransport: 'upload_transfer', strategy: 'daemon_decode', systemFfmpegAllowed: false } });
+      const caught = await operation.then(() => { throw new Error('expected native rejection'); }, failure => failure);
+      expect(DaemonVoiceInferenceErrorSchema.parse(toVoiceInferenceError(caught))).toMatchObject({ ok: false, failureCause: cause });
+      expect(JSON.stringify(toVoiceInferenceError(caught))).not.toContain('private');
+    } finally {
+      runner.dispose();
+      await client.stop();
+    }
   });
 
   it('proxies a terminal direct TTS result over IPC', async () => {

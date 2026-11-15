@@ -1213,6 +1213,7 @@ describe('createStopSession', () => {
     await expect(stop('sess-adapter-load-failed')).resolves.toEqual({
       status: 'incomplete',
       reason: 'terminal_host_adapter_unavailable',
+      failureCause: { phase: 'stop.terminal_host_adapter_acquisition', errorClass: 'Error', errorCode: null, httpStatus: null },
     });
     expect(killSpy).not.toHaveBeenCalled();
     expect(waitForTrackedRunnersExit).not.toHaveBeenCalled();
@@ -1256,6 +1257,7 @@ describe('createStopSession', () => {
     await expect(stop('sess-destroy-failed')).resolves.toEqual({
       status: 'incomplete',
       reason: 'destroy_failed',
+      failureCause: { phase: 'terminal_host.disposition.destroy', errorClass: 'Error', errorCode: null, httpStatus: null },
     });
   });
 
@@ -1288,7 +1290,8 @@ describe('createStopSession', () => {
     await vi.waitFor(() => expect(waitForTrackedRunnersExit).toHaveBeenCalledTimes(2));
     releaseDispose();
     const expected = outcome === 'stopped' ? { status: 'stopped' }
-      : { status: 'incomplete', reason: 'destroy_failed' };
+      : { status: 'incomplete', reason: 'destroy_failed',
+          failureCause: { phase: 'terminal_host.disposition.destroy', errorClass: 'Error', errorCode: null, httpStatus: null } };
     await expect(firstStop).resolves.toEqual(expected);
     await expect(joinedStop).resolves.toEqual(expected);
     expect(adapter.dispose).toHaveBeenCalledTimes(1);
@@ -1411,6 +1414,7 @@ describe('createStopSession', () => {
     await expect(stop(attachment.sessionId)).resolves.toEqual({
       status: 'incomplete',
       reason: 'terminal_control_serviceability_retirement_failed',
+      failureCause: { phase: 'terminal_host.disposition.retirement', errorClass: 'Error', errorCode: null, httpStatus: null },
     });
     expect(dispose).toHaveBeenCalledTimes(1);
     expect(retireExactTerminalControlServiceability).toHaveBeenCalledWith(expect.objectContaining({
@@ -1636,6 +1640,7 @@ describe('createStopSession', () => {
     await expect(stop(attachment.sessionId)).resolves.toEqual({
       status: 'incomplete',
       reason: 'terminal_attachment_descriptor_retirement_failed',
+      failureCause: { phase: 'terminal_host.disposition.descriptor_retirement', errorClass: 'Error', errorCode: 'EPERM', httpStatus: null },
     });
     expect(dispose).toHaveBeenCalledTimes(1);
   });

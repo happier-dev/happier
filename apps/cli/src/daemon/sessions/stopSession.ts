@@ -1,6 +1,6 @@
 
 import { logger } from '@/ui/logger';
-import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { sessionStopRequestDiagnostics, type SessionStopRequestDiagnostics } from './stopSessionDiagnostics';
 import { configuration } from '@/configuration';
 import type { TerminalHostAdapter } from '@happier-dev/agents';
@@ -344,7 +344,9 @@ export function createStopSession(params: Readonly<{
           }
         } catch (error) {
           logWarning('[DAEMON RUN] Startup Stop failed', error);
-          return incompleteStopSession('runner_signal_incomplete');
+          return incompleteStopSession('runner_signal_incomplete', undefined, {
+            failureCause: projectActionFailureCauseV1(error, 'stop.startup_launch_cancellation'),
+          });
         }
       }
       return await retireAbsentRunnerServiceability();
@@ -358,12 +360,18 @@ export function createStopSession(params: Readonly<{
             return info ? { status: 'present', info } : { status: 'absent' };
           }
         : readTerminalHostAttachmentState);
-    const attachmentState: TerminalHostAttachmentReadState = !isPidFallback
-      ? await readHostAttachmentState({
+    let attachmentState: TerminalHostAttachmentReadState = { status: 'absent' };
+    try {
+      if (!isPidFallback) attachmentState = await readHostAttachmentState({
           happyHomeDir: configuration.happyHomeDir,
           sessionId: normalizedSessionId,
-        }).catch(() => ({ status: 'unreadable', reason: 'io_error' } as const))
-      : { status: 'absent' };
+        });
+    } catch (error) {
+      logWarning(`[DAEMON RUN] Could not read terminal topology for session ${normalizedSessionId}`, error);
+      return incompleteStopSession('missing_topology_proof', undefined, {
+        failureCause: projectActionFailureCauseV1(error, 'stop.attachment_read'),
+      });
+    }
     if (attachmentState.status === 'unreadable') {
       logWarning(`[DAEMON RUN] Refusing to stop session ${normalizedSessionId} without readable terminal topology evidence`);
       return incompleteStopSession('missing_topology_proof');
@@ -476,10 +484,12 @@ export function createStopSession(params: Readonly<{
           }
         : null;
     let terminalHostAdaptersPromise: Promise<Readonly<Partial<Record<TerminalHostAdapter['kind'], TerminalHostAdapter>>> | null> | null = null;
+    let terminalHostAdapterFailureCause: ActionFailureCauseV1 | undefined;
     const loadTerminalHostAdapters = async () => {
       if (params.terminalHostAdapters) return params.terminalHostAdapters;
       terminalHostAdaptersPromise ??= params.loadTerminalHostAdapters?.().catch((error) => {
         logWarning(`[DAEMON RUN] Failed to acquire terminal host cleanup adapters for session ${normalizedSessionId}`, error);
+        terminalHostAdapterFailureCause = projectActionFailureCauseV1(error, 'stop.terminal_host_adapter_acquisition');
         return null;
       }) ?? Promise.resolve(null);
       return await terminalHostAdaptersPromise;
@@ -530,7 +540,8 @@ export function createStopSession(params: Readonly<{
       if (evidence.handle) {
         const adapters = await loadTerminalHostAdapters();
         const adapter = adapters?.[evidence.handle.kind];
-        if (!adapter) return incompleteStopSession('terminal_host_adapter_unavailable');
+        if (!adapter) return incompleteStopSession('terminal_host_adapter_unavailable', undefined,
+          terminalHostAdapterFailureCause ? { failureCause: terminalHostAdapterFailureCause } : undefined);
         const probe = await probeTerminalHostForRecovery({ adapter, handle: evidence.handle });
         if (probe.status === 'alive') return incompleteStopSession('legacy_attachment');
         if (probe.status === 'inconclusive') return incompleteStopSession('missing_topology_proof');
@@ -570,8 +581,8 @@ export function createStopSession(params: Readonly<{
         return disposition.status === 'retired'
           ? options.trackedPids.length > 0 ? await retireAbsentRunnerServiceability() : { status: 'stopped' }
           : disposition.status === 'parked'
-            ? incompleteStopSession(mapDispositionFailureReason(disposition.reason))
-            : incompleteStopSession('terminal_attachment_descriptor_retirement_failed');
+            ? incompleteStopSession(mapDispositionFailureReason(disposition.reason), undefined, { failureCause: disposition.failureCause })
+            : incompleteStopSession('terminal_attachment_descriptor_retirement_failed', undefined, { failureCause: disposition.failureCause });
       }
 
       const removed = await (
@@ -617,7 +628,7 @@ export function createStopSession(params: Readonly<{
               removeAttachmentInfo: params.removeHostAttachmentInfo ?? removeTerminalHostAttachmentInfo,
             });
             if (disposition.status !== 'retired') {
-              return incompleteStopSession('terminal_attachment_descriptor_retirement_failed');
+              return incompleteStopSession('terminal_attachment_descriptor_retirement_failed', undefined, { failureCause: disposition.failureCause });
             }
             await params.onExactTerminalAttachmentRetired?.({
               happyHomeDir: configuration.happyHomeDir,
@@ -630,7 +641,9 @@ export function createStopSession(params: Readonly<{
           }
         } catch (error) {
           logWarning(`[DAEMON RUN] Failed to inspect stranded terminal control for session ${normalizedSessionId}`, error);
-          return incompleteStopSession('missing_topology_proof');
+          return incompleteStopSession('missing_topology_proof', undefined, {
+            failureCause: projectActionFailureCauseV1(error, 'stop.stranded_control_recovery'),
+          });
         }
       }
       if (attachmentInfo?.version === 2 || attachmentInfo?.version === 3) {
@@ -646,7 +659,8 @@ export function createStopSession(params: Readonly<{
       const adapters = await loadTerminalHostAdapters();
       terminalHostAdapterForDisposition = adapters?.[attachmentInfo.handle.kind] ?? null;
       if (!terminalHostAdapterForDisposition) {
-        return incompleteStopSession('terminal_host_adapter_unavailable');
+        return incompleteStopSession('terminal_host_adapter_unavailable', undefined,
+          terminalHostAdapterFailureCause ? { failureCause: terminalHostAdapterFailureCause } : undefined);
       }
     }
 
@@ -678,6 +692,7 @@ export function createStopSession(params: Readonly<{
     }
     let captureFailure = capturedRemainder?.processFailure;
     let stoppedAny = false;
+    let signalFailureCause: ActionFailureCauseV1 | undefined;
     const signaledPids: number[] = [];
     const confirmedExitedPids: number[] = runnersAlreadyExited ? [...pidsToStop] : [];
     for (const pid of runnersAlreadyExited ? [] : signalEligiblePids) {
@@ -740,6 +755,7 @@ export function createStopSession(params: Readonly<{
         signaledPids.push(pid);
       } catch (error) {
         logger.debug(`[DAEMON RUN] Failed to signal session ${normalizedSessionId} (pid=${pid}):`, error);
+        signalFailureCause ??= projectActionFailureCauseV1(error, 'stop.runner_signal');
       }
     }
 
@@ -759,7 +775,8 @@ export function createStopSession(params: Readonly<{
     if (runnersWithStopDisposition.size !== pidsToStop.length) {
       logWarning(`[DAEMON RUN] Stop signaling was incomplete for session ${normalizedSessionId}`);
       return incompleteStopSession(captureFailure
-        ? 'process_owner_observation_unavailable' : 'runner_signal_incomplete', captureFailure);
+        ? 'process_owner_observation_unavailable' : 'runner_signal_incomplete', captureFailure,
+        signalFailureCause ? { failureCause: signalFailureCause } : undefined);
     }
     if (!params.waitForTrackedRunnersExit) {
       logWarning(`[DAEMON RUN] Stop cannot prove runner exit for session ${normalizedSessionId}`);
@@ -891,8 +908,8 @@ export function createStopSession(params: Readonly<{
       });
       if (disposition.status !== 'retired') {
         return disposition.status === 'parked'
-          ? incompleteStopSession(mapDispositionFailureReason(disposition.reason))
-          : incompleteStopSession('terminal_attachment_descriptor_retirement_failed');
+          ? incompleteStopSession(mapDispositionFailureReason(disposition.reason), undefined, { failureCause: disposition.failureCause })
+          : incompleteStopSession('terminal_attachment_descriptor_retirement_failed', undefined, { failureCause: disposition.failureCause });
       }
       await params.onExactTerminalAttachmentRetired?.({
         happyHomeDir: configuration.happyHomeDir,
@@ -949,10 +966,10 @@ export function createStopSession(params: Readonly<{
           sessionId: normalizedSessionId,
           attachmentId: attachmentInfo.attachmentId,
         });
-        return incompleteStopSession('terminal_control_serviceability_retirement_failed');
+        return incompleteStopSession('terminal_control_serviceability_retirement_failed', undefined, { failureCause: disposition.failureCause });
       }
       if (disposition.status === 'destroyed' && disposition.descriptorRetained) {
-        return incompleteStopSession('terminal_attachment_descriptor_retirement_failed');
+        return incompleteStopSession('terminal_attachment_descriptor_retirement_failed', undefined, { failureCause: disposition.failureCause });
       }
       // A concurrent confirmed-dead recovery can own the same exact retirement.
       const attachmentRetired = disposition.status === 'destroyed' || disposition.status === 'retired';
@@ -974,8 +991,8 @@ export function createStopSession(params: Readonly<{
         return { status: 'stopped' };
       }
       return disposition.status === 'parked'
-        ? incompleteStopSession(mapDispositionFailureReason(disposition.reason))
-        : incompleteStopSession('destroy_failed');
+        ? incompleteStopSession(mapDispositionFailureReason(disposition.reason), undefined, { failureCause: disposition.failureCause })
+        : incompleteStopSession('destroy_failed', undefined, { failureCause: disposition.failureCause });
     }
     return await retireAbsentRunnerServiceability();
   };

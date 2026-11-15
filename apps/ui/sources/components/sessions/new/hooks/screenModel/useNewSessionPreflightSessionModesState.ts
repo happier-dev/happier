@@ -27,6 +27,7 @@ import {
 } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS } from '@/components/sessions/new/modules/newSessionCapabilityProbeTimeoutMs';
 import type { ProbedResourceFailure } from '@/sync/runtime/probedResources/createPersistentProbedResourceCache';
+import { readCapabilityInvokeFailure } from '@happier-dev/protocol/capabilities';
 import {
     scheduleProbedResourceRetryAfterDelay,
     scheduleProbedResourceRetryAfterExpiry,
@@ -50,6 +51,7 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
         errorCode?: string;
         retryable?: boolean;
         requestDisposition?: ProbedResourceFailure['requestDisposition'];
+        failureCause?: ProbedResourceFailure['failureCause'];
         onRefresh?: () => void;
     }>;
 }> {
@@ -204,7 +206,8 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
         }
 
         const cacheEntry = readDynamicSessionModeProbeCache(preflightModesKey);
-        setFailure({ reason: cacheEntry?.reason, errorCode: cacheEntry?.errorCode, retryable: cacheEntry?.retryable, requestDisposition: cacheEntry?.requestDisposition });
+        setFailure({ reason: cacheEntry?.reason, errorCode: cacheEntry?.errorCode, retryable: cacheEntry?.retryable,
+            requestDisposition: cacheEntry?.requestDisposition, failureCause: cacheEntry?.failureCause });
         const cached = cacheEntry?.kind === 'success' ? cacheEntry.value : null;
         const scopeStable = lastScopeKeyRef.current !== null && probeScopeKey !== null && lastScopeKeyRef.current === probeScopeKey;
         lastScopeKeyRef.current = probeScopeKey;
@@ -263,8 +266,10 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
                     ...(res.errorCode ? { errorCode: res.errorCode } : {}),
                     ...(res.retryable === undefined ? {} : { retryable: res.retryable }),
                     ...(res.requestDisposition ? { requestDisposition: res.requestDisposition } : {}),
+                    ...(res.failureCause ? { failureCause: res.failureCause } : {}),
                 } };
-                if (!res.response.ok) return null;
+                if (!res.response.ok) return { failure: { reason: 'error',
+                    ...readCapabilityInvokeFailure({ ...res.response.error, errorCode: res.response.error.code }) } };
 
                 const result = res.response.result;
                 if (!result || typeof result !== 'object' || Array.isArray(result)) return null;
@@ -329,7 +334,9 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
             if (cached) {
                 // Keep stale-but-usable mode lists sticky if a refresh probe fails.
                 if (cached.unavailable === true) {
-                    writeDynamicSessionModeProbeCacheUnavailable(preflightModesKey, cached, commitNowMs);
+                    writeDynamicSessionModeProbeCacheUnavailable(preflightModesKey, cached, commitNowMs, probeFailure);
+                } else if (probeFailure) {
+                    writeDynamicSessionModeProbeCacheError(preflightModesKey, commitNowMs, probeFailure);
                 } else {
                     writeDynamicSessionModeProbeCacheSuccess(preflightModesKey, cached, commitNowMs);
                 }
@@ -342,6 +349,7 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
             const stale = preflightModesRef.current;
             const staleUpdatedAt = refreshedAtRef.current;
             if (stale && staleUpdatedAt) {
+                if (probeFailure) writeDynamicSessionModeProbeCacheError(preflightModesKey, commitNowMs, probeFailure);
                 setPreflightModes(stale);
                 setRefreshedAt(staleUpdatedAt);
                 setProbePhase('idle');

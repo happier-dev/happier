@@ -19,6 +19,7 @@ import type { MachineCapabilitiesInvokeResult } from './capabilities';
 import { SpawnFailureV1Schema, type SpawnFailureV1 } from '@happier-dev/protocol/machines/processes/spawnFailureV1';
 import type { ProbedResourceFailure } from '@/sync/runtime/probedResources/createPersistentProbedResourceCache';
 import { readCapabilityInvokeFailure } from '@happier-dev/protocol/capabilities';
+import { readSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
 /** Shared discovery lifecycle for model pickers and voice catalog requests. */
 type MachineModelDiscoveryParams = Readonly<{
@@ -71,6 +72,7 @@ async function discoverMachineModelsWithTransport(params: MachineModelDiscoveryP
                 ...(response.errorCode ? { errorCode: response.errorCode } : {}),
                 ...(response.retryable === undefined ? {} : { retryable: response.retryable }),
                 ...(response.requestDisposition ? { requestDisposition: response.requestDisposition } : {}),
+                ...(response.failureCause ? { failureCause: response.failureCause } : {}),
             };
             if (response.supported && !response.response.ok) failure = {
                 reason: 'error',
@@ -89,8 +91,10 @@ async function discoverMachineModelsWithTransport(params: MachineModelDiscoveryP
                     if (failure.success) spawnFailure = failure.data;
                 }
                 if (parsed && record) {
+                    const failureCause = readSessionRuntimeFailureCause(record);
+                    if (failureCause) failure = { failureCause };
                     if (parsed.unavailable === true) {
-                        writeDynamicModelProbeCacheUnavailable(params.cacheKey, Date.now(), spawnFailure);
+                        writeDynamicModelProbeCacheUnavailable(params.cacheKey, Date.now(), spawnFailure, failure);
                         return readDynamicModelProbeCache(params.cacheKey, params.successMaxAgeMs);
                     }
                     const previous = readDynamicModelProbeCache(params.cacheKey, params.successMaxAgeMs);

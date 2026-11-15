@@ -59,6 +59,7 @@ import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/e
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 import { createVoiceToolHandlers, serializeVoiceActionExecuteResult } from './handlers';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 // The daemon response is authored at the genuine Socket.IO boundary. Session
 // eligibility, scoped Account admission, RPC framing and response parsing run.
@@ -2955,6 +2956,15 @@ describe('voice tool handlers', () => {
     expect(JSON.parse(serialized)).toMatchObject({
       ok: false, errorCode: 'credential_refresh_failed', details,
     });
+  });
+
+  it.each([false, true])('preserves the Action refusal cause with canonical result %s', canonicalResult => {
+    const failureCause = projectActionFailureCauseV1(Object.assign(new TypeError('private action response'), { status: 429 }), 'voice.action');
+    const serialized = serializeVoiceActionExecuteResult('session.stop', {
+      ok: false, errorCode: 'internal_error', error: 'internal_error', failureCause,
+    }, { canonicalResult });
+    expect(JSON.parse(serialized)).toMatchObject({ ok: false, errorCode: 'internal_error', failureCause });
+    expect(serialized).not.toContain('private action response');
   });
 
   it.each(['session_stop_failed', 'session_stop_requested'] as const)(

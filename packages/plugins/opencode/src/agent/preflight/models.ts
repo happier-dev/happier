@@ -123,7 +123,8 @@ export const OPENCODE_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
       return controls?.refreshError
         ? { availableModels: controls.models ?? [], refreshError: true, source: controls.models === null ? 'unavailable' : 'dynamic',
           ...(controls.observedAt === undefined ? {} : { observedAt: controls.observedAt }),
-          ...(controls.refreshErrorMessage === undefined ? {} : { refreshErrorMessage: controls.refreshErrorMessage }) }
+          ...(controls.refreshErrorMessage === undefined ? {} : { refreshErrorMessage: controls.refreshErrorMessage }),
+          ...(controls.failureCause ? { failureCause: controls.failureCause } : {}) }
         : controls?.models ?? null;
     }
     return await withOpenCodePreflightServer(context, async client => {

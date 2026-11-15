@@ -158,10 +158,12 @@ describe('Codex V3 oai-events decoder', () => {
   });
 
   it.each([
-    { type: 'error', message: 'Bearer private-token' },
-    { type: 'error', error: { message: 'private context', code: 'private-token' } },
-    { type: 'error', error: 'private-token' },
-  ] as const)('surfaces a native error through a sanitized typed failure', (event) => {
+    { event: { type: 'error', message: 'Bearer private-token' }, httpStatus: null },
+    { event: { type: 'error', error: { message: 'private context', code: 'private-token' } }, httpStatus: null },
+    { event: { type: 'error', error: 'private-token' }, httpStatus: null },
+    { event: { type: 'error', error: { message: 'private context', code: 'rate_limit_exceeded', status: 429 } }, httpStatus: 429 },
+    { event: { type: 'error', error: { message: 'private context', code: 'private-token', status: 429 } }, httpStatus: 429 },
+  ] as const)('surfaces a native error through a sanitized typed failure', ({ event, httpStatus }) => {
     const diagnostics: string[] = [];
     const decode = createCodexV3ControlDecoder({
       attemptId: 1,
@@ -177,6 +179,7 @@ describe('Codex V3 oai-events decoder', () => {
     expect(failure).toMatchObject({
       code: 'upstream_rejected',
       message: 'codex_v3_upstream_error',
+      failureCause: { phase: 'codex.realtime.control', errorClass: 'UnknownThrownValue', errorCode: null, httpStatus },
     });
     expect(JSON.stringify(failure)).not.toContain('private');
     expect(diagnostics).toEqual(['codex_v3_upstream_error']);

@@ -539,7 +539,8 @@ describe('createVoiceInferenceSpeechStreamManager', () => {
     expect(dataTrace && typeof dataTrace === 'object' && 'elapsedMs' in dataTrace ? dataTrace.elapsedMs : undefined)
       .toBeGreaterThanOrEqual(20);
     if (nativeFailure) {
-      expect(parsedResponse).toMatchObject({ ok: false, errorCode: 'cancelled', diagnostic: { operation: 'appendPcm16', code: 'cancelled' } });
+      expect(parsedResponse).toMatchObject({ ok: false, errorCode: 'cancelled', diagnostic: { operation: 'appendPcm16', code: null },
+        failureCause: { phase: 'voice.inference', errorClass: 'Error', errorCode: null, httpStatus: null } });
       expect(runtimeSession.close).toHaveBeenCalledOnce();
       return;
     }
@@ -815,9 +816,14 @@ describe('createVoiceInferenceSpeechStreamManager', () => {
 
   it.each([
     { cause: Object.assign(new Error('private audio /secret/model.wav token=secret'), { code: 'runtime_timeout' }),
-      errorCode: 'request_timeout', exceptionClass: 'Error', code: 'runtime_timeout' },
+      errorCode: 'request_timeout', exceptionClass: 'Error', code: null },
     { cause: Object.assign(new TypeError('private audio /secret/model.wav token=secret'), { code: 'ERR_NATIVE_FAILURE' }),
-      errorCode: 'internal_error', exceptionClass: 'TypeError', code: 'ERR_NATIVE_FAILURE' },
+      errorCode: 'internal_error', exceptionClass: 'TypeError', code: null },
+    { cause: Object.assign(new TypeError('private audio'), { code: 'privatecode', response: { status: 429 } }),
+      errorCode: 'internal_error', exceptionClass: 'TypeError', code: null },
+    { cause: Object.assign(new Error('private worker detail'), { code: 'internal_error', failureCause: {
+      phase: 'voice.inference.stt_stream_append', errorClass: 'TypeError', errorCode: 'EACCES', httpStatus: null,
+    } }), errorCode: 'internal_error', exceptionClass: 'TypeError', code: 'EACCES' },
     { cause: Object.assign(new Error('private audio /secret/model.wav token=secret'), { name: 'private audio', code: 'token=secret /secret/model.wav' }),
       errorCode: 'internal_error', exceptionClass: 'Error', code: null },
     { cause: 'private audio /secret/model.wav token=secret',
@@ -859,13 +865,14 @@ describe('createVoiceInferenceSpeechStreamManager', () => {
         pcm16Bytes: new Uint8Array([0, 0]),
       });
       const diagnostic = { operation: 'appendPcm16', streamId: started.streamId, exceptionClass, code };
-      expect(response).toEqual({
+      expect(response).toMatchObject({
         ok: false,
         errorCode,
         error: `voice_inference_${errorCode}`,
         diagnostic,
       });
       expect(DaemonVoiceInferenceSttStreamChunkResponseSchema.parse(response)).toEqual(response);
+      expect(JSON.stringify(response)).not.toContain('privatecode');
       fileLogger.flushSync();
       const log = await readFile(logPath, 'utf8');
       expect(log).toContain(JSON.stringify(diagnostic));

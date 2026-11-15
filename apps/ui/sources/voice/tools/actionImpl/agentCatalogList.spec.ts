@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
 import { createDeferred } from '@/dev/testkit';
 import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import {
   AgentsBackendsListOutputSchema} from '@happier-dev/protocol/actions/agentBackendInventory';
 import {
@@ -1177,18 +1178,19 @@ describe('agent catalog voice tools', () => {
     expect(persisted.getString('dynamic-model-probe-cache-v1')).not.toContain('transient-provider-model');
   });
 
-  it('uses a newer daemon last-good observation on failure without renewing its age', async () => {
+  it.each([429, 503])('retains model discovery cause %i with the newer daemon last-good observation age', async (status) => {
+    const failureCause = projectSessionRuntimeFailureCause(Object.assign(new TypeError('private model discovery error'), { status }), 'client_start', 'voice.models');
     const key = buildDynamicModelProbeCacheKey({ machineId: 'm1', targetKey: resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' }), providerConnectionId: null, serverId: catalogHomeId, cwd: null })!;
     const previousAt = Date.now() - DYNAMIC_MODEL_PROBE_SUCCESS_TTL_MS - 1000;
     const observedAt = previousAt + 500;
     writeDynamicModelProbeCacheSuccess(key, { availableModels: [{ id: 'old', name: 'Old' }], supportsFreeform: true }, previousAt);
     machineCapabilitiesInvoke.mockResolvedValue({ supported: true, response: { ok: true, result: {
       availableModels: [{ id: 'newer', name: 'Newer' }], supportsFreeform: true,
-      source: 'dynamic', cacheable: false, refreshError: true, observedAt,
+      source: 'dynamic', cacheable: false, refreshError: true, observedAt, failureCause,
     } } });
     const { listAgentModelsForVoiceTool } = await import('./agentCatalogList');
     expect(await listAgentModelsForVoiceTool({ agentId: 'claude', machineId: 'm1' })).toMatchObject({
-      refreshError: true, items: expect.arrayContaining([expect.objectContaining({ modelId: 'newer', label: 'Newer' })]),
+      refreshError: true, failureCause, items: expect.arrayContaining([expect.objectContaining({ modelId: 'newer', label: 'Newer' })]),
     });
     expect(readDynamicModelProbeCache(key)).toMatchObject({ updatedAt: observedAt });
   });

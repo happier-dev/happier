@@ -3,6 +3,7 @@ import { createDeferred, waitForTestEvent } from '@/dev/testkit';
 import { createOpenAiVoiceRuntimeEnvironment } from '@/dev/testkit/harness/openAiVoiceRuntime';
 import { installVoiceWebRtcBrowserBoundary, TestVoiceAudioContext } from '@/dev/testkit/harness/voiceWebRtcHarness';
 import { PluginContributesV2Schema} from '@happier-dev/protocol/plugins/contributions/v2';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { type VoiceRealtimeJsonValue } from '@happier-dev/protocol/voice/realtime/events';
 import type {
   BundledRetiringDirectMediaTranscriptDrain,
@@ -2410,7 +2411,8 @@ describe('createBundledRealtimeProviderRuntime', () => {
     }
   });
 
-  it('names real persistence, carrier and retired-owner transcript refusals without disclosing authoritative words', async () => {
+  it.each([429, 503])('retains the carrier rebind cause %i while naming real transcript refusals without authoritative words', async (status) => {
+    const failureCause = projectActionFailureCauseV1(Object.assign(new TypeError('private carrier response'), { status }), 'voice.transcript.rebind');
     const environment = await createOpenAiVoiceRuntimeEnvironment();
     const hostLease = createBundledConversationRuntimeHostLease();
     const pluginId = 'conformance.voice.transcript-refusal';
@@ -2502,7 +2504,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
       if (attemptId === null) throw new Error('Expected the real owned attempt identity');
       storage.getState().deleteSession(globalCarrier, target.serverId);
       environment.sessionHttp.replaceSession(globalCarrier);
-      environment.historySessionPost = async () => new Response('{}', { status: 503 });
+      environment.historySessionPost = async () => { throw Object.assign(new TypeError('private carrier response'), { failureCause }); };
       log.clear();
       observation.sdk!.onControl({ id: 'global-rebind-refused-one' });
       await waitForTestEvent(notify => log.onChange(notify), () => transcriptDrops().length, count => count === 1);
@@ -2511,6 +2513,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
       await new Promise<void>(resolve => setTimeout(resolve, 0));
       expect(transcriptDrops()).toHaveLength(1);
       expect(transcriptDrops()[0]).toContain('transcript_carrier_rebind_failed');
+      expect(JSON.parse(transcriptDrops()[0]!.slice(transcriptDrops()[0]!.indexOf('{')))).toMatchObject({ failureCause });
       expect(transcriptDrops()[0]).not.toContain(privateWords);
       expect(readStoredSessionMessages(storage.getState(), globalCarrier)).toEqual([]);
       await adapter.stop({ sessionId: controlSessionId });
@@ -2524,8 +2527,8 @@ describe('createBundledRealtimeProviderRuntime', () => {
       expect(transcriptDrops()[0]).not.toContain(privateWords);
 
       environment.historySessionPost = async init => environment.sessionHttp.createSessionFromPost('refusal-generation-carrier', init);
-      // The genuine 503 above revoked verified Home transport. Recover through
-      // its real readiness owner before asking a new Voice attempt to connect.
+      // Recover verified Home transport through its real readiness owner before
+      // asking a new Voice attempt to connect after the failed carrier request.
       const { invalidateServerReachabilitySupervisor, peekServerReachabilityState, subscribeServerReachabilityState } =
         await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
       const home = environment.accountConnection.home;

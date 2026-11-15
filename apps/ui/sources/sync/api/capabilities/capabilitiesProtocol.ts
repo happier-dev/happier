@@ -11,6 +11,7 @@ import type {
     CapabilitiesInvokeResponse,
 } from '@happier-dev/protocol/capabilities';
 import { parseCapabilityId as parseCanonicalCapabilityId, parseCapabilityProtocol } from '@happier-dev/protocol/capabilities';
+import { readSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { ChecklistId as ProtocolChecklistId } from '@happier-dev/protocol/checklists';
 export { parseCapabilitiesDetectResponse } from '@happier-dev/protocol/capabilities';
 
@@ -152,10 +153,12 @@ export function parseCapabilitiesInvokeResponse(raw: unknown): CapabilitiesInvok
     if (!isPlainObject(error) || typeof error.message !== 'string') return null;
     const code = error.code;
     const logPath = raw.logPath;
+    const failureCause = readSessionRuntimeFailureCause(error);
     return {
         ok: false,
         error: { message: error.message, ...(typeof code === 'string' ? { code } : {}),
-            ...(typeof error.retryable === 'boolean' ? { retryable: error.retryable } : {}) },
+            ...(typeof error.retryable === 'boolean' ? { retryable: error.retryable } : {}),
+            ...(failureCause ? { failureCause } : {}) },
         ...((typeof logPath === 'string') ? { logPath } : {}),
     };
 }

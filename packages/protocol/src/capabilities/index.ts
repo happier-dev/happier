@@ -1,4 +1,5 @@
 import { parseQualifiedPluginContributionKey } from '../plugins/contributionIdentity.js';
+import type { SessionRuntimeIssueV1 } from '../sessions/control/runtimeIssueV1.js';
 
 export * from './probedCatalogOption.js';
 export * from './agentProbeObservation.js';
@@ -115,7 +116,8 @@ export type CapabilitiesInvokeRequest = {
 
 export type CapabilitiesInvokeResponse =
   | { ok: true; result: unknown }
-  | { ok: false; error: { message: string; code?: string; retryable?: boolean; details?: Readonly<Record<string, string>> }; logPath?: string };
+  | { ok: false; error: { message: string; code?: string; retryable?: boolean; details?: Readonly<Record<string, string>>;
+      failureCause?: NonNullable<SessionRuntimeIssueV1['failureCause']> }; logPath?: string };
 
 export {
   AgentPassiveRealtimeSetupResultV1Schema,

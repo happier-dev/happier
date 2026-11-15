@@ -9,6 +9,7 @@ import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fi
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { parseModelPackManifest } from '@happier-dev/protocol/voice/modelPacks/manifest';
 import { DaemonVoiceInferenceTtsStreamStartResponseSchema } from '@happier-dev/protocol/daemon/voiceInference';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DaemonVoiceInferenceModelStatusSchema } from '@happier-dev/protocol/daemon/voiceInference';
 import { getDefaultModelPackId, getModelPackCatalogEntry } from '@happier-dev/protocol/voice/modelPacks/catalog';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -530,12 +531,13 @@ describe('localVoiceTtsController', () => {
         }));
     });
 
-    it('reports segmented daemon playback failure through the typed TTS recovery owner', async () => {
-        encodedAudio.start.mockRejectedValueOnce(new Error('native_playback_failed'));
+    it.each([429, 503])('reports segmented daemon playback failure with cause status %s through the typed TTS recovery owner', async status => {
+        const failureCause = projectActionFailureCauseV1(Object.assign(new TypeError('private playback response'), { status }), 'voice.playback');
+        encodedAudio.start.mockRejectedValueOnce(Object.assign(new Error('native_playback_failed'), { failureCause }));
         const onTtsFailed = vi.fn();
         await createLocalVoiceTtsController().speak(neuralRequest({ onTtsFailed }));
         expect(onTtsFailed).toHaveBeenCalledWith(expect.objectContaining({
-            kind: 'tts_failed', reason: 'native_playback_failed', recoverable: true,
+            kind: 'tts_failed', reason: 'native_playback_failed', recoverable: true, failureCause,
         }));
         expect(machineRpc.mock.calls.some(([request]) => request.method === 'daemon.voiceInference.tts.stream.cancel')).toBe(true);
         expect(speechBoundary.getAudioSessionCoordinator().getSnapshot().leaseCount).toBe(0);

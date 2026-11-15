@@ -79,6 +79,7 @@ export function serializeVoiceActionExecuteResult(
     return jsonError(result.errorCode, options?.agentTarget
       ? `${options.agentTarget.identity.localId}: ${result.errorCode}` : result.errorCode, {
       actionId,
+      ...(result.failureCause ? { failureCause: result.failureCause } : {}),
       ...(result.details === undefined ? {} : { details: result.details }),
       ...(options?.agentTarget ? { agentTarget: options.agentTarget } : {}),
       // The Action-input owner has already projected these content-free repair facts.

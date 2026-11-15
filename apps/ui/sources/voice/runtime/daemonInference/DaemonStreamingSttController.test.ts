@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { MachineLiveStreamRelayCapsV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
@@ -132,7 +133,7 @@ beforeEach(async () => {
     handleRequest: async (path, init) => createPlainMachineReadHttpResponseFixture(path, init),
   });
   const machine = createMachineFixture({ id: 'streaming-machine', activeAt: Date.now() });
-  storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [account.home.id]: [machine] } });
+  storage.getState().applyMachines([machine], true, { sourceServerId: account.home.id });
   const voice = voiceSettingsParse({ providerId: 'local_conversation',
     executionMachine: { mode: 'fixed', machineId: machine.id } });
   const configuredVoice = writeLocalConversationVoiceSettings(voice, {
@@ -545,8 +546,9 @@ describe('createDaemonStreamingSttController with actual capture and daemon clie
     })).toBe(presentation.failureMessage);
   });
 
-  it('retains the sender-start cause privately while publishing a safe machine failure', async () => {
-    const boundaryFailure = new Error('private transport detail');
+  it.each([429, 503])('retains the sender-start cause with status %s while publishing a safe machine failure', async status => {
+    const failureCause = projectActionFailureCauseV1(Object.assign(new TypeError('private transport detail'), { status }), 'voice.stt');
+    const boundaryFailure = Object.assign(new Error('private transport detail'), { failureCause });
     rpc.mockImplementation(async request => {
       if (request.method === methods.start) throw boundaryFailure;
       return respond(request);
@@ -554,7 +556,7 @@ describe('createDaemonStreamingSttController with actual capture and daemon clie
     const params = startParams();
     await controller().start(params);
     const failure: unknown = vi.mocked(params.sink.onError).mock.calls[0]?.[0];
-    expect(failure).toMatchObject({ reason: 'daemon_streaming_stt_start_failed' });
+    expect(failure).toMatchObject({ reason: 'daemon_streaming_stt_start_failed', failureCause });
     expect(failure).toHaveProperty('cause');
     expect(Object.getOwnPropertyDescriptor(failure, 'cause')?.enumerable).toBe(false);
     expect(JSON.stringify(failure)).not.toContain('private transport detail');
@@ -574,7 +576,8 @@ describe('createDaemonStreamingSttController with actual capture and daemon clie
       const params = startParams();
       await controller().start(params);
       expect(params.sink.onError).toHaveBeenCalledWith(expect.objectContaining({ reason: 'daemon_streaming_stt_internal_error' }));
-      const safe = { code: 'internal_error', message: 'redacted_start_failure', step: 'sender_start', errorClass: 'Error' };
+      const safe = { code: 'internal_error', message: 'redacted_start_failure', step: 'sender_start', errorClass: 'Error',
+        failureCause: projectActionFailureCauseV1(Object.assign(new Error(), { code: 'internal_error' }), 'voice.runtime', { allowUnknownErrorCode: false }) };
       expect(daemonSpeechStreamDiagnostics.snapshot().lastStartFailure).toEqual(safe);
       expect(warn).toHaveBeenCalledWith('[daemonVoiceInference] streaming STT start failed ' + JSON.stringify(safe));
       expect(JSON.stringify(warn.mock.calls)).not.toContain('secret');
@@ -593,6 +596,7 @@ describe('createDaemonStreamingSttController with actual capture and daemon clie
       expect(params.sink.onError).toHaveBeenCalledWith(expect.objectContaining({ reason: 'daemon_streaming_stt_internal_error' }));
       expect(daemonSpeechStreamDiagnostics.snapshot().lastStartFailure).toEqual({
         code: 'internal_error', message: 'daemon_voice_inference_invalid_response', step: 'sender_start', errorClass: 'Error',
+        failureCause: projectActionFailureCauseV1(Object.assign(new Error(), { code: 'internal_error' }), 'voice.runtime', { allowUnknownErrorCode: false }),
       });
       expect(JSON.stringify(warn.mock.calls)).not.toContain('secret');
       expect(requests('start')).toHaveLength(1);

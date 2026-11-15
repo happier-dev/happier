@@ -1,4 +1,5 @@
-import type { PluginApi } from '@happier-dev/plugin-sdk';
+import type { PluginApi, PluginDiagnosticData } from '@happier-dev/plugin-sdk';
+import { ActionFailureCauseV1Schema } from '@happier-dev/plugin-sdk/errors';
 import type {
   RealtimeVoiceProviderProtocol,
   RealtimeVoiceProviderRuntime,
@@ -43,8 +44,11 @@ const START_REMEDIATION_BY_DIAGNOSTIC_CODE = Object.freeze({
   codex_realtime_feature_disabled: 'feature_unavailable',
 } as const);
 
-function agentRealtimeError(code: string, message: string): Error & Readonly<{ code: string }> {
-  return Object.assign(new Error(message), { code });
+function agentRealtimeError(code: string, message: string, diagnostic?: PluginDiagnosticData): Error & Readonly<{ code: string }> {
+  const details = diagnostic?.details;
+  const cause = ActionFailureCauseV1Schema.safeParse(details && typeof details === 'object' && 'failureCause' in details
+    ? details.failureCause : undefined);
+  return Object.assign(new Error(message), { code, ...(cause.success ? { failureCause: cause.data } : {}) });
 }
 
 function startFailureCode(
@@ -108,6 +112,7 @@ export function createCodexRealtimeVoiceProviderRuntime(): RealtimeVoiceProvider
         throw agentRealtimeError(
           availability.reason,
           `voice_agent_realtime_${availability.reason}:${availability.diagnostic.code}`,
+          availability.diagnostic,
         );
       }
       const decoder = activeAttemptsById.get(attemptId)?.decoder ?? createCodexV3ControlDecoder({
@@ -133,6 +138,7 @@ export function createCodexRealtimeVoiceProviderRuntime(): RealtimeVoiceProvider
                 `voice_agent_realtime_${result.status}${
                   diagnostic ? `:${diagnostic.code}` : ''
                 }`,
+                diagnostic,
               );
             }
             decoder.markStarted();

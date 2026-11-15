@@ -51,7 +51,7 @@ function isVoiceAccountOperationCancelled(error: unknown): boolean {
 
 function assertProviderHttpSuccess(status: number): void {
   const httpFailure = classifyVoiceProviderHttpFailure(status);
-  if (httpFailure) throw providerError(httpFailure);
+  if (httpFailure) throw Object.assign(providerError(httpFailure), { status });
 }
 
 function stringValue(value: unknown, max = 512): string | null {

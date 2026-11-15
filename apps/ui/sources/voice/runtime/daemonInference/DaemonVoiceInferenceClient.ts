@@ -30,6 +30,7 @@ import {
     type DaemonVoiceInferenceNormalizationDecision,
 } from '@happier-dev/protocol/daemon/voiceInference';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { runWithServerAccountScopeRequestGuard } from '@/sync/runtime/orchestration/serverScopedRpc/serverAccountScopeRequestGuard';
 
@@ -77,6 +78,7 @@ function throwIfErrorResponse<T extends Readonly<{
     ok: boolean;
     error?: string;
     errorCode?: string;
+    failureCause?: ActionFailureCauseV1;
 }>>(
     response: T,
 ): asserts response is Exclude<T, Readonly<{ ok: false }>> {
@@ -84,6 +86,7 @@ function throwIfErrorResponse<T extends Readonly<{
         throw createDaemonVoiceInferenceClientError(
             (response.errorCode ?? 'internal_error') as Parameters<typeof createDaemonVoiceInferenceClientError>[0],
             response.error ?? 'daemon_voice_inference_error',
+            response.failureCause,
         );
     }
 }

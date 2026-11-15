@@ -52,6 +52,27 @@ function buildAdapter(dispose: TerminalHostAdapter['dispose']): TerminalHostAdap
 }
 
 describe('executeTerminalHostDisposition', () => {
+  it.each(['read', 'destroy', 'retirement', 'descriptor_retirement'] as const)(
+    'retains the native cause when exact host %s fails', async phase => {
+      const dir = tmp.dirSync({ unsafeCleanup: true });
+      const sessionId = `cause-${phase}`;
+      const error = Object.assign(new Error('private native details'), { code: 'EACCES' });
+      try {
+        const attachment = await writeTerminalHostAttachmentInfo({ happyHomeDir: dir.name, sessionId, handle: HANDLE });
+        const result = await executeTerminalHostDisposition({ happyHomeDir: dir.name, sessionId,
+          expectedAttachmentId: attachment.attachmentId,
+          intent: { kind: 'destroy_owned_host', reason: 'explicit_user_stop' },
+          adapter: buildAdapter(async () => { if (phase === 'destroy') throw error; }),
+          ...(phase === 'read' ? { readAttachmentState: async () => { throw error; } } : {}),
+          ...(phase === 'retirement' ? { beforeDescriptorRetirement: async () => { throw error; } } : {}),
+          ...(phase === 'descriptor_retirement' ? { removeAttachmentInfo: async () => { throw error; } } : {}),
+        });
+        expect(result).toMatchObject({ status: phase === 'read' || phase === 'destroy' ? 'parked' : 'destroyed',
+          failureCause: { phase: `terminal_host.disposition.${phase}`, errorClass: 'Error', errorCode: 'EACCES', httpStatus: null } });
+        expect(await readTerminalHostAttachmentInfo({ happyHomeDir: dir.name, sessionId })).not.toBeNull();
+      } finally { dir.removeCallback(); }
+    });
+
   it.each(['owned', 'borrowed'] as const)('retires captured %s attachment evidence after the exited runner removed its descriptor', async (lifecycle) => {
     const dir = tmp.dirSync({ unsafeCleanup: true });
     const sessionId = `session-exited-${lifecycle}`;
@@ -125,7 +146,8 @@ describe('executeTerminalHostDisposition', () => {
         adapter: buildAdapter(dispose),
         beforeDescriptorRetirement: retire,
       };
-      await expect(executeTerminalHostDisposition(input)).resolves.toEqual({ status: 'parked', reason: 'missing_topology_proof' });
+      await expect(executeTerminalHostDisposition(input)).resolves.toEqual({ status: 'parked', reason: 'missing_topology_proof',
+        failureCause: { phase: 'terminal_host.disposition.read', errorClass: 'Error', errorCode: null, httpStatus: null } });
       expect(dispose).not.toHaveBeenCalled();
       expect(retire).not.toHaveBeenCalled();
       await expect(stat(descriptorPath)).resolves.toBeDefined();
@@ -151,7 +173,7 @@ describe('executeTerminalHostDisposition', () => {
         beforeDescriptorRetirement: async () => {
           await writeFile(join(dir.name, 'terminal', 'sessions', `${sessionId}.host.json`), '{');
         },
-      })).resolves.toEqual(lifecycle === 'borrowed'
+      })).resolves.toMatchObject(lifecycle === 'borrowed'
         ? { status: 'parked', reason: 'missing_topology_proof' }
         : { status: 'destroyed', attachmentId: attachment.attachmentId, descriptorRetained: true });
       await expect(stat(join(dir.name, 'terminal', 'sessions', `${sessionId}.host.json`))).resolves.toBeDefined();
@@ -207,7 +229,7 @@ describe('executeTerminalHostDisposition', () => {
           // Genuine OS permission failure: retain a readable exact descriptor,
           // but deny the canonical remover's filesystem writes.
           beforeDescriptorRetirement: async () => { await chmod(sessionsDir, 0o500); },
-        })).resolves.toEqual(lifecycle === 'owned'
+        })).resolves.toMatchObject(lifecycle === 'owned'
           ? { status: 'destroyed', attachmentId: attachment.attachmentId, descriptorRetained: true }
           : { status: 'parked', reason: 'descriptor_retirement_failed' });
         expect(fileLog).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
@@ -297,6 +319,7 @@ describe('executeTerminalHostDisposition', () => {
       status: 'destroyed',
       attachmentId: attachment.attachmentId,
       descriptorRetained: true,
+      failureCause: { phase: 'terminal_host.disposition.descriptor_retirement', errorClass: 'Error', errorCode: 'EPERM', httpStatus: null },
     });
     expect(dispose).toHaveBeenCalledTimes(1);
   });
@@ -357,7 +380,8 @@ describe('executeTerminalHostDisposition', () => {
       adapter,
       readAttachmentInfo: vi.fn(async () => attachment),
       removeAttachmentInfo,
-    })).resolves.toEqual({ status: 'parked', reason: 'destroy_failed' });
+    })).resolves.toEqual({ status: 'parked', reason: 'destroy_failed',
+      failureCause: { phase: 'terminal_host.disposition.destroy', errorClass: 'Error', errorCode: 'EPERM', httpStatus: null } });
 
     expect(removeAttachmentInfo).not.toHaveBeenCalled();
     expect(warning).toHaveBeenCalledWith(
@@ -426,6 +450,7 @@ describe('executeTerminalHostDisposition', () => {
       attachmentId: HANDLE.attachmentId,
       descriptorRetained: true,
       retirementFailed: true,
+      failureCause: { phase: 'terminal_host.disposition.retirement', errorClass: 'Error', errorCode: null, httpStatus: null },
     });
     expect(removeAttachmentInfo).not.toHaveBeenCalled();
   });

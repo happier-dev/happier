@@ -20,7 +20,7 @@ import { ScopedRpcSocketConnectionTimeoutError } from '@/sync/runtime/orchestrat
 import { ServerFetchAbortedForServerSwitchError } from '@/sync/http/client';
 import { isDemoModeActive } from '@/demoMode/runtime/enterExitDemoMode';
 import { readRpcRequestDisposition, type RpcRequestDisposition } from '@happier-dev/sync-client';
-import { readCapabilityInvokeFailure } from '@happier-dev/protocol/capabilities';
+import { readCapabilityInvokeFailure, type CapabilityInvokeFailure } from '@happier-dev/protocol/capabilities';
 
 export type {
     CapabilitiesDescribeResponse,
@@ -121,7 +121,8 @@ export async function machineCapabilitiesDetect(
 
 export type MachineCapabilitiesInvokeResult =
     | { supported: true; response: CapabilitiesInvokeResponse }
-    | { supported: false; reason: 'not-supported' | 'error' | 'outcomeUnknown'; errorCode?: string; retryable?: boolean; requestDisposition?: RpcRequestDisposition };
+    | { supported: false; reason: 'not-supported' | 'error' | 'outcomeUnknown'; errorCode?: string; retryable?: boolean;
+        failureCause?: CapabilityInvokeFailure['failureCause']; requestDisposition?: RpcRequestDisposition };
 
 export async function machineCapabilitiesInvoke(
     machineId: string,

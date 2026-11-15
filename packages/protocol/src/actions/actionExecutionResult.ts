@@ -239,7 +239,12 @@ export function readActionFailureCauseV1(value: unknown): ActionFailureCauseV1 {
     ...(nativeReason.success ? { nativeErrorReason: nativeReason.data } : {}) };
 }
 
-export function projectActionFailureCauseV1(error: unknown, phase?: string): ActionFailureCauseV1 {
+/** Raw external exceptions use closed diagnostic codes; authored causes remain authoritative. */
+export function projectActionFailureCauseV1(
+  error: unknown,
+  phase?: string,
+  options?: Readonly<{ allowUnknownErrorCode?: boolean }>,
+): ActionFailureCauseV1 {
   try {
     const projected = error && typeof error === 'object' && 'failureCause' in error
       ? error.failureCause : isPluginError(error) ? error.data.failureCause : undefined;
@@ -253,12 +258,14 @@ export function projectActionFailureCauseV1(error: unknown, phase?: string): Act
   catch { /* Preserve the original failure if a diagnostic accessor throws. */ }
   const parsedPhase = ActionFailurePhaseV1Schema.safeParse(phase ?? stage ?? 'dispatch');
   const settledPhase = parsedPhase.success ? parsedPhase.data : 'dispatch';
-  const errorCode = readActionErrorCodeV1(error) ?? diagnostic.errorCode;
-  if (errorCode === null) {
+  const allowUnknownErrorCode = options?.allowUnknownErrorCode !== false;
+  const errorCode = (allowUnknownErrorCode ? readActionErrorCodeV1(error) : null) ?? diagnostic.errorCode;
+  if (errorCode === null || diagnostic.httpStatus === null) {
     try {
       const immediate = error && typeof error === 'object' && 'cause' in error ? error.cause : undefined;
       const child = readUnexpectedActionErrorDiagnosticV1(immediate);
-      return { phase: settledPhase, errorClass: diagnostic.errorClass, errorCode: readActionErrorCodeV1(immediate) ?? child.errorCode,
+      return { phase: settledPhase, errorClass: diagnostic.errorClass,
+        errorCode: errorCode ?? (allowUnknownErrorCode ? readActionErrorCodeV1(immediate) : null) ?? child.errorCode,
         httpStatus: diagnostic.httpStatus ?? child.httpStatus };
     } catch { /* A hostile cause accessor cannot replace the original failure. */ }
   }

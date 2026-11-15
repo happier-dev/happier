@@ -75,10 +75,10 @@ function readTransientUnavailable(key: string, nowMs = Date.now()): DynamicConfi
 }
 
 export function readDynamicConfigOptionsProbeCache(key: string): DynamicConfigOptionsProbeCacheEntry | null {
-    const transientUnavailable = readTransientUnavailable(key);
-    if (transientUnavailable) return transientUnavailable;
     const snap: ProbedResourceSnapshot<ConfigOptionsCatalog> = persistedCache.getSnapshot(key);
     const failure = snap.error instanceof ProbedResourceError ? snap.error.failure : undefined;
+    const transientUnavailable = readTransientUnavailable(key);
+    if (transientUnavailable) return { ...transientUnavailable, ...failure };
     if (snap.dataUpdatedAt !== null && snap.data) {
         return {
             kind: 'success',
@@ -115,8 +115,8 @@ export function writeDynamicConfigOptionsProbeCacheError(key: string, nowMs = Da
     persistedCache.writeError(key, new ProbedResourceError('dynamic-config-options-probe-failed', failure), nowMs);
 }
 
-export function writeDynamicConfigOptionsProbeCacheUnavailable(key: string, nowMs = Date.now()): void {
-    persistedCache.writeError(key, new Error('dynamic-config-options-probe-unavailable'), nowMs);
+export function writeDynamicConfigOptionsProbeCacheUnavailable(key: string, nowMs = Date.now(), failure?: ProbedResourceFailure): void {
+    persistedCache.writeError(key, new ProbedResourceError('dynamic-config-options-probe-unavailable', failure), nowMs);
     transientUnavailableByKey.set(key, {
         updatedAt: nowMs,
         expiresAt: nowMs + DYNAMIC_CONFIG_OPTIONS_PROBE_ERROR_BACKOFF_MS,

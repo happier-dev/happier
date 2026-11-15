@@ -615,7 +615,9 @@ export async function invokeCliPreflightMethod(
           });
           const parsed = AgentPassiveRealtimeSetupResultV1Schema.safeParse(raw);
           return parsed.success ? parsed.data : { v: 1, status: 'unavailable' } as const;
-        }).catch(() => ({ v: 1, status: 'unavailable' } as const));
+        }).catch((error: unknown) => ({ v: 1, status: 'unavailable',
+          failureCause: projectActionFailureCauseV1(error, 'capabilities.preflight.passive_realtime_setup', { allowUnknownErrorCode: false }),
+        } as const));
         if (dependencies.isAgentRegistryCurrent?.() === false) {
           return { ok: true, result: { v: 1, status: 'unavailable' } };
         }

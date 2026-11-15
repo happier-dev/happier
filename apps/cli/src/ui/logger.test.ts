@@ -151,6 +151,30 @@ describe('logger.debugLargeJson', () => {
         }
     });
 
+    it.each([
+        { label: 'HTTP provider', error: Object.assign(new Error('request failed'), { status: 429 }),
+            cause: { phase: 'cli.log', errorClass: 'Error', errorCode: null, httpStatus: 429 } },
+        { label: 'Action refusal', error: Object.assign(new Error('refused'), { failureCause: {
+            phase: 'execution_authorization', errorClass: 'TypeError', errorCode: 'ECONNRESET', httpStatus: 503 } }),
+            cause: { phase: 'execution_authorization', errorClass: 'TypeError', errorCode: 'ECONNRESET', httpStatus: 503 } },
+        { label: 'native session', error: Object.assign(new Error('turn failed'), { details: { failureCause: {
+            phase: 'turn', failureReason: 'rate_limit', providerErrorCode: 'rate_limit_exceeded', httpStatus: 429 } } }),
+            cause: { phase: 'turn', failureReason: 'rate_limit', providerErrorCode: 'rate_limit_exceeded', httpStatus: 429 } },
+    ])('retains typed $label causes in top-level, nested and large JSON file logs', async ({ error, cause }) => {
+        process.env.DEBUG = '1';
+        const { logger } = await import('@/ui/logger');
+        logger.debug('typed-top', error);
+        logger.debug('typed-nested', { error });
+        logger.debugLargeJson('typed-large', { error });
+        logger.flushSync();
+        const content = readFileSync(logger.getLogPath(), 'utf8');
+        for (const marker of ['typed-top', 'typed-nested', 'typed-large']) {
+            const section = content.split(marker)[1]?.split(/\n\[/)[0] ?? '';
+            expect(JSON.parse(section.trim())).toMatchObject(marker === 'typed-top'
+                ? { failureCause: cause } : { error: { failureCause: cause } });
+        }
+    });
+
     it('does not throw when a nested error causes a cycle', async () => {
         process.env.DEBUG = '1';
 

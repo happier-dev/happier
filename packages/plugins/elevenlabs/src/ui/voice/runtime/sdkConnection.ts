@@ -1,4 +1,4 @@
-import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/plugin-sdk/errors';
+import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 import { VoiceRealtimeToolResultV1Schema } from '@happier-dev/plugin-sdk/voice/client';
 import type {
   VoiceOutputFocusState,
@@ -104,11 +104,10 @@ export function createElevenLabsSdkConnection(input: Readonly<{
   };
 
   const reportSendFailure = (toolResult: boolean, error: unknown, phase: string) => {
-    const { errorClass, errorCode, httpStatus } = readUnexpectedActionErrorDiagnosticV1(error);
     // Pinned LiveKit 2.21.0 PublishDataError carries code 14. Preserve that
     // native identifier without accepting arbitrary vendor text or codes.
     const vendor = readRecord(error);
-    const failureCause = { phase, errorClass, errorCode, httpStatus,
+    const failureCause = { ...projectActionFailureCauseV1(error, phase, { allowUnknownErrorCode: false }),
       ...(vendor.name === 'PublishDataError' && vendor.code === 14 ? { nativeErrorCode: '14' } : {}) };
     publishControl?.({ type: 'elevenlabs.send_error', toolResult, failureCause });
     return failureCause;
@@ -120,14 +119,14 @@ export function createElevenLabsSdkConnection(input: Readonly<{
         publishControl = onControl;
         let sessionFailure: Error | null = null;
         const reportSessionFailure = (error: unknown, phase: string, nativeErrorCode?: string, nativeErrorReason?: string,
-          code: Extract<VoiceRealtimeCanonicalEvent, { type: 'provider_error' }>['code'] = 'voice_service_unavailable'): void => {
-          if (sessionFailure) return;
-          const { errorClass, errorCode, httpStatus } = readUnexpectedActionErrorDiagnosticV1(error);
-          const failureCause = { errorClass, errorCode, httpStatus, phase,
+          code: Extract<VoiceRealtimeCanonicalEvent, { type: 'provider_error' }>['code'] = 'voice_service_unavailable'): Error => {
+          if (sessionFailure) return sessionFailure;
+          const failureCause = { ...projectActionFailureCauseV1(error, phase, { allowUnknownErrorCode: false }),
             ...(nativeErrorCode === undefined ? {} : { nativeErrorCode }),
             ...(nativeErrorReason === undefined ? {} : { nativeErrorReason }) };
           sessionFailure = Object.assign(new Error(code), { code, failureCause });
           onControl({ type: 'elevenlabs.session_error', code, failureCause });
+          return sessionFailure;
         };
         const onEvent = (event: ElevenLabsConversationHandleEvent): void => {
           switch (event.type) {
@@ -234,7 +233,12 @@ export function createElevenLabsSdkConnection(input: Readonly<{
               : input.initialMuted === true,
           );
         }
-        const sessionId = await handle.startSession(input.startConfig);
+        let sessionId: string | null;
+        try {
+          sessionId = await handle.startSession(input.startConfig);
+        } catch (error) {
+          throw reportSessionFailure(error, 'elevenlabs.session.start', readNumericNativeCode(readRecord(error).closeCode));
+        }
         if (sessionFailure) throw sessionFailure;
         if (signal.aborted || closed) {
           await endActiveSession();

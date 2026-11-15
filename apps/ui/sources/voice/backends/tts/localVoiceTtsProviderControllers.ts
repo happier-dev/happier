@@ -71,6 +71,7 @@ export function reportTtsFailure(ctx: LocalVoiceTtsRequest, error: unknown): voi
     const machineError = createVoiceMachineError({
         kind: 'tts_failed',
         reason: error instanceof Error && error.message ? error.message : 'tts_failed',
+        cause: error,
     });
     if (ctx.onTtsFailed) {
         ctx.onTtsFailed(machineError);

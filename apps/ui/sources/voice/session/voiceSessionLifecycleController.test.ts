@@ -4,6 +4,7 @@ import {
     localVoiceAgentRpc,
     localVoiceHomeId,
     localVoiceSpeechOutputBoundary,
+    localVoiceSpeechTranscription,
     machineRpcWithServerScope,
     registerLocalVoiceEngineHarnessHooks,
     setPlatformOs,
@@ -25,6 +26,7 @@ import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSes
 import { createBundledConversationRuntimeHostLease } from '@/voice/registry/bundledConversationRuntimeHost';
 import { createVoiceCaptureAdmissionController } from '@/voice/runtime/input/VoiceCaptureAdmissionController';
 import { storage } from '@/sync/domains/state/storage';
+import { log } from '@/log';
 function isControlRecord(value: unknown): value is Readonly<Record<string, unknown>> {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -1364,6 +1366,82 @@ describe('createVoiceSessionLifecycleController', () => {
 
     describe('actual local model-session disclosure', () => {
         registerLocalVoiceEngineHarnessHooks({ serverIdentityId: 'srv_voice_recovery_home' });
+
+        it.each([
+            { name: 'HTTP playback TypeError', error: Object.assign(new TypeError('private playback response'), { status: 429 }),
+                expected: { phase: 'voice.runtime', errorClass: 'TypeError', errorCode: null, httpStatus: 429 } },
+            { name: 'native playback refusal', error: Object.assign(new Error('private playback path'), { code: 'EACCES' }),
+                expected: { phase: 'voice.runtime', errorClass: 'Error', errorCode: 'EACCES', httpStatus: null } },
+        ])('records safe cause for a waiting cue $name', async ({ error, expected }) => {
+            const state = await getStorage();
+            const settings = state.getState().settings;
+            state.__setState({ settings: { ...settings, voice: { ...settings.voice, providerId: 'local_direct', audibleWaitingCue: true } } });
+            await loadLocalVoiceEngineWithCompatState();
+            const { createLocalDirectVoiceAdapter } = await import('@/voice/adapters/localDirect/localDirectAdapter');
+            const { registerVoiceAdapters } = await import('./voiceAdapterRegistry');
+            registerVoiceAdapters([createLocalDirectVoiceAdapter()]);
+            const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
+            const controller = createVoiceSessionLifecycleController();
+            controller.setConfiguredProviderId('local_direct');
+            const transcription = createDeferred<string>();
+            localVoiceSpeechTranscription.mockImplementationOnce(() => transcription.promise);
+            localVoiceSpeechOutputBoundary.encodedAudio.start.mockRejectedValueOnce(error);
+            let committing: Promise<void> | undefined;
+            log.clear();
+            try {
+                await controller.toggle({ serverId: localVoiceHomeId, sessionId: 's1' });
+                committing = controller.commitInput('s1');
+                const readCueFailures = () => log.getLogs().filter(line => line.includes('[voiceRuntimeFailure]') && line.includes('audio_playback_failed'));
+                const records = await waitForTestEvent(listener => log.onChange(listener), readCueFailures, records => records.length > 0);
+                expect(JSON.parse(records[0]!.slice(records[0]!.indexOf('{')))).toMatchObject({
+                    outcome: 'provider_error', kind: 'tts_failed', reason: 'audio_playback_failed', failureCause: expected,
+                });
+                expect(records.join('\n')).not.toContain('private playback');
+            } finally { transcription.resolve(''); await committing?.catch(() => undefined); await controller.dispose(); }
+        });
+
+        it.each([429, 503])('retains the cause when the previous provider Stop refuses with status %s', async status => {
+            const state = await getStorage();
+            const settings = state.getState().settings;
+            state.__setState({ settings: { ...settings, voice: { ...settings.voice, providerId: 'local_direct' } } });
+            await loadLocalVoiceEngineWithCompatState();
+            const { createLocalDirectVoiceAdapter } = await import('@/voice/adapters/localDirect/localDirectAdapter');
+            const { registerVoiceAdapters } = await import('./voiceAdapterRegistry');
+            registerVoiceAdapters([createLocalDirectVoiceAdapter()]);
+            const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
+            const { projectActionFailureCauseV1 } = await import('@happier-dev/protocol/actions/actionExecutionResult');
+            const failureCause = projectActionFailureCauseV1(Object.assign(new TypeError('private teardown response'), { status }), 'voice.stop');
+            const controller = createVoiceSessionLifecycleController();
+            controller.setConfiguredProviderId('local_direct');
+            const cleanup = createDeferred<never>();
+            void cleanup.promise.catch(() => undefined);
+            const cleanupStarted = createDeferred<void>();
+            const { File } = await import('expo-file-system');
+            const artifact = new File('file:///recording.m4a');
+            artifact.create();
+            // Expo's File delete is the physical cleanup boundary; recorder-stop
+            // failure itself is deliberately best effort in terminal teardown.
+            const filePrototype: { delete(): void } = Object.getPrototypeOf(artifact);
+            const deleteArtifact = vi.spyOn(filePrototype, 'delete').mockImplementationOnce(() => {
+                cleanupStarted.resolve(); return cleanup.promise;
+            });
+            log.clear();
+            try {
+                const target = { serverId: localVoiceHomeId, sessionId: 's1' };
+                await controller.toggle(target);
+                expect(controller.getSnapshot()).toMatchObject({ status: 'connected', canStop: true });
+                const stopping = controller.stop('s1').catch(error => error);
+                await cleanupStarted.promise;
+                const starting = controller.toggle(target);
+                const refusal = Object.assign(new Error('recording_cleanup_failed'), { failureCause });
+                cleanup.reject(refusal);
+                expect(await stopping).toBe(refusal);
+                await starting;
+                expect(controller.getSnapshot()).toMatchObject({ status: 'error', errorFailureCause: failureCause });
+                const record = log.getLogs().find(line => line.includes('[voiceRuntimeFailure]') && line.includes('voice_previous_session_stop_failed'));
+                expect(JSON.parse(record!.slice(record!.indexOf('{')))).toMatchObject({ failureCause });
+            } finally { cleanup.reject(new Error('test_stop_cleanup')); deleteArtifact.mockRestore(); await controller.dispose(); }
+        });
 
         beforeEach(async () => {
             const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');

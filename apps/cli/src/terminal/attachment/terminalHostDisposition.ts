@@ -1,5 +1,6 @@
 import type { TerminalHostAdapter, TerminalHostHandle } from '@happier-dev/agents';
 import type { AgentTerminalHostDisposeIntent } from '@happier-dev/plugin-sdk/agents/runtime';
+import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { probeTerminalHostForRecovery } from '@/integrations/terminal/host/recoveryLiveness';
 import { disposeSessionHookArtifactsForSession } from '@/plugins/runtime/hooks/session/service';
 import { logger } from '@/ui/logger';
@@ -24,7 +25,7 @@ export type TerminalHostDispositionIntent =
   | Readonly<{ kind: 'retire_confirmed_dead_attachment'; reason: 'positive_dead_recovery' }>
   | Readonly<{ kind: 'release_borrowed_host'; reason: 'provider_exit' | 'explicit_user_stop' | 'wrapper_exit' }>;
 
-export type TerminalHostDispositionResult =
+export type TerminalHostDispositionResult = Readonly<{ failureCause?: ActionFailureCauseV1 }> & (
   | Readonly<{ status: 'preserved'; attachmentId: TerminalAttachmentId }>
   | Readonly<{ status: 'retired'; attachmentId: TerminalAttachmentId | null }>
   | Readonly<{
@@ -36,7 +37,7 @@ export type TerminalHostDispositionResult =
   | Readonly<{
       status: 'parked';
       reason: 'legacy_attachment' | 'attachment_mismatch' | 'missing_topology_proof' | 'disposition_in_progress' | 'destroy_failed' | 'retirement_failed' | 'descriptor_retirement_failed';
-    }>;
+    }>);
 
 const activeDispositionClaims = new Map<string, Promise<TerminalHostDispositionResult>>();
 
@@ -141,12 +142,13 @@ export async function executeTerminalHostDisposition(input: Readonly<{
   let attachmentInfo: TerminalHostAttachmentInfo | null;
   try {
     attachmentInfo = await readCurrent() ?? captured;
-  } catch {
+  } catch (error) {
     logger.infoFile('[TERMINAL HOST] Disposition could not read exact attachment evidence', {
       sessionId: input.sessionId,
       attachmentId: input.expectedAttachmentId,
     });
-    return { status: 'parked', reason: 'missing_topology_proof' };
+    return { status: 'parked', reason: 'missing_topology_proof',
+      failureCause: projectActionFailureCauseV1(error, 'terminal_host.disposition.read') };
   }
   if (!attachmentInfo || attachmentInfo.version === 1) {
     return { status: 'parked', reason: 'legacy_attachment' };
@@ -162,12 +164,13 @@ export async function executeTerminalHostDisposition(input: Readonly<{
     let current: TerminalHostAttachmentInfo | null;
     try {
       current = await readCurrent() ?? captured;
-    } catch {
+    } catch (error) {
       logger.infoFile('[TERMINAL HOST] Disposition could not verify exact attachment evidence', {
         sessionId: input.sessionId,
         attachmentId: input.expectedAttachmentId,
       });
-      return { status: 'parked', reason: 'missing_topology_proof' };
+      return { status: 'parked', reason: 'missing_topology_proof',
+        failureCause: projectActionFailureCauseV1(error, 'terminal_host.disposition.verify') };
     }
     if (!current || current.version === 1 || current.attachmentId !== attachmentInfo.attachmentId) {
       return { status: 'parked', reason: 'attachment_mismatch' };
@@ -185,8 +188,9 @@ export async function executeTerminalHostDisposition(input: Readonly<{
           sessionId: input.sessionId,
           attachmentInfo: current,
         });
-      } catch {
-        return { status: 'parked', reason: 'retirement_failed' };
+      } catch (error) {
+        return { status: 'parked', reason: 'retirement_failed',
+          failureCause: projectActionFailureCauseV1(error, 'terminal_host.disposition.retirement') };
       }
       let removed: boolean;
       try {
@@ -195,23 +199,25 @@ export async function executeTerminalHostDisposition(input: Readonly<{
           sessionId: input.sessionId,
           expectedAttachmentId: current.attachmentId,
         });
-      } catch {
+      } catch (error) {
         logger.infoFile('[TERMINAL HOST] Failed to retire exact terminal attachment descriptor; retaining evidence for retry', {
           sessionId: input.sessionId,
           attachmentId: current.attachmentId,
         });
-        return { status: 'parked', reason: 'descriptor_retirement_failed' };
+        return { status: 'parked', reason: 'descriptor_retirement_failed',
+          failureCause: projectActionFailureCauseV1(error, 'terminal_host.disposition.descriptor_retirement') };
       }
       if (!removed) {
         let alreadyAbsent = false;
         try {
           alreadyAbsent = captured !== null && await readCurrent() === null;
-        } catch {
+        } catch (error) {
           logger.infoFile('[TERMINAL HOST] Disposition could not verify borrowed attachment retirement', {
             sessionId: input.sessionId,
             attachmentId: input.expectedAttachmentId,
           });
-          return { status: 'parked', reason: 'missing_topology_proof' };
+          return { status: 'parked', reason: 'missing_topology_proof',
+            failureCause: projectActionFailureCauseV1(error, 'terminal_host.disposition.verify_retirement') };
         }
         if (!alreadyAbsent) return { status: 'parked', reason: 'attachment_mismatch' };
       }
@@ -250,7 +256,8 @@ export async function executeTerminalHostDisposition(input: Readonly<{
           livenessStatus: liveness.status,
           liveness: liveness.liveness,
         });
-        return { status: 'parked', reason: 'destroy_failed' };
+        return { status: 'parked', reason: 'destroy_failed',
+          failureCause: projectActionFailureCauseV1(error, 'terminal_host.disposition.destroy') };
       }
     }
     try {
@@ -259,19 +266,22 @@ export async function executeTerminalHostDisposition(input: Readonly<{
         sessionId: input.sessionId,
         attachmentInfo: current,
       });
-    } catch {
+    } catch (error) {
       return {
         status: 'destroyed',
         attachmentId: current.attachmentId,
         descriptorRetained: true,
         retirementFailed: true,
+        failureCause: projectActionFailureCauseV1(error, 'terminal_host.disposition.retirement'),
       };
     }
+    let descriptorRetirementFailureCause: ActionFailureCauseV1 | undefined;
     const removed = await removeAttachment({
       happyHomeDir: input.happyHomeDir,
       sessionId: input.sessionId,
       expectedAttachmentId: current.attachmentId,
-    }).catch(() => {
+    }).catch((error: unknown) => {
+      descriptorRetirementFailureCause = projectActionFailureCauseV1(error, 'terminal_host.disposition.descriptor_retirement');
       logger.infoFile('[TERMINAL HOST] Failed to retire descriptor after exact host destruction; retaining evidence for retry', {
         sessionId: input.sessionId,
         attachmentId: current.attachmentId,
@@ -281,7 +291,8 @@ export async function executeTerminalHostDisposition(input: Readonly<{
     // Absence is completion evidence only after the exact disposal/retirement
     // pipeline above; it never substitutes for physical disposal.
     const alreadyAbsent = !removed && captured !== null
-      && await readCurrent().then((info) => info === null, () => {
+      && await readCurrent().then((info) => info === null, (error: unknown) => {
+        descriptorRetirementFailureCause ??= projectActionFailureCauseV1(error, 'terminal_host.disposition.verify_retirement');
         logger.infoFile('[TERMINAL HOST] Could not verify descriptor retirement after exact host destruction; retaining evidence for retry', {
           sessionId: input.sessionId,
           attachmentId: current.attachmentId,
@@ -289,7 +300,8 @@ export async function executeTerminalHostDisposition(input: Readonly<{
         return false;
       });
     if (!removed && !alreadyAbsent) {
-      return { status: 'destroyed', attachmentId: current.attachmentId, descriptorRetained: true };
+      return { status: 'destroyed', attachmentId: current.attachmentId, descriptorRetained: true,
+        ...(descriptorRetirementFailureCause ? { failureCause: descriptorRetirementFailureCause } : {}) };
     }
     await disposeRetiredTerminalSessionHookArtifacts({
       happyHomeDir: input.happyHomeDir,
@@ -336,12 +348,16 @@ export async function executeConfirmedDeadTerminalHostAttachmentRetirement(input
   const claimKey = `${input.happyHomeDir}\u0000${input.sessionId}\u0000legacy:${expected.updatedAt}`;
   return await joinTerminalHostDisposition(claimKey, async () => {
     const removeAttachment = input.removeAttachmentInfo ?? removeTerminalHostAttachmentInfo;
+    let failureCause: ActionFailureCauseV1 | undefined;
     const removed = await removeAttachment({
       happyHomeDir: input.happyHomeDir,
       sessionId: input.sessionId,
       expectedHandle: expected.handle,
-    }).catch(() => false);
-    if (!removed) return { status: 'parked', reason: 'attachment_mismatch' };
+    }).catch((error: unknown) => {
+      failureCause = projectActionFailureCauseV1(error, 'terminal_host.disposition.descriptor_retirement');
+      return false;
+    });
+    if (!removed) return { status: 'parked', reason: 'attachment_mismatch', ...(failureCause ? { failureCause } : {}) };
     await disposeRetiredTerminalSessionHookArtifacts({
       happyHomeDir: input.happyHomeDir,
       sessionId: input.sessionId,

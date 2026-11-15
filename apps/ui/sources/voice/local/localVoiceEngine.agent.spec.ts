@@ -10,6 +10,7 @@ import { createReadyMachineAgentInventoryFixture } from '@/dev/testkit/fixtures/
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { t } from '@/text';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
 
 import {
@@ -951,7 +952,7 @@ describe('local voice engine agent behavior', () => {
         });
     }, 60_000);
 
-    it('surfaces an attach-time daemon model warm failure through the canonical runtime error state', async () => {
+    it.each([429, 503])('surfaces an attach-time daemon model warm failure with cause status %s', async status => {
         let rejectWarm!: (error: unknown) => void;
         configureWarmTransport(() =>
             new Promise<unknown>((_resolve, reject) => {
@@ -994,9 +995,10 @@ describe('local voice engine agent behavior', () => {
         await waitForLocalVoiceBoundaryEvent(`rpc:${RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_WARM}`);
         expect(rejectWarm).toBeTypeOf('function');
 
+        const failureCause = projectActionFailureCauseV1(Object.assign(new TypeError('private warm response'), { status }), 'voice.prewarm');
         rejectWarm(Object.assign(
             new Error('daemon_voice_inference_model_not_installed'),
-            { code: 'model_not_installed' },
+            { code: 'model_not_installed', failureCause },
         ));
         await waitForLocalVoiceState(state => state.status === 'idle'
             && state.error === 'daemon_voice_inference_model_not_installed');
@@ -1005,6 +1007,8 @@ describe('local voice engine agent behavior', () => {
             sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
             error: 'daemon_voice_inference_model_not_installed',
         });
+        const { voiceConversationRuntimeMachine } = await import('@/voice/runtime/machine/VoiceConversationRuntimeMachine');
+        expect(voiceConversationRuntimeMachine.getSnapshot().error).toMatchObject({ failureCause });
     }, 60_000);
 
     it('does not revive a stopped Voice session when its attach-time warm fails late', async () => {
