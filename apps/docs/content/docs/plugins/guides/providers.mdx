@@ -94,6 +94,12 @@ consumes `ProviderConnectionsDescribeResult` through public imports. Its
 `providers.connections.endpoint.set` Action, including `null` for reset; the
 editor itself grants no mutation authority.
 
+To show a value your plugin already holds, such as a signing secret it
+generated, use the development `SecretValueText` and `SecretValueControls`
+components. They draw the same masked value, reveal control and Copy control as
+Happier's own secret rows. You pass the value and decide what reveal and Copy
+do. These components never read a Saved Secret.
+
 ## Secret transport and readiness
 
 Authentication belongs in `credential.transports`, with Saved Secret bindings,

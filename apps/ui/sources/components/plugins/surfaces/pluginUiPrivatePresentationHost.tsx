@@ -105,7 +105,8 @@ import { PagePinnedBar } from '@/components/ui/layout/PagePinnedBar';
 import { HorizontalScrollEdgeMask } from '@/components/ui/scroll/HorizontalScrollEdgeMask';
 import { useSheetDismiss } from '@/modal/components/card/sheetDragDismiss';
 import type { BotFaceProps, PageAsideColumnsProps, PagePinnedBarProps, KeyboardStickyFooterProps } from '@happier-dev/plugin-ui/components';
-import type { ExecutableParticipantPickerProps } from '@happier-dev/plugin-ui/components';
+import type { ExecutableParticipantPickerProps, SecretValueControlsProps, SecretValueTextProps } from '@happier-dev/plugin-ui/components';
+import { SecretValueControls, SecretValueText } from '@/components/ui/copy/SecretValueDisclosure';
 import type { PluginUiScrollActivityTracker } from '@happier-dev/plugin-ui/advanced';
 import {
     useInstalledPluginBrandPresentation,
@@ -362,6 +363,12 @@ function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDire
     collectionAddMenu: CORE_COLLECTION_ADD_MENU_HOST,
     renderExecutableParticipantPicker(input: ExecutableParticipantPickerProps) {
         return <ExecutableParticipantPickerPresentation {...input} />;
+    },
+    renderSecretValueText({ unavailableLabel: _unavailable, ...input }: SecretValueTextProps) {
+        return <SecretValueText {...input} />;
+    },
+    renderSecretValueControls({ unavailableLabel: _unavailable, ...input }: SecretValueControlsProps) {
+        return <SecretValueControls {...input} />;
     },
     renderVoiceMarkArt(input: Omit<VoiceMarkArtProps, 'fallback'>) {
         // Only explicit art props: no live energy acquisition or attempt data.

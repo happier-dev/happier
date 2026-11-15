@@ -181,6 +181,12 @@ export {
   type ExecutableParticipantPickerSelection,
   type ExecutableParticipantPickerProps,
 } from './ExecutableParticipantPicker.js';
+export {
+  SecretValueControls,
+  SecretValueText,
+  type SecretValueControlsProps,
+  type SecretValueTextProps,
+} from './SecretValueDisclosure.js';
 export * from './Session.js';
 export { SessionCard, type SessionCardProps, type SessionCardStatus } from './SessionCard.js';
 export * from './Spinner.js';

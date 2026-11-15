@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import type { SecretValueControlsProps, SecretValueTextProps } from '@happier-dev/plugin-ui/components';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -10,21 +11,13 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 /**
+ * The one secret value presentation: Happier's own rows and the public plugin-ui `SecretValueText` /
+ * `SecretValueControls` (through the presentation host) draw it here, with one prop contract.
+ *
  * A secret's value in a row subtitle: a one-line masked shape while hidden, the whole value (wrapped,
  * readable) while revealed. A recorded disclosure leaves it unselectable, so Copy stays the one copy path.
  */
-export function SecretValueText(
-  props: Readonly<{
-    testID?: string;
-    /** The revealed value; `null` draws the mask. */
-    revealed: string | null;
-    mask: string;
-    /** What the masked shape stands for, for assistive readers. */
-    maskedAccessibilityLabel?: string;
-    /** The revealed value may be selected (an unrecorded secret the person already holds). */
-    selectable?: boolean;
-  }>,
-) {
+export function SecretValueText(props: Omit<SecretValueTextProps, 'unavailableLabel'>) {
   return (
     <Text
       testID={props.testID}
@@ -46,19 +39,9 @@ export function SecretValueText(
  * follow it.
  */
 export function SecretValueControls(
-  props: Readonly<{
-    testIDPrefix: string;
-    revealed: boolean;
-    revealLabel: string;
-    hideLabel: string;
-    onToggleReveal: () => void;
-    /** Absent: no Copy is drawn. */
-    onCopy?: () => void;
-    copied?: boolean;
-    copyAccessibilityLabel?: string;
+  props: Omit<SecretValueControlsProps, 'unavailableLabel'> & Readonly<{
+    /** Host-only: the Copy control a host flow returns focus to. */
     copyControlRef?: React.ComponentProps<typeof RoundButton>['controlRef'];
-    disabled?: boolean;
-    children?: React.ReactNode;
   }>,
 ) {
   const label = props.revealed ? props.hideLabel : props.revealLabel;

@@ -7,6 +7,7 @@ import { ReviewReadyNoticeExample } from './reviewReadyNoticeSurface.js';
 import { ReplyQuoteExample } from './replyQuoteSurface.js';
 import { ReturnedAnswerQuoteExample } from './returnedAnswerQuoteSurface.js';
 import { ExecutableParticipantPickerExample } from './executableParticipantPickerSurface.js';
+import { SecretValueDisclosureExample } from './secretValueDisclosureSurface.js';
 import { DocEditProposalExample } from './docEditProposalSurface.js';
 import { MemoryFactsExample } from './memoryFactsSurface.js';
 import { MemoryDuplicateChoiceExample } from './memoryDuplicateChoiceSurface.js';
@@ -87,6 +88,7 @@ function Summary() {
       <ReplyQuoteExample />
       <ReturnedAnswerQuoteExample />
       <ExecutableParticipantPickerExample multiple />
+      <SecretValueDisclosureExample />
       <BuiltInParityExample text={(words) => translate(words, words)} onDecide={() => setReviewDecided(true)} />
       {reviewDecided ? <Text value={translate('Review decision recorded', 'Review decision recorded')} /> : null}
     </Card>

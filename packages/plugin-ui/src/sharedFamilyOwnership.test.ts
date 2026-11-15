@@ -131,6 +131,8 @@ const APPROVED_CATALOG_VOCABULARY = [
   'EndpointHeadersEditor',
   // C3/C4 R7: one host-mediated, controlled participant choice/search presentation.
   'ExecutableParticipantPicker',
+  // Providers parity S3 (1115): a secret value's masked/revealed text and its reveal/copy controls, host-rendered.
+  'SecretValueText', 'SecretValueControls',
   // C6/C5 (N3 FR1-10): the controlled Memory duplicate choice and the Doc suggested-edit card.
   'MemoryDuplicateChoice', 'DocEditProposal',
   // Capabilities A7 (owner-approved 2026-10-22): the capability row anatomy Happier's Skills/MCP/Agents pages use.
@@ -3024,6 +3026,70 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
       },
     },
   },
+  {
+    publicName: 'SecretValueText',
+    propTypeName: 'SecretValueTextProps',
+    family: 'Host-mediated secret value disclosure',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    // The author passes its own value and callbacks; the host's one secret value presenter draws it.
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentationHost/context.ts',
+    sharedSymbol: 'useOptionalPluginUiPresentationHost',
+    pluginOwner: { module: 'components/SecretValueDisclosure.tsx', symbol: 'SecretValueText' },
+    coreConsumers: ['components/plugins/surfaces/pluginUiPrivatePresentationHost.tsx'],
+    coreAdapter: { module: 'components/SecretValueDisclosure.tsx', symbol: 'SecretValueText' },
+    positiveConsumer: {
+      kind: 'external-author-reference',
+      pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/secretValueDisclosureSurface.tsx',
+    },
+    devMountSymbols: [],
+    declarative: {
+      kind: 'not-applicable',
+      reason: 'V2 has no secret value node; no Happier-held secret crosses this seam, only the author\'s own value and callbacks.',
+    },
+    hostComposition: {
+      adapter: { module: 'components/plugins/surfaces/pluginUiPrivatePresentationHost.tsx', symbol: 'createPluginUiPrivatePresentationRenderers' },
+      physicalHost: {
+        module: 'components/ui/copy/SecretValueDisclosure.tsx',
+        symbol: 'SecretValueText',
+        callbackSymbol: 'renderSecretValueText',
+      },
+    },
+  },
+  {
+    publicName: 'SecretValueControls',
+    propTypeName: 'SecretValueControlsProps',
+    family: 'Host-mediated secret value disclosure',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    // The author passes its own value and callbacks; the host's one secret value presenter draws it.
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentationHost/context.ts',
+    sharedSymbol: 'useOptionalPluginUiPresentationHost',
+    pluginOwner: { module: 'components/SecretValueDisclosure.tsx', symbol: 'SecretValueControls' },
+    coreConsumers: ['components/plugins/surfaces/pluginUiPrivatePresentationHost.tsx'],
+    coreAdapter: { module: 'components/SecretValueDisclosure.tsx', symbol: 'SecretValueControls' },
+    positiveConsumer: {
+      kind: 'external-author-reference',
+      pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/secretValueDisclosureSurface.tsx',
+    },
+    devMountSymbols: [],
+    declarative: {
+      kind: 'not-applicable',
+      reason: 'V2 has no secret value node; no Happier-held secret crosses this seam, only the author\'s own value and callbacks.',
+    },
+    hostComposition: {
+      adapter: { module: 'components/plugins/surfaces/pluginUiPrivatePresentationHost.tsx', symbol: 'createPluginUiPrivatePresentationRenderers' },
+      physicalHost: {
+        module: 'components/ui/copy/SecretValueDisclosure.tsx',
+        symbol: 'SecretValueControls',
+        callbackSymbol: 'renderSecretValueControls',
+      },
+    },
+  },
   // Source ownership evidence only: none of these rows asserts loaded-platform graduation.
   {
     publicName: 'AvatarStack',
@@ -4076,6 +4142,7 @@ describe('graduated shared presentation families (§8.2)', () => {
       'SetupSteps', 'LocalDateTimeField', 'WidgetGlanceRow', 'DiffStat', 'InlineCode', 'ComposerStatusBadge', 'ThreadMessage', 'ReplyQuote',
       'RowStatusLine', 'HappierRequesterDisclosureContent', 'SessionCard', 'BotFace', 'PageAsideColumns', 'PagePinnedBar', 'KeyboardStickyFooter', 'widgetFootprintBodyRows',
       'CollectionSavedViewsStrip', 'CollectionRowNeedsYouHighlight', 'AccountByline', 'ReturnedAnswerQuote', 'MemoryDuplicateChoice', 'CapabilityAddDetailAction', 'CapabilityListingSections', 'capabilityCollectionAnatomy', 'DocEditProposal', 'ExecutableParticipantPicker',
+      'SecretValueText', 'SecretValueControls',
       'AvatarStack', 'CollectionConditionTokens', 'CollectionSpaceIcon', 'CollectionTitleButton',
       'EntityFlatReorderList', 'HorizontalScrollEdgeMask', 'ModalCardFooterActions', 'PageLoadingRows',
       'PlanChecklistCard', 'RegistryShelf', 'RegistryShelfAddControl', 'RegistrySourcesUnavailable',
