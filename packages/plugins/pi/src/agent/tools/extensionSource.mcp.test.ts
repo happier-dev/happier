@@ -43,7 +43,11 @@ lines.on('close', () => process.exit(0));
 describe('Pi extension user MCP', () => {
   it('registers the full Action catalog and long plugin names within the provider limit with stable unique dispatch', async () => {
     const catalog = listActionSpecBindingDeclarations().flatMap(spec => spec.bindings?.mcpToolName ? [spec.bindings.mcpToolName] : []);
-    const originals = [...new Set([...catalog, 'plugin_' + 'shared_prefix_'.repeat(10) + 'read', 'plugin_' + 'shared_prefix_'.repeat(10) + 'write'])];
+    // The final mcp__happier__ prefix consumes 13 characters. Keep the valid
+    // 64-character neighbor and two 65-character names that naive truncation merges.
+    const originals = [...new Set([...catalog, 'x'.repeat(51), 'x'.repeat(52), 'x'.repeat(51) + 'y',
+      'a.b', 'admin.tools.list', 'admin.tools.' + 'x'.repeat(60),
+      'plugin_' + 'shared_prefix_'.repeat(10) + 'read', 'plugin_' + 'shared_prefix_'.repeat(10) + 'write'])];
     const root = mkdtempSync(join(tmpdir(), 'pi-tool-names-'));
     const handlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
     const tools: Tool[] = [];
@@ -67,9 +71,10 @@ describe('Pi extension user MCP', () => {
       for (const handler of handlers.get('session_start') ?? []) await handler({});
       expect(tools).toHaveLength(originals.length);
       expect(tools.filter(tool => tool.name.length > 64).map(tool => tool.name)).toEqual([]);
+      expect(tools.filter(tool => !/^[A-Za-z0-9_-]+$/.test(tool.name)).map(tool => tool.name)).toEqual([]);
       expect(new Set(tools.map(tool => tool.name)).size).toBe(originals.length);
       expect(tools.find(tool => tool.name === 'mcp__happier__connected_services_authentication_continue_connect')).toBeDefined();
-      for (const original of originals.filter(name => `mcp__happier__${name}`.length > 64)) {
+      for (const original of originals.filter((name, index) => tools[index]!.name !== `mcp__happier__${name}`)) {
         const tool = tools[originals.indexOf(original)]!;
         await expect(tool.execute('call', { text: 'ok' }, undefined, undefined, { cwd: root, ui: { confirm: async () => true } }))
           .resolves.toMatchObject({ details: { structuredContent: { originalName: original } } });

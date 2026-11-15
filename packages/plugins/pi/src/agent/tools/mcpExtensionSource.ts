@@ -5,12 +5,12 @@ export function buildPiMcpExtensionSource(): string {
 function providerMcpToolName(serverName, toolName) {
   const original = "mcp__" + serverName + "__" + toolName;
   const aliasPrefix = "mcp__h__";
-  if (original.length <= 64 && !original.startsWith(aliasPrefix)) return original;
+  if (original.length <= 64 && /^[A-Za-z0-9_-]+$/.test(original) && !original.startsWith(aliasPrefix)) return original;
   // Retain the full SHA-256 digest. Base64url leaves room for a readable prefix.
   // Reserve the alias namespace so an unchanged short name cannot shadow it.
   const hash = createHash("sha256").update(original).digest("base64url");
   const prefixLength = 64 - aliasPrefix.length - 1 - hash.length;
-  return aliasPrefix + original.slice(5, 5 + prefixLength) + "_" + hash;
+  return aliasPrefix + original.slice(5, 5 + prefixLength).replace(/[^A-Za-z0-9_-]/g, "_") + "_" + hash;
 }
 
 function openMcpServer(server, cwd) {
