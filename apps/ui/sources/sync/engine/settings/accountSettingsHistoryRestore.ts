@@ -28,6 +28,7 @@ import {
 
 import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import { syncSettings } from './syncSettings';
+import { readObservedAccountSettingsHeadVersion } from './accountSettingsRawSnapshot';
 
 /**
  * Client-side classification-aware Account Settings history restore (SET-07).
@@ -158,6 +159,8 @@ type HistoryNormalizationPass = {
     latestTrigger: number;
     /** Set when the pass starts; null while it is still a trailing pass. */
     startedAt: number | null;
+    /** Catalog roots of every trigger this pass serves; recorded as normalized when it completes. */
+    roots: Set<string>;
 };
 const historyNormalizationPasses = new Set<HistoryNormalizationPass>();
 let historyNormalizationClock = 0;
@@ -238,6 +241,63 @@ function writeVerifiedHistoryRows(scopeKey: string, verified: Map<string, Set<nu
     }
 }
 
+// Owner ruling 2026-11-15 ("Settings-history normalization runs only on change"): a catalog load
+// normalizes only after a Settings write this client observed (its own or a pushed one, both admitted
+// as the head) or when one of its roots is newly active. History rows are created only by Settings
+// writes, so an unchanged head with already-normalized roots has nothing new to purge. Device-local:
+// a missing or unreadable record, an unverified head, or an explicit transfer witness runs the pass.
+const NORMALIZED_HISTORY_STORAGE_PREFIX = 'account-settings-history-normalized-v1:';
+const NormalizedHistoryRecordSchema = z.object({
+    headVersion: z.number().check(z.int(), z.nonnegative()),
+    roots: z.array(z.string()),
+    /** Saved Secret recovery inputs a completed pass used at this head (identities and revisions only, no values). */
+    recoveries: z.optional(z.array(z.string())),
+});
+type NormalizedHistoryRecord = z.infer<typeof NormalizedHistoryRecordSchema>;
+
+function readNormalizedHistoryRecord(scopeKey: string): NormalizedHistoryRecord | null {
+    try {
+        const raw = getPersistenceStorage().getString(NORMALIZED_HISTORY_STORAGE_PREFIX + scopeKey);
+        const parsed = raw === undefined ? null : NormalizedHistoryRecordSchema.safeParse(JSON.parse(raw));
+        return parsed?.success ? parsed.data : null;
+    } catch (error) {
+        console.warn('[settings-history] Normalized-history record could not be read; the next catalog load normalizes.', error);
+        return null;
+    }
+}
+
+function writeNormalizedHistoryRecord(scopeKey: string, record: NormalizedHistoryRecord): void {
+    try {
+        getPersistenceStorage().set(NORMALIZED_HISTORY_STORAGE_PREFIX + scopeKey, JSON.stringify(record));
+    } catch (error) {
+        console.warn('[settings-history] Normalized-history record could not be saved; the next catalog load normalizes.', error);
+    }
+}
+
+function hasTransferWitness(params: HistoryNormalizationParams): boolean {
+    return params.expectedProfileTransferRevision !== undefined
+        || (params.destinationAuthority.savedSecretTransfers?.length ?? 0) > 0
+        || params.destinationAuthority.legacyRoleArtifactTransfers !== undefined;
+}
+
+/** The recovery inputs' identity: the same fields that decide recovery equality, without the source document. */
+function savedSecretRecoveryIdentity(recovery: HistoryNormalizationParams['savedSecretRecovery']): string | null {
+    return recovery ? JSON.stringify({ accountId: recovery.accountId, sourceVersion: recovery.source.version,
+        resources: recovery.resources.map(({ resourceId, ownerAccountId, revision, materialStatus }) => ({ resourceId, ownerAccountId, revision, materialStatus })),
+        resolver: Boolean(recovery.resolveResourceValue) }) : null;
+}
+
+/** Nothing new since the last completed pass: same observed head and every root already normalized. */
+function isHistoryNormalizationUnchanged(params: HistoryNormalizationParams, headVersion: number | null): boolean {
+    if (headVersion === null || hasTransferWitness(params)) return false;
+    const record = readNormalizedHistoryRecord(accountSettingsScopeKeySuffix(params.settingsScope));
+    if (!record || record.headVersion !== headVersion) return false;
+    const recovery = savedSecretRecoveryIdentity(params.savedSecretRecovery);
+    if (recovery !== null && !(record.recoveries ?? []).includes(recovery)) return false;
+    const normalized = new Set(record.roots);
+    return params.destinationAuthority.activeTransferredRoots.every(root => normalized.has(root));
+}
+
 /** Private transport for the incumbent approved, exact-version purge intent. */
 export async function purgeAccountSettingsHistoryVersions(params: Readonly<{
     credentials: AuthCredentials; settingsScope: AccountSettingsScope; versions: readonly number[]; signal?: AbortSignal;
@@ -289,6 +349,8 @@ export async function normalizeAccountSettingsHistoryAfterTransfer(params: Reado
     if (!captured) throwStaleRestoreScope();
     try {
         if (!captured.isCurrent()) throwStaleRestoreScope();
+        const observedHead = readObservedAccountSettingsHeadVersion(params.settingsScope, { credentials: params.credentials, request: captured.request });
+        if (isHistoryNormalizationUnchanged(params, observedHead)) return { status: 'complete' };
         for (const [key, entry] of completedHistoryNormalizations) {
             if (!entry.isCurrent()) completedHistoryNormalizations.delete(key);
         }
@@ -296,12 +358,14 @@ export async function normalizeAccountSettingsHistoryAfterTransfer(params: Reado
         const shared = coveringHistoryNormalization(params, trigger);
         if (shared) {
             shared.latestTrigger = Math.max(shared.latestTrigger, trigger);
+            params.destinationAuthority.activeTransferredRoots.forEach(root => shared.roots.add(root));
             const result = await shared.result;
             if (!captured.isCurrent()) throwStaleRestoreScope();
             return result;
         }
         let settle!: { resolve(result: AccountSettingsHistoryCleanupResult): void; reject(error: unknown): void };
         const own: HistoryNormalizationPass = { params, isCurrent: captured.isCurrent, latestTrigger: trigger, startedAt: null,
+            roots: new Set(params.destinationAuthority.activeTransferredRoots),
             result: new Promise((resolve, reject) => { settle = { resolve, reject }; }) };
         own.result.catch(() => undefined);
         historyNormalizationPasses.add(own);
@@ -332,12 +396,15 @@ async function runTrailingHistoryNormalization(own: HistoryNormalizationPass,
         if (!covering) break;
         historyNormalizationPasses.delete(own);
         covering.latestTrigger = Math.max(covering.latestTrigger, own.latestTrigger);
+        own.roots.forEach(root => covering.roots.add(root));
         const result = await covering.result;
         if (!captured.isCurrent()) throwStaleRestoreScope();
         return result;
     }
     own.startedAt = ++historyNormalizationClock;
     const key = accountSettingsScopeKeySuffix(params.settingsScope);
+    // The head this pass starts from; a write during the pass is reported pending and records nothing.
+    const headAtStart = readObservedAccountSettingsHeadVersion(params.settingsScope, { credentials: params.credentials, request: captured.request });
     const previous = completedHistoryNormalizations.get(key);
     const checkpoint: AccountSettingsHistoryNormalizationCheckpointV1 = previous
         && sameHistoryNormalizationAccount(previous.params, params) ? { ...previous.checkpoint }
@@ -359,6 +426,17 @@ async function runTrailingHistoryNormalization(own: HistoryNormalizationPass,
         completedHistoryNormalizations.set(key, { params, isCurrent: captured.isCurrent, checkpoint });
     }
     writeVerifiedHistoryRows(key, checkpoint.verifiedUnchanged);
+    if (completed.status === 'complete' && headAtStart !== null && !hasTransferWitness(params)) {
+        const previous = readNormalizedHistoryRecord(key);
+        const sameHead = previous?.headVersion === headAtStart;
+        const roots = new Set(sameHead ? previous.roots : []);
+        own.roots.forEach(root => roots.add(root));
+        const recoveries = new Set(sameHead ? previous.recoveries ?? [] : []);
+        const recovery = savedSecretRecoveryIdentity(params.savedSecretRecovery);
+        if (recovery !== null) recoveries.add(recovery);
+        writeNormalizedHistoryRecord(key, { headVersion: headAtStart, roots: [...roots].sort(),
+            ...(recoveries.size ? { recoveries: [...recoveries].sort() } : {}) });
+    }
     return completed;
 }
 

@@ -48,7 +48,7 @@ export async function readCurrentAccountSettingsRawSnapshot(scope: AccountSettin
     readBaseline(): Promise<RetainedRawSettings>;
 }>): Promise<RetainedRawSettings> {
     const admitted = retained.get(accountSettingsScopeKeySuffix(scope));
-    if (admitted && admitted.headVerified && readAccountEncryptionObservationBinding(ports.request, ports.credentials)) return admitted;
+    if (admitted && readObservedAccountSettingsHeadVersion(scope, ports) === admitted.version) return admitted;
     if (admitted && (await fetchAccountEncryptionCurrentness(ports.credentials, { request: ports.request, signal: ports.signal }))
         .settingsVersion === admitted.version) {
         confirmAccountSettingsHead(scope, admitted.version);
@@ -57,6 +57,20 @@ export async function readCurrentAccountSettingsRawSnapshot(scope: AccountSettin
     const baseline = await ports.readBaseline();
     retainAccountSettingsRawSnapshot(scope, baseline.version, baseline.raw);
     return baseline;
+}
+
+/**
+ * The Account Settings head version this client knows without a request: the admitted document's
+ * version while its Account socket observation is live and has had no gap (own writes and pushed
+ * `settingsV2` copies both land here). Null when it must be checked.
+ */
+export function readObservedAccountSettingsHeadVersion(scope: AccountSettingsScope, ports: Readonly<{
+    credentials: AuthCredentials;
+    request: ServerFetch;
+}>): number | null {
+    const admitted = retained.get(accountSettingsScopeKeySuffix(scope));
+    return admitted && admitted.headVerified && readAccountEncryptionObservationBinding(ports.request, ports.credentials)
+        ? admitted.version : null;
 }
 
 /** A socket gap can have missed a pushed write: the next read of each document checks the head once. */
