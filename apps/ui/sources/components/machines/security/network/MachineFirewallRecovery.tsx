@@ -9,9 +9,11 @@ import { t } from '@/text';
 export function MachineFirewallRecovery(props: Readonly<{ recovery: MachineFirewallRecoveryV1 }>) {
     return (
         <ItemGroup title={t('machineDetailPage.network.savedRecoveryTitle')}
-            description={t('machineDetailPage.network.savedRecoveryDescription')}>
+            description={props.recovery.restore
+                ? t('machineDetailPage.network.savedRecoveryBasis', { time: props.recovery.restore.capturedAt })
+                : t('machineDetailPage.network.savedRecoveryDescription')}>
             <SectionContentRow>
-                <CodeBlockView code={JSON.stringify(props.recovery, null, 2)} language="json" showCopyButton />
+                {props.recovery.restore ? <CodeBlockView code={props.recovery.restore.commands.join('\n')} language="shell" showCopyButton /> : null}
             </SectionContentRow>
         </ItemGroup>
     );

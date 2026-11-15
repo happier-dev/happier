@@ -88,13 +88,47 @@ export type MachineSetupFirewallTransitionFactsV1 = Readonly<{
     status: 'available'; externalInterfaces: string[]; privateInterfaces: PrivateInterface[]; retainedSshEndpoints: SshEndpoint[];
     privateWorkloadBindings?: MachineFirewallPrivateWorkloadBindingsV1[];
 }> | Readonly<{ status: 'unavailable'; requiredFact: string }>;
-function recoveryData(state: Snapshot): MachineFirewallRecoveryV1 {
+type RestoreStep = Readonly<
+    { kind: 'file'; path: string; state: NativeFileState; mode: number }
+    | { kind: 'command'; executable: string; args: string[]; when?: 'unitCreated' | 'tablePresent' }
+>;
+const quoteShell = (value: string) => "'" + value.replace(/'/g, "'\\''") + "'";
+/** The one ordered restoration program, shared by native undo and the recovery card. */
+function restoreSteps(state: Snapshot): RestoreStep[] {
+    const command = (executable: string, args: string[], when?: 'unitCreated' | 'tablePresent'): RestoreStep =>
+        ({ kind: 'command', executable, args, ...(when ? { when } : {}) });
+    return [
+        ...(state.unit.kind === 'absent' ? [command('systemctl', ['stop', '--', unit], 'unitCreated'),
+            command('systemctl', ['disable', '--', unit], 'unitCreated')] : []),
+        { kind: 'file', path: rulesPath, state: state.rules, mode: 0o600 },
+        { kind: 'file', path: unitPath, state: state.unit, mode: 0o644 },
+        state.table === null ? command(nft, ['delete', 'table', 'inet', 'happier'], 'tablePresent')
+            : command(nft, ['-f', rulesPath]),
+        command('systemctl', ['daemon-reload']),
+        ...(state.unit.kind !== 'absent' ? [command('systemctl', [state.boot.enabled ? 'enable' : 'disable', '--', unit])] : []),
+        ...(state.boot.running ? [command('systemctl', ['start', '--', unit])]
+            : state.unit.kind !== 'absent' ? [command('systemctl', ['stop', '--', unit])] : []),
+    ];
+}
+function restoreCommand(step: RestoreStep): string {
+    if (step.kind === 'file') {
+        if (step.state.kind === 'absent') return `rm -f -- ${quoteShell(step.path)}`;
+        if (step.state.kind !== 'file') throw new MachineSetupEffectError('foreign_effect_conflict');
+        return `printf '%s' ${quoteShell(step.state.bytes!.toString('utf8'))} > ${quoteShell(step.path)}\nchown 0:0 ${quoteShell(step.path)}\nchmod ${step.mode.toString(8)} ${quoteShell(step.path)}`;
+    }
+    const command = [step.executable, ...step.args].map(quoteShell).join(' ');
+    if (step.when === 'unitCreated') return `if test -f ${quoteShell(unitPath)}; then ${command}; fi`;
+    if (step.when === 'tablePresent') return `if ${quoteShell(nft)} list table inet happier >/dev/null 2>&1; then ${command}; fi`;
+    return command;
+}
+function recoveryData(state: Snapshot, steps: readonly RestoreStep[]): MachineFirewallRecoveryV1 {
     const file = (value: NativeFileState): MachineFirewallRecoveryV1['rules'] => {
         if (value.kind === 'absent') return { kind: 'absent' };
         if (value.kind !== 'file') throw new MachineSetupEffectError('foreign_effect_conflict');
         return { kind: 'file', content: value.bytes!.toString('utf8') };
     };
-    return { rules: file(state.rules), unit: file(state.unit), table: state.table, boot: state.boot };
+    return { rules: file(state.rules), unit: file(state.unit), table: state.table, boot: state.boot,
+        restore: { capturedAt: new Date().toISOString(), commands: ['set -e', ...steps.map(restoreCommand)] } };
 }
 function record(value: unknown): Record<string, unknown> | undefined {
     return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
@@ -388,7 +422,8 @@ export function createNativeFirewallBackend(run: NativeRun, recover: NativeRun, 
         candidateRules(step.rules);
         if (!await available()) throw new MachineSetupEffectError('required_fact_unavailable');
         const previous = await inspect(step);
-        const recovery = recoveryData(previous);
+        const restoration = restoreSteps(previous);
+        const recovery = recoveryData(previous, restoration);
         if (satisfied(step, previous)) return {
             recovery,
             verify: async () => !signal?.aborted && satisfied(step, await inspect(step)),
@@ -438,23 +473,16 @@ export function createNativeFirewallBackend(run: NativeRun, recover: NativeRun, 
                 throw new MachineSetupEffectError('foreign_effect_conflict');
             }
             const currentUnit = await inspectNativePath(unitPath, false, true);
-            if (previous.unit.kind === 'absent' && currentUnit.kind === 'file') {
-                if (currentUnit.bytes!.toString('utf8') !== nativeFirewallUnit) throw new MachineSetupEffectError('foreign_effect_conflict');
-                await effect(recover, 'systemctl', ['stop', '--', unit]);
-                await effect(recover, 'systemctl', ['disable', '--', unit]);
+            const unitCreated = previous.unit.kind === 'absent' && currentUnit.kind === 'file';
+            if (unitCreated && currentUnit.bytes!.toString('utf8') !== nativeFirewallUnit) throw new MachineSetupEffectError('foreign_effect_conflict');
+            for (const operation of restoration) {
+                if (operation.kind === 'file') await restore(operation.path, operation.state, operation.mode);
+                else {
+                    if (operation.when === 'unitCreated' && !unitCreated) continue;
+                    if (operation.when === 'tablePresent' && !await table(recover)) continue;
+                    await effect(recover, operation.executable, operation.args);
+                }
             }
-            await restore(rulesPath, previous.rules, 0o600);
-            await restore(unitPath, previous.unit, 0o644);
-            if (previous.table === null) {
-                if (await table(recover)) await effect(recover, nft, ['delete', 'table', 'inet', 'happier']);
-            } else {
-                await effect(recover, nft, ['-f', rulesPath]);
-            }
-            await effect(recover, 'systemctl', ['daemon-reload']);
-            if (previous.unit.kind !== 'absent') await effect(recover, 'systemctl', [previous.boot.enabled ? 'enable' : 'disable', '--', unit]);
-            if (previous.boot.running) await effect(recover, 'systemctl', ['start', '--', unit]);
-            // This fixed oneshot has no ExecStop: stopping cannot delete rules.
-            else if (previous.unit.kind !== 'absent') await effect(recover, 'systemctl', ['stop', '--', unit]);
             const restoredTable = await table(recover), restoredBoot = await boot(recover);
             if ((previous.table === null) !== (restoredTable === null) || previous.table !== null && restoredTable !== null && !equivalentTable(previous.table, restoredTable)
                 || restoredBoot.enabled !== previous.boot.enabled || restoredBoot.running !== previous.boot.running) throw new MachineSetupEffectError('required_fact_unavailable');

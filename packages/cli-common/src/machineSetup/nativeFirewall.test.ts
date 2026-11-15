@@ -6,6 +6,8 @@ import { MachineReachabilityInspectResultV1Schema } from '@happier-dev/protocol/
 import { applyMachineSetupEffectPlan, applyMachineSetupEffectPlans, checkMachineSetupEffectPlan,
     createMachineFirewallTransitionObservationStepV1, readMachineFirewallTransitionFactsV1,
     materializeMachineFirewallTransitionV1, type MachineSetupStepObservationV1 } from './index.js';
+import { MachineFirewallRecoveryV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
+import { MachineEffectInternalRecordSchema } from './effectInternalProtocol.js';
 import { createMachineSetupNativeBackend, type MachineSetupNativeCommand } from './nativeBackend.js';
 
 // Only OS boundaries are substituted. Bytes, inode identity, chmod, staging,
@@ -498,10 +500,11 @@ describe('native owned firewall', () => {
         } });
     });
 
-    it.each(['absent', 'present'] as const)('exposes serializable recovery from the same captured %s snapshot used by native undo', async initial => {
+    it.each(['absent', 'present', 'unitAbsent'] as const)('exposes serializable recovery from the same captured %s snapshot used by native undo', async initial => {
         const f = await fixture();
-        if (initial === 'present') await f.backend.apply(f.step);
-        const previousRules = initial === 'present' ? await f.fs.readFile(f.disk(rulesPath), 'utf8') : null;
+        if (initial !== 'absent') await f.backend.apply(f.step);
+        if (initial === 'unitAbsent') await f.fs.unlink(f.disk(unitPath));
+        const previousRules = initial !== 'absent' ? await f.fs.readFile(f.disk(rulesPath), 'utf8') : null;
         const previousUnit = initial === 'present' ? await f.fs.readFile(f.disk(unitPath), 'utf8') : null;
         const previousTable = f.readEffectiveTable() ?? null;
         const changed = MachineRecipeStepV1Schema.parse({ ...f.step, rules: rules.replace('ct state new drop', 'tcp dport 443 accept\n    ct state new drop') });
@@ -512,11 +515,26 @@ describe('native owned firewall', () => {
             unit: previousUnit === null ? { kind: 'absent' } : { kind: 'file', content: previousUnit },
             table: previousTable, boot: { present: initial === 'present', enabled: initial === 'present', running: initial === 'present' },
         };
+        const undoStart = f.calls.length;
         try {
-            expect(recovery).toEqual(expected);
-            expect(JSON.parse(JSON.stringify(recovery))).toEqual(expected);
+            expect(recovery).toMatchObject({ ...expected, restore: { capturedAt: expect.any(String), commands: expect.any(Array) } });
+            const saved = recovery as typeof expected & { restore: { commands: string[] } };
+            expect(saved.restore.commands.join('\n')).toContain(initial === 'absent' ? "'delete' 'table' 'inet' 'happier'" : '-f');
+            expect(saved.restore.commands.join('\n')).toContain(initial === 'present' ? 'enable' : 'disable');
+            expect(MachineFirewallRecoveryV1Schema.parse(expected)).toEqual(expected);
+            expect(MachineFirewallRecoveryV1Schema.parse(JSON.parse(JSON.stringify(recovery)))).toEqual(recovery);
+            expect(MachineEffectInternalRecordSchema.parse({ type: 'firewall.staged', planIndex: 0, planDigest: 'a'.repeat(64), recovery })).toHaveProperty('recovery', recovery);
         } finally { await staged.undo(); }
         expect(f.readEffectiveTable() ?? null).toBe(previousTable);
+        const saved = MachineFirewallRecoveryV1Schema.parse(recovery);
+        const quote = (value: string) => "'" + value.replace(/'/g, "'\\''") + "'";
+        const executed = f.calls.slice(undoStart).filter(call =>
+            call.executable === 'systemctl' && ['stop', 'disable', 'enable', 'start', 'daemon-reload'].includes(call.args[0]!)
+            || call.executable === '/usr/sbin/nft' && ['-f', 'delete'].includes(call.args[0]!));
+        expect(saved.restore!.commands.filter(command => command !== 'set -e' && !/^(?:printf|rm) /.test(command))).toEqual(
+            executed.map(call => expect.stringContaining([call.executable, ...call.args].map(quote).join(' '))));
+        expect(await f.fs.readFile(f.disk(rulesPath), 'utf8').catch(() => null)).toBe(previousRules);
+        expect(await f.fs.readFile(f.disk(unitPath), 'utf8').catch(() => null)).toBe(previousUnit);
     });
 
     it('persists only root-owned exact rules and the independent native boot unit through the typed interpreter', async () => {
@@ -646,7 +664,7 @@ describe('native owned firewall', () => {
         const result = await applyMachineSetupEffectPlans(input);
         expect(observedStages).toEqual([0, 1]);
         expect(result.status).toBe('cancelled');
-        expect(recovery).toEqual([
+        expect(recovery).toMatchObject([
             { rules: { kind: 'file', content: originalBytes }, unit: { kind: 'file', content: originalUnit },
                 table: originalTable, boot: { present: true, enabled: true, running: true } },
             { rules: { kind: 'file', content: stageARules }, unit: { kind: 'file', content: originalUnit },

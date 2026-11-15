@@ -78,6 +78,7 @@ export const MachineFirewallRecoveryV1Schema = lazyZodSchema(() => z.strictObjec
   unit: MachineFirewallRecoveryFileV1Schema,
   table: z.nullable(z.string()),
   boot: z.strictObject({ present: z.boolean(), enabled: z.boolean(), running: z.boolean() }),
+  restore: z.optional(z.strictObject({ capturedAt: z.string(), commands: z.array(z.string()) })),
 }));
 export type MachineFirewallRecoveryV1 = z.infer<typeof MachineFirewallRecoveryV1Schema>;
 
