@@ -44,7 +44,7 @@ export type SavedSecretOperationContextV1 = Readonly<{
   commitProviderConnectionsCatalog(input: Readonly<{ expectedSettingsVersion: number; catalog: ProviderConnectionsCatalogSnapshotV1 }>): Promise<boolean>;
   commitConnectedAccountCatalog(input: Readonly<{ key: ConnectedAccountCatalogKeyV1; catalog: ConnectedAccountCatalogSnapshotV1 }>): Promise<boolean>;
   commitPromptLibraryCatalog(input: Readonly<{ expectedSettingsVersion: number; catalog: PromptLibraryCatalogSnapshotV1 }>): Promise<boolean>;
-  beginRefresh(): boolean;
+  beginRefresh(resourceIds?: readonly string[]): boolean;
   commitCatalog(input: Readonly<{ resources: readonly SavedSecretCatalogResourceInputV1[]; state: SavedSecretCatalogState }>): boolean;
   withdrawCatalog(): void;
 }>;
@@ -171,7 +171,11 @@ export function createInvocationSavedSecretOperationContextV1(input: Readonly<{
       if (admission?.status === 'admitted') acpRevision = admission.revision;
       return true;
     },
-    beginRefresh: () => { if (!snapshot) return false; withdrawCatalog(); return true; },
+    beginRefresh: (resourceIds?: readonly string[]) => {
+      if (!snapshot) return false;
+      replaceSnapshot(withdrawSavedSecretCatalogInSnapshot(snapshot, resourceIds));
+      return true;
+    },
     commitLegacyImportResult: async (result: Parameters<SavedSecretOperationContextV1['commitLegacyImportResult']>[0]) => {
       if (!await isCurrent() || !snapshot || snapshot.settingsVersion !== result.expectedSettingsVersion) return false;
       replaceSnapshot(replaceSavedSecretLegacyImportInSnapshot(snapshot, result.result));

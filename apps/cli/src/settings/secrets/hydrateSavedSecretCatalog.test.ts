@@ -1000,6 +1000,60 @@ describe('Saved Secret catalog hydration', () => {
     expect(axios.get).toHaveBeenCalledTimes(1);
   });
 
+  it('acquires only the selected reference batch at operation admission and keeps unselected material', async () => {
+    const token = 'account-token';
+    const scopeKey = resolveAccountSettingsScopeKeyForToken(token);
+    const plainRow = (resourceId: string, revision: number, value: string) => ({
+      resourceId, ownerAccountId: 'owner-account', displayName: resourceId, kind: 'apiKey' as const,
+      encryptionMode: 'plain' as const, revision, materialStatus: 'ready' as const,
+      storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain',
+        content: { v: 1, name: resourceId, kind: 'apiKey', value } }),
+    });
+    const homeRow = (resourceId: string, revision: number, value: string) => {
+      const row = plainRow(resourceId, revision, value);
+      return { resourceId, encryptionMode: 'plain', storedContent: row.storedContent, recipientEnvelope: null,
+        entry: { ref: formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: resourceId }),
+          source: 'shared_resource', relationship: 'recipient', name: resourceId, kind: 'apiKey',
+          ownerAccountId: 'owner-account', revision, materialStatus: 'ready',
+          capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false } } };
+    };
+    setActiveAccountSettingsSnapshot({ source: 'network', settings: AccountSettingsSchema.parse({}), settingsVersion: 1,
+      loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey, savedSecretCatalogState: 'ready',
+      savedSecretResources: [plainRow('selected-a', 4, 'stale-a'), plainRow('unselected-c', 1, 'kept-c')] });
+    persistenceMocks.readStoredCredentials.mockResolvedValue({ token, encryption: null });
+    const homeRows = [homeRow('selected-a', 5, 'fresh-a'), homeRow('selected-b', 2, 'fresh-b'), homeRow('unselected-c', 1, 'kept-c'),
+      ...Array.from({ length: 5 }, (_, index) => homeRow(`unrelated-${index}`, 1, `unrelated-${index}`))];
+    const requested: unknown[] = [];
+    vi.mocked(axios.get).mockImplementation(async (_url, config) => {
+      const selected = (config?.params as { resourceIds?: readonly string[] } | undefined)?.resourceIds;
+      requested.push(selected ?? 'all');
+      return { status: 200, data: { resources: selected ? homeRows.filter(row => selected.includes(row.resourceId)) : homeRows } };
+    });
+    const refA = formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: 'selected-a' });
+    const refB = formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: 'selected-b' });
+    const refC = formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: 'unselected-c' });
+
+    const snapshot = await refreshSavedSecretCatalogForOperation({ expectedScopeKey: scopeKey,
+      secretReferenceOverlay: { v: 1, bindings: { A: { ref: refA, revision: 5 }, B: { ref: refB, revision: 2 } } } });
+
+    expect(requested).toEqual([['selected-a', 'selected-b']]);
+    expect(snapshot.savedSecretResources?.map(resource => resource.resourceId).sort())
+      .toEqual(['selected-a', 'selected-b', 'unselected-c']);
+    const materializer = createSavedSecretMaterializerFromSnapshotV1(snapshot);
+    expect(materializer.resolve(refA)).toMatchObject({ status: 'ready', value: 'fresh-a' });
+    expect(materializer.resolve(refB)).toMatchObject({ status: 'ready', value: 'fresh-b' });
+    expect(materializer.resolve(refC)).toMatchObject({ status: 'ready', value: 'kept-c' });
+
+    // A grant withdrawn since the last read is refused at the next acquisition of that reference.
+    homeRows.splice(homeRows.findIndex(row => row.resourceId === 'selected-b'), 1);
+    await expect(refreshSavedSecretCatalogForOperation({ expectedScopeKey: scopeKey,
+      secretReferenceOverlay: { v: 1, bindings: { B: { ref: refB, revision: 2 } } } })).rejects.toMatchObject({ reference: refB });
+    expect(requested.at(-1)).toEqual(['selected-b']);
+    const after = getActiveAccountSettingsSnapshot();
+    if (!after) throw new Error('expected active Account snapshot');
+    expect(createSavedSecretMaterializerFromSnapshotV1(after).resolve(refC)).toMatchObject({ status: 'ready', value: 'kept-c' });
+  });
+
   it('does not contact the shared catalog for a personal-only operation overlay', async () => {
     const token = 'account-token';
     setActiveAccountSettingsSnapshot({

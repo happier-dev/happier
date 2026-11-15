@@ -125,7 +125,7 @@ export function registerSavedSecretResourceRoutes(app: Fastify): void {
             }
             const result = await inReadSnapshot(async tx => {
                 const rows = await listSavedSecretResourceMaterialsForAccountInTx(tx, request.userId, authentication,
-                    selection.resourceId ? [selection.resourceId] : undefined, selection.includeReferenceCensus === true);
+                    selection.resourceId ? [selection.resourceId] : selection.resourceIds, selection.includeReferenceCensus === true);
                 // The qualified loader is the one decision: an unauthorized resource answers like a missing one,
                 // a visible non-owned resource refuses management, and its row revision decides currentness.
                 if (selection.resourceId && (selection.requireManage || selection.expectedRevision !== undefined)) {

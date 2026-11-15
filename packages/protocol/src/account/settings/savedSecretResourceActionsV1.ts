@@ -250,9 +250,13 @@ export type SharedSavedSecretRevealOutputV1 = z.infer<typeof SharedSavedSecretRe
 export const SavedSecretResourceMaterialSelectionV1Schema = lazyZodSchema(() => z.strictObject({
   includeReferenceCensus: z.optional(z.pipe(z.union([z.literal('true'), z.literal(true)]), z.transform(() => true as const))),
   resourceId: z.optional(ResourceIdSchema),
+  /** A finite operation's already selected batch; a repeated query value, so one id may arrive unwrapped. */
+  resourceIds: z.optional(z.pipe(z.union([ResourceIdSchema, z.array(ResourceIdSchema).check(z.minLength(1))]),
+    z.transform((value): string[] => (typeof value === 'string' ? [value] : value)))),
   expectedRevision: z.optional(z.coerce.number().check(z.int(), z.positive())),
   requireManage: z.optional(z.pipe(z.union([z.literal('true'), z.literal(true)]), z.transform(() => true as const))),
 }).check(z.superRefine((value, ctx) => {
+  if (value.resourceId && value.resourceIds) ctx.addIssue({ code: 'custom', message: 'Select one resource or a batch, not both' });
   if ((value.expectedRevision !== undefined || value.requireManage) && !value.resourceId) ctx.addIssue({ code: 'custom', message: 'Exact resource identity required' });
   if (value.requireManage && value.expectedRevision === undefined) ctx.addIssue({ code: 'custom', message: 'Exact revision required for disclosure' });
 })));

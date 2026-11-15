@@ -187,6 +187,37 @@ describe("Saved Secret material route (SQLite integration)", () => {
         } finally { await app.close(); }
     });
 
+    it('returns only the selected reference batch while the unselected inventory stays complete, and drops a withdrawn grant at the next read', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const recipient = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await db.userRelationship.create({ data: { fromUserId: owner.id, toUserId: recipient.id, status: 'friend' } });
+        const unrelated = Array.from({ length: 6 }, (_, index) => `batch-unrelated-${index}`);
+        for (const resourceId of ['batch-a', 'batch-b', ...unrelated]) {
+            expect(await inTx(tx => createSavedSecretResourceInTx(tx, {
+                accountId: owner.id, resourceId, displayName: resourceId, kind: 'token', encryptionMode: 'plain',
+                accountGrants: [recipient.id],
+                storedContent: { t: 'plain', v: { v: 1, name: resourceId, kind: 'token', value: `${resourceId}-sentinel` } },
+            }))).toMatchObject({ ok: true });
+        }
+        const app = createAuthenticatedTestApp();
+        app.addHook('onRequest', async request => { request.headers['x-test-user-id'] = recipient.id; });
+        registerSavedSecretResourceRoutes(app);
+        const read = async (query: string) => {
+            const response = await app.inject({ method: 'GET', url: `/v1/account/saved-secrets/resources/materials${query}` });
+            expect(response.statusCode, response.body).toBe(200);
+            return SavedSecretResourceMaterialsResponseV1Schema.parse(response.json()).resources
+                .map(row => ('resourceId' in row ? row.resourceId : null)).sort();
+        };
+        try {
+            expect(await read('?resourceIds=batch-a&resourceIds=batch-b')).toEqual(['batch-a', 'batch-b']);
+            expect(await read('?resourceIds=batch-b')).toEqual(['batch-b']);
+            expect(await read('')).toEqual(['batch-a', 'batch-b', ...unrelated].sort());
+            expect(await inTx(tx => setSavedSecretResourceGrantsInTx(tx, { accountId: owner.id, resourceId: 'batch-a',
+                expectedRevision: 1, accountGrants: [], teamGrants: [], groupGrants: [] }))).toMatchObject({ ok: true });
+            expect(await read('?resourceIds=batch-a&resourceIds=batch-b')).toEqual(['batch-b']);
+        } finally { await app.close(); }
+    });
+
     it('selects one exact managed revision and refuses grantees without management', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const recipient = await db.account.create({ data: { encryptionMode: 'plain' } });

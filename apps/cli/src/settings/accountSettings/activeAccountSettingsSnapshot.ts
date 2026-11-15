@@ -737,10 +737,14 @@ export function replaceSavedSecretCatalogInSnapshot(
   return { ...snapshot, savedSecretResources: input.resources, savedSecretCatalogState: input.state };
 }
 
-export function withdrawSavedSecretCatalogInSnapshot(snapshot: ActiveAccountSettingsSnapshot): ActiveAccountSettingsSnapshot {
-  const resources = (snapshot.savedSecretResources ?? []).map(({ resourceDataKey, ...resource }) => {
+/** Withdraws all material, or only a finite operation's selected batch while it is re-read. */
+export function withdrawSavedSecretCatalogInSnapshot(snapshot: ActiveAccountSettingsSnapshot,
+  resourceIds?: readonly string[]): ActiveAccountSettingsSnapshot {
+  const resources = (snapshot.savedSecretResources ?? []).map((resource) => {
+    if (resourceIds && !resourceIds.includes(resource.resourceId)) return resource;
+    const { resourceDataKey, ...retired } = resource;
     resourceDataKey?.fill(0);
-    return { ...resource, storedContent: null };
+    return { ...retired, storedContent: null };
   });
   return replaceSavedSecretCatalogInSnapshot(snapshot, { resources, state: 'temporarily_unavailable' });
 }
@@ -748,10 +752,11 @@ export function withdrawSavedSecretCatalogInSnapshot(snapshot: ActiveAccountSett
 function withdrawSavedSecretCatalogMaterial(input: Readonly<{
   scopeKey: string;
   lifetimeToken: number;
+  resourceIds?: readonly string[];
 }>): ActiveAccountSettingsSnapshot | null {
   const previous = active;
   if (!previous || previous.scopeKey !== input.scopeKey || activeLifetimeToken !== input.lifetimeToken) return null;
-  const next = withdrawSavedSecretCatalogInSnapshot(previous);
+  const next = withdrawSavedSecretCatalogInSnapshot(previous, input.resourceIds);
   active = next;
   return next;
 }
@@ -798,6 +803,8 @@ function publishSavedSecretCatalogIfChanged(next: ActiveAccountSettingsSnapshot)
 export function beginActiveSavedSecretCatalogRefresh(input: Readonly<{
   scopeKey: string;
   lifetimeToken: number;
+  /** A finite operation re-reads only its selected batch; other rows keep their material. */
+  resourceIds?: readonly string[];
 }>): boolean {
   return withdrawSavedSecretCatalogMaterial(input) !== null;
 }

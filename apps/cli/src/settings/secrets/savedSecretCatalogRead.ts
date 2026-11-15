@@ -86,6 +86,8 @@ async function accountContentPrivateKey(token: string, suppliedCredentials?: Sto
 export async function hydrateSavedSecretCatalog(input: Readonly<{
   token: string;
   includeReferenceCensus?: boolean;
+  /** A finite operation's selected batch: only these rows are read, opened and replaced. */
+  resourceIds?: readonly string[];
   signal?: AbortSignal;
   operationContext?: SavedSecretOperationContextV1;
 }>): Promise<HydratedSavedSecretCatalog> {
@@ -97,6 +99,12 @@ export async function hydrateSavedSecretCatalog(input: Readonly<{
   }
   const snapshot = context ? context.readSnapshot() : getActiveAccountSettingsSnapshot();
   const lifetimeToken = context ? null : getActiveAccountSettingsSnapshotLifetimeToken();
+  const selected = input.resourceIds;
+  // A batch read replaces only its selected rows; unselected rows keep their prior observation.
+  const withUnselectedRows = (resources: readonly SavedSecretCatalogResourceInputV1[]) => selected
+    ? [...((context ? context.readSnapshot() : getActiveAccountSettingsSnapshot())?.savedSecretResources ?? [])
+      .filter(resource => !selected.includes(resource.resourceId)), ...resources]
+    : resources;
   const commitCatalog = async (catalog: Readonly<{ resources: readonly SavedSecretCatalogResourceInputV1[]; state: SavedSecretCatalogState }>) => {
     if (input.signal?.aborted) return false;
     if (context) return await context.isCurrent(input.signal) && context.commitCatalog(catalog);
@@ -109,7 +117,8 @@ export async function hydrateSavedSecretCatalog(input: Readonly<{
   // for recovery, but retire all opened material before waiting on the Home.
   // Listeners are woken once, by the refresh's outcome, and only when the
   // authorized catalog changed.
-  if (!(context ? context.beginRefresh() : beginActiveSavedSecretCatalogRefresh({ scopeKey, lifetimeToken: lifetimeToken! }))) {
+  if (!(context ? context.beginRefresh(selected) : beginActiveSavedSecretCatalogRefresh({ scopeKey, lifetimeToken: lifetimeToken!,
+    ...(selected ? { resourceIds: selected } : {}) }))) {
     throw new Error('saved_secret_account_lifetime_changed');
   }
   let settled = false;
@@ -122,13 +131,16 @@ export async function hydrateSavedSecretCatalog(input: Readonly<{
           ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
         },
         signal: input.signal,
-        ...(input.includeReferenceCensus ? { params: { includeReferenceCensus: true } } : {}),
+        ...(input.includeReferenceCensus || selected ? { params: {
+          ...(input.includeReferenceCensus ? { includeReferenceCensus: true } : {}),
+          ...(selected ? { resourceIds: selected } : {}),
+        }, paramsSerializer: { indexes: null } } : {}),
         timeout: 15_000,
         validateStatus: () => true,
       },
     );
     if (response.status === 404) {
-      const resources: readonly SavedSecretCatalogResourceInputV1[] = Object.freeze([]);
+      const resources: readonly SavedSecretCatalogResourceInputV1[] = Object.freeze(withUnselectedRows([]));
       if (!await commitCatalog({ resources, state: 'ready' })) {
         throw new Error('saved_secret_account_lifetime_changed');
       }
@@ -142,7 +154,8 @@ export async function hydrateSavedSecretCatalog(input: Readonly<{
     // Corrupt rows intentionally expose only row-local repair metadata. They have
     // no canonical resource reference or material envelope and therefore cannot
     // participate in the CLI's materialization snapshot.
-    const materialRows = parsed.resources.filter(isHealthySavedSecretResourceMaterialV1);
+    const materialRows = parsed.resources.filter(isHealthySavedSecretResourceMaterialV1)
+      .filter(row => !selected || selected.includes(row.resourceId));
     const privateKey = materialRows.some((row) => row.encryptionMode === 'e2ee')
       ? await accountContentPrivateKey(input.token, context?.credentials)
       : null;
@@ -169,12 +182,13 @@ export async function hydrateSavedSecretCatalog(input: Readonly<{
         ...(resourceDataKey ? { resourceDataKey } : {}),
       };
     });
-    if (!await commitCatalog({ resources, state: 'ready' })) {
+    const catalogResources = withUnselectedRows(resources);
+    if (!await commitCatalog({ resources: catalogResources, state: 'ready' })) {
       for (const resource of resources) resource.resourceDataKey?.fill(0);
       throw new Error('saved_secret_account_lifetime_changed');
     }
     settled = true;
-    return Object.freeze({ resources: Object.freeze(resources), state: 'ready' });
+    return Object.freeze({ resources: Object.freeze(catalogResources), state: 'ready' });
   } finally {
     // Any unsettled refresh (transport failure, non-success or malformed Home
     // answer, unopenable envelope) ends with the fail-closed state published.
@@ -295,8 +309,16 @@ export async function readSavedSecretCatalogAdmissionForOperation(input: SavedSe
   ) {
     throw new Error('saved_secret_account_credentials_unavailable');
   }
+  // Imports and census reads need the complete authorized catalog; a finite
+  // operation acquires only the shared references it selected.
+  const selectedResourceIds = input.refreshCatalog === true || input.includeReferenceCensus ? null
+    : [...new Set(sharedReferences.flatMap(reference => {
+      const parsed = parseSavedSecretRefV1(reference.ref);
+      return parsed.kind === 'shared_resource' ? [parsed.resourceId] : [];
+    }))];
   await hydrateSavedSecretCatalog({
     ...(input.includeReferenceCensus ? { includeReferenceCensus: true } : {}),
+    ...(selectedResourceIds && selectedResourceIds.length > 0 ? { resourceIds: selectedResourceIds } : {}),
     token: credentials.token,
     ...(input.signal ? { signal: input.signal } : {}),
     ...(context ? { operationContext: context } : {}),
