@@ -346,9 +346,10 @@ describe('authorizeMachineRpcRequest', () => {
       // terminal owner (rpcHandlers.terminal.test.ts member Use refusals).
       const memberRefusal = method === RPC_METHODS.DAEMON_TERMINAL_ENSURE
         ? { ok: true } : { ok: false, errorCode: 'agent_isolation_unavailable' };
-      // Source control needs Manage for a Use member (SEC-FORKC-1115F F1 containment).
-      const memberUse = method === RPC_METHODS.SCM_STATUS_SNAPSHOT
-        || method === RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_LIST || method === RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE
+      // A person's local repository read reaches the SCM owner, which runs it whole in their
+      // member process; other source control needs Manage (MEMBER-SCM-READ-1114, SEC-FORKC-1115F).
+      const memberUse = method === RPC_METHODS.SCM_STATUS_SNAPSHOT ? { ok: true }
+        : method === RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_LIST || method === RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE
           ? { ok: false, errorCode: 'machine_manage_required' } : memberRefusal;
       expect(await authorizeMachineRpcRequest({ ...request, machineAdmission: { ...machineAdmission, actorAccountId: 'member', role: 'use' } }, boundary), method)
         .toMatchObject(memberUse);
@@ -378,9 +379,9 @@ describe('authorizeMachineRpcRequest', () => {
     expect(await authorizeMachineRpcRequest({ method: `machine:${RPC_METHODS.BASH}`, params: {},
       machineAdmission: { ...machineAdmission, role: 'manage' }, callerAuthority: 'account_automation' }, boundary))
       .toEqual({ ok: true });
-    // A Use member's local repository and forge reads are refused before any effect (SEC-FORKC-1115F F1 containment).
+    // A Use member's local repository read reaches the SCM owner (member process); forge reads stay refused.
     expect(await authorizeMachineRpcRequest({ method: `machine:${RPC_METHODS.SCM_STATUS_SNAPSHOT}`, params: {}, machineAdmission,
-      callerAuthority: 'account_automation' }, boundary)).toMatchObject({ ok: false, errorCode: 'machine_manage_required' });
+      callerAuthority: 'account_automation' }, boundary)).toEqual({ ok: true });
     expect(await authorizeMachineRpcRequest({ method: `machine:${RPC_METHODS.SCM_PULL_REQUEST_LIST}`, params: {}, machineAdmission,
       callerAuthority: 'account_automation' }, boundary)).toMatchObject({ ok: false, errorCode: 'machine_manage_required' });
     for (const method of Object.values(PRIVATE_SPAWN_SESSION_RPC_METHODS)) {

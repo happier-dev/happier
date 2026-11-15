@@ -6,6 +6,7 @@ import type { MaterializedProjectCheckout } from './materializeProjectCheckout';
 import { privateProjectCheckoutRefusal } from './privateProjectCheckout';
 import { executePrivateProjectSyncEffect, privateSyncEffectError, type PrivateProjectNativeSyncProcessPort,
   type PrivateProjectSyncEffectConfiguration, type PrivateProjectSyncNetwork, type WorkspaceNativeSyncEffect } from './privateProjectSyncEffect';
+import { executeMemberScmRead, type MemberScmReadEffect } from '@/scm/rpc/memberScmRead';
 
 export type WorkspaceEffectServices = Readonly<{
   connectedAccounts?: WorkspaceCheckoutEffectContext['connectedAccounts'];
@@ -14,6 +15,8 @@ export type WorkspaceEffectServices = Readonly<{
   fail(error: Error, effectsIssued: boolean): Promise<void>;
   readNativeSyncConfiguration?(): Promise<Readonly<{ configuration: PrivateProjectSyncEffectConfiguration; network: PrivateProjectSyncNetwork }>>;
   completeNativeSync?(result: PrivateProjectNativeSyncProcessPort): Promise<void>;
+  /** A member's local repository read: its whole SCM response. */
+  completeScmRead?(response: unknown): Promise<void>;
 }>;
 
 /** Early same-binary entry, before CLI/Account bootstrap. Private inherited
@@ -41,7 +44,7 @@ export async function runWorkspaceEffectWorker(args: readonly string[], io: Read
         if (message.kind !== 'run' || running) throw new Error('workspace_effect_protocol_invalid');
         // Admission/source descriptors are inherited solely from the parent
         // owner, exactly as in the existing background-process bootstrap.
-        const dispatched = message.context as WorkspaceCheckoutEffect | WorkspaceNativeSyncEffect;
+        const dispatched = message.context as WorkspaceCheckoutEffect | WorkspaceNativeSyncEffect | MemberScmReadEffect;
         const effect = 'kind' in dispatched && dispatched.kind === 'native_sync' ? dispatched.checkout : dispatched as WorkspaceCheckoutEffect;
         if (effect.workspaceRoot !== (io.currentDirectory ?? process.cwd)()) {
           throw privateProjectCheckoutRefusal();
@@ -55,6 +58,12 @@ export async function runWorkspaceEffectWorker(args: readonly string[], io: Read
         running = (async () => {
           let effectsIssued = false;
           try {
+            if ('kind' in dispatched && dispatched.kind === 'scm_read') {
+              if (!services.completeScmRead) throw privateProjectCheckoutRefusal();
+              await services.completeScmRead(await executeMemberScmRead(dispatched, signal));
+              send({ kind: 'settled', id: runId });
+              return;
+            }
             if ('kind' in dispatched && dispatched.kind === 'native_sync') {
               if (!services.readNativeSyncConfiguration || !services.completeNativeSync) throw privateProjectCheckoutRefusal();
               const configuration = await services.readNativeSyncConfiguration();

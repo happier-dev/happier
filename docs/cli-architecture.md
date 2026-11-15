@@ -2626,12 +2626,15 @@ A person with Can use (or their own Account automation) gets local repository
 reads only: the SCM Action specs mark them `localRepositoryRead` (status, log,
 history, branches, stashes, commit and file diffs, file content, backend
 describe), and `isScmLocalRepositoryReadRpcMethod` projects that flag for
-ingress and the handler. The handler runs those reads as the person's member
-user through the member execution owner (`prepareNativeOperation`, as bash and
-Project Open use it), with the member folder as the access-policy root, so a
-path outside it is `INVALID_PATH` before Git starts. Captured diff evidence,
-which goes through the daemon's own Account executor, is refused for a member
-placement. Every other `scm.*` method (forge, hosting, saved results, Agent
+ingress and the handler. The handler runs the whole read (Git and every
+repository metadata read, such as rebase/merge state files and `shallow`) in
+the member's `workspace-effect` child, the Project Open/Sync member owner,
+launched as the member through `prepareNativeOperation`. The daemon never
+opens a path in the member folder, so a symlinked or FIFO state file only
+reaches what the member itself can read (SEC-FORKC-1115F F1). The child
+resolves the Project root and `cwd` with the member folder as the
+access-policy root, so a path outside it is `INVALID_PATH`. The child has no
+daemon credentials, so captured diff evidence is unavailable to it. Every other `scm.*` method (forge, hosting, saved results, Agent
 runs, writes) is refused at ingress with `machine_manage_required` for a
 requester without Manage; Agent and Session sources keep
 `agent_isolation_unavailable`. The daemon-level isolation port carries no

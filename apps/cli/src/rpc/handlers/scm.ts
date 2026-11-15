@@ -118,8 +118,6 @@ const scmRpcOperationContextStorage = new AsyncLocalStorage<Readonly<{
     workingDirectory: string;
     accessPolicy: FilesystemAccessPolicy;
     workAdmissions?: ReadonlyMap<string, ScmWorkEvidenceAdmission['admissions'][number] | null>;
-    /** This read runs as the requester's member user; the daemon's own Account is never lent to it. */
-    memberPlacement?: true;
 }>>();
 
 export function registerScmHandlers(
@@ -141,13 +139,17 @@ export function registerScmHandlers(
 ): void {
     const refused = (actionErrorCode: string) => ({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
         actionErrorCode, error: 'Source control could not run on this Machine' });
+    const readErrorCode = (error: unknown): string => {
+        const code: unknown = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;
+        return typeof code === 'string' ? code : 'agent_isolation_unavailable';
+    };
     // Can use runs as the person's own member user, only in their own folder (owner rulings
-    // 2026-11-02, 2026-11-14). The member folder becomes the access policy root, so the
-    // existing path authorization refuses anything outside it before Git starts.
-    const runAsMember = async (context: RpcHandlerContext, identity: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>,
-        projectRoot: string | undefined, run: () => unknown): Promise<unknown> => {
-        const store = scmRpcOperationContextStorage.getStore();
-        if (!store || !deps?.nativeOperationRuntime) return refused('agent_isolation_unavailable');
+    // 2026-11-02, 2026-11-14). The whole read (Git and every repository metadata read) runs in
+    // the member Workspace effect child: the daemon never opens a member-controlled path
+    // (SEC-FORKC-1115F F1: a symlinked or FIFO Git state file).
+    const readAsMember = async (context: RpcHandlerContext, identity: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>,
+        method: string, projectRoot: string | undefined, input: unknown): Promise<unknown> => {
+        if (!deps?.nativeOperationRuntime) return refused('agent_isolation_unavailable');
         const material = Object.freeze({ materializationKey: context.transportRequestId ?? context.localActionContext?.actionRequestId
             ?? context.callerInputAuthorization?.binding.requestId ?? randomUUID(), environment: Object.freeze({}), selectedMaterials: Object.freeze([]) });
         let native: Awaited<ReturnType<ApiMachineClient['prepareNativeOperation']>>;
@@ -155,27 +157,22 @@ export function registerScmHandlers(
             // A read consumes the existing member binding; a person without one has no folder to read.
             native = await deps.nativeOperationRuntime.prepareNativeOperation({ requesterIdentity: identity, ingress: context,
                 signal: context.signal, readMaterial: () => material, allowMemberPreparation: false });
-        } catch (error) {
-            const code: unknown = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;
-            return refused(typeof code === 'string' ? code : 'agent_isolation_unavailable');
-        }
+        } catch (error) { return refused(readErrorCode(error)); }
         try {
             if (!native.memberIdentity) return refused('agent_isolation_unavailable');
-            const memberRoot = native.memberIdentity.workspaceRoot;
-            const root = projectRoot ? resolveCwd(projectRoot, memberRoot, { kind: 'restrictedRoots', roots: [memberRoot] }) : null;
-            if (root && !root.ok) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH, error: root.error };
-            const folder = root?.cwd ?? memberRoot;
-            return await scmRpcOperationContextStorage.run({ ...store, workingDirectory: folder,
-                accessPolicy: { kind: 'restrictedRoots', roots: [folder] }, memberPlacement: true },
-            () => runWithRequesterScmCommandRunner(createHostScmCommandRunner({ agentIsolation: native.agentIsolation,
-                isCurrent: () => !context.signal.aborted }), run));
+            const { readScmAsMember } = await import('@/scm/rpc/memberScmRead');
+            return await readScmAsMember({ agentIsolation: native.agentIsolation, requesterIdentity: identity,
+                workspaceRoot: native.memberIdentity.workspaceRoot, ...(projectRoot !== undefined ? { root: projectRoot } : {}),
+                method, input, signal: context.signal });
+        } catch (error) {
+            return refused(readErrorCode(error));
         } finally { await native.dispose(); }
     };
     // Manage is full control of this Machine (owner ruling 2026-10-31): an admitted Manage
     // requester's Project SCM runs as the daemon user, like its file effects and shell.
     // Ingress admits anyone else only to a local repository read; closed host calls keep their runner.
     const runAsAdmittedRequester = async (context: RpcHandlerContext | undefined, method: string,
-        projectRoot: string | undefined, run: () => unknown): Promise<unknown> => {
+        projectRoot: string | undefined, input: unknown, run: () => unknown): Promise<unknown> => {
         if (!deps?.resolveRequester || !context) return await run();
         const requester = await deps.resolveRequester(context);
         try {
@@ -183,7 +180,7 @@ export function registerScmHandlers(
             if (isHostRequesterUnrestrictedOwner(identity)) return await runWithRequesterScmCommandRunner(
                 createHostScmCommandRunner({ isCurrent: () => !context.signal.aborted }), run);
             if (!isScmLocalRepositoryReadRpcMethod(method)) return await run();
-            return identity.kind === 'isolated' ? await runAsMember(context, identity, projectRoot, run)
+            return identity.kind === 'isolated' ? await readAsMember(context, identity, method, projectRoot, input)
                 : refused('agent_isolation_unavailable');
         } finally { await requester.dispose(); }
     };
@@ -204,6 +201,8 @@ export function registerScmHandlers(
                 }
                 const root = target?.success && target.data.target.kind === 'machine'
                     ? target.data.target.project?.directory : undefined;
+                // A member read never resolves the selected root here: the member child does.
+                return runAsAdmittedRequester(context, method, root, target?.success ? target.data.input : request, () => {
                 const scoped = root ? resolveCwd(root, workingDirectory, machinePolicy) : null;
                 // A selected root can narrow Machine access, never expand it.
                 // Resolve this on the receiving filesystem, including symlinks.
@@ -212,15 +211,12 @@ export function registerScmHandlers(
                 }
                 const accessPolicy: FilesystemAccessPolicy = scoped
                     ? { kind: 'restrictedRoots', roots: [scoped.cwd] } : machinePolicy;
-                return (
-                scmRpcOperationContextStorage.run(
+                return scmRpcOperationContextStorage.run(
                     { context: operationContext, workingDirectory: scoped?.cwd ?? workingDirectory, accessPolicy },
                     // Raw SCM methods consume semantic input; Action-spec RPCs
                     // retain the same envelope for their canonical target parser.
-                    () => runAsAdmittedRequester(context, method, root,
-                        () => handler((unwrapTarget && target?.success ? target.data.input : request) as TRequest, operationContext)),
-                )
-                );
+                    () => handler((unwrapTarget && target?.success ? target.data.input : request) as TRequest, operationContext));
+                });
             });
         },
     });
@@ -294,13 +290,7 @@ export function registerScmHandlers(
             // envelope for captured evidence's canonical Action admission.
             const request = input && typeof input === 'object' && 'kind' in input
                 && input.kind === 'targeted_action_rpc' && 'input' in input ? input.input : input;
-            if (request && typeof request === 'object' && 'captured' in request) {
-                // Captured evidence is admitted through this daemon's own Account executor, never for a member placement.
-                return scmRpcOperationContextStorage.getStore()?.memberPlacement
-                    ? { accepted: false, response: { success: false, errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
-                        actionErrorCode: 'machine_manage_required', error: 'Captured evidence needs Manage access to this Machine' } }
-                    : { accepted: true, input };
-            }
+            if (request && typeof request === 'object' && 'captured' in request) return { accepted: true, input };
             // Released live file diffs retain their direct backend/response ABI.
             return { accepted: false, response: await executeScmActionOperation({
                 actionId: 'scm.diff.file', input: request, ...routeBase, rpcCompatibility: true,
