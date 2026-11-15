@@ -9,6 +9,7 @@ import { installUiListsCommonModuleMocks } from '@/components/ui/lists/uiListsTe
 installUiListsCommonModuleMocks();
 
 const { ProjectShellHeader } = await import('./ProjectShellHeader');
+const { SegmentedTabBar } = await import('@/components/ui/navigation/SegmentedTabBar');
 const { AtmosphereBandBoundary } = await import('@/components/atmosphere/atmosphereBandBoundary');
 const { atmosphereStageStore } = await import('@/components/atmosphere/atmosphereStage');
 
@@ -22,7 +23,10 @@ function header(pictureRoom: boolean) {
 }
 
 describe('Project header band footprint', () => {
-    afterEach(() => { atmosphereStageStore.setPictureShown(false); standardCleanup(); });
+    afterEach(async () => {
+        await act(async () => { atmosphereStageStore.setPictureShown(false); });
+        await standardCleanup();
+    });
 
     it('keeps the room a picture band needs from the first paint, so the picture arriving moves nothing', async () => {
         const screen = await renderScreen(header(true));
@@ -50,8 +54,14 @@ describe('Project header band footprint', () => {
         // The segmented track is the material the tabs read through; plain tabs have no track of their own.
         const presentation = (screen: Awaited<ReturnType<typeof renderScreen>>) => {
             const tablist = screen.root.findAll(node => typeof node.type === 'string' && node.props.accessibilityRole === 'tablist')[0]!;
-            const track = StyleSheet.flatten(tablist.props.style).backgroundColor;
-            return track === undefined || track === 'transparent' ? 'plain' : 'segmented';
+            // With overflow, the semantic tab row sits inside the painted track beside More.
+            // Read its rendered backing ancestors, stopping at the bar rather than the page's band.
+            for (let node = tablist.parent; node && node.type !== SegmentedTabBar; node = node.parent) {
+                if (typeof node.type !== 'string') continue;
+                const track = StyleSheet.flatten(node.props.style)?.backgroundColor;
+                if (track !== undefined && track !== 'transparent') return 'segmented';
+            }
+            return 'plain';
         };
         const screen = await renderScreen(scene({ planet: true }));
         expect(presentation(screen)).toBe('segmented');
