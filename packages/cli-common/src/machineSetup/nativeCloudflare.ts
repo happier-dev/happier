@@ -1,3 +1,4 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import type { MachineRecipeStepV1, MachineSetupApplyResultV1 } from './index.js';
 import type { MachineSetupNativeCommand, MachineSetupNativeCommandResult } from './nativeBackend.js';
 import { compareVersions } from '../update/compareVersions.js';
@@ -15,7 +16,7 @@ export type NativeCloudflareConnectorObservation =
     | Readonly<{ status: 'unavailable'; reason: 'required_fact_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed';
         details?: Readonly<{ requiredFact: string }> }>;
 export type NativeCloudflareConnectorResult = NativeCloudflareConnectorObservation
-    | Readonly<{ status: 'outcome_unknown'; reason: 'native_effect_failed' }>;
+    | Readonly<{ status: 'outcome_unknown'; reason: 'native_effect_failed'; details?: Readonly<{ requiredFact: 'cloudflare_connector_running' }> }>;
 export type NativeCloudflareConnectorRemovalResult =
     | Readonly<{ status: 'removed' }>
     | Extract<NativeCloudflareConnectorObservation, { status: 'unavailable' }>
@@ -32,6 +33,10 @@ const tokenStepId = 'cloudflare-connector-token';
 // The vendor's documented first metrics port, fixed only inside this private
 // connector namespace. No host publish, host listener, allocator or poller.
 const metricsAddress = '127.0.0.1:20241';
+// cloudflared answers /ready with 503 until its first edge connection
+// registers, ~1 s after start (real 2026.10.0, 2026-11-15), and retries its
+// own edge connection from 1 s. Ask at that pace; this is not a deadline.
+const readinessPaceMs = 1_000;
 const unavailable = (reason: Extract<NativeCloudflareConnectorObservation, { status: 'unavailable' }>['reason'], requiredFact?: string) =>
     ({ status: 'unavailable' as const, reason, ...(requiredFact ? { details: { requiredFact } } : {}) });
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -74,7 +79,7 @@ export function createCloudflareConnectorRemovalSteps(input: Pick<NativeCloudfla
         owner: 'root', group: 'root', mode: 0o600,
         content: { kind: 'secretGrant', grantRef: input.grantRef } }];
 }
-type OwnedContainer = Readonly<{ status: 'observed'; containerId: string; running: boolean }>;
+type OwnedContainer = Readonly<{ status: 'observed'; containerId: string; running: boolean; restarts: number }>;
 async function inspect(input: ContainerInput, options: NativeOptions): Promise<OwnedContainer
     | Exclude<NativeCloudflareConnectorObservation, { status: 'ready' | 'stopped' }>> {
     const name = containerName(input.tunnelId);
@@ -113,21 +118,28 @@ async function inspect(input: ContainerInput, options: NativeOptions): Promise<O
         || !Array.isArray(host.SecurityOpt) || !host.SecurityOpt.includes('no-new-privileges')
         || mount?.Type !== 'bind' || mount.Source !== tokenPath(input.tunnelId)
         || mount.Target !== tokenPath(input.tunnelId) || mount.ReadOnly !== true) return unavailable('foreign_effect_conflict');
-    return { status: 'observed', containerId: ids[0], running: state.Running };
+    // A manual start resets Docker's policy RestartCount, so after our start any
+    // count means cloudflared exited and the unless-stopped policy relaunched it.
+    return { status: 'observed', containerId: ids[0], running: state.Running,
+        restarts: typeof state.RestartCount === 'number' ? state.RestartCount : 0 };
 }
-async function observe(input: NativeCloudflareConnectorInput,
-    options: NativeOptions): Promise<NativeCloudflareConnectorObservation> {
+type Connecting = Readonly<{ status: 'connecting' }>;
+async function observe(input: NativeCloudflareConnectorInput, options: NativeOptions): Promise<NativeCloudflareConnectorObservation>;
+async function observe(input: NativeCloudflareConnectorInput, options: NativeOptions,
+    started: true): Promise<NativeCloudflareConnectorObservation | Connecting>;
+async function observe(input: NativeCloudflareConnectorInput, options: NativeOptions,
+    started = false): Promise<NativeCloudflareConnectorObservation | Connecting> {
     options.signal?.throwIfAborted();
     try {
         const container = await inspect(input, options);
         if (container.status !== 'observed') return container;
-        if (!container.running) return { status: 'stopped', containerId: container.containerId };
+        if (!container.running || started && container.restarts > 0) return { status: 'stopped', containerId: container.containerId };
         const version = await runDocker(options, ['exec', '--user', '0:0', container.containerId, 'cloudflared', '--version']);
         const observed = /^cloudflared version (\d+\.\d+\.\d+)(?:[ \t].*)?\r?\n?$/.exec(version.stdout)?.[1];
         if (version.code !== 0 || observed !== input.connector.version) return unavailable('required_fact_unavailable', 'cloudflare_connector_version');
         const ready = await runDocker(options, ['exec', '--user', '0:0', container.containerId,
             'cloudflared', 'tunnel', '--metrics', metricsAddress, 'ready']);
-        if (ready.code !== 0) return unavailable('native_effect_failed');
+        if (ready.code !== 0) return started ? { status: 'connecting' } : unavailable('native_effect_failed');
         return { status: 'ready', containerId: container.containerId };
     } catch {
         options.signal?.throwIfAborted();
@@ -179,8 +191,17 @@ export async function ensureNativeCloudflareConnector(input: NativeCloudflareCon
                 if (settled.code !== 0) return { status: 'outcome_unknown', reason: 'native_effect_failed' };
             }
         }
-        const verified = await observe(input, options);
-        return verified.status === 'ready' || !issued ? verified : { status: 'outcome_unknown', reason: 'native_effect_failed' };
+        if (!issued) return await observe(input, options);
+        // The started container's own exit and the operation's cancel bound
+        // this wait; a connector that never connects stays visibly pending.
+        for (;;) {
+            const verified = await observe(input, options, true);
+            if (verified.status === 'ready') return verified;
+            if (verified.status === 'stopped') return { status: 'outcome_unknown', reason: 'native_effect_failed',
+                details: { requiredFact: 'cloudflare_connector_running' } };
+            if (verified.status !== 'connecting') return { status: 'outcome_unknown', reason: 'native_effect_failed' };
+            await delay(readinessPaceMs, undefined, options.signal ? { signal: options.signal } : undefined);
+        }
     } catch {
         options.signal?.throwIfAborted();
         return issued ? { status: 'outcome_unknown', reason: 'native_effect_failed' } : unavailable('required_fact_unavailable', 'cloudflare_native_observation');

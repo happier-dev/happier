@@ -31,10 +31,13 @@ function fixture() {
     let version = '2025.4.0';
     let readable = true;
     let lostCreate = false;
+    // Queued /ready answers; once empty, the readable flag decides.
+    const readyAnswers: boolean[] = [];
+    let onReady: (() => void) | undefined;
     type Container = { Id: string; Name: string; Config: { Image: string; Entrypoint: string[]; Cmd: string[]; User: string; Labels: Record<string, string> };
         HostConfig: { NetworkMode: string; RestartPolicy: { Name: string }; Binds: null; Mounts: Array<{ Type: string; Source: string; Target: string; ReadOnly: boolean }>;
             PortBindings: object; Privileged: false; ReadonlyRootfs: true; PublishAllPorts: false; CapAdd: null; CapDrop: string[]; SecurityOpt: string[] };
-        NetworkSettings: { Networks: Record<string, object> }; State: { Running: boolean } };
+        NetworkSettings: { Networks: Record<string, object> }; State: { Running: boolean; RestartCount?: number } };
     let container: Container | undefined;
     // Docker is the genuine process/OS boundary. Native selection, ownership,
     // command construction, interpreter settlement and redaction remain real.
@@ -76,14 +79,20 @@ function fixture() {
         }
         if (args[0] === 'container' && args[1] === 'rm') { container = undefined; return ok(); }
         if (args[0] === 'exec' && args.at(-1) === '--version') return ok(`cloudflared version ${version} (test build)\n`);
-        if (args[0] === 'exec' && args.at(-1) === 'ready') return readable ? ok() : { code: 1, stdout: 'private diagnostic', stderr: 'private diagnostic' };
+        if (args[0] === 'exec' && args.at(-1) === 'ready') {
+            const answer = readyAnswers.length > 0 ? readyAnswers.shift()! : readable;
+            onReady?.();
+            return answer ? ok() : { code: 1, stdout: 'private diagnostic', stderr: 'private diagnostic' };
+        }
         throw new Error('Unexpected Docker operation');
     };
     return { commands, run, get container() {
         if (!container) throw new Error('Missing container');
         return container;
     }, version: (value: string) => { version = value; },
-        unreadable: () => { readable = false; }, loseCreate: () => { lostCreate = true; } };
+        unreadable: () => { readable = false; }, loseCreate: () => { lostCreate = true; },
+        answerReady: (...answers: boolean[]) => { readyAnswers.push(...answers); },
+        afterReady: (callback: () => void) => { onReady = callback; } };
 }
 
 it('keeps the connector grant in the existing protected P20 file program, not native command data', () => {
@@ -167,4 +176,34 @@ it('retires only the exact reviewed owned container, preserving foreign containe
     expect(f.commands.slice(owned).filter(command => ['stop', 'rm'].includes(command.args[1] ?? '')).map(command => command.args))
         .toEqual([['container', 'stop', '--', 'owned-connector'], ['container', 'rm', '--', 'owned-connector']]);
     expect(await removeNativeCloudflareConnector(input, { run: f.run })).toEqual({ status: 'removed' });
+});
+
+// Real cloudflared 2026.10.0 answers /ready with 503 for ~1 s after start
+// (.project/tmp/CF-HEALTHY-ROUTE-1115/live-connector-readiness.json).
+it('admits a started connector once cloudflared registers its first connection', async () => {
+    const f = fixture(); f.answerReady(false, true);
+    expect(await ensureNativeCloudflareConnector(input, { run: f.run, setupResult: await settled() }))
+        .toEqual({ status: 'ready', containerId: 'owned-connector' });
+    expect(f.commands.filter(command => command.args.at(-1) === 'ready')).toHaveLength(2);
+    expect(f.commands.filter(command => command.args[1] === 'create' || command.args[1] === 'start')).toHaveLength(2);
+});
+
+it.each([
+    ['exits', (container: { State: { Running: boolean; RestartCount?: number } }) => { container.State.Running = false; }],
+    ['is restarted by its policy', (container: { State: { Running: boolean; RestartCount?: number } }) => { container.State.RestartCount = 1; }],
+])('settles a started connector that %s while connecting with a typed cause', async (_name, exit) => {
+    const f = fixture(); f.unreadable();
+    f.afterReady(() => exit(f.container));
+    expect(await ensureNativeCloudflareConnector(input, { run: f.run, setupResult: await settled() }))
+        .toEqual({ status: 'outcome_unknown', reason: 'native_effect_failed', details: { requiredFact: 'cloudflare_connector_running' } });
+    expect(f.commands.filter(command => command.args.at(-1) === 'ready')).toHaveLength(1);
+});
+
+it('stops waiting for a connecting connector when the operation is cancelled', async () => {
+    const f = fixture(); f.unreadable();
+    const operation = new AbortController();
+    f.afterReady(() => operation.abort());
+    const setupResult = await settled();
+    await expect(ensureNativeCloudflareConnector(input, { run: f.run, signal: operation.signal, setupResult })).rejects.toThrow();
+    expect(f.commands.filter(command => command.args.at(-1) === 'ready')).toHaveLength(1);
 });
