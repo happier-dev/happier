@@ -37,7 +37,7 @@ import { resolveRuntimeBuildAuthority } from '../runtime/shared/runtime_build_au
 import { readGreenSourceRuntimeCandidateGroups, sourceRuntimeCaptureUnavailable } from './source_runtime_last_green.mjs';
 import { assertSourceReloadBundledPluginFailures } from '../runtime/launch/sourceReloadPluginFailures.mjs';
 import { rememberSourceCaptureFailure, withSourceCaptureRetry } from './source_capture_retry.mjs';
-import { applySourceRevision, parseSourceOverlayPaths, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionIdentity, writeSourceRevisionDescriptor } from './source_revision.mjs';
+import { applySourceRevision, canResolveSourceRevisions, parseSourceOverlayPaths, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionIdentity, writeSourceRevisionDescriptor } from './source_revision.mjs';
 
 import { SOURCE_CONDITION, SOURCE_RUNTIME_OUTPUT_OPTIONS, sourceExport, readWorkspacePackages, resolveWorkspaceSource, packageNameOfSpecifier, readCliSourceEntries, createCliSourceProjectionResolver, createWorkspaceSourceResolver, bundleCliSourceSidecars, runtimePackageExports } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 export { readWorkspacePackages, resolveWorkspaceSource } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
@@ -210,7 +210,7 @@ async function resolveProducerRevision({ repoDir, sourceRevision, env }) {
     return { ...sourceRevisionIdentity(descriptor), overlay: descriptor.overlay,
       descriptorPath: sourceRevision.descriptorPath, latest: sourceRevision.latest === true };
   }
-  if (!existsSync(join(repoDir, '.git'))) return null;
+  if (!canResolveSourceRevisions({ repoDir, env })) return null;
   const overlay = parseSourceOverlayPaths(sourceRevision?.overlay ?? env.HAPPIER_STACK_SOURCE_OVERLAY ?? '');
   const identity = await resolveSourceRevisionIdentity({ repoDir, rev: sourceRevision?.rev ?? 'HEAD', overlay });
   return { ...identity, descriptorPath: null, latest: !sourceRevision?.rev && !overlay.length };

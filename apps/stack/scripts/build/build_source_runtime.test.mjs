@@ -2498,6 +2498,28 @@ test('source reload refusal publishes the failing module and preserves incumbent
   assert.deepEqual(JSON.parse(await readFile(graph.runtimePath, 'utf8')), graph.runtime);
 });
 
+test('an execution host never selects a revision from a repository left in its mirror', async t => {
+  const graph = await reloadFixtureGraph(t, 'export {};');
+  graph.old.entrypoint = graph.daemon.entrypoint;
+  await writeFile(graph.selectedPath, JSON.stringify(graph.old));
+  const repoDir = await createReloadDaemonRepo(graph.fixture, 'export const ready = true;');
+  // Mirror sync never carries `.git`; Sessions can leave an unrelated repository there
+  // (nl3: an Oct 25 HEAD). Its HEAD must never become this host's revision.
+  const git = args => spawnSync('git', ['-C', repoDir, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { encoding: 'utf8' });
+  await writeFile(join(graph.fixture.root, 'unrelated.txt'), 'old');
+  assert.equal(git(['init', '-q']).status, 0);
+  assert.equal(git(['commit', '-q', '--allow-empty', '-m', 'unrelated history']).status, 0);
+  // Only the revision decision is asserted: the build after it is other tests' contract.
+  await prepareSourceRuntimeReload({ stackName: 'qa', stackBaseDir: graph.stackBaseDir, repoDir,
+    // An explicit capture boundary: this fixture has no load-sentinel history.
+    args: ['--no-server', '--server-url=http://fixture.invalid', '--no-ui', `--source-after=${new Date(Date.now() - 60_000).toISOString()}`],
+    onHost: true, env: { ...process.env, HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light', HAPPIER_STACK_DAEMON: '1',
+      HAPPIER_STACK_SOURCE_MIRROR: '1' } }).catch(() => {});
+  const { logPath } = JSON.parse(await readFile(join(graph.stackBaseDir, 'source-runtime/reload.json'), 'utf8'));
+  const log = await readFile(logPath, 'utf8');
+  assert.doesNotMatch(log, /\[reload\] source revision /, 'the host selected no revision from the leftover repository');
+});
+
 for (const activate of [false, true]) {
 test(`source reload preparation ${activate ? 'selects only after activation' : 'keeps the incumbent when activation is cancelled'}`, async t => {
   const graph = await reloadFixtureGraph(t, 'export {};');

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
-import { createWriteStream } from 'node:fs';
+import { createWriteStream, existsSync } from 'node:fs';
 import { lstat, mkdir, readFile, readlink, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, posix } from 'node:path';
 import { Readable } from 'node:stream';
@@ -38,6 +38,16 @@ async function git(repoDir, args) {
 
 function nulList(buffer) {
   return buffer.toString('utf8').split('\0').filter(Boolean);
+}
+
+/** Whether `repoDir` may select revisions from its own Git objects. Only the
+ * controller's checkout may: execution-host mirrors never sync `.git`, and a
+ * repository left in one (Sessions keep checkpoints there) holds unrelated
+ * history, so a host selects only through the controller's description. The
+ * controller marks every Stack and producer it runs in a mirror with
+ * `HAPPIER_STACK_SOURCE_MIRROR=1`. */
+export function canResolveSourceRevisions({ repoDir, env = process.env }) {
+  return env.HAPPIER_STACK_SOURCE_MIRROR !== '1' && existsSync(join(repoDir, '.git'));
 }
 
 /** Overlay paths are repository-relative POSIX paths, from `--overlay` or the

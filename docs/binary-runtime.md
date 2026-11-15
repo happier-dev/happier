@@ -1709,7 +1709,10 @@ replacement.
 `apps/stack/scripts/build/source_revision.mjs` owns the revision contract. On
 the controller it resolves `--rev` (default: the latest revision the local
 producer built, else HEAD) and the overlay (`--overlay`, else the Stack env
-`HAPPIER_STACK_SOURCE_OVERLAY`). Execution-host mirrors carry no Git metadata,
+`HAPPIER_STACK_SOURCE_OVERLAY`). Execution-host mirrors carry no Git metadata
+of the controller's (a `.git` there, such as one holding Session checkpoints, is
+unrelated history; the controller marks mirror Stacks and producers with
+`HAPPIER_STACK_SOURCE_MIRROR=1` and `canResolveSourceRevisions` never reads it),
 so the controller writes a finite revision description (revision tree listing,
 HEAD blobs for changed paths the capture can contain, untracked authored paths,
 overlay digests), and each host's worker deletes it after use. Every host keeps

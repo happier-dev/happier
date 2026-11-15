@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs';
 import { appendFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,7 +6,7 @@ import { PassThrough } from 'node:stream';
 import { format } from 'node:util';
 
 import { prepareSourceRuntimeProducer, admitSourceRuntimeReload, normalizeSourceCapturedAfter, readLatestBuiltSourceRevision } from '../../build/build_source_runtime.mjs';
-import { parseSourceOverlayPaths, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionIdentity, writeSourceRevisionDescriptor } from '../../build/source_revision.mjs';
+import { canResolveSourceRevisions, parseSourceOverlayPaths, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionIdentity, writeSourceRevisionDescriptor } from '../../build/source_revision.mjs';
 import { prepareSourceQaWebUi } from '../../build/build_source_web_ui.mjs';
 import { prepareSourceTreeRuntimeComponents, resolveSourceTreeRevision, sourceRevisionTreesRoot } from '../../build/source_revision_tree.mjs';
 import { parseArgs } from '../../utils/cli/args.mjs';
@@ -50,8 +49,8 @@ export function resolveSourceRuntimeReloadArguments({ args }) {
  * plus `--overlay` / the Stack's `HAPPIER_STACK_SOURCE_OVERLAY`. An overlay layers on HEAD
  * unless `--rev` names another revision. Every host then prepares this exact revision. */
 async function resolveReloadSourceRevision({ request, repoDir, stackBaseDir, env }) {
-  // Without Git metadata there is no revision to select; the producer logs its checkout capture.
-  if (!existsSync(join(repoDir, '.git'))) return null;
+  // Without the controller's Git there is no revision to select; the producer logs its checkout capture.
+  if (!canResolveSourceRevisions({ repoDir, env })) return null;
   const overlay = request.overlay ?? parseSourceOverlayPaths(env.HAPPIER_STACK_SOURCE_OVERLAY ?? '');
   const rev = request.rev ?? (overlay.length ? 'HEAD' : await readLatestBuiltSourceRevision({ repoDir, stackBaseDir }) ?? 'HEAD');
   return await resolveSourceRevisionIdentity({ repoDir, rev, overlay });
@@ -113,7 +112,7 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
     const hostTreeDescriptor = request.revisionDescriptorPath
       ? (await readSourceRevisionDescriptor(request.revisionDescriptorPath)).fullTree === true : false;
     const sourceTree = hostTreeDescriptor || (!request.revisionDescriptorPath && sourceCapturedAfter == null
-      && String(env.HAPPIER_STACK_SOURCE_TREES ?? '').trim() === '1' && existsSync(join(repoDir, '.git')));
+      && String(env.HAPPIER_STACK_SOURCE_TREES ?? '').trim() === '1' && canResolveSourceRevisions({ repoDir, env }));
     let treeRevision = null;
     if (sourceTree && !request.revisionDescriptorPath) {
       treeRevision = await resolveSourceTreeRevision({ repoDir, treesRoot: sourceRevisionTreesRoot(stackBaseDir),

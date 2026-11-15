@@ -147,7 +147,7 @@ export async function prepareStackDevTargetSourceReload({ stackName, stackBaseDi
           HAPPIER_STACK_CLI_HOME_DIR: paths.cliHomeDir, HAPPIER_HOME_DIR: paths.cliHomeDir,
           HAPPIER_SERVER_URL: env.HAPPIER_SERVER_URL,
           ...(env.HAPPIER_WEBAPP_URL ? { HAPPIER_WEBAPP_URL: env.HAPPIER_WEBAPP_URL } : {}),
-          HAPPIER_DEV_TARGET_EXECUTION: '1', HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES: '0',
+          HAPPIER_DEV_TARGET_EXECUTION: '1', HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES: '0', HAPPIER_STACK_SOURCE_MIRROR: '1',
           ...(env.HAPPIER_STACK_EXPO_SOURCE_STACK ? { HAPPIER_STACK_EXPO_SOURCE_STACK: env.HAPPIER_STACK_EXPO_SOURCE_STACK } : {}) },
         controlStdin: true, dependencyAdmission: 'skip', provenance: 'skip',
         signal: cancellation.signal, env, silent: true,

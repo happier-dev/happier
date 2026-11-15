@@ -50,7 +50,7 @@ export async function prepareSourceRuntimeProducerOnTarget({ target, repoDir, pr
       environment: { HAPPIER_STACK_REPO_DIR: target.repoDir, HAPPIER_STACK_STACK: producerStackName,
         HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: producerStackName,
         HAPPIER_STACK_STORAGE_DIR: paths.stackStorageDir,
-        HAPPIER_DEV_TARGET_EXECUTION: '1', HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES: '0',
+        HAPPIER_DEV_TARGET_EXECUTION: '1', HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES: '0', HAPPIER_STACK_SOURCE_MIRROR: '1',
         ...projectRemoteGuestCliPayloadEnvironment(env) },
       dependencyAdmission: 'skip', workspacePreparation: 'skip', provenance: 'skip',
       env: { ...env, HAPPIER_STACK_SYNC_SOURCE_DIR: repoDir, HAPPIER_STACK_PROCESS_KIND: 'infra' },
