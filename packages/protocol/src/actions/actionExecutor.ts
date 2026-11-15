@@ -2041,10 +2041,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               && parsed.data.actionId === continuation.actionId
               && JSON.stringify(parsed.data.actionArgs) === JSON.stringify(continuation.request)
               && parsed.data.executionOriginV1.requestId === continuation.requestId
-              && await isApprovalExecutionOriginCurrentForRequest({ request: parsed.data,
-                expectedOriginServerId: args.expectedOriginServerId ?? args.artifactServerId,
-                ...(args.ctx.signal ? { signal: args.ctx.signal } : {}) })
-              && await isDecidingHumanAdmissionCurrent(args.ctx);
+              && !args.ctx.signal?.aborted;
           },
         });
         const parsed = SecretFillSettlementV1Schema.safeParse(settlement);
