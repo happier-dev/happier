@@ -35,6 +35,7 @@ import { readDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protoc
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { readSavedSecretResourcesForAccountInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
 import { DeploymentApprovalEnvironmentResultV1Schema } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
+import { readArtifactHeadersForCallerInTx } from '@/app/artifacts/artifactAccessService';
 
 type AcceptedDeploymentRead = NonNullable<VerifiedExternalActionExecutionRequest['acceptedDeploymentReceipt']>['read'];
 
@@ -263,12 +264,12 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
         const access = await resolveEffectiveMachineAccessForMachinesInTx(tx, { accountIds: [actorAccountId], machineIds: [input.machineId] });
         if (!access.get(input.machineId)?.get(actorAccountId)) return deploymentFailure('deployment_unavailable', { phase: 'deployment.environment.list.machine_access', causeKind: 'access_denied' });
     }
-    const sources = new Map<string, Awaited<ReturnType<typeof resolveDeploymentEnvironmentAdmissionInTx>>>();
+    const sources = new Map<string, DeploymentSourceAdmission | null>();
     if (input.projectSourceId) {
         const source = await resolveDeploymentEnvironmentAdmissionInTx(tx, actorAccountId,
             { serverId: input.serverId, projectSourceId: input.projectSourceId }, authentication);
         if (!source.ok) return source;
-        sources.set(input.projectSourceId, source);
+        sources.set(input.projectSourceId, source.admission);
     }
     if (input.projection === 'activity') {
         const provider = getDbProviderFromEnv(process.env, 'postgres');
@@ -289,7 +290,7 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
         const admissions = sourceIds.length ? await resolveProjectSourcesAccessInTx(tx, actorAccountId, sourceIds, authentication, { includeDeleted: true }) : null;
         const activity = { running: false, failed: false, attentionCount: 0 };
         for (const row of rows) {
-            if (sources.get(row.projectSourceId)?.ok !== true && admissions?.get(row.projectSourceId)?.ok !== true) continue;
+            if (!sources.get(row.projectSourceId) && admissions?.get(row.projectSourceId)?.ok !== true) continue;
             const fact = projectDeploymentReceiptActivityV1(DeploymentStateV1Schema.parse(row.state));
             activity.running ||= fact.running;
             activity.failed ||= fact.failed;
@@ -312,10 +313,36 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
             domains: input.environmentIds === undefined ? { where: { deletedAt: null }, orderBy: { id: 'asc' } } : false,
             runtimeTargetLink: { include: { machines: { orderBy: { position: 'asc' } },
                 activeDeployment: input.environmentIds === undefined } } } });
+    // Source metadata access does not imply an openable private Environment.
+    // Admit headers in batches through the Artifact owner (including Source
+    // custody and recipient envelopes), then fill the existing page window.
+    const readReadableRows = async (where: Prisma.DeploymentEnvironmentWhereInput): Promise<Awaited<ReturnType<typeof readRows>>> => {
+        const readable: Awaited<ReturnType<typeof readRows>> = [];
+        let scannedThrough: string | undefined;
+        while (readable.length <= limit) {
+            const candidates = await readRows(scannedThrough ? { AND: [where, { id: { lt: scannedThrough } }] } : where);
+            if (!candidates.length) break;
+            const sourceIds = [...new Set(candidates.map(row => row.projectSourceId))].filter(id => !sources.has(id));
+            if (sourceIds.length) {
+                for (const [id, source] of await resolveProjectSourcesAccessInTx(tx, actorAccountId, sourceIds, authentication, { includeDeleted: true })) {
+                    sources.set(id, source.ok ? projectDeploymentSourceAdmission(source) : null);
+                }
+            }
+            const admitted = candidates.filter(row => sources.get(row.projectSourceId));
+            const headers = new Map((await readArtifactHeadersForCallerInTx(tx, {
+                actorAccountId, artifactIds: [...new Set(admitted.map(row => row.contentArtifactId))],
+            })).map(item => [item.artifactId, item.read.ok]));
+            readable.push(...admitted.filter(row => headers.get(row.contentArtifactId)));
+            if (candidates.length <= limit) break;
+            scannedThrough = candidates.at(-1)!.id;
+        }
+        return readable.slice(0, limit + 1);
+    };
     // Carry only the existing page window into the next query. The database
     // merges it with that selection chunk in its native collation, preserving
     // the ordinary list/cursor contract without a JavaScript ordering copy.
     const fixedBindings = limit + 1 // Retained page candidates.
+        + 1 // Continuation through unreadable candidate windows.
         + 2 // List take/offset.
         + (input.environmentIds === undefined ? 1 : 0) // Latest receipt take.
         + (input.projectSourceId ? 1 : 0)
@@ -349,7 +376,7 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
                 } } : {}),
                 ...(input.machineId ? deploymentMachineReferenceWhere(input.machineId) : {}),
             };
-            rows = await readRows(rows.length ? { OR: [where, { id: { in: rows.map(row => row.id) } }] } : where);
+            rows = await readReadableRows(rows.length ? { OR: [where, { id: { in: rows.map(row => row.id) } }] } : where);
         }
     }
     const hasNext = rows.length > limit;
@@ -363,23 +390,20 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
     let coverage: 'complete' | 'partial' = 'complete';
     const selectedRepository = input.previewRepository ? normalizeScmHostingRepositoryIdentity(input.previewRepository) : null;
     for (const row of selected) {
-        const source = sources.get(row.projectSourceId) ?? await resolveDeploymentEnvironmentAdmissionInTx(tx, actorAccountId,
-            { serverId: input.serverId, projectSourceId: row.projectSourceId }, authentication);
-        sources.set(row.projectSourceId, source);
-        if (!source.ok) { coverage = 'partial'; continue; }
+        const source = sources.get(row.projectSourceId)!;
         if (input.previewRepository) {
-            const selector = source.admission.source.repository;
+            const selector = source.source.repository;
             const repository = selector && normalizeScmHostingRepositoryIdentity({ kind: selector.provider.kind,
                 deployment: selector.provider.baseUrl, repository: selector.repository.nameWithOwner });
             if (!repository || !selectedRepository || !sameScmHostingRepositoryIdentity(repository, selectedRepository)) continue;
         }
         if (row.runtimeTargetLink && row.runtimeTargetLink.environmentId !== row.id) { coverage = 'partial'; continue; }
-        const environment = projectDeploymentListRow(() => projectDeploymentEnvironmentHeader(row, input.serverId, source.admission));
+        const environment = projectDeploymentListRow(() => projectDeploymentEnvironmentHeader(row, input.serverId, source));
         if (!environment) { coverage = 'partial'; continue; }
         items.push(environment);
         // Source admission already loaded this exact name. Preserve its existing
         // disclosed-metadata contract, not a copy in Environment metadata/storage.
-        projectSources.set(row.projectSourceId, projectDeploymentSourcePresentation(source.admission.source));
+        projectSources.set(row.projectSourceId, projectDeploymentSourcePresentation(source.source));
         for (const receipt of row.deployments ?? []) {
             const projected = projectDeploymentListRow(() => projectDeploymentReceiptHeader(receipt));
             if (projected) currentDeployments.push(projected);

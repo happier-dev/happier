@@ -90,6 +90,52 @@ describe('deployment detail admission cost', () => {
         } finally { stop(); await app.close(); }
     });
 
+    it('pages only Environments whose Artifact headers the Account can read, without inaccessible tail pages', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const source = await inTx(tx => createProjectSourceInTx(tx, owner.id,
+            { serverId, requestKey: randomUUID(), name: 'Readable inventory', audience: [] }));
+        if (!source.ok) throw new Error(source.error);
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id,
+            metadata: '{}', installationId: randomUUID() } });
+        const content = async (accountId: string) => {
+            const artifact = await createArtifact({ actorUserId: accountId, artifactId: randomUUID(),
+                kind: 'v1:other:deployment-environment.v1',
+                header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'Readable inventory' })),
+                body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: '{}' })),
+                dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+            if (!artifact.ok) throw new Error(artifact.error);
+            return { contentArtifactId: artifact.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
+        };
+        const readable = await content(owner.id);
+        const inaccessible = await content(stranger.id);
+        const base = { projectSourceId: source.source.id, createdByAccountId: owner.id,
+            protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', controllerMachineId: machine.id };
+        const id = (prefix: string) => `${prefix}-${source.source.id}`;
+        await db.deploymentEnvironment.createMany({ data: ['z', 'y', 'x', 'c', 'a'].map(prefix =>
+            ({ ...base, id: id(prefix), ...inaccessible })).concat(['w', 'b'].map(prefix =>
+                ({ ...base, id: id(prefix), ...readable }))) });
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const read = async (accountId: string, cursor?: string) => {
+                const query = new URLSearchParams({ serverId, projectSourceId: source.source.id, limit: '1', ...(cursor ? { cursor } : {}) });
+                return app.inject({ method: 'GET', url: `/v1/deployments/environments?${query}`,
+                    headers: { 'x-test-user-id': accountId } });
+            };
+            const firstResponse = await read(owner.id);
+            expect(firstResponse.statusCode).toBe(200);
+            const first = DeploymentEnvironmentListResultV1Schema.parse(firstResponse.json());
+            if (!first.ok) throw new Error(first.error);
+            expect(first.items.map(row => row.id)).toEqual([id('w')]);
+            expect(first.coverage).toBe('complete');
+            expect(first.nextCursor).not.toBeNull();
+            const next = DeploymentEnvironmentListResultV1Schema.parse((await read(owner.id, first.nextCursor!)).json());
+            if (!next.ok) throw new Error(next.error);
+            expect(next.items.map(row => row.id)).toEqual([id('b')]);
+            expect(next.nextCursor).toBeNull();
+            expect((await read(stranger.id)).statusCode).toBe(404);
+        });
+    });
+
     it('preserves valid deployment list rows and continuation when stored siblings are malformed', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const source = await inTx(tx => createProjectSourceInTx(tx, owner.id,
@@ -213,7 +259,12 @@ describe('deployment detail admission cost', () => {
                 }) }) })]);
             expect(templatePage.json().items.map((row: { id: string }) => row.id)).toEqual([children.map(row => row.id).sort().reverse()[0]]);
             expect(templatePage.json().nextCursor).toBeTruthy();
-            expect(templateRequests.filter(row => row.model === 'Artifact')).toEqual([]);
+            expect(templateRequests.filter(row => row.model === 'Artifact' && row.action === 'findMany')).toEqual([
+                expect.objectContaining({ args: expect.objectContaining({
+                    where: expect.objectContaining({ id: { in: [artifact.artifact.id] } }),
+                    select: expect.objectContaining({ body: false }),
+                }) }),
+            ]);
             templateQuery.set('cursor', templatePage.json().nextCursor);
             const templateNext = await app.inject({ method: 'GET', url: `/v1/deployments/environments?${templateQuery}`,
                 headers: { 'x-test-user-id': owner.id } });
@@ -226,7 +277,7 @@ describe('deployment detail admission cost', () => {
             expect(await inTx(tx => listDeploymentEnvironmentsInTx(tx, owner.id,
                 { serverId, previewTemplateEnvironmentId: peerTemplate.id, cursor: sealedCursor, limit: 1 })))
                 .toEqual({ ok: false, error: 'deployment_invalid' });
-            const queries: { model?: string; action: string }[] = [];
+            const queries: { model?: string; action: string; args?: unknown }[] = [];
             const stop = observeSqliteRequests({ before: request => { queries.push(request); } });
             const query = new URLSearchParams({ serverId, previewRepositoryId: source.source.id });
             query.append('previewPullRequestIds', 'pr:17');
@@ -258,8 +309,10 @@ describe('deployment detail admission cost', () => {
                 headers: { 'x-test-user-id': owner.id } });
             expect(otherRepository.json()).toMatchObject({ ok: true, items: [] });
             expect(queries.filter(row => row.model === 'DeploymentEnvironment' && row.action === 'findMany')).toHaveLength(1);
-            expect(queries.filter(row => row.model === 'ProjectSource' && row.action === 'findUnique')).toHaveLength(1);
-            expect(queries.filter(row => (row.model === 'ProjectSource' || row.model === 'Machine') && row.action === 'findMany')).toEqual([]);
+            expect(queries.filter(row => row.model === 'ProjectSource' && row.action === 'findMany')).toEqual([
+                expect.objectContaining({ args: expect.objectContaining({ where: { id: { in: [source.source.id] } } }) }),
+            ]);
+            expect(queries.filter(row => row.model === 'Machine' && row.action === 'findMany')).toEqual([]);
             expect(response.body).not.toContain('unopened-preview-body');
             const denied = await app.inject({ method: 'GET', url: `/v1/deployments/environments?${query}`,
                 headers: { 'x-test-user-id': stranger.id } });
@@ -335,13 +388,18 @@ describe('deployment detail admission cost', () => {
             let cursor: string | null = null;
             const found: string[] = [];
             do {
-                const queries: { model?: string; action: string }[] = [];
+                const queries: { model?: string; action: string; args?: unknown }[] = [];
                 const stop = observeSqliteRequests({ before: request => { queries.push(request); } });
                 const page: Awaited<ReturnType<typeof read>> = await read(`${base}&includeDeleted=true&limit=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`)
                     .finally(stop);
                 expect(page.statusCode, page.body).toBe(200);
                 expect(queries.filter(query => query.model === 'DeploymentEnvironment' && query.action === 'findMany')).toHaveLength(1);
-                expect(queries.filter(query => query.model === 'Artifact')).toEqual([]);
+                expect(queries.filter(query => query.model === 'Artifact' && query.action === 'findMany')).toEqual([
+                    expect.objectContaining({ args: expect.objectContaining({
+                        where: expect.objectContaining({ id: { in: [artifact.artifact.id] } }),
+                        select: expect.objectContaining({ body: false }),
+                    }) }),
+                ]);
                 expect(page.body).not.toContain('private-retained-body');
                 const result: { coverage: string; items: { id: string }[]; nextCursor: string | null } = page.json();
                 expect(result.coverage).toBe('complete');
@@ -385,23 +443,26 @@ describe('deployment detail admission cost', () => {
         // Start at this fixture's range: existing unrelated fixture rows are not this demand.
         let cursor: string | undefined = `${prefix}-3`;
         const found: string[] = [];
-        for (let index = 0; index < ids.length; index++) {
-            const queries: { model?: string; action: string }[] = [];
+        do {
+            const queries: { model?: string; action: string; args?: unknown }[] = [];
             const stop = observeSqliteRequests({ before: request => { queries.push(request); } });
             const page = await inTx(tx => listDeploymentEnvironmentsInTx(tx, owner.id, { serverId, cursor, limit: 1 }));
             stop();
             expect(page).toMatchObject({ ok: true });
             if (!page.ok) throw new Error(page.error);
-            expect(queries.filter(query => query.model === 'ProjectSource' && query.action === 'findMany')).toHaveLength(0);
-            expect(page.items.length).toBeLessThanOrEqual(1);
-            expect(page).toMatchObject({ projectSources: index === 0 ? [] : [{ id: visible.source.id, name: visible.source.name }] });
+            for (const query of queries.filter(query => query.model === 'ProjectSource' && query.action === 'findMany')) {
+                expect(query.args).toMatchObject({ where: { id: { in: expect.any(Array) } } });
+            }
+            expect(page.items).toHaveLength(1);
+            expect(page).toMatchObject({ coverage: 'complete', projectSources: [{ id: visible.source.id, name: visible.source.name }] });
             expect(JSON.stringify(page)).not.toContain(hidden.source.name);
-            if (index === 0) {
-                expect(page).toMatchObject({ coverage: 'partial', items: [] });
+            expect(JSON.stringify(page)).not.toContain(ids[0]);
+            expect(JSON.stringify(page)).not.toContain(hidden.source.id);
+            if (found.length === 0) {
+                // Visible rows retain raw-id cursors. An opaque continuation
+                // remains bound to its Account and query when explicitly sealed.
                 expect(page.nextCursor).toBeTruthy();
-                expect(JSON.stringify(page)).not.toContain(ids[0]);
-                expect(JSON.stringify(page)).not.toContain(hidden.source.id);
-                const continuation = page.nextCursor!;
+                const continuation = sealDeploymentReadCursor(owner.id, { serverId }, page.items[0]!.id);
                 expect(await inTx(tx => listDeploymentEnvironmentsInTx(tx, stranger.id,
                     { serverId, cursor: continuation, limit: 1 }))).toEqual({ ok: false, error: 'deployment_invalid' });
                 expect(await inTx(tx => listDeploymentEnvironmentsInTx(tx, owner.id,
@@ -410,7 +471,7 @@ describe('deployment detail admission cost', () => {
             }
             found.push(...page.items.map(item => item.id));
             cursor = page.nextCursor ?? undefined;
-        }
+        } while (cursor);
         expect(found).toEqual(ids.slice(1));
 
         // Machine Services names its visible owner groups, not the Account's
@@ -552,12 +613,17 @@ describe('deployment detail admission cost', () => {
                 patch: { audience: [{ principal: { kind: 'team', teamId: team.id }, level: 'view' }] } }));
             expect(shared).toMatchObject({ ok: true });
             if (!shared.ok) throw new Error(shared.error);
+            const list = async (accountId: string) => DeploymentEnvironmentListResultV1Schema.parse((await app.inject({ method: 'GET',
+                url: `/v1/deployments/environments?${new URLSearchParams({ serverId, projectSourceId: source.source.id })}`,
+                headers: { 'x-test-user-id': accountId } })).json());
+            expect(await list(owner.id)).toMatchObject({ ok: true, items: [{ id: environment.environmentId }] });
             const readArtifact = (artifactId: string) => app.inject({ method: 'GET', url: `/v1/artifacts/${artifactId}`,
                 headers: { 'x-test-user-id': member.id } });
             if (mode === 'e2ee') {
                 expect((await headers(member.id)).map(item => item.read.ok ? 'ok' : item.read.error))
                     .toEqual(['artifact_content_unavailable', 'artifact_content_unavailable']);
                 expect((await read(member.id)).json()).toMatchObject({ ok: false, error: 'deployment_content_unavailable' });
+                expect(await list(member.id)).toMatchObject({ ok: true, items: [], nextCursor: null });
                 for (const [artifactId, keys] of contentKeys) {
                     await runArtifactRecipientKeyPreparationV1({ artifactId, dataKey: keys.dataKey,
                         openedDataEncryptionKey: privacyKit.encodeBase64(keys.ownerEnvelope), randomBytes: nacl.randomBytes,
@@ -574,6 +640,7 @@ describe('deployment detail admission cost', () => {
                     });
                 }
             }
+            expect(await list(member.id)).toMatchObject({ ok: true, items: [{ id: environment.environmentId }], nextCursor: null });
             const observedHeaders = await headers(member.id);
             for (const item of observedHeaders) {
                 const access = await inTx(tx => resolveArtifactAccessInTx(tx, { actorAccountId: member.id, artifactId: item.artifactId }));
