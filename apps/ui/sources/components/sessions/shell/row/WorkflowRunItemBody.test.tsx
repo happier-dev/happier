@@ -155,7 +155,7 @@ async function initializeRun(triggerId?: string) {
 
 describe('opened habit History result', () => {
     it.each(['machine_offline', 'machine_presence_at_due_unavailable'] as const)('retains a missed one-time occurrence and its reason in schedule History (%s)', async errorCode => {
-        const { serve } = await initializeRun('timer');
+        const { serve, home } = await initializeRun('timer');
         const cause = AutomationRunCauseSchema.parse({ kind: 'trigger', triggerId: 'timer', triggerRevision: 1,
             triggerKind: 'schedule', occurrenceKey: 'A'.repeat(43), occurredAt: 1, evidence: { scheduledFor: 1 } });
         const summary = createWorkflowRunSummaryFixture({ id: 'habit-run', revision: 4, state: 'missed', errorCode,
@@ -175,6 +175,8 @@ describe('opened habit History result', () => {
         expect(screen.getTextContent()).toContain(errorCode === 'machine_offline'
             ? 'workflows.triggers.once.missedOffline' : 'workflows.triggers.once.missedUnavailable');
         expect(screen.getTextContent()).not.toContain('workflows.finalOutput.none');
+        await screen.pressByTestIdAsync('workflow-run-row:habit-run');
+        expect(routerPush).toHaveBeenCalledWith(`/workflows/runs/habit-run?target=occurrence&automationId=auto-1&serverId=${encodeURIComponent(home.id)}`);
     });
     it('opens a saved workflow schedule History on demand with its frozen editor attribution', async () => {
         await initializeRun('timer');

@@ -171,6 +171,9 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
     // A hidden surface retains its body, never another Account's body.
     const row = inScope && retained.current.scopeKey === scopeKey ? retained.current.row : null;
     const summary = row?.summary;
+    const runRoute = createWorkflowRunRoute(summary?.origin.kind === 'automation'
+        ? { kind: 'occurrence', automationId: summary.origin.automationId, runId: props.runId }
+        : props.runId, props.serverId);
     const cachedSourceProfile = useUser(props.sourceProfile === undefined && summary?.sourceSavedBy?.kind === 'person' ? summary.sourceSavedBy.accountId : '');
     const editedBy = resolveEditedByLabel({ savedBy: summary?.sourceSavedBy, viewerAccountId: scope?.accountId,
         viewerOwnSave: props.inTriggerHistory === true ? 'you' : 'omit',
@@ -254,7 +257,7 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
             rightElementOutsidePressable={requestRef !== null}
             showChevron={false}
             accessibilityLabel={[name, word, context, starterLabel, editedBy].filter(Boolean).join('. ')}
-            onPress={() => router.push(createWorkflowRunRoute(props.runId, props.serverId) as never)} />
+            onPress={() => router.push(runRoute as never)} />
     );
     return <View testID={`workflow-run-sheet:${props.runId}`} style={[bareSectionRow ? null : styles.row, depth > 0 ? { paddingLeft: depth * resolveHappierCollectionTreeChildIndentPx() } : null]}>
         <View style={depth > 0 ? styles.guide : null}>
@@ -277,12 +280,12 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
                 trailing={!requestRef && rowMark === 'none' && (summary.state === 'succeeded' || !(showWord && word)) ? <WorkflowRunRowAge
                     runId={props.runId} timestamp={Date.parse(summary.finishedAt ?? summary.updatedAt)}
                     dataActive={dataActive} density={density} readablePhone={readablePhone} textScale={fontScale} /> : statusControl}
-                renderContainer={(content, style) => <WorkspaceDestinationRow href={createWorkflowRunRoute(props.runId, props.serverId)} style={style}>
+                renderContainer={(content, style) => <WorkspaceDestinationRow href={runRoute} style={style}>
                     <Pressable style={style} testID={`workflow-run-row:${props.runId}`}
                     onHoverIn={() => setHovered(true)} onHoverOut={() => setHovered(false)}
                     accessibilityRole="button" accessibilityState={{ selected: props.selected === true }}
                     accessibilityLabel={[name, word, context, editedBy].filter(Boolean).join('. ')}
-                    onPress={() => router.push(createWorkflowRunRoute(props.runId, props.serverId) as never)}>{content}</Pressable>
+                    onPress={() => router.push(runRoute as never)}>{content}</Pressable>
                 </WorkspaceDestinationRow>}>
                 {contextLine !== null || (!oneLine && starterLabel) ? <View style={styles.context}>
                     {!oneLine && (summary.startedBy === 'trigger' || summary.startedBy === 'agent')
