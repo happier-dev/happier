@@ -242,12 +242,13 @@ export function useNewSessionHostNavigation(): Readonly<{
             setParams: (patch: Readonly<Record<string, unknown>>) => setParams(patch ?? {}),
             push: ((href: Parameters<RouterLike['push']>[0], options?: Parameters<RouterLike['push']>[1]) => {
                 if (hostDraftId && (docked || !presentsInPlace)) {
-                    const objectHref: HrefObject | null = typeof href === 'object' ? href : null;
-                    const isPicker = objectHref && isNewSessionPickerSubflowPath(objectHref.pathname);
-                    if (isPicker && !docked) router.setParams({ newSessionHostDraftId: hostDraftId });
-                    const pickerHref = isPicker
-                        ? { ...objectHref, params: { ...objectHref.params, newSessionHostDraftId: hostDraftId } }
-                        : href;
+                    let pickerHref: HrefObject | string = href;
+                    let isPicker = false;
+                    if (typeof href === 'object' && isNewSessionPickerSubflowPath(href.pathname)) {
+                        isPicker = true;
+                        if (!docked) router.setParams({ newSessionHostDraftId: hostDraftId });
+                        pickerHref = { pathname: href.pathname, params: { ...href.params, newSessionHostDraftId: hostDraftId } };
+                    }
                     // A picker opens inside the pane that holds the page whose composer opened it, docked or inline, so its
                     // return steps that pane back to that composer with the choice applied (UI refinements rulings
                     // 2026-11-13 14:10Z, 15:07Z). Without a workspace pane the route is unchanged; only this host's

@@ -29,7 +29,7 @@ function readStringRouteParams(params: Readonly<Record<string, unknown>> | undef
 }
 
 function useSessionLayoutParams() {
-    const layoutParams = readStringRouteParams(useLocalSearchParams<Record<string, unknown>>());
+    const layoutParams = readStringRouteParams(useLocalSearchParams());
     const hosted = useDestinationInstanceKey() !== null;
     // The retained destination already supplies its leaf's exact params. Expo's
     // outer branch describes another mounted route and must not lend its Home.

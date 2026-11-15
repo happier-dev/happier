@@ -1,4 +1,5 @@
 import type { TerminalConnectLinkState } from '@/auth/terminal/terminalConnectContinuation';
+import type { Router } from 'expo-router';
 import { t } from '@/text';
 
 import type { TerminalConnectSurfaceState } from './TerminalConnectSurface';
@@ -15,7 +16,7 @@ const SCAN_TERMINAL_HREF = '/scan/terminal';
 export function terminalLinkProblemMessage(params: Readonly<{
     linkState: Exclude<TerminalConnectLinkState, 'ready'>;
     signedIn: boolean;
-    navigate: (href: string) => void;
+    navigate: Router['replace'];
 }>): TerminalConnectSurfaceState {
     const copy = params.linkState === 'update_required'
         ? { title: t('connect.updateRequiredTitle'), description: t('connect.legacyPairingUpdateRequiredBody') }

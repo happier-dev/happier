@@ -64,7 +64,7 @@ export function HubStatusLineView(props: Readonly<{
                     testID="home-hub.status.inbox"
                     accessibilityRole="link"
                     accessibilityLabel={inboxLabel}
-                    onPress={props.onOpenInbox}
+                    onPress={() => props.onOpenInbox?.()}
                     style={styles.fact}
                 >
                     <WorkStatusGlyph

@@ -321,11 +321,17 @@ function createDemoSurfaceHost(initial: SurfaceContext): DemoSurfaceHost {
         respondToSessionPermission: async () => ({ status: 'refused', reason: 'sessionUnavailable' }),
         publishCurrentUiContext: () => undefined,
         openSurface: async () => undefined,
+        openResource: async () => {
+            throw new Error('dev surface has no openable resources');
+        },
         replacePageLocation: async () => {
             throw new Error('dev surface has no page location');
         },
         setUnsavedChanges: async () => {
             throw new Error('dev surface has no page guard');
+        },
+        setPageNavigation: async () => {
+            throw new Error('dev surface has no page navigation');
         },
         notify: async () => undefined,
         confirm: async () => false,

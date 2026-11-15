@@ -220,7 +220,7 @@ describe('callback root navigation readiness', () => {
       // mounts its real root navigator; the child layout effect runs before onReady.
       return <CallbackErrorBoundary>{url ? <BaseNavigationContainer ref={root}
         initialState={getStateFromPath(`${url.pathname}${url.search}`, config)!}>
-        <WorkspaceRootStack><WorkspaceRootStack.Screen name="callback" component={Callback} /></WorkspaceRootStack>
+        <WorkspaceRootStack><Stack.Screen name="callback" component={Callback} /></WorkspaceRootStack>
       </BaseNavigationContainer> : <DestinationInstanceHost tabId="credentials" ref={{ kind: 'settings', params: { pageId: 'connected-services' } }}
         pathname="/settings/connected-services" focused visible navigation={navigation}>{null}</DestinationInstanceHost>}</CallbackErrorBoundary>;
     }

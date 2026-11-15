@@ -64,7 +64,7 @@ function resolveServerRemoteUpdateDiagnostics(params: Readonly<{
 export function resolveLiveActivityRemoteRegistrationPlan(params: Readonly<{
     snapshot: LiveActivitySnapshot;
     accountSettings: ExactHomeAccountSettings | null;
-    localSettings: LocalSettings;
+    localSettings: Pick<LocalSettings, 'attentionDeviceOverridesV1'>;
     serverFeaturesSnapshot: ServerFeaturesMainSelectionSnapshot;
 }>): LiveActivityRemoteRegistrationPlan {
     if (!params.accountSettings) {
@@ -73,7 +73,7 @@ export function resolveLiveActivityRemoteRegistrationPlan(params: Readonly<{
     const attentionPolicy = accountSettingsParse(params.accountSettings).attentionDeliveryPolicyV1;
     const remotePolicy = attentionPolicy.liveActivityRemoteUpdates;
     const deviceOverrides = AttentionDeviceOverridesV1Schema.parse(
-        (params.localSettings as Readonly<Record<string, unknown>>).attentionDeviceOverridesV1,
+        params.localSettings.attentionDeviceOverridesV1,
     );
     const deviceLiveActivityOverrides = deviceOverrides.liveActivities;
 
@@ -250,7 +250,7 @@ export function reconcileLiveActivityRemoteTargetRegistration(params: Readonly<{
     handle: LiveActivityHandleWithRemoteTargetSupport;
     snapshot: LiveActivitySnapshot;
     accountSettings: ExactHomeAccountSettings | null;
-    localSettings: LocalSettings;
+    localSettings: Pick<LocalSettings, 'attentionDeviceOverridesV1'>;
     serverFeaturesSnapshot: ServerFeaturesMainSelectionSnapshot;
     pushTokenSubscriptions: Map<string, LiveActivityPushTokenSubscription>;
     remoteTargetRegistry: ReturnType<typeof createLiveActivityRemoteTargetRegistry>;

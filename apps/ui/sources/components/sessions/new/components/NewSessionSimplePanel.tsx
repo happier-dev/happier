@@ -48,7 +48,7 @@ const SIMPLE_NEW_SESSION_MIN_TOP_GAP = 8;
 
 
 export type NewSessionSimplePanelProps = Readonly<{
-    popoverBoundaryRef: React.RefObject<View>;
+    popoverBoundaryRef: React.RefObject<View | null>;
     headerHeight: number;
     safeAreaTop: number;
     safeAreaBottom: number;

@@ -55,19 +55,20 @@ function PhoneCaptureSurface(props: Readonly<{ frame: StageFrame }>): React.Reac
     if (!surface) return null;
     const Surface = surface.component;
     const contentId = `demo-stage-frame-${props.frame.id}`;
+    const captureAttributes = { dataSet: {
+        'frame-id': props.frame.id,
+        'viewport-width': String(viewport.width),
+        'viewport-height': String(viewport.height),
+        'safe-area-top': String(insets.top),
+        'safe-area-bottom': String(insets.bottom),
+        'safe-area-left': String(insets.left),
+        'safe-area-right': String(insets.right),
+    } };
     return (
         <View
             testID="demo-stage-phone-screen"
             style={[styles.captureScreen, { backgroundColor: theme.colors.surface.base }]}
-            dataSet={{
-                'frame-id': props.frame.id,
-                'viewport-width': String(viewport.width),
-                'viewport-height': String(viewport.height),
-                'safe-area-top': String(insets.top),
-                'safe-area-bottom': String(insets.bottom),
-                'safe-area-left': String(insets.left),
-                'safe-area-right': String(insets.right),
-            }}
+            {...captureAttributes}
         >
             <React.Suspense fallback={<View testID={`${contentId}-loading`} />}>
                 <View testID={`${contentId}-content`} style={styles.captureScreen}>

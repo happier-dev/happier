@@ -193,7 +193,7 @@ const McpServersStageSurface = React.lazy(loadMcpServersStageSurface);
 
 const loadConnectedServicesStageSurface = cacheStageSurfaceLoader<StageSurfaceModule>(async () => {
     const module = await import('@/components/settings/connectedServices/ConnectedServicesSettingsView');
-    return { default: module.ConnectedServicesSettingsView };
+    return { default: () => React.createElement(module.ConnectedServicesSettingsView) };
 });
 const ConnectedServicesStageSurface = React.lazy(loadConnectedServicesStageSurface);
 

@@ -125,8 +125,10 @@ export function useActivityRuleAudienceScopes(): ReadonlyMap<string, ServerAccou
     return React.useMemo(() => new Map([...bindings].map(([home, binding]) => [home, binding.scope])), [bindings]);
 }
 
+type MountedActivityAttentionSource = ActivityAttentionSource & Required<Pick<ActivityAttentionSource, 'audienceScopes'>>;
+
 /** Summary surfaces never subscribe to or scan detailed transcript messages. */
-export function useActivityAttentionSummarySource(): ActivityAttentionSource {
+export function useActivityAttentionSummarySource(): MountedActivityAttentionSource {
     return useActivityAttentionSourceContext(false);
 }
 
@@ -134,12 +136,12 @@ export function useActivityAttentionSource(options?: Readonly<{
     includeSessionMessages?: boolean;
     detailAddresses?: readonly SessionAddress[];
     changeDetection?: Parameters<typeof createActivityAttentionSourceSelector>[0]['changeDetection'];
-}>): ActivityAttentionSource {
+}>): MountedActivityAttentionSource {
     return useActivityAttentionSourceContext(options?.includeSessionMessages !== false, options?.detailAddresses, options?.changeDetection);
 }
 
 function useActivityAttentionSourceContext(includeSessionMessages: boolean, detailAddresses?: readonly SessionAddress[],
-    changeDetection?: Parameters<typeof createActivityAttentionSourceSelector>[0]['changeDetection']): ActivityAttentionSource {
+    changeDetection?: Parameters<typeof createActivityAttentionSourceSelector>[0]['changeDetection']): MountedActivityAttentionSource {
     const summarySource = storage(useActivityAttentionStoreSelector(includeSessionMessages, detailAddresses, changeDetection));
     const serverProfilesGeneration = React.useSyncExternalStore(
         subscribeServerProfiles,

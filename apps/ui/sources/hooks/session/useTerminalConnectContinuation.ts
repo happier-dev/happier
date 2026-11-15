@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { Router } from 'expo-router';
 import { useAuth } from '@/auth/context/AuthContext';
 import { focusTerminalConnectTarget, prepareTerminalConnect, resolveTerminalConnectLinkState } from '@/auth/terminal/terminalConnectContinuation';
 import { useConnectTerminal } from './useConnectTerminal';
@@ -11,7 +12,7 @@ import { clearPendingTerminalConnect } from '@/sync/domains/pending/pendingTermi
 /** One continuation for both terminal route adapters; approval remains explicit. */
 export function useTerminalConnectContinuation(options: Readonly<{
     request: ParsedTerminalConnectUrl | null;
-    replace: (href: string) => void;
+    replace: Router['replace'];
     onSuccess: () => void;
     onReject: () => void;
     allowLoopbackServerOverride?: boolean;

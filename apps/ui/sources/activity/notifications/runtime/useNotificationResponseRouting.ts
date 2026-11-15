@@ -1,5 +1,6 @@
 import { createActivitySurfaceSessionRoute } from '@/activity/actions/activitySurfaceTargets';
 import { router } from 'expo-router';
+import { resolveHref } from 'expo-router/build/link/href';
 import { withInternalRouteQueryParams } from '@/utils/path/routeUtils';
 import * as React from 'react';
 import { AppState, Platform } from 'react-native';
@@ -367,7 +368,7 @@ export function useNotificationResponseRouting(params: Readonly<{
                 return;
             }
             const routeToServerSettingsForUrl = (url: string) => {
-                openAddHome({ ...router, push: navigateExplicit }, { address: url, source: 'notification' });
+                openAddHome({ ...router, push: href => navigateExplicit(resolveHref(href)) }, { address: url, source: 'notification' });
             };
 
             if (serverUrl) {

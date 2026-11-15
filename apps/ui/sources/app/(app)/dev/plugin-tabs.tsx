@@ -170,7 +170,9 @@ function createFixtureHostApi(context: SurfaceContext, state: FixtureState): Plu
         respondToSessionPermission: async () => ({ status: 'refused', reason: 'sessionUnavailable' }),
         publishCurrentUiContext: () => undefined,
         openSurface: async () => undefined,
+        openResource: unsupported,
         replacePageLocation: unsupported,
+        setPageNavigation: unsupported,
         setUnsavedChanges: unsupported,
         notify: async () => undefined,
         confirm: async () => false,
@@ -178,7 +180,7 @@ function createFixtureHostApi(context: SurfaceContext, state: FixtureState): Plu
         readClipboard: async () => '',
         writeClipboard: async () => undefined,
         openExternalLink: async () => undefined,
-    } as PluginUiHostApi;
+    } satisfies PluginUiHostApi;
 }
 
 /** Triage's session links as the Account Collection returns them: two PRs and an issue, by path. */

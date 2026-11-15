@@ -180,7 +180,7 @@ function WorkspaceCanvas(props: Readonly<{
                 const isActive = tabId === group.activeTabId;
                 const previous = previousMembers.current.get(tabId);
                 // A member keeps its identity while its facts stand, so another tab's write leaves its layer alone.
-                const member = previous && previous.leafId === group.id && previous.isActive === isActive
+                const member: WorkspaceRetainedMember = previous && previous.leafId === group.id && previous.isActive === isActive
                     && previous.target === tab.target && previous.navigation === navigation
                     && previous.phone === phone && previous.catalog === props.catalog
                     ? previous

@@ -859,7 +859,7 @@ describe('cockpit tab bars', () => {
                 terminalTabAvailable={true} onSurfacePress={() => {}} />
         </>;
         const screen = await renderScreen(bar(true));
-        const ids = () => (screen.root.findByType(DropdownMenu).props.items as Array<{ id: string }>).map(item => item.id);
+        const ids = () => screen.root.findByType(DropdownMenu).props.items.map(item => item.id);
         expect(ids().filter(id => id.endsWith('availableOn'))).toHaveLength(1);
         expect(ids().filter(id => id === 'terminal' || id.endsWith(':terminal'))).toEqual(['terminal']);
         // Navigation first, then the page's actions, then Customize.

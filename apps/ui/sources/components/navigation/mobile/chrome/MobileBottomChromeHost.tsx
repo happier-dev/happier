@@ -155,7 +155,7 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
     // Settings' pushed pages keep their own Back and no bar unless Settings is pinned; its own page is a main screen
     // like the others (owner 11-10), decided by the catalog's one root answer.
     const sectionPage = anchorPathname === PHONE_HOME_ROUTE
-        || (routeDestination !== null && (routeDestination.column !== 'settings' || destinationPinned
+        || (routeDestination !== null && (routeDestination.kind !== 'builtin' || routeDestination.column !== 'settings' || destinationPinned
             || (typeof anchorPathname === 'string' && isAppDestinationRootPath(destinationCatalog, anchorPathname))));
     // The root route is shared by the tabs, so the remembered tab answers there; any other page is its own destination,
     // and on one that isn't on the bar (More's Home included) no tab claims to be here.

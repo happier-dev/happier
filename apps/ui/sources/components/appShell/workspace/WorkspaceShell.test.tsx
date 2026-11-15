@@ -14,6 +14,7 @@ import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionEx
 import type { CompactAppDestination, DestinationRef } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { createWorkspaceState, reduceWorkspaceState, type WorkspaceState } from './workspaceState';
 import { registerWorkspaceRouteContext } from './workspaceRouteContext';
+import { createPlainManagedMachinePresetFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
 
 const route = vi.hoisted(() => ({ pathname: '/' }));
 
@@ -77,11 +78,11 @@ function PresetCollectionEntry() {
     const serverId = production[7].storage.getState().profileScope!.serverId;
     return <MachinePresetCollectionSectionView rail selectedKey={null} replacing={false} query=""
         section={{ key: 'presets', serverId, title: null, status: 'idle', rows: [{ kind: 'preset',
-            presetId: 'build', serverId, title: 'Build recipe', audience: 'You', preset: {
+            presetId: 'build', serverId, title: 'Build recipe', audience: 'You', preset: createPlainManagedMachinePresetFixture({
                 id: 'build', homeId: serverId, revision: 1, name: 'Build recipe', owner: { kind: 'account', accountId: 'alice' },
                 controller: { machineId: 'builder', installationId: 'builder-installation' },
                 launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Build box', choices: {} },
-            },
+            }).opened,
         }] }} />;
 }
 function PresetRouteProbe() { return React.createElement('PresetRouteProbe', { door: useMachinesDoor() }); }
