@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import axios from 'axios';
 import { z } from 'zod/mini';
 import tweetnacl from 'tweetnacl';
-import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 
 import type { Credentials, StoredCredentials } from '@/persistence';
 import { decodeBase64, decryptWithDataKey, encryptWithDataKey, encodeBase64, libsodiumPublicKeyFromSecretKey } from '@/api/encryption';
@@ -22,11 +22,22 @@ import {
   listPromptLibrary,
 } from '@happier-dev/protocol';
 
+import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
+import { sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
+import { sealExternalActionRequestV2, openExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { normalizeActionExecuteResult, projectCliActionFailure } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
+import { finiteActionExitCode } from '@/cli/actions/finiteOutcome';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { createCliActionExecutorHarness } from '../createCliActionExecutorHarness';
 import { createCliApprovalsArtifactStore } from './artifactStore';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { encodeAccountArtifactListCursor } from '@/api/artifacts/accountArtifactStore';
 import { ArtifactHttpReadV1Schema, ArtifactHttpHeaderReadV1Schema, ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema,
   ArtifactReadHeadersBatchInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { sealManagedMachinePresetContentV1, projectManagedMachinePresetForRecipientV1, createManagedMachinePresetAcquireOverrideV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import { ManagedAcquireInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createProjectServiceDeclarationTargetIdV1 } from '@happier-dev/protocol/local/services/actions/v1';
@@ -158,19 +169,35 @@ describe('createCliApprovalsArtifactStore', () => {
     expect(signedHeaders).toHaveBeenCalledWith(expect.objectContaining({ method: 'POST', path: '/v1/artifacts' }));
   });
 
-  it('refuses foreign requester approval custody before writing a custodian Artifact', async () => {
-    const actionId = 'notifications.notify_me';
+  it.each((['plain', 'e2ee'] as const).flatMap(mode => (['one-off', 'preset'] as const).map(selection => ({ mode, selection }))))(
+    'settles foreign $mode $selection terminal acquire approval custody before writing a custodian Artifact', async ({ mode, selection }) => {
+    const actionId = 'machines.managed.acquire';
     const target = { kind: 'machine' as const, machineId: 'company-controller' };
-    const envelope = { v: 1 as const, requestId: 'foreign-approval', target, input: { message: 'Review delivery' } };
+    const launch = { provider: { pluginId: 'machine.example', localId: 'vm' }, schemaVersion: 1, name: 'Work VM', choices: {} };
+    const enrollmentIdentity = { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'server', adminAccessAtCreation: 'none' } as const;
+    const controller = { machineId: target.machineId, installationId: 'company-installation' };
+    const retention = { kind: 'until-delete' } as const;
+    const presetId = 'shared-preset';
+    const sealed = sealManagedMachinePresetContentV1({ presetId, mode: 'plain', content: { v: 1, name: 'Shared preset', launch } });
+    const presetContentOverride = createManagedMachinePresetAcquireOverrideV1({ presetId, mode: 'plain', enrollmentIdentity,
+      projection: projectManagedMachinePresetForRecipientV1({ ...sealed, recipientAccountId: 'requester' }) });
+    if (!presetContentOverride) throw new Error('Expected canonical preset override');
+    const input = ManagedAcquireInputV1Schema.parse(selection === 'one-off' ? {
+      enrollmentIdentity, selection: { kind: 'one-off', homeId: 'srv_home', controller, launch, retention, wakeOnAcceptedMessage: false },
+    } : {
+      selection: { kind: 'preset', homeId: 'srv_home', id: presetId, revision: 1 },
+      controller, retention, wakeOnAcceptedMessage: false, presetContentOverride,
+    });
+    const envelope = { v: 1 as const, requestId: 'foreign-approval', target, input };
     const request = ApprovalRequestV2Schema.parse({ v: 2, actionId, status: 'open', summary: 'Review delivery',
       createdAtMs: 1, updatedAtMs: 1, createdBy: { surface: 'cli' }, actionArgs: envelope.input,
       executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
-        accountId: 'requester', serverId: 'home', serverIdentityId: 'home-identity', target,
+        accountId: 'requester', serverId: 'home', serverIdentityId: 'srv_home', target,
         actionId, requestId: envelope.requestId, machineId: target.machineId,
         externalActionInputSignature: 'a'.repeat(86), originalActionEnvelope: envelope,
         externalActionExecutionAuthorization: { v: 1, token: 'home-signed-root', binding: {
-          accountId: 'requester', custodianAccountId: 'company', authentication: { kind: 'account', tokenEpoch: 1 },
-          accountEncryptionMode: 'plain', serverIdentityId: 'home-identity', machineId: target.machineId,
+          accountId: 'requester', custodianAccountId: 'company', authentication: { kind: 'terminal', tokenEpoch: 1 },
+          accountEncryptionMode: 'plain', serverIdentityId: 'srv_home', machineId: target.machineId,
           installationId: 'company-installation', actionId, requestId: envelope.requestId, target,
           requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
         } },
@@ -179,11 +206,91 @@ describe('createCliApprovalsArtifactStore', () => {
     const tokenFor = (accountId: string) => `fixture.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
     mockPost.mockImplementation(async (_url: string, body: Readonly<{ id: string }>) =>
       createdArtifactResponse(body, 'plain', request.executionOriginV1.accountId));
-    const custodian = createStore({ token: tokenFor('company'), encryption: null }, 'plain');
+    const custodianCredentials: StoredCredentials = { token: tokenFor('company'),
+      encryption: mode === 'plain' ? null : createCredentials().encryption };
+    const custodian = createStore(custodianCredentials, mode);
     await expect(custodian.approvalsCreate({ request, serverId: 'home' })).rejects.toMatchObject({ code: 'credential_scope_denied' });
     expect(mockPost).not.toHaveBeenCalled();
-    const requester = createStore({ token: tokenFor('requester'), encryption: null }, 'plain');
-    expect(await requester.approvalsCreate({ request, serverId: 'home' })).toMatchObject({ artifactId: expect.any(String) });
+    const installation = tweetnacl.sign.keyPair();
+    const deliveries: unknown[] = [];
+    const actionsSettings = ActionsSettingsV1Schema.parse({ v: 1,
+      actions: { [actionId]: { approvalRequiredSurfaces: ['cli'] } } });
+    const executorFor = (store: typeof custodian, credentials: StoredCredentials) => createCliActionExecutorHarness({
+      token: credentials.token, credentials, sessionId: 'cli-global', serverId: 'home', serverIdentityId: 'srv_home',
+      serverHttpBaseUrl: 'http://127.0.0.1:24599', runtimeActionMachineId: target.machineId,
+      actionsSettingsProvider: { getActionsSettings: () => actionsSettings, getAccountSettings: () => null },
+    }, {
+      ...createUnavailableActionTransportDeps(), ...store,
+      managedMachineAction: async input => { deliveries.push(input); return { managedId: 'must-not-exist' }; },
+    }).executor;
+    // Home authorization is the ingress boundary. Preparation, origin signing,
+    // approval creation and the custodian's persistent store remain real.
+    const context = { surface: 'cli' as const, authority: 'present_user' as const,
+      serverId: 'home', serverIdentityId: 'srv_home', runtimeAccountId: 'requester',
+      defaultSessionMachineId: target.machineId, externalActionTarget: target,
+      actionRequestId: envelope.requestId, originalActionEnvelope: envelope,
+      externalActionExecutionAuthorization: request.executionOriginV1.externalActionExecutionAuthorization,
+      signExternalActionApprovalInput: input =>
+        signExternalActionApprovalInputV1({ actionId: input.actionId, input: input.input, target: input.target,
+          authorizationToken: input.authorization.token, privateKey: installation.secretKey }),
+    } satisfies import('@happier-dev/protocol').ActionExecutorContext;
+    const executor = executorFor(custodian, custodianCredentials);
+    const prepared = await executor.prepare(actionId, envelope.input, context);
+    expect(prepared, JSON.stringify(prepared)).toMatchObject({
+      kind: 'settled', result: { ok: false, errorCode: 'credential_scope_denied' },
+    });
+    await expect(executor.execute(actionId, envelope.input, context)).resolves.toMatchObject({
+      ok: false, errorCode: 'credential_scope_denied',
+    });
+    const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(45) };
+    const binding = { serverIdentityId: 'srv_home', accountId: 'requester',
+      authentication: { kind: 'terminal' as const, tokenEpoch: 1 }, actionId, requestId: envelope.requestId, target };
+    const wireEnvelope = mode === 'plain' ? envelope : sealExternalActionRequestV2({
+      projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      binding, material, input, randomBytes: tweetnacl.randomBytes,
+    });
+    const authorization = sealManagedControllerActionCodecV1({ authorization: { v: 1 as const, token: 'home-signed-root', binding: { ...binding,
+      machineId: target.machineId, custodianAccountId: 'company', installationId: controller.installationId,
+      accountEncryptionMode: mode, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(wireEnvelope) } },
+      material, installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes });
+    // Home verification and installed keys are external boundaries. The real
+    // receiver chooses its context, executes and seals the typed refusal.
+    const received = await executeExternalAction({ actionId, envelope: wireEnvelope,
+      principal: { accountId: 'requester', authentication: binding.authentication, authority: 'account_automation' },
+      executionAuthorization: authorization, surface: 'cli', currentAccountId: 'company',
+      currentMachineId: target.machineId, currentServerId: binding.serverIdentityId,
+      currentInstallationId: controller.installationId, externalActionMachineRequestPrivateKey: installation.secretKey,
+      verifyExecutionAuthorization: async () => true,
+      resolveEncryption: async () => ({ serverIdentityId: binding.serverIdentityId, material }),
+      resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: tokenFor('company'), encryption: null } }),
+      executor,
+    });
+    expect(received, JSON.stringify(received)).toMatchObject({ kind: 'response' });
+    if (received.kind !== 'response') throw new Error('Expected admitted receiver response');
+    const execution = wireEnvelope.v === 2 ? openExternalActionResponseV2({
+      envelope: received.response, binding, material, request: wireEnvelope,
+    }) : received.response.v === 1 ? received.response.execution : null;
+    expect(execution, JSON.stringify(execution)).toMatchObject({ ok: false, errorCode: 'credential_scope_denied',
+      error: 'credential_scope_denied', requestId: envelope.requestId,
+      failureCause: { errorClass: 'Error', errorCode: 'credential_scope_denied' } });
+    if (!execution || execution.ok) throw new Error('Expected typed custody refusal');
+    const cliFailure = normalizeActionExecuteResult(execution);
+    if (cliFailure.ok) throw new Error('Expected CLI failure projection');
+    expect(projectCliActionFailure(cliFailure)).toMatchObject({ code: 'credential_scope_denied', requestId: envelope.requestId });
+    expect(finiteActionExitCode(cliFailure.errorCode)).toBe(1);
+    // Missing dispatch evidence stays absent; it does not turn a known refusal
+    // into uncertainty at the CLI projection. Native and persistence effects
+    // are asserted independently below.
+    expect(execution.effectAttempted).toBeUndefined();
+    expect(cliFailure.effectAttempted).toBeUndefined();
+    expect(deliveries).toEqual([]);
+    expect(mockPost).not.toHaveBeenCalled();
+    const requesterCredentials = { token: tokenFor('requester'), encryption: null };
+    const requester = createStore(requesterCredentials, 'plain');
+    await expect(executorFor(requester, requesterCredentials).prepare(actionId, envelope.input, context)).resolves.toMatchObject({
+      kind: 'settled', result: { ok: true, result: { kind: 'approval_request_created', artifactId: expect.any(String) } },
+    });
+    expect(deliveries).toEqual([]);
     expect(mockPost).toHaveBeenCalledTimes(1);
   });
   it('places a received Artifact through the real private row transport and refuses stale, cancelled and retired-Home writes', async () => {
