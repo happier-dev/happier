@@ -285,7 +285,7 @@ export function projectAzureIterationChanges(
   const changes = readAzureChangeEntryRows(body) ?? [];
   const projected = projectRows<AzureProjectedChangedFileRowV1>(changes, (raw) => {
     const item = isRecord(raw.item) ? raw.item : {};
-    const path = bounded(item.path, bounds.locationUtf8Bytes);
+    const path = bounded(typeof item.path === 'string' ? item.path.replace(/^\/+/, '') : item.path, bounds.locationUtf8Bytes);
     const changeType = bounded(raw.changeType, bounds.textUtf8Bytes);
     if (path === null || changeType === null) return null;
     const objectId = bounded(item.objectId, bounds.identifierUtf8Bytes);

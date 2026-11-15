@@ -22,6 +22,7 @@
  */
 
 import * as React from 'react';
+import { useTriageDetailFilesCount } from '@happier-dev/triage-sources/ui';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import { splitUnifiedDiffByFile } from '@happier-dev/protocol/diff/splitUnifiedDiffByFile';
 import { parseScmPatchPaths } from '@happier-dev/protocol/scm';
@@ -430,6 +431,7 @@ function DiffPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): 
   const text = usePluginTranslation();
   const controller = useBitbucketDiff(input);
   const { state, raw } = controller;
+  useTriageDetailFilesCount(state);
   const { active } = useTabPanelActivity();
   const [focusPath, setFocusPath] = React.useState<string | null>(null);
   // The page's one refresh re-reads this diff; the panel draws no refresh of its own.

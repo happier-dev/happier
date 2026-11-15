@@ -19,6 +19,7 @@ import {
 import {
   TriageDetailPanelNavigationProvider,
   useTriageDetailPanelOpener,
+  useTriageDetailFilesCount,
 } from './detailPanelNavigation.js';
 
 (
@@ -50,6 +51,38 @@ async function mount(Body: () => React.ReactElement): Promise<PluginUiTestkit> {
 }
 
 describe('the shared detail story for an error group', () => {
+  it.each([
+    { kind: 'loading' as const, canLoadMore: false, incomplete: null, failure: null },
+    { kind: 'ready' as const, canLoadMore: true, incomplete: null, failure: null },
+    { kind: 'ready' as const, canLoadMore: false, incomplete: 'short', failure: null },
+    { kind: 'ready' as const, canLoadMore: false, incomplete: null, failure: 'failed' },
+  ])('does not publish a partial file walk as a total: %j', async (state) => {
+    const answers: Array<number | null> = [];
+    function Files() {
+      useTriageDetailFilesCount({ ...state, rows: ['a'], omittedRowCount: 0 });
+      return <Text value="files" />;
+    }
+    await mount(() => <TriageDetailPanelNavigationProvider navigation={{ panels: ['files'], select() {}, publishFilesCount: count => { answers.push(count); } }}>
+      <Files />
+    </TriageDetailPanelNavigationProvider>);
+    expect(answers).toEqual([null]);
+  });
+  it('publishes completed provider file reads to the frame, and withdraws on retirement', async () => {
+    const answers: Array<number | null> = [];
+    const publishFilesCount = (count: number | null) => { answers.push(count); };
+    function Files() {
+      useTriageDetailFilesCount({ kind: 'ready', rows: ['a', 'b'], omittedRowCount: 0,
+        canLoadMore: false, incomplete: null, failure: null });
+      return <Text value="files" />;
+    }
+    const page = await mount(() => <TriageDetailPanelNavigationProvider navigation={{ panels: ['files'], select() {}, publishFilesCount }}>
+      <Files />
+    </TriageDetailPanelNavigationProvider>);
+    expect(answers).toEqual([2]);
+    await page.dispose();
+    mounted.splice(mounted.indexOf(page), 1);
+    expect(answers).toEqual([2, null]);
+  });
   it('titles ① "What happened" and shows the spread as the step after it', async () => {
     const page = await mount(() => (
       <TriageDetailStory

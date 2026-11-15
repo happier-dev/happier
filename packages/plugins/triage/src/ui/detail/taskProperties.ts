@@ -183,6 +183,8 @@ export type TriageTaskPropertyInputV1 = Readonly<{
   fields: readonly TriageTaskFieldV1[];
   /** The exact current values; a field without a value here is not offered (unknown is not empty). */
   values: Readonly<Partial<TriageTaskFieldsV1>>;
+  /** The source projection owns the provider priority label; edits retain the native value. */
+  priorityLabel?: string;
   /** The task itself, never offered as its own parent or blocker; absent for a draft. */
   self?: TriageEntryRefV1;
   candidates: ReadonlyMap<string, TriageTaskRelationCandidateV1>;
@@ -309,7 +311,7 @@ export function projectTriageTaskPropertiesV1(
       items.push({
         id: field,
         label: label(field),
-        value: current === null ? null : String(current),
+        value: current === null ? null : input.priorityLabel ?? String(current),
         ...busy,
         editor:
           typeof current === 'string'

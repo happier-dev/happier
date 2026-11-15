@@ -69,6 +69,7 @@ export {
 export {
   TriageDetailPanelNavigationProvider,
   useTriageDetailPanelOpener,
+  useTriageDetailFilesCount,
   useTriageDetailFixPullRequestNavigation,
   useTriageDetailFixPullRequestsEmpty,
   type TriageDetailFixPullRequestNavigationV1,

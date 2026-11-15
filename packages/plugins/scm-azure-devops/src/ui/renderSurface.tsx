@@ -29,6 +29,7 @@
  */
 
 import * as React from 'react';
+import { useTriageDetailFilesCount } from '@happier-dev/triage-sources/ui';
 import { AZURE_DEVOPS_PLUGIN_ID } from '../azureDevopsContracts.js';
 import { AZURE_DEVOPS_TRIAGE_DETAIL_RENDERER_ID, AZURE_DEVOPS_TRIAGE_KIND_ID } from '../triage/descriptor.js';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
@@ -480,7 +481,7 @@ function azureFileWebUrl(pullRequestUrl: string | undefined, path: string): stri
   try {
     const url = new URL(pullRequestUrl);
     url.searchParams.set('_a', 'files');
-    url.searchParams.set('path', path);
+    url.searchParams.set('path', path.startsWith('/') ? path : `/${path}`);
     return url.toString();
   } catch {
     return undefined;
@@ -505,6 +506,7 @@ function FilesPanel({
     : undefined;
   const controller = useAzureIterationChanges(input, currentIterationId);
   const { state } = controller;
+  useTriageDetailFilesCount(state);
   const { active } = useTabPanelActivity();
   const loadMore = useTriageSourcePanelPagingV1('files', 'Show more files',
     state.canLoadMore, state.pending, controller.loadMore);

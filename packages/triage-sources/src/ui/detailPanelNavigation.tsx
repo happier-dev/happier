@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
+import type { TriageEntryRefV1, TriagePagedPanelStateV1 } from '@happier-dev/triage-protocol/v1';
 
 import { resolveTriageCrossCopyContext } from './crossCopyContext.js';
 
@@ -38,10 +38,22 @@ export type TriageDetailPanelNavigationV1 = Readonly<{
   select(panel: string): void;
   /** The mounted source alone decides its conditional panels from its current detail reads. */
   publishVisiblePanels?(panels: readonly string[] | null): void;
+  /** Already-read file total, published by the source's file-read owner. */
+  publishFilesCount?(count: number | null): void;
   fixPullRequest?: TriageDetailFixPullRequestNavigationV1;
   /** The fix owner answered with no primary association; navigation readiness is independent. */
   fixPullRequestsEmpty?: boolean;
 }>;
+
+/** A complete file walk supplies the badge without another provider request. */
+export function useTriageDetailFilesCount(state: Pick<TriagePagedPanelStateV1<unknown, unknown, unknown>,
+  'kind' | 'rows' | 'omittedRowCount' | 'canLoadMore' | 'incomplete' | 'failure'>): void {
+  const publish = React.useContext(TriageDetailPanelNavigationContext)?.publishFilesCount;
+  const count = state.kind === 'ready' && !state.canLoadMore && state.incomplete === null && state.failure === null
+    ? state.rows.length + state.omittedRowCount : null;
+  React.useEffect(() => { publish?.(count); }, [publish, count]);
+  React.useEffect(() => () => { publish?.(null); }, [publish]);
+}
 
 /** Publish presentation through the existing frame seam; retirement withdraws this source's answer. */
 export function useTriageDetailPanelVisibility(panels: readonly string[] | undefined): void {

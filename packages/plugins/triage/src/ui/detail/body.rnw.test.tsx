@@ -26,7 +26,7 @@ import {
   type TriageDetailSurfaceInputV1,
 } from '@happier-dev/triage-protocol/v1';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
-import { TriageDetailPanel, useTriageDetailPanelOpener, useTriageDetailFixPullRequestNavigation, type TriageDetailFixPullRequestNavigationV1 } from '@happier-dev/triage-sources/ui';
+import { TriageDetailPanel, useTriageDetailFilesCount, useTriageDetailPanelOpener, useTriageDetailFixPullRequestNavigation, type TriageDetailFixPullRequestNavigationV1 } from '@happier-dev/triage-sources/ui';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { TriageDetailPageLeadProvider, TriageDetailTabbedBody } from './body.js';
@@ -264,6 +264,17 @@ const PR_TABS = planTriageDetailTabsV1({
 });
 
 describe('the tabbed detail body (r0.42)', () => {
+  it('draws the source file count from its existing completed read', async () => {
+    function Source() {
+      useTriageDetailFilesCount({ kind: 'ready', rows: ['a', 'b'], omittedRowCount: 0,
+        canLoadMore: false, incomplete: null, failure: null });
+      return <Text value="files" />;
+    }
+    if (PR_TABS.kind !== 'tabs') throw new Error('Expected tabs');
+    const body = await mountBody(PR_TABS.tabs, <Source />);
+    expect(document.querySelector('[role="tablist"]')?.textContent).toContain('Files2');
+    await body.dispose();
+  });
   it('uses the source’s visible panels and falls back without retiring its retained detail', async () => {
     let mounts = 0;
     let retires = 0;

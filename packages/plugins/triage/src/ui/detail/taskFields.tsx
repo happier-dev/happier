@@ -805,7 +805,9 @@ export function TriageEditTaskScope(props: Readonly<{
   if (assigneeIds.length === 1 && snapshot.assigneeLabel !== undefined && !propertyAssigneeLabels.has(assigneeIds[0]!)) {
     propertyAssigneeLabels.set(assigneeIds[0]!, snapshot.assigneeLabel);
   }
-  const properties = projectTriageTaskPropertiesV1({ fields: editable, values: propertyValues, self: props.row.entryRef, candidates, assigneeLabels: propertyAssigneeLabels, assigneeFace: renderTriageTaskAssigneeFace,
+  const priorityFact = snapshot.facts.find((fact) => fact.id === 'priority');
+  const properties = projectTriageTaskPropertiesV1({
+    ...(priorityFact?.value.kind === 'text' ? { priorityLabel: priorityFact.value.value } : {}), fields: editable, values: propertyValues, self: props.row.entryRef, candidates, assigneeLabels: propertyAssigneeLabels, assigneeFace: renderTriageTaskAssigneeFace,
     ...(props.taskFieldChoices === undefined ? {} : { fieldChoices: props.taskFieldChoices }),
     ...(assigneeDirectory === undefined ? {} : { assigneeDirectory }),
     ...(snapshot.assigneeLabel === undefined ? {} : { assigneeLabel: snapshot.assigneeLabel }),

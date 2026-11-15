@@ -31,6 +31,7 @@
  */
 
 import * as React from 'react';
+import { useTriageDetailFilesCount } from '@happier-dev/triage-sources/ui';
 import { TriageSourceReadFailureDetails } from '@happier-dev/triage-sources/ui';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import { createReviewCommentLinkedIssueIdV1 } from '@happier-dev/plugin-sdk/reviews';
@@ -865,6 +866,7 @@ function ChangesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
     framed.set(row, next);
     return next;
   }) }], [state.rows, framed, text, changesUrl]);
+  useTriageDetailFilesCount(state);
   const files = React.useMemo(() => splitGitlabDiffByFile(rawDiff.state), [rawDiff.state]);
   const diff = React.useMemo<GitlabFilesDiffV1>(() => ({ state: rawDiff.state, load: rawDiff.load, files }),
     [rawDiff.state, rawDiff.load, files]);

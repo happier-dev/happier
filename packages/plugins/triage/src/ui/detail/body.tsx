@@ -115,6 +115,7 @@ function SourceDetailInstance(props: Readonly<{
   overviewTail?: React.ReactNode;
   navigation: TriageDetailPanelNavigationV1;
   publishVisiblePanels(panels: readonly string[] | null): void;
+  publishFilesCount(count: number | null): void;
   /** The phone detail scrolls as one page (D21): source Lists join it instead of owning a bounded scroller. */
   pageScroll?: boolean;
 }>): React.ReactElement {
@@ -128,7 +129,8 @@ function SourceDetailInstance(props: Readonly<{
   const pageScroll = props.pageScroll === true;
   const ownsScroller = !pageScroll && triageDetailPanelOwnsScrollerV1(scrollOwner);
   const navigation = React.useMemo(() => ({ ...props.navigation,
-    publishVisiblePanels: props.publishVisiblePanels }), [props.navigation, props.publishVisiblePanels]);
+    publishVisiblePanels: props.publishVisiblePanels, publishFilesCount: props.publishFilesCount }),
+    [props.navigation, props.publishVisiblePanels, props.publishFilesCount]);
   // The source declares whether its List owns scrolling. Keep ancestry stable across ownership changes so
   // retained panels keep their state and viewport while the frame only bounds source-owned Lists (QB-55/81).
   return (
@@ -187,6 +189,9 @@ export function TriageDetailTabbedBody(props: Readonly<{
   type VisiblePanels = Readonly<{ instanceKey: string; panels: readonly string[] }> | null;
   const [entryPanels, setEntryPanels] = React.useState<VisiblePanels>(null);
   const [fixPanels, setFixPanels] = React.useState<VisiblePanels>(null);
+  type FilesCount = Readonly<{ instanceKey: string; count: number | null }> | null;
+  const [entryFilesCount, setEntryFilesCount] = React.useState<FilesCount>(null);
+  const [fixFilesCount, setFixFilesCount] = React.useState<FilesCount>(null);
   const entryKey = props.entry.instanceKey;
   const fixKey = props.fixPullRequest?.instanceKey;
   const publishEntryPanels = React.useCallback((panels: readonly string[] | null) => {
@@ -194,6 +199,12 @@ export function TriageDetailTabbedBody(props: Readonly<{
   }, [entryKey]);
   const publishFixPanels = React.useCallback((panels: readonly string[] | null) => {
     setFixPanels(panels === null || fixKey === undefined ? null : { instanceKey: fixKey, panels });
+  }, [fixKey]);
+  const publishEntryFilesCount = React.useCallback((count: number | null) => {
+    setEntryFilesCount(previous => previous?.instanceKey === entryKey && previous.count === count ? previous : { instanceKey: entryKey, count });
+  }, [entryKey]);
+  const publishFixFilesCount = React.useCallback((count: number | null) => {
+    setFixFilesCount(previous => fixKey === undefined ? null : previous?.instanceKey === fixKey && previous.count === count ? previous : { instanceKey: fixKey, count });
   }, [fixKey]);
   const tabs = React.useMemo(() => props.tabs.filter((tab) => {
     const answer = tab.from === 'entry' && entryPanels?.instanceKey === entryKey ? entryPanels
@@ -260,6 +271,7 @@ export function TriageDetailTabbedBody(props: Readonly<{
                   overviewTail={props.overviewTail}
                   navigation={navigation}
                   publishVisiblePanels={publishEntryPanels}
+                  publishFilesCount={publishEntryFilesCount}
                   pageScroll={props.pushed === true}
                 />
               </Tabs.Item>
@@ -283,6 +295,7 @@ export function TriageDetailTabbedBody(props: Readonly<{
                       fallback={props.fallback}
                       navigation={navigation}
                       publishVisiblePanels={publishFixPanels}
+                      publishFilesCount={publishFixFilesCount}
                       pageScroll={props.pushed === true}
                     />
                   </Stack>
@@ -301,7 +314,11 @@ export function TriageDetailTabbedBody(props: Readonly<{
       >
         {tabs.map((tab, index) => {
           // The declaring source's own fact, said beside the title ("Checks 2 failing"); absent says nothing.
-          const summary = tab.summary === undefined ? null : readTriageDetailTabSummaryV1(tab.summary, locale);
+          const published = tab.from === 'entry' ? entryFilesCount : fixFilesCount;
+          const count = tab.kind === 'shared' && tab.id === 'files' && published !== null && published.instanceKey === (tab.from === 'entry' ? entryKey : fixKey)
+            ? published.count : null;
+          const value = count == null ? tab.summary : { kind: 'number' as const, value: count, format: 'plain' as const };
+          const summary = value === undefined ? null : readTriageDetailTabSummaryV1(value, locale);
           return (
             <Tabs.Item
               key={tab.frameId}

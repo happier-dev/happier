@@ -12,6 +12,11 @@ const base = {
 };
 
 describe('task properties with a source directory', () => {
+  it('shows the source priority label while preserving its numeric edit value', () => {
+    const items = projectTriageTaskPropertiesV1({ ...base, fields: ['priority'], values: { priority: 2 },
+      priorityLabel: 'High' });
+    expect(items[0]).toMatchObject({ value: 'High', editor: { kind: 'number', value: 2 } });
+  });
   it('offers people and labels as searchable choices, keeping a current value the directory no longer lists', () => {
     const items = projectTriageTaskPropertiesV1({
       ...base,
