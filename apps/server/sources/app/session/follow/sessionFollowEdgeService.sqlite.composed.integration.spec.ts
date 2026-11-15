@@ -8,6 +8,7 @@ import { deriveSessionFollowWakeEventLocalIdV1, SESSION_FOLLOW_WAKE_EVENT_MESSAG
 import type { FollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 
 import { db } from '@/storage/db';
+import { encodeSessionMessageContentForStorage, toPrismaSessionMessageStoredContent } from '@/storage/sessionMessageContent';
 import { inTx, type Tx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { transitionSessionArchiveStateInTx } from '@/app/session/archive/transitionSessionArchiveStateInTx';
@@ -862,13 +863,17 @@ describe('SessionFollowEdge service', () => {
         await expect(inTx((tx) => projectSessionFollowSourceForRunnerInTx(tx, {
             principal, destinationSessionId: destination.id, request: { ...historicalRequest, sourceSessionId: sibling.id },
         }))).resolves.toBeNull();
+        // Stored in the current canonical form: E2EE ciphertext as raw bytes beside JSON null.
+        const currentContent = encryptionMode === 'plain'
+            ? { t: 'plain' as const, v: { role: 'user', content: { type: 'text', text: 'current' } } }
+            : { t: 'encrypted' as const, c: 'Y3VycmVudA==' };
+        const storedCurrent = encodeSessionMessageContentForStorage(currentContent);
         await db.sessionMessage.create({ data: {
             sessionId: source.id,
             seq: 3,
             localId: 'runner-original-3',
-            content: encryptionMode === 'plain'
-                ? { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'current' } } }
-                : { t: 'encrypted', c: 'Y3VycmVudA' },
+            content: toPrismaSessionMessageStoredContent(storedCurrent.content),
+            contentBytes: storedCurrent.contentBytes,
         } });
         await db.session.update({ where: { id: source.id }, data: { seq: 3 } });
         await expect(inTx((tx) => observeSessionFollowForDestinationInTx(tx, {
@@ -895,7 +900,8 @@ describe('SessionFollowEdge service', () => {
         const request = { ...historicalRequest, afterTranscriptSeq: 2, observedTranscriptSeq: 3 };
         await expect(inTx((tx) => projectSessionFollowSourceForRunnerInTx(tx, {
             principal, destinationSessionId: destination.id, request,
-        }))).resolves.toMatchObject({ source: { id: source.id, agentState }, messages: [{ seq: 3, localId: 'runner-original-3' }], hasMore: false });
+        }))).resolves.toMatchObject({ source: { id: source.id, agentState },
+            messages: [{ seq: 3, localId: 'runner-original-3', content: currentContent }], hasMore: false });
 
         // Stored transcript reads preserve historical ids; only original
         // admission applies the current Pending identity grammar.

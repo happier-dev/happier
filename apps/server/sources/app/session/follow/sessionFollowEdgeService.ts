@@ -38,6 +38,7 @@ import {
 } from "@/app/session/access/sessionContextInjection";
 import { AccountStatus } from "@/storage/prisma";
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
+import { decodeStoredSessionMessage, decodeStoredSessionMessages } from '@/storage/sessionMessageContent';
 import { isApiTokenGrantRestrictedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
 import { acquireSessionAccountCursorLocksInTx } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
@@ -284,18 +285,18 @@ export async function projectSessionFollowSourceForRunnerInTx(
     } }, select: { status: true, transcriptAnchorsJson: true, lastRuntimeIssueJson: true } }) : null;
     if (sourceTurn && turn?.status !== sourceTurn.status) return null;
     const finalAssistantMessageSeq = turn ? parseStoredSessionTurnTranscriptAnchors(turn.transcriptAnchorsJson)?.finalAssistantMessageSeq : null;
-    const messageSelect = { seq: true, localId: true, content: true, messageRole: true, createdAt: true,
+    const messageSelect = { seq: true, localId: true, content: true, contentBytes: true, messageRole: true, createdAt: true,
         inputAdmissionReceipt: true, authorAccountId: true } as const;
     const terminalMessage = sourceTurn && finalAssistantMessageSeq != null
-        ? await tx.sessionMessage.findFirst({ where: {
+        ? decodeStoredSessionMessage(await tx.sessionMessage.findFirst({ where: {
             sessionId: source.id, seq: finalAssistantMessageSeq,
-        }, select: { ...messageSelect, sidechainId: true } }) : null;
+        }, select: { ...messageSelect, sidechainId: true } })) : null;
     if (terminalMessage) {
         const content = SessionStoredMessageContentSchema.safeParse(terminalMessage.content);
         if (!content.success || (source.encryptionMode === 'plain') !== (content.data.t === 'plain')) return null;
     }
     const fetched = sourceTurn ? terminalMessage && terminalMessage.sidechainId === null && terminalMessage.messageRole === 'agent'
-        ? [terminalMessage] : [] : await tx.sessionMessage.findMany({
+        ? [terminalMessage] : [] : decodeStoredSessionMessages(await tx.sessionMessage.findMany({
         where: {
             sessionId: source.id,
             seq: { gt: input.request.afterTranscriptSeq, lte: input.request.observedTranscriptSeq },
@@ -303,7 +304,7 @@ export async function projectSessionFollowSourceForRunnerInTx(
         select: messageSelect,
         orderBy: { seq: 'asc' },
         take: input.request.limit + 1,
-    });
+    }));
     const hasMore = !sourceTurn && fetched.length > input.request.limit;
     const page = fetched.slice(0, input.request.limit);
     const accountActors = await projectSessionMessageAccountActors(tx, page);
