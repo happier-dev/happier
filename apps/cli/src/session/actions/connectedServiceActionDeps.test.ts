@@ -652,7 +652,8 @@ describe('native connected-service Action adapter', () => {
     const peer = { service, accountId: 'other' };
     const ambiguousAccounts = [{ service, accountId: 'folder%2Faccount' }, { service, accountId: 'folder/account' }];
     const raw = { futurePreference: 'retained', dismissedCLIWarnings: { global: { unrelated: false }, perMachine: { machine: { unrelated: true } } },
-      connectedServicesProfileLabelByKey: { 'openai-codex/folder%2Faccount': 'Ambiguous source label' },
+      connectedServicesProfileLabelByKey: { 'openai-codex/default': 'Delete legacy label',
+        'openai-codex/folder%2Faccount': 'Ambiguous source label' },
       connectedServicesCollapsedItemKeysV1: { 'happier.agent.codex/openai-codex:account:default': true,
         'openai-codex:account:default': false, 'openai-codex:pool:work-team:default': true,
         'openai-codex:account:other': false, 'opaque-predecessor-key': true } };
@@ -721,16 +722,15 @@ describe('native connected-service Action adapter', () => {
         deleted = true;
         return { status: 'revoked', account, remoteStatus: 'remoteRevoked' };
       } });
-    const expectedSource = { ...raw, connectedServicesCollapsedItemKeysV1: {
-      // Conflicting aliases for the same account stay opaque; the independently
-      // proven group-member key is still removable after the definite receipt.
-      'happier.agent.codex/openai-codex:account:default': true,
-      'openai-codex:account:default': false,
-      'openai-codex:account:other': false, 'opaque-predecessor-key': true,
+    const expectedSource = { ...raw, connectedServicesProfileLabelByKey: {
+      // Remove the qualified legacy label; ambiguous labels and the retired
+      // disclosure carrier remain opaque to the metadata owner (fe44eeea624).
+      'openai-codex/folder%2Faccount': 'Ambiguous source label',
     } };
     const prepared = await createCliConnectedMetadataStore({ credentials, operationContext,
       authorizeRequest: () => ({ Authorization: 'Bearer historical-delete' }) }).prepareCleanup({ kind: 'account', account });
-    expect(prepared).toMatchObject({ raw: expectedSource, expectedVersion: 7, mode: 'plain', incomplete: true });
+    expect(prepared).toMatchObject({ expectedVersion: 7, mode: 'plain', incomplete: true });
+    expect(prepared.raw).toEqual(expectedSource);
     expect(await action({ actionId: 'connectedServices.accounts.revoke', input: { account, machineId: 'machine', cleanupGroupReferences: false },
       context: { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } } })).toMatchObject({
       status: 'revoked', account, metadataCleanup: { status: 'cleanup-pending' },
@@ -1236,12 +1236,14 @@ describe('native connected-service Action adapter', () => {
     currentRevision = 'csr_zyxwvutsrqponmlkjihgfe';
     expect(await executor.execute('approval.request.decide', { artifactId: 'credential-revoke-review', decision: 'approve' }, {
       ...context, surface: 'ui', actionRequestId: 'credential-review:decision',
-    })).toMatchObject({ ok: true, result: { status: 'executed', execution: {
-      ok: true, result: { status: 'conflict', code: 'connect_credential_mutation_superseded' },
+    })).toMatchObject({ ok: true, result: { status: 'failed', execution: {
+      ok: false, errorCode: 'connect_credential_mutation_superseded',
     } } });
     expect(reviewedInput).toEqual({ ...input, expectedCredentialRevision: presentedRevision });
     expect(nativeEffectIssued).toBe(false);
     expect(requests.at(-1)).toMatchObject({ request: { command: { operation: 'revokeAccount', expectedCredentialRevision: presentedRevision } } });
+    // One admission describe and one admitted revoke; replay must not re-prepare.
+    expect(requests).toHaveLength(2);
     const initialApproval = createdApprovals[0];
     if (!initialApproval) throw new Error('Missing initial approval Artifact');
     storedApproval = { ...initialApproval, actionArgs: input };

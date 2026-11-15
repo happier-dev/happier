@@ -431,7 +431,7 @@ describe('MCP compiled CLI sign-in journey', () => {
         authorizationUrl: 'https://issuer.example.test/authorize?state=attempt.nonce' } });
       return;
     }
-    expect(commands).toContainEqual({ machineId: 'machine', command: { operation: 'completeOAuth', attemptId: 'attempt',
+    expect(commands).toContainEqual({ command: { operation: 'completeOAuth', attemptId: 'attempt',
       completion: { code: 'returned-code', state: 'attempt.nonce', callbackUrl: mode.callbackUrl, iss: 'https://issuer.example.test' } } });
     expect(configurationValues).toMatchObject({ serverId: 'server-id', resource: 'https://resource.example.test/mcp', stepUp: argv.includes('--step-up') });
     if (argv.includes('--client-id') || argv.some(value => value.includes('person-app'))) {
@@ -443,8 +443,8 @@ describe('MCP compiled CLI sign-in journey', () => {
       expect(removedAppAdmitted).toBe(true);
       expect(configurationValues.registrations).toEqual({});
     }
-    expect(commands).toContainEqual({ machineId: 'machine', command: { operation: 'read', attemptId: 'attempt', waitForProviderStart: true } });
-    expect(commands).toContainEqual({ machineId: 'machine', command: { operation: 'cancel', attemptId: 'attempt' } });
+    expect(commands).toContainEqual({ command: { operation: 'read', attemptId: 'attempt', waitForProviderStart: true } });
+    expect(commands).not.toContainEqual(expect.objectContaining({ command: expect.objectContaining({ operation: 'cancel' }) }));
     expect(log.mock.calls.some(args => args.some(value => typeof value === 'string' && value.includes('https://issuer.example.test/authorize')))).toBe(true);
   });
 });
