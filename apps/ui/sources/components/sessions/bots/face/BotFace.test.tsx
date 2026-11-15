@@ -665,3 +665,21 @@ it('reads the Bot default only for inheriting faces and leaves explicit and unre
     expect(screen.findAllByType(BotFace).map(node => node.props.style)).toEqual(['dots', 'dots']);
   } finally { await screen.unmount(); storage.setState(before, true); }
 });
+
+it.each([3, 12])('hides %s resting Lively faces in the commit that hides them, with no follow-up reset render', async (count) => {
+  let commits = 0;
+  const faces = (visible: boolean) => (
+    <React.Profiler id="faces" onRender={() => { commits += 1; }}>
+      {Array.from({ length: count }, (_, index) => (
+        <BotFace key={index} identity={{ ...identity, seed: index }} style="solid" size={24} mood="quiet" visible={visible} motion motionMode="lively" />
+      ))}
+    </React.Profiler>
+  );
+  const screen = await mount(faces(true));
+  // Let any appearance moment finish: the faces are at rest.
+  await act(async () => { advance(5000); });
+  commits = 0;
+  await screen.update(faces(false));
+  await act(async () => {});
+  expect(commits).toBe(1);
+});

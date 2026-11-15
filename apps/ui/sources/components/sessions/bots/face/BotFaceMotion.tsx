@@ -112,7 +112,10 @@ export function BotFaceMotion(props: Readonly<{
   restingMouth.current = props.mood;
   const displayedMouth = React.useRef(props.mood);
   const frameRef = React.useRef<ReturnType<typeof useFrameCallback> | null>(null);
-  const [brainState, setBrainLook] = React.useState<BotFaceLook | 'loop'>(BOT_FACE_LOOK_REST);
+  const brainMode = activityEligible && (props.mode === 'lively' || props.mode === 'reactions') ? props.mode : null;
+  const [heldBrainState, setBrainLook] = React.useState<BotFaceLook | 'loop'>(BOT_FACE_LOOK_REST);
+  // Without a brain the face rests; the held look is the next brain's to replace, so releasing one is not a render.
+  const brainState = brainMode ? heldBrainState : BOT_FACE_LOOK_REST;
   const looping = brainState === 'loop';
   const seed = props.identity ?? 0;
   const turns = props.turns;
@@ -122,12 +125,16 @@ export function BotFaceMotion(props: Readonly<{
   const live = pose !== null || playing || mouths.from !== mouths.to;
   const brainLook = brainState !== 'loop' ? brainState : loop && live ? botFaceLoopLookAt(loop, seed, Date.now()) : BOT_FACE_LOOK_REST;
   const brainSlide = useSharedValue({ x: 0, y: 0 });
+  // A face already at rest keeps its mouths: hiding or finishing it is not another render.
+  const restMouths = React.useCallback((current: Readonly<{ from: BotFaceMood; to: BotFaceMood }>) =>
+    current.from === restingMouth.current && current.to === restingMouth.current
+      ? current : { from: restingMouth.current, to: restingMouth.current }, []);
   const finish = React.useCallback(() => {
     setPlaying(false);
     setPose(null);
     setLook(0);
     displayedMouth.current = restingMouth.current;
-    setMouths({ from: restingMouth.current, to: restingMouth.current });
+    setMouths(restMouths);
     frameRef.current?.setActive(false);
   }, []);
   const frame = useFrameCallback(info => {
@@ -173,12 +180,13 @@ export function BotFaceMotion(props: Readonly<{
       elapsed.set(0);
       currentPose.set(BOT_FACE_REST);
       lastPose.set(null);
-      setPose(null);
       lastLook.set(0);
-      setLook(0);
-      setPlaying(false);
       displayedMouth.current = restingMouth.current;
-      setMouths({ from: restingMouth.current, to: restingMouth.current });
+      // A face already at rest is not rendered again to be hidden: reset only what a moment left behind.
+      if (pose !== null) setPose(null);
+      if (look !== 0) setLook(0);
+      if (playing) setPlaying(false);
+      if (mouths.from !== restingMouth.current || mouths.to !== restingMouth.current) setMouths(restMouths);
       if (!presented) restingFade.set(1);
     }
     frame.setActive(eligible && playing);
@@ -221,7 +229,7 @@ export function BotFaceMotion(props: Readonly<{
     if (reaction.get() === null) {
       const before = displayedMouth.current;
       displayedMouth.current = props.mood;
-      setMouths({ from: before, to: props.mood });
+      if (mouths.from !== before || mouths.to !== props.mood) setMouths({ from: before, to: props.mood });
       const fade = presented && before !== props.mood;
       restingFade.set(fade ? 0 : 1);
       if (fade) restingFade.set(withTiming(1, { duration: botFaceMotionTokens.stillCrossFadeMs }));
@@ -233,7 +241,6 @@ export function BotFaceMotion(props: Readonly<{
    * `setMood`, so a state change keeps its springs (no jump back to centre).
    */
   const brain = React.useRef<BotFaceBrainHandle | null>(null);
-  const brainMode = activityEligible && (props.mode === 'lively' || props.mode === 'reactions') ? props.mode : null;
   React.useEffect(() => {
     if (!brainMode) return;
     const handle = registerBotFaceBrain({
@@ -266,7 +273,6 @@ export function BotFaceMotion(props: Readonly<{
       host?.removeEventListener('blur', onBlur);
       handle.release();
       brain.current = null;
-      setBrainLook(BOT_FACE_LOOK_REST);
     };
   }, [brainMode, reaction, seed, turns]);
   const seenMood = React.useRef(props.mood);
