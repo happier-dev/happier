@@ -18,6 +18,10 @@ export function parseToolUseError(message: unknown): {
         if (typeof errorMessage === 'string' && errorMessage.trim()) {
             return { isToolUseError: false, errorMessage };
         }
+        const failureReason = record.failureReason;
+        if (typeof failureReason === 'string' && failureReason.trim()) {
+            return { isToolUseError: false, errorMessage: failureReason };
+        }
         // Pre-canonical native title failures remain in stored histories (and
         // the 0.2 producer). Translate only this observed Action error shape;
         // current writers supply errorMessage above, never diagnostic JSON.

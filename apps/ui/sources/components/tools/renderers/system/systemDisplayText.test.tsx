@@ -3,8 +3,30 @@ import { describe, expect, it } from 'vitest';
 import { makeToolCall, makeToolViewProps, renderScreen } from '@/dev/testkit';
 import { TranscriptFindProvider } from '@/components/sessions/transcript/find/TranscriptFindContext';
 import { createTranscriptFindRowStore } from '@/components/sessions/transcript/find/transcriptFindRowStore';
+import { BashView, projectBashDisplayText } from './BashView';
 
 describe('system tool display text', () => {
+    const failureReason = 'environment failure: sandbox enforcement unavailable; install bwrap.\nDo not retry: the command was never started.';
+    it.each([
+        { status: 'failed', failureReason, _raw: { secret: 'hidden diagnostic' } },
+        failureReason,
+    ])('renders a Bash failure and its Find match through the same display text', async (result) => {
+        const tool = makeToolCall({ name: 'Bash', state: 'error', input: { command: 'echo hi' }, result });
+        const blocks = projectBashDisplayText(tool);
+        expect(blocks.find((block) => block.id === 'tool-error')?.text).toBe(failureReason);
+        expect(blocks.map((block) => block.text).join('\n')).not.toContain('hidden diagnostic');
+        const store = createTranscriptFindRowStore();
+        const start = failureReason.indexOf('bwrap');
+        store.publish(new Map([['bash-error', { blocks: [{ id: 'tool-error', sourceRanges: [{ start, end: start + 'bwrap'.length, current: true }] }] }]]));
+        const screen = await renderScreen(<TranscriptFindProvider store={store}><BashView {...makeToolViewProps(tool, { messageId: 'bash-error', detailLevel: 'full' })} /></TranscriptFindProvider>);
+        expect(screen.getTextContent()).toContain('environment failure: sandbox enforcement unavailable; install');
+        expect(screen.getTextContent()).toContain('Do not retry: the command was never started.');
+        expect(screen.getTextContent()).not.toContain('hidden diagnostic');
+        const highlighted = screen.findAllHostsByTestId('find-match-current');
+        expect(highlighted).toHaveLength(1);
+        expect(highlighted[0].props.children).toBe('bwrap');
+    });
+
     it('paints a full running Bash output match using its actual command renderer', async () => {
         const { BashView } = await import('./BashView');
         const stdout = 'needle\n' + 'x'.repeat(9000);

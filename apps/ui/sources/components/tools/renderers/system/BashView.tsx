@@ -11,6 +11,7 @@ import { t } from '@/text';
 import type { ToolViewProps } from '../core/_registry';
 import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
 import { ToolFindText, useToolFindState } from '../core/ToolFindText';
+import { parseToolUseError } from '@/utils/errors/toolErrorParser';
 
 function getBashDisplay(tool: ToolCall, full: boolean) {
     const { input, result, state } = tool;
@@ -38,8 +39,8 @@ function getBashDisplay(tool: ToolCall, full: boolean) {
                 unparsedOutput = JSON.stringify(parsedMaybe);
             }
         }
-    } else if (state === 'error' && typeof result === 'string') {
-        error = result;
+    } else if (state === 'error') {
+        error = typeof result === 'string' ? result : parseToolUseError(result).errorMessage;
     }
 
     const stdout = parsedStreams?.stdout || unparsedOutput;

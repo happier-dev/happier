@@ -3,6 +3,12 @@ import { parseToolUseError } from './toolErrorParser';
 
 describe('toolErrorParser', () => {
     describe('parseToolUseError', () => {
+        it('reads the native execution failure reason without exposing diagnostic metadata', () => {
+            const failureReason = 'environment failure: sandbox enforcement unavailable; install bwrap.\nDo not retry: the command was never started.';
+            expect(parseToolUseError({ status: 'failed', failureReason, _raw: { secret: 'hidden diagnostic' } }))
+                .toEqual({ isToolUseError: false, errorMessage: failureReason });
+        });
+
         it('reads the canonical typed tool error without exposing diagnostic metadata', () => {
             const result = parseToolUseError({
                 errorMessage: 'target_unavailable', errorCode: 'change_title_failed',
