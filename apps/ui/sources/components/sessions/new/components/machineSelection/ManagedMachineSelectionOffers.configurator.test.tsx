@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { renderHook } from '@/dev/testkit';
+import { createMachineFixture, renderHook, standardCleanup } from '@/dev/testkit';
+import { act } from 'react-test-renderer';
+import { storage } from '@/sync/domains/state/storage';
+import { createMachineMetadataFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { Modal } from '@/modal';
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { createPlainManagedMachinePresetFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
+import { observeMachinePresenceForTest, publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 
 /**
  * The configurator outlives the picker that opened it (lab m-pick): the host closes first, then the
@@ -38,6 +43,7 @@ function binding(current = true): ServerCredentialAccountScopeBinding {
     accountId: 'account-a',
     serverId: 'server-a',
     revision: 1,
+    scope: { serverId: 'server-a', accountId: 'account-a' },
     isCurrent: () => current,
     onRetire: () => Object.freeze({ dispose(): void {} }),
   } as unknown as ServerCredentialAccountScopeBinding;
@@ -141,7 +147,45 @@ describe('useManagedMachineConfigurator', () => {
   });
 });
 
+/** Where the offer's cost column says a local machine runs: the controller's current name. */
+const runsOn = (offer: { cost?: unknown }) => (offer.cost as { props?: { runsOn?: string } } | undefined)?.props?.runsOn;
+
 describe('useManagedMachineSelectionOffers', () => {
+  it('disables only an assigned-controller preset while its controller is unavailable and recovers on presence', async () => {
+    const { useManagedMachineSelectionOffers } = await import('./ManagedMachineSelectionOffers');
+    const accountBinding = binding();
+    const presetInput = {
+      id: 'preset-a', homeId: 'home-a', revision: 1, name: 'Build box',
+      owner: { kind: 'account', accountId: 'account-a' },
+      launch: { provider: { pluginId: 'acme', localId: 'acme' }, schemaVersion: 1, name: 'Guest', choices: {} },
+      controller: { machineId: 'machine-a', installationId: 'installation-a' },
+    } as const;
+    const preset = createPlainManagedMachinePresetFixture(presetInput).opened;
+    const poolPreset = createPlainManagedMachinePresetFixture({ ...presetInput, id: 'pool-preset', controller: undefined, controllerPoolId: 'pool-a' }).opened;
+    const accountPreset = createPlainManagedMachinePresetFixture({ ...presetInput, id: 'account-preset', controller: undefined }).opened;
+    const presets = [preset, poolPreset, accountPreset];
+    const beforeState = storage.getState();
+    const machine = createMachineFixture({ id: 'machine-a', installationId: 'installation-a', active: false,
+      activeAt: 1, metadata: createMachineMetadataFixture({ displayName: 'Mac Studio' }) });
+    storage.getState().applyMachines([machine], true, { sourceServerId: 'server-a', sourceAccountId: 'account-a' });
+    const configure = vi.fn();
+    const hook = await renderHook(() => useManagedMachineSelectionOffers({ homeId: 'home-a', binding: accountBinding,
+      serverId: 'server-a', presets, configure }));
+    try {
+      expect(hook.getCurrent()[0]).toMatchObject({ disabled: true, unavailableText: expect.any(String) });
+      expect(hook.getCurrent()[0]!.unavailableText).toContain('Mac Studio');
+      expect(hook.getCurrent().slice(1).every(offer => offer.disabled !== true)).toBe(true);
+      await act(async () => {
+        publishMachineActivityForTest([machine], { active: true, activeAt: Date.now() });
+        observeMachinePresenceForTest(accountBinding.scope, [machine.id]);
+      });
+      expect(hook.getCurrent()[0]!.disabled).not.toBe(true);
+      await act(async () => storage.getState().applyMachines([{ ...machine, installationId: 'replacement' }], false,
+        { sourceServerId: 'server-a', sourceAccountId: 'account-a' }));
+      expect(hook.getCurrent()[0]!.disabled).toBe(true);
+    } finally { await hook.unmount(); standardCleanup(); storage.setState(beforeState, true); }
+  });
+
   it('keeps the offers identity across a machine list change that leaves the controller name alone', async () => {
     const { useManagedMachineSelectionOffers } = await import('./ManagedMachineSelectionOffers');
     const accountBinding = binding();
@@ -152,23 +196,27 @@ describe('useManagedMachineSelectionOffers', () => {
     } as unknown as import('@happier-dev/protocol/machines/managed/managedMachinePresetV1').ManagedMachinePresetV1;
     const presets = [preset];
     const configure = vi.fn();
-    const machine = (activeAt: number, displayName = 'Mac Studio') =>
-      ({ id: 'machine-a', activeAt, metadata: { displayName, host: 'mac' } });
-    const hook = await renderHook(
-      (props: Readonly<{ machines: readonly unknown[] }>) => useManagedMachineSelectionOffers({
-        homeId: 'home-a', binding: accountBinding, serverId: 'server-a', presets,
-        machines: props.machines as never, configure,
-      }),
-      { initialProps: { machines: [machine(1)] } },
-    );
-    const before = hook.getCurrent();
-    expect(before.map(offer => offer.subtitle)).toContain('Mac Studio');
-    await hook.rerender({ machines: [machine(2)] });
-    // A presence tick changes the list's identity, not what an offer shows.
-    expect(hook.getCurrent()).toBe(before);
-    await hook.rerender({ machines: [machine(3, 'Renamed Mac')] });
-    const renamed = hook.getCurrent();
-    expect(renamed).not.toBe(before);
-    expect(renamed.map(offer => offer.subtitle)).toContain('Renamed Mac');
+    const beforeState = storage.getState();
+    const machine = createMachineFixture({ id: 'machine-a', metadata: createMachineMetadataFixture({ displayName: 'Mac Studio', host: 'mac' }) });
+    storage.getState().applyMachines([machine], true, { sourceServerId: 'server-a' });
+    let renders = 0;
+    const hook = await renderHook(() => {
+      renders++;
+      return useManagedMachineSelectionOffers({ homeId: 'home-a', binding: accountBinding,
+        serverId: 'server-a', presets, configure });
+    });
+    try {
+      const before = hook.getCurrent();
+      expect(before.map(runsOn)).toContain('Mac Studio');
+      const initialRenders = renders;
+      for (let tick = 1; tick <= 10; tick++) await act(async () => {
+        storage.getState().applyMachines([{ ...machine, activeAt: machine.activeAt + tick }], false, { sourceServerId: 'server-a' });
+      });
+      expect(renders).toBe(initialRenders);
+      expect(hook.getCurrent()).toBe(before);
+      await act(async () => storage.getState().applyMachines([{ ...machine,
+        metadata: { ...machine.metadata!, displayName: 'Renamed Mac' } }], false, { sourceServerId: 'server-a' }));
+      expect(hook.getCurrent().map(runsOn)).toContain('Renamed Mac');
+    } finally { await hook.unmount(); standardCleanup(); storage.setState(beforeState, true); }
   });
 });

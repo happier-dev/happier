@@ -28,10 +28,12 @@ export type ManagedMachineSelectionOffer = Readonly<{
     /** A saved preset, or the one-off configuration entry. */
     kind?: 'preset' | 'one-off';
     title: string;
-    /** Controller/Keep facts only; prices belong to the shared reviewed receipt. */
+    /** What it makes and its Keep it rule (lab m-pick: "CX32 · Falkenstein · Until I delete it"). */
     subtitle?: string;
     /** A preset's provider mark; the one-off entry has none. */
     mark?: ReactNode;
+    /** The right-hand cost column ("No bill · Runs on devbox", a returned price); nothing when unpriced. */
+    cost?: ReactNode;
     draft?: ManagedMachineSelectionDraft;
     disabled?: boolean;
     unavailableText?: string;
@@ -95,8 +97,9 @@ export function buildManagedMachineSelectionOffers(params: Readonly<{
     presets: readonly ManagedMachinePresetListEntryV1[];
     oneOffTitle: string;
     oneOffSubtitle?: string;
-    describeController?: (preset: OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1) => string | undefined;
+    describeOffer?: (preset: OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1) => string | undefined;
     markFor?: (preset: OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1) => ReactNode;
+    costFor?: (preset: OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1) => ReactNode;
     onConfigure: (preset: (OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1) | null) => void;
 }>): readonly ManagedMachineSelectionOffer[] {
     return [...params.presets.filter((preset): preset is OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1 =>
@@ -106,8 +109,9 @@ export function buildManagedMachineSelectionOffers(params: Readonly<{
         presetId: preset.id,
         kind: 'preset' as const,
         title: preset.name,
-        subtitle: params.describeController?.(preset),
+        subtitle: params.describeOffer?.(preset),
         ...(params.markFor ? { mark: params.markFor(preset) } : {}),
+        ...(params.costFor ? { cost: params.costFor(preset) } : {}),
         onSelect: () => params.onConfigure(preset),
     })), {
         id: `managed-machine:${params.homeId}:one-off`, homeId: params.homeId, kind: 'one-off' as const,

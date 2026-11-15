@@ -765,6 +765,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                         : offer.subtitle),
                     // A preset carries its provider's mark; "One-off machine…" reads as making a new one.
                     icon: offer.mark ?? <Icon name={offer.kind === 'one-off' ? 'plus-circle' : 'stack'} size={24} color={theme.colors.text.secondary} />,
+                    ...(offer.cost ? { rightAccessory: offer.cost } : {}),
                     disabled: offer.disabled === true || (offer.draft
                         ? !hasSelectManagedMachine
                         : !offer.onSelect),

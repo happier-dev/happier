@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildManagedConfigurationReceipt, describeManagedConfigurationSummary, formatManagedSizeBytes, describeLocalHeadroom, managedCredentialReceiptTargets } from './managedConfigurationPresentation';
+import { buildManagedConfigurationReceipt, describeManagedConfigurationSummary, describeManagedPresetOffer, formatManagedSizeBytes, describeLocalHeadroom, managedCredentialReceiptTargets, presentManagedPresetCost } from './managedConfigurationPresentation';
 import { ValidatedLaunchSnapshotV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { presentQualifiedConnectedAccountTarget } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 import { t } from '@/text';
-import { presentManagedCost } from './managedMachineDisplay';
-import { describeRetention, formatRetentionDuration } from './managedRetentionPresentation';
+import { formatPriceSource, presentManagedCost } from './managedMachineDisplay';
+import { describeRetention, describeRetentionPolicy, formatRetentionDuration } from './managedRetentionPresentation';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { describeApprovalActionFields } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 
@@ -30,29 +30,72 @@ describe('the phone summary of a configuration', () => {
         expect(describeManagedConfigurationSummary(reviewedFacts)).toBeNull();
     });
 });
+describe('a preset offered as a new machine in the picker (lab m-pick)', () => {
+    const nativeFacts = { size: { id: 'cx32', title: 'CX32', cpuCores: 4 }, image: { id: 'ubuntu', title: 'Ubuntu 24.04' },
+        location: { id: 'fsn1', title: 'Falkenstein', countryCode: 'DE' } };
+    const stopUnused = { kind: 'unused' as const, afterMs: 3_600_000, effect: 'stop' as const };
+    it('says its reviewed size and place, then the Keep it rule the preset sets now', () => {
+        expect(describeManagedPresetOffer({ reviewedFacts: { ...reviewedFacts, nativeFacts }, retention: stopUnused, wakeOnAcceptedMessage: true }))
+            .toBe(['CX32', 'Falkenstein', describeRetentionPolicy({ retention: stopUnused, wakeOnAcceptedMessage: true })].join(' · '));
+    });
+    it('says only its Keep it rule when nothing reviewed describes its size', () => {
+        expect(describeManagedPresetOffer({ retention: { kind: 'until-delete' } })).toBe(t('managedRetention.untilDelete'));
+    });
+    it('never repeats the Keep rule captured at review once the preset follows the defaults', () => {
+        expect(describeManagedPresetOffer({ reviewedFacts: { ...reviewedFacts, nativeFacts } })).toBe('CX32 · Falkenstein');
+        expect(describeManagedPresetOffer({})).toBeUndefined();
+    });
+    it('costs No bill on the computer that runs it, a returned price with when it was read, and nothing it cannot know', () => {
+        const local = { location: 'local' as const, stoppedBilling: 'not-billed' as const };
+        expect(presentManagedPresetCost({ billing: local, provider: 'Lima', runsOn: 'Mac Studio' })).toEqual({
+            value: t('managedMachines.price.noBill'), detail: t('managedMachines.price.runsOn', { computer: 'Mac Studio' }) });
+        const price = reviewedFacts.prices[0]!;
+        const headline = presentManagedCost({ kind: 'price', prices: [price] });
+        expect(presentManagedPresetCost({ prices: [price], billing: reviewedFacts.billing, provider: 'Hetzner' })).toEqual({
+            value: `${headline.value} ${headline.unit}`, detail: formatPriceSource(price, null) });
+        // A cloud machine without a returned price shows no figure: never a guess (lab m-pick Truth).
+        expect(presentManagedPresetCost({ billing: reviewedFacts.billing, provider: 'Hetzner' })).toBeNull();
+    });
+});
 describe('one managed configuration receipt projection', () => {
-    it('keeps declared saved choices alongside partial native facts, with field labels and sensitive values withheld', () => {
+    it('lists saved choices only under their declared titles, with sensitive values withheld, when no native facts describe them', () => {
         const saved = { ...launch, choices: { image: 'https://images.example/saved.img', store: '/saved/virtual-machines',
-            memory: 4 * 1024 ** 3, region: 'west', token: 'private-saved-token', enabled: false } };
+            memory: 4 * 1024 ** 3, region: 'west', token: 'private-saved-token', enabled: false, arch: 'x86_64' } };
+        const schema = { type: 'object', properties: { image: { type: 'string' }, store: { type: 'string' },
+            memory: { type: 'integer' }, region: { type: 'string' }, token: { type: 'string' }, missingFlag: { type: 'boolean' },
+            enabled: { type: 'boolean' }, arch: { type: 'string', title: 'Architecture' } } };
         const receipt = buildManagedConfigurationReceipt({ launch: saved, providerTitle: 'Compute',
-            reviewedFacts: { ...reviewedFacts, launch: saved, nativeFacts: { image: { id: 'friendly', title: 'Friendly system' } } },
-            savedLaunchPresentation: { schema: { type: 'object', properties: { image: { type: 'string' }, store: { type: 'string' },
-                memory: { type: 'integer' }, region: { type: 'string' }, token: { type: 'string' }, missingFlag: { type: 'boolean' }, enabled: { type: 'boolean' } } }, inputHints: { fields: [
+            savedLaunchPresentation: { schema, inputHints: { fields: [
                 { path: 'memory', title: 'Memory (GiB)', widget: 'integer', unit: 'bytes' },
                 { path: 'region', title: 'Region', widget: 'select', options: [{ value: 'west', label: 'West coast' }] },
                 { path: 'token', title: 'Token', widget: 'secret' },
             ] } } });
-        expect(receipt.spec).toBe('Friendly system');
         expect(receipt.facts).toEqual(expect.arrayContaining([
-            expect.objectContaining({ label: 'Image', value: saved.choices.image }),
-            expect.objectContaining({ label: 'Store', value: saved.choices.store }),
             expect.objectContaining({ label: 'Memory (GiB)', value: '4' }),
             expect.objectContaining({ label: 'Region', value: 'West coast' }),
-            expect.objectContaining({ label: 'Enabled', value: t('common.no') }),
+            expect.objectContaining({ label: 'Architecture', value: 'x86_64' }),
         ]));
+        // A field named only by its schema key ("Store", "Vm Type", "Disk Gi B") has no title a person reads.
+        expect(receipt.facts.filter(fact => fact.id.startsWith('saved:')).map(fact => fact.label).sort())
+            .toEqual(['Architecture', 'Memory (GiB)', 'Region']);
         expect(JSON.stringify(receipt)).not.toContain(saved.choices.token);
-        expect(receipt.facts.some(fact => fact.label === 'Token')).toBe(false);
-        expect(receipt.facts.some(fact => fact.label === 'Missing Flag')).toBe(false);
+        expect(JSON.stringify(receipt)).not.toContain(saved.choices.store);
+    });
+    it('leaves saved choices to the provider\'s native facts when it has described them, current or last saved', () => {
+        const saved = { ...launch, choices: { image: 'https://cloud-images.example/releases/ubuntu-26.04-server-cloudimg-amd64.img',
+            cpus: 2, memoryGiB: 2, diskGiB: 8, vmType: 'qemu' } };
+        const savedLaunchPresentation = { schema: { type: 'object', properties: { image: { type: 'string', title: 'Image location' },
+            cpus: { type: 'integer', title: 'CPU cores' }, memoryGiB: { type: 'integer', title: 'Memory (GiB)' },
+            diskGiB: { type: 'integer', title: 'Disk (GiB)' }, vmType: { type: 'string', title: 'VM driver' } } } };
+        const native = { size: { id: 'custom', title: 'Custom size', cpuCores: 2, memoryBytes: 2 * 1024 ** 3, diskBytes: 8 * 1024 ** 3 },
+            image: { id: 'ubuntu', title: 'Ubuntu 26.04' } };
+        const current = buildManagedConfigurationReceipt({ launch: saved, providerTitle: 'Lima', savedLaunchPresentation,
+            reviewedFacts: { ...reviewedFacts, launch: saved, nativeFacts: native } });
+        const lastSaved = buildManagedConfigurationReceipt({ launch: saved, providerTitle: 'Lima', savedLaunchPresentation, lastSaved: native });
+        for (const receipt of [current, lastSaved]) {
+            expect(receipt.facts.filter(fact => fact.id.startsWith('saved:'))).toEqual([]);
+            expect(JSON.stringify(receipt)).not.toContain(saved.choices.image);
+        }
     });
     it('keeps saved choices with unavailable declaration labels honest instead of printing opaque selection ids', () => {
         const saved = { ...launch, choices: { region: 'private-provider-location-id' } };

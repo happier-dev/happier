@@ -1,6 +1,10 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
+import { useDeviceType } from '@/utils/platform/responsive';
+import { presentManagedPresetCost } from './managedConfigurationPresentation';
 import type { ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { hasOpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetV1, type ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
@@ -107,6 +111,21 @@ function ManagedProvisionerMark(props: ProvisionerMarkProps) {
     return <ManagedProvisionerGlyph pluginId={props.installedPackage ? undefined : props.pluginId} icon={props.icon} size={props.size} />;
 }
 
+/**
+ * Brand art is full-bleed, while an icon glyph keeps a 2-unit margin in its 24-unit grid. Drawn at a slot's
+ * full size, a Hetzner square reads larger than the glyph beside it; drawn at the glyph's ink extent inside
+ * the same slot, every provider's mark reads one size.
+ */
+const GLYPH_INK_RATIO = 20 / 24;
+
+function ManagedProvisionerBrandArt(props: Readonly<{ brand: HostCatalogMark; size: number }>) {
+    return (
+        <View style={{ width: props.size, height: props.size, alignItems: 'center', justifyContent: 'center' }}>
+            <HappierBrandMark brand={props.brand} externallyLabelled pixelSize={Math.round(props.size * GLYPH_INK_RATIO)} />
+        </View>
+    );
+}
+
 /** A brand stands for a provider only with its art; a name alone would be drawn as a second (letter) fallback. */
 function withArt(brand: HostCatalogMark | null): HostCatalogMark | null {
     return brand && (brand.bytes || brand.light || brand.dark) ? brand : null;
@@ -115,7 +134,7 @@ function withArt(brand: HostCatalogMark | null): HostCatalogMark | null {
 function ManagedProvisionerBrandMark(props: ProvisionerMarkProps) {
     const brand = withArt(useServerInstalledPluginBrand(props));
     if (!props.installedPackage) return null;
-    if (brand) return <HappierBrandMark brand={brand} externallyLabelled pixelSize={props.size} />;
+    if (brand) return <ManagedProvisionerBrandArt brand={brand} size={props.size} />;
     // Art that is on its way keeps its place blank; a package without art falls back like every other provider,
     // to the glyph its descriptor names, never a second (letter) fallback.
     if (props.installedPackage.brand?.state === 'available') return <View style={{ width: props.size, height: props.size }} />;
@@ -124,7 +143,7 @@ function ManagedProvisionerBrandMark(props: ProvisionerMarkProps) {
 
 function ManagedProvisionerGlyph(props: Readonly<{ pluginId?: string; icon?: string; size: number }>) {
     const brand = withArt(useBundledPluginBrandPresentation(props.pluginId));
-    if (brand) return <HappierBrandMark brand={brand} externallyLabelled pixelSize={props.size} />;
+    if (brand) return <ManagedProvisionerBrandArt brand={brand} size={props.size} />;
     return <Icon name={resolvePluginContributedActionIconName(props.icon)} size={props.size} />;
 }
 
@@ -265,12 +284,52 @@ export function ManagedPresetMark(props: Readonly<{
     size: number;
 }>) {
     const { theme } = useUnistyles();
+    const { creation, presentation } = useManagedPresetMarkPresentation(props);
+    return creation ? presentation.markAt(props.size)
+        : <Icon name={MACHINE_SETUP_PRESET_GLYPH} size={props.size} color={theme.colors.text.secondary} />;
+}
+
+/** A preset's provisioner as its mark reads it: the same identity-only read serves its mark and its cost. */
+function useManagedPresetMarkPresentation(props: Readonly<{ serverId: string; accountScope?: ServerAccountScope | null; preset: ManagedPresetMarkSource }>) {
     const creation = hasOpenedManagedMachinePresetCreationV1(props.preset) ? props.preset : null;
     const presentation = useManagedProvisionerPresentation({ serverId: props.serverId, accountScope: props.accountScope,
         controller: creation && !creation.teamAcquireDelegated ? creation.controller : undefined,
         provider: creation?.launch.provider, schemaVersion: creation?.launch.schemaVersion, purpose: 'mark' });
-    return creation ? presentation.markAt(props.size)
-        : <Icon name={MACHINE_SETUP_PRESET_GLYPH} size={props.size} color={theme.colors.text.secondary} />;
+    return { creation, presentation };
+}
+
+const presetCostStyles = StyleSheet.create(theme => ({
+    column: { alignItems: 'flex-end' },
+    value: { ...Typography.tabular(), color: theme.colors.text.primary, textAlign: 'right' },
+    detail: { color: theme.colors.text.secondary, textAlign: 'right' },
+}));
+
+/**
+ * A preset offer's cost column in the machine picker (lab m-pick): "No bill" and the computer it runs on for a
+ * local machine, or the provider's returned price with when it was read. It reads the billing its provisioner
+ * declares through the mark's own read; an unpriced cloud preset draws nothing rather than a guess.
+ */
+export function ManagedPresetCost(props: Readonly<{
+    serverId: string;
+    accountScope?: ServerAccountScope | null;
+    preset: ManagedPresetMarkSource & Readonly<{ reviewedFacts?: OpenedManagedMachinePresetV1['reviewedFacts'] }>;
+    /** The machine that manages it, by name; a local machine runs there. */
+    runsOn?: string;
+    testID?: string;
+}>) {
+    const { creation, presentation } = useManagedPresetMarkPresentation(props);
+    // A phone keeps a short value beside the title: where a local machine runs stays on the preset's page,
+    // while a price keeps the time it was read (never a price without its time).
+    const phone = useDeviceType() === 'phone';
+    const cost = creation ? presentManagedPresetCost({ prices: props.preset.reviewedFacts?.prices,
+        billing: props.preset.reviewedFacts?.billing ?? presentation.billing, provider: presentation.title, runsOn: phone ? undefined : props.runsOn }) : null;
+    if (!cost) return null;
+    return (
+        <View style={presetCostStyles.column} testID={props.testID}>
+            <Text variant="body" numberOfLines={1} style={presetCostStyles.value}>{cost.value}</Text>
+            {cost.detail ? <Text variant="meta" numberOfLines={1} style={presetCostStyles.detail}>{cost.detail}</Text> : null}
+        </View>
+    );
 }
 
 /** The glyph a setup-only preset stands under (lab `setup/over` Tools row): what it sets up, not who makes it. */

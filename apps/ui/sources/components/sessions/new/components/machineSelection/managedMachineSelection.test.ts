@@ -44,7 +44,7 @@ describe('managed machine selection draft', () => {
     });
     it('offers only current-Home unarchived creation parts before resolving their presentation', () => {
         const onConfigure = vi.fn();
-        const describeController = vi.fn((_preset: { id: string }) => 'Controller');
+        const describeOffer = vi.fn((_preset: { id: string }) => 'Controller');
         const markFor = vi.fn((_preset: { id: string }) => null);
         const preset = { id: 'preset-a', homeId: 'home-a', revision: 3, name: 'Guest',
             owner: { kind: 'account' as const, accountId: 'owner' }, launch: receipt.launch, controller: receipt.controller };
@@ -53,10 +53,10 @@ describe('managed machine selection draft', () => {
             owner: preset.owner, setup: { scripts: [{ body: 'prepare-tools' }] } };
         const offers = buildManagedMachineSelectionOffers({ homeId: 'home-a', oneOffTitle: 'One-off',
             presets: [preset, setupOnly, combined, { ...preset, id: 'archived', archivedAt: 1 }, { ...preset, id: 'foreign', homeId: 'home-b' }],
-            describeController, markFor, onConfigure });
+            describeOffer, markFor, onConfigure });
         expect(offers.map(offer => offer.id)).toEqual(['managed-machine:home-a:preset:preset-a:3',
             'managed-machine:home-a:preset:combined:3', 'managed-machine:home-a:one-off']);
-        expect(describeController.mock.calls.map(([row]) => row.id)).toEqual(['preset-a', 'combined']);
+        expect(describeOffer.mock.calls.map(([row]) => row.id)).toEqual(['preset-a', 'combined']);
         expect(markFor.mock.calls.map(([row]) => row.id)).toEqual(['preset-a', 'combined']);
         expect(onConfigure).not.toHaveBeenCalled();
         offers[0]?.onSelect?.();

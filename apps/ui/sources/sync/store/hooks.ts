@@ -122,7 +122,7 @@ import { readExternalSessionLink } from '../domains/session/external/readExterna
 import { resolveSessionMachineId } from '../domains/session/external/resolveSessionMachineId';
 import type { SessionForkSupportSource } from '../domains/sessionFork/forkUiSupport';
 import { agentTextLooksLikeExecutionRunSignal, shouldIncludeSubagentSourceMessage } from '../domains/session/subagents/subagentSourceMessageDetection';
-import { readExecutionRunResultStatus } from '../domains/session/subagents/executionRuns/executionRunSubagentStatus';
+import { reconcileSubagentSourceMessageProjection, type SubagentSourceMessageProjection } from './subagentSourceMessageProjection';
 import type { ReviewCommentDraft } from '../domains/input/reviewComments/reviewCommentTypes';
 import type { UserProfile } from '../domains/social/friendTypes';
 import { buildSessionMessageRouteId, resolveSessionMessageRouteId } from "@happier-dev/session-core/messages";
@@ -203,7 +203,6 @@ import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime'
 import { isLiveSessionRuntime, SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS } from '../domains/session/attention/runtimePresentation';
 import {
   sortTranscriptMessagesOldestFirst,
-  normalizeTranscriptSeq,
 } from "@happier-dev/session-core/messages";
 
 import { getStorage } from '../domains/state/storageStore';
@@ -1481,25 +1480,35 @@ export function useMachineDisplaysByServerId(serverIds: readonly string[]): Read
 
 /** The display names of an already-bounded machine set, read once from a store snapshot. */
 export function readMachineDisplayNamesById(
-  state: Readonly<{ machineDisplayById?: StorageState['machineDisplayById'] }>,
+  state: Readonly<{ machineDisplayById?: StorageState['machineDisplayById'] }> & Partial<Pick<StorageState,
+    'machines' | 'machineListByServerId' | 'machineRecordsByServerId' | 'machineListStatusByServerId'>>,
   machineIds: readonly string[],
+  serverId?: string,
 ): Record<string, string> {
   const names: Record<string, string> = {};
+  const scopedState = serverId === undefined ? null : { machines: state.machines ?? {}, machineListByServerId: state.machineListByServerId,
+    machineRecordsByServerId: state.machineRecordsByServerId, machineListStatusByServerId: state.machineListStatusByServerId };
   for (const machineId of machineIds) {
     // The name the Machine list shows, same-named Machines told apart (R3-3); none while it has nothing to show.
-    const name = readDisplayedMachineName(state.machineDisplayById?.[machineId]);
+    const machine = scopedState ? resolveServerScopedMachine(scopedState, serverId, machineId)
+      : state.machineDisplayById?.[machineId];
+    const name = readDisplayedMachineName(machine);
     if (name) names[machineId] = name;
   }
   return names;
 }
 
 /** Subscribe only to display-name changes for an already-bounded machine set. */
-export function useMachineDisplayNamesById(machineIds: readonly string[]): Readonly<Record<string, string>> {
+export function useMachineDisplayNamesById(machineIds: readonly string[],
+  options: Readonly<{ serverId?: string; presented?: boolean }> = {},
+): Readonly<Record<string, string>> {
   const normalizedIds = React.useMemo(
     () => [...new Set(machineIds.map((id) => id.trim()).filter(Boolean))].sort(),
     [machineIds],
   );
-  return getStorage()(useShallow((state) => readMachineDisplayNamesById(state, normalizedIds)));
+  const select = React.useCallback((state: StorageState) => readMachineDisplayNamesById(state, normalizedIds, options.serverId),
+    [normalizedIds, options.serverId]);
+  return usePresentedMachineInventory(select, options.presented !== false);
 }
 
 const noopSessionServerIdSubscribe = () => () => {};
@@ -1586,12 +1595,10 @@ type UseSessionMessagesOptions = Readonly<{
 
 type SessionSubagentSourceMessagesCacheEntry = Readonly<{
   sourceVersion: number;
-  signature: string;
-  messages: readonly Message[];
+  projection: SubagentSourceMessageProjection;
 }>;
 
 const sessionSubagentSourceMessagesCache = new Map<string, SessionSubagentSourceMessagesCacheEntry>();
-const sessionSubagentSourceMessageSignatureCache = new WeakMap<Message, string>();
 
 export function clearSessionMessageDerivedCachesForServerScopeReset(): void {
   sessionMessagesArrayCache.clear();
@@ -1605,66 +1612,6 @@ registerSessionTranscriptDerivedCacheClear((sessionId) => {
   sessionMessagesArrayCache.delete(sessionId);
   sessionSubagentSourceMessagesCache.delete(sessionId);
 });
-
-function stringifySignatureValue(value: unknown): string {
-  try {
-    return JSON.stringify(value ?? null) ?? 'null';
-  } catch {
-    return String(value);
-  }
-}
-
-function appendSubagentSourceMessageSignature(parts: string[], message: Message): void {
-  const cached = sessionSubagentSourceMessageSignatureCache.get(message);
-  if (cached !== undefined) {
-    parts.push(cached);
-    return;
-  }
-
-  const messageParts: string[] = [];
-  const seq = normalizeTranscriptSeq((message as any).seq);
-  messageParts.push(`${message.id}:${message.kind}:${seq ?? ''}:${message.createdAt ?? ''}`);
-  if (message.kind === 'agent-text') {
-    messageParts.push(typeof (message as any).text === 'string' ? String((message as any).text) : '');
-    const signature = messageParts.join('\u0001');
-    sessionSubagentSourceMessageSignatureCache.set(message, signature);
-    parts.push(signature);
-    return;
-  }
-  if (message.kind !== 'tool-call') {
-    const signature = messageParts.join('\u0001');
-    sessionSubagentSourceMessageSignatureCache.set(message, signature);
-    parts.push(signature);
-    return;
-  }
-  const tool = (message as any).tool;
-  messageParts.push(stringifySignatureValue({
-    id: tool?.id ?? null,
-    name: tool?.name ?? null,
-    state: tool?.state ?? null,
-    createdAt: tool?.createdAt ?? null,
-    startedAt: tool?.startedAt ?? null,
-    completedAt: tool?.completedAt ?? null,
-    description: tool?.description ?? null,
-    permissionStatus: tool?.permission?.status ?? null,
-    input: tool?.input ?? null,
-    // A still-running execution run streams prose into its result, so the signature carries only
-    // the field the roster derivation actually reads — the structured status the execution-run
-    // manager wrote — through that derivation's own owner. Otherwise every token would change the
-    // signature and hand every consumer a fresh array to re-derive.
-    //
-    // Narrowed to `SubAgentRun` on purpose: the Claude teammate derivation discovers a spawned
-    // member from a spawn tool's *result*, so dropping a running tool's result wholesale would
-    // delay that roster entry. Once the call leaves `running` the state itself changes the
-    // signature, so the full result is read again either way.
-    result: tool?.state === 'running' && tool?.name === 'SubAgentRun'
-      ? { status: readExecutionRunResultStatus(tool?.result) }
-      : tool?.result ?? null,
-  }));
-  const signature = messageParts.join('\u0001');
-  sessionSubagentSourceMessageSignatureCache.set(message, signature);
-  parts.push(signature);
-}
 
 function trimSessionSubagentSourceMessagesCache(): void {
   while (sessionSubagentSourceMessagesCache.size > SESSION_MESSAGES_ARRAY_CACHE_MAX) {
@@ -1687,11 +1634,10 @@ export function useSessionSubagentSourceMessages(sessionId: string): readonly Me
     if (cached && cached.sourceVersion === sourceVersion) {
       sessionSubagentSourceMessagesCache.delete(normalizedSessionId);
       sessionSubagentSourceMessagesCache.set(normalizedSessionId, cached);
-      return cached.messages;
+      return cached.projection.messages;
     }
 
     const sourceMessages: Message[] = [];
-    const signatureParts: string[] = [];
     const ids = session.messageIdsOldestFirst;
     const orderedMessages = Array.isArray(ids) && ids.length > 0
       ? ids.map((id) => session.messagesById[id]).filter((message): message is Message => message != null)
@@ -1700,26 +1646,14 @@ export function useSessionSubagentSourceMessages(sessionId: string): readonly Me
     for (const message of orderedMessages) {
       if (!shouldIncludeSubagentSourceMessage(message)) continue;
       sourceMessages.push(message);
-      appendSubagentSourceMessageSignature(signatureParts, message);
     }
 
-    const signature = signatureParts.join('\u0000');
-    if (cached && cached.signature === signature) {
-      sessionSubagentSourceMessagesCache.delete(normalizedSessionId);
-      const nextCached = { ...cached, sourceVersion };
-      sessionSubagentSourceMessagesCache.set(normalizedSessionId, nextCached);
-      return cached.messages;
-    }
-
-    const next = {
-      sourceVersion,
-      signature,
-      messages: sourceMessages.length > 0 ? sourceMessages : (emptyArray as any as readonly Message[]),
-    } satisfies SessionSubagentSourceMessagesCacheEntry;
+    const projection = reconcileSubagentSourceMessageProjection(sourceMessages, cached?.projection);
+    const next = { sourceVersion, projection } satisfies SessionSubagentSourceMessagesCacheEntry;
     sessionSubagentSourceMessagesCache.delete(normalizedSessionId);
     sessionSubagentSourceMessagesCache.set(normalizedSessionId, next);
     trimSessionSubagentSourceMessagesCache();
-    return next.messages;
+    return next.projection.messages;
   }, { sessionMessages: [normalizedSessionId] });
 }
 

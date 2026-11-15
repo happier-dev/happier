@@ -13,7 +13,7 @@ import { describeManagedSize as describeSharedManagedSize, managedSizeDimensions
     type ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 export { formatManagedSizeBytes } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import type { ManagedReceiptModel } from './MachineConfigurationReceipt';
-import { countryFlag, type ManagedReceiptCost } from './managedMachineDisplay';
+import { countryFlag, formatPriceSource, presentManagedCost, type ManagedReceiptCost } from './managedMachineDisplay';
 import type { ManagedLocalResourceFactsV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import type { MachineRetentionOverrideV1 } from '@happier-dev/protocol/account/settings/machineRetentionDefaultsV1';
 import type { BillingCapabilitiesV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
@@ -55,7 +55,7 @@ export function managedCredentialPresentations(input: Readonly<{
 
 export type ManagedConfigurationReceiptInput = Readonly<{
     launch: ValidatedLaunchSnapshotV1; reviewedFacts?: ManagedConfigurationFactsV1;
-    /** Saved configuration fields come from its declaration, independently of native availability or facts. */
+    /** Saved configuration fields come from its declaration: shown under declared titles when no native facts describe them. */
     savedLaunchPresentation?: Readonly<{ schema: JsonSchemaObject; inputHints?: ActionInputHints }>;
     /** The declared service title; null when no current or bundled declaration can name it. */
     providerTitle: string | null;
@@ -129,11 +129,17 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
         rows.push({ id: dimension, label: t(`managedMachines.config.${dimension}`), value: flag ? `${flag} ${value}` : value });
     }
     // Saved launch choices are an object of field values; any other JSON shape has no field to present.
+    // They stand in for the provider's own facts: once its native facts (current or last saved) describe the
+    // configuration, the raw choices behind them would only repeat it in launch terms (a store path, an image URL).
     const savedChoices = input.launch.choices;
-    if (input.savedLaunchPresentation && savedChoices !== null && typeof savedChoices === 'object' && !Array.isArray(savedChoices)) {
-        const hints = deriveActionInputHints(input.savedLaunchPresentation.schema, input.savedLaunchPresentation.inputHints);
+    const nativeDescribed = Boolean(size || nativeLabels.length || input.lastSaved?.size || input.lastSaved?.image);
+    if (input.savedLaunchPresentation && !nativeDescribed && savedChoices !== null && typeof savedChoices === 'object' && !Array.isArray(savedChoices)) {
+        const { schema, inputHints } = input.savedLaunchPresentation;
+        const hints = deriveActionInputHints(schema, inputHints);
         const options = buildSessionActionFieldOptionsResolver({});
         for (const field of resolveEffectiveActionInputFields({ inputHints: hints }, savedChoices)) {
+            // Only a declared title names a choice; a title derived from its schema key ("Disk Gi B") names nothing.
+            if (!inputHints?.fields.some(hint => hint.path === field.path) && !declaredSchemaTitle(schema, field.path)) continue;
             const savedValue = readInputPath(savedChoices, field.path);
             if (savedValue === undefined || savedValue === null) continue;
             const presentation = resolveActionFieldPresentationForInput(field, savedChoices);
@@ -241,11 +247,60 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
  * reviewed facts as the receipt; without any native dimension it says nothing of its own.
  */
 export function describeManagedConfigurationSummary(facts: ManagedConfigurationFactsV1,
-    localized: (value: PluginLocalizedStringV2) => string = value => typeof value === 'string' ? value : value.fallback): string | null {
+    localized: (value: PluginLocalizedStringV2) => string = fallbackLocalized): string | null {
+    const dimensions = managedSummaryDimensions(facts, localized);
+    return dimensions.length ? [...dimensions, describeRetention(facts.retention)].join(' · ') : null;
+}
+
+function fallbackLocalized(value: PluginLocalizedStringV2): string {
+    return typeof value === 'string' ? value : value.fallback;
+}
+
+/** The size, then the system for a local machine or the place for a cloud one: the summary's native dimensions. */
+function managedSummaryDimensions(facts: ManagedConfigurationFactsV1, localized: (value: PluginLocalizedStringV2) => string): string[] {
     const native = facts.nativeFacts;
     const lead = facts.billing.location === 'local' ? native?.image : native?.location;
-    const dimensions = [native?.size, lead].flatMap(fact => fact ? [localized(fact.title)] : []);
-    return dimensions.length ? [...dimensions, describeRetention(facts.retention)].join(' · ') : null;
+    return [native?.size, lead].flatMap(fact => fact ? [localized(fact.title)] : []);
+}
+
+/**
+ * A preset's line in the machine picker's New machine group (lab m-pick): the summary's reviewed size and place
+ * when the preset carries them, then the Keep it rule the preset sets now. A preset that follows the defaults says
+ * no rule of its own, so a rule captured at review never stands in for the current one.
+ */
+export function describeManagedPresetOffer(preset: Readonly<{
+    reviewedFacts?: ManagedConfigurationFactsV1; retention?: MachineRetentionOverrideV1['retention']; wakeOnAcceptedMessage?: boolean;
+}>, localized: (value: PluginLocalizedStringV2) => string = fallbackLocalized): string | undefined {
+    const dimensions = preset.reviewedFacts ? managedSummaryDimensions(preset.reviewedFacts, localized) : [];
+    const keep = preset.retention
+        ? describeRetentionPolicy({ retention: preset.retention, wakeOnAcceptedMessage: preset.wakeOnAcceptedMessage === true }) : null;
+    return [...dimensions, ...(keep ? [keep] : [])].join(' · ') || undefined;
+}
+
+/**
+ * A preset offer's cost column (lab m-pick): "No bill" and the computer it runs on for a local machine, or the
+ * provider's returned price with when it was read. Unpriced says nothing: the column never guesses a figure.
+ */
+export function presentManagedPresetCost(input: Readonly<{
+    prices?: ManagedConfigurationFactsV1['prices']; billing?: BillingCapabilitiesV1; provider: string | null; runsOn?: string;
+}>): Readonly<{ value: string; detail?: string }> | null {
+    const cost = resolveManagedConfigurationCost({ prices: input.prices, billing: input.billing, provider: input.provider });
+    if (cost.kind === 'unpriced') return null;
+    const headline = presentManagedCost(cost);
+    if (cost.kind === 'local') return { value: headline.value,
+        ...(input.runsOn ? { detail: t('managedMachines.price.runsOn', { computer: input.runsOn }) } : {}) };
+    return { value: `${headline.value} ${headline.unit}`, detail: formatPriceSource(cost.prices[0], null) };
+}
+
+/** Whether the launch schema itself titles the property at this field path. */
+function declaredSchemaTitle(schema: JsonSchemaObject, path: string): boolean {
+    let node: unknown = schema;
+    for (const key of path.split('.')) {
+        const properties = node && typeof node === 'object' ? (node as { properties?: unknown }).properties : undefined;
+        node = properties && typeof properties === 'object' ? (properties as Record<string, unknown>)[key] : undefined;
+    }
+    const title = node && typeof node === 'object' ? (node as { title?: unknown }).title : undefined;
+    return typeof title === 'string' && title.trim().length > 0;
 }
 
 type NativeSizeFact = NonNullable<NonNullable<ManagedConfigurationFactsV1['nativeFacts']>['size']>;

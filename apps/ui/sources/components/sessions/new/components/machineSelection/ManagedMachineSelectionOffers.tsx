@@ -4,11 +4,11 @@ import { hasOpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePrese
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { useServerCredentialAccountScopeBinding, type ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
-import { useMachineListForServer } from '@/sync/domains/state/storage';
-import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
+import { useMachineDisplayNamesById } from '@/sync/domains/state/storage';
 import { useManagedMachineAccountSettings } from '@/components/settings/machines/managed/useManagedMachineAccountSettings';
 import { useMachinePresets } from '@/components/settings/machines/managed/useMachinePresets';
-import { MANAGED_PROVISIONER_MARK_SIZE, ManagedPresetMark } from '@/components/settings/machines/managed/useManagedProvisionerPresentation';
+import { MANAGED_PROVISIONER_MARK_SIZE, ManagedPresetCost, ManagedPresetMark } from '@/components/settings/machines/managed/useManagedProvisionerPresentation';
+import { describeManagedPresetOffer } from '@/components/settings/machines/managed/managedConfigurationPresentation';
 import { MachineProvisionerPicker, type ManagedProvisionerSelection } from '@/components/settings/machines/managed/MachineProvisionerPicker';
 import { ManagedMachineConfigurationView } from '@/components/settings/machines/managed/ManagedMachineConfigurationView';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
@@ -85,23 +85,19 @@ export function useManagedMachineSelectionOffers(input: Readonly<{
     binding: ServerCredentialAccountScopeBinding | null;
     serverId: string;
     presets: readonly ManagedMachinePresetListEntryV1[] | undefined;
-    machines: ReturnType<typeof useMachineListForServer>;
     configure: (preset: (OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1) | null) => void;
 }>): readonly ManagedMachineSelectionOffer[] {
-    const { homeId, binding, serverId, presets, machines, configure } = input;
-    // Presence ticks replace the machine list; offers only show the controller's name, so they rebuild for a name change.
-    const controllerNames = presets?.flatMap(preset => preset.controller?.machineId ? [
-        [preset.controller.machineId, getMachineDisplayName(machines?.find(machine => machine.id === preset.controller?.machineId)) ?? preset.controller.machineId] as const,
-    ] : []) ?? [];
-    const controllerNamesKey = JSON.stringify(controllerNames);
-    const names = React.useMemo(() => new Map(controllerNames), [controllerNamesKey]);
+    const { homeId, binding, serverId, presets, configure } = input;
+    const controllerIds = React.useMemo(() => presets?.flatMap(preset => preset.controller ? [preset.controller.machineId] : []) ?? [], [presets]);
+    const names = useMachineDisplayNamesById(controllerIds, { serverId });
     return React.useMemo(() => homeId && binding?.isCurrent() ? buildManagedMachineSelectionOffers({
         homeId, presets: presets ?? [],
         oneOffTitle: t('managedMachines.picker.oneOff'), oneOffSubtitle: t('managedMachines.picker.oneOffHelp'),
-        // A pool-backed preset says where it runs without reading the pool list the picker never demands.
-        describeController: preset => preset.controllerPoolId ? t('machinePresets.controllerPoolAny')
-            : preset.controller?.machineId ? names.get(preset.controller.machineId) : undefined,
+        describeOffer: preset => describeManagedPresetOffer(preset),
         markFor: preset => <ManagedPresetMark serverId={serverId} accountScope={binding.scope} preset={preset} size={MANAGED_PROVISIONER_MARK_SIZE.rail} />,
+        // A local machine runs on the machine that manages it; a pool-backed preset names none (the pool picks one).
+        costFor: preset => <ManagedPresetCost serverId={serverId} accountScope={binding.scope} preset={preset}
+            runsOn={preset.controllerPoolId || !preset.controller ? undefined : names[preset.controller.machineId] ?? preset.controller.machineId} />,
         onConfigure: configure,
     }) : [], [homeId, binding, presets, serverId, names, configure]);
 }
@@ -114,12 +110,11 @@ function CurrentManagedMachineSelectionOffers(props: OffersProps & Readonly<{ bi
     const presets = useMachinePresets(serverIds, approval.requestApproval);
     const state = presets.statesByServerId[props.serverId];
     const homeId = getServerProfileById(props.serverId)?.serverIdentityId;
-    const machines = useMachineListForServer(props.serverId);
     const router = useRouter();
     const configure = useManagedMachineConfigurator({ serverId: props.serverId, binding,
         initialConfiguration: props.initialConfiguration, onUse: props.onUse, onConfigure: props.onConfigure, startsSession: props.startsSession });
     const offers = useManagedMachineSelectionOffers({ homeId, binding, serverId: props.serverId,
-        presets: presets.presetsByServerId[props.serverId], machines, configure });
+        presets: presets.presetsByServerId[props.serverId], configure });
     React.useEffect(() => { props.onOffers(props.serverId, offers, {
         state: !binding?.isCurrent() || state?.loading !== false || !!state?.error ? 'pending' : 'available', rowCount: offers.length,
     }); }, [offers, binding, state?.loading, state?.error, props.serverId, props.onOffers]);
