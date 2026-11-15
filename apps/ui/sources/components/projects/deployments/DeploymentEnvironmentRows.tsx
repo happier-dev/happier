@@ -25,14 +25,16 @@ import { t } from '@/text';
 import { isSameDeploymentName, useDeploymentEnvironmentRowParts } from './DeploymentEnvironmentCollection';
 import { DeploymentStepStrip } from './DeploymentStepStrip';
 import { deploymentActorIsViewer, deploymentActorLabel } from './deploymentPresentation';
-import { useDeploymentActorPresentations } from './useDeploymentActorPresentations';
+import { useDeploymentActorPresentations, type DeploymentActorPresentation } from './useDeploymentActorPresentations';
 import { formatDeploymentLiveAddress } from './deploymentLiveAddressFacts';
 import { deploymentEnvironmentRoute } from './deploymentNavigation';
 import { groupDeploymentRowsByProject } from './deploymentProjectGroups';
 import { DeploymentEnvironmentMark, DeploymentEnvironmentStateMark } from './rows/DeploymentEnvironmentRow';
 
 type EnvironmentItem = DeploymentEnvironmentCollectionV1['items'][number];
-type Row = ReturnType<typeof useDeploymentEnvironmentRowParts>[number];
+type RowParts = ReturnType<typeof useDeploymentEnvironmentRowParts>[number];
+/** A row and who did its latest deploy, so a name that arrives redraws that row only, never the anatomy's every row. */
+type Row = RowParts & Readonly<{ author: string | null }>;
 
 const OTHER_PROJECT = 'other';
 const SINGLE_PROJECTS = 'single';
@@ -109,12 +111,19 @@ export function DeploymentEnvironmentRows(
 ) {
   const { theme } = useUnistyles();
   const router = useRouter();
-  const rows = useDeploymentEnvironmentRowParts(
+  const parts = useDeploymentEnvironmentRowParts(
     props.items,
     `${props.testID}.row`,
     props.lifetime,
     'row',
   );
+  // Who did each latest deploy: its captured actor through the one actor display owner ("by you", a name, an agent
+  // and whose session, a workflow). The requester is an audit fact and never names the row.
+  const accountId = props.lifetime?.scope.accountId ?? null;
+  const actors = React.useMemo(() => parts.map((row) => row.actor), [parts]);
+  const presentations = useDeploymentActorPresentations({ actors, scope: props.lifetime?.scope ?? NO_SCOPE,
+    accountLifetime: props.lifetime, active: props.lifetime !== null });
+  const rows = useAuthoredRows(parts, presentations, accountId);
   const { serverId } = props;
   const openBackups = props.openBackups === true;
   const byId = React.useMemo(
@@ -154,19 +163,6 @@ export function DeploymentEnvironmentRows(
     onOpenChange: open,
   });
   const hereMachine = props.hereMachine === true;
-  // Who did each latest deploy: its captured actor through the one actor display owner ("by you", a name, an agent
-  // and whose session, a workflow). The requester is an audit fact and never names the row.
-  const accountId = props.lifetime?.scope.accountId ?? null;
-  const actors = React.useMemo(() => rows.map((row) => row.actor), [rows]);
-  const presentations = useDeploymentActorPresentations({ actors, scope: props.lifetime?.scope ?? NO_SCOPE,
-    accountLifetime: props.lifetime, active: props.lifetime !== null });
-  const presentationByRow = React.useMemo(() => new Map(rows.map((row, index) => [row, presentations[index]] as const)),
-    [presentations, rows]);
-  const authorOf = React.useCallback((row: Row): string | null => {
-    if (deploymentActorIsViewer(row.actor, accountId)) return t('projects.deployments.byYou');
-    const presentation = presentationByRow.get(row);
-    return presentation ? deploymentActorLabel(presentation, row.actor, accountId) : null;
-  }, [accountId, presentationByRow]);
   // The Address column stands only when an address is known on this page. Which columns fit the row at the reader's
   // text size is the Collection's to decide (lowest priority first): Address gives way before Runs on.
   const hasAddress = React.useMemo(() => rows.some((row) => Boolean(row.liveAddress)), [rows]);
@@ -245,7 +241,7 @@ export function DeploymentEnvironmentRows(
       // A phone row (no columns) leads line 2 with the state that speaks, so the name keeps line 1 whole (DESIGN
       // "Phones recompose"); wide, the State column says it.
       byline: (row, layout) =>
-        deploymentEnvironmentRowLine(row, authorOf(row), { columns: layout?.fieldColumns === true, hereMachine }),
+        deploymentEnvironmentRowLine(row, row.author, { columns: layout?.fieldColumns === true, hereMachine }),
       bylineLead: (row, layout) =>
         deploymentEnvironmentRowLeadState(row, { columns: layout?.fieldColumns === true }) ? <EnvironmentStateWord row={row} /> : null,
       fields,
@@ -264,7 +260,7 @@ export function DeploymentEnvironmentRows(
         title: t('projects.deployments.services.columnEnvironment'),
       },
     };
-  }, [hasAddress, authorOf, hereMachine, props.testID, theme.colors.text.secondary, theme.space.s2]);
+  }, [hasAddress, hereMachine, props.testID, theme.colors.text.secondary, theme.space.s2]);
   return (
     <EnvironmentRowMenuContext.Provider value={openTab}>
       <ServicesPageList<Row>
@@ -294,6 +290,31 @@ function useEnvironmentRowActions(row: Row): CollectionRowActions {
 }
 
 const NO_SCOPE: ServerAccountScope = Object.freeze({ serverId: '', accountId: '' });
+
+/**
+ * Each row with its author, keeping the row's identity while its parts and author are unchanged: a name that resolves
+ * (a Session's Agent, a Workflow's title, a person) redraws only the rows it names.
+ */
+function useAuthoredRows(parts: readonly RowParts[], presentations: readonly DeploymentActorPresentation[],
+  accountId: string | null): readonly Row[] {
+  const authored = React.useRef(new WeakMap<RowParts, Row>());
+  const previous = React.useRef<readonly Row[]>([]);
+  return React.useMemo(() => {
+    const rows = parts.map((part, index) => {
+      const presentation = presentations[index];
+      const author = deploymentActorIsViewer(part.actor, accountId) ? t('projects.deployments.byYou')
+        : presentation ? deploymentActorLabel(presentation, part.actor, accountId) : null;
+      const known = authored.current.get(part);
+      if (known !== undefined && known.author === author) return known;
+      const row = { ...part, author };
+      authored.current.set(part, row);
+      return row;
+    });
+    const same = rows.length === previous.current.length && rows.every((row, index) => row === previous.current[index]);
+    if (!same) previous.current = rows;
+    return previous.current;
+  }, [accountId, parts, presentations]);
+}
 
 type LineRow = Pick<Row, 'deploymentTitle' | 'runsOn' | 'detail' | 'steps' | 'stepCaption'>;
 
