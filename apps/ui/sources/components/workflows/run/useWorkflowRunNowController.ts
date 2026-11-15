@@ -16,6 +16,8 @@ import {
     type TransientCommandState,
 } from '@/hooks/ui/useTransientCommandAcknowledgement';
 import { storage } from '@/sync/domains/state/storageStore';
+import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
+import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerAccountScopesEqual, serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -440,7 +442,10 @@ export function useWorkflowRunNowController(
                     // The Automation formatter knows no workflow code, so every
                     // admission refusal — no access, a conflicting rejoin, a
                     // definition that needs repair — read as one generic sentence.
-                    const problem = resolveWorkflowProblemPresentation(admission.unresolved ? unresolvedAdmission() : error);
+                    const machineId = submitted?.context?.externalActionTarget?.machineId;
+                    const machine = machineId ? resolveServerScopedMachine(storage.getState(), requestLifetime.scope.serverId, machineId) : null;
+                    const problem = resolveWorkflowProblemPresentation(admission.unresolved ? unresolvedAdmission() : error,
+                        undefined, { machineName: machine ? getMachineDisplayName(machine) : null });
                     if (request.refusal === 'inline') {
                         requestState.refusals.set(key, problem);
                         requestState.publish(key);

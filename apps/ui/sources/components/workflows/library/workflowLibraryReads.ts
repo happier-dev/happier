@@ -801,7 +801,10 @@ export function refreshRunWindow(windowId: WorkflowRunListWindowId, invalidate =
     const loadedBoundary = previousWindow?.frontier ?? (previousTail ? workflowRunListFrontier(previousTail) : undefined);
     if (!ownedBefore || promoting || previous.knownAt === null) setRunWindowStatus(storeId, { ...INITIAL_RUN_STATUS, scopeKey,
         knownAt: ownedBefore ? previous.knownAt : null });
-    else if (previous.loadingMore || previous.loadMoreFailed) setRunWindowStatus(storeId, { ...previous, loadingMore: false, loadMoreFailed: false });
+    else if (previous.status === 'failed' || previous.loadingMore || previous.loadMoreFailed) setRunWindowStatus(storeId, {
+        ...previous, status: previous.status === 'failed' ? 'loading' : previous.status,
+        failure: null, loadingMore: false, loadMoreFailed: false,
+    });
     const readRunWindow = async (): Promise<void> => {
         let continuing = false;
         try {

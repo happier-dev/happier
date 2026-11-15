@@ -393,6 +393,16 @@ describe('useWorkflowRunNowController', () => {
     expect(startInput(2).runId).toBe(RUN_ID);
   });
 
+  it('names the selected project Machine in a refused Start', async () => {
+    executeMock.mockResolvedValue({ ok: false, errorCode: 'target_unavailable', error: 'Confirmed not sent' });
+    const { useWorkflowRunNowController } = await import('./useWorkflowRunNowController');
+    const hook = await renderHook(() => useWorkflowRunNowController());
+    await act(async () => {
+      await hook.getCurrent().runNow({ source, refusal: 'inline', project: { machineId: 'machine-1', directory: '/repo' } });
+    });
+    expect(hook.getCurrent().refusal).toMatchObject({ code: 'target_unavailable', message: expect.stringContaining('tester.local') });
+  });
+
   it('keeps a known refusal for the composer instead of interrupting with an alert', async () => {
     executeMock.mockResolvedValue({
       ok: false,

@@ -716,6 +716,26 @@ describe('Workflow library reads through real Account Actions and HTTP', () => {
         await act(async () => held.resolve());
     });
 
+    it('shares a recovering Run read without reporting the previous outage while it loads', async () => {
+        home.answer(serverId, route, { body: await runPage([run('retained-run')]) });
+        const first = await renderHook(() => useWorkflowRunWindow('all'));
+        await waitLoaded(first);
+        home.answer(serverId, route, { status: 503, body: { error: 'storage_unavailable' } });
+        await act(async () => first.getCurrent().retry());
+        await waitForHomeGovernance(() => expect(first.getCurrent().status).toBe('failed'));
+        const held = createDeferred<void>();
+        home.answer(serverId, route, { body: await runPage([run('retained-run')]), respondAfter: held.promise });
+        const second = await renderHook(() => useWorkflowRunWindow('all'));
+        await waitForHomeGovernance(() => expect(first.getCurrent().status).toBe('loading'));
+        expect(second.getCurrent().status).toBe('loading');
+        expect(first.getCurrent().failure).toBeNull();
+        expect(first.getCurrent().runIds).toEqual(['retained-run']);
+        await act(async () => held.resolve());
+        await waitLoaded(second);
+        await first.unmount();
+        await second.unmount();
+    });
+
     it('Retry replaces a stuck Run read and late old data cannot replace the fresh rows', async () => {
         const held = createDeferred<void>();
         const signals: (AbortSignal | null | undefined)[] = [];

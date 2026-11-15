@@ -266,7 +266,7 @@ export const en = {
         keysTitle: 'Waiting for keys',
         keysBody: 'This device does not have the encryption keys for this run yet. Try again after your keys are available.',
         storageTitle: 'Run storage is unavailable',
-        storageBody: 'Happier could not access run storage. Check your connection, then try again.',
+        storageBody: 'Happier could not access run storage. Try again.',
         openSettings: 'Open Settings',
     },
     contentReasons: {

@@ -230,12 +230,16 @@ const GENERIC_SHAPE: WorkflowProblemShape = {
 export function resolveWorkflowProblemPresentation(
     error: unknown,
     scope?: 'run',
+    target?: Readonly<{ machineName?: string | null }>,
 ): WorkflowProblemPresentation {
     const problem = resolveWorkflowProblemCopy(error, scope);
     if (problem.code === null) return problem;
     const failure = error instanceof WorkflowActionError ? error.failure : null;
     const details = failure && 'details' in failure ? failure.details : null;
-    return { ...problem, technicalDetails: [
+    return { ...problem,
+        ...(problem.code === 'target_unavailable' && target?.machineName
+            ? { message: `${target.machineName}: ${problem.message}` } : {}),
+        technicalDetails: [
         { key: 'code', label: t('workflows.run.technical.failureCode'), value: problem.code },
         ...(details && 'reason' in details && typeof details.reason === 'string'
             ? [{ key: 'reason', label: t('workflows.run.technical.failureCause'), value: details.reason }] : []),

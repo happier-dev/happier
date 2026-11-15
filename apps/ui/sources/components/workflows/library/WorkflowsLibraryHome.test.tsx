@@ -974,6 +974,28 @@ describe('workflow library page anatomy', () => {
         await screen.pressByTestIdAsync('workflows-home:new');
         expect(routerPush).toHaveBeenCalledWith('/workflows/new');
     });
+    it('shows the settled empty library while its first-visit history is pending', async () => {
+        let finishHistory!: () => void;
+        const history = new Promise<void>(resolve => { finishHistory = resolve; });
+        execute.mockImplementation(async (actionId: string) => {
+            if (actionId === 'workflow.definition.list') return { ok: true, result: { definitions: [] } };
+            if (actionId === 'workflow.run.list') {
+                await history;
+                return { ok: true, result: { runs: [], metadataByRunId: {} } };
+            }
+            return { ok: false, errorCode: 'unexpected', error: 'unexpected' };
+        });
+        const screen = await renderScreen(<WorkflowsLibraryHome />, { wrapper: Wrapper });
+        try {
+            await vi.waitFor(() => expect(execute.mock.calls.some(([id]) => id === 'workflow.run.list')).toBe(true));
+            await vi.waitFor(() => expect(screen.findByTestId('workflows-home:empty')).not.toBeNull());
+            expect(screen.findByTestId('workflows-home:loading')).toBeNull();
+        } finally {
+            await act(async () => finishHistory());
+            await screen.unmount();
+        }
+    });
+
     it.each([false, true])('reads history for an empty library and distinguishes a first visit (has history: %s)', async (hasHistory) => {
         const { createWorkflowRunSummaryFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
         execute.mockImplementation(async (actionId: string) => {

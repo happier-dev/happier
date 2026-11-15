@@ -30,6 +30,13 @@ function actionError(rawCode: string | null, message = 'server-internal reason')
  * never reach a person as prose the server chose or as the identifier itself.
  */
 describe('workflowProblemPresentation', () => {
+    it('names the selected Machine only for a target refusal', () => {
+        const context = { machineName: 'Build computer' };
+        expect(resolveWorkflowProblemPresentation(actionError('target_unavailable'), undefined, context).message)
+            .toContain('Build computer');
+        expect(resolveWorkflowProblemPresentation(actionError('content_unavailable'), undefined, context).message)
+            .not.toContain('Build computer');
+    });
     it.each([
         ['machine_offline', 'workflows.triggers.once.missedOffline'],
         ['machine_presence_at_due_unavailable', 'workflows.triggers.once.missedUnavailable'],
