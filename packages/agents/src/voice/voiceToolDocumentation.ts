@@ -1,7 +1,7 @@
 import { describeActionForVoiceTool } from '@happier-dev/protocol/actions/actionVoiceToolSummary';
 import { isVoicePromptHotPathSpec, listVoiceToolActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
-import type { ActionInputFieldHint, ActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { describeActionInputFieldForVoice, getActionVoiceWorkflowNotes } from '@happier-dev/protocol/actions/actionInputVoiceGuidance';
+import type { ActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionVoiceWorkflowNotes } from '@happier-dev/protocol/actions/actionInputVoiceGuidance';
 import type { VoiceGuidanceAvailability } from '@happier-dev/protocol/actions/actionInputVoiceGuidance';
 
 export type VoicePromptActionSpec = Pick<
@@ -36,76 +36,10 @@ function normalizeText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function listStaticOptionValues(field: ActionInputFieldHint): string[] {
-  const options = Array.isArray((field as any).options) ? ((field as any).options as Array<Record<string, unknown>>) : [];
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const option of options) {
-    const value = normalizeText(option?.value);
-    if (!value || seen.has(value)) continue;
-    seen.add(value);
-    out.push(value);
-  }
-  return out;
-}
-
-function describeRequirement(field: ActionInputFieldHint): string {
-  if ((field as any).required === true) return 'required';
-  if ((field as any).requiredWhen || (field as any).visibleWhen) return 'conditional';
-  return 'optional';
-}
-
-function formatFieldSummary(spec: VoicePromptActionSpec, field: ActionInputFieldHint, availability: VoiceGuidanceAvailability): string | null {
-  const path = normalizeText((field as any).path);
-  if (!path) return null;
-  const summary = describeActionInputFieldForVoice(spec, field, availability);
-  const staticOptions = listStaticOptionValues(field);
-  const optionSuffix = staticOptions.length > 0 ? ` one of ${staticOptions.join(' | ')}` : '';
-  const widget = normalizeText((field as any).widget);
-  const widgetSuffix = widget ? `; ${widget}` : '';
-  return `    - ${path} (${describeRequirement(field)}${widgetSuffix}${optionSuffix}): ${summary}`;
-}
-
-function formatToolDocumentation(
-  spec: VoicePromptActionSpec,
-  toolName: string,
-  invocationLabel: string,
-  availability: VoiceGuidanceAvailability,
-  functionToolName?: string,
-): readonly string[] {
-  const desc = normalizeText(describeActionForVoiceTool(spec)) || toolName;
-  const argsExample = normalizeText(spec.examples?.voice?.argsExample) || '{}';
-  // Arguments stay owned by the published Action example. Local native calls
-  // add only their discriminated envelope; realtime uses its per-Action tools.
-  const invocationExample = functionToolName
-    ? `{"t":${JSON.stringify(toolName)},"args":${argsExample}}`
-    : argsExample;
-  const lines: string[] = [`- ${toolName}: ${desc} ${invocationLabel} ${invocationExample}.`];
-
-  const workflowNotes = getActionVoiceWorkflowNotes(spec.id, availability)
-    .filter(note => !referencesUnavailableVoiceTool(note, availability));
-  if (workflowNotes.length > 0) {
-    lines.push(`  Use: ${workflowNotes.join(' ')}`);
-  }
-
-  const inputHints = spec.surfaceBindings?.voice?.inputHints ?? spec.inputHints;
-  if (inputHints?.description && inputHints !== spec.inputHints) lines.push(`  Use: ${inputHints.description}`);
-  const fields = Array.isArray(inputHints?.fields) ? (inputHints.fields as ActionInputFieldHint[]) : [];
-  const fieldLines = fields.map((field) => formatFieldSummary(spec, field, availability)).filter(Boolean) as string[];
-  if (fieldLines.length > 0) {
-    lines.push('  Fields:');
-    lines.push(...fieldLines);
-  }
-
-  return lines;
-}
-
 export function buildVoiceToolDocumentationLines(
   specs: readonly VoicePromptActionSpec[],
   params: Readonly<{
     disabledActionIds?: readonly string[];
-    invocationLabel: string;
-    functionToolName?: string;
     includeAllTools?: boolean;
   }>,
 ): readonly string[] {
@@ -122,8 +56,11 @@ export function buildVoiceToolDocumentationLines(
   for (const spec of enabledSpecs) {
     const toolName = normalizeText(spec.bindings?.voiceClientToolName);
     if (!toolName) continue;
-    out.push(...formatToolDocumentation(spec, toolName, params.invocationLabel, availability, params.functionToolName)
-      .filter((line) => !referencesUnavailableVoiceTool(line, availability)));
+    // The prompt is an index. Full inputs and examples remain in getActionSpec
+    // and the provider's structured tools instead of growing every Voice seed.
+    const purpose = normalizeText(describeActionForVoiceTool(spec)).replace(/\s+/g, ' ') || toolName;
+    const line = `- ${toolName}: ${purpose}`;
+    if (!referencesUnavailableVoiceTool(line, availability)) out.push(line);
   }
 
   return out;
@@ -131,7 +68,7 @@ export function buildVoiceToolDocumentationLines(
 
 export function buildVoiceDiscoveryChecklistLines(
   specs: readonly VoicePromptActionSpec[],
-  params?: Readonly<{ disabledActionIds?: readonly string[]; includeAllTools?: boolean }>,
+  params?: Readonly<{ disabledActionIds?: readonly string[] }>,
 ): readonly string[] {
   const disabled = new Set((params?.disabledActionIds ?? []).map((value) => normalizeText(value)).filter(Boolean));
   const enabledSpecs = specs.filter((spec) => !disabled.has(spec.id));
@@ -143,9 +80,7 @@ export function buildVoiceDiscoveryChecklistLines(
   const out: string[] = [];
 
   for (const spec of enabledSpecs) {
-    // Documented tools already carry these workflow notes beside their inputs.
-    // The checklist supplies only the undisplayed catalog's discovery guidance.
-    if (params?.includeAllTools || isVoicePromptHotPathSpec(spec)) continue;
+    // Keep workflow guidance once, independently of the compact action index.
     for (const note of getActionVoiceWorkflowNotes(spec.id, availability)) {
       const normalized = normalizeText(note);
       if (!normalized

@@ -1,9 +1,12 @@
 import { createHash } from 'node:crypto';
 import { buildMemoryRecallGuidanceBlockV1 } from '@happier-dev/protocol/prompts/memoryRecallGuidanceV1';
+import { describeActionForVoiceTool } from '@happier-dev/protocol/actions/actionVoiceToolSummary';
+import { getActionDefinitionForCatalogSurface, resolveActionCatalogSurfaceProjection } from '@happier-dev/protocol/actions/actionCatalog';
 import { describe, expect, it } from 'vitest';
 
 import {
   listVoiceActionBlockSpecs,
+  getActionSpec,
   isVoicePromptHotPathSpec,
   listVoiceSdkSafeToolActionSpecs,
   listVoiceToolActionSpecs,
@@ -32,18 +35,43 @@ describe('voiceAgentPrompt', () => {
     expect(documented).toHaveLength(hotPath.length);
     expect(documented.length).toBeLessThan(catalog.length);
   });
-  it('publishes native function arguments from the Voice catalog, including unnamed creation', () => {
+  it('charges the native action index only for tool identifiers and one-line purposes', () => {
     const prompt = buildLocalVoiceAgentSystemPrompt();
-    const listedTools = prompt.slice(prompt.indexOf('Available actions:')).split('\n')
-      .filter(line => /^- \w+: /.test(line));
-    const published = listedTools.map(line => {
-      const json = line.match(/happier_voice_action (\{.*\})\.$/)?.[1];
-      expect(json, line).toBeDefined();
-      return JSON.parse(json!);
-    });
-    const creation = published.find(value => value.t === 'spawnSession');
-    expect(creation).toMatchObject({ t: 'spawnSession', args: { initialInput: { text: expect.any(String) } } });
-    expect(creation.args).not.toHaveProperty('agentTarget');
+    const index = prompt.slice(prompt.indexOf('Available actions:\n') + 'Available actions:\n'.length,
+      prompt.indexOf('\n\nRules:'));
+    const expected = listVoiceActionBlockSpecs().filter(isVoicePromptHotPathSpec)
+      .map(spec => `- ${spec.bindings?.voiceClientToolName}: ${describeActionForVoiceTool(spec).trim().replace(/\s+/g, ' ')}`)
+      .join('\n');
+    const bytes = (text: string) => new TextEncoder().encode(text).byteLength;
+    console.info(JSON.stringify({ nativePromptBytes: bytes(prompt), actionIndexBytes: bytes(index),
+      purposeIndexBytes: bytes(expected) }));
+    expect(bytes(index)).toBe(bytes(expected));
+    expect(index).toBe(expected);
+    expect(prompt).toContain('Read getActionSpec for the input schema when needed');
+    const creation = getActionSpec('session.spawn_new');
+    const input = JSON.parse(creation.examples!.voice!.argsExample!);
+    expect(resolveActionCatalogSurfaceProjection(creation, 'voice').inputSchema.safeParse(input).success).toBe(true);
+    expect(getActionDefinitionForCatalogSurface({ id: creation.id, surface: 'voice' })?.inputHints?.fields.length)
+      .toBeGreaterThan(0);
+    expect(input).toMatchObject({ initialInput: { text: expect.any(String) } });
+    expect(input).not.toHaveProperty('agentTarget');
+  });
+
+  it('adds no prompt bytes when action field documentation or argument examples grow', () => {
+    const spec = getActionSpec('session.spawn_new');
+    const hints = spec.surfaceBindings?.voice?.inputHints ?? spec.inputHints;
+    const expandedHints = { ...hints, fields: [
+      ...hints.fields,
+      ...hints.fields.map(field => ({ ...field, path: `additional.${field.path}` })),
+    ] };
+    const expanded = { ...spec, inputHints: { ...spec.inputHints, fields: expandedHints.fields },
+      surfaceBindings: { ...spec.surfaceBindings, voice: { ...spec.surfaceBindings?.voice, inputHints: expandedHints } },
+      examples: { ...spec.examples, voice: { argsExample: JSON.stringify({ additional: spec.examples?.voice?.argsExample }) } },
+    };
+    const before = buildVoiceClientToolAgentPrompt({ actionSpecs: [spec] });
+    const after = buildVoiceClientToolAgentPrompt({ actionSpecs: [expanded] });
+    expect(expandedHints.fields.length).toBeGreaterThan(hints.fields.length);
+    expect(new TextEncoder().encode(after).byteLength).toBe(new TextEncoder().encode(before).byteLength);
   });
 
   it('distinguishes native subagents from created Happier Sessions in every Voice mode', () => {
@@ -81,7 +109,6 @@ describe('voiceAgentPrompt', () => {
       .map(spec => spec.bindings?.voiceClientToolName));
     expect([...local.matchAll(/^- ([A-Za-z0-9_]+):/gm)].map(match => match[1]))
       .toEqual(expect.arrayContaining(tools.filter(name => hotPathNames.has(name))));
-    expect(local).toContain('voiceConversations');
     for (const name of tools) expect(prompt).toContain(name);
     expect(prompt).toContain('action_execute');
     const disabled = buildVoiceClientToolAgentPrompt({ actionSpecs: specs,
@@ -299,7 +326,7 @@ describe('voiceAgentPrompt', () => {
     }
   });
 
-  it('documents discovery workflows and field requirements for complex voice tools', () => {
+  it('keeps discovery workflows for complex voice tools with schemas available on demand', () => {
     const prompt = buildLocalVoiceAgentSystemPrompt({
       sessionId: 's1',
     });
@@ -312,10 +339,10 @@ describe('voiceAgentPrompt', () => {
     expect(prompt).toContain('listRecentPaths');
     expect(prompt).toContain('listAgentBackends');
     expect(prompt).not.toContain('- listAgentModels:');
-    expect(prompt).toContain('Use listExecutionRuns to discover runs by title or status before choosing runId internally');
+    expect(prompt).toContain('Use listExecutionRuns before choosing runId internally');
     expect(prompt).toContain('Use getExecutionRun after choosing runId to inspect available actions before choosing actionId internally');
-    expect(prompt).toContain('Use listSessions before choosing the exact serverId and sessionId internally');
-    expect(prompt).toContain('Use listMachines to discover machines by label before choosing machineId internally');
+    expect(prompt).toContain('Use listSessions before choosing sessionId internally');
+    expect(prompt).toContain('Use listMachines before choosing machineId internally');
   });
 
   it('includes the same discovery guidance in the client-tool voice prompt', () => {
@@ -329,7 +356,7 @@ describe('voiceAgentPrompt', () => {
     expect(prompt).not.toContain('spawnSession');
     expect(prompt).not.toContain('spawnSessionPicker');
     expect(prompt).not.toContain('- listAgentModels:');
-    expect(prompt).toContain('Use listExecutionRuns to discover runs by title or status before choosing runId internally');
+    expect(prompt).toContain('Use listExecutionRuns before choosing runId internally');
     expect(prompt).toContain('Use listSessions before choosing sessionId internally');
   });
 
@@ -484,7 +511,7 @@ describe('voiceAgentPrompt', () => {
     expect(clientToolPrompt).toContain('For codebase questions or actions, use tools first before answering');
   });
 
-  it('retains discovery guidance beside documented tools or in the discovery checklist', () => {
+  it('retains discovery guidance in the discovery checklist', () => {
     const localPrompt = buildLocalVoiceAgentSystemPrompt({
       sessionId: 's1',
     });

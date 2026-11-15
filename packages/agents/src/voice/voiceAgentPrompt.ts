@@ -275,11 +275,9 @@ export function buildVoiceClientToolAgentPrompt(params?: Readonly<{
     .filter((name): name is string => typeof name === 'string' && name.length > 0));
   const discoveryLines = buildVoiceDiscoveryChecklistLines(actionSpecs, {
     disabledActionIds: params?.disabledActionIds,
-    includeAllTools: !availableToolNames.has('searchActionSpecs'),
   });
   const toolLines = buildVoiceToolDocumentationLines(actionSpecs, {
     disabledActionIds: params?.disabledActionIds,
-    invocationLabel: 'Call with',
     includeAllTools: !availableToolNames.has('searchActionSpecs'),
   });
 
@@ -363,8 +361,6 @@ export function buildLocalVoiceAgentSystemPrompt(params?: Readonly<{
   // document the same hot path as realtime Voice instead of expanding every schema.
   const actionLines = nativeActions ? buildVoiceToolDocumentationLines(actionSpecs, {
     disabledActionIds: params?.disabledActionIds,
-    invocationLabel: `Call ${VOICE_ACTION_FUNCTION_NAME}`,
-    functionToolName: VOICE_ACTION_FUNCTION_NAME,
   }) : [];
 
   return renderPromptPlanV1(buildPromptPlanV1({
