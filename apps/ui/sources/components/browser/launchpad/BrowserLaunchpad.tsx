@@ -491,9 +491,11 @@ export function BrowserLaunchpad(props: Readonly<{
                                     countPlacement="title"
                                     first={section === firstSection && props.refreshStatus === 'idle'}
                                 />
+                                {/* Flat rows under the label, as Local services draws the same rows (lab Lp): no second sheet. */}
                                 <ItemGroup
                                     header="none"
                                     accessibilityLabel={titleForSection(section)}
+                                    surface="none"
                                     selectableItemCountOverride={rows.length}
                                 >
                                     {rows.map((row) => {

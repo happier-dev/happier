@@ -4,6 +4,7 @@ import { useEmbeddedBrowserKeyboard, normalizeKeyboardEvent, readKeyboardContext
 import { parseBrowserGuestKeyboardEvent } from '@/sync/domains/browser/adapters/guestKeyboard';
 import { createPortal } from 'react-dom';
 import { View } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
 import { ARTIFACT_HTML_SHELL_CSP_V1 } from '@happier-dev/protocol/artifacts/artifactHtmlDocumentV1';
 
 import { browserFrameStyles } from '../styles';
@@ -49,6 +50,13 @@ const iframeStyle: React.CSSProperties = {
  * browser keeps the page transparent over its card instead of painting an opaque canvas behind it.
  */
 const hostedDocumentIframeStyle: React.CSSProperties = { ...iframeStyle, colorScheme: 'light dark' };
+/**
+ * A web page's frame carries the app's scheme, as a browser tab carries the browser's: a page that supports it
+ * draws dark, and a page without a scheme (most local previews) gets its own opaque white canvas instead of
+ * showing black text through to the dark card behind it.
+ */
+const pageIframeStyleLight: React.CSSProperties = { ...iframeStyle, colorScheme: 'light' };
+const pageIframeStyleDark: React.CSSProperties = { ...iframeStyle, colorScheme: 'dark' };
 
 function normalizePostMessageOrigin(origin: string | undefined): string | null {
     if (!origin) {
@@ -144,6 +152,7 @@ function NavigationContainedIframe(props: WebIframeEngineProps): React.ReactElem
 }
 
 function WebIframeGuest(props: WebIframeEngineProps): React.ReactElement {
+    const { theme } = useUnistyles();
     const iframeRef = React.useRef<HTMLIFrameElement | null>(null);
     const guestKeyboard = useEmbeddedBrowserKeyboard();
     const guestKeyboardRef = React.useRef(guestKeyboard);
@@ -888,7 +897,7 @@ function WebIframeGuest(props: WebIframeEngineProps): React.ReactElement {
                 ...(props.csp ? { csp: props.csp } : {}),
                 sandbox: props.sandbox,
                 ...(props.html === undefined ? { src: cooperativeNavigation?.url ?? navigationUrl } : { srcDoc: props.html }),
-                style: props.html === undefined ? iframeStyle : hostedDocumentIframeStyle,
+                style: props.html === undefined ? (theme.dark ? pageIframeStyleDark : pageIframeStyleLight) : hostedDocumentIframeStyle,
                 title: props.title,
             })}
         </View>

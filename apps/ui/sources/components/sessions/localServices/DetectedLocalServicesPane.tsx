@@ -784,8 +784,9 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
                                 />
                             </View>
                         ) : null}
-                        <DiagnosticsBanner diagnostics={viewModel.diagnostics} homeDir={props.machine?.homeDir} testID={`${testID}-error`} checkAgain={checkAgain} />
+                        {/* The scope control stays put when switching: a scan diagnostic belongs to the selected scope, so it sits under it. */}
                         {scopeBar}
+                        <DiagnosticsBanner diagnostics={viewModel.diagnostics} homeDir={props.machine?.homeDir} testID={`${testID}-error`} checkAgain={checkAgain} />
                         {detailRow ? null : effectReview}
                         {hasRows
                             ? sections.map((entry, index) => (
