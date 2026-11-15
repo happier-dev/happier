@@ -38,9 +38,9 @@ function WindowBotRailRow() {
           testID="settings-desktop-window-bot-rail"
           value={enabled}
           accessibilityLabel={t('settingsDesktop.windows.botRailTitle')}
-          onValueChange={(value) =>
-            setSetting(DESKTOP_SETTINGS.settings.windowBotRail, value)
-          }
+          onValueChange={async (value) => {
+            await setSetting(DESKTOP_SETTINGS.settings.windowBotRail, value);
+          }}
         />
       }
     />

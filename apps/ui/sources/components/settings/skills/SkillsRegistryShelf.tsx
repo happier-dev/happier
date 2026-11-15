@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { RegistryShelf, RegistryShelfAddControl, registryShelfCardKey, registryShelfProjection, resolveRegistryShelfUnavailable } from '@/components/capabilities/add/RegistryShelf';
-import type { RegistryItemSummaryV1 } from '@happier-dev/protocol/registries';
+import type { RegistryCatalogItemSummary } from '@/registries/registryBrandMark';
 import { findHeldSkillV1, type SkillListItemV1 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
@@ -19,7 +19,7 @@ import { t } from '@/text';
 
 const SHELF_SIZE = 3;
 
-type ShelfCard = RegistryItemSummaryV1;
+type ShelfCard = RegistryCatalogItemSummary;
 type AddState = Readonly<{ status: 'adding' | 'added' | 'failed' | 'partial'; outcome?: SkillInstallAcknowledgment }>;
 
 const cardKey = registryShelfCardKey;

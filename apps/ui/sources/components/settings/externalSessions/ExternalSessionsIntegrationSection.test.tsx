@@ -9,6 +9,7 @@ import {
 } from '@/dev/testkit';
 import type {
     ExternalSessionsIntegrationDescriptor,
+    ExternalSessionsIntegrationOperations,
 } from './externalSessionsIntegrationModel';
 
 const modalMock = createModalModuleMock({ confirmResult: true });
@@ -181,6 +182,7 @@ await import('./ExternalSessionsIntegrationSection');
 describe('ExternalSessionsIntegrationSection', () => {
     beforeEach(() => {
         modalMock.spies.confirm.mockClear();
+        modalMock.spies.show.mockClear();
         modalMock.spies.alertAsync.mockClear();
     });
 
@@ -370,11 +372,10 @@ describe('ExternalSessionsIntegrationSection', () => {
         const operations = {
             reviewAndInstall: vi.fn(async (
                 _integration: ExternalSessionsIntegrationDescriptor,
-                confirm: (
-                    preview: ReturnType<typeof installPreview>,
-                ) => Promise<boolean>,
+                confirm: Parameters<ExternalSessionsIntegrationOperations['reviewAndInstall']>[1],
             ) => {
-                await confirm(installPreview());
+                await confirm(installPreview(), { actionId: 'plugins.sessionHooks.install', input: {}, context: { surface: 'ui' },
+                    preview: { summary: 'The receiver also updates its startup hooks.' } });
                 await deferred.promise;
             }),
             disable: vi.fn(async () => {}),
@@ -383,6 +384,10 @@ describe('ExternalSessionsIntegrationSection', () => {
             checkAgain: vi.fn(async () => {}),
         };
 
+        modalMock.spies.show.mockImplementationOnce(config => {
+            queueMicrotask(() => { if (typeof config.props?.onAnswer === 'function') config.props.onAnswer(true); });
+            return 'hook-review';
+        });
         const screen = await renderSettingsView(
             <ExternalSessionsIntegrationSection
                 integrations={[integration('install', 'not_installed', {
@@ -419,15 +424,12 @@ describe('ExternalSessionsIntegrationSection', () => {
             await first;
             await duplicate;
         });
-        expect(modalMock.spies.confirm).toHaveBeenCalledTimes(1);
-        expect(modalMock.spies.confirm).toHaveBeenCalledWith(
-            expect.any(String),
-            expect.stringContaining('/Users/alice/.agent/settings.json'),
-            expect.any(Object),
-        );
-        expect(modalMock.spies.confirm.mock.calls[0]?.[1]).toContain(
-            'happier hook --event session-start',
-        );
+        expect(modalMock.spies.show).toHaveBeenCalledTimes(1);
+        const review = modalMock.spies.show.mock.calls[0]?.[0];
+        expect(review?.props?.preview).toEqual({ summary: 'The receiver also updates its startup hooks.' });
+        if (review?.chrome?.kind !== 'card') throw new Error('Expected a card confirmation');
+        expect(review.chrome.subtitle).toContain('/Users/alice/.agent/settings.json');
+        expect(review.chrome.subtitle).toContain('happier hook --event session-start');
     });
 
     it('keeps the refreshed Review and Install action authoritative after a replaced preview', async () => {

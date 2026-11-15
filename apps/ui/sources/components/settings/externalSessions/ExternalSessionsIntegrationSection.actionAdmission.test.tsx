@@ -3,8 +3,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import { createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { settingsParse } from '@/sync/domains/settings/settings';
@@ -19,7 +18,16 @@ const preview = { previewId: `hook-install-preview:v1:${'a'.repeat(64)}`, target
             hooks: [{ type: 'command', command: 'happier hook', timeout: 500 }] } }] }] };
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
-vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
+const nativeReview = vi.hoisted(() => ({ hold: false, answer: undefined as undefined | ((value: boolean) => void) }));
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ spies: {
+    show: config => {
+        if (config.chrome?.testID === 'actions.confirmation-review.modal' && typeof config.props?.onAnswer === 'function') {
+            nativeReview.answer = config.props.onAnswer;
+            if (!nativeReview.hold) queueMicrotask(() => nativeReview.answer?.(false));
+        }
+        return 'hook-review';
+    },
+} }).module);
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOriginal => {
     const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
     const { createFrontDoorActionExecuteForVitest } = await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary');
@@ -61,7 +69,7 @@ const { ExternalSessionsIntegrationSection } = await import('./ExternalSessionsI
 const { useExternalSessionsIntegrationController } = await import('./externalSessionsIntegrationController');
 
 afterEach(() => { standardCleanup(); vi.restoreAllMocks(); rpc.installed = false; rpc.writes = 0;
-    rpc.blockNextStatus = false; rpc.statusSignals.length = 0; });
+    rpc.blockNextStatus = false; rpc.statusSignals.length = 0; nativeReview.hold = false; nativeReview.answer = undefined; });
 
 describe('external hook Actions from the rendered integration controls', () => {
     it('retires an unanswered inventory on Machine change and can load the original Machine again', async () => {
@@ -87,8 +95,8 @@ describe('external hook Actions from the rendered integration controls', () => {
     });
     it('retires an install intent when its selected Machine changes during confirmation', async () => {
         const account = await createSecretSettingsTestHarness();
-        const decision = createDeferred<boolean>();
-        const confirm = vi.spyOn(Modal, 'confirm').mockImplementation(() => decision.promise);
+        nativeReview.hold = true;
+        const confirm = vi.spyOn(Modal, 'show');
         function Screen({ machineId }: { machineId: string }) {
             const controller = useExternalSessionsIntegrationController({ machineId, serverId: account.scope.serverId,
                 projectionGeneration: 1, agent: { agent, agentTitle: 'Assistant' } });
@@ -104,7 +112,7 @@ describe('external hook Actions from the rendered integration controls', () => {
             act(() => { installing = findInstall()!.props.onPress(); });
             await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce());
             await screen.update(<Screen machineId="machine-two" />);
-            decision.resolve(true);
+            nativeReview.answer?.(true);
             await act(async () => { await installing; });
             expect(rpc.writes).toBe(0);
             expect(rpc.installed).toBe(false);
@@ -114,7 +122,7 @@ describe('external hook Actions from the rendered integration controls', () => {
         const account = await createSecretSettingsTestHarness({ settings: settingsParse({ actionsSettingsV1: {
             v: 1, actions: { 'plugins.sessionHooks.install': { disabledSurfaces: ['ui'] } },
         } }) });
-        const confirm = vi.spyOn(Modal, 'confirm').mockResolvedValue(false);
+        const confirm = vi.spyOn(Modal, 'show');
         function Screen() {
             const controller = useExternalSessionsIntegrationController({ machineId: 'machine-one', serverId: account.scope.serverId,
                 projectionGeneration: 1, agent: { agent, agentTitle: 'Assistant' } });
@@ -139,8 +147,10 @@ describe('external hook Actions from the rendered integration controls', () => {
             await click('-review_install');
             expect(rpc.writes).toBe(0);
             expect(confirm).toHaveBeenCalledTimes(1);
-            expect(confirm.mock.calls[0]?.[1]).toContain('/tmp/agent-settings.json');
-            expect(confirm.mock.calls[0]?.[1]).toContain('happier hook');
+            const reviewChrome = confirm.mock.calls[0]?.[0].chrome;
+            if (reviewChrome?.kind !== 'card') throw new Error('Expected a card confirmation');
+            expect(reviewChrome.subtitle).toContain('/tmp/agent-settings.json');
+            expect(reviewChrome.subtitle).toContain('happier hook');
             await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings, actionsSettingsV1: {
                 v: 1, approvalWaivedSurfaces: { 'plugins.sessionHooks.install': ['ui'] },
             } })); });
@@ -156,18 +166,15 @@ describe('external hook Actions from the rendered integration controls', () => {
             } })); });
             await click('-uninstall');
             expect(rpc.installed).toBe(true);
-            expect(account.artifacts.list()).toHaveLength(1);
-            const approval = account.artifacts.list()[0]!;
-            const request = ApprovalRequestV2Schema.parse(JSON.parse(account.artifacts.readPlainBody(approval.id) ?? 'null'));
-            expect(request.executionOriginV1.machineId).toBe('machine-one');
-            expect(confirm).toHaveBeenCalledTimes(2);
+            expect(account.artifacts.list()).toHaveLength(0);
+            expect(confirm).toHaveBeenCalledTimes(3);
             await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings, actionsSettingsV1: {
                 v: 1, approvalWaivedSurfaces: { 'plugins.sessionHooks.uninstall': ['ui'] },
             } })); });
             await click('-uninstall');
             expect(rpc.installed).toBe(false);
             expect(rpc.writes).toBe(2);
-            expect(confirm).toHaveBeenCalledTimes(2);
+            expect(confirm).toHaveBeenCalledTimes(3);
         } finally { standardCleanup(); await account.dispose(); }
     });
 });
