@@ -105,8 +105,10 @@ import { PagePinnedBar } from '@/components/ui/layout/PagePinnedBar';
 import { HorizontalScrollEdgeMask } from '@/components/ui/scroll/HorizontalScrollEdgeMask';
 import { useSheetDismiss } from '@/modal/components/card/sheetDragDismiss';
 import type { BotFaceProps, PageAsideColumnsProps, PagePinnedBarProps, KeyboardStickyFooterProps } from '@happier-dev/plugin-ui/components';
-import type { ExecutableParticipantPickerProps, SecretValueControlsProps, SecretValueTextProps } from '@happier-dev/plugin-ui/components';
+import type { ExecutableParticipantPickerProps, SavedSecretChoiceListProps, SecretValueControlsProps, SecretValueTextProps } from '@happier-dev/plugin-ui/components';
 import { SecretValueControls, SecretValueText } from '@/components/ui/copy/SecretValueDisclosure';
+import { SavedSecretReferenceChoice } from '@/components/ui/forms/valueRefs/SavedSecretPickerModal';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import type { PluginUiScrollActivityTracker } from '@happier-dev/plugin-ui/advanced';
 import {
     useInstalledPluginBrandPresentation,
@@ -349,6 +351,12 @@ function PluginUiPrivateQRCode(props: Readonly<{ data: string; size: number; tes
     );
 }
 
+/** A plugin's saved-secret choice reads the signed-in Account's catalog, as Happier's own picker does. */
+function PluginUiPrivateSavedSecretChoice({ unavailableLabel: _unavailable, ...input }: SavedSecretChoiceListProps): React.ReactElement {
+    const scope = useAccountSettingsScope();
+    return <SavedSecretReferenceChoice scope={scope} {...input} />;
+}
+
 function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDirection) {
     return Object.freeze({
     useScmFileViewed,
@@ -369,6 +377,9 @@ function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDire
     },
     renderSecretValueControls({ unavailableLabel: _unavailable, ...input }: SecretValueControlsProps) {
         return <SecretValueControls {...input} />;
+    },
+    renderSavedSecretChoiceList(input: SavedSecretChoiceListProps) {
+        return <PluginUiPrivateSavedSecretChoice {...input} />;
     },
     renderVoiceMarkArt(input: Omit<VoiceMarkArtProps, 'fallback'>) {
         // Only explicit art props: no live energy acquisition or attempt data.

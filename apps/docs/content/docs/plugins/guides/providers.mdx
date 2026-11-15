@@ -167,8 +167,14 @@ compatibility is informational and asks neither custodian nor recipient for
 experimental confirmation; personal binding confirmation remains separate. The provisioner leaf receives
 them only within its admitted apply invocation, as described in
 [invocation services](/plugins/guides/invocation-services#native-credential-headers-in-development).
-There is no general secret selector or guest credential materialization. A
-declaration or compiled SDK type is not proof of a loaded native journey.
+There is no guest credential materialization. A declaration or compiled SDK
+type is not proof of a loaded native journey.
+
+To let someone pick a Saved Secret, render the development `SavedSecretChoiceList`
+component. It is Happier's own saved-secret list: Happier reads the signed-in
+Account's catalog, shows the same rows, and lets only a ready secret be chosen.
+Your `onSelect` receives the secret's reference and revision, never its value;
+bind that reference through your Saved Secret binding.
 
 The development controller applies the complete current policy, including an
 empty set after binding deletion, through the same per-resource writer used by

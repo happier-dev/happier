@@ -8,6 +8,7 @@ import { ReplyQuoteExample } from './replyQuoteSurface.js';
 import { ReturnedAnswerQuoteExample } from './returnedAnswerQuoteSurface.js';
 import { ExecutableParticipantPickerExample } from './executableParticipantPickerSurface.js';
 import { SecretValueDisclosureExample } from './secretValueDisclosureSurface.js';
+import { SavedSecretChoiceExample } from './savedSecretChoiceSurface.js';
 import { DocEditProposalExample } from './docEditProposalSurface.js';
 import { MemoryFactsExample } from './memoryFactsSurface.js';
 import { MemoryDuplicateChoiceExample } from './memoryDuplicateChoiceSurface.js';
@@ -89,6 +90,7 @@ function Summary() {
       <ReturnedAnswerQuoteExample />
       <ExecutableParticipantPickerExample multiple />
       <SecretValueDisclosureExample />
+      <SavedSecretChoiceExample />
       <BuiltInParityExample text={(words) => translate(words, words)} onDecide={() => setReviewDecided(true)} />
       {reviewDecided ? <Text value={translate('Review decision recorded', 'Review decision recorded')} /> : null}
     </Card>

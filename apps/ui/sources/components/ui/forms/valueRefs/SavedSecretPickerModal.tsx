@@ -23,11 +23,38 @@ export type SavedSecretPickerModalProps = CustomModalInjectedProps & Readonly<{
 
 /**
  * The saved-secret picker's body: the shared secrets this Account can bind, by name, in the one choice list.
- * Only a ready secret can be pressed; one still preparing or out of reach stays listed with its status. Pressing
- * returns its exact reference and current revision, never material. Management (add, rename, replace, delete)
- * lives in Saved Secrets, not here.
+ * Management (add, rename, replace, delete) lives in Saved Secrets, not here.
  */
 export function SavedSecretPickerModal(props: SavedSecretPickerModalProps) {
+    const { onSelect } = props.referenceSelection;
+    const { onClose } = props;
+    const select = React.useCallback((selection: SharedSavedSecretReferenceSelectionV1) => {
+        onSelect(selection);
+        onClose();
+    }, [onSelect, onClose]);
+    return (
+        <View style={styles.body} testID="saved-secret-picker">
+            <SavedSecretReferenceChoice
+                scope={props.scope}
+                selectedRef={props.referenceSelection.selected?.ref ?? null}
+                onSelect={select}
+                testIDPrefix="saved-secret-picker"
+            />
+        </View>
+    );
+}
+
+/**
+ * The saved-secret choice over this Account's catalog, shared by the picker sheet and plugin surfaces. Only a ready
+ * secret can be pressed; one still preparing or out of reach stays listed with its status. Pressing returns its
+ * exact reference and current revision, never material.
+ */
+export function SavedSecretReferenceChoice(props: Readonly<{
+    scope: AccountSettingsScope | null;
+    selectedRef: string | null;
+    onSelect: (selection: SharedSavedSecretReferenceSelectionV1) => void;
+    testIDPrefix: string;
+}>) {
     const catalog = useSavedSecretCatalog({ scope: props.scope, includeMaterial: false });
     const stale = catalog.status === 'error' || (catalog.status === 'ready' && catalog.stale);
     // The same entries the Connect sheet's Saved tab lists: every named secret this Account can bind by reference.
@@ -47,36 +74,30 @@ export function SavedSecretPickerModal(props: SavedSecretPickerModalProps) {
         if (resolution.kind !== 'shared_resource' || resolution.status !== 'ready') return;
         const selection = SharedSavedSecretReferenceSelectionV1Schema.safeParse({ ref, resourceRevision: resolution.revision });
         if (!selection.success) return;
-        props.referenceSelection.onSelect(selection.data);
-        props.onClose();
+        props.onSelect(selection.data);
     };
+    const prefix = props.testIDPrefix;
 
     // Known rows stay while the catalog refreshes; the line holds the place only before the first answer.
     if (catalog.status === 'loading' && rows.length === 0) {
-        return (
-            <View style={styles.body}>
-                <SurfaceStateCard testID="saved-secret-picker:loading" size="line" kind="loading" title={t('common.loading')} />
-            </View>
-        );
+        return <SurfaceStateCard testID={`${prefix}:loading`} size="line" kind="loading" title={t('common.loading')} />;
     }
     return (
-        <View style={styles.body} testID="saved-secret-picker">
-            <SavedSecretChoiceList
-                rows={rows}
-                selectedRef={props.referenceSelection.selected?.ref ?? null}
-                onChoose={choose}
-                testIDPrefix="saved-secret-picker"
-                notice={stale ? (
-                    <SurfaceStateCard
-                        testID="saved-secret-picker:stale"
-                        size="line"
-                        kind="unavailable"
-                        title={resolveActionExecutionErrorMessage(catalog.errorCause, t('secrets.catalog.operationFailed'), { safeToRetry: true })}
-                        action={{ label: t('common.retry'), onPress: retry, testID: 'saved-secret-picker:retry' }}
-                    />
-                ) : null}
-            />
-        </View>
+        <SavedSecretChoiceList
+            rows={rows}
+            selectedRef={props.selectedRef}
+            onChoose={choose}
+            testIDPrefix={prefix}
+            notice={stale ? (
+                <SurfaceStateCard
+                    testID={`${prefix}:stale`}
+                    size="line"
+                    kind="unavailable"
+                    title={resolveActionExecutionErrorMessage(catalog.errorCause, t('secrets.catalog.operationFailed'), { safeToRetry: true })}
+                    action={{ label: t('common.retry'), onPress: retry, testID: `${prefix}:retry` }}
+                />
+            ) : null}
+        />
     );
 }
 

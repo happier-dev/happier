@@ -41,6 +41,7 @@ import type { PluginUiScrollActivityTracker } from './scrollActivity.js';
 import type { FindSurfaceRegistrationHost } from '../presentation/find/useFindSurfaceRegistration.js';
 import type { ExecutableParticipantPickerProps } from '../components/ExecutableParticipantPicker.js';
 import type { SecretValueControlsProps, SecretValueTextProps } from '../components/SecretValueDisclosure.js';
+import type { SavedSecretChoiceListProps } from '../components/SavedSecretChoiceList.js';
 import type { DetailsPaneOpenAsPageButtonProps } from '../components/DetailsPaneOpenAsPageButton.js';
 import type { HappierCollectionAddMenuHost } from '../presentation/collection/CollectionAddMenu.js';
 import type { BotFaceProps } from '../components/BotFace.js';
@@ -469,6 +470,8 @@ export type PluginUiPresentationHost = Readonly<{
   /** The one secret value text and its reveal/Copy controls; the author's own value and callbacks, no host secret. */
   renderSecretValueText?(input: SecretValueTextProps): ReactNode;
   renderSecretValueControls?(input: SecretValueControlsProps): ReactNode;
+  /** The one saved-secret choice list over the host's own catalog; the author receives the chosen reference, never a value. */
+  renderSavedSecretChoiceList?(input: SavedSecretChoiceListProps): ReactNode;
   /** Incumbent collection menu primitives; the shared presentation owns the composition. */
   collectionAddMenu?: HappierCollectionAddMenuHost;
   /**

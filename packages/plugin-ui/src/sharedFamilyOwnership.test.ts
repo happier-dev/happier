@@ -133,6 +133,8 @@ const APPROVED_CATALOG_VOCABULARY = [
   'ExecutableParticipantPicker',
   // Providers parity S3 (1115): a secret value's masked/revealed text and its reveal/copy controls, host-rendered.
   'SecretValueText', 'SecretValueControls',
+  // Providers parity S3a (owner 2026-11-15): the host's saved-secret choice list; the host loads the catalog.
+  'SavedSecretChoiceList',
   // C6/C5 (N3 FR1-10): the controlled Memory duplicate choice and the Doc suggested-edit card.
   'MemoryDuplicateChoice', 'DocEditProposal',
   // Capabilities A7 (owner-approved 2026-10-22): the capability row anatomy Happier's Skills/MCP/Agents pages use.
@@ -3090,6 +3092,38 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
       },
     },
   },
+  {
+    publicName: 'SavedSecretChoiceList',
+    propTypeName: 'SavedSecretChoiceListProps',
+    family: 'Host-mediated saved secret choice',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    // The host loads its saved-secret catalog and draws its one choice list; the author gets the chosen reference.
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentationHost/context.ts',
+    sharedSymbol: 'useOptionalPluginUiPresentationHost',
+    pluginOwner: { module: 'components/SavedSecretChoiceList.tsx', symbol: 'SavedSecretChoiceList' },
+    coreConsumers: ['components/plugins/surfaces/pluginUiPrivatePresentationHost.tsx'],
+    coreAdapter: { module: 'components/SavedSecretChoiceList.tsx', symbol: 'SavedSecretChoiceList' },
+    positiveConsumer: {
+      kind: 'external-author-reference',
+      pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/savedSecretChoiceSurface.tsx',
+    },
+    devMountSymbols: [],
+    declarative: {
+      kind: 'not-applicable',
+      reason: 'V2 has no saved-secret choice node; the host reads its own catalog and returns a reference, never the value.',
+    },
+    hostComposition: {
+      adapter: { module: 'components/plugins/surfaces/pluginUiPrivatePresentationHost.tsx', symbol: 'createPluginUiPrivatePresentationRenderers' },
+      physicalHost: {
+        module: 'components/ui/forms/valueRefs/SavedSecretPickerModal.tsx',
+        symbol: 'SavedSecretReferenceChoice',
+        callbackSymbol: 'renderSavedSecretChoiceList',
+      },
+    },
+  },
   // Source ownership evidence only: none of these rows asserts loaded-platform graduation.
   {
     publicName: 'AvatarStack',
@@ -4142,7 +4176,7 @@ describe('graduated shared presentation families (§8.2)', () => {
       'SetupSteps', 'LocalDateTimeField', 'WidgetGlanceRow', 'DiffStat', 'InlineCode', 'ComposerStatusBadge', 'ThreadMessage', 'ReplyQuote',
       'RowStatusLine', 'HappierRequesterDisclosureContent', 'SessionCard', 'BotFace', 'PageAsideColumns', 'PagePinnedBar', 'KeyboardStickyFooter', 'widgetFootprintBodyRows',
       'CollectionSavedViewsStrip', 'CollectionRowNeedsYouHighlight', 'AccountByline', 'ReturnedAnswerQuote', 'MemoryDuplicateChoice', 'CapabilityAddDetailAction', 'CapabilityListingSections', 'capabilityCollectionAnatomy', 'DocEditProposal', 'ExecutableParticipantPicker',
-      'SecretValueText', 'SecretValueControls',
+      'SecretValueText', 'SecretValueControls', 'SavedSecretChoiceList',
       'AvatarStack', 'CollectionConditionTokens', 'CollectionSpaceIcon', 'CollectionTitleButton',
       'EntityFlatReorderList', 'HorizontalScrollEdgeMask', 'ModalCardFooterActions', 'PageLoadingRows',
       'PlanChecklistCard', 'RegistryShelf', 'RegistryShelfAddControl', 'RegistrySourcesUnavailable',
