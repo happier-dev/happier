@@ -6519,6 +6519,7 @@ const machineDetailPageTranslations = { pl: translated({
                 installingRow: ({ machine }) => `${machine} instaluje. Możesz opuścić tę stronę; postęp widać w Aktywności.`,
                 installed: ({ machine }) => `Zainstalowano aktualizacje na ${machine}`,
                 installFailed: ({ machine }) => `Instalacja aktualizacji na ${machine} nie została ukończona`,
+                installUnfinishedReason: `Wcześniejsza instalacja zatrzymała się w połowie. Zainstaluj teraz najpierw ją dokończy.`,
                 showDetails: `Szczegóły`,
                 reviewTitleSecurity: ({ machine }) => `Zainstaluj aktualizacje zabezpieczeń na ${machine}`,
                 reviewTitleAll: ({ machine }) => `Zainstaluj aktualizacje na ${machine}`,

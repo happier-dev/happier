@@ -343,7 +343,8 @@ export function describeUpdatesStatus(
   if (updates.status === 'drifted' && updates.reason === 'native_effect_failed') {
     return {
       title: t(`${s}.installFailed`, { machine }),
-      subtitle: describeReason(updates.reason),
+      // Not a failed check: the interrupted install is what Install now reviews and finishes first.
+      subtitle: t(`${s}.installUnfinishedReason`),
       install: 'all',
     };
   }

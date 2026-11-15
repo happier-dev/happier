@@ -6499,6 +6499,7 @@ const machineDetailPageTranslations = { fr: translated({
                 installingRow: ({ machine }) => `${machine} installe. Vous pouvez quitter cette page ; cela s’affiche dans Activité.`,
                 installed: ({ machine }) => `Mises à jour installées sur ${machine}`,
                 installFailed: ({ machine }) => `L’installation des mises à jour n’a pas abouti sur ${machine}`,
+                installUnfinishedReason: `Une installation précédente s’est arrêtée en cours de route. Installer maintenant la termine d’abord.`,
                 showDetails: `Détails`,
                 reviewTitleSecurity: ({ machine }) => `Installer les mises à jour de sécurité sur ${machine}`,
                 reviewTitleAll: ({ machine }) => `Installer les mises à jour sur ${machine}`,

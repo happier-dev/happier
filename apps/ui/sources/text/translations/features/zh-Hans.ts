@@ -6491,6 +6491,7 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
                 installingRow: ({ machine }) => `${machine} 正在安装。你可以离开此页面，进度会显示在活动中。`,
                 installed: ({ machine }) => `已在 ${machine} 上安装更新`,
                 installFailed: ({ machine }) => `${machine} 上的更新未能完成安装`,
+                installUnfinishedReason: `之前的安装中途停止了。立即安装会先完成它。`,
                 showDetails: `详情`,
                 reviewTitleSecurity: ({ machine }) => `在 ${machine} 上安装安全更新`,
                 reviewTitleAll: ({ machine }) => `在 ${machine} 上安装更新`,

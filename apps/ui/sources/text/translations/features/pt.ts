@@ -6501,6 +6501,7 @@ const machineDetailPageTranslations = { pt: translated({
                 installingRow: ({ machine }) => `${machine} está a instalar. Pode sair desta página; aparece na Atividade.`,
                 installed: ({ machine }) => `Atualizações instaladas em ${machine}`,
                 installFailed: ({ machine }) => `As atualizações não terminaram de instalar em ${machine}`,
+                installUnfinishedReason: `Uma instalação anterior parou a meio. Instalar agora termina-a primeiro.`,
                 showDetails: `Detalhes`,
                 reviewTitleSecurity: ({ machine }) => `Instalar atualizações de segurança em ${machine}`,
                 reviewTitleAll: ({ machine }) => `Instalar atualizações em ${machine}`,

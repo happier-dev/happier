@@ -6528,6 +6528,7 @@ const machineDetailPageTranslations = { ru: translated({
                 installingRow: ({ machine }) => `${machine} устанавливает. Можно уйти со страницы — процесс виден в Активности.`,
                 installed: ({ machine }) => `Обновления установлены на ${machine}`,
                 installFailed: ({ machine }) => `Установка обновлений на ${machine} не завершилась`,
+                installUnfinishedReason: `Предыдущая установка остановилась на полпути. «Установить сейчас» сначала завершит её.`,
                 showDetails: `Подробнее`,
                 reviewTitleSecurity: ({ machine }) => `Установить обновления безопасности на ${machine}`,
                 reviewTitleAll: ({ machine }) => `Установить обновления на ${machine}`,

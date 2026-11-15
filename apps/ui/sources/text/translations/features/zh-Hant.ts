@@ -6490,6 +6490,7 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
                 installingRow: ({ machine }) => `${machine} 正在安裝。你可以離開此頁面，進度會顯示在活動中。`,
                 installed: ({ machine }) => `已在 ${machine} 上安裝更新`,
                 installFailed: ({ machine }) => `${machine} 上的更新未能完成安裝`,
+                installUnfinishedReason: `先前的安裝中途停止了。立即安裝會先完成它。`,
                 showDetails: `詳情`,
                 reviewTitleSecurity: ({ machine }) => `在 ${machine} 上安裝安全更新`,
                 reviewTitleAll: ({ machine }) => `在 ${machine} 上安裝更新`,

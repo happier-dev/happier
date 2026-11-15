@@ -125,6 +125,7 @@ export const english = {
             installingRow: ({ machine }: { machine: string }) => `${machine} is installing. You can leave this page; it shows in Activity.`,
             installed: ({ machine }: { machine: string }) => `Updates installed on ${machine}`,
             installFailed: ({ machine }: { machine: string }) => `Updates didn't finish installing on ${machine}`,
+            installUnfinishedReason: `An earlier install stopped partway. Install now finishes it first.`,
             showDetails: `Details`,
             reviewTitleSecurity: ({ machine }: { machine: string }) => `Install security updates on ${machine}`,
             reviewTitleAll: ({ machine }: { machine: string }) => `Install updates on ${machine}`,

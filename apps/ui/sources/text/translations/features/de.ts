@@ -6493,6 +6493,7 @@ const machineDetailPageTranslations = { de: translated({
                 installingRow: ({ machine }) => `${machine} installiert. Du kannst die Seite verlassen; es erscheint unter Aktivität.`,
                 installed: ({ machine }) => `Updates auf ${machine} installiert`,
                 installFailed: ({ machine }) => `Updates wurden auf ${machine} nicht fertig installiert`,
+                installUnfinishedReason: `Eine frühere Installation brach mittendrin ab. Jetzt installieren schließt sie zuerst ab.`,
                 showDetails: `Details`,
                 reviewTitleSecurity: ({ machine }) => `Sicherheitsupdates auf ${machine} installieren`,
                 reviewTitleAll: ({ machine }) => `Updates auf ${machine} installieren`,

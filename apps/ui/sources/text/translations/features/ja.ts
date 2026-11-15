@@ -6496,6 +6496,7 @@ const machineDetailPageTranslations = { ja: translated({
                 installingRow: ({ machine }) => `${machine} でインストール中です。このページを離れても、アクティビティに表示されます。`,
                 installed: ({ machine }) => `${machine} にアップデートをインストールしました`,
                 installFailed: ({ machine }) => `${machine} でアップデートのインストールが完了しませんでした`,
+                installUnfinishedReason: `前回のインストールが途中で止まりました。今すぐインストールすると、まずそれを完了します。`,
                 showDetails: `詳細`,
                 reviewTitleSecurity: ({ machine }) => `${machine} にセキュリティアップデートをインストール`,
                 reviewTitleAll: ({ machine }) => `${machine} にアップデートをインストール`,

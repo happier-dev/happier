@@ -6501,6 +6501,7 @@ const machineDetailPageTranslations = { ca: translated({
                 installingRow: ({ machine }) => `${machine} està instal·lant. Pots sortir d’aquesta pàgina; es mostra a Activitat.`,
                 installed: ({ machine }) => `Actualitzacions instal·lades a ${machine}`,
                 installFailed: ({ machine }) => `Les actualitzacions no s’han acabat d’instal·lar a ${machine}`,
+                installUnfinishedReason: `Una instal·lació anterior es va aturar a mig camí. Instal·la ara l’acaba primer.`,
                 showDetails: `Detalls`,
                 reviewTitleSecurity: ({ machine }) => `Instal·la actualitzacions de seguretat a ${machine}`,
                 reviewTitleAll: ({ machine }) => `Instal·la actualitzacions a ${machine}`,
