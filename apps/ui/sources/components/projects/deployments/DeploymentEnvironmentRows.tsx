@@ -221,7 +221,7 @@ export function DeploymentEnvironmentRows(
       {
         key: 'state',
         title: t('projects.deployments.services.columnState'),
-        minWidth: 120,
+        minWidth: 136,
         priority: 5,
         align: 'end',
         listColumn: true,
@@ -280,7 +280,7 @@ export function DeploymentEnvironmentRows(
 const NO_SCOPE: ServerAccountScope = Object.freeze({ serverId: '', accountId: '' });
 /** The Address column's bounds: a mono host at meta size (MONO_META_CHAR_PX each), never narrower than its title. */
 const ADDRESS_MIN_PX = 96;
-const ADDRESS_MAX_PX = 240;
+const ADDRESS_MAX_PX = 200;
 const MONO_META_CHAR_PX = 7.4;
 
 type LineRow = Pick<Row, 'deploymentTitle' | 'runsOn' | 'detail' | 'steps' | 'stepCaption'>;
