@@ -1,5 +1,5 @@
 import type { JsonValue, PluginAccountApi } from '@happier-dev/plugin-sdk';
-import type { PluginAccountActionContext, PluginAccountActionHandler } from '@happier-dev/plugin-sdk/actions';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import type { PluginUiHostApi, PluginUiActionReference, PluginUiActionInputFor, PluginUiActionExecutionOptions } from '@happier-dev/plugin-sdk/ui';
 import type { TriageSessionHandoffResultV1 } from '@happier-dev/triage-protocol/v1';
 import { triageEntryRowKey } from '../projection/listWindow.js';
@@ -32,10 +32,8 @@ async function readConfiguredSourceContext(context: PluginAccountActionContext):
 }
 
 /** Portable transport of the configured owner, with optional ordinary UI authoring. */
-export function createTriageRunConfiguredActionHandler(): PluginAccountActionHandler<
-    JsonValue, TriageRunConfiguredActionResultV1
-> {
-    return async (value, context) => {
+export function createTriageRunConfiguredActionHandler() {
+    return async (value: JsonValue | undefined, context: PluginAccountActionContext): Promise<TriageRunConfiguredActionResultV1> => {
         const input = TriageRunConfiguredActionInputV1Schema.parse(value);
         const host = createTriageConfiguredActionHost(context);
         if (input.handoff.context.kind !== 'entries') {

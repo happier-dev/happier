@@ -123,7 +123,7 @@ export function createDemoTriageRuntime(surface: SurfaceContext, options?: Reado
     } } as unknown as Parameters<typeof createTriageSourceSessionRelations>[0];
     const sourceRelations = createTriageSourceSessionRelations(relationContext, collections);
 
-    async function executeAction(reference: PluginReference, input: JsonValue): Promise<unknown> {
+    async function executeAction(reference: PluginReference, input: JsonValue | undefined): Promise<unknown> {
         await ready;
         const action = typeof reference === 'string' ? reference : reference.pluginId === TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 ? reference.localId : null;
         if (action === TRIAGE_SPAWN_PROFILES_LIST_ACTION_ID_V1) return projectLaunchProfileListV1([profile], { agentIds: ['claude'] });
