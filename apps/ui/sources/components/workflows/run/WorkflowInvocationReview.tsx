@@ -78,12 +78,21 @@ export function WorkflowInvocationReview(props: Readonly<{
     const [draft, setDraft] = React.useState(() => buffers.drafts.get(invocation.id));
     const [reading, setReading] = React.useState<WorkflowReviewReading>(() => buffers.readings.get(invocation.id)
         ?? { value: progress.result, revision: props.contentRevision });
+    // Acceptance settles the pinned review to the authoritative invocation,
+    // including answers made elsewhere and responses recovered after reconnect.
+    if (progress.review?.decision?.kind === 'use_result' && reading.revision !== props.contentRevision) {
+        setReading({ value: progress.result, revision: props.contentRevision });
+        setDraft(undefined);
+    }
     // An absent result is not a publication the person has read. Populate the
     // first private result as it arrives; established readings and edits stay pinned.
     if (reading.value === undefined && progress.result !== undefined) {
         setReading({ value: progress.result, revision: props.contentRevision });
     }
     React.useEffect(() => { buffers.readings.set(invocation.id, reading); }, [buffers, invocation.id, reading]);
+    React.useEffect(() => {
+        if (draft) buffers.drafts.set(invocation.id, draft); else buffers.drafts.delete(invocation.id);
+    }, [buffers, invocation.id, draft]);
     const contractResult = React.useMemo(() => WorkflowResultContractSchema.safeParse(progress.resultContract), [progress.resultContract]);
     const contract = contractResult.success ? contractResult.data : undefined;
     const shown = React.useMemo(() => draft ? decodeWorkflowReviewDraft(draft.text, contract) : reading.value, [contract, draft, reading]);

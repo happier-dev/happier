@@ -426,6 +426,31 @@ function editorPromptInput(screen: Awaited<ReturnType<typeof renderScreen>>) {
 const admissions = () => startPlan.mock.calls;
 
 describe('Review through the real Account Action owner and HTTP storage boundary', () => {
+    it.each(['edited', 'as-is', 'refused'] as const)('reconciles the mounted Plan buffer only after acceptance (%s)', async (choice) => {
+        const h = await harness({ plan: true });
+        if (choice !== 'as-is') {
+            await h.screen.pressByTestIdAsync('workflow-review-edit');
+            await change(h.screen, 'workflow-review-field-document', 'Human edited plan');
+        }
+        h.boundary.refuse = choice === 'refused';
+        await h.screen.pressByTestIdAsync('workflow-review-use');
+        await h.refresh();
+        if (choice === 'refused') {
+            expect(h.readDraft()).toBeDefined();
+            expect(h.rows.get(heldId)?.index.lifecycle).toBe('waiting_for_review');
+            expect(h.screen.findByTestId('workflow-review-field-document')?.props.value).toBe('Human edited plan');
+        } else {
+            expect(h.readProgress().review?.decision?.kind).toBe('use_result');
+            expect(h.readDraft()).toBeUndefined();
+            expect(h.screen.findHostByTestId('workflow-review-newer')).toBeNull();
+            expect(h.screen.findHostByTestId('workflow-review-editor')).toBeNull();
+            expect(h.screen.getTextContent()).not.toContain(t('workflows.review.editsTitle'));
+            expect(h.screen.getTextContent()).not.toContain(t('workflows.review.editedNotUsed'));
+            if (choice === 'edited') expect(h.screen.getTextContent()).toContain('Human edited plan');
+            await h.reopen();
+            expect(h.screen.findHostByTestId('workflow-review-newer')).toBeNull();
+        }
+    });
     it('names the authorized human who answered a Plan in its review card', async () => {
         const { screen } = await harness({ plan: true, humanAnswer: true });
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('Ada Chen'));
@@ -880,7 +905,7 @@ describe('Review through the real Account Action owner and HTTP storage boundary
         await h.refresh();
         expect(h.screen.getTextContent()).not.toContain(message);
     });
-    it('publishes a draft, explicitly shows newer bytes, and commits the exact displayed edit/token', async () => {
+    it('publishes a draft, explicitly shows newer bytes, and settles the mounted buffer to the accepted edit/token', async () => {
         const h = await harness();
         await workflowRunDetailActions.publishDraft({ runId, invocation: { recordId: heldId }, expectedContentRevision: '7', value: { ...originalValue, summary: 'New publication' } });
         await h.refresh();
@@ -894,6 +919,12 @@ describe('Review through the real Account Action owner and HTTP storage boundary
             review: { resultSource: { kind: 'human', accountId }, decision: { kind: 'use_result', requestedFromContentRevision: '8' } } });
         expect(h.rows.get(heldId)?.index).toMatchObject({ lifecycle: 'completed', contentRevision: '9' });
         expect(h.onSettled.mock.calls[0]?.[0]).toMatchObject({ state: 'queued' });
+        await h.refresh();
+        expect(h.readDraft()).toBeUndefined();
+        expect(h.screen.findHostByTestId('workflow-review-newer')).toBeNull();
+        expect(h.screen.getTextContent()).not.toContain(t('workflows.review.editsTitle'));
+        expect(h.screen.getTextContent()).not.toContain(t('workflows.review.editedNotUsed'));
+        expect(h.screen.getTextContent()).toContain('Human exact edit');
         expect(machineRpc).not.toHaveBeenCalled();
         expect(startPlan).not.toHaveBeenCalled();
     });
