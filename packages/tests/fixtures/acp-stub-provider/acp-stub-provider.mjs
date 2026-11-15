@@ -218,6 +218,13 @@ class AcpStubAgent {
         // by buffering or test load. Keep this timeout comfortably below provider inactivity caps.
         steer = await withTimeout(state.steerDeferred.promise, resolveSteerWaitMs(), 'waiting for steer');
       } catch (error) {
+        if (state.canceled) {
+          // ACP: a prompt the client cancelled settles with stopReason "cancelled", not an error.
+          state.inFlight = false;
+          state.primary = null;
+          state.canceled = false;
+          return { stopReason: 'cancelled' };
+        }
         // Surface a deterministic failure marker; the harness will time out anyway if the CLI gets stuck.
         const message = error instanceof Error ? error.message : String(error);
         await this.connection.sessionUpdate({
@@ -227,6 +234,7 @@ class AcpStubAgent {
             content: { type: 'text', text: `ACP_STUB_ERROR ${message}` },
           },
         });
+        state.inFlight = false;
         throw error;
       } finally {
         state.steerDeferred = null;

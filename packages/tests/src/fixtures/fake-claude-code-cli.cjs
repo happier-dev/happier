@@ -192,8 +192,71 @@ void runHookForwarder({
   invocationId,
 });
 
-async function runSdkStreamUntilEof() {
+function readSubmittedPromptText(msg) {
+  const content = msg?.message?.content;
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return null;
+  const parts = content.filter((part) => part && part.type === 'text' && typeof part.text === 'string').map((part) => part.text);
+  return parts.length > 0 ? parts.join('') : null;
+}
+
+// Stdin lines in arrival order, except control_responses to this CLI's own control_requests, which settle
+// the waiting request immediately (the real CLI blocks a turn on its hook callbacks while reading stdin).
+function createSdkStdinReader() {
   const rl = readline.createInterface({ input: process.stdin });
+  const pendingControlResponses = new Map();
+  const queuedLines = [];
+  let closed = false;
+  let wake = null;
+  rl.on('line', (line) => {
+    try {
+      const parsed = JSON.parse(String(line || '').trim());
+      const requestId = parsed?.type === 'control_response' ? parsed.response?.request_id : null;
+      const pending = typeof requestId === 'string' ? pendingControlResponses.get(requestId) : undefined;
+      if (pending) {
+        pendingControlResponses.delete(requestId);
+        pending(parsed.response);
+        return;
+      }
+    } catch {
+      // Non-JSON lines are skipped by the consumer.
+    }
+    queuedLines.push(line);
+    wake?.();
+  });
+  rl.on('close', () => {
+    closed = true;
+    for (const [requestId, pending] of pendingControlResponses) {
+      pendingControlResponses.delete(requestId);
+      pending(null);
+    }
+    wake?.();
+  });
+  return {
+    awaitControlResponse(requestId) {
+      return new Promise((resolveResponse) => {
+        if (closed) resolveResponse(null);
+        else pendingControlResponses.set(requestId, resolveResponse);
+      });
+    },
+    async *lines() {
+      for (;;) {
+        if (queuedLines.length > 0) {
+          yield queuedLines.shift();
+          continue;
+        }
+        if (closed) return;
+        await new Promise((resolveWake) => { wake = resolveWake; });
+        wake = null;
+      }
+    },
+  };
+}
+
+async function runSdkStreamUntilEof() {
+  const stdinReader = createSdkStdinReader();
+  // Callback ids the host registered for UserPromptSubmit in initialize.hooks.
+  let userPromptSubmitCallbackIds = [];
   let initialized = false;
   let turn = 0;
   let triageCurrentUiPhase = null;
@@ -413,7 +476,7 @@ async function runSdkStreamUntilEof() {
     emitSdk(createResultSuccess());
   }
 
-  for await (const line of rl) {
+  for await (const line of stdinReader.lines()) {
     const trimmed = String(line || '').trim();
     if (!trimmed) continue;
     let msg;
@@ -435,6 +498,12 @@ async function runSdkStreamUntilEof() {
         requestId,
         hasUserText: false,
       });
+      if (msg.request?.subtype === 'initialize') {
+        const matchers = Array.isArray(msg.request?.hooks?.UserPromptSubmit) ? msg.request.hooks.UserPromptSubmit : [];
+        userPromptSubmitCallbackIds = matchers.flatMap((matcher) => (
+          Array.isArray(matcher?.hookCallbackIds) ? matcher.hookCallbackIds.filter((id) => typeof id === 'string') : []
+        ));
+      }
       if (requestId) {
         emitSdk(createControlResponse(requestId));
       }
@@ -455,6 +524,34 @@ async function runSdkStreamUntilEof() {
     });
     if (!promptText) continue;
 
+    // Real CLI order: UserPromptSubmit hook callbacks (awaited) → system:init → the transcript user row.
+    const submittedPrompt = readSubmittedPromptText(msg) ?? promptText;
+    let promptBlocked = false;
+    for (const callbackId of userPromptSubmitCallbackIds) {
+      const hookRequestId = `fake-claude-hook-${randomUUID()}`;
+      const hookResponse = stdinReader.awaitControlResponse(hookRequestId);
+      process.stdout.write(`${JSON.stringify({
+        type: 'control_request',
+        request_id: hookRequestId,
+        request: {
+          subtype: 'hook_callback',
+          callback_id: callbackId,
+          input: {
+            session_id: sessionId,
+            transcript_path: transcriptPath,
+            cwd: process.cwd(),
+            permission_mode: 'default',
+            hook_event_name: 'UserPromptSubmit',
+            prompt: submittedPrompt,
+          },
+        },
+      })}\n`);
+      const response = await hookResponse;
+      safeAppendJsonl(logPath, { type: 'sdk_hook_callback', invocationId, ts: Date.now(), hookEventName: 'UserPromptSubmit',
+        responseSubtype: response?.subtype ?? null });
+      if (response?.subtype === 'success' && response.response?.continue === false) promptBlocked = true;
+    }
+
     if (!initialized) {
       initialized = true;
       emitSdk(createSystemInitMessage());
@@ -466,6 +563,15 @@ async function runSdkStreamUntilEof() {
       emitSdk({ type: 'command_lifecycle', command_uuid: submittedUuid, state: 'started', uuid: randomUUID(), session_id: sessionId });
       emitSdk({ type: 'user', message: msg.message, parent_tool_use_id: null, session_id: sessionId, uuid: submittedUuid,
         timestamp: new Date().toISOString(), isReplay: true });
+    } else {
+      // The real CLI persists every accepted prompt as a transcript user row, replayed or not.
+      safeAppendTranscriptJsonl({ type: 'user', message: msg.message, parent_tool_use_id: null, session_id: sessionId,
+        uuid: submittedUuid ?? randomUUID(), timestamp: new Date().toISOString(), cwd: process.cwd() });
+    }
+    if (promptBlocked) {
+      // Assumed shape: a hook that returns continue:false stops this prompt before generation; the turn still settles.
+      emitSdk({ ...createResultSuccess(), result: '' });
+      continue;
     }
 
     const now = Date.now();
@@ -1203,7 +1309,7 @@ async function runSdkStreamUntilEof() {
     emitSdk(createResultSuccess());
   }
 
-  rl.close();
+  // The stdin reader ends only after stdin closed.
   safeAppendJsonl(logPath, { type: 'sdk_exited', invocationId, ts: Date.now(), turns: turn });
   process.exit(0);
 }

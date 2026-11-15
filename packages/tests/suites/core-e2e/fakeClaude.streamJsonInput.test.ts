@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -484,6 +484,80 @@ describe('fake Claude CLI fixture', () => {
       expect(rows.filter((row) => row?.type === 'user' && row.uuid === uuid && row.isReplay === true)).toHaveLength(1);
       expect(rows.filter((row) => row?.type === 'result')).toEqual([expect.objectContaining({ user_message_uuids: [uuid], user_message_uuid: uuid })]);
     } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('sends the registered UserPromptSubmit hook callback and waits for its reply before generating', async () => {
+    // Real Claude Code 2.1.319 (.project/tmp/P03-CLAUDE-RESUME/run1.json): after initialize registers a
+    // UserPromptSubmit callback, each prompt produces control_request hook_callback (exact prompt, session id,
+    // transcript path) before system:init, and the transcript gains exactly one user row with that text.
+    // Happier publishes the provider session id (and so resumes) only on this proof.
+    const dir = await mkdtemp(join(tmpdir(), 'happier-fake-claude-hook-callback-'));
+    const configDir = join(dir, 'claude-config');
+    const fixturePath = resolve(process.cwd(), 'src/fixtures/fake-claude-code-cli.cjs');
+    const prompt = 'remember HOOK_CALLBACK_PROMPT';
+    const child = spawn(process.execPath, [fixturePath, '--output-format', 'stream-json', '--input-format', 'stream-json'], {
+      cwd: dir,
+      env: {
+        ...process.env,
+        CLAUDE_CONFIG_DIR: configDir,
+        HAPPIER_E2E_FAKE_CLAUDE_LOG: join(dir, 'fake-claude.jsonl'),
+        HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: 'hook-session-1',
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const rows: any[] = [];
+    let buffered = '';
+    const waiters: Array<() => void> = [];
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      buffered += chunk;
+      const lines = buffered.split('\n');
+      buffered = lines.pop() ?? '';
+      rows.push(...parseJsonLines(lines.join('\n')));
+      for (const wake of waiters.splice(0)) wake();
+    });
+    const exited = new Promise<number | null>((resolveExit) => child.once('exit', (code) => resolveExit(code)));
+    const waitForRow = async (predicate: (row: any) => boolean): Promise<any> => {
+      for (;;) {
+        const found = rows.find(predicate);
+        if (found) return found;
+        await new Promise<void>((wake) => waiters.push(wake));
+      }
+    };
+    try {
+      child.stdin.write(`${JSON.stringify({ type: 'control_request', request_id: 'init-1', request: {
+        subtype: 'initialize', hooks: { UserPromptSubmit: [{ hookCallbackIds: ['happier-session-hook'] }] } } })}\n`);
+      child.stdin.write(`${JSON.stringify({ type: 'user', session_id: '', parent_tool_use_id: null,
+        message: { role: 'user', content: [{ type: 'text', text: prompt }] } })}\n`);
+
+      const hookRequest = await waitForRow((row) => row?.type === 'control_request' && row.request?.subtype === 'hook_callback');
+      expect(hookRequest.request).toEqual(expect.objectContaining({
+        callback_id: 'happier-session-hook',
+        input: expect.objectContaining({
+          hook_event_name: 'UserPromptSubmit',
+          prompt,
+          session_id: 'hook-session-1',
+          transcript_path: expect.stringContaining('hook-session-1.jsonl'),
+        }),
+      }));
+      // Generation waits for the host's reply, as the real CLI does.
+      await new Promise((resolveWait) => setTimeout(resolveWait, 200));
+      expect(rows.some((row) => row?.type === 'assistant' || row?.type === 'result')).toBe(false);
+
+      child.stdin.write(`${JSON.stringify({ type: 'control_response', response: {
+        subtype: 'success', request_id: hookRequest.request_id, response: {} } })}\n`);
+      await waitForRow((row) => row?.type === 'result');
+      child.stdin.end();
+      expect(await exited).toBe(0);
+
+      const transcript = parseJsonLines(await readFile(hookRequest.request.input.transcript_path, 'utf8'));
+      const userRows = transcript.filter((row) => row?.type === 'user'
+        && JSON.stringify(row.message?.content).includes('HOOK_CALLBACK_PROMPT'));
+      expect(userRows).toHaveLength(1);
+    } finally {
+      if (child.exitCode === null) child.kill();
       await rm(dir, { recursive: true, force: true });
     }
   });
