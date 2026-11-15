@@ -38,7 +38,7 @@ import { Socket } from "socket.io";
 import { z } from 'zod/mini';
 import type { VerifiedEphemeralSessionRunnerPrincipal } from "@happier-dev/protocol/ephemeralRunner/principal";
 import type { VerifiedApiTokenPrincipal } from "@/app/auth/auth";
-import { admitApiTokenSessionOperation } from "@/app/api/utils/apiTokenRouteAdmission";
+import { admitApiTokenSessionOperation, isRestrictedAuthTokenKind } from "@/app/api/utils/apiTokenRouteAdmission";
 import { logUnexpectedRequestError } from '@/app/api/utils/logUnexpectedRequestError';
 import { API_TOKEN_SOCKET_EVENT_ACTIONS } from '@happier-dev/protocol/socketRpc';
 import { hasCurrentSocketCredential } from "./socketCredentialCurrentness";
@@ -106,6 +106,7 @@ import {
     acknowledgeSessionFollowFrontierInTx,
     acknowledgeAdmittedSessionFollowInputInTx,
     observePendingSessionFollowForDestinationInTx,
+    readSessionFollowTerminalAckFacts,
 } from "@/app/session/follow/sessionFollowEdgeService";
 import {
     acknowledgeAccountVoiceFollowInTx,
@@ -1126,7 +1127,20 @@ export function sessionUpdateHandler(
                     });
                     if (!bound) return { ok: false, error: 'invalid-params' } as const;
                 }
-                return written;
+                if (!written.ok || !observation.followFacts || observation.sidechainId) return { ...written, followRoutes: null };
+                // The terminal original's follow facts for this publisher's own Account, under the same
+                // admission as the route read it replaces (feature, credential kind, publisher, access).
+                // The row is committed: a facts failure never fails its ack; the host falls back to the route read.
+                const followRoutes = await (async () => await isServerFeatureEnabledForHome("sessions.following")
+                    && !isRestrictedAuthTokenKind(socket.data.authTokenKind)
+                    ? await readSessionFollowTerminalAckFacts({ accountId: userId, sessionId: observation.sessionId,
+                        machineId: publisherAuthority.machineId, authentication: readSessionAccessAuthenticationFromSocket(socket),
+                        originalCreatedAt: written.message.createdAt.getTime() })
+                    : null)().catch((error: unknown) => {
+                        log({ module: "websocket", level: "warn" }, `Terminal follow facts unavailable; ack sent without them: ${error}`);
+                        return null;
+                    });
+                return { ...written, followRoutes };
             },
         });
         if (result === null || !result.ok) {
@@ -1147,6 +1161,7 @@ export function sessionUpdateHandler(
             didWrite: result.didWrite,
             ...(result.didUpdate ? { didUpdate: true } : {}),
             ingestedAt: result.message.createdAt.getTime(),
+            ...(result.followRoutes ? { followRoutes: result.followRoutes } : {}),
         } as const;
         if (!result.didWrite && !result.didUpdate) return { ack };
         return { ack, publication: { sessionId: observation.sessionId, publish: async () => {

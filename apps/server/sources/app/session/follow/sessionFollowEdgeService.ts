@@ -83,7 +83,7 @@ import { isSessionFollowStalledOccurrenceCurrentV1, type SessionFollowStalledOcc
 import type { SessionFollowSelectedDeliveryV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import { SESSION_FOLLOW_ZERO_FRONTIER_V1 } from '@happier-dev/protocol/sessions/follow/sessionFollowFrontierV1';
 import { readSessionFollowRouteDestinationsInTx } from './sessionFollowRouteAdmission';
-import { projectSessionFollowDefaultRelationshipsV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
+import { projectSessionFollowDefaultRelationshipsV1, type SessionFollowCurrentAccountFactsV1, type SessionFollowTerminalAckFactsV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
 import { resolveSessionFollowFactsInTx } from '@/app/session/personal/followFacts';
 import { readOtherPersonalFollowerCensusInTx, readSessionPersonalFollowerCensusInTx, readAccountRunFollowDeliveryInTx } from './accountFollowService';
 import type { SessionFollowActionOutputV1 } from '@happier-dev/protocol/sessions/follow/actions';
@@ -478,15 +478,7 @@ export async function observeSessionFollowSourceRoutes(input: Readonly<{
         let recoveryDestinationId: string | undefined;
         if (!source || source.archivedAt !== null) return denied;
         if (publisher) {
-            if (source.accountId !== input.accountId
-                || source.publisherGeneration.toString() !== publisher.publisherGeneration
-                || !await readExactCurrentPublisherAuthorityInTx(tx, {
-                accountId: input.accountId, sessionId: source.id, machineId: publisher.machineId,
-                // A committed original can wait behind source traversal while
-                // this same publisher heartbeats. Validate its registration,
-                // not the notification's superseded liveness timestamp.
-                publisherGeneration: source.publisherGeneration,
-            }, input.accountId, source.id, undefined, { admittedWork: true })) return denied;
+            if (!await isSessionFollowSourcePublisherCurrentInTx(tx, { accountId: input.accountId, source, publisher })) return denied;
         } else if ('receiver' in input.request) {
             if (input.authentication.apiTokenGrant && isApiTokenGrantRestrictedV1(input.authentication.apiTokenGrant)
                 || !await canReadSession(tx, input.accountId, source.id, input.authentication)) return denied;
@@ -513,23 +505,11 @@ export async function observeSessionFollowSourceRoutes(input: Readonly<{
             source, occurrence: input.request, delivered: SESSION_FOLLOW_ZERO_FRONTIER_V1,
         });
         if (!original) return denied;
-        const edges = await tx.sessionFollowEdge.findMany({
-            where: { sourceSessionId: source.id, relation: { in: ['follower', 'manager'] },
-                ...(input.request.destinationSessionId ? { destinationSessionId: input.request.destinationSessionId } : {}) },
-            select: EDGE_SELECT, orderBy: [{ destinationSessionId: 'asc' }, { relation: 'asc' }],
-        });
-        // All edges in this snapshot share one source and caller. The existing
-        // set-oriented owner retains every destination's custody and audience
-        // checks without re-reading the same source once per relation.
-        const destinations = recoveryDestinationId ? new Set([recoveryDestinationId]) : await readSessionFollowRouteDestinationsInTx(tx, {
-            accountId: input.accountId, authentication: input.authentication, sourceSessionId: source.id,
-            destinationSessionIds: edges.map(edge => edge.destinationSessionId),
-        });
+        const edges = await readAdmittedSessionFollowSourceEdgesInTx(tx, { accountId: input.accountId,
+            authentication: input.authentication, sourceSessionId: source.id,
+            destinationSessionId: input.request.destinationSessionId, recoveryDestinationId });
         const routes: SessionFollowSessionPendingObservationV1[] = [];
-        for (const row of edges) {
-            const edge = readSessionEdge(row);
-            if (!edge) continue;
-            if (!destinations.has(edge.destinationSessionId)) continue;
+        for (const edge of edges) {
             // Routes are demand for the Pending owner's final decision. A muted
             // original must reach that owner to settle as suppressed, not replay
             // when the receiver later removes its mute.
@@ -542,10 +522,9 @@ export async function observeSessionFollowSourceRoutes(input: Readonly<{
                 relation: edge.relation, ...(edge.relation === 'manager' ? { attachedAt: edge.attachedAt.getTime() } : {}),
                 policy: edge.policy, delivered, observed });
         }
-        const access = await resolveEffectiveSessionAccess(tx, { accountId: input.accountId, sessionId: source.id,
-            authentication: input.authentication });
-        if (!access?.capabilities.readTranscript) return denied;
-        const follow = await resolveSessionFollowFactsInTx(tx, { accountId: input.accountId, sessionId: source.id });
+        const currentAccountFacts = await readSessionFollowCurrentAccountFactsInTx(tx, { accountId: input.accountId,
+            authentication: input.authentication, source });
+        if (!currentAccountFacts) return denied;
         const request = input.request.sourceRequests?.requests[0];
         const handler = request?.currentHandler;
         let representedQuestionHandlerSessionId: string | undefined;
@@ -564,11 +543,99 @@ export async function observeSessionFollowSourceRoutes(input: Readonly<{
         }
         return { ok: true, v: 1, sourceSessionId: source.id, routes, originalCreatedAt: original.originalCreatedAt,
             ...(representedQuestionHandlerSessionId ? { representedQuestionHandlerSessionId } : {}),
-            currentAccountFacts: { defaultRelationships: projectSessionFollowDefaultRelationshipsV1({
-                responsibleForMe: source.responsibleAccountId === input.accountId, relationshipKinds: access.relationshipKinds,
-            }), personalFollowSuppressed: follow.follows === false && follow.notificationLevel === 'none',
-            hasPersistentFollow: follow.notificationLevel !== null } };
+            currentAccountFacts };
     });
+}
+
+/**
+ * The source-publisher route read's answer for a terminal original, computed for the Session's own
+ * admitted publisher right after its write commits (`followFacts` on the transcript observation).
+ * Same Account, publisher, access and destination checks as the route; null when any refuses, so
+ * the caller falls back to the route read. Facts are about the writer's own Account only.
+ */
+export async function readSessionFollowTerminalAckFacts(input: Readonly<{
+    accountId: string; sessionId: string; machineId: string;
+    authentication: SessionAccessAuthentication; originalCreatedAt: number;
+}>): Promise<SessionFollowTerminalAckFactsV1 | null> {
+    return inReadSnapshot(async tx => {
+        if (input.authentication.sessionRuntimePrincipal || !await isActingAccountActive(tx, input.accountId)) return null;
+        const source = await tx.session.findUnique({ where: { id: input.sessionId },
+            select: { ...SESSION_SELECT, responsibleAccountId: true } });
+        // The write just fenced this publisher; its current registration generation is the one proven here.
+        if (!source || source.archivedAt !== null || !await isSessionFollowSourcePublisherCurrentInTx(tx, {
+            accountId: input.accountId, source,
+            publisher: { machineId: input.machineId, publisherGeneration: source.publisherGeneration.toString() },
+            // The publisher's own socket event: its registration already decided Machine access (R4).
+            admittedWork: true,
+        })) return null;
+        const currentAccountFacts = await readSessionFollowCurrentAccountFactsInTx(tx, { accountId: input.accountId,
+            authentication: input.authentication, source });
+        if (!currentAccountFacts) return null;
+        const edges = await readAdmittedSessionFollowSourceEdgesInTx(tx, { accountId: input.accountId,
+            authentication: input.authentication, sourceSessionId: source.id });
+        return { edges: edges.length > 0 ? 'present' : 'none', originalCreatedAt: input.originalCreatedAt, currentAccountFacts };
+    });
+}
+
+/**
+ * The source-publisher proof shared by the route read and the terminal-write ack. The HTTP route
+ * names a client-supplied `machineId`, so it keeps the Machine-access check that binds it;
+ * `admittedWork` is only for the publisher's own socket event, whose `machineId` is server-held.
+ */
+async function isSessionFollowSourcePublisherCurrentInTx(tx: Tx, input: Readonly<{
+    accountId: string; source: Readonly<{ id: string; accountId: string; publisherGeneration: bigint }>;
+    publisher: Readonly<{ machineId: string; publisherGeneration: string }>;
+    admittedWork?: true;
+}>): Promise<boolean> {
+    const { source } = input;
+    return source.accountId === input.accountId
+        && source.publisherGeneration.toString() === input.publisher.publisherGeneration
+        && await readExactCurrentPublisherAuthorityInTx(tx, {
+            accountId: input.accountId, sessionId: source.id, machineId: input.publisher.machineId,
+            // A committed original can wait behind source traversal while
+            // this same publisher heartbeats. Validate its registration,
+            // not the notification's superseded liveness timestamp.
+            publisherGeneration: source.publisherGeneration,
+        }, input.accountId, source.id, undefined, input.admittedWork ? { admittedWork: true } : undefined) !== null;
+}
+
+/** Ordinary follower/manager edges of one source whose destination the caller may route to. */
+async function readAdmittedSessionFollowSourceEdgesInTx(tx: Tx, input: Readonly<{
+    accountId: string; authentication: SessionAccessAuthentication; sourceSessionId: string;
+    destinationSessionId?: string; recoveryDestinationId?: string;
+}>) {
+    const rows = await tx.sessionFollowEdge.findMany({
+        where: { sourceSessionId: input.sourceSessionId, relation: { in: ['follower', 'manager'] },
+            ...(input.destinationSessionId ? { destinationSessionId: input.destinationSessionId } : {}) },
+        select: EDGE_SELECT, orderBy: [{ destinationSessionId: 'asc' }, { relation: 'asc' }],
+    });
+    if (rows.length === 0) return [];
+    // All edges in this snapshot share one source and caller. The existing
+    // set-oriented owner retains every destination's custody and audience
+    // checks without re-reading the same source once per relation.
+    const destinations = input.recoveryDestinationId ? new Set([input.recoveryDestinationId]) : await readSessionFollowRouteDestinationsInTx(tx, {
+        accountId: input.accountId, authentication: input.authentication, sourceSessionId: input.sourceSessionId,
+        destinationSessionIds: rows.map(edge => edge.destinationSessionId),
+    });
+    return rows.flatMap(row => {
+        const edge = readSessionEdge(row);
+        return edge && destinations.has(edge.destinationSessionId) ? [edge] : [];
+    });
+}
+
+/** The caller's own follow-relevant facts about one source; null without transcript access. Never another Account's. */
+async function readSessionFollowCurrentAccountFactsInTx(tx: Tx, input: Readonly<{
+    accountId: string; authentication: SessionAccessAuthentication;
+    source: Readonly<{ id: string; responsibleAccountId: string | null }>;
+}>): Promise<SessionFollowCurrentAccountFactsV1 | null> {
+    const access = await resolveEffectiveSessionAccess(tx, { accountId: input.accountId, sessionId: input.source.id,
+        authentication: input.authentication });
+    if (!access?.capabilities.readTranscript) return null;
+    const follow = await resolveSessionFollowFactsInTx(tx, { accountId: input.accountId, sessionId: input.source.id });
+    return { defaultRelationships: projectSessionFollowDefaultRelationshipsV1({
+        responsibleForMe: input.source.responsibleAccountId === input.accountId, relationshipKinds: access.relationshipKinds,
+    }), personalFollowSuppressed: follow.follows === false && follow.notificationLevel === 'none',
+    hasPersistentFollow: follow.notificationLevel !== null };
 }
 
 /** Durable destination invalidation and socket hints share the commit boundary. */
