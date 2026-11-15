@@ -7,6 +7,9 @@ import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 import { createLoadSentinel, sentinelGraphs, isSentinelSource, watchLoadSentinel } from './load-sentinel.mjs';
 import { ENTRY_GRAPHS } from './entry-load.mjs';
 import { postBoardEntry } from '../../../../scripts/board/postBoardEntry.mjs';
+import { execFileSync } from 'node:child_process';
+import { probeRuntimeImport } from '../utils/proc/runtimeImportProbe.mjs';
+import { launchHeadDaemon } from './head-daemon-boot.mjs';
 
 async function fixtureGraph(t) {
   const fixture = await createTempFixture(t, { prefix: 'load-sentinel-' });
@@ -21,6 +24,85 @@ async function fixtureGraph(t) {
   await writeFile(entry, 'export {};');
   return { fixture, graph, entry };
 }
+
+test('HEAD native launcher preserves the missing producer error and throwing file', async t => {
+  const { fixture, entry } = await fixtureGraph(t);
+  await writeFile(entry, 'const producer = {}; producer.attachMachineRolesRoutes();');
+  const launched = await launchHeadDaemon({ entrypoint: entry, env: process.env, cwd: fixture.root });
+  await assert.rejects(launched.completion, error => error.message.includes('attachMachineRolesRoutes is not a function')
+    && error.message.includes(entry));
+});
+
+test('HEAD boot reports a missing producer member once and does not boot an unchanged revision', async t => {
+  const { fixture, entry } = await fixtureGraph(t);
+  const git = (...args) => execFileSync('git', args, { cwd: fixture.root, stdio: 'pipe' });
+  git('init', '-q');
+  git('config', 'user.name', 'Fixture');
+  git('config', 'user.email', 'fixture@example.invalid');
+  await writeFile(entry, 'const producer = {}; producer.attachMachineRolesRoutes();');
+  git('add', '.');
+  git('commit', '-qm', 'test: broken producer');
+  const revision = git('rev-parse', 'HEAD').toString().trim();
+  const posts = [];
+  const results = [];
+  let boots = 0;
+  const graph = { id: 'head-daemon-boot', entry: 'apps/cli/scripts/importCycleGuard.mjs', cwd: '.', args: [] };
+  const sentinel = createLoadSentinel({ repoDir: fixture.root, graphs: [graph], signal: t.signal,
+    post: async text => posts.push(text), onResult: result => results.push(result),
+    // The worker process is the system boundary. Its constructed executable
+    // reproduces the missing-member boot failure without a real Account.
+    runHeadBootCommand: async options => {
+      boots += 1;
+      return probeRuntimeImport({ ...options, entrypoint: entry, args: [] });
+    }, waitForQuiet: async () => {} });
+  await sentinel.request();
+  await sentinel.request();
+  assert.equal(results.length, 1, 'one boot verdict per unchanged HEAD');
+  assert.equal(results[0].revision, revision);
+  assert.equal(results[0].status, 'failed');
+  assert.equal(boots, 1);
+  assert.equal(posts.length, 1);
+  assert.match(posts[0], /ALL leads — URGENT/);
+  assert.ok(posts[0].includes(revision));
+  assert.match(posts[0], /attachMachineRolesRoutes/);
+  await writeFile(entry, 'export {};');
+  git('add', '.');
+  git('commit', '-qm', 'test: repaired producer');
+  await sentinel.request();
+  assert.equal(results.at(-1).status, 'passed');
+  assert.equal(results.at(-1).revision, git('rev-parse', 'HEAD').toString().trim());
+  assert.equal(boots, 2, 'a new HEAD is checked');
+  assert.equal(posts.length, 1, 'a successful revision does not publish an alarm');
+});
+
+test('HEAD commits with unchanged source trigger the boot graph through Git notifications', async t => {
+  const { fixture, entry } = await fixtureGraph(t);
+  const git = (...args) => execFileSync('git', args, { cwd: fixture.root, stdio: 'pipe' });
+  git('init', '-q');
+  git('config', 'user.name', 'Fixture');
+  git('config', 'user.email', 'fixture@example.invalid');
+  git('add', '.');
+  git('commit', '-qm', 'test: initial revision');
+  const controller = new AbortController();
+  t.after(() => controller.abort());
+  const ready = Promise.withResolvers();
+  const revisions = [];
+  const watching = watchLoadSentinel({ repoDir: fixture.root, signal: controller.signal,
+    graphs: [{ id: 'head-daemon-boot', entry: 'apps/cli/scripts/importCycleGuard.mjs' }],
+    post: async () => assert.fail('a healthy daemon must not alarm'),
+    watchAdmissions: async () => {},
+    runHeadBootCommand: options => probeRuntimeImport({ ...options, entrypoint: entry, args: [] }),
+    onResult: result => {
+      revisions.push(result.revision);
+      ready.resolve();
+      if (revisions.length === 2) controller.abort();
+    } });
+  await ready.promise;
+  git('commit', '--allow-empty', '-qm', 'test: HEAD only');
+  await watching;
+  assert.equal(revisions.length, 2);
+  assert.notEqual(revisions[0], revisions[1]);
+});
 
 test('admission pushes post once per slot without rerunning source graphs', async t => {
   const { fixture, graph } = await fixtureGraph(t);
@@ -196,7 +278,7 @@ test('source changes renew the confirmation quiet window and a transient watcher
 
 test('sentinel subset consumes the canonical graph declarations', () => {
   assert.deepEqual(sentinelGraphs().map(graph => graph.id).sort(),
-    ['bundled-plugin-manifests', 'daemon', 'protocol-import-cycles', 'schema-sync', 'sdk-publication-spec', 'server', 'tracked-migrations', 'ui-catalog', 'ui-web-bundle']);
+    ['bundled-plugin-manifests', 'daemon', 'head-daemon-boot', 'protocol-import-cycles', 'schema-sync', 'sdk-publication-spec', 'server', 'tracked-migrations', 'ui-catalog', 'ui-web-bundle']);
   for (const graph of sentinelGraphs().filter(graph => ENTRY_GRAPHS.some(entry => entry.id === graph.id))) assert.ok(ENTRY_GRAPHS.includes(graph));
 });
 

@@ -32,6 +32,7 @@ type FullDaemonHome = Readonly<{
   installedToken: string | null;
   homeId: string;
   baseUrl: string;
+  pauseInstalledMachineNetwork(): Promise<() => Promise<void>>;
   waitForMachineRpc(machineId: string, method: string, signal?: AbortSignal): Promise<void>;
   createMachineMember(accessLevel: 'view' | 'admin'): Promise<Readonly<{ accountId: string; token: string }>>;
   createForeignAccount(): Promise<Readonly<{ accountId: string; token: string }>>;
@@ -53,6 +54,12 @@ export async function startInstalledDaemonFixture(input: Readonly<{
   forwardRpc?: ExternalActionForwardRpcCall;
   plugins?: Parameters<typeof createAuthoredAdmittedPluginRuntimeFixture>[0]['plugins'];
   env?: Readonly<Record<string, string | undefined>>;
+  /** OS process boundary for probing a produced CLI with this fixture's Home. */
+  launchDaemon?: (input: Readonly<{ homeDirectory: string }>) => Promise<Readonly<{
+    pid: number;
+    completion: Promise<void>;
+    stop: () => void;
+  }>>;
   registerCleanup?: (cleanup: () => Promise<void>) => void;
   onStartupPhase?: (phase: 'identity' | 'home' | 'homeStart' | 'credentials' | 'plugins' | 'daemonImport' | 'daemonStart' | 'machineRpc' | 'ready') => void;
   onShutdownPhase?: (phase: 'sessions' | 'listSessions' | 'retireSession' | 'signalDaemon' | 'awaitDaemon' | 'plugins' | 'home' | 'mounts' | 'restore' | 'stopped') => void;
@@ -84,6 +91,7 @@ export async function startInstalledDaemonFixture(input: Readonly<{
   let mounts: Awaited<ReturnType<typeof createInstalledDaemonMountInventory>> | undefined;
   let startup: Promise<void> | undefined;
   let shutdownDaemon: (() => void) | undefined;
+  let daemonPid = process.pid;
   let stopping: Promise<void> | undefined;
   const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
   // Artifact acquisition is the network/install boundary. Keep installed
@@ -104,7 +112,7 @@ export async function startInstalledDaemonFixture(input: Readonly<{
           if (configuration.happyHomeDir !== homeDirectory) throw new Error('Installed fixture lost its isolated Home scope');
           const target = await readDaemonState();
           if (target?.httpPort) {
-            if (target.pid !== process.pid) throw new Error('Installed fixture does not own this daemon publication');
+            if (target.pid !== daemonPid) throw new Error('Installed fixture does not own this daemon publication');
             input.onShutdownPhase?.('listSessions');
             const children = z.object({ children: z.array(z.object({ happySessionId: z.string(), pid: z.number() })) })
               .parse(await daemonPost('/list', {}, { target })).children;
@@ -200,14 +208,22 @@ export async function startInstalledDaemonFixture(input: Readonly<{
       plugin = await createAuthoredAdmittedPluginRuntimeFixture({ happyHomeDir: homeDirectory,
         plugins: input.plugins });
     }
-    input.onStartupPhase?.('daemonImport');
-    const { startDaemon } = await import('@/daemon/startDaemon');
-    lifetime.signal.throwIfAborted();
-    const signalListenersBeforeStart = new Set(processEvents.listeners('SIGTERM'));
-    input.onStartupPhase?.('daemonStart');
-    startup = startDaemon();
-    const signalListeners = processEvents.listeners('SIGTERM').filter(listener => !signalListenersBeforeStart.has(listener));
-    shutdownDaemon = () => { for (const listener of signalListeners) listener.call(process); };
+    if (input.launchDaemon) {
+      input.onStartupPhase?.('daemonStart');
+      const launched = await input.launchDaemon({ homeDirectory });
+      daemonPid = launched.pid;
+      startup = launched.completion;
+      shutdownDaemon = launched.stop;
+    } else {
+      input.onStartupPhase?.('daemonImport');
+      const { startDaemon } = await import('@/daemon/startDaemon');
+      lifetime.signal.throwIfAborted();
+      const signalListenersBeforeStart = new Set(processEvents.listeners('SIGTERM'));
+      input.onStartupPhase?.('daemonStart');
+      startup = startDaemon();
+      const signalListeners = processEvents.listeners('SIGTERM').filter(listener => !signalListenersBeforeStart.has(listener));
+      shutdownDaemon = () => { for (const listener of signalListeners) listener.call(process); };
+    }
     void startup.catch(() => undefined);
     input.onStartupPhase?.('machineRpc');
     await Promise.race([Promise.all([

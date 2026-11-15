@@ -1,4 +1,7 @@
 import { SDK_PUBLICATION_SPEC_GRAPH, loadSdkPublicationSpec } from './sdk-publication-spec.mjs';
+import { HEAD_DAEMON_BOOT_GRAPH, loadHeadDaemonBoot } from './head-daemon-boot.mjs';
+import { resolveSourceRevisionIdentity } from '../build/source_revision.mjs';
+import { execFileSync } from 'node:child_process';
 import { SCHEMA_SYNC_GRAPH, TRACKED_MIGRATIONS_GRAPH, loadSchemaSync, loadTrackedMigrations } from './schema-migration-probes.mjs';
 import { BUNDLED_MANIFEST_GRAPH, loadBundledManifestContracts } from './contract-manifests.mjs';
 import { WEB_BUNDLE_GRAPH, loadWebBundle } from './web-bundle.mjs';
@@ -15,7 +18,7 @@ import { resolveRepoStackIdentity, resolveStacksStorageRoot } from '../utils/sta
 export function sentinelGraphs() {
   // The incident corridor; entry paths, loaders and execution stay with the owner.
   const ids = ['protocol-import-cycles', 'ui-catalog', 'server', 'daemon'];
-  return [...ENTRY_GRAPHS.filter(graph => ids.includes(graph.id)).sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id)), WEB_BUNDLE_GRAPH, SCHEMA_SYNC_GRAPH, TRACKED_MIGRATIONS_GRAPH, BUNDLED_MANIFEST_GRAPH, SDK_PUBLICATION_SPEC_GRAPH];
+  return [...ENTRY_GRAPHS.filter(graph => ids.includes(graph.id)).sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id)), WEB_BUNDLE_GRAPH, SCHEMA_SYNC_GRAPH, TRACKED_MIGRATIONS_GRAPH, BUNDLED_MANIFEST_GRAPH, SDK_PUBLICATION_SPEC_GRAPH, HEAD_DAEMON_BOOT_GRAPH];
 }
 
 export function isSentinelSource(filename) {
@@ -38,6 +41,7 @@ function failureIdentity(result) {
 
 export function formatLoadSentinelResult(result) {
   return { graph: result.graph, status: result.status, elapsedMs: result.elapsedMs,
+    ...(result.revision ? { revision: result.revision } : {}),
     startedAt: result.startedAt, endedAt: result.endedAt,
     ...(result.status === 'passed' ? {} : { code: failureIdentity(result).code }) };
 }
@@ -82,9 +86,11 @@ async function recentImportFiles(repoDir, graph, result) {
 }
 
 export function createLoadSentinel({ repoDir, graphs = sentinelGraphs(), signal, env = process.env, post, onResult = () => {},
+  runHeadBootCommand,
   readAdmissionSamples = async () => [],
   waitForQuiet = () => delay(DEFAULT_FILE_CHANGE_CATCH_UP_MS, undefined, { signal }) }) {
   const failures = new Map();
+  const checkedHeads = new Set();
   const announcedOverruns = new Map();
   let admissionPending = false;
   let admissionRunning;
@@ -146,6 +152,21 @@ export function createLoadSentinel({ repoDir, graphs = sentinelGraphs(), signal,
       await requestAdmissionSample();
       for (const graph of graphs) {
         signal?.throwIfAborted();
+        if (graph.id === HEAD_DAEMON_BOOT_GRAPH.id) {
+          const { revision } = await resolveSourceRevisionIdentity({ repoDir, rev: 'HEAD' });
+          if (checkedHeads.has(revision)) continue;
+          checkedHeads.add(revision);
+          const startedAt = new Date().toISOString();
+          const result = { ...await loadHeadDaemonBoot({ repoDir, revision, env, signal, runCommand: runHeadBootCommand }),
+            startedAt, endedAt: new Date().toISOString() };
+          await onResult(result);
+          if (result.status !== 'passed') {
+            const message = String(result.loadError?.message ?? 'HEAD boot failed').split('\n')[0];
+            const details = `graph=${graph.id}; revision=${revision}; file=${sourcePath(repoDir, result.firstFailingModule) ?? graph.entry}; error=${isPublicRuntimeImportDiagnostic(message) ? message : 'private diagnostic withheld'}`;
+            await announce(graph.id, 'broken', details);
+          }
+          continue;
+        }
         let result = await load(graph);
         await onResult(result);
         if (result.status === 'unavailable') continue;
@@ -228,7 +249,7 @@ async function watchConfiguredAdmissions({ repoDir, env, signal, onSample }) {
 }
 
 export async function watchLoadSentinel({ repoDir, signal, post, onResult, graphs, env = process.env,
-  watchAdmissions = watchConfiguredAdmissions }) {
+  runHeadBootCommand, watchAdmissions = watchConfiguredAdmissions }) {
   let debounce;
   let quiet;
   let requestAfterQuiet = false;
@@ -238,6 +259,14 @@ export async function watchLoadSentinel({ repoDir, signal, post, onResult, graph
     recursive: true, persistent: true, isRelevant: (_directory, filename) => isSentinelSource(filename),
     onError: error => { failure = error; stopped.resolve(); },
   });
+  // Commits normally leave source bytes unchanged. Follow the reflog's parent
+  // directory so update-ref's atomic replacement also reaches the observer.
+  const headObserver = (graphs ?? sentinelGraphs()).some(graph => graph.id === HEAD_DAEMON_BOOT_GRAPH.id)
+    ? createFileChangeObserver([execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-path', 'logs'],
+      { cwd: repoDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()], {
+      persistent: true, isRelevant: (_directory, filename) => String(filename) === 'HEAD',
+      onError: error => { failure = error; stopped.resolve(); },
+    }) : null;
   const abort = () => { quiet?.resolve(); stopped.resolve(); };
   const request = () => sentinel.request().catch(error => { failure = error; stopped.resolve(); });
   // Source-triggered runs and confirmation share the existing debounce. Every
@@ -258,7 +287,7 @@ export async function watchLoadSentinel({ repoDir, signal, post, onResult, graph
   const abortAdmissions = () => admissionController.abort();
   signal.addEventListener('abort', abortAdmissions, { once: true });
   if (signal.aborted) abortAdmissions();
-  const sentinel = createLoadSentinel({ repoDir, signal, post, onResult, graphs, waitForQuiet, env,
+  const sentinel = createLoadSentinel({ repoDir, signal, post, onResult, graphs, waitForQuiet, env, runHeadBootCommand,
     readAdmissionSamples: async () => [...admissionSamples.values()] });
   // A broker stream is independent of graph checks: launches and clock-only
   // overruns never start expensive source loads or process/memory walks.
@@ -276,12 +305,17 @@ export async function watchLoadSentinel({ repoDir, signal, post, onResult, graph
     requestAfterQuiet = true;
     waitForQuiet();
   });
+  headObserver?.subscribe(() => {
+    requestAfterQuiet = true;
+    waitForQuiet();
+  });
   try {
     if (!signal.aborted) { await request(); await stopped.promise; }
   } finally {
     clearTimeout(debounce);
     quiet?.resolve();
     observer.close();
+    headObserver?.close();
     admissionController.abort();
     signal.removeEventListener('abort', abortAdmissions);
     signal.removeEventListener('abort', abort);
