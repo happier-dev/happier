@@ -346,8 +346,13 @@ describe('authorizeMachineRpcRequest', () => {
       // terminal owner (rpcHandlers.terminal.test.ts member Use refusals).
       const memberRefusal = method === RPC_METHODS.DAEMON_TERMINAL_ENSURE
         ? { ok: true } : { ok: false, errorCode: 'agent_isolation_unavailable' };
+      // A person's local repository read runs as their member user (SCM owner); other
+      // source control needs Manage (MEMBER-SCM-READ-1114).
+      const memberUse = method === RPC_METHODS.SCM_STATUS_SNAPSHOT ? { ok: true }
+        : method === RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_LIST || method === RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE
+          ? { ok: false, errorCode: 'machine_manage_required' } : memberRefusal;
       expect(await authorizeMachineRpcRequest({ ...request, machineAdmission: { ...machineAdmission, actorAccountId: 'member', role: 'use' } }, boundary), method)
-        .toMatchObject(memberRefusal);
+        .toMatchObject(memberUse);
       const ownerAgent = await authorizeMachineRpcRequest({ ...request, localActionContext: { actionCaller: caller } }, boundary);
       // Coordination's D1 ruling admits only the owner's native terminal open;
       // the installed receiver still owns placement and all control custody.
@@ -374,10 +379,12 @@ describe('authorizeMachineRpcRequest', () => {
     expect(await authorizeMachineRpcRequest({ method: `machine:${RPC_METHODS.BASH}`, params: {},
       machineAdmission: { ...machineAdmission, role: 'manage' }, callerAuthority: 'account_automation' }, boundary))
       .toEqual({ ok: true });
-    for (const method of [RPC_METHODS.SCM_STATUS_SNAPSHOT]) {
-      expect(await authorizeMachineRpcRequest({ method: `machine:${method}`, params: {}, machineAdmission,
-        callerAuthority: 'account_automation' }, boundary), method).toMatchObject({ ok: false, errorCode: 'agent_isolation_unavailable' });
-    }
+    // A Use member's local repository read reaches the SCM owner, which places it as their member user;
+    // forge reads stay refused before any effect.
+    expect(await authorizeMachineRpcRequest({ method: `machine:${RPC_METHODS.SCM_STATUS_SNAPSHOT}`, params: {}, machineAdmission,
+      callerAuthority: 'account_automation' }, boundary)).toEqual({ ok: true });
+    expect(await authorizeMachineRpcRequest({ method: `machine:${RPC_METHODS.SCM_PULL_REQUEST_LIST}`, params: {}, machineAdmission,
+      callerAuthority: 'account_automation' }, boundary)).toMatchObject({ ok: false, errorCode: 'machine_manage_required' });
     for (const method of Object.values(PRIVATE_SPAWN_SESSION_RPC_METHODS)) {
       const request = { method: `machine:${method}`, machineAdmission, callerAuthority: 'account_automation' as const };
       expect(await authorizeMachineRpcRequest({ ...request, params: { directory: '/workspace',

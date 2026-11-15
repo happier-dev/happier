@@ -111,6 +111,12 @@ export type ScmActionSpecDefinition<
   id: TId;
   inputSchema: TInput;
   outputSchema: TOutput;
+  /**
+   * Reads only the local repository at the input's folder (status, history, diffs, file content), so it can run as
+   * the requesting person. Never set on forge, hosting, saved-result or Agent-starting methods: those run on this
+   * Machine's own credentials or services, which a person with Can use must not reach.
+   */
+  localRepositoryRead?: true;
 }>;
 
 /**
@@ -212,7 +218,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.backend.describe' },
     surfaces: { ui: false, voice: false, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'read',
+    sideEffectClass: 'read', localRepositoryRead: true,
     inputSchema: scm.ScmBackendDescribeRequestSchema,
     outputSchema: scm.ScmBackendDescribeResponseSchema,
     inputHints: {
@@ -232,7 +238,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.status.snapshot' },
     surfaces: { ui: false, voice: false, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'read',
+    sideEffectClass: 'read', localRepositoryRead: true,
     inputSchema: SessionScmStatusInputSchema,
     outputSchema: scm.ScmStatusSnapshotResponseSchema,
     inputHints: {
@@ -271,7 +277,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.diff.file' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'read',
+    sideEffectClass: 'read', localRepositoryRead: true,
     inputSchema: scm.ScmDiffFileActionRequestSchema,
     outputSchema: scm.ScmDiffFileResponseSchema,
     inputHints: {
@@ -290,7 +296,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     safety: 'safe', placements: [],
     bindings: { rpcMethod: 'scm.file.read' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'read',
+    sideEffectClass: 'read', localRepositoryRead: true,
     inputSchema: scm.ScmFileAtRevisionRequestSchema,
     outputSchema: scm.ScmFileReadResponseSchema,
     inputHints: { title: 'Read file at revision', fields: [
@@ -331,7 +337,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.diff.commit' },
     surfaces: { ui: false, voice: false, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'read',
+    sideEffectClass: 'read', localRepositoryRead: true,
     inputSchema: scm.ScmDiffCommitRequestSchema,
     outputSchema: scm.ScmDiffCommitResponseSchema,
     inputHints: {
@@ -449,7 +455,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: RPC_METHODS.SCM_COMMIT_RESOLVE_OUTCOME, mcpToolName: 'scm_commit_resolve_outcome' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'read',
+    sideEffectClass: 'read', localRepositoryRead: true,
     cli: { commands: [{ path: ['scm', 'commit', 'resolve-outcome'], visibility: 'canonical' }] },
     inputSchema: scm.ScmCommitResolveOutcomeRequestSchema,
     outputSchema: scm.ScmCommitResolveOutcomeResponseSchema,
@@ -512,7 +518,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: RPC_METHODS.SCM_HISTORY_ENTRIES },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'read',
+    sideEffectClass: 'read', localRepositoryRead: true,
     // The catalog needs classic Zod composition; parsing stays at the one Mini owner.
     inputSchema: z.lazy(() => ScmHistoryEntriesInputV1Schema),
     outputSchema: z.lazy(() => ScmHistoryEntriesResponseSchema),
@@ -531,7 +537,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.log.list' },
     surfaces: { ui: false, voice: false, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'read',
+    sideEffectClass: 'read', localRepositoryRead: true,
     inputSchema: scm.ScmLogListRequestSchema,
     outputSchema: scm.ScmLogListResponseSchema,
     inputHints: {
@@ -553,7 +559,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.branch.list' },
     surfaces: { ui: false, voice: false, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'read',
+    sideEffectClass: 'read', localRepositoryRead: true,
     inputSchema: branches.ScmBranchListRequestSchema,
     outputSchema: branches.ScmBranchListResponseSchema,
     inputHints: {
@@ -1026,7 +1032,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.stash.list' },
     surfaces: { ui: false, voice: false, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'read',
+    sideEffectClass: 'read', localRepositoryRead: true,
     inputSchema: stash.ScmStashListRequestSchema,
     outputSchema: stash.ScmStashListResponseSchema,
     inputHints: {
@@ -1045,7 +1051,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.stash.show' },
     surfaces: { ui: false, voice: false, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'read',
+    sideEffectClass: 'read', localRepositoryRead: true,
     inputSchema: stash.ScmStashShowRequestSchema,
     outputSchema: stash.ScmStashShowResponseSchema,
     inputHints: {
@@ -2104,5 +2110,14 @@ export const SCM_GIT_ACTION_SPECS: readonly (
 
 /** A projection of the declaration owner, not a separate operation taxonomy. */
 export function getScmRpcSideEffectClass(method: string) {
-  return SCM_GIT_ACTION_SPECS.find((spec) => spec.bindings && 'rpcMethod' in spec.bindings && spec.bindings.rpcMethod === method)?.sideEffectClass;
+  return findScmRpcSpec(method)?.sideEffectClass;
+}
+
+/** A projection of `localRepositoryRead` on the declaration owner. */
+export function isScmLocalRepositoryReadRpcMethod(method: string): boolean {
+  return findScmRpcSpec(method)?.localRepositoryRead === true;
+}
+
+function findScmRpcSpec(method: string) {
+  return SCM_GIT_ACTION_SPECS.find((spec) => spec.bindings && 'rpcMethod' in spec.bindings && spec.bindings.rpcMethod === method);
 }

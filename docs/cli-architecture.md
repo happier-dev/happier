@@ -2591,13 +2591,24 @@ an Agent cannot gain the person's terminal authority through copied context.
 Session-less Project SCM (the Machine-scoped `scm.*` RPCs) runs where the
 admitted viewer may run. The SCM handler resolves the requester through the
 filesystem-effect requester owner. An admitted Manage requester or the custodian
-runs Git as the daemon user, unisolated, like its file effects and shell. Ingress
-refuses every other requester on these routes with `agent_isolation_unavailable`.
-The daemon-level isolation port carries no launch material. Without a selected
-requester, a Project read inside a Workspace root on an isolation-enabled Machine
-is refused before Git starts. Machine SCM keeps that typed refusal as the response's
-`actionErrorCode` beside `BACKEND_UNAVAILABLE`, instead of a Git probe message.
-Can use reads of a member's own folder are not served by Machine SCM yet.
+runs Git as the daemon user, unisolated, like its file effects and shell.
+A person with Can use (or their own Account automation) gets local repository
+reads only: the SCM Action specs mark them `localRepositoryRead` (status, log,
+history, branches, stashes, commit and file diffs, file content, backend
+describe), and `isScmLocalRepositoryReadRpcMethod` projects that flag for
+ingress and the handler. The handler runs those reads as the person's member
+user through the member execution owner (`prepareNativeOperation`, as bash and
+Project Open use it), with the member folder as the access-policy root, so a
+path outside it is `INVALID_PATH` before Git starts. Captured diff evidence,
+which goes through the daemon's own Account executor, is refused for a member
+placement. Every other `scm.*` method (forge, hosting, saved results, Agent
+runs, writes) is refused at ingress with `machine_manage_required` for a
+requester without Manage; Agent and Session sources keep
+`agent_isolation_unavailable`. The daemon-level isolation port carries no
+launch material. Without a selected requester, a Project read inside a
+Workspace root on an isolation-enabled Machine is refused before Git starts.
+Machine SCM keeps that typed refusal as the response's `actionErrorCode` beside
+`BACKEND_UNAVAILABLE`, instead of a Git probe message.
 
 In 0.3 development, automatic folder selection consumes the canonical execution
 placement policy. With isolation disabled, shared-Machine Sessions run as the

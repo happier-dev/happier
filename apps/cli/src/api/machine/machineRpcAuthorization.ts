@@ -43,6 +43,7 @@ import {
 } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ScmWorkEvidenceAdmissionSchema } from '@happier-dev/protocol/scm';
+import { getScmRpcSideEffectClass, isScmLocalRepositoryReadRpcMethod } from '@happier-dev/protocol/actions/scmGitActionSpecs';
 import {
   PreparedTransferRpcRequestV1Schema,
   resolvePreparedTransferRpcPhaseV1,
@@ -1917,7 +1918,16 @@ export async function authorizeMachineRpcRequest(
         if (installationId !== machine.resolveInstallationId())
           return forbidden('machine_installation');
         // Home-admitted Manage on this physical receiver permits raw work.
-        if (!receivingManager && !isHostRequesterUnrestrictedOwner(identity)) {
+        // A person (or their own Account automation) reading a local repository: the SCM
+        // owner runs it as their member user, only inside their own folder.
+        const personLocalRepositoryRead = identity.kind === 'isolated' && (identity.presentPerson || identity.accountAutomation)
+          && isScmLocalRepositoryReadRpcMethod(rpcMethod);
+        if (!receivingManager && !isHostRequesterUnrestrictedOwner(identity) && !personLocalRepositoryRead) {
+          // Other source control runs on this Machine's own credentials and services (owner ruling 2026-10-31).
+          if (getScmRpcSideEffectClass(rpcMethod) !== undefined && context.role !== 'manage') {
+            return { ok: false, errorCode: 'machine_manage_required',
+              error: 'This source-control action needs Manage access to this Machine' };
+          }
           return {
             ok: false,
             errorCode: 'agent_isolation_unavailable',
