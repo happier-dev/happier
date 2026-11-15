@@ -13154,6 +13154,7 @@ const shareSheetTranslations = { ja: {
             help: { use: 'エージェントはあなたのマシン経由で実行し、内容は見えません' },
             description: 'チームを選びます。次に、利用を通すマシンとチーム内の対象を選びます。',
             footnote: 'メンバーのエージェントはあなたのマシンを通して使います。値が見えることはありません。',
+            searchPlaceholder: 'チームを追加',
         },
         documents: {
             title: '共有',

@@ -13148,6 +13148,7 @@ const shareSheetTranslations = { 'zh-Hant': {
             help: { use: '他們的代理透過你的機器執行，看不到它' },
             description: '選擇一個團隊。接著選擇透過哪台機器使用，以及團隊中誰取得它。',
             footnote: '成員的代理透過你的機器使用它，永遠看不到它。',
+            searchPlaceholder: '新增團隊',
         },
         documents: {
             title: '共享',

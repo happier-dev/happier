@@ -13169,6 +13169,7 @@ const shareSheetTranslations = { pt: {
             help: { use: 'os agentes deles passam pela tua máquina; nunca o veem' },
             description: 'Escolhe uma equipa. Depois escolhes por que máquina passa o uso e quem na equipa o recebe.',
             footnote: 'Os agentes dos membros usam pela sua máquina. Eles nunca veem o valor.',
+            searchPlaceholder: 'Adicionar uma equipa',
         },
         documents: {
             title: 'Compartilhamento',

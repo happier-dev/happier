@@ -13170,6 +13170,7 @@ const shareSheetTranslations = { it: {
             help: { use: 'i loro agenti passano dalla tua macchina; non lo vedono mai' },
             description: 'Scegli un team. Poi scegli da quale macchina passa l’uso e chi nel team lo riceve.',
             footnote: 'Gli agenti dei membri lo usano tramite la tua macchina. Non lo vedono mai.',
+            searchPlaceholder: 'Aggiungi un team',
         },
         documents: {
             title: 'Condivisione',

@@ -13191,6 +13191,7 @@ const shareSheetTranslations = { ca: {
             help: { use: 'els seus agents passen per la teva màquina; mai no el veuen' },
             description: 'Tria un equip. Després tries per quina màquina passa l’ús i qui de l’equip el rep.',
             footnote: 'Els agents dels membres el fan servir a través de la teva màquina. No el veuen mai.',
+            searchPlaceholder: 'Afegeix un equip',
         },
         documents: {
             title: 'Compartició',

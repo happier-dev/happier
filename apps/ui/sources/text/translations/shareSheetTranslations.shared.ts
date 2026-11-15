@@ -44,6 +44,7 @@ export type ShareSheetTranslations = Readonly<{
         levels: Readonly<{ canUse: string }>;
         help: Readonly<{ use: string }>;
         description: string;
+        searchPlaceholder: string;
     }>;
     tasks: Readonly<{
         shareTitle: (params: Readonly<{ name: string }>) => string;
@@ -175,6 +176,7 @@ export const shareSheetTranslationsEnglish = { en: {
             help: { use: 'their agents run through your machine; they never see it' },
             description: 'Choose a Team. Next you pick which machine its use runs through and who in the Team gets it.',
             footnote: 'Members\' agents use it through your machine. They never see it.',
+            searchPlaceholder: 'Add a Team',
         },
         documents: {
             title: 'Sharing',

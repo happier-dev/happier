@@ -484,7 +484,8 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
             {needle && matchCount === 0 && !npmProfiles ? (
                 <EmptyState
                     testID="connected-services-index:no-match"
-                    layout="inline"
+                    // "No credentials match “x” · Clear search": a quiet line with an inline link, never a button.
+                    layout="line"
                     iconName="magnifying-glass"
                     title={t('connectedServicesCollection.noCredentialsMatch', { query: query.trim() })}
                     primaryAction={{ testID: 'connected-services-index:no-match-clear', label: t('common.clearSearch'), onPress: () => setQuery('') }}

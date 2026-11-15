@@ -12978,6 +12978,7 @@ const shareSheetTranslations = { de: {
             help: { use: 'ihre Agenten laufen über deine Maschine; sie sehen es nie' },
             description: 'Wähle ein Team. Danach wählst du, über welche Maschine die Nutzung läuft und wer im Team es bekommt.',
             footnote: 'Die Agents der Mitglieder nutzen es über deinen Rechner. Sie sehen es nie.',
+            searchPlaceholder: 'Team hinzufügen',
         },
         documents: {
             title: 'Teilen',

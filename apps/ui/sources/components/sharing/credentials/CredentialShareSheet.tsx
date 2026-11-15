@@ -44,6 +44,8 @@ function createCredentialShareAdapter(source: TeamCredentialSourceHint): ShareSh
     description: credentialBrokeredSourceUseMessage(source.kind === 'connected_account' ? source.account.service
       : source.kind === 'connected_pool' ? source.service : undefined) ?? t('shareSheet.credentials.description'),
     footnote: t('shareSheet.credentials.footnote'),
+    // Credentials go to Teams only (the directory below lists no people), so the field says so.
+    searchPlaceholder: t('shareSheet.credentials.searchPlaceholder'),
     levels: {
       view: canUse,
       edit: { label: canUse.label },

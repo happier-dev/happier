@@ -13216,6 +13216,7 @@ const shareSheetTranslations = { fr: {
             help: { use: 'leurs agents passent par votre machine ; ils ne le voient jamais' },
             description: 'Choisissez une équipe. Vous choisirez ensuite par quelle machine passe l’usage et qui dans l’équipe le reçoit.',
             footnote: 'Les agents des membres l’utilisent via ta machine. Ils ne le voient jamais.',
+            searchPlaceholder: 'Ajouter une équipe',
         },
         documents: {
             title: 'Partage',

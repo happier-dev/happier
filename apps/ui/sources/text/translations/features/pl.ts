@@ -13189,6 +13189,7 @@ const shareSheetTranslations = { pl: {
             help: { use: 'ich agenci działają przez twoją maszynę; nigdy go nie widzą' },
             description: 'Wybierz zespół. Potem wybierzesz, przez którą maszynę idzie użycie i kto w zespole je dostaje.',
             footnote: 'Agenci członków używają go przez twoją maszynę. Nigdy go nie widzą.',
+            searchPlaceholder: 'Dodaj zespół',
         },
         documents: {
             title: 'Udostępnianie',

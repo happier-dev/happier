@@ -13149,6 +13149,7 @@ const shareSheetTranslations = { 'zh-Hans': {
             help: { use: '他们的代理通过你的机器运行，看不到它' },
             description: '选择一个团队。接下来选择通过哪台机器使用，以及团队中谁获得它。',
             footnote: '成员的代理通过你的机器使用它，永远看不到它。',
+            searchPlaceholder: '添加团队',
         },
         documents: {
             title: '共享',

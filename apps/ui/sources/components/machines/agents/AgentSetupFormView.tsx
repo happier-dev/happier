@@ -14,6 +14,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
 import { ConnectedServiceMark } from '@/components/settings/connectedServices/ConnectedServiceMark';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -27,7 +28,7 @@ import { canPerformMachineAgentAction, isMachineAgentInstalledBySetup, resolveAg
 import { formatMachineAgentStatus } from './machineAgentCopy';
 
 /** Exact choices from the connected-account chooser, or the Agent's own login. */
-export type AgentSignInChoice = Readonly<{ kind: 'service'; serviceId: string; option: SelectionListOption }> | Readonly<{ kind: 'native' }>;
+export type AgentSignInChoice = Readonly<{ kind: 'service'; serviceId: string; serviceTitle: string; option: SelectionListOption }> | Readonly<{ kind: 'native' }>;
 
 export type AgentSetupFormHandlers = Readonly<{
     onInstall: () => void;
@@ -77,7 +78,7 @@ export function resolveAgentSignInChoices(agent: MachineAgent, handlers: AgentSe
             renderRowIcon: () => null, renderBrowseMark: () => null, renderSettingsIcon: () => null,
         });
         return model.rootStep.sections.flatMap(section => section.kind === 'static'
-            ? section.options.map(option => ({ kind: 'service' as const, serviceId: service.serviceId, option })) : []);
+            ? section.options.map(option => ({ kind: 'service' as const, serviceId: service.serviceId, serviceTitle: service.title, option })) : []);
     });
     return agent.signIn.nativeLogin === 'terminal' ? [...services, { kind: 'native' }] : services;
 }
@@ -407,11 +408,14 @@ function SignInChoices(props: AgentSetupFormViewProps & Readonly<{ compact: bool
                 testID: `${testID}.way.native`,
             };
         }
+        // Tiles from several services sit together here, so "connect one" names its service ("Kimi · No account connected").
+        const connect = choice.option.id === createConnectServiceOptionId(choice.serviceId);
         return {
             id: choiceKey(choice),
-            title: choice.option.label,
-            subtitle: choice.option.subtitle,
-            mark: <ConnectedServiceMark legacyServiceId={choice.serviceId} size="inline" />,
+            title: connect ? choice.serviceTitle : choice.option.label,
+            subtitle: connect ? choice.option.label : choice.option.subtitle,
+            // `serviceId` is the qualified service key: its exact identity selects the service's own mark.
+            mark: <ConnectedServiceMark legacyServiceId={choice.serviceId} service={parseQualifiedPluginContributionKey(choice.serviceId)} size="inline" />,
             disabled: choice.option.disabled,
             testID: `${testID}.way.${choice.option.id}`,
         };
