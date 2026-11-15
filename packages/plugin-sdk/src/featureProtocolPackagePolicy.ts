@@ -24,9 +24,14 @@ export function isFeatureProtocolPackageName(value: unknown): value is string {
 
 export function hasFeatureProtocolPackageExports(value: unknown): value is Readonly<Record<string, unknown>> {
     if (!isRecord(value)) return false;
-    const keys = Object.keys(value).sort((left, right) => left.localeCompare(right));
-    return keys.length === FEATURE_PROTOCOL_EXPORTS.length
-        && keys.every((key, index) => key === FEATURE_PROTOCOL_EXPORTS[index]);
+    const keys = Object.keys(value);
+    return FEATURE_PROTOCOL_EXPORTS.every((key) => Object.hasOwn(value, key))
+        && keys.every((key) => {
+            if ((FEATURE_PROTOCOL_EXPORTS as readonly string[]).includes(key)) return true;
+            const match = /^\.\/([a-z][a-z0-9-]*)(?:\/testing)?\/v[1-9][0-9]*$/u.exec(key);
+            return match !== null
+                && !['host', 'runtime', 'private', 'internal'].includes(match[1]);
+        });
 }
 
 export function isPublicFeatureProtocolPackageManifest(
@@ -40,7 +45,7 @@ export function isPublicFeatureProtocolPackageManifest(
 
 export function publicFeatureProtocolPackageSpecifiers(value: unknown): readonly string[] {
     if (!isPublicFeatureProtocolPackageManifest(value)) return [];
-    return FEATURE_PROTOCOL_EXPORTS.map((exportKey) => (
+    return Object.keys(value.exports).sort((left, right) => left.localeCompare(right)).map((exportKey) => (
         exportKey === '.' ? value.name : `${value.name}/${exportKey.slice(2)}`
     ));
 }

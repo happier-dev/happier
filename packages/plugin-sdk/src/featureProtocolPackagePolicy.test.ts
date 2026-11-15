@@ -245,6 +245,9 @@ const FEATURE_PROTOCOL_CONTRIBUTIONS_IMPORT_ALLOWLIST = new Set(
 const FEATURE_PROTOCOL_SDK_IMPORT_ALLOWLIST: Readonly<Record<string, ReadonlySet<string>>> = Object.freeze({
     [SDK_PROTOCOL_SUBPATH]: FEATURE_PROTOCOL_PROTOCOL_IMPORT_ALLOWLIST,
     [SDK_CONTRIBUTIONS_SUBPATH]: FEATURE_PROTOCOL_CONTRIBUTIONS_IMPORT_ALLOWLIST,
+    // Canonical portable target identity only; Agent operations remain outside
+    // reusable feature protocols. Triage's Session handoff consumes this parser.
+    [`${SDK_PACKAGE_NAME}/agents`]: new Set(['AgentTargetKeyV2Schema']),
     // Only the canonical portable numeric contract, never Action services.
     [`${SDK_PACKAGE_NAME}/actions`]: new Set(['EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES']),
     // Coordination17:13: portable feature failures use this exact public
@@ -1216,6 +1219,30 @@ afterAll(async () => {
 });
 
 describe('feature-protocol package policy', () => {
+    it('admits declared versioned feature domains and preserves their exact public specifiers', () => {
+        const packageJson = {
+            ...featureProtocolFixture.packageJson,
+            exports: {
+                ...featureProtocolFixture.packageJson.exports,
+                './ci/v1': { types: './dist/ci/v1.d.ts', default: './dist/ci/v1.js' },
+                './ci/testing/v1': { types: './dist/ci/testing/v1.d.ts', default: './dist/ci/testing/v1.js' },
+                './releases/v1': { types: './dist/releases/v1.d.ts', default: './dist/releases/v1.js' },
+                './releases/testing/v1': { types: './dist/releases/testing/v1.d.ts', default: './dist/releases/testing/v1.js' },
+            },
+        };
+        expect(isPublicFeatureProtocolPackageManifest(packageJson)).toBe(true);
+        expect(publicFeatureProtocolPackageSpecifiers(packageJson)).toEqual(
+            Object.keys(packageJson.exports).sort((left, right) => left.localeCompare(right))
+                .map((key) => key === '.' ? packageJson.name : packageJson.name + '/' + key.slice(2)),
+        );
+        for (const forbidden of ['./ci', './host/v1', './runtime/v1', './private/v1', './ci/private/v1']) {
+            expect(isPublicFeatureProtocolPackageManifest({
+                ...packageJson,
+                exports: { ...packageJson.exports, [forbidden]: {} },
+            }), forbidden).toBe(false);
+        }
+    });
+
     it('resolves the policy fixtures\' SDK peer and dev ranges through the shared prepublication rule', () => {
         for (const fixture of [featureProtocolFixture, featureProtocolWireFixture]) {
             expect(collectBundledPrepublicationAuthorPackageNames(fixture.packageJson))
@@ -1427,6 +1454,18 @@ describe('feature-protocol package policy', () => {
         });
         expect(() => assertFeatureProtocolPackageBoundary(source('ScmHostingRepositoryIdentityV1'))).not.toThrow();
         expect(() => assertFeatureProtocolPackageBoundary(source('PluginScmRegistrationApi'))).toThrow('PluginScmRegistrationApi');
+    });
+
+    it('admits the canonical Agent target key schema without admitting Agent runtime services', () => {
+        const source = (name: string) => ({
+            ...featureProtocolFixture,
+            sources: {
+                ...featureProtocolFixture.sources,
+                'src/v1/agent.ts': `import { ${name} } from '@happier-dev/plugin-sdk/agents';\nvoid ${name};\n`,
+            },
+        });
+        expect(() => assertFeatureProtocolPackageBoundary(source('AgentTargetKeyV2Schema'))).not.toThrow();
+        expect(() => assertFeatureProtocolPackageBoundary(source('buildAgentTargetKeyV2'))).toThrow('buildAgentTargetKeyV2');
     });
 
     it('allows only named, allowlisted public SDK schema facts in feature protocol source', () => {
