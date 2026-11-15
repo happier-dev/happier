@@ -23,6 +23,7 @@ import { useNativeBackLayerDescendant } from '@/components/ui/overlays/NativeBac
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useLayoutPresentationActive, useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
+import { useRetainedPlacement } from '@/modal/components/RetainedModalFrame';
 import type {
     PopoverAnchor,
     PopoverBackdropEffect,
@@ -256,10 +257,11 @@ type PopoverCommonProps = Readonly<{
     maxHeightCap?: number;
     maxWidthCap?: number;
     /**
-     * The room a side must offer before an `auto*` placement (or a flip) prefers it. Defaults to the
-     * cap on that axis. A menu whose height is bounded only by the window passes the room it usually
+     * The vertical room a side must offer before an `auto*` placement (or a flip) prefers it. Defaults to
+     * the height cap. A menu whose height is bounded only by the window passes the room it usually
      * needs, so it still opens below its trigger when that room exists. A start-aligned side popover
-     * (a submenu) likewise stays at its anchor row while the room below it holds this much.
+     * (a submenu) likewise stays at its anchor row while the room below it holds this much. Sideways
+     * side choice always uses `maxWidthCap`, since the free room there is a width.
      */
     placementMinSpace?: number;
     /**
@@ -384,7 +386,7 @@ const DEFAULT_PREFERRED_ROOM_PX = 400;
 
 type PopoverProps = PopoverWithBackdrop | PopoverWithoutBackdrop;
 
-function resolveFocusReturnRef(props: PopoverProps) {
+function resolveFocusReturnRef(props: Pick<PopoverProps, 'focusReturnRef' | 'anchor' | 'anchorRef'>) {
     return props.focusReturnRef ?? (props.anchor?.kind === 'view' ? props.anchor.ref : props.anchorRef);
 }
 
@@ -416,8 +418,39 @@ function useCloseWhenPageWithdrawn(open: boolean, onRequestClose: (() => void) |
     React.useEffect(() => presentation.subscribe(closeIfOpen), [closeIfOpen, presentation]);
 }
 
+/**
+ * How far a presented body's events travel: a body is rendered at the Popover, away from its shell, so it stops
+ * what its shell stopped. A portaled anchored popover keeps clicks and scrolls inside it; a sheet (a dialog) keeps
+ * its presses; an inline popover or a view pushed into another surface lets them through as before.
+ */
+type PopoverBodyIsolation = 'portal' | 'dialog' | 'none';
+type PopoverBodyArgs = Readonly<{ renderProps: PopoverRenderProps; isolation: PopoverBodyIsolation }>;
+type PopoverShellProps = (PopoverProps extends infer Variant ? Variant extends unknown ? Omit<Variant, 'children'> : never : never) & Readonly<{
+    /** The one mounted body, presented in this shell. */
+    renderBody: (args: PopoverBodyArgs) => React.ReactElement;
+}>;
+
+const stopWebPropagation = (event: { stopPropagation?: () => void }) => { event.stopPropagation?.(); };
+const PORTAL_ISOLATION = {
+    onClick: stopWebPropagation, onPointerDown: stopWebPropagation, onTouchStart: stopWebPropagation,
+    onWheel: stopWebPropagation, onTouchMove: stopWebPropagation,
+} as const;
+const DIALOG_ISOLATION = { onClick: stopWebPropagation, onPointerDown: stopWebPropagation, onTouchStart: stopWebPropagation } as const;
+const NO_ISOLATION = {} as const;
+const BODY_HOST_STYLE = { display: 'contents' } as const;
+
 export function Popover(requested: PopoverProps) {
     const deviceType = useDeviceType();
+    // One mounted body across the anchored popover, the phone sheet and a view pushed into another surface: crossing
+    // the phone breakpoint changes the shell, never the content (typed text, a picked source, an open step).
+    const children = requested.children;
+    const renderRetainedBody = React.useCallback((args: PopoverBodyArgs) => Platform.OS === 'web'
+        ? <div style={BODY_HOST_STYLE} {...(args.isolation === 'portal' ? PORTAL_ISOLATION : args.isolation === 'dialog' ? DIALOG_ISOLATION : NO_ISOLATION)}>
+            {children(args.renderProps)}
+        </div>
+        : children(args.renderProps), [children]);
+    // A closed popover's body retires with its last shell, so it opens fresh next time.
+    const retained = useRetainedPlacement(renderRetainedBody, requested.open ? RETAIN_WITHOUT_SHELL : RETIRE_WITHOUT_SHELL);
     useCloseWhenPageWithdrawn(requested.open, requested.onRequestClose);
     // A withdrawn page presents nothing, whether or not its opener has committed the close yet: a retained
     // page is frozen behind the content that replaced it, so its close may only land when it is shown again
@@ -428,31 +461,39 @@ export function Popover(requested: PopoverProps) {
     // opening a second surface over it.
     const pushStack = React.useContext(PhoneSheetPushContext);
     const phone = deviceType === 'phone';
+    const { children: _body, ...shell } = props;
+    const shellProps: PopoverShellProps = { ...shell, renderBody: retained.mount };
     // Placement measurements belong to the anchored presentation's mounted tree. A sheet
     // replaces that tree, so returning to desktop measures its new anchor and content afresh.
     // A menu's or picker's own scroll never drives the shade under the pane header it opens from.
     return <PaneHeaderScrollIsolation>
         {phone && pushStack && props.phonePresentation
-            ? <PushedPhonePopover {...props} stack={pushStack} />
+            ? <PushedPhonePopover {...shellProps} stack={pushStack} />
             : phone && props.phonePresentation === 'sheet'
-                ? <PhonePopoverSheet {...props} />
-                : <AnchoredPopoverPresence {...props} />}
+                ? <PhonePopoverSheet {...shellProps} />
+                : <AnchoredPopoverPresence {...shellProps} />}
+        {retained.body}
     </PaneHeaderScrollIsolation>;
 }
 
-function PushedPhonePopover(props: PopoverProps & Readonly<{ stack: PhoneSheetPushStack }>) {
+const RETIRE_WITHOUT_SHELL = { retireWithoutShell: true } as const;
+const RETAIN_WITHOUT_SHELL = { retireWithoutShell: false } as const;
+
+function PushedPhonePopover(props: PopoverShellProps & Readonly<{ stack: PhoneSheetPushStack }>) {
+    const { renderBody } = props;
+    const render = React.useCallback((renderProps: PopoverRenderProps) => renderBody({ renderProps, isolation: 'none' }), [renderBody]);
     usePhoneSheetPush({
         stack: props.stack,
         open: props.open,
         title: props.sheetHeader === 'none' ? undefined : props.accessibilityLabel,
         subtitle: props.sheetSubtitle,
         onRequestClose: props.onRequestClose,
-        render: props.children,
+        render,
     });
     return null;
 }
 
-function PhonePopoverSheet(props: PopoverProps) {
+function PhonePopoverSheet(props: PopoverShellProps) {
     // A sheet is a screen surface: hosted above its layer's chrome, never inside a page's popover scope.
     const layerOverlayPortal = useLayerOverlayPortal();
     const nearestOverlayPortal = useOverlayPortal();
@@ -461,7 +502,8 @@ function PhonePopoverSheet(props: PopoverProps) {
     const { width: windowWidth, height: windowHeight } = usePresentationWindowDimensions();
     const insets = useChromeSafeAreaInsets();
     const maxHeight = Math.min(props.maxHeightCap ?? windowHeight, Math.max(0, windowHeight - insets.top - insets.bottom));
-    const closeSheet = () => props.onRequestClose?.();
+    // Stable, so the retained body is not republished (and re-rendered) on every render of the sheet.
+    const closeSheet = useEventCallback(() => props.onRequestClose?.());
     // Views pushed inside this sheet (a row's picker): the band then names the top one and leads with Back.
     const [pushStack] = React.useState(createPhoneSheetPushStack);
     const pushed = React.useSyncExternalStore(pushStack.subscribe, pushStack.getChrome, pushStack.getChrome);
@@ -502,12 +544,15 @@ function PhonePopoverSheet(props: PopoverProps) {
                     presentation: 'sheet',
                     requestClose: closeSheet,
                 }}>
-                    {props.children({
-                        placement: 'bottom',
-                        maxWidth: Math.max(0, windowWidth - insets.left - insets.right),
-                        maxHeight,
-                        presentation: 'sheet',
-                        requestClose: closeSheet,
+                    {props.renderBody({
+                        renderProps: {
+                            placement: 'bottom',
+                            maxWidth: Math.max(0, windowWidth - insets.left - insets.right),
+                            maxHeight,
+                            presentation: 'sheet',
+                            requestClose: closeSheet,
+                        },
+                        isolation: 'dialog',
                     })}
                 </PhoneSheetPushBody>
             </FloatingOverlaySheetContext.Provider>
@@ -524,7 +569,7 @@ function PhonePopoverSheet(props: PopoverProps) {
     return Platform.OS !== 'web' && overlayPortal ? null : content;
 }
 
-function AnchoredPopoverPresence(props: PopoverProps) {
+function AnchoredPopoverPresence(props: PopoverShellProps) {
     const reducedMotion = useReducedMotionPreference();
     const popoverMotionPreset = React.useMemo(
         () => resolveOverlayMotionPreset({ kind: 'popover' }),
@@ -535,7 +580,7 @@ function AnchoredPopoverPresence(props: PopoverProps) {
     return overlayPresence.present ? <AnchoredPopover {...props} overlayPresence={overlayPresence} /> : null;
 }
 
-function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: ReturnType<typeof useOverlayPresence> }>) {
+function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: ReturnType<typeof useOverlayPresence> }>) {
     const {
         open: requestedOpen,
         anchorRef: anchorRefLegacy,
@@ -552,7 +597,7 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
         edgePadding = 0,
         backdrop,
         containerStyle,
-        children,
+        renderBody,
     } = props;
     const open = requestedOpen;
     const closeForHiddenAnchor = props.dismissWhenAnchorHidden ? onRequestClose : undefined;
@@ -1379,11 +1424,9 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
 
             const resolvedPlacement = resolveHappierPopoverPlacement({
                 placement,
-                preferredMinAvailable: props.placementMinSpace ?? (
-                    placement === 'auto-horizontal' || placement === 'left' || placement === 'right'
-                        ? maxWidthCap
-                        : preferredRoom
-                ),
+                preferredMinAvailable: placement === 'auto-horizontal' || placement === 'left' || placement === 'right'
+                    ? maxWidthCap
+                    : (props.placementMinSpace ?? preferredRoom),
                 flip: props.flip !== false,
                 available: {
                     top: availableTop,
@@ -2176,11 +2219,11 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
     // On a phone the popover spans the screen, so a submenu opened inside it pushes in place (`AnchoredPhonePushHost`).
     const renderedChildren = React.useMemo(() => {
         const renderProps = { ...computed, maxWidth: contentMaxWidth, requestClose, ...(phone ? { pushesSubmenus: true } : {}) };
-        const body = children(renderProps);
+        const body = renderBody({ renderProps, isolation: shouldPortalWeb ? 'portal' : 'none' });
         return <GlassOpenedLayer>
             {phone ? <AnchoredPhonePushHost renderProps={renderProps}>{body}</AnchoredPhonePushHost> : body}
         </GlassOpenedLayer>;
-    }, [children, computed, contentMaxWidth, phone, requestClose]);
+    }, [renderBody, computed, contentMaxWidth, phone, requestClose, shouldPortalWeb]);
     const content = (
         <EscapeLayerProvider layer={escapeLayer}>
             <PopoverBackdrop

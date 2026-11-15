@@ -12,6 +12,10 @@ import { SurfaceFreshnessOnSheetProvider, useSurfaceFreshnessOnSheet } from '@/c
 import { PluginSurfaceFocusEligibilityTransfer, useCapturedPluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { PaneRegionProvider, usePaneRegion } from '@/components/appShell/panes/paneRegionContext';
 import { ScreenBackdropBoundary } from '@/components/navigation/safeArea/HorizontalSafeArea';
+import { SurfacePlanesTransfer, useContainingSurfacePlanes } from '@/components/ui/glass/GlassSurface';
+import { FloatingOverlaySheetContext } from '@/components/ui/overlays/FloatingOverlay';
+import { PhoneSheetPushContext } from '@/components/ui/popover/phoneSheetPush';
+import { PhonePushedViewContext } from '@/components/ui/popover/phonePushedView';
 import { retainDeep, retainShallow } from '@/sync/domains/state/structuralSharing';
 import type { ModalCardFrame } from './card/ModalCardFrame';
 
@@ -32,6 +36,11 @@ type ShellFacts = Readonly<{
     onSheet: ReturnType<typeof useSurfaceFreshnessOnSheet>;
     focus: ReturnType<typeof useCapturedPluginSurfaceFocusEligibility>;
     region: ReturnType<typeof usePaneRegion>;
+    planes: ReturnType<typeof useContainingSurfacePlanes>;
+    /** A floating sheet's body (a phone popover sheet), its push stack and the pushed view it stands in. */
+    onFloatingSheet: boolean;
+    pushStack: React.ContextType<typeof PhoneSheetPushContext>;
+    pushedView: React.ContextType<typeof PhonePushedViewContext>;
 }>;
 type Placement<TArgs> = ShellFacts & Readonly<{ args: TArgs }>;
 
@@ -48,8 +57,16 @@ export type RetainedPlacement<TArgs> = Readonly<{
  * its DOM host moves into whichever shell is mounted; local state (an open operation, unsubmitted text)
  * survives the move. Without a web DOM each shell renders the body itself.
  */
-export function useRetainedPlacement<TArgs>(render: (args: TArgs) => React.ReactNode): RetainedPlacement<TArgs> {
+export function useRetainedPlacement<TArgs>(
+    render: (args: TArgs) => React.ReactNode,
+    /**
+     * Retire the body when its last shell unmounts while this holds (a popover that closed). Otherwise the body
+     * outlives a gap between shells (a pane folding into a later dialog, a popover pushing into a phone sheet).
+     */
+    options?: Readonly<{ retireWithoutShell?: boolean }>,
+): RetainedPlacement<TArgs> {
     const [host] = React.useState(() => Platform.OS === 'web' && typeof document !== 'undefined'
+        && typeof document.createElement === 'function'
         ? document.createElement('div') : null);
     const [placement, setPlacement] = React.useState<Placement<TArgs> | null>(null);
     // The newest mounted shell presents the body. An outgoing shell can stay mounted while it hides or animates
@@ -61,9 +78,14 @@ export function useRetainedPlacement<TArgs>(render: (args: TArgs) => React.React
         return retainShallow(previous ?? undefined, { ...next, args });
     }), []);
     // With a DOM host the slot never renders the body, so it stays the same element while the body changes.
+    const retireWithoutShell = React.useRef(false);
+    retireWithoutShell.current = options?.retireWithoutShell === true;
+    // Decided at the next render, after any shell mounting in the same commit has claimed the host.
+    const retire = React.useCallback(() => setPlacement(previous =>
+        owner.current === null && retireWithoutShell.current ? null : previous), []);
     const mount = React.useCallback((args: TArgs) => host
-        ? <RetainedPlacementSlot host={host} owner={owner} args={args} publish={publish} />
-        : <>{render(args)}</>, [host, publish, host ? null : render]);
+        ? <RetainedPlacementSlot host={host} owner={owner} args={args} publish={publish} retire={retire} />
+        : <>{render(args)}</>, [host, publish, retire, host ? null : render]);
     if (!host) return { mount, body: null };
     // The portal's React parent and target never change. Only its DOM host moves between shells.
     // Portaling into the shell itself would remount the body whenever that target changes.
@@ -78,8 +100,16 @@ export function useRetainedPlacement<TArgs>(render: (args: TArgs) => React.React
                                 <PaneRegionProvider region={placement.region}>
                                     <ContainedPageScopeProvider contained={placement.contained}>
                                         <SurfaceFreshnessOnSheetProvider onSheet={placement.onSheet}>
-                                            {/* A presented body never owns the backdrop of the screen that renders it. */}
-                                            <ScreenBackdropBoundary>{render(placement.args)}</ScreenBackdropBoundary>
+                                            <SurfacePlanesTransfer planes={placement.planes}>
+                                                <FloatingOverlaySheetContext.Provider value={placement.onFloatingSheet}>
+                                                    <PhoneSheetPushContext.Provider value={placement.pushStack}>
+                                                        <PhonePushedViewContext.Provider value={placement.pushedView}>
+                                                            {/* A presented body never owns the backdrop of the screen that renders it. */}
+                                                            <ScreenBackdropBoundary>{render(placement.args)}</ScreenBackdropBoundary>
+                                                        </PhonePushedViewContext.Provider>
+                                                    </PhoneSheetPushContext.Provider>
+                                                </FloatingOverlaySheetContext.Provider>
+                                            </SurfacePlanesTransfer>
                                         </SurfaceFreshnessOnSheetProvider>
                                     </ContainedPageScopeProvider>
                                 </PaneRegionProvider>
@@ -99,6 +129,7 @@ function RetainedPlacementSlot<TArgs>(props: Readonly<{
     owner: React.MutableRefObject<object | null>;
     args: TArgs;
     publish: (placement: Placement<TArgs>) => void;
+    retire: () => void;
 }>) {
     const slot = React.useRef<HTMLDivElement>(null);
     const [token] = React.useState(() => ({}));
@@ -118,7 +149,11 @@ function RetainedPlacementSlot<TArgs>(props: Readonly<{
     const onSheet = useSurfaceFreshnessOnSheet();
     const focus = useCapturedPluginSurfaceFocusEligibility();
     const region = usePaneRegion();
-    const { host, owner, publish, args } = props;
+    const planes = useContainingSurfacePlanes();
+    const onFloatingSheet = React.useContext(FloatingOverlaySheetContext);
+    const pushStack = React.useContext(PhoneSheetPushContext);
+    const pushedView = React.useContext(PhonePushedViewContext);
+    const { host, owner, publish, retire, args } = props;
     React.useLayoutEffect(() => {
         owner.current = token;
         host.style.display = 'contents';
@@ -127,13 +162,16 @@ function RetainedPlacementSlot<TArgs>(props: Readonly<{
             if (owner.current !== token) return;
             owner.current = null;
             host.remove();
+            retire();
         };
-    }, [host, owner, token]);
+    }, [host, owner, token, retire]);
     React.useLayoutEffect(() => { shellDismissRef.current = shellDismiss; }, [shellDismiss]);
     React.useLayoutEffect(() => {
         if (owner.current !== token) return;
-        publish({ args, viewport, inside, modalId, escape, portal, dismiss, scroll, contained, onSheet, focus, region });
-    }, [owner, token, publish, args, viewport, inside, modalId, escape, portal, dismiss, scroll, contained, onSheet, focus, region]);
+        publish({ args, viewport, inside, modalId, escape, portal, dismiss, scroll, contained, onSheet, focus, region,
+            planes, onFloatingSheet, pushStack, pushedView });
+    }, [owner, token, publish, args, viewport, inside, modalId, escape, portal, dismiss, scroll, contained, onSheet, focus, region,
+        planes, onFloatingSheet, pushStack, pushedView]);
     return <div ref={slot} style={{ display: 'contents' }} />;
 }
 

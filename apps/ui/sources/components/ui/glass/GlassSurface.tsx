@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Platform, StyleSheet, View, type StyleProp, type ViewStyle, type ViewProps } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { HappierMaterialRoleProvider, HappierOpenedLayer, HappierSurfaceGradientLayer, happierSurfaceGradientWebStyle, happierSurfaceFinishLift, resolveHappierSurfaceFinish, useContainingHappierMaterialRole, type HappierSurfaceGradient, type HappierSurfaceFinishRole, type HappierMaterialSurfaceRender } from '@happier-dev/plugin-ui/presentation';
+import { HappierMaterialPlaneTransfer, HappierMaterialRoleProvider, HappierOpenedLayer, useContainingHappierMaterialPlane, HappierSurfaceGradientLayer, happierSurfaceGradientWebStyle, happierSurfaceFinishLift, resolveHappierSurfaceFinish, useContainingHappierMaterialRole, type HappierSurfaceGradient, type HappierSurfaceFinishRole, type HappierMaterialSurfaceRender } from '@happier-dev/plugin-ui/presentation';
 import { resolveAndroidTranslucentUnlift, resolveThemeSurfaceFinish } from '@/components/ui/surfaces/themeRaisedEdge';
 import { readSurfaceStyleProperty } from '@/components/ui/surfaces/surfaceStyle';
 
@@ -44,6 +44,37 @@ export function GlassOpenedLayer(props: Readonly<{ children: React.ReactNode }>)
     // The public material plane (plugin surfaces) takes the same boundary, so its finish follows suit.
     const layer = <HappierOpenedLayer>{props.children}</HappierOpenedLayer>;
     return <GlassSurfaceGroupContext.Provider value={opened}>{layer}</GlassSurfaceGroupContext.Provider>;
+}
+
+/**
+ * The surface planes a shell gives the content it presents: its glass group, material plane, backed ink and
+ * live-picture backdrop. A body rendered away from that shell (a retained popover or dialog body) captures them at
+ * the shell and reads them through `SurfacePlanesTransfer`, so it paints as if it stood there.
+ */
+export type SurfacePlanes = Readonly<{
+    group: React.ContextType<typeof GlassSurfaceGroupContext>;
+    material: ReturnType<typeof useContainingHappierMaterialPlane>;
+    ink: React.ContextType<typeof GlassBackedInkContext>;
+    livePicture: boolean;
+}>;
+
+export function useContainingSurfacePlanes(): SurfacePlanes {
+    const group = React.useContext(GlassSurfaceGroupContext);
+    const material = useContainingHappierMaterialPlane();
+    const ink = React.useContext(GlassBackedInkContext);
+    const livePicture = React.useContext(GlassLivePictureBackdropContext);
+    return React.useMemo(() => ({ group, material, ink, livePicture }), [group, material, ink, livePicture]);
+}
+
+export function SurfacePlanesTransfer(props: Readonly<{ planes: SurfacePlanes; children: React.ReactNode }>): React.ReactNode {
+    const { planes } = props;
+    return <GlassSurfaceGroupContext.Provider value={planes.group}>
+        <HappierMaterialPlaneTransfer plane={planes.material}>
+            <GlassBackedInkContext.Provider value={planes.ink}>
+                <GlassLivePictureBackdropContext.Provider value={planes.livePicture}>{props.children}</GlassLivePictureBackdropContext.Provider>
+            </GlassBackedInkContext.Provider>
+        </HappierMaterialPlaneTransfer>
+    </GlassSurfaceGroupContext.Provider>;
 }
 
 /**

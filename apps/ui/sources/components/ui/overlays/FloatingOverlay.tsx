@@ -333,7 +333,7 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
         {pushedView ? <PushedViewBackRow view={pushedView} /> : null}
         {props.header}
         <View style={SCROLL_VIEWPORT_FRAME_STYLE}>
-            {pushedView ? <PhonePushedViewContext.Provider value={null}>{content}</PhonePushedViewContext.Provider> : content}
+            <PhonePushedViewContext.Provider value={null}>{content}</PhonePushedViewContext.Provider>
             {scrollEnabled && fadeCfg && Platform.OS !== 'web' ? (
                 <ScrollEdgeFades color={fadeColor} size={fadeCfg.size} edges={fades.visibility} />
             ) : null}
@@ -349,36 +349,40 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
         {props.footer}
     </SurfaceFreshnessOnSheetProvider>;
 
-    if (insideSheet) {
-        return <ListPresentationProvider value="grouped" floating>
-            <Animated.View style={[{ maxHeight, flexShrink: 1, minHeight: 0 }, containerStyle, containerPaint]}>
-                <FloatingOverlaySheetContext.Provider value={false}>
-                    {surfaceContent}
-                </FloatingOverlaySheetContext.Provider>
-            </Animated.View>
-        </ListPresentationProvider>;
-    }
-
-    const overlay = (
-        <Animated.View style={[
+    // One tree whichever way the surface is presented: a popover body kept mounted while it moves from an anchored
+    // popover into a phone sheet and back keeps its rows (typed text, a picked source). Only props change: inside a
+    // sheet the surface paints nothing of its own (the sheet is the surface) and draws no arrow.
+    const arrowNode = !insideSheet && arrowCfg && arrowSide ? renderFloatingOverlayArrow({
+        arrowSize: arrowCfg.size, arrowSide, fadeColor, backdropTone, theme,
+    }) : null;
+    return <ListPresentationProvider value="grouped" floating>
+        <Animated.View style={insideSheet ? [{ maxHeight, flexShrink: 1, minHeight: 0 }, containerStyle, containerPaint] : [
             surfaceChrome === 'theme' ? styles.themedSurfaceShadowFrame : styles.modalShadowFrame,
             { maxHeight },
             containerStyle,
             containerPaint,
         ]}>
-            <GlassSurface surfaceGroup="floating" style={[
-                surfaceChrome === 'theme' ? styles.themedSurfaceClip : styles.modalClipSurface,
-                { maxHeight },
-            ]}>
-                {surfaceContent}
-                <SurfaceRim role="floating" radius={OVERLAY_BORDER_RADIUS} border="modal" />
+            {arrowNode}
+            <GlassSurface surfaceGroup="floating" noCoat={insideSheet} finishRole={insideSheet ? null : undefined}
+                style={insideSheet ? { maxHeight, flexShrink: 1, minHeight: 0 } : [
+                    surfaceChrome === 'theme' ? styles.themedSurfaceClip : styles.modalClipSurface,
+                    { maxHeight },
+                ]}>
+                <FloatingOverlaySheetContext.Provider value={false}>{surfaceContent}</FloatingOverlaySheetContext.Provider>
+                {insideSheet ? null : <SurfaceRim role="floating" radius={OVERLAY_BORDER_RADIUS} border="modal" />}
             </GlassSurface>
         </Animated.View>
-    );
+    </ListPresentationProvider>;
+});
 
-    if (!arrowCfg || !arrowSide) return <ListPresentationProvider value="grouped" floating>{overlay}</ListPresentationProvider>;
-
-    const arrowSize = arrowCfg.size;
+function renderFloatingOverlayArrow(input: Readonly<{
+    arrowSize: number;
+    arrowSide: 'top' | 'bottom' | 'left' | 'right';
+    fadeColor: string;
+    backdropTone: ReturnType<typeof useGlassSurfaceBackdropTone>;
+    theme: ReturnType<typeof useUnistyles>['theme'];
+}>): React.ReactElement {
+    const { arrowSize, arrowSide, fadeColor, backdropTone, theme } = input;
     const protrusion = arrowSize / 2;
 
     const arrowBoxStyle: ViewStyle = {
@@ -447,11 +451,8 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
     }
 
     return (
-        <Animated.View style={{ position: 'relative' }}>
-            <View testID="floating-overlay-arrow" style={arrowWrapperStyle}>
-                <View style={arrowBoxStyle} {...(Platform.OS === 'web' ? { dataSet: { happyGlassBackdrop: 'true' } } : {})} />
-            </View>
-            <ListPresentationProvider value="grouped" floating>{overlay}</ListPresentationProvider>
-        </Animated.View>
+        <View testID="floating-overlay-arrow" style={arrowWrapperStyle}>
+            <View style={arrowBoxStyle} {...(Platform.OS === 'web' ? { dataSet: { happyGlassBackdrop: 'true' } } : {})} />
+        </View>
     );
-});
+}

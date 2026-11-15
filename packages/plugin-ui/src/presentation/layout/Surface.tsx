@@ -35,6 +35,18 @@ export function HappierOpenedLayer(props: Readonly<{ children?: ReactNode }>) {
   return plane ? <MaterialRoleContext.Provider value={plane}>{props.children}</MaterialRoleContext.Provider> : <>{props.children}</>;
 }
 
+/**
+ * The containing material plane, verbatim. A host body rendered away from the shell that presents it (a retained
+ * popover or dialog body) carries the shell's plane over with `HappierMaterialPlaneTransfer`.
+ */
+export function useContainingHappierMaterialPlane(): HappierMaterialPlane | null {
+  return useContext(MaterialRoleContext);
+}
+
+export function HappierMaterialPlaneTransfer(props: Readonly<{ plane: HappierMaterialPlane | null; children?: ReactNode }>) {
+  return <MaterialRoleContext.Provider value={props.plane}>{props.children}</MaterialRoleContext.Provider>;
+}
+
 /** Descendant paint. Solid control roles keep their own fill and contrasting ink on every plane. */
 export function useHappierMaterialColorResolver() {
   const plane = useContext(MaterialRoleContext);

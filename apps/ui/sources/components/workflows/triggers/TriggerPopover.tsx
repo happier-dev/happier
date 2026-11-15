@@ -756,16 +756,19 @@ function TriggerPushedPageHost(props: Readonly<{
     children: React.ReactNode;
 }>): React.ReactElement {
     const stack = React.useContext(PhoneSheetPushContext);
-    if (props.presentation === 'sheet' && stack !== null) return <TriggerSheetPushedPage {...props} stack={stack} />;
-    return <>{props.page === undefined ? props.children : props.renderPage(props.page, false)}</>;
+    const pushes = props.presentation === 'sheet' && stack !== null;
+    // The form keeps its place whichever way the page shows, so a popover turning into a sheet keeps its rows.
+    return <>
+        {pushes ? <TriggerSheetPushedPage page={props.page} stack={stack} renderPage={props.renderPage} /> : null}
+        {pushes || props.page === undefined ? props.children : props.renderPage(props.page, false)}
+    </>;
 }
 
 function TriggerSheetPushedPage(props: Readonly<{
     page: TriggerPopoverPushedPage | undefined;
     stack: PhoneSheetPushStack;
     renderPage: (page: TriggerPopoverPushedPage, sheetHeaderBack: boolean) => React.ReactNode;
-    children: React.ReactNode;
-}>): React.ReactElement {
+}>): null {
     const { page, renderPage } = props;
     usePhoneSheetPush({
         stack: props.stack,
@@ -774,7 +777,7 @@ function TriggerSheetPushedPage(props: Readonly<{
         onRequestClose: page?.onBack,
         render: () => page === undefined ? null : renderPage(page, true),
     });
-    return <>{props.children}</>;
+    return null;
 }
 
 /** Repeat · Day · At, or the expression a schedule was written with when it is not a simple one. */

@@ -182,12 +182,15 @@ export function usePhoneSheetPush(input: Readonly<{
     const { stack } = input;
     const closeRef = React.useRef(input.onRequestClose);
     closeRef.current = input.onRequestClose;
+    // One close for the entry's life: its content receives it as `requestClose`, and a retained popover body
+    // (Popover) would otherwise be republished by every push.
+    const [close] = React.useState(() => () => closeRef.current?.());
     React.useLayoutEffect(() => {
         if (!input.open) {
             stack.remove(key);
             return;
         }
-        stack.set({ key, title: input.title, subtitle: input.subtitle, close: () => closeRef.current?.(), render: input.render });
+        stack.set({ key, title: input.title, subtitle: input.subtitle, close, render: input.render });
     });
     React.useLayoutEffect(() => () => stack.remove(key), [stack, key]);
 }
