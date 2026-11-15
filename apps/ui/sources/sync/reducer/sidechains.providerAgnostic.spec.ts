@@ -3,6 +3,75 @@ import { createReducer, reducer } from './reducer';
 import type { NormalizedMessage } from '../typesRaw';
 
 describe('sidechains (provider-agnostic)', () => {
+  it.each([false, true])('publishes the root when a nested sidechain tool finishes (permission mirror: %s)', (withPermissionMirror) => {
+    const state = createReducer();
+    const input = { prompt: 'Review synthetic files' };
+    if (withPermissionMirror) {
+      reducer(state, [], { requests: { inner: { tool: 'Task', arguments: input, createdAt: 900 } } });
+    }
+    function call(id: string, sidechainId?: string): NormalizedMessage {
+      return {
+        id: `message_${id}`, localId: null, createdAt: 1000,
+        role: 'agent', isSidechain: Boolean(sidechainId), sidechainId,
+        content: [{ type: 'tool-call', id, name: 'Task', input, description: null, uuid: id, parentUUID: null }],
+      };
+    }
+    const initial = reducer(state, [call('outer'), call('inner', 'outer'), call('leaf', 'inner')]);
+    const root = initial.messages.find((message) => message.kind === 'tool-call' && message.tool.id === 'outer');
+    if (!root || root.kind !== 'tool-call') throw new Error('Expected root Task');
+    expect(root.children[0]).toMatchObject({ kind: 'tool-call', tool: { id: 'inner' }, children: [{ tool: { id: 'leaf', state: 'running' } }] });
+
+    const result = { output: 'synthetic result' };
+    const updated = reducer(state, [{
+      id: 'leaf_result', localId: null, createdAt: 2000, role: 'agent', isSidechain: true, sidechainId: 'inner',
+      content: [{ type: 'tool-result', tool_use_id: 'leaf', content: result, is_error: false, uuid: 'leaf_result', parentUUID: 'leaf' }],
+    }]);
+    const nextRoot = updated.messages.find((message) => message.id === root.id);
+    expect(nextRoot).toMatchObject({
+      kind: 'tool-call', children: [{ tool: { id: 'inner' }, children: [{ tool: { id: 'leaf', state: 'completed', result } }] }],
+    });
+    if (!nextRoot || nextRoot.kind !== 'tool-call') throw new Error('Expected updated root Task');
+    expect(nextRoot).not.toBe(root);
+    expect(nextRoot.tool.input).toBe(root.tool.input);
+    expect(root.children[0]).toMatchObject({ children: [{ tool: { state: 'running', result: undefined } }] });
+    expect(updated.messages.filter((message) => message.kind === 'tool-call')).toHaveLength(1);
+  });
+
+  it('publishes nested text through its actual owner while preserving permission mirror results', () => {
+    const state = createReducer();
+    const input = { prompt: 'Review synthetic files' };
+    reducer(state, [], { requests: { inner: { tool: 'Task', arguments: input, createdAt: 900 } } });
+    const calls: NormalizedMessage[] = ['outer', 'inner'].map((id) => ({
+      id: `message_${id}`, localId: null, createdAt: 1000, role: 'agent',
+      isSidechain: id === 'inner', sidechainId: id === 'inner' ? 'outer' : undefined,
+      content: [{ type: 'tool-call', id, name: 'Task', input, description: null, uuid: id, parentUUID: null }],
+    }));
+    const initial = reducer(state, calls);
+    const root = initial.messages.find((message) => message.kind === 'tool-call' && message.tool.id === 'outer');
+    if (!root || root.kind !== 'tool-call') throw new Error('Expected root Task');
+
+    const updated = reducer(state, [{
+      id: 'nested_text', localId: null, createdAt: 1500, role: 'agent', isSidechain: true, sidechainId: 'inner',
+      content: [{ type: 'text', text: 'Working inside inner', uuid: 'nested_text', parentUUID: null }],
+    }]);
+    expect(updated.messages.find((message) => message.id === root.id)).toMatchObject({
+      children: [{ tool: { id: 'inner' }, children: [{ kind: 'agent-text', text: 'Working inside inner' }] }],
+    });
+    expect(root.children[0]).toMatchObject({ children: [] });
+
+    const completed = reducer(state, [{
+      id: 'inner_result', localId: null, createdAt: 2000, role: 'agent', isSidechain: true, sidechainId: 'outer',
+      content: [{ type: 'tool-result', tool_use_id: 'inner', content: 'done', is_error: false, permissions: { result: 'approved', date: 2000 }, uuid: 'inner_result', parentUUID: 'inner' }],
+    }]);
+    expect(completed.messages.find((message) => message.id === root.id)).toMatchObject({
+      children: [{ tool: { id: 'inner', state: 'completed', result: 'done', permission: { status: 'approved' } } }],
+    });
+    expect(completed.messages.find((message) => message.id !== root.id)).toMatchObject({
+      realID: null, tool: { id: 'inner', state: 'completed', result: 'done', permission: { status: 'approved' } },
+    });
+    expect(completed.messages).toHaveLength(2);
+  });
+
   it('merges streaming sidechain text chunks when happierSidechainStreamKey is shared', () => {
     const state = createReducer();
 
