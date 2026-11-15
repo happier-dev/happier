@@ -2,7 +2,7 @@ import type { DefinePluginInput } from '@happier-dev/plugin-sdk';
 import type { PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { CLOUDFLARE_ACCOUNT_ID, cloudflareConnectedAccountRuntime } from './connectedAccounts/runtime.js';
-import { CLOUDFLARE_CALLBACK_URL, CLOUDFLARE_IDENTITY_SCOPES } from './connectedAccounts/oauth.js';
+import { CLOUDFLARE_IDENTITY_SCOPES } from './connectedAccounts/oauth.js';
 import { cloudflarePortableAuthentication } from './connectedAccounts/portableAuthentication.js';
 import { cloudflareClientPermissionGuide, cloudflarePermissionGuide, cloudflareFeatureNames } from './connectedAccounts/permissions.js';
 import { tunnelActions } from './platform/tunnel.js';
@@ -64,7 +64,7 @@ const actions: Readonly<{
 
 const deploymentTargets = { workers: { role: 'runtime', title: 'Cloudflare Workers', targetKind: 'cloudflare-workers', icon: 'server-outline',
     targetSchema: { type: 'object', properties: {}, additionalProperties: false }, linkSchema: workerLinkSchema,
-    actions: { inspect: 'workers-inspect', link: 'workers-link', create: 'workers-create', deploy: 'workers-deploy', observe: 'workers-observe', cancel: 'workers-cancel', promote: 'workers-promote', rollback: 'workers-rollback',
+    actions: { inspect: 'workers-inspect', link: 'workers-link', create: 'workers-create', deploy: 'workers-deploy', observe: 'workers-observe', cancel: 'workers-cancel', teardown: 'workers-teardown', promote: 'workers-promote', rollback: 'workers-rollback',
       logs: { build: 'workers-build-logs-read' },
       variables: { read: 'workers-variables-read', sync: 'workers-variables-sync' },
       domains: { read: 'workers-domains-read', add: 'workers-domains-add', verify: 'workers-domains-verify', remove: 'workers-domains-remove' } } },
@@ -90,7 +90,7 @@ export const definition: Pick<DefinePluginInput<typeof actions>,
     scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.cloudflare.com' }], methods: ['GET'] },
   }, { id: 'cloudflare-tunnel', capability: 'network', reason: 'Create or adopt the reviewed remote tunnel, read its connector token and reconcile owned configuration and DNS records.',
     scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.cloudflare.com' }], methods: ['GET', 'POST', 'PUT', 'DELETE'] },
-  }, { id: 'cloudflare-workers', capability: 'network', reason: 'Inspect the selected Worker and deploy, observe or cancel its reviewed Git build.',
+  }, { id: 'cloudflare-workers', capability: 'network', reason: 'Inspect, deploy or delete the selected Worker or Preview and manage its reviewed builds.',
     scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.cloudflare.com' }], methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] },
   }, { id: 'cloudflare-pages', capability: 'network', reason: 'Adopt an existing Pages project and upload the reviewed prepared assets and Functions.',
     scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.cloudflare.com' }], methods: ['GET', 'POST', 'PATCH', 'DELETE'] },
@@ -113,7 +113,8 @@ export const definition: Pick<DefinePluginInput<typeof actions>,
     declaration: { title: 'Cloudflare',
       description: 'Connect Cloudflare to deploy Workers and Pages or manage tunnels and DNS.',
       authentication: { account: { artifactId: 'connected-account-authentication', exportName: 'activate' }, defaultModeId: 'oauth', modes: [
-        { id: 'oauth', kind: 'oauthAuthorizationCode', title: 'Sign in with Cloudflare', callbackUrl: CLOUDFLARE_CALLBACK_URL,
+        // No callbackUrl: the attempt uses the Home's Connected Account relay.
+        { id: 'oauth', kind: 'oauthAuthorizationCode', title: 'Sign in with Cloudflare',
           browserReachability: 'unreachable',
           clientConfiguration: { clientIdFieldId: 'clientId', scopesFieldId: 'registeredScopes' },
           postAuthenticationFieldIds: ['accountId'],

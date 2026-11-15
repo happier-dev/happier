@@ -1,4 +1,4 @@
-import { withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
+import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { isPluginError, PluginError, type DeploymentTargetRoleFailureV1 } from '@happier-dev/plugin-sdk';
 import type { HttpMethod, HttpRequest, HttpService } from '@happier-dev/plugin-sdk/http';
 import { isObject } from '../connectedAccounts/probe.js';
@@ -63,6 +63,8 @@ async function send(context: DeploymentContext, input: HttpRequest, phase: Phase
     response = await context.http.request(input, { signal: context.signal });
   } catch (error) {
     if (isPluginError(error)) throw error;
+    if (phase === 'teardown') throw new PluginError({ code: 'outcome_unknown', retryable: false, details: { phase },
+      failureCause: projectActionFailureCauseV1(error, 'deployment.provider.teardown') });
     // A locally stopped request cannot prove that a sent build/cancel did not run.
     if (mutation) return failure('outcome_unknown', phase);
     context.signal.throwIfAborted();
@@ -73,6 +75,11 @@ async function send(context: DeploymentContext, input: HttpRequest, phase: Phase
   const nativeError = isObject(body) && Array.isArray(body.errors) ? body.errors[0] : undefined;
   const nativeCode = isObject(nativeError) && (typeof nativeError.code === 'number' || typeof nativeError.code === 'string')
     ? String(nativeError.code) : null;
+  // A failed deletion or absence read cannot establish removal. Preserve the
+  // provider cause while the receipt retains its exact resource for recovery.
+  if (phase === 'teardown' && response.status >= 500) throw new PluginError({ code: 'outcome_unknown', retryable: false, details: { phase },
+    failureCause: { phase: 'deployment.provider.teardown', errorClass: 'Error', errorCode: null,
+      ...(nativeCode === null ? {} : { nativeErrorCode: nativeCode }), httpStatus: response.status } });
   if (response.status >= 400 && response.status < 500
     || isObject(body) && body.success === false
     || (response.status < 200 || response.status >= 300) && isObject(nativeError)) {

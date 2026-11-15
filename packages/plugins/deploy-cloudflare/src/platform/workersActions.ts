@@ -9,6 +9,7 @@ import { targetProductSchema } from './targetOptions.js';
 import { CLOUDFLARE_BUILD_IMAGE, CLOUDFLARE_WRANGLER_VERSION } from './cloudflareToolchain.js';
 import { workerEnvironmentKey, prepareWorker, deployWorker, observeWorker, cancelWorker, observeUploadedWorker, isUploadedWorkerReference } from './workers.js';
 import { inspectPreviewIdentity, preparePreview } from './preview.js';
+import { teardownWorker } from './workersTeardown.js';
 import { deployPreview, observePreview, cancelPreview, observeUploadedPreview, isUploadedPreviewReference,
   uploadedPreviewSelection, type PreviewDeployment } from './previewDeploy.js';
 
@@ -160,6 +161,7 @@ export const workerActions = {
     run: async (value: JsonValue, context: PluginAccountActionContext) => {
       const input = value as unknown as DeploymentTargetObserveInputV1;
       const contextIo = io(context);
+      if (input.operation === 'teardown') return teardownWorker(input, contextIo, true);
       if (isUploadedWorkerReference(input.providerDeploymentId)) return result(await observeUploadedWorker(input, contextIo));
       if (isUploadedPreviewReference(input.providerDeploymentId)) {
         const uploaded = uploadedPreviewSelection(input);
@@ -168,6 +170,10 @@ export const workerActions = {
       const preview = previewDeployment(input);
       return result(await (preview ? observePreview(input, preview, contextIo) : observeWorker(input, contextIo)));
     } },
+  'workers-teardown': { ...common, title: 'Delete the linked Cloudflare Worker or Preview', dangerLevel: 'writesRemote', readOnly: false,
+    confirmation: { title: 'Delete this Cloudflare Worker or Preview and its associated resources?' },
+    inputSchema: inputs.teardown.jsonSchema, resultSchema: output.jsonSchema,
+    run: (value: JsonValue, context: PluginAccountActionContext) => teardownWorker(value as unknown as DeploymentTargetObserveInputV1, io(context)) },
   'workers-cancel': { ...common, title: 'Cancel the selected Cloudflare Worker build', dangerLevel: 'writesRemote', readOnly: false,
     confirmation: { title: 'Cancel this Cloudflare Worker build?' }, inputSchema: inputs.cancel.jsonSchema, resultSchema: output.jsonSchema,
     run: async (value: JsonValue, context: PluginAccountActionContext) => {
