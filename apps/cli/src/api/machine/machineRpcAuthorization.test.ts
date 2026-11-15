@@ -342,8 +342,12 @@ describe('authorizeMachineRpcRequest', () => {
       RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE, RPC_METHODS.DAEMON_TERMINAL_ENSURE, RPC_METHODS.PREVIEW_ENV]) {
       const request = { method: `machine:${method}`, params: {}, machineAdmission, callerAuthority: 'account_automation' as const };
       expect(await authorizeMachineRpcRequest(request, boundary), method).toEqual({ ok: true });
+      // Member terminal placement and isolation are decided by the registered
+      // terminal owner (rpcHandlers.terminal.test.ts member Use refusals).
+      const memberRefusal = method === RPC_METHODS.DAEMON_TERMINAL_ENSURE
+        ? { ok: true } : { ok: false, errorCode: 'agent_isolation_unavailable' };
       expect(await authorizeMachineRpcRequest({ ...request, machineAdmission: { ...machineAdmission, actorAccountId: 'member', role: 'use' } }, boundary), method)
-        .toMatchObject({ ok: false, errorCode: 'agent_isolation_unavailable' });
+        .toMatchObject(memberRefusal);
       const ownerAgent = await authorizeMachineRpcRequest({ ...request, localActionContext: { actionCaller: caller } }, boundary);
       // Coordination's D1 ruling admits only the owner's native terminal open;
       // the installed receiver still owns placement and all control custody.
@@ -351,7 +355,7 @@ describe('authorizeMachineRpcRequest', () => {
         ? { ok: true } : { ok: false, errorCode: 'agent_isolation_unavailable' });
       expect(await authorizeMachineRpcRequest({ ...request,
         machineAdmission: { ...machineAdmission, actorAccountId: 'member' }, localActionContext: { actionCaller: caller } }, boundary), method)
-        .toMatchObject({ ok: false, errorCode: 'agent_isolation_unavailable' });
+        .toMatchObject(memberRefusal);
     }
   });
   it('leaves native-finalized Project, Session and Manage Bash payloads to their registered owner, but refuses unowned deputies', async () => {
