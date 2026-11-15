@@ -6,7 +6,7 @@ import { readProjectManifest } from '@/workspaces/projectSetup/projectManifestFi
 import { inspectProjectDefinitions, inspectProjectDefinitionFiles, NATIVE_PROJECT_DEFINITION_FILES } from '@/workspaces/projectSetup/nativeDefinitionInspection';
 import { collectNativePackageDirectories, readNativePackage, resolveNativePackageManager, type NativePackageManager } from '@/workspaces/projectSetup/nativePackageScripts';
 import { projectNativeSourceKey, resolveNativePackageScript } from '@/workspaces/projectSetup/projectNativeResolution';
-import { isWorkspacePathWithin } from '../inventory/provenance';
+import { isWorkspacePathWithin, matchWorkspaceAssociation } from '../inventory/provenance';
 
 export type LocalServicePackageManager = NativePackageManager;
 
@@ -138,6 +138,12 @@ export async function discoverLocalServiceRunTargets(input: Readonly<{
         }
     }
 
+    const workspaces = (input.acceptedWorkspaceRefs ?? []).map(workspace => ({ id: workspace.id, path: workspace.rootPath }));
+    // An implicit package script belongs to its nearest accepted Workspace. An
+    // accepted parent must not project a second declaration for the same script.
+    const packageTargets = targets.map(target => ({ target,
+        workspace: matchWorkspaceAssociation({ cwd: target.cwd, workspaces }).workspace }));
+
     // Physical files are observed once per discovery, then projected for each
     // Workspace identity. Nothing from this operation survives the next read.
     const definitionsByRoot = new Map<string, Readonly<{
@@ -168,7 +174,7 @@ export async function discoverLocalServiceRunTargets(input: Readonly<{
             ? [] : [projectNativeSourceKey(workspace.rootPath, service.source)]));
         const isDeclared = (source: Extract<ProjectServiceDeclarationRefV1['selection'], { kind: 'native' }>['source']) =>
             Object.hasOwn(manifestServices, source.target) || declaredSources.has(projectNativeSourceKey(workspace.rootPath, source));
-        for (const target of targets.filter(target => isWorkspacePathWithin(workspace.rootPath, target.cwd))) {
+        for (const { target } of packageTargets.filter(target => target.workspace?.id === workspace.id)) {
             const packageManager = packageManagers.get(target.cwd)!;
             const selected = declarationTarget(workspace, { kind: 'native', source: { kind: 'native', tool: 'package_script',
                 file: relative(workspace.rootPath, join(target.cwd, 'package.json')).replaceAll('\\', '/'), target: target.scriptName } });
@@ -190,6 +196,6 @@ export async function discoverLocalServiceRunTargets(input: Readonly<{
             }
         }
     }
-    const unqualified = targets.filter(target => !(input.acceptedWorkspaceRefs ?? []).some(workspace => isWorkspacePathWithin(workspace.rootPath, target.cwd)));
+    const unqualified = packageTargets.filter(target => !target.workspace).map(target => target.target);
     return [...withStableRunTargetIds(unqualified), ...declarations];
 }

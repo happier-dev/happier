@@ -19,7 +19,7 @@ async function writeJson(path: string, value: unknown): Promise<void> {
 }
 
 describe('discoverLocalServiceRunTargets', () => {
-    it('reads each package tree once per discovery while retaining every Workspace and later file changes', async () => {
+    it('reads each package tree once, retaining declared Workspace services and one implicit script per physical package', async () => {
         const root = await makeRepo();
         const reads = vi.spyOn(filesystem, 'readdir'); // Observe the real filesystem boundary; internal discovery stays real.
         try {
@@ -33,7 +33,8 @@ describe('discoverLocalServiceRunTargets', () => {
             expect(reads.mock.calls.filter(([directory]) => directory === root)).toHaveLength(1);
             for (const workspace of refs) {
                 expect(targets.filter(target => 'workspaceId' in target && target.workspaceId === workspace.id)
-                    .map(target => 'title' in target ? target.title : target.id).sort()).toEqual(['api', 'web:dev']);
+                    .map(target => 'title' in target ? target.title : target.id).sort())
+                    .toEqual(workspace === refs[0] ? ['api', 'web:dev'] : ['api']);
             }
 
             reads.mockClear();
@@ -46,7 +47,7 @@ describe('discoverLocalServiceRunTargets', () => {
             for (const workspace of refs) {
                 expect(changed.filter(target => 'workspaceId' in target && target.workspaceId === workspace.id)
                     .map(target => 'title' in target ? target.title : target.id).sort())
-                    .toEqual(['api', 'nested:start', 'web:dev', 'worker']);
+                    .toEqual(workspace === refs[0] ? ['api', 'nested:start', 'web:dev', 'worker'] : ['api', 'worker']);
             }
         } finally {
             reads.mockRestore();
@@ -92,7 +93,7 @@ describe('discoverLocalServiceRunTargets', () => {
             for (const ref of refs) {
                 expect(targets.filter(target => 'workspaceId' in target && target.workspaceId === ref.id)
                     .map(target => 'title' in target ? target.title : target.id).sort())
-                    .toEqual(['cache', 'database', 'storefront:preview', 'web']);
+                    .toEqual(ref === refs[0] ? ['cache', 'database', 'storefront:preview', 'web'] : ['cache', 'database', 'web']);
                 expect(machineTargets.filter(target => 'workspaceId' in target && target.workspaceId === ref.id)
                     .map(target => 'title' in target ? target.title : target.id).sort())
                     .toEqual(['cache', 'database', 'web']);
@@ -206,6 +207,36 @@ describe('discoverLocalServiceRunTargets', () => {
                 }),
             ]));
         } finally { await Promise.all([root, unrelated].map(directory => rm(directory, { recursive: true, force: true }))); }
+    });
+    it('offers each physical package script through its nearest accepted Workspace instead of an accepted ancestor', async () => {
+        const root = await makeRepo();
+        const child = join(root, 'WAVE93-SERVICES-ART');
+        const sibling = join(root, 'WAVE93-SERVICES-ART-other');
+        try {
+            await mkdir(child);
+            await mkdir(sibling);
+            await writeJson(join(root, 'package.json'), { name: 'parent', scripts: { start: 'node parent.js' } });
+            await writeJson(join(child, 'package.json'), { name: 'wave93-services-art', scripts: { start: 'node child.js' } });
+            await writeJson(join(sibling, 'package.json'), { name: 'sibling', scripts: { start: 'node sibling.js' } });
+            const parentRef = { id: 'parent', serverId: 'home', machineId: 'machine', rootPath: root, createdAtMs: 1 };
+            const childRef = { ...parentRef, id: 'child', rootPath: child };
+            for (const acceptedWorkspaceRefs of [[parentRef, childRef], [childRef, parentRef]]) {
+                const runTargets = await discoverLocalServiceRunTargets({ roots: [root], acceptedWorkspaceRefs });
+                const snapshot = LocalServiceLauncherSnapshotV1Schema.parse(buildLocalServiceLauncherSnapshot({
+                    machineId: 'machine', updatedAt: 1, runTargets, inventoryEntries: [], previewResources: [],
+                }));
+                expect(snapshot.targets.map(target => ({ cwd: target.cwd, declaration: target.declaration })))
+                    .toEqual(expect.arrayContaining([
+                        { cwd: root, declaration: { workspaceRefId: 'parent', selection: { kind: 'native',
+                            source: { kind: 'native', tool: 'package_script', file: 'package.json', target: 'start' } } } },
+                        { cwd: child, declaration: { workspaceRefId: 'child', selection: { kind: 'native',
+                            source: { kind: 'native', tool: 'package_script', file: 'package.json', target: 'start' } } } },
+                        { cwd: sibling, declaration: { workspaceRefId: 'parent', selection: { kind: 'native',
+                            source: { kind: 'native', tool: 'package_script', file: 'WAVE93-SERVICES-ART-other/package.json', target: 'start' } } } },
+                    ]));
+                expect(snapshot.targets).toHaveLength(3);
+            }
+        } finally { await rm(root, { recursive: true, force: true }); }
     });
     it('does not offer package files that escape their root through a symlink', async () => {
         const root = await makeRepo();
