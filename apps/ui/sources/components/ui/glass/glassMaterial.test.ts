@@ -554,6 +554,18 @@ describe('floating menus solve like Elements', () => {
             });
         }
     }
+    // COR5B (UI refinements 18:15Z): over a plain page there is no measured picture, and a menu over a list read its
+    // rows as dark smudges under its words. The same rule holds there: the thin glass keeps body ink at 4.5:1 over
+    // the page's own darkest content (its ink), with the owner's hair coat unchanged.
+    it('light: over a plain page a web menu keeps the hair coat and holds body ink 4.5:1 over the page\'s ink', () => {
+        const theme = lightTheme;
+        const ground = { page: theme.colors.surface.base, solid: theme.colors.edge.floatingFill, ink: theme.colors.text.primary, controlFill: theme.colors.surface.selected };
+        const map = resolveGlassBackdropMap(settings, 'floating', false, {}, ground)!;
+        const opacity = map.opacity ?? resolveGlassSurfaceMaterial(settings, 'floating').material.opacity;
+        expect(opacity).toBeLessThan(0.2);
+        const out = renderGlassOver({ filter: map.tone, coat: rgb(map.coat!), opacity, backdrop: rgb(theme.colors.text.primary) });
+        expect(glassContrastRatio(out, rgb(theme.colors.text.primary))).toBeGreaterThanOrEqual(4.5);
+    });
     it('keeps the coat where it is still the readable answer: native light menus, panels and live pictures', () => {
         expect(resolveGlassPanelCoatOpacity(settings, false, false, { nativeRenderer: true })).toBeGreaterThan(0.5);
         expect(resolveGlassPanelCoatOpacity(settings, false, false)).toBeUndefined();

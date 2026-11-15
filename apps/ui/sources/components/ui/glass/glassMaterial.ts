@@ -228,6 +228,13 @@ const contrast = (a: readonly number[], b: readonly number[]) => {
     const [high, low] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x);
     return (high! + 0.05) / (low! + 0.05);
 };
+/** The page's own content as the backdrop a floating surface may cover: its ink is the darkest (and lightest) it carries. */
+const pageInkTone = (ground: GlassBackdropGround | null): GlassAtmosphereTone | undefined => {
+    const ink = ground?.ink ? parseRgb(ground.ink) : null;
+    if (!ink) return undefined;
+    const luminance = relativeLuminance(ink);
+    return { dark: luminance, light: luminance, focus: luminance };
+};
 /** The sRGB grey with relative luminance `luminance`. */
 const greyOf = (luminance: number) => {
     const linear = Math.min(1, Math.max(0, luminance));
@@ -238,7 +245,9 @@ const greyOf = (luminance: number) => {
  * The most backdrop a named material lets through over the measured picture. The glass is the surface's
  * solid paint plus `compression` × (picture − page), so where the picture runs against the theme (its darkest
  * under light ink, its lightest under dark ink) the compression drops just far enough for the
- * theme's ink to keep its contrast. Pictures that agree with the theme, and the plain page, change nothing.
+ * theme's ink to keep its contrast. Pictures that agree with the theme change nothing. A light floating surface
+ * over the plain page has no measured picture, but it hangs over that page's content, whose darkest is the page's own
+ * ink (rows of text under a menu): it solves against that ink, so its words stay readable over a list (COR5B).
  * `coat` is the page coat the surface stands on (an Element on the reading coat): its glass sees the picture through
  * it, so the solve does not dim a backdrop the coat has already calmed (owner, 2026-11-11 #04).
  */
@@ -299,7 +308,9 @@ export function resolveGlassBackdropMap(settings: GlassMaterialSettings, group: 
         // as the paint needs, keeping k exact without a neutral lift.
         // Elements stand on the page's reading coat; floating surfaces may hang over any plane, so they keep the bare picture.
         const standing = group === 'card' && picture ? resolveGlassReadingCoatOpacity(settings, environment, dark) : 0;
-        return solveGlassFixedPoint(legibleCompression(dark ? compression : Math.min(compression, 1 - opacity), dark, picture ? environment.atmosphereTone : undefined, ground, standing), opacity, ground);
+        // Dark floating glass keeps passing an ordinary page through unchanged (the monocode reference).
+        const contentTone = group === 'floating' && !picture && !dark ? pageInkTone(ground) : undefined;
+        return solveGlassFixedPoint(legibleCompression(dark ? compression : Math.min(compression, 1 - opacity), dark, picture ? environment.atmosphereTone : contentTone, ground, standing), opacity, ground);
     }
     // Shell planes over a wallpaper are frosted picture under their coat, as in the atmosphere lab's G1
     // (owner, 2026-10-24: the title bar shows the picture): light keeps it unwashed, dark only dims it.
