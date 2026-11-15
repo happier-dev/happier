@@ -2297,7 +2297,7 @@ describe('voice tool handlers', () => {
     expect(routerNavigate).not.toHaveBeenCalled();
   });
 
-  it('distinguishes absent from incomplete natural Session title resolution', async () => {
+  it('acquires an absent Session title corpus while preserving known absence and incomplete coverage', async () => {
     retainVoiceSessionReferenceCorpus({
       addresses: [{ serverId: homeA, sessionId: 's_matrix' }],
       complete: true,
@@ -2307,9 +2307,13 @@ describe('voice tool handlers', () => {
       .toMatchObject({ ok: false, errorCode: 'session_not_found' });
 
     resetSessionListPaneRetentionForTests();
+    const corpusHome = getServerProfileById(homeA);
+    if (!corpusHome) throw new Error('Session corpus Home profile is missing');
     const absentCorpusTools = createVoiceToolHandlers({ resolveSessionId: () => null });
     expect(JSON.parse(await absentCorpusTools.openSession({ sessionTitle: 'Session QA Voice Matrix' })))
-      .toMatchObject({ ok: false, errorCode: 'session_lookup_incomplete' });
+      .toMatchObject({ ok: true, status: 'opened', address: { serverId: corpusHome.id, sessionId: 's_matrix' } });
+    expect(routerNavigate).toHaveBeenCalledWith(`/session/s_matrix?serverId=${corpusHome.id}`, expect.any(Object));
+    routerNavigate.mockClear();
 
     retainVoiceSessionReferenceCorpus({
       addresses: [{ serverId: homeA, sessionId: 's_matrix' }],
