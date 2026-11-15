@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierDisclosureTurn, type HappierDisclosureCaretDensity } from '@happier-dev/plugin-ui/presentation';
 
@@ -49,6 +50,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.variant('meta'),
         ...Typography.mono(),
         color: theme.colors.text.secondary,
+        // Machine text is often one long token (a joined reason code, a path): on web it breaks inside the token
+        // rather than running past both edges of a narrow card. Native text already wraps an over-long word.
+        ...(Platform.OS === 'web' ? { wordBreak: 'break-word' as const } : {}),
     },
     centered: {
         textAlign: 'center',
