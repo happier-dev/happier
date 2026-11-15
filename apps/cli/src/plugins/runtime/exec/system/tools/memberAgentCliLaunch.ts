@@ -25,18 +25,29 @@ export function createMemberAgentCliLaunchContext(input: Readonly<{
     signal?: AbortSignal;
 }>): MemberAgentCliLaunchContext | undefined {
     if (!input.material?.memberIdentity) return undefined;
-    if (!input.managedHappierBinaryPath) throw new PluginError({ code: 'agent_isolation_unavailable',
-        message: 'Current member launch material is unavailable', retryable: false });
+    if (!input.managedHappierBinaryPath) throw new PluginError({ code: 'agent_isolation_unavailable', retryable: false,
+        message: 'Current member launch material is unavailable (member_launch_preparation: installed_cli_absent)',
+        details: { phase: 'member_launch_preparation', reason: 'installed_cli_absent' } });
     return { memberIdentity: input.material.memberIdentity, runtimeHome: input.material.runtimeHome,
         managedHappierBinaryPath: input.managedHappierBinaryPath, signal: input.signal };
 }
 
+/** Which Agent services were being built when a member launch was unavailable. */
+export type MemberAgentCliLaunchSite = 'agent_invocation_services' | 'retained_runner_agent_services';
+
 /** Consume the operation/Session owner's admitted native selection. */
-export function readMemberAgentCliLaunchContext(context?: HostAgentIsolationLaunchContext): MemberAgentCliLaunchContext | undefined {
+export function readMemberAgentCliLaunchContext(context: HostAgentIsolationLaunchContext | undefined,
+    site: MemberAgentCliLaunchSite): MemberAgentCliLaunchContext | undefined {
     const snapshot = context?.read();
     if (!snapshot || resolveMachineAgentExecutionPlacementV1({ policy: snapshot, platform: process.platform }) !== 'member') return undefined;
-    if (!snapshot.memberIdentity || !snapshot.launch) throw new PluginError({ code: 'agent_isolation_unavailable',
-        message: 'Current member launch material is unavailable', retryable: false });
+    if (!snapshot.memberIdentity || !snapshot.launch) {
+        // Content-free cause: the services family and whether no Session member
+        // reached this context or its launch was not yet prepared (R126U3).
+        const reason = snapshot.memberIdentity ? 'member_launch_not_prepared' : 'member_identity_absent';
+        throw new PluginError({ code: 'agent_isolation_unavailable', retryable: false,
+            message: `Current member launch material is unavailable (${site}: ${reason})`,
+            details: { phase: site, reason } });
+    }
     return createMemberAgentCliLaunchContext({ material: { ...snapshot.launch, memberIdentity: snapshot.memberIdentity },
         managedHappierBinaryPath: snapshot.launch.managedHappierBinaryPath });
 }
