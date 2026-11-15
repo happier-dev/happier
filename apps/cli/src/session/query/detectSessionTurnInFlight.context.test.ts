@@ -1,4 +1,5 @@
 import axios from 'axios';
+import type { SessionMessagePageActivityV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { detectSessionTurnActivity, SessionTurnActivityUnavailableError } from './detectSessionTurnInFlight';
 
@@ -7,7 +8,7 @@ const row = (seq: number, v: unknown): Row => ({ id: `m-${seq}`, seq, localId: n
 const task = (type: 'task_started' | 'task_complete') => ({ role: 'agent', content: { type: 'acp', provider: 'codex', data: { type, id: 'task-1' } } });
 const noise = (seq: number) => row(seq, { role: 'agent', content: { type: 'acp', provider: 'codex', data: { type: 'tool-result', callId: `call-${seq}`, id: `result-${seq}`, output: 'ok' } } });
 const read = (extra = {}) => detectSessionTurnActivity({ token: 'token', sessionId: 'sess-1', encryptionMode: 'plain', encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey', ...extra });
-function serve(rows: Row[]) {
+function serve(rows: Row[], activity: SessionMessagePageActivityV1 = { pendingCount: 0, pendingBlockedCount: 0, pendingBlockedNoEffectCount: 0, pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0, latestTurnStatus: null }) {
   return vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
     const query = new URL(String(url), 'http://boundary.test').searchParams;
     const rawParams: unknown = config?.params;
@@ -20,19 +21,19 @@ function serve(rows: Row[]) {
     const limit = Number(value('limit') ?? 20);
     const hasMore = selected.length > limit;
     const messages = selected.slice(0, limit);
-    return { status: 200, data: { messages, hasMore, nextBeforeSeq: after === null && hasMore ? messages.at(-1)?.seq ?? null : null, nextAfterSeq: after !== null && hasMore ? messages.at(-1)?.seq ?? null : null } };
+    return { status: 200, data: { messages, hasMore, activity, nextBeforeSeq: after === null && hasMore ? messages.at(-1)?.seq ?? null : null, nextAfterSeq: after !== null && hasMore ? messages.at(-1)?.seq ?? null : null } };
   });
 }
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 describe('legacy transcript activity context', () => {
   it('recovers an active task start across multiple backward pages before the latest twenty tool rows', async () => {
     const http = serve([row(1, task('task_started')), ...Array.from({ length: 2004 }, (_, index) => noise(index + 2))]);
-    await expect(read()).resolves.toEqual({ pendingUserTurns: 0, activeTaskInFlight: true, turnInFlight: true });
+    await expect(read()).resolves.toMatchObject({ pendingUserTurns: 0, activeTaskInFlight: true, turnInFlight: true });
     expect(http).toHaveBeenCalledTimes(5);
   });
   it('preserves the existing reduction when the latest window already has material activity evidence', async () => {
     const http = serve([row(1, { role: 'user', content: { type: 'text', text: 'queued prompt' } }), row(2, { role: 'user', content: { type: 'text', text: 'queued prompt' } }), row(3, { role: 'user', content: { type: 'text', text: 'queued prompt' } }), row(4, task('task_started')), row(5, task('task_complete')), row(6, { role: 'agent', content: { type: 'event', data: { type: 'ready' } } }), ...Array.from({ length: 9 }, (_, index) => noise(index + 7))]);
-    await expect(read()).resolves.toEqual({ pendingUserTurns: 1, activeTaskInFlight: false, turnInFlight: true });
+    await expect(read()).resolves.toMatchObject({ pendingUserTurns: 1, activeTaskInFlight: false, turnInFlight: true });
     expect(http).toHaveBeenCalledTimes(1);
   });
   it('does not count a realtime Voice user row as a pending Agent-thread text turn', async () => {
@@ -41,16 +42,21 @@ describe('legacy transcript activity context', () => {
       content: { type: 'text', text: 'spoken sentence' },
       meta: { happier: { conversationTurnOriginV1: { v: 1, channel: 'realtime_conversation', modality: 'voice' } } },
     })]);
-    await expect(read()).resolves.toEqual({ pendingUserTurns: 0, activeTaskInFlight: false, turnInFlight: false });
+    await expect(read()).resolves.toMatchObject({ pendingUserTurns: 0, activeTaskInFlight: false, turnInFlight: false });
   });
   it('keeps an explicit after-sequence boundary ahead of an earlier task start', async () => {
     serve([row(1, task('task_started')), ...Array.from({ length: 24 }, (_, index) => noise(index + 2))]);
-    await expect(read({ afterSeqExclusive: 1 })).resolves.toEqual({ pendingUserTurns: 0, activeTaskInFlight: false, turnInFlight: false });
+    await expect(read({ afterSeqExclusive: 1 })).resolves.toMatchObject({ pendingUserTurns: 0, activeTaskInFlight: false, turnInFlight: false });
   });
-  it('retains complete foreground projection precedence over older transcript activity', async () => {
-    const http = serve([row(1, task('task_started')), ...Array.from({ length: 24 }, (_, index) => noise(index + 2))]);
-    await expect(read({ sessionProjection: { latestTurnStatus: 'completed', pendingCount: 0, pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0 } })).resolves.toEqual({ pendingUserTurns: 0, activeTaskInFlight: false, turnInFlight: false });
-    expect(http).not.toHaveBeenCalled();
+  it('keeps a current-input window independent of unrelated Session work', async () => {
+    serve([row(11, { role: 'user', content: { type: 'text', text: 'current input' } }),
+      row(12, { role: 'agent', content: { type: 'event', data: { type: 'ready' } } })],
+      { pendingCount: 2, pendingBlockedCount: 0, pendingBlockedNoEffectCount: 0,
+        pendingPermissionRequestCount: 1, pendingUserActionRequestCount: 0, latestTurnStatus: 'in_progress' });
+
+    await expect(read({ afterSeqExclusive: 10 })).resolves.toMatchObject({
+      pendingUserTurns: 0, activeTaskInFlight: false, turnInFlight: false,
+    });
   });
   it('observes an older Claude row becoming terminal at the same sequence on the next read', async () => {
     const assistant = (stopReason: string | null) => ({ role: 'agent', content: { type: 'output', data: { type: 'assistant', uuid: 'assistant-1', message: { role: 'assistant', content: [{ type: 'text', text: 'answer' }], stop_reason: stopReason } } } });
@@ -58,11 +64,11 @@ describe('legacy transcript activity context', () => {
     serve(rows);
     await expect(read()).resolves.toMatchObject({ activeTaskInFlight: true, turnInFlight: true });
     rows[1] = row(2, assistant('end_turn'));
-    await expect(read()).resolves.toEqual({ pendingUserTurns: 0, activeTaskInFlight: false, turnInFlight: false });
+    await expect(read()).resolves.toMatchObject({ pendingUserTurns: 0, activeTaskInFlight: false, turnInFlight: false });
   });
   it('does not backfill a legacy sidechain task into foreground activity', async () => {
     serve([row(1, { ...task('task_started'), meta: { sidechainId: 'background-1' } }), ...Array.from({ length: 24 }, (_, index) => noise(index + 2))]);
-    await expect(read()).resolves.toEqual({ pendingUserTurns: 0, activeTaskInFlight: false, turnInFlight: false });
+    await expect(read()).resolves.toMatchObject({ pendingUserTurns: 0, activeTaskInFlight: false, turnInFlight: false });
   });
   it.each([
     { messages: [], hasMore: true, nextBeforeSeq: 1 },

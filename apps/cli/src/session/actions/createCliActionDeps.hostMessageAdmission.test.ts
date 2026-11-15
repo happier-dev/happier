@@ -299,7 +299,7 @@ describe('CLI host Message admission', () => {
       if (url.endsWith(`/messages/by-local-id/${localId}`)) return { status: 200, data: { message: {
         id: 'committed-input', seq: 7, localId, sidechainId: null, content, createdAt: Date.now(), updatedAt: Date.now(),
       } } };
-      if (url.includes('/messages?')) return { status: 200, data: { messages: [{ id: 'partial-row', seq: 8, localId: 'partial',
+      if (url.includes('/messages?')) return { status: 200, data: { hasMore: false, messages: [{ id: 'partial-row', seq: 8, localId: 'partial',
         content: { t: 'plain', v: { role: 'agent', content: { type: 'acp', agentId: 'codex', data: { type: 'text', text: 'Stopped partial' } } } },
         createdAt: Date.now(), updatedAt: Date.now() }] } };
       if (url.endsWith(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: {

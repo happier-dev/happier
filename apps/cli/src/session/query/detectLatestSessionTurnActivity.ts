@@ -1,10 +1,8 @@
 import {
     detectSessionTurnActivity,
-    detectSessionTurnActivityFromProjection,
     SessionTurnActivityUnavailableError,
     type SessionTurnActivity,
 } from '@/session/query/detectSessionTurnInFlight';
-import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { resolveTranscriptFetchTimeoutMs, withTranscriptReadDeadline } from '@/session/replay/fetchEncryptedTranscriptMessages';
 
 export async function detectLatestSessionTurnActivity(params: Readonly<{
@@ -15,39 +13,18 @@ export async function detectLatestSessionTurnActivity(params: Readonly<{
     encryptionVariant: 'legacy' | 'dataKey' | null;
     afterSeqExclusive?: number;
     transcriptFetchTimeoutMs?: number;
-    resolveAuthorizationHeaders?: Parameters<typeof fetchSessionById>[0]['resolveAuthorizationHeaders'];
+    resolveAuthorizationHeaders?: Parameters<typeof detectSessionTurnActivity>[0]['resolveAuthorizationHeaders'];
     signal?: AbortSignal;
 }>): Promise<SessionTurnActivity> {
     const timeoutMs = resolveTranscriptFetchTimeoutMs(params.transcriptFetchTimeoutMs);
     const deadlineAtMs = Date.now() + timeoutMs;
     try {
         return await withTranscriptReadDeadline({ deadlineAtMs, signal: params.signal }, async (signal) => {
-            let projectedActivity: SessionTurnActivity | null = null;
-            let refreshedSession: Awaited<ReturnType<typeof fetchSessionById>> = null;
-            try {
-                refreshedSession = await fetchSessionById({
-                    reason: 'session-query',
-                    token: params.token,
-                    sessionId: params.sessionId,
-                    ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
-                    signal,
-                });
-                signal.throwIfAborted();
-                projectedActivity = detectSessionTurnActivityFromProjection(refreshedSession);
-                if (projectedActivity) {
-                    return projectedActivity;
-                }
-            } catch (error) {
-                if (signal.aborted) throw new SessionTurnActivityUnavailableError(error);
-                // Fall back to legacy transcript activity detection below.
-            }
-
             const transcriptActivity = await detectSessionTurnActivity({
                 token: params.token,
                 sessionId: params.sessionId,
                 ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
                 signal,
-                sessionProjection: refreshedSession,
                 deadlineAtMs,
                 encryptionMode: params.encryptionMode,
                 encryptionKey: params.encryptionKey,
@@ -57,11 +34,7 @@ export async function detectLatestSessionTurnActivity(params: Readonly<{
                     ? { transcriptFetchTimeoutMs: params.transcriptFetchTimeoutMs }
                     : {}),
             });
-            if (transcriptActivity.turnInFlight) {
-                return transcriptActivity;
-            }
-
-            return projectedActivity ?? transcriptActivity;
+            return transcriptActivity;
         });
     } catch (error) {
         if (error instanceof SessionTurnActivityUnavailableError) throw error;

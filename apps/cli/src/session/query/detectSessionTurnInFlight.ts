@@ -1,8 +1,7 @@
 import { isAgentThreadTextConversationTurnMeta } from '@happier-dev/protocol/messages/structured/conversationTurnOriginV1';
 
 import { decodeBase64, decrypt } from '@/api/encryption';
-import { fetchEncryptedTranscriptPageAfterSeq, fetchEncryptedTranscriptPageBeforeSeq, fetchEncryptedTranscriptPageLatest } from '@/api/session/fetchEncryptedTranscriptWindow';
-import { MAX_TRANSCRIPT_MESSAGES_PAGE_SIZE, resolveTranscriptFetchTimeoutMs } from '@/session/replay/fetchEncryptedTranscriptMessages';
+import { fetchEncryptedTranscriptMessagesPage, MAX_TRANSCRIPT_MESSAGES_PAGE_SIZE, resolveTranscriptFetchTimeoutMs } from '@/session/replay/fetchEncryptedTranscriptMessages';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import {
     applySessionTurnLifecycleEvent,
@@ -16,6 +15,8 @@ export type SessionTurnActivity = Readonly<{
     pendingUserTurns: number;
     activeTaskInFlight: boolean;
     turnInFlight: boolean;
+    /** Effective primary Pending count from the same snapshot as the reduced transcript. */
+    pendingInputCount?: number;
 }>;
 
 export class SessionTurnActivityUnavailableError extends Error {
@@ -66,8 +67,16 @@ export function readSessionProjectedPendingRequestCount(value: unknown): number 
 export function readSessionProjectedPendingInputCount(value: unknown): number | null {
     const record = asRecord(value);
     if (!record) return null;
-
-    return readNonnegativeInteger(record.pendingCount);
+    const pendingCount = readNonnegativeInteger(record.pendingCount);
+    if (pendingCount === null) return null;
+    const pendingBlockedCount = readNonnegativeInteger(record.pendingBlockedCount);
+    const pendingBlockedNoEffectCount = readNonnegativeInteger(record.pendingBlockedNoEffectCount);
+    // Missing or inconsistent proof retains the total, including bodyless queue hints.
+    if (pendingBlockedCount === null || pendingBlockedNoEffectCount === null
+        || pendingBlockedNoEffectCount > pendingBlockedCount || pendingBlockedCount > pendingCount) {
+        return pendingCount;
+    }
+    return pendingCount - pendingBlockedNoEffectCount;
 }
 
 export function detectSessionTurnActivityFromProjection(value: unknown): SessionTurnActivity | null {
@@ -75,7 +84,11 @@ export function detectSessionTurnActivityFromProjection(value: unknown): Session
     if (!record) return null;
 
     const latestTurnStatus = readSessionProjectedTurnStatus(record.latestTurnStatus);
-    const pendingInputCount = readSessionProjectedPendingInputCount(record);
+    const pendingInputCount = readNonnegativeInteger(record.pendingCount);
+    const pendingBlockedCount = readNonnegativeInteger(record.pendingBlockedCount);
+    // Blocked custody needs the coherent transcript crossover; aggregate counts cannot prove idle.
+    if (pendingInputCount !== null && pendingInputCount > 0 && pendingBlockedCount === pendingInputCount
+        && latestTurnStatus !== 'in_progress') return null;
     if (pendingInputCount !== null && pendingInputCount > 0) {
         return {
             pendingUserTurns: pendingInputCount,
@@ -147,18 +160,13 @@ export async function detectSessionTurnActivity(params: Readonly<{
     encryptionKey: Uint8Array | null;
     encryptionVariant: 'legacy' | 'dataKey' | null;
     afterSeqExclusive?: number;
-    sessionProjection?: unknown;
     readyCompletesPendingUserTurns?: boolean;
     transcriptFetchTimeoutMs?: number;
     deadlineAtMs?: number;
-    resolveAuthorizationHeaders?: Parameters<typeof fetchEncryptedTranscriptPageLatest>[0]['resolveAuthorizationHeaders'];
+    resolveAuthorizationHeaders?: Parameters<typeof fetchEncryptedTranscriptMessagesPage>[0]['resolveAuthorizationHeaders'];
     signal?: AbortSignal;
 }>): Promise<SessionTurnActivity> {
     if (params.signal?.aborted) throw new SessionTurnActivityUnavailableError(params.signal.reason);
-    const projectedActivity = detectSessionTurnActivityFromProjection(params.sessionProjection);
-    if (projectedActivity) {
-        return projectedActivity;
-    }
     const readyCompletesPendingUserTurns = params.readyCompletesPendingUserTurns !== false;
 
     try {
@@ -173,21 +181,20 @@ export async function detectSessionTurnActivity(params: Readonly<{
         const afterSeq = typeof params.afterSeqExclusive === 'number' && Number.isFinite(params.afterSeqExclusive)
             ? Math.max(0, Math.trunc(params.afterSeqExclusive))
             : null;
-        const rows =
-            afterSeq !== null
-                ? await fetchEncryptedTranscriptPageAfterSeq({
-                    token: params.token,
-                    sessionId: params.sessionId,
-                    afterSeq,
-                    limit: 20,
-                    ...readOptions,
-                })
-                : await fetchEncryptedTranscriptPageLatest({
-                    token: params.token,
-                    sessionId: params.sessionId,
-                    limit: 20,
-                    ...readOptions,
-                });
+        const page = await fetchEncryptedTranscriptMessagesPage({
+            token: params.token,
+            sessionId: params.sessionId,
+            ...(afterSeq !== null ? { afterSeq } : {}),
+            limit: 20,
+            projection: 'activity',
+            ...readOptions,
+        });
+        const rows = page.messages;
+        if (afterSeq === null && !page.activity) {
+            throw new Error('Requested Session activity snapshot is unavailable');
+        }
+        const activitySnapshot = afterSeq === null ? page.activity : undefined;
+        const pendingInputCount = activitySnapshot ? readSessionProjectedPendingInputCount(activitySnapshot) : null;
         const orderedRows = [...rows].sort((a, b) => a.seq - b.seq);
 
         let pendingUserTurns = 0;
@@ -246,6 +253,7 @@ export async function detectSessionTurnActivity(params: Readonly<{
         let hasMaterialActivity = false;
         for (const row of orderedRows) {
             assertReadActive();
+            if (row.pendingOwnsTranscript === true) continue;
             hasMaterialActivity = applyDecryptedRow(decryptRow(row)) || hasMaterialActivity;
         }
 
@@ -256,14 +264,16 @@ export async function detectSessionTurnActivity(params: Readonly<{
             let beforeSeq = orderedRows[0]?.seq ?? 0;
             while (beforeSeq > 0) {
                 assertReadActive();
-                const page = await fetchEncryptedTranscriptPageBeforeSeq({
+                const page = await fetchEncryptedTranscriptMessagesPage({
                     token: params.token,
                     sessionId: params.sessionId,
                     beforeSeq,
                     limit: MAX_TRANSCRIPT_MESSAGES_PAGE_SIZE,
+                    projection: 'activity',
                     ...readOptions,
                 });
-                for (const row of [...page.rows].sort((a, b) => b.seq - a.seq)) {
+                for (const row of [...page.messages].sort((a, b) => b.seq - a.seq)) {
+                    if (row.pendingOwnsTranscript === true) continue;
                     assertReadActive();
                     const decrypted = decryptRow(row);
                     // The server's main scope excludes materialized sidechains;
@@ -282,15 +292,21 @@ export async function detectSessionTurnActivity(params: Readonly<{
         }
         assertReadActive();
 
-        const transcriptActivity = {
+        const snapshotTurnStatus = readSessionProjectedTurnStatus(activitySnapshot?.latestTurnStatus);
+        if (snapshotTurnStatus) {
+            activeTaskInFlight = snapshotTurnStatus === 'in_progress';
+            // Foreground completion is authoritative even without a transcript completion marker.
+            if (!activeTaskInFlight) pendingUserTurns = 0;
+        }
+        pendingUserTurns = Math.max(pendingUserTurns, pendingInputCount ?? 0);
+        const pendingRequests = activitySnapshot ? readSessionProjectedPendingRequestCount(activitySnapshot) ?? 0 : 0;
+        const transcriptActivity: SessionTurnActivity = {
             pendingUserTurns,
             activeTaskInFlight,
-            turnInFlight: activeTaskInFlight || pendingUserTurns > 0,
+            turnInFlight: activeTaskInFlight || pendingUserTurns > 0 || pendingRequests > 0,
+            ...(pendingInputCount !== null ? { pendingInputCount } : {}),
         };
-        if (transcriptActivity.turnInFlight) {
-            return transcriptActivity;
-        }
-        return projectedActivity ?? transcriptActivity;
+        return transcriptActivity;
     } catch (error) {
         if (error instanceof SessionTurnActivityUnavailableError) {
             throw error;
@@ -306,7 +322,6 @@ export async function detectSessionTurnInFlight(params: Readonly<{
     encryptionKey: Uint8Array;
     encryptionVariant: 'legacy' | 'dataKey';
     afterSeqExclusive?: number;
-    sessionProjection?: unknown;
 }>): Promise<boolean> {
     const activity = await detectSessionTurnActivity(params);
     return activity.turnInFlight;

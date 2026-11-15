@@ -17,6 +17,29 @@ import {
   sealSessionOwnerMetadataEnvelopeV1,
 } from '@happier-dev/protocol';
 
+// PR912-PORT reads coherent activity pages. Keep page parsing and reduction real.
+function serveTranscriptPages(
+    after: (request: { afterSeq: number; limit: number }) => Promise<readonly unknown[]>,
+    latest: () => Promise<readonly unknown[]>,
+) {
+    vi.doUnmock('@/api/session/fetchEncryptedTranscriptWindow');
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+        const parsed = new URL(String(url));
+        if (!parsed.pathname.endsWith('/messages')) throw new Error('Unexpected transcript fixture read');
+        const query = parsed.searchParams;
+        return { status: 200, data: {
+            hasMore: false,
+            messages: query.has('afterSeq')
+                ? await after({ afterSeq: Number(query.get('afterSeq')), limit: Number(query.get('limit')) })
+                : await latest(),
+            ...(query.get('projection') === 'activity' ? { activity: {
+                pendingCount: 0, pendingBlockedCount: 0, pendingBlockedNoEffectCount: 0,
+                pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0, latestTurnStatus: null,
+            } } : {}),
+        } };
+    });
+}
+
 describe('sendSessionMessage', () => {
     it('admits causal Session input without an optional caller through its source Machine', async () => {
         const { createSessionRecordFixture, createAccountEncryptionCurrentnessFixture } = await import('@/testkit/backends/sessionFixtures');
@@ -261,10 +284,7 @@ describe('sendSessionMessage', () => {
         const callSessionRpc = vi.fn(async (_params: unknown) => ({ ok: true }));
         const waitForIdleViaSocket = vi.fn(async () => ({ idle: true as const, observedAt: 456 }));
 
-        vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
-            fetchEncryptedTranscriptPageAfterSeq,
-            fetchEncryptedTranscriptPageLatest,
-        }));
+        serveTranscriptPages(fetchEncryptedTranscriptPageAfterSeq, fetchEncryptedTranscriptPageLatest);
         vi.doMock('@/api/session/transcriptMessageLookup', () => ({
             findTranscriptEncryptedMessageByLocalId: waitForTranscriptEncryptedMessageByLocalId,
             waitForTranscriptEncryptedMessageByLocalId,
@@ -790,10 +810,7 @@ describe('sendSessionMessage', () => {
             materializeNextPendingQueueV2MessageViaHttp,
             readPendingQueueV2DeliveryStatusByLocalIdFromServer,
         }));
-        vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
-            fetchEncryptedTranscriptPageAfterSeq,
-            fetchEncryptedTranscriptPageLatest,
-        }));
+        serveTranscriptPages(fetchEncryptedTranscriptPageAfterSeq, fetchEncryptedTranscriptPageLatest);
         vi.doMock('@/api/session/transcriptMessageLookup', () => ({
             findTranscriptEncryptedMessageByLocalId: waitForTranscriptEncryptedMessageByLocalId,
             waitForTranscriptEncryptedMessageByLocalId,
@@ -894,10 +911,7 @@ describe('sendSessionMessage', () => {
         const callSessionRpc = vi.fn(async (_params: unknown) => ({ ok: true }));
         const waitForIdleViaSocket = vi.fn(async () => ({ idle: true as const, observedAt: 456 }));
 
-        vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
-            fetchEncryptedTranscriptPageAfterSeq,
-            fetchEncryptedTranscriptPageLatest,
-        }));
+        serveTranscriptPages(fetchEncryptedTranscriptPageAfterSeq, fetchEncryptedTranscriptPageLatest);
         vi.doMock('@/api/session/transcriptMessageLookup', () => ({
             findTranscriptEncryptedMessageByLocalId: waitForTranscriptEncryptedMessageByLocalId,
             waitForTranscriptEncryptedMessageByLocalId,
@@ -1025,10 +1039,7 @@ describe('sendSessionMessage', () => {
             return { idle: true as const, observedAt: 102 };
         });
 
-        vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
-            fetchEncryptedTranscriptPageAfterSeq,
-            fetchEncryptedTranscriptPageLatest,
-        }));
+        serveTranscriptPages(fetchEncryptedTranscriptPageAfterSeq, fetchEncryptedTranscriptPageLatest);
         vi.doMock('@/api/session/transcriptMessageLookup', () => ({
             findTranscriptEncryptedMessageByLocalId: waitForTranscriptEncryptedMessageByLocalId,
             waitForTranscriptEncryptedMessageByLocalId,
@@ -1103,10 +1114,7 @@ describe('sendSessionMessage', () => {
         const callSessionRpc = vi.fn(async (_params: unknown) => ({ ok: true }));
         const waitForIdleViaSocket = vi.fn(async () => ({ idle: true as const, observedAt: 456 }));
 
-        vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
-            fetchEncryptedTranscriptPageAfterSeq,
-            fetchEncryptedTranscriptPageLatest,
-        }));
+        serveTranscriptPages(fetchEncryptedTranscriptPageAfterSeq, fetchEncryptedTranscriptPageLatest);
         vi.doMock('@/api/session/transcriptMessageLookup', () => ({
             findTranscriptEncryptedMessageByLocalId: waitForTranscriptEncryptedMessageByLocalId,
             waitForTranscriptEncryptedMessageByLocalId,
@@ -1196,10 +1204,7 @@ describe('sendSessionMessage', () => {
         const callSessionRpc = vi.fn(async (_params: unknown) => ({ ok: true }));
         const waitForIdleViaSocket = vi.fn(async () => ({ idle: true as const, observedAt: 456 }));
 
-        vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
-            fetchEncryptedTranscriptPageAfterSeq,
-            fetchEncryptedTranscriptPageLatest,
-        }));
+        serveTranscriptPages(fetchEncryptedTranscriptPageAfterSeq, fetchEncryptedTranscriptPageLatest);
         vi.doMock('@/api/session/transcriptMessageLookup', () => ({
             findTranscriptEncryptedMessageByLocalId: waitForTranscriptEncryptedMessageByLocalId,
             waitForTranscriptEncryptedMessageByLocalId,
@@ -1405,10 +1410,7 @@ describe('sendSessionMessage', () => {
         const callSessionRpc = vi.fn(async (_params: unknown) => ({ ok: true }));
         const waitForIdleViaSocket = vi.fn(async () => ({ idle: true as const, observedAt: 456 }));
 
-        vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
-            fetchEncryptedTranscriptPageAfterSeq,
-            fetchEncryptedTranscriptPageLatest,
-        }));
+        serveTranscriptPages(fetchEncryptedTranscriptPageAfterSeq, fetchEncryptedTranscriptPageLatest);
         vi.doMock('@/api/session/transcriptMessageLookup', () => ({
             findTranscriptEncryptedMessageByLocalId: waitForTranscriptEncryptedMessageByLocalId,
             waitForTranscriptEncryptedMessageByLocalId,
@@ -1523,10 +1525,7 @@ describe('sendSessionMessage', () => {
         const callSessionRpc = vi.fn(async (_params: unknown) => ({ ok: true }));
         const waitForIdleViaSocket = vi.fn(async () => ({ idle: true as const, observedAt: 456 }));
 
-        vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
-            fetchEncryptedTranscriptPageAfterSeq,
-            fetchEncryptedTranscriptPageLatest,
-        }));
+        serveTranscriptPages(fetchEncryptedTranscriptPageAfterSeq, fetchEncryptedTranscriptPageLatest);
         vi.doMock('@/api/session/transcriptMessageLookup', () => ({
             findTranscriptEncryptedMessageByLocalId: waitForTranscriptEncryptedMessageByLocalId,
             waitForTranscriptEncryptedMessageByLocalId,
@@ -2128,10 +2127,7 @@ describe('sendSessionMessage', () => {
         });
         const callSessionRpc = vi.fn(async (_params: unknown) => ({ ok: true }));
 
-        vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
-            fetchEncryptedTranscriptPageAfterSeq,
-            fetchEncryptedTranscriptPageLatest,
-        }));
+        serveTranscriptPages(fetchEncryptedTranscriptPageAfterSeq, fetchEncryptedTranscriptPageLatest);
         vi.doMock('@/session/transport/http/sessionsHttp', () => ({
             fetchSessionById,
             fetchSessionTurnsProjection: vi.fn(async () => null),

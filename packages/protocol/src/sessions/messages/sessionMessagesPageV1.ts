@@ -27,21 +27,33 @@ export const SessionMessageV1Schema = lazyZodSchema(() => z.object({
   transcriptObservationProvenance: z.optional(SessionTranscriptObservationProvenanceV1Schema),
   surfaceItemReference: z.optional(z.nullable(SessionTranscriptSurfaceItemReferenceInputV1Schema)),
   deliveryResolution: z.optional(SessionMessageDeliveryResolutionV1Schema),
+  pendingOwnsTranscript: z.optional(z.literal(true)),
   followDeliveryProjection: z.optional(FollowDeliveryProjectionV1Schema),
   messageActionReference: z.optional(MessageActionReferenceV1Schema),
   accountActor: z.optional(z.nullable(SessionMessageAccountActorV1Schema)),
   inputAdmissionReceipt: z.optional(SessionInputAdmissionReceiptV1Schema),
 }));
 export type SessionMessageV1 = z.infer<typeof SessionMessageV1Schema>;
+/** Current main-session activity facts captured with this transcript page. */
+export const SessionMessagePageActivityV1Schema = lazyZodSchema(() => z.object({
+  pendingCount: z.number().check(z.int(), z.minimum(0)),
+  pendingBlockedCount: z.number().check(z.int(), z.minimum(0)),
+  pendingBlockedNoEffectCount: z.number().check(z.int(), z.minimum(0)),
+  pendingPermissionRequestCount: z.number().check(z.int(), z.minimum(0)),
+  pendingUserActionRequestCount: z.number().check(z.int(), z.minimum(0)),
+  latestTurnStatus: z.nullable(z.string()),
+}));
+export type SessionMessagePageActivityV1 = z.infer<typeof SessionMessagePageActivityV1Schema>;
 export const SessionMessagesPageV1Schema = lazyZodSchema(() => z.object({
+  activity: z.optional(SessionMessagePageActivityV1Schema),
   messages: z.array(SessionMessageV1Schema), hasMore: z.optional(z.boolean()),
   nextBeforeSeq: z.optional(z.nullable(z.number().check(z.int(), z.minimum(0), z.maximum(Number.MAX_SAFE_INTEGER)))), nextAfterSeq: z.optional(z.nullable(z.number().check(z.int(), z.minimum(0), z.maximum(Number.MAX_SAFE_INTEGER)))),
 }));
 export type SessionMessagesPageV1 = z.infer<typeof SessionMessagesPageV1Schema>;
 // An external publication row may be an opaque cursor witness. Invalid content
 // and coarse actors are omitted; Account identity never crosses this projection.
-export const SessionExternalShareableMessagesPageV1Schema = lazyZodSchema(() => z.extend(SessionMessagesPageV1Schema, {
-  messages: z.array(z.extend(z.omit(SessionMessageV1Schema, { content: true, accountActor: true, inputAdmissionReceipt: true, followDeliveryProjection: true }), {
+export const SessionExternalShareableMessagesPageV1Schema = lazyZodSchema(() => z.extend(z.omit(SessionMessagesPageV1Schema, { activity: true }), {
+  messages: z.array(z.extend(z.omit(SessionMessageV1Schema, { content: true, accountActor: true, inputAdmissionReceipt: true, followDeliveryProjection: true, pendingOwnsTranscript: true }), {
     content: z.pipe(z.optional(z.unknown()), z.transform((input) => {
       const parsed = SessionStoredMessageContentSchema.safeParse(input);
       return parsed.success ? parsed.data : undefined;
@@ -58,7 +70,7 @@ export type SessionMessagesPageScope = 'main' | 'sidechain' | 'all';
 export type BuildSessionMessagesPathParams = Readonly<{
   sessionId: string; scope: SessionMessagesPageScope; sidechainId?: string | null;
   limit?: number; beforeSeq?: number; afterSeq?: number; messageId?: string;
-  role?: SessionMessageRole; roles?: readonly SessionMessageRole[]; projection?: 'turns' | 'externalShareableV1';
+  role?: SessionMessageRole; roles?: readonly SessionMessageRole[]; projection?: 'turns' | 'externalShareableV1' | 'activity';
 }>;
 function appendFiniteInteger(query: URLSearchParams, key: string, value: number | undefined) {
   if (typeof value === 'number' && Number.isFinite(value)) query.set(key, String(Math.trunc(value)));

@@ -1,7 +1,9 @@
+import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 describe('waitForSessionIdle', () => {
     afterEach(() => {
+        vi.restoreAllMocks();
         vi.resetModules();
         vi.clearAllMocks();
     });
@@ -145,16 +147,9 @@ describe('waitForSessionIdle', () => {
     });
 
     it('falls back to socket confirmation when transcript evidence is unavailable for an incomplete projection', async () => {
-        const fetchEncryptedTranscriptPageLatest = vi.fn(async () => {
-            throw new Error('transcript decrypt unavailable');
-        });
-        const fetchEncryptedTranscriptPageAfterSeq = vi.fn(async () => []);
+        const transcriptRead = vi.spyOn(axios, 'get').mockRejectedValue(new Error('transcript unavailable'));
         const waitForIdleViaSocket = vi.fn(async () => ({ idle: true as const, observedAt: 123 }));
 
-        vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
-            fetchEncryptedTranscriptPageLatest,
-            fetchEncryptedTranscriptPageAfterSeq,
-        }));
         vi.doMock('@/session/transport/socket/sessionSocketAgentState', () => ({
             waitForIdleViaSocket,
         }));
@@ -198,7 +193,7 @@ describe('waitForSessionIdle', () => {
             initialTurnActivityRequiresTranscriptIdleEvidence: true,
             preferProjectionUpdates: false,
         }));
-        expect(fetchEncryptedTranscriptPageLatest).toHaveBeenCalledOnce();
+        expect(transcriptRead).toHaveBeenCalledOnce();
     });
 
     it('seeds socket idle wait from durable pending input before transcript materialization', async () => {

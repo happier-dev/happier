@@ -4,7 +4,7 @@ import axios from '@/api/client/credentialAxios';
 
 import { createAuthenticationHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { buildSessionMessagesPath, SessionMessagesPageV1Schema, SessionExternalShareableMessagesPageV1Schema, type SessionMessageV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
+import { buildSessionMessagesPath, SessionMessagesPageV1Schema, SessionExternalShareableMessagesPageV1Schema, type SessionMessageV1, type SessionMessagePageActivityV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import { isExternalShareableTranscriptWirePayloadWithinLimitV1 } from '@happier-dev/protocol/sessions/messages/sessionExternalShareableTranscriptV1';
 import type { ExternalShareableTranscriptSnapshotV1 } from '@happier-dev/protocol';
 import {
@@ -75,6 +75,7 @@ export type FetchEncryptedTranscriptMessagesPageResult = Readonly<{
   hasMore: boolean;
   nextBeforeSeq: number | null;
   nextAfterSeq: number | null;
+  activity?: SessionMessagePageActivityV1;
   publicationBlocked?: boolean;
   externalShareableSnapshot?: ExternalShareableTranscriptSnapshotV1;
 }>;
@@ -93,14 +94,14 @@ type FetchEncryptedTranscriptMessagesPageParams = Readonly<{
   sidechainId?: string | null;
   role?: 'user' | 'agent' | 'event' | 'unknown';
   roles?: readonly ('user' | 'agent' | 'event' | 'unknown')[];
-  projection?: 'externalShareableV1';
+  projection?: 'externalShareableV1' | 'activity';
   signal?: AbortSignal;
   deadlineAtMs?: number;
   timeoutMs?: number;
 }>;
 
 export function fetchEncryptedTranscriptMessagesPage(
-  params: FetchEncryptedTranscriptMessagesPageParams & Readonly<{ projection?: undefined }>,
+  params: FetchEncryptedTranscriptMessagesPageParams & Readonly<{ projection?: 'activity' | undefined }>,
 ): Promise<Omit<FetchEncryptedTranscriptMessagesPageResult, 'messages'> & Readonly<{ messages: readonly SessionMessageV1[] }>>;
 export function fetchEncryptedTranscriptMessagesPage(
   params: FetchEncryptedTranscriptMessagesPageParams,
@@ -197,6 +198,7 @@ export async function fetchEncryptedTranscriptMessagesPage(params: FetchEncrypte
     }
     return {
       messages: page.data.messages,
+      ...(page.data.activity ? { activity: page.data.activity } : {}),
       hasMore: page.data.hasMore,
       nextBeforeSeq,
       nextAfterSeq,

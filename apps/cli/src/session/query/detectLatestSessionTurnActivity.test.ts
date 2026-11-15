@@ -4,6 +4,7 @@ describe('detectLatestSessionTurnActivity', () => {
   afterEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    vi.restoreAllMocks();
   });
 
   it('trusts a refreshed complete foreground projection over transcript task lifecycle rows', async () => {
@@ -39,13 +40,12 @@ describe('detectLatestSessionTurnActivity', () => {
     ]);
     const fetchEncryptedTranscriptPageAfterSeq = vi.fn(async () => []);
 
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
-      fetchSessionById,
-    }));
-    vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
-      fetchEncryptedTranscriptPageLatest,
-      fetchEncryptedTranscriptPageAfterSeq,
-    }));
+    const axios = (await import('axios')).default;
+    const http = vi.spyOn(axios, 'get').mockImplementation(async () => ({ status: 200, data: {
+      hasMore: false, messages: await fetchEncryptedTranscriptPageLatest(),
+      activity: { pendingCount: 0, pendingBlockedCount: 0, pendingBlockedNoEffectCount: 0,
+        ...await fetchSessionById() },
+    } }));
 
     const { detectLatestSessionTurnActivity } = await import('./detectLatestSessionTurnActivity');
 
@@ -57,18 +57,14 @@ describe('detectLatestSessionTurnActivity', () => {
       encryptionVariant: 'dataKey',
     })).resolves.toEqual({
       pendingUserTurns: 0,
+      pendingInputCount: 0,
       activeTaskInFlight: false,
       turnInFlight: false,
     });
 
-    expect(fetchSessionById).toHaveBeenCalledWith(expect.objectContaining({
-      reason: 'session-query',
-      token: 'token',
-      sessionId: 'sess-1',
-      signal: expect.any(AbortSignal),
-    }));
-    expect(fetchEncryptedTranscriptPageLatest).not.toHaveBeenCalled();
-    expect(fetchEncryptedTranscriptPageAfterSeq).not.toHaveBeenCalled();
+    const path = new URL(String(http.mock.calls[0][0]));
+    expect(path.searchParams.get('scope')).toBe('main');
+    expect(path.searchParams.get('projection')).toBe('activity');
   });
 
   it('keeps a refreshed durable pending input in flight before transcript materialization', async () => {
@@ -80,13 +76,12 @@ describe('detectLatestSessionTurnActivity', () => {
     const fetchEncryptedTranscriptPageLatest = vi.fn(async () => []);
     const fetchEncryptedTranscriptPageAfterSeq = vi.fn(async () => []);
 
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
-      fetchSessionById,
-    }));
-    vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
-      fetchEncryptedTranscriptPageLatest,
-      fetchEncryptedTranscriptPageAfterSeq,
-    }));
+    const axios = (await import('axios')).default;
+    const http = vi.spyOn(axios, 'get').mockImplementation(async () => ({ status: 200, data: {
+      hasMore: false, messages: await fetchEncryptedTranscriptPageLatest(),
+      activity: { pendingBlockedCount: 0, pendingBlockedNoEffectCount: 0,
+        pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0, ...await fetchSessionById() },
+    } }));
 
     const { detectLatestSessionTurnActivity } = await import('./detectLatestSessionTurnActivity');
 
@@ -98,17 +93,13 @@ describe('detectLatestSessionTurnActivity', () => {
       encryptionVariant: 'dataKey',
     })).resolves.toEqual({
       pendingUserTurns: 1,
+      pendingInputCount: 1,
       activeTaskInFlight: false,
       turnInFlight: true,
     });
 
-    expect(fetchSessionById).toHaveBeenCalledWith(expect.objectContaining({
-      reason: 'session-query',
-      token: 'token',
-      sessionId: 'sess-1',
-      signal: expect.any(AbortSignal),
-    }));
-    expect(fetchEncryptedTranscriptPageLatest).not.toHaveBeenCalled();
-    expect(fetchEncryptedTranscriptPageAfterSeq).not.toHaveBeenCalled();
+    const path = new URL(String(http.mock.calls[0][0]));
+    expect(path.searchParams.get('scope')).toBe('main');
+    expect(path.searchParams.get('projection')).toBe('activity');
   });
 });
