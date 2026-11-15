@@ -1,8 +1,7 @@
-import { readStoredSessionMessagesFromStateLike } from '@/sync/domains/messages/readStoredSessionMessages';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { StorageState } from '@/sync/store/types';
 
-import { deriveLatestPendingRequestObservedAtFromSession } from './listPendingSessionRequests';
+import { deriveLatestPendingRequestObservedAtFromSession, readStoredTranscriptRequestStatesCache } from './listPendingSessionRequests';
 
 export type PendingRequestObservedAtCacheEntry = Readonly<{
     sessionSignature: string;
@@ -38,7 +37,8 @@ export function readCachedPendingRequestObservedAt(params: Readonly<{
 
     const value = deriveLatestPendingRequestObservedAtFromSession(
         params.session,
-        readStoredSessionMessagesFromStateLike(params.sessionMessages),
+        undefined,
+        readStoredTranscriptRequestStatesCache(params.sessionMessages, params.session),
     );
     params.cache.set(params.session.id, {
         sessionSignature: params.sessionSignature,
