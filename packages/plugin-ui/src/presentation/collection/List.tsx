@@ -99,6 +99,11 @@ export type HappierListSectionProps = Readonly<{
    * it apart from its siblings. Omitted, the heading ends in a tail ellipsis.
    */
   titleEllipsizeMode?: 'middle';
+  /**
+   * A narrow band: the name keeps line 1; what the rows share and the action stand on line 2 (DESIGN "Phones
+   * recompose"). Wide bands keep them on one line.
+   */
+  stacked?: boolean;
   /** One control at the header's end ("See all"), beside — never inside — the heading's name. */
   action?: ReactNode;
   /**
@@ -333,6 +338,8 @@ const sectionHeadingTitleBesideActionStyle: HappierPortableStyle = { flexShrink:
 const sectionHeadingDescriptionStyle: HappierPortableStyle = { flexShrink: 1 };
 const sectionHeadingActionStyle: HappierPortableStyle = { marginLeft: 'auto' };
 const sectionHeadingStackStyle: ViewStyle = { minWidth: 0 };
+// A stacked band's action follows what its rows share on line 2, not at the far end.
+const sectionHeadingStackedActionStyle: ViewStyle = { flexShrink: 0 };
 // The page section description's step below its title (PageSection's default text).
 const sectionDescriptionBelowStyle: HappierPortableStyle = { marginTop: 2 };
 const sectionHeadingTrailingStyle: HappierPortableStyle = { marginLeft: 'auto', textAlign: 'right' };
@@ -407,6 +414,7 @@ export function HappierListSection({
   description,
   titleRole = 'label',
   titleEllipsizeMode,
+  stacked,
   action,
   virtualizedCollectionRole,
   accessibilityRowIndex,
@@ -460,7 +468,23 @@ export function HappierListSection({
       )}
     </HappierText>
   );
-  const heading = descriptionBelow ? (
+  const stackedLine = stacked === true && !descriptionBelow && (description !== undefined || hasAction);
+  const heading = stackedLine ? (
+    <View style={sectionHeadingStackStyle}>
+      <View style={sectionHeadingStyle}>
+        {headingTitle}
+        {count === undefined ? null : (
+          <HappierText accessible={false} tabularNumbers style={quietStyle}>{String(count)}</HappierText>
+        )}
+      </View>
+      <View style={sectionHeadingStyle}>
+        {description === undefined ? null : (
+          <HappierText accessible={false} numberOfLines={1} style={[quietStyle, sectionHeadingDescriptionStyle]}>{description}</HappierText>
+        )}
+        {hasAction ? <View style={sectionHeadingStackedActionStyle}>{action}</View> : null}
+      </View>
+    </View>
+  ) : descriptionBelow ? (
     <View style={sectionHeadingStackStyle}>
       <View style={sectionHeadingStyle}>
         {headingTitle}

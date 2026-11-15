@@ -159,6 +159,20 @@ describe('Projects → All deployments', () => {
     controller.retire();
   });
 
+  it('says on line 2 the commit subject of the latest deploy and who asked for it (lab envRow)', async () => {
+    const { createDeploymentReceiptHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const shipped = { ...environment('env-shop', 'source-shop', 'Production', { projectSourceName: 'storefront' }),
+      currentDeployment: { ...createDeploymentReceiptHeaderV1({ id: 'receipt-1', environmentId: 'env-shop', state: 'succeeded' }),
+        title: 'Deploy main', commitSubject: 'fix(invoices): round VAT per line' } };
+    const { controller } = controllerFor(() => page([shipped]));
+    const screen = await render(controller, 'all-deployments.row.env-shop');
+    const text = screen.findByTestId('all-deployments.row.env-shop')!.findAll(() => true)
+      .map((node) => node.props.children).filter((child): child is string => typeof child === 'string').join(' ');
+    expect(text).toContain('fix(invoices): round VAT per line');
+    expect(text).not.toContain('Deploy main');
+    controller.retire();
+  });
+
   it('keeps a page that hides every row it read leading on, instead of calling the Account empty', async () => {
     const { controller, calls } = controllerFor((cursor) =>
       cursor

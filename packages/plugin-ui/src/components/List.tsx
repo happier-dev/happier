@@ -2070,6 +2070,7 @@ function VirtualizedList<Item>(
                                 rows without a label, so it draws none. */}
                             {section.title === '' ? null : (
                               <HappierListSection title={section.title} titleRole="group" titleEllipsizeMode="middle"
+                                {...(pageSheet.stackedHeadings === true ? { stacked: true } : {})}
                                 style={index === 0 ? sheetGroupFirstHeadingStyle : sheetGroupHeadingStyle}
                                 {...(section.description === undefined ? {} : { description: section.description })}
                                 {...(sectionHeaderAction === undefined ? {} : { action: sectionHeaderAction(section.authorKey) })} />

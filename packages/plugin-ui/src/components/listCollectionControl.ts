@@ -71,6 +71,11 @@ export type ListCollectionControl = Readonly<{
     flatSheet?: boolean;
     /** A grouped list that is one table (it has totals): the bar, every group's band and rows, then the footer on one sheet. */
     oneSheet?: boolean;
+    /**
+     * The rows are narrow (a phone): a band sharing a sheet keeps its name on line 1 and puts what its rows share
+     * and its action on line 2, rather than truncating both beside each other (DESIGN "Phones recompose").
+     */
+    stackedHeadings?: boolean;
   }>;
   /**
    * A page's catalog directory (S10: the Store, Installed): its groups are page sections of catalog rows standing on

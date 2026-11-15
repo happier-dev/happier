@@ -2552,7 +2552,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
         columns: directoryColumns,
         columnGapPx: CATALOG_ROW.directoryColumnGap,
         ...(props.testID === undefined ? {} : { lineTestID: `${props.testID}:directory-line` }),
-      } } : { pageSheet: { colors: palette, header: pageSheetHeader, flatSheet: enclosingPageSheet === null } }),
+      } } : { pageSheet: { colors: palette, header: pageSheetHeader, flatSheet: enclosingPageSheet === null, stackedHeadings: narrowRows } }),
     } : wrapTitles || catalogSideList ? {
       // The resting list (a phone, a narrow page) groups on the page canvas: a plain heading over rows parted by
       // air (lab phone `.grp`), seated on its rows rather than banded off them. A catalog list beside its detail

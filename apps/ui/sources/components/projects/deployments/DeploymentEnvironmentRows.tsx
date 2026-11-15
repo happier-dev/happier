@@ -157,6 +157,11 @@ export function DeploymentEnvironmentRows(
     const actor = people.accounts.get(row.requestedByAccountId);
     return actor && props.lifetime ? resolveAccountActorPresentation(actor, props.lifetime.scope).name : null;
   }, [accountId, people.accounts, props.lifetime]);
+  // Runs on keeps its longest name whole (it never truncates at a desktop width); Address gives way first.
+  const runsOnWidth = React.useMemo(() => {
+    const longest = Math.max(0, ...rows.map((row) => row.runsOn?.length ?? 0));
+    return Math.min(RUNS_ON_MAX_PX, Math.max(RUNS_ON_MIN_PX, Math.round(longest * META_CHAR_PX)));
+  }, [rows]);
   // The Address column stands only when an address is known on this page, sized to the longest one it shows.
   const addressWidth = React.useMemo(() => {
     const longest = Math.max(0, ...rows.map((row) => row.liveAddress ? formatDeploymentLiveAddress(row.liveAddress).length : 0));
@@ -212,7 +217,7 @@ export function DeploymentEnvironmentRows(
             {
               key: 'runsOn',
               title: t('projects.deployments.services.columnRunsOn'),
-              minWidth: 136,
+              minWidth: runsOnWidth,
               priority: 3,
               listColumn: true,
               render: (row: Row) => row.runsOn,
@@ -266,7 +271,7 @@ export function DeploymentEnvironmentRows(
         title: t('projects.deployments.services.columnEnvironment'),
       },
     };
-  }, [addressWidth, authorOf, hereMachine, props.testID, theme.colors.text.secondary, theme.space.s2]);
+  }, [addressWidth, authorOf, hereMachine, props.testID, runsOnWidth, theme.colors.text.secondary, theme.space.s2]);
   return (
     <ServicesPageList<Row>
       testID={props.testID}
@@ -278,9 +283,12 @@ export function DeploymentEnvironmentRows(
 }
 
 const NO_SCOPE: ServerAccountScope = Object.freeze({ serverId: '', accountId: '' });
-/** The Address column's bounds: a mono host at meta size (MONO_META_CHAR_PX each), never narrower than its title. */
+/** Column bounds from their text at meta size: Address (mono) gives way first, Runs on keeps its longest name whole. */
 const ADDRESS_MIN_PX = 96;
-const ADDRESS_MAX_PX = 200;
+const ADDRESS_MAX_PX = 128;
+const RUNS_ON_MIN_PX = 96;
+const RUNS_ON_MAX_PX = 184;
+const META_CHAR_PX = 7;
 const MONO_META_CHAR_PX = 7.4;
 
 type LineRow = Pick<Row, 'deploymentTitle' | 'runsOn' | 'detail' | 'steps' | 'stepCaption'>;

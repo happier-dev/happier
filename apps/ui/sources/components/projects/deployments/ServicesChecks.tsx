@@ -320,7 +320,7 @@ function WatchedList(props: Readonly<{
   const groupAction = React.useCallback((machineId: string) => {
     const band = bands.find((candidate) => candidate.key === machineId);
     const refresh = refreshers.current.get(machineId);
-    return band?.read === 'failed' && refresh ? { label: t('common.retry'), onPress: refresh, kind: 'operation' as const } : null;
+    return band?.read === 'failed' && refresh ? { label: t('common.retry'), onPress: refresh, kind: 'link' as const } : null;
   }, [bands]);
   const open = React.useCallback((key: string | number | null) => {
     const item = key === null ? undefined : items.find((candidate) => candidate.key === String(key));

@@ -3253,6 +3253,27 @@ describe('render scope', () => {
       expect(view.query('row:a')?.textContent).toContain('payments-api · 18m');
     } finally { view.unmount(); }
   });
+  it.each([[390, false], [1200, true]] as const)('a shared sheet band at %ipx keeps its name on line 1 and its fact with its action %s on the same line', (width, sameLine) => {
+    const view = mount({
+      presentation: 'list', scroll: 'page',
+      grouping: { ...groups, axis: [{ key: 'needs', title: 'Needs you', description: "Couldn't read services" }, { key: 'rest', title: 'Everything else' }]
+        .map((group) => ({ ...group, section: { key: 'all', title: '' } })) },
+      groupAction: (key) => key === 'needs' ? { kind: 'link', label: 'Retry', onPress: () => undefined } : null,
+    });
+    try {
+      view.measure(width);
+      // The deepest element saying exactly this (a middle-ellipsized title is two runs inside it).
+      const leaf = (text: string) => [...view.container.querySelectorAll('*')].filter((node) => node.textContent?.replace(/\s/gu, ' ') === text)
+        .find((node) => ![...node.children].some((child) => child.textContent?.replace(/\s/gu, ' ') === text));
+      const title = leaf('Needs you')!;
+      const retry = leaf('Retry')!;
+      expect(title).toBeDefined();
+      expect(retry).toBeDefined();
+      // A phone row puts what the band shares and its action on line 2 (DESIGN "Phones recompose"); wide, one line.
+      expect(title.parentElement!.contains(retry)).toBe(sameLine);
+      expect(retry.closest('[role="group"]')?.textContent).toContain("Couldn't read services");
+    } finally { view.unmount(); }
+  });
   it('draws an empty list column cell as the table does: a quiet dash, never a blank', () => {
     const view = mount({
       presentation: 'list', scroll: 'page',

@@ -241,8 +241,9 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
       liveAddress: liveAddress ?? null,
       /** Who asked for the latest deploy (its receipt's requester), for the row's who-and-what line. */
       requestedByAccountId: currentDeployment?.requestedByAccountId ?? null,
-      // What was deployed last (its receipt's title), else what is live; never one that only repeats the row's name.
-      deploymentTitle: [currentDeployment?.title, liveVersionTitle]
+      // What was deployed last: its commit subject (the latest attempt's source facts), else its receipt's title, else
+      // what is live; never one that only repeats the row's name.
+      deploymentTitle: [currentDeployment?.commitSubject, currentDeployment?.title, liveVersionTitle]
         .find((candidate): candidate is string => !!candidate && !isSameDeploymentName(candidate, title)) ?? null,
       state: latest,
       steps,
