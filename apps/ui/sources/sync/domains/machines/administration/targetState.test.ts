@@ -11,6 +11,7 @@ import {
 } from '@/sync/domains/machines/reachability/machineReachability';
 import { resolveMachineAdministrationTargetState } from './targetSelection';
 import { publishMachineActivities } from '../machineActivity';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 
 import {
     buildMachineAdministrationCandidateInventoryRowsFromSnapshots,
@@ -100,6 +101,7 @@ describe('snapshot Administration candidates', () => {
     it('reads profile identity once for the full candidate inventory without retaining reachability', async () => {
         const { MMKV } = await import('react-native-mmkv');
         const machines = Array.from({ length: 138 }, (_, index) => machine({ id: `bulk-candidate-${index}`, active: true }));
+        publishMachineActivityForTest(machines);
         const read = (rows: readonly Machine[]) => buildMachineAdministrationCandidateInventoryRowsFromSnapshots({
             snapshots: [{ kind: 'resolved', profileId: profile.id, accountId: 'account-b',
                 serverIdentityId: profile.serverIdentityId!, serverName: 'Server B', observation: 'live', machines: rows }],
@@ -166,6 +168,7 @@ describe('snapshot Administration candidates', () => {
     it('keeps the selected Machine online through transport withdrawal and a fresh observation', () => {
         const scope = { serverId: profile.serverIdentityId!, accountId: 'account-b' };
         const selectedMachine = machine({ id: 'machine-b', active: true });
+        publishMachineActivityForTest([selectedMachine]);
         const readCandidate = () => buildMachineAdministrationCandidatesFromSnapshots({
             snapshots: [{ kind: 'resolved', profileId: profile.id, accountId: scope.accountId,
                 serverIdentityId: scope.serverId, serverName: 'Server B', observation: 'live', machines: [selectedMachine] }],

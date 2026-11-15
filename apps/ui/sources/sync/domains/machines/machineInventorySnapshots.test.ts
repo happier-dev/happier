@@ -202,6 +202,7 @@ describe('resolveAllProfileMachineInventorySnapshots', () => {
     });
     it('retains Account provenance and refuses execution without an exact Home credential scope', () => {
         const row = { ...machine({ id: 'scoped-row', active: true }), activeAt: Date.now() };
+        publishMachineActivityForTest([row]);
         const scope = { serverId: 'srv_server_a', accountId: 'account-1' };
         const base = { profiles: [profiles[0]], activeServerId: 'local-a', activeMachines: [row],
             machineListByServerId: { 'local-a': [row] }, machineListStatusByServerId: { 'local-a': 'idle' as const },
