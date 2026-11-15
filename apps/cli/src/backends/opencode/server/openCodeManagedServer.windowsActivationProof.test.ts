@@ -80,7 +80,14 @@ describe('managed OpenCode Windows activation proof', () => {
 
     const { getOpenCodeServerProcessInfoBestEffort } = await import('./openCodeServerProcessState');
     const processInfo = await getOpenCodeServerProcessInfoBestEffort(trackedPid);
-    expect(processInfo).toEqual({
+    expect(processInfo, JSON.stringify({
+      platform: process.platform,
+      processInspectionCalls: execFileSyncMock.mock.calls,
+      processInspectionResults: execFileSyncMock.mock.results.map(({ type, value }) => ({
+        type,
+        value: value instanceof Error ? value.message : value,
+      })),
+    })).toEqual({
       name: 'opencode.exe',
       cmd: commandLine,
     });
