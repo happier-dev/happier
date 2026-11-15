@@ -306,6 +306,7 @@ export async function setSessionPinInTx(tx: SessionOrganizationTx, params: Reado
     const membership = surface === "rail" ? { railPinned: params.request.pinned } : { listPinned: params.request.pinned };
     const select = { sessionId: true, sortKey: true, pinnedAt: true, listPinned: true, railPinned: true } as const;
     if (!params.request.pinned) {
+        if (!await canAccessSyncedSessionForOrganizationInTx(tx, params)) return { error: "session-not-found" };
         // Update only this membership. The row write keeps a concurrent other-surface
         // change intact, and clearing a missing row must never recreate a saved choice.
         const updated = await tx.sessionPin.updateMany({
@@ -414,6 +415,8 @@ export async function setSessionAttentionStandingInTx(tx: SessionOrganizationTx,
 }>): Promise<Readonly<{ standing: ReturnType<typeof mapSessionAttentionStanding> | null }> | { error: "session-not-found" }> {
     // Reminder read-state publication needs the full Session audience at entry.
     await acquireSessionOrganizationMutationAdmissionInTx(tx, params.accountId, params.sessionId);
+    if ((params.request.standing === null || params.request.remindAt === null)
+        && !await canAccessSyncedSessionForOrganizationInTx(tx, params)) return { error: "session-not-found" };
     if (params.request.standing === null) {
         const deleted = await tx.sessionAttentionStanding.deleteMany({
             where: { accountId: params.accountId, sessionId: params.sessionId },
@@ -569,6 +572,7 @@ export async function setSessionAppearanceInTx(tx: SessionOrganizationTx, params
 }>): Promise<SetSessionAppearanceResult> {
     await acquireSessionOrganizationMutationAdmissionInTx(tx, params.accountId);
     if (params.request.display === null) {
+        if (!await canAccessSyncedSessionForOrganizationInTx(tx, params)) return { error: "session-not-found" };
         const deleted = await tx.sessionAppearance.deleteMany({ where: { accountId: params.accountId, sessionId: params.sessionId } });
         if (deleted.count === 0) return { appearance: null };
         await markSessionOrganizationChanged(tx, {

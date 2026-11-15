@@ -654,9 +654,7 @@ describe("session organization routes", () => {
     });
 
     it("rejects pinning an archived session before writing hidden pin state", async () => {
-        sessionFindFirst
-            .mockResolvedValueOnce({ id: "archived" })
-            .mockResolvedValue(null);
+        sessionFindFirst.mockResolvedValue(null);
         txSessionFindFirst.mockResolvedValue(null);
         txSessionPinFindUnique.mockResolvedValue(null);
         txSessionPinCount.mockResolvedValue(0);

@@ -9,10 +9,6 @@ import { z } from "zod/mini";
 import { enforceCurrentAccountStoredContentCompatibilityForHttpRequest } from "@/app/clientCompatibility/accountStoredContentCompatibility";
 import { createServerFeatureGatedRouteApp } from "@/app/features/catalog/serverFeatureGate";
 import {
-    canAccessSyncedSessionForOrganization,
-    canAccessVisibleUnarchivedSessionForOrganization,
-} from "@/app/session/organization/access";
-import {
     deleteSessionOrganizationFolder,
     deleteSessionOrganizationLabel,
     deleteSessionOrganizationTag,
@@ -122,21 +118,7 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
             return reply.code(400).send({ error: "invalid-session-pin" });
         }
 
-        const visible = parsedBody.data.pinned
-            ? await canAccessVisibleUnarchivedSessionForOrganization({
-                accountId: request.userId,
-                sessionId: parsedParams.data.sessionId,
-                authentication: readSessionAccessAuthenticationFromRequest(request),
-            })
-            : await canAccessSyncedSessionForOrganization({
-                accountId: request.userId,
-                sessionId: parsedParams.data.sessionId,
-                authentication: readSessionAccessAuthenticationFromRequest(request),
-            });
-        if (!visible) {
-            return reply.code(404).send({ error: "Session not found" });
-        }
-
+        // The mutation transaction decides access once, under the Account admission.
         const result = await setSessionPin({
             accountId: request.userId,
             sessionId: parsedParams.data.sessionId,
@@ -173,21 +155,7 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
             return reply.code(400).send({ error: "invalid-session-attention-standing" });
         }
 
-        const visible = parsedBody.data.standing === null || parsedBody.data.remindAt === null
-            ? await canAccessSyncedSessionForOrganization({
-                accountId: request.userId,
-                sessionId: parsedParams.data.sessionId,
-                authentication: readSessionAccessAuthenticationFromRequest(request),
-            })
-            : await canAccessVisibleUnarchivedSessionForOrganization({
-                accountId: request.userId,
-                sessionId: parsedParams.data.sessionId,
-                authentication: readSessionAccessAuthenticationFromRequest(request),
-            });
-        if (!visible) {
-            return reply.code(404).send({ error: "Session not found" });
-        }
-
+        // The mutation transaction decides access once, under the Account admission.
         const result = await setSessionAttentionStanding({
             accountId: request.userId,
             sessionId: parsedParams.data.sessionId,
@@ -219,10 +187,6 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
         if (!parsedParams.success || !parsedBody.success) return reply.code(400).send({ error: "invalid-session-appearance" });
         const access = { accountId: request.userId, sessionId: parsedParams.data.sessionId,
             authentication: readSessionAccessAuthenticationFromRequest(request) };
-        const visible = parsedBody.data.display === null
-            ? await canAccessSyncedSessionForOrganization(access)
-            : await canAccessVisibleUnarchivedSessionForOrganization(access);
-        if (!visible) return reply.code(404).send({ error: "Session not found" });
         const result = await setSessionAppearance({ ...access, request: parsedBody.data });
         if ("error" in result) {
             if (result.error === "session-not-found") return reply.code(404).send({ error: "Session not found" });
@@ -382,15 +346,6 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
             return reply.code(400).send({ error: "invalid-session-folder-assignment" });
         }
 
-        const visible = await canAccessSyncedSessionForOrganization({
-            accountId: request.userId,
-            sessionId: parsedParams.data.sessionId,
-            authentication: readSessionAccessAuthenticationFromRequest(request),
-        });
-        if (!visible) {
-            return reply.code(404).send({ error: "Session not found" });
-        }
-
         const result = await setSessionFolderAssignment({
             accountId: request.userId,
             sessionId: parsedParams.data.sessionId,
@@ -398,6 +353,7 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
             authentication: readSessionAccessAuthenticationFromRequest(request),
         });
         if ("error" in result) {
+            if (result.error === "session-not-found") return reply.code(404).send({ error: "Session not found" });
             return reply.code(400).send({ error: "invalid-session-folder-assignment" });
         }
         return reply.send(result);
@@ -593,15 +549,6 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
         if (!parsedParams.success || !parsedBody.success) {
             return reply.code(400).send({ error: "invalid-session-tag-assignments" });
         }
-        const visible = await canAccessSyncedSessionForOrganization({
-            accountId: request.userId,
-            sessionId: parsedParams.data.sessionId,
-            authentication: readSessionAccessAuthenticationFromRequest(request),
-        });
-        if (!visible) {
-            return reply.code(404).send({ error: "Session not found" });
-        }
-
         const result = await setSessionTagAssignments({
             accountId: request.userId,
             sessionId: parsedParams.data.sessionId,
@@ -609,6 +556,7 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
             authentication: readSessionAccessAuthenticationFromRequest(request),
         });
         if ("error" in result) {
+            if (result.error === "session-not-found") return reply.code(404).send({ error: "Session not found" });
             return reply.code(400).send({ error: "invalid-session-tag-assignments" });
         }
         return reply.send(result);
