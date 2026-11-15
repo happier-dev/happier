@@ -3,7 +3,7 @@ import { readSafeFailureDetails } from '@/utils/errors/alertActionFailure';
 import { isPluginError } from '@happier-dev/protocol/plugins/errors';
 import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
 import { PluginDiagnosticRemediationV1Schema } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
-import { isActionTurnedOffErrorCode, readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isActionOutcomeUnknownErrorCodeV1, isActionTurnedOffErrorCode, readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DiscussionErrorCodeV1Schema } from '@happier-dev/protocol/discussions/api';
 import { MachineElevationFailureV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
 import { MachineReachabilityNativeFailureDetailsV1Schema } from '@happier-dev/protocol/machines/reachability/actionsV1';
@@ -140,7 +140,7 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     const transient = readTransientFailure(record, options);
     if (transient) return !options?.safeToRetry && transient.effectMayHaveApplied ? t('toolView.pending.unknownDescription') : transient.message;
     // An unconfirmed effect keeps its recovery even when its transport cause is known.
-    if (code === 'outcome_unknown' || code === 'outcome_uncertain' || code === 'approval_execution_outcome_unknown') return t(options?.safeToRetry ? 'errors.tryAgain' : 'entityDragDrop.preview.unknownDetail');
+    if (isActionOutcomeUnknownErrorCodeV1(code)) return t(options?.safeToRetry ? 'errors.tryAgain' : 'entityDragDrop.preview.unknownDetail');
     // A transport wrapper can say Forbidden while its producer names unavailable
     // infrastructure. Present that validated cause before the wrapper's generic copy.
     const cause = record.failureCause === undefined ? null : readActionFailureCauseV1(record.failureCause);
@@ -255,7 +255,7 @@ export function resolveActionExecutionFailureMessage(
 
 
 /** The existing combined reason/recovery copy, with the disclosure's safe reference fields. */
-export function presentActionExecutionFailure(failure: PluginUiActionFailureV1): PluginUiActionFailurePresentationV1 {
+export function presentActionExecutionFailure(failure: PluginUiActionFailureV1, fallbackMessage = t('common.requestFailed')): PluginUiActionFailurePresentationV1 {
     const technicalDetails = [
         { key: 'code', label: t('workflows.run.technical.failureCode'), value: failure.errorCode },
         ...(failure.requestId ? [{ key: 'requestId', label: t('browserDiagnostics.host.devtools.fields.requestId'), value: failure.requestId }] : []),
@@ -268,7 +268,7 @@ export function presentActionExecutionFailure(failure: PluginUiActionFailureV1):
             ...(failure.failureCause.httpStatus != null ? [{ key: 'httpStatus', label: t('approvals.failureTechnicalLabels.httpStatus'), value: String(failure.failureCause.httpStatus) }] : []),
         ] : []),
     ];
-    return { reason: resolveActionExecutionFailureMessage(failure, t('common.requestFailed')) ?? t('common.requestFailed'),
+    return { reason: resolveActionExecutionFailureMessage(failure, fallbackMessage) ?? fallbackMessage,
         // The presenter currently owns one combined message; never infer a second instruction from code.
         nextStep: null, technicalDetails };
 }

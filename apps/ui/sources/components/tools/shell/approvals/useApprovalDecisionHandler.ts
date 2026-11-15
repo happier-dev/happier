@@ -29,7 +29,7 @@ import { t } from '@/text';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
 import { presentProviderError } from '@/providers/connection/errorPresentation';
-import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { WorkflowActionFailureV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import { formatWorkflowProblemMessage } from '@/components/workflows/presentation/workflowProblemPresentation';
@@ -98,7 +98,8 @@ export function presentApprovalFailure(
         : /^[a-z][a-z0-9_]*(?::[a-z0-9_]+)*$/.test(fallbackMessage.trim())
             ? neutralReason : fallbackMessage;
     // Keep the validated cause for the shared presenter, without transport prose.
-    return { reason: resolveActionExecutionErrorMessage({ code, failureCause }, reason), code: diagnosticCode };
+    return { reason: presentActionExecutionFailure({ ok: false,
+        errorCode: diagnosticCode ?? 'approval_execution_failed', failureCause }, reason).reason, code: diagnosticCode };
 }
 
 /**

@@ -11,6 +11,19 @@ import { t } from '@/text';
 import { alertApprovalFailure, assertApprovalExecutionSucceeded, presentRecordedApprovalFailure } from './useApprovalDecisionHandler';
 
 describe('approval decision execution outcome', () => {
+    it('presents an unconfirmed managed Delete through the shared Action failure presenter', async () => {
+        const { ActionFailureCauseV1Schema, projectUnexpectedActionFailureV1 } = await import('@happier-dev/protocol/actions/actionExecutionResult');
+        const { presentActionExecutionFailure } = await import('@/sync/ops/actions/resolveActionExecutionFailureMessage');
+        const failure = { ...projectUnexpectedActionFailureV1(null, 'delete-request'),
+            failureCause: ActionFailureCauseV1Schema.parse({ phase: 'managed.controller.admit_control', errorClass: 'ManagedMachineControllerError',
+                errorCode: 'managed_controller_request_failed', httpStatus: 200 }) };
+        const presentation = presentActionExecutionFailure(failure);
+        expect(presentation.reason).not.toBe(t('approvals.decisionError'));
+        alert.mockClear();
+        alertApprovalFailure(new HappyError('private transport diagnostic', false,
+            { code: failure.errorCode, failureCause: failure.failureCause }));
+        expect(alert.mock.calls[0]?.[1]).toBe(presentation.reason);
+    });
     it('keeps confirmed execution cancellation quiet without treating the cancelled effect as success', () => {
         let cancelled: unknown;
         try {
