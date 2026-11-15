@@ -82,6 +82,7 @@ export type VoiceReadinessCopy = {
     configure_endpoint: string;
     install_model: string;
     switch_provider: string;
+    open_features: string;
   };
 };
 
@@ -172,5 +173,6 @@ export const voiceReadinessTranslationsEnglish = { en: defineVoiceReadinessTrans
       configure_endpoint: 'Configure endpoint',
       install_model: 'Install a model',
       switch_provider: 'Choose another provider',
+      open_features: 'Open Features',
     },
   }) } as const;

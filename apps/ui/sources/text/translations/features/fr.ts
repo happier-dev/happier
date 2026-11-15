@@ -14877,6 +14877,7 @@ const voiceReadinessTranslations = { fr: defineVoiceReadinessTranslation({
       configure_endpoint: 'Configurer l’endpoint',
       install_model: 'Installer un modèle',
       switch_provider: 'Choisir un autre provider',
+      open_features: 'Ouvrir Fonctionnalités',
     },
   }) } as const;
 

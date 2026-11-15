@@ -14852,6 +14852,7 @@ const voiceReadinessTranslations = { ca: defineVoiceReadinessTranslation({
       configure_endpoint: 'Configurar el punt final',
       install_model: 'Instal·lar un model',
       switch_provider: 'Triar un altre proveïdor',
+      open_features: 'Obre Funcions',
     },
   }) } as const;
 

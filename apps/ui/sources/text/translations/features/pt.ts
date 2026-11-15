@@ -14830,6 +14830,7 @@ const voiceReadinessTranslations = { pt: defineVoiceReadinessTranslation({
       configure_endpoint: 'Configurar o endpoint',
       install_model: 'Instalar um modelo',
       switch_provider: 'Escolher outro provedor',
+      open_features: 'Abrir Recursos',
     },
   }) } as const;
 

@@ -14850,6 +14850,7 @@ const voiceReadinessTranslations = { pl: defineVoiceReadinessTranslation({
       configure_endpoint: 'Skonfiguruj punkt końcowy',
       install_model: 'Zainstaluj model',
       switch_provider: 'Wybierz innego dostawcę',
+      open_features: 'Otwórz Funkcje',
     },
   }) } as const;
 

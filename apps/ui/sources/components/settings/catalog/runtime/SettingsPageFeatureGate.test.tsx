@@ -65,3 +65,18 @@ it('explains a server that has Voice off once its answer arrives', async () => {
     expect(text).toContain(t('settings.voiceAssistant'));
     expect(text).not.toContain('page body');
 });
+
+it('says Voice is off in the person’s own Features, and leads there, when that is the decision’s reason', async () => {
+    const home = await selectHome('Local policy gate', 'https://local-policy-gate.example');
+    const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    primeServerFeaturesSnapshot({ serverId: home.id, snapshot: { status: 'ready', features: FeaturesResponseSchema.parse({ features: { voice: { enabled: true } }, capabilities: {} }) } });
+    // The person turned Voice off in Settings → Features: the decision is blocked by local policy, not the server.
+    storage.setState({ settings: settingsParse({ ...settingsDefaults, featureToggles: { ...settingsDefaults.featureToggles, voice: false } }) });
+    const { SettingsPageFeatureGate } = await import('./SettingsPageFeatureGate');
+    const view = await renderWithAppProviders(<SettingsPageFeatureGate pageId="voiceConversations"><Text>page body</Text></SettingsPageFeatureGate>);
+    onTestFinished(() => view.unmount());
+    const text = renderedText(view.tree);
+    expect(text).not.toContain(tLoose('voice.readiness.server_feature_disabled'));
+    expect(text).toContain(t('voice.readiness.actions.open_features'));
+    expect(text).not.toContain('page body');
+});

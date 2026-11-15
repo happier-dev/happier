@@ -14809,6 +14809,7 @@ const voiceReadinessTranslations = { 'zh-Hans': defineVoiceReadinessTranslation(
       configure_endpoint: '配置端点',
       install_model: '安装模型',
       switch_provider: '选择其他提供商',
+      open_features: '打开功能',
     },
   }) } as const;
 

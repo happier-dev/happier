@@ -14808,6 +14808,7 @@ const voiceReadinessTranslations = { 'zh-Hant': defineVoiceReadinessTranslation(
       configure_endpoint: '設定端點',
       install_model: '安裝模型',
       switch_provider: '選擇其他提供者',
+      open_features: '開啟功能',
     },
   }) } as const;
 

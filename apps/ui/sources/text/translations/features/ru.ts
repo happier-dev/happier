@@ -14862,6 +14862,7 @@ const voiceReadinessTranslations = { ru: defineVoiceReadinessTranslation({
       configure_endpoint: 'Настроить конечную точку',
       install_model: 'Установить модель',
       switch_provider: 'Выбрать другого провайдера',
+      open_features: 'Открыть функции',
     },
   }) } as const;
 

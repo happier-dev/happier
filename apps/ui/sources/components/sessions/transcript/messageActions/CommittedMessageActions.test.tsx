@@ -365,6 +365,26 @@ describe('Committed row and native menu availability', () => {
         expect(home.requestsFor('/v1/discussions/second-opinion/preview')).toHaveLength(0);
     });
 
+    it('says a failed read-aloud in the app notice instead of a blocking dialog', async () => {
+        const { Modal } = await import('@/modal');
+        const { readPresentationNotice, retirePresentationNotice } = await import('@/components/sessions/presentation/presentationNotices');
+        const { t } = await import('@/text');
+        retirePresentationNotice();
+        const screen = await renderScreen(element('agent-text', {}));
+        try {
+            vi.mocked(Modal.alert).mockClear();
+            const button = screen.findHostByTestId('transcript-message-readAloud:m1');
+            if (!button) throw new Error('Missing Read aloud');
+            // The test voice runtime is ready but has no speech engine behind it: the say Action refuses.
+            await act(async () => { await button.props.onPress(); });
+            expect(Modal.alert).not.toHaveBeenCalled();
+            expect(readPresentationNotice()).toMatchObject({ severity: 'error', message: t('settingsVoice.local.machineErrors.tts_failed') });
+        } finally {
+            retirePresentationNotice();
+            await screen.unmount();
+        }
+    });
+
     it('clears copied feedback after a refused retry and lets the message copy succeed again', async () => {
         const Clipboard = await import('expo-clipboard');
         const { Modal } = await import('@/modal');

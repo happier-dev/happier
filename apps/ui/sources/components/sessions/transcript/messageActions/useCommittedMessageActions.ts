@@ -18,6 +18,7 @@ import { useForkMessageAction } from './useForkMessageAction';
 import { usePluginMessageActions } from './PluginMessageActions';
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { Modal } from '@/modal';
+import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { t } from '@/text';
 import type { SessionMessageRefV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageRefV1';
 import { resolveCommittedMessageRef } from './resolveCommittedMessageRef';
@@ -173,7 +174,9 @@ export function useCommittedMessageActions(input: CommittedMessageActionInput, p
                         sessionAddress ? { voiceSpeechSource: { sessionAddress, routeMessageId: buildMessageRouteId(message) } } : undefined));
                     if (result.status !== 'unavailable') return;
                 } catch { /* The Action owns typed refusal; presentation never exposes transport or provider prose. */ }
-                Modal.alert(t('common.error'), t('settingsVoice.local.machineErrors.tts_failed'));
+                // A reading that could not start is said in the app's notice, beside the work; it never blocks.
+                publishPresentationNotice({ key: `read-aloud-failed:${message.id}`, severity: 'error',
+                    message: t('settingsVoice.local.machineErrors.tts_failed') });
             } },
         { id: 'copy', placement: 'row', available: settings.transcriptMessageCopyActionEnabled !== false && input.copyText.trim().length > 0,
             icon: copied ? 'check' : 'copy', title: t('common.copy'), onPress: copy },

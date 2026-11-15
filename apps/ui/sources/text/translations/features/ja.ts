@@ -14814,6 +14814,7 @@ const voiceReadinessTranslations = { ja: defineVoiceReadinessTranslation({
       configure_endpoint: 'エンドポイントを設定',
       install_model: 'モデルをインストール',
       switch_provider: '別のプロバイダーを選択',
+      open_features: '機能を開く',
     },
   }) } as const;
 
