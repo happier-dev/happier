@@ -11,7 +11,7 @@ import { formatUsageCost } from './usageFormatting.js';
 import { projectUsageAccountingSnapshotPrices } from './resolveUsagePageAggregation.js';
 import type { UsageModelPriceOverridesV1 } from './usageModelPriceCatalog.js';
 import { readUsageMoney, withUsageMoney } from './usageMoney.js';
-import { resolveUsageCostFacts } from './usageCostFacts.js';
+import { projectUsagePageCost, resolveUsageCostFacts } from './usageCostFacts.js';
 import { buildUsagePricedPartition, buildUsagePricingPopulation, mergeUsagePricingPopulations, priceUsagePricingPopulation, resolveUsagePricingPopulationStates } from './usagePricingPopulation.js';
 import { projectUsageAnalyticsResponseDemand } from './usageAnalyticsDemandProjection.js';
 import * as usageSummary from './usageSummary.js';
@@ -429,6 +429,45 @@ describe('compact Usage summary', () => {
             expect(combined['breakdowns:model']![0]!.value).toMatchObject({ label: 'breakdown label',
                 context: { usedTokens: 9, windowTokens: 20 } });
             expect(combined['leaders:models']![0]!.value.label).toBe('leader model');
+        }
+    });
+
+    it.each(['Agent prompt usage', 'Claude responses'])('retains known %s money beside children of reports outside the query', source => {
+        // Minimized authenticated r174 payloads: no report-total rows or zero-token edges.
+        const prompt = source === 'Agent prompt usage';
+        const modelId = prompt ? null : 'claude-haiku-4-5-20251001';
+        const childTokens = prompt
+            ? { input: 109206, output: 6, reasoning: 76, cacheRead: 0, cacheWrite: 0, total: 109288 }
+            : { input: 10, output: 1, reasoning: 0, cacheRead: 15495, cacheWrite: 30623, total: 46129 };
+        const childCost = { reportedUsd: 0, estimatedUsd: prompt ? 0 : 0.03984325, invoiceUsd: 0,
+            currency: 'USD', billingContext: 'unknown', costSource: prompt ? 'none' : 'pricing_estimate',
+            reportedTotalId: 'report-outside-query' } satisfies UsageAnalyticsContribution['cost'];
+        const observed = prompt ? [
+            { tokens: { input: 16950, output: 195, reasoning: 191, cacheRead: 1664, cacheWrite: 0, total: 17145 }, amount: 0.01107516 },
+            { tokens: { input: 24475, output: 28, reasoning: 25, cacheRead: 22912, cacheWrite: 0, total: 24503 }, amount: 0.005015 },
+            { tokens: { input: 55376, output: 329, reasoning: 147, cacheRead: 22784, cacheWrite: 0, total: 55705 }, amount: 0.025157688 },
+        ] : [{ tokens: { input: 9, output: 107, reasoning: 0, cacheRead: 26102, cacheWrite: 10703, total: 36921 }, amount: 0.01653295 }];
+        const rows = [contribution(0, { modelId, tokens: childTokens, tokenCategories: prompt ? null : childTokens, cost: childCost }),
+            ...observed.map(({ tokens, amount }, index) => contribution(index + 1, { modelId, tokens, tokenCategories: prompt ? null : tokens,
+                cost: { reportedUsd: prompt ? amount : 0, estimatedUsd: prompt ? null : amount, invoiceUsd: prompt ? null : 0,
+                    currency: 'USD', billingContext: 'unknown', costSource: prompt ? 'provider_reported' : 'pricing_estimate' } }))];
+        const prices = { ...catalog, models: { 'claude-haiku-4-5-20251001': { inputUsdPerMillion: 1, outputUsdPerMillion: 5,
+            cacheReadUsdPerMillion: 0.09999999999999999, cacheWriteUsdPerMillion: 1.25 } } };
+        const base = response(rows);
+        for (const mode of ['auto', 'reported', 'estimated', 'api_equivalent'] as const) {
+            const requested = { ...query, costMode: mode };
+            const rich = usageCost.repriceUsageAnalyticsResponse(base, prices, {}, mode);
+            const delivered = collectUsageAnalyticsBatchDelivery(projectUsageAnalyticsBatchDelivery({ v: 1,
+                priceCatalog: prices, results: [{ query: requested, value: rich }] },
+                { queries: [requested], includeContributions: false, contributionQueries: [] }, false));
+            const deliveredResult = delivered.results[0]!;
+            if ('error' in deliveredResult) throw new Error('Expected successful compact delivery');
+            const compact = UsageAnalyticsQueryResponseSchema.parse(JSON.parse(JSON.stringify(deliveredResult.value)));
+            const actual = usageCost.repriceUsageAnalyticsResponse(compact, prices, {}, mode);
+            if (mode === 'auto') expect(projectUsagePageCost(rich, mode).amountUsd).toBe(prompt ? 0.041247848 : 0.01653295);
+            expect.soft(projectUsagePageCost(actual, mode).amountUsd, mode).toEqual(projectUsagePageCost(rich, mode).amountUsd);
+            expect.soft(actual.costFacts, mode).toEqual(rich.costFacts);
+            expect(actual.totals.tokens).toEqual(rich.totals.tokens);
         }
     });
 

@@ -1,8 +1,8 @@
 import type { UsageAnalyticsContribution, UsageObservationCost, UsageObservationTokens, UsagePricingPopulation } from './usageAnalyticsContracts.js';
-import { addUsageCost, aggregateUsageContributionCosts, addUsageMeasuredTokens, createUsageCostAccumulator, createUsageCostPartitionAccumulator, addUsageCostForMode, addUsageTokens, createEmptyUsageCost, resolveUsageContributionCosts, selectResolvedUsageCost, usageCostAggregationBasis, type AggregatedUsageCost } from './usageAggregation.js';
+import { addUsageCost, aggregateUsageContributionCosts, addUsageMeasuredTokens, createUsageCostAccumulator, createUsageCostPartitionAccumulator, addUsageTokens, createEmptyUsageCost, resolveUsageContributionCosts, selectResolvedUsageCost, usageCostAggregationBasis, type AggregatedUsageCost } from './usageAggregation.js';
 import { createUsageModelCostEstimator, priceUsageObservation } from './usageCost.js';
 import type { UsagePricingReuse } from './usagePricingReuse.js';
-import { hasUnresolvedUsageReportedTotalScope, resolveEffectiveUsageCostUsd, resolveUsageCostBasis, resolveUsageCostFacts, serializeUsageCostBasis, type UsageCostMode } from './usageCostFacts.js';
+import { hasUnresolvedUsageReportedTotalScope, resolveUsageCostBasis, resolveUsageCostFacts, serializeUsageCostBasis, type UsageCostMode } from './usageCostFacts.js';
 import { createUsageSourceCostFacts } from './usageCostFactTotals.js';
 import type { UsageModelPriceCatalog, UsageModelPriceOverridesV1 } from './usageModelPriceCatalog.js';
 import { hasZeroUsageTokens, resolveUsageTokenCategories } from './usageTokenCategories.js';
@@ -207,14 +207,6 @@ function* prepareUsagePricingPopulationSteps(rows: readonly UsagePricingOperand[
     })) : [], resolvedCost: resolvedCosts?.value() };
 }
 
-function selectPricingGroupCost(cost: UsageObservationCost, group: Group, mode: UsageCostMode): UsageObservationCost {
-    if (mode === 'api_equivalent' || group.selection[mode] === 'plain') return cost;
-    const state = group.selection[mode];
-    const selected = state === 'total' ? resolveUsageCostBasis(cost, mode) : null;
-    return { ...cost, [usageCostAggregationBasis]: { mode, available: state !== 'unavailable',
-        ...(state === 'covered' ? { covered: true } : {}), ...(selected ? { selected } : {}) } } as AggregatedUsageCost;
-}
-
 /** Combine already-admitted partitions in group space, without revisiting events. */
 export function mergeUsagePricingPopulations(populations: readonly UsagePricingPopulation[]): UsagePricingPopulation {
     const grouped = new Map<string, Group>();
@@ -236,8 +228,7 @@ export function mergeUsagePricingPopulations(populations: readonly UsagePricingP
 /** Shared exact arithmetic owners price grouped operands just as they price rows. */
 export function priceUsagePricingPopulation(population: UsagePricingPopulation, catalog: UsageModelPriceCatalog,
     overrides: UsageModelPriceOverridesV1, mode: UsageCostMode, reuse?: UsagePricingReuse) {
-    let total = population.groups.length === 0 ? aggregateUsageContributionCosts([], mode) : createEmptyUsageCost();
-    let api = usageMoneyFromNumber(0);
+    const costs = createUsageCostPartitionAccumulator(createEmptyUsageCost(), mode);
     let savings = usageMoneyFromNumber(0);
     let cacheSavingsComplete = true;
     let pricedContributionCount = 0;
@@ -248,12 +239,11 @@ export function priceUsagePricingPopulation(population: UsagePricingPopulation, 
         const categories = group.categories ? restore(group.categories, group.categoryUnits) : null;
         const raw = restoreCost(group.cost, group.costUnits);
         const priced = priceUsageObservation(raw, group.modelId, categories, catalog, overrides, mode, estimateCost(group.modelId, categories));
-        let cost = priced.cost;
+        const cost = priced.cost;
         const estimate = priced.estimate;
         if (!estimate && group.tokens.cacheRead !== 0) cacheSavingsComplete = false;
         savings = addUsageMoney(savings, readUsageMoney(estimate?.breakdown ?? {}, 'cacheSavingsUsd', estimate?.breakdown?.cacheSavingsUsd ?? 0));
         if (cost.apiEquivalentUsd !== undefined) {
-            api = addUsageMoney(api, readUsageMoney(cost, 'apiEquivalentUsd', cost.apiEquivalentUsd));
             pricedContributionCount += group.contributionCount;
             pricingSources.add(cost.pricingSource ?? 'effective_model_prices');
         }
@@ -262,20 +252,17 @@ export function priceUsagePricingPopulation(population: UsagePricingPopulation, 
         for (const fact of resolveUsageCostFacts(cost)) facts.add({ ...base, ...fact, currency: fact.kind === 'api_equivalent' ? 'USD' : fact.currency }, group.contributionCount);
         if (!estimate && cost.apiEquivalentUsd === undefined) facts.add({ ...base, kind: 'unpriced', currency: 'USD', amountUsd: null,
             source: categories ? 'model_price_unknown' : 'token_categories_unknown', complete: false }, group.contributionCount);
-        cost = selectPricingGroupCost(cost, group, mode);
-        total = addUsageCostForMode(total, cost, mode);
+        // The producer already admitted each group's report selection. A missing
+        // report selects no charge, just as for a rich row; it does not invalidate
+        // unrelated known money. Both shapes use the same selected-money fold.
+        const state = mode === 'api_equivalent' ? 'plain' : group.selection[mode];
+        costs.add(cost, state === 'plain' ? undefined : { available: true,
+            selected: state === 'total' ? resolveUsageCostBasis(cost, mode) : null });
     }
+    const total = population.groups.length === 0 ? aggregateUsageContributionCosts([], mode) : costs.value();
     const selected = resolveUsageCostBasis(total, mode);
-    const effectiveUsd = selected?.amountUsd ?? resolveEffectiveUsageCostUsd(total, mode);
-    const { apiEquivalentUsd: _old, pricingSource: _source, effectiveUsd: _effective, ...observed } = total;
-    const hasPrices = pricedContributionCount > 0;
-    const cost = withUsageMoney({ ...observed, ...(hasPrices ? { apiEquivalentUsd: usageMoneyToNumber(api),
-        pricingSource: pricingSources.size === 1 ? [...pricingSources][0] : 'effective_model_prices' } : {}),
-        ...(effectiveUsd === null ? {} : { effectiveUsd }) }, { ...(hasPrices ? { apiEquivalentUsd: api } : {}),
-            ...(effectiveUsd === null ? {} : { effectiveUsd: selected ? readUsageMoney(selected, 'amountUsd', effectiveUsd)
-                : readUsageMoney(total, 'effectiveUsd', effectiveUsd) }) });
     const projectedFacts = facts.values();
-    return { cost: serializeUsageCostBasis(cost, mode), selected, selectedCost: selectResolvedUsageCost(total, mode),
-        pricedContributionCount, pricingSources: [...pricingSources].sort(), apiEquivalentUsd: hasPrices ? usageMoneyToNumber(api) : null,
+    return { cost: serializeUsageCostBasis(total, mode), selected, selectedCost: selectResolvedUsageCost(total, mode),
+        pricedContributionCount, pricingSources: [...pricingSources].sort(), apiEquivalentUsd: total.apiEquivalentUsd ?? null,
         facts: projectedFacts, cacheSavingsUsd: usageMoneyToNumber(savings), cacheSavingsComplete };
 }

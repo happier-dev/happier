@@ -263,7 +263,8 @@ export function createUsageCostPartitionAccumulator(initial: UsageObservationCos
     let selected: SelectedCostEvidence = selectedCostOperands({ available: initialState?.available ?? true, selected: initialBasis });
     const selectedMoney = createUsageMoneyAccumulator(initialBasis
         ? readUsageMoney(initialBasis, 'amountUsd', initialBasis.amountUsd) : { units: 0n, scale: 0 });
-    return { add(input: UsageObservationCost): void {
+    // Compact operands carry the producer's selection after private report identities are removed.
+    return { add(input: UsageObservationCost, admittedSelection?: UsageSelectedCostAccumulator): void {
         hasOperands = true;
         // Snapshot once before raw and selected exact arithmetic share the operand.
         const cost = { ...input };
@@ -281,7 +282,7 @@ export function createUsageCostPartitionAccumulator(initial: UsageObservationCos
                 pricingSource = cost.pricingSource;
             }
         }
-        const right = selectedCostOperands(selectResolvedUsageCost(cost, mode));
+        const right = selectedCostOperands(admittedSelection ?? selectResolvedUsageCost(cost, mode));
         selected = mergeSelectedCostEvidence(selected, right, mode);
         if (selected.available && right.amount) selectedMoney.add(right.amount);
     }, value(): AggregatedUsageCost {
