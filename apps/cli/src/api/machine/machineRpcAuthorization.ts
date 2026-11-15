@@ -1126,6 +1126,41 @@ function forbidden(
 
 export { readWorkspaceSyncTargetMethodV1 as readWorkspaceSyncTargetMethod } from '@happier-dev/protocol/socketRpc';
 
+/**
+ * In-process admission for a SOURCE-writer TARGET phase on this same Machine.
+ * Home never delivers a daemon's own signed call back to its socket, so this is
+ * the delivery Home and this ingress apply to a writer-target phase, decided from
+ * what the writer already holds: the SOURCE admission Home minted on this Machine
+ * is the target admission Home resolves for the same actor here. Cleanup runs as
+ * this installed writer. No Home round-trip: the root was admitted once at mint.
+ */
+export function admitSameMachineWorkspaceSyncTargetPhase(input: Readonly<{
+  /** Built by this writer for a TARGET on this Machine; the caller selects same-Machine placement. */
+  routing: WorkspaceSyncSourceWriterTargetRoutingV1;
+  /** The admitted root for preflight/prepare; the current reviewed retirement for copy phases. */
+  callerInputAuthorization?: ExternalActionExecutionAuthorizationV1;
+}>): Readonly<{ ok: true; machineAdmission: SocketRpcMachineAdmissionContextV1;
+  callerInputAuthorization?: ExternalActionExecutionAuthorizationV1 }> | Extract<RpcAuthorizationResult, { ok: false }> {
+  const { routing, callerInputAuthorization: root } = input;
+  const source = routing.source.sourceContext.machineAdmission;
+  if (isWorkspaceSyncSourceWriterCleanupPhaseV1(routing.target.phase)) {
+    // Home's writer delivery: the SOURCE custodian with Manage on this Machine.
+    // The retained TARGET owner matches the retirement; release spends no root.
+    return { ok: true, machineAdmission: { ...source, actorAccountId: source.custodianAccountId, role: 'manage' },
+      ...(routing.target.phase !== 'release' && root ? { callerInputAuthorization: root } : {}) };
+  }
+  if (!root || !doesWorkspaceSyncSourceWriterTargetRootMatchRouting(root, routing, source)) {
+    return forbidden('machine_target') as Extract<RpcAuthorizationResult, { ok: false }>;
+  }
+  // Home's target role: relationship writes use the replacement route's access; Project Open needs Use.
+  const required = isWorkspaceSyncRelationshipWriteActionId(root.binding.actionId)
+    ? resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT).sharedMachineAccess : 'use';
+  if (required !== 'use' && source.role !== 'manage') {
+    return { ok: false, errorCode: 'machine_manage_required', error: 'Replacing a destination folder needs Manage access to this Machine' };
+  }
+  return { ok: true, machineAdmission: source, callerInputAuthorization: root };
+}
+
 /** One strict binding for both the installed child sender and physical receiver. */
 export function doesWorkspaceSyncTargetRequestMatchRouting(
   params: unknown,

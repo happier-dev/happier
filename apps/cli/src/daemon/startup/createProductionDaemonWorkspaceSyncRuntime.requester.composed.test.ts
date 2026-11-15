@@ -28,6 +28,7 @@ import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
 import { WorkspaceSyncRelationshipCreateResultV1Schema, WorkspaceSyncRelationshipsListRpcResultV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { WorkspaceSyncController } from '@/workspaces/sync/workspaceSyncController';
 import { deriveWorkspaceSyncEndpointId } from '@/workspaces/sync/transport/workspaceSyncBrokerProtocol';
+import { computeWorkspaceSyncRootFingerprint } from '@/workspaces/sync/workspaceSyncTargetBootstrap';
 
 const socketIo = vi.hoisted(() => vi.fn());
 const executionBoundary = vi.hoisted(() => ({ member: true, recovery: undefined as undefined | { pending: boolean; root: string; calls: number } }));
@@ -712,4 +713,82 @@ it.skipIf(process.platform !== 'linux').each([false, true])(
   expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('edited while disabled');
   await owner.stop(relationshipId);
   expect(await setup.fixture.parentManagedWorkspaceSync!.list()).toEqual([]);
+});
+
+// SEC-FORKC-1114E R4: a member-placed Manage requester's same-Machine relationship write is
+// admitted at the in-process preflight before any in-process prepare can write the destination.
+it.skipIf(process.platform !== 'linux')('admits a Manage member same-Machine worker copy at preflight before the in-process prepare', async () => {
+  executionBoundary.member = true;
+  const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo, remoteTarget: false,
+    targetCustodianAccountId: 'requester', workerCleanCopy: true, originalActionHomeHttp: true });
+  const rejectedSelfCalls = rejectSelfCalls(setup);
+  const manager = Reflect.get(setup.installed.machine, 'rpcHandlerManager') as { invokeLocal: (...args: never[]) => Promise<unknown> };
+  const targetPhases: Array<Readonly<{ method: string; role: unknown }>> = [];
+  const invokeLocal = manager.invokeLocal.bind(manager);
+  vi.spyOn(manager, 'invokeLocal').mockImplementation(async (method: string, params: unknown, options?: { rpcContext?: RpcHandlerContext }) => {
+    if (method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT || method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE) {
+      targetPhases.push({ method, role: options?.rpcContext?.machineAdmission?.role });
+    }
+    return invokeLocal(method as never, params as never, options as never);
+  });
+  // Its own relationship identity; the live link is stopped so later rows start clean.
+  const result = await setup.executeNativeRelationshipAction(await setup.prepareInvocation({
+    ...setup.request, operationId: 'member-sync-manage-member' }));
+  expect(result, JSON.stringify({ result, rejectedSelfCalls, targetPhases, diagnostics: setup.rpcDiagnostics }))
+    .toMatchObject({ ok: true, result: { created: true } });
+  expect(targetPhases[0]).toEqual({ method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT, role: 'manage' });
+  expect(targetPhases.findIndex(phase => phase.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE)).toBeGreaterThan(0);
+  expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
+  if (!result.ok) throw new Error('Sync creation failed');
+  const binding = setup.authorization.binding;
+  const requester = await setup.fixture.parent.workspaceSync.forRequester!({ signal: new AbortController().signal,
+    callerAuthority: 'present_user', verifyMachineAdmissionCurrent: async () => true, callerInputAuthorization: setup.authorization,
+    machineAdmission: { actorAccountId: binding.accountId, custodianAccountId: binding.custodianAccountId,
+      machineId: setup.installed.machineId, installationId: setup.installed.installation.installationId,
+      role: 'manage', encryptionMode: 'plain' } });
+  await requester.relationshipOwner.stop(WorkspaceSyncRelationshipCreateResultV1Schema.parse(result.result).relationshipId);
+});
+
+// SEC-FORKC-1114E R3: a retained requester retires its same-Machine worker copy; the in-process
+// copy phases carry the current reviewed retirement, and only the requester's own retirement removes it.
+it.skipIf(process.platform !== 'linux').each([true, false])(
+  'retires a same-Machine worker copy through the retained requester (own retirement=%s)', async ownRetirement => {
+  executionBoundary.member = false;
+  const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo, remoteTarget: false,
+    targetCustodianAccountId: 'requester', workerCleanCopy: true, originalActionHomeHttp: true });
+  const rejectedSelfCalls = rejectSelfCalls(setup);
+  // Only a copy this Sync created is removable: let the in-process prepare create the destination.
+  await rm(setup.targetPath, { recursive: true });
+  // Its own relationship identity: later rows reuse the fixture's default operation id.
+  const created = await setup.executeNativeRelationshipAction(await setup.prepareInvocation({
+    ...setup.request, operationId: `member-sync-retire-${ownRetirement}` }));
+  expect(created, JSON.stringify({ created, rejectedSelfCalls })).toMatchObject({ ok: true, result: { created: true } });
+  if (!created.ok) throw new Error('Sync creation failed');
+  const { relationshipId } = WorkspaceSyncRelationshipCreateResultV1Schema.parse(created.result);
+  const retained = setup.fixture.parent.handoffAdapter.resolvePrivateExecution?.({ relationshipId });
+  const expectedRelationship = retained?.execution.getSnapshot?.()?.relationships
+    .find(relationship => relationship.relationshipId === relationshipId);
+  if (!expectedRelationship) throw new Error('Retained requester relationship is unavailable');
+  const binding = setup.authorization.binding;
+  const actionInput = { workspace: { serverId: setup.installed.homeServerIdentityId, refId: expectedRelationship.alphaWorkspaceRefId },
+    machineId: setup.installed.machineId, expectedRelationship,
+    removeTargetCopy: { workspaceRefId: expectedRelationship.betaWorkspaceRefId,
+      rootFingerprint: await computeWorkspaceSyncRootFingerprint(setup.targetPath) } };
+  const retirement = setup.adoptHomeAuthorization({ v: 1, token: `retire-root-${ownRetirement}`, binding: { ...binding,
+    accountId: ownRetirement ? binding.accountId : 'foreign-account', actionId: 'projects.worker.copy.retire',
+    requestId: 'retire-receipt' } });
+  const requester = await setup.fixture.parent.workspaceSync.forRequester!({ signal: new AbortController().signal,
+    callerAuthority: 'present_user', verifyMachineAdmissionCurrent: async () => true, callerInputAuthorization: retirement,
+    machineAdmission: { actorAccountId: binding.accountId, custodianAccountId: binding.custodianAccountId,
+      machineId: setup.installed.machineId, installationId: setup.installed.installation.installationId,
+      role: 'manage', encryptionMode: 'plain' } });
+  const stop = requester.relationshipOwner.stop(relationshipId, undefined, { expectedRelationship,
+    removeTargetCopy: actionInput.removeTargetCopy, approval: { actionReceiptId: 'retire-receipt', actionInput } });
+  if (ownRetirement) {
+    await expect(stop).resolves.toBeUndefined();
+    await expect(readdir(setup.targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  } else {
+    await expect(stop).rejects.toMatchObject({ code: 'forbidden' });
+    expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
+  }
 });

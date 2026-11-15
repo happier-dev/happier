@@ -341,7 +341,7 @@ import {
 import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent,
     readMachineRpcAdmissionCurrent, doesWorkspaceSyncSourceRootMatchRouting, doesWorkspaceSyncSourceWriterTargetRootMatchRouting, doesWorkspaceSyncSeedRootMatchRouting,
     doesWorkspaceSyncTargetRequestMatchRouting, doesWorkspaceSyncTargetRoutingMatchWriterTarget,
-    readWorkspaceSyncTargetMethod, type MachineRpcAdmissionBoundary } from './machine/machineRpcAuthorization';
+    readWorkspaceSyncTargetMethod, admitSameMachineWorkspaceSyncTargetPhase, type MachineRpcAdmissionBoundary } from './machine/machineRpcAuthorization';
 import type { MachineTerminalAccountReadRuntime, MachineTerminalOwnSessionReadRuntime } from './machine/rpcHandlers.terminal';
 import { resolvePrivateWorkspaceSyncTargetExecution } from './machine/rpcHandlers.workspaceSync';
 import { resolveAdmittedRequesterAccountReadRuntime } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
@@ -4319,19 +4319,22 @@ export class ApiMachineClient {
                     targetContext: workspaceSyncSourceWriterTargetRouting.source.sourceContext })) {
                 throw Object.assign(new Error('Workspace target authority is unavailable'), { code: 'peer_unavailable' });
             }
-            // Home never routes a daemon's signed call back to its own socket. A
-            // same-Machine TARGET receives the context Home would deliver, in-process:
-            // the source side's admitted requester and its verified native consent;
-            // cleanup phases run as this installed writer, as Home delivers them.
-            const cleanup = isWorkspaceSyncSourceWriterCleanupPhaseV1(input.routing.phase);
-            const admission = input.context.machineAdmission;
-            const result = input.routing.targetMachineId === this.machine.id
+            // Home never routes a daemon's signed call back to its own socket: a
+            // same-Machine TARGET phase is admitted in-process by the ingress owner.
+            const admitted = input.routing.targetMachineId === this.machine.id ? admitSameMachineWorkspaceSyncTargetPhase({
+                routing: workspaceSyncSourceWriterTargetRouting,
+                callerInputAuthorization: isWorkspaceSyncSourceWriterCleanupPhaseV1(input.routing.phase)
+                    ? input.callerInputAuthorization : input.context.callerInputAuthorization }) : null;
+            if (admitted && !admitted.ok) {
+                throw Object.assign(new Error(admitted.error), { code: admitted.errorCode ?? 'peer_unavailable' });
+            }
+            const result = admitted?.ok
                 ? await this.rpcHandlerManager.invokeLocal(input.method, input.request, {
                     ...(input.signal ?? input.context.signal ? { signal: input.signal ?? input.context.signal } : {}),
-                    rpcContext: { machineAdmission: cleanup && admission
-                            ? { ...admission, actorAccountId: admission.custodianAccountId, role: 'manage' as const } : admission,
+                    admissionResult: { ok: true },
+                    rpcContext: { machineAdmission: admitted.machineAdmission,
                         verifyMachineAdmissionCurrent: input.context.verifyMachineAdmissionCurrent,
-                        ...(cleanup ? {} : { callerInputAuthorization: input.context.callerInputAuthorization }),
+                        ...(admitted.callerInputAuthorization ? { callerInputAuthorization: admitted.callerInputAuthorization } : {}),
                         callerAuthority: input.context.authority ?? 'account_automation',
                         ...(input.context.callerInputConstraints ? { callerInputConstraints: input.context.callerInputConstraints } : {}),
                         ...(input.context.sessionActionOrigin ? { sessionActionOrigin: input.context.sessionActionOrigin } : {}),
@@ -4341,9 +4344,10 @@ export class ApiMachineClient {
                 originalMachineId: workspaceSyncSourceWriterTargetRouting.source.sourceMachineId,
                 accountServerId: input.routing.accountServerId, requireCurrentAdmission: input.routing.phase !== 'release',
                 signedEffectActionId: input.context.callerInputAuthorization.binding.actionId, routing: { workspaceSyncSourceWriterTargetRouting } });
+            // Copy and dependency phases return to their owner's result reader unparsed.
             return input.routing.phase === 'preflight' ? HandoffTargetReplacementPreflightResultV1Schema.parse(result)
                 : input.routing.phase === 'prepare' ? WorkspaceSyncTargetBootstrapPrepareResultV1Schema.parse(result)
-                : WorkspaceSyncTargetBootstrapReleaseResultV1Schema.parse(result);
+                : input.routing.phase === 'release' ? WorkspaceSyncTargetBootstrapReleaseResultV1Schema.parse(result) : result;
         }
         const workspaceSyncTargetRouting = WorkspaceSyncTargetRoutingV1Schema.parse({ ...input.routing,
             targetContext: projectWorkspaceSyncPhysicalContextFromActionContext(input.context) });

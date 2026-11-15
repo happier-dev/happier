@@ -2908,16 +2908,6 @@ export function createWorkspaceSyncTargetAuthority(
         throw authorityError('target_unavailable', 'Handoff target server does not match this daemon');
       }
       const source = context?.workspaceSyncSourceWriterTargetRouting?.source ?? context?.workspaceSyncSourceRouting;
-      // Home never routes a daemon's signed call back to its own socket: a
-      // same-Machine destination keeps the original requester context here and
-      // consumes the role Home admitted on this Machine for the same Manage rule.
-      if (wireRequest.machineId === localMachineId && context?.callerInputAuthorization && source
-        && isWorkspaceSyncRelationshipWriteActionId(context.callerInputAuthorization.binding.actionId)) {
-        if (context.machineAdmission?.role !== 'manage') {
-          throw authorityError('machine_manage_required', 'Replacing a destination folder needs Manage access to this Machine');
-        }
-        return await authority.preflightHandoffTargetReplacementHere(wireRequest, request.signal, context);
-      }
       if (context?.callerInputAuthorization && source) {
         context.signal.throwIfAborted();
         if (!source.sourceContext || source.accountServerId !== localServerId || source.operationId !== wireRequest.operationId
