@@ -627,8 +627,7 @@ export function createTriageStartPullRequestReviewActionHandler(): ActionHandler
             // offers only the idempotent Session open — never a blind second
             // review start.
             const answer = projectNativeJsonValueForTransport(fanout);
-            const items = typeof answer === 'object' && answer !== null && !Array.isArray(answer)
-                && Array.isArray(answer.results) ? answer.results : [];
+            const items = isJsonRecord(answer) && Array.isArray(answer.results) ? answer.results : [];
             throw new PluginError({
                 code: 'action_outcome_unknown',
                 details: answer,

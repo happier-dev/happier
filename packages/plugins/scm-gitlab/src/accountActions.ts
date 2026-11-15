@@ -19,7 +19,14 @@ export function readGitlabActionDeclaration(id: string) {
 }
 
 /** The full declaration catalog also contains native workspace roles. */
-function readGitlabAccountActionDeclaration(id: string) {
+function readGitlabAccountActionDeclaration(id:
+  | Exclude<typeof GITLAB_TRIAGE_ACTION_IDS[keyof typeof GITLAB_TRIAGE_ACTION_IDS],
+    typeof GITLAB_TRIAGE_ACTION_IDS.prepareReviewWorkspace | typeof GITLAB_TRIAGE_ACTION_IDS.verifyReviewWorkspace>
+  | typeof GITLAB_TRIAGE_DETAIL_ACTION_IDS[keyof typeof GITLAB_TRIAGE_DETAIL_ACTION_IDS]
+  | typeof GITLAB_TRIAGE_MUTATION_ACTION_IDS[keyof typeof GITLAB_TRIAGE_MUTATION_ACTION_IDS]
+): Omit<ReturnType<typeof readGitlabActionDeclaration>, 'operation' | 'execution'> & Readonly<{
+  execution: typeof GITLAB_ACCOUNT_EXECUTION;
+}> {
   return { ...readGitlabActionDeclaration(id), execution: GITLAB_ACCOUNT_EXECUTION };
 }
 
