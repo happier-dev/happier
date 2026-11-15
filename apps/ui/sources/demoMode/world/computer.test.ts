@@ -6,6 +6,13 @@ import { useComputerScreen } from '@/components/computer/useComputerScreen';
 import { buildDemoComputerWorld } from './computer';
 
 describe('the Computer stage machine boundary', () => {
+    it('refuses an Action outside the runtime family without claiming success', async () => {
+        const world = buildDemoComputerWorld(async () => new Uint8Array());
+        try {
+            await expect(world.execute('session.open', { sessionId: world.scope.sessionId },
+                { authority: 'present_user', surface: 'ui' })).resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+        } finally { world.dispose(); }
+    });
     it('feeds the real control/stream owner and supports takeover, hand back, stop and reopening', async () => {
         const bytes = new Uint8Array(readFileSync('public/static/demo/fieldwork-desktop.png'));
         const world = buildDemoComputerWorld(async () => bytes);

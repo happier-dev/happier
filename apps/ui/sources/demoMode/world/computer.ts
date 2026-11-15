@@ -1,4 +1,5 @@
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { isRuntimeActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { createUnavailableRuntimeActionExecutor } from '@happier-dev/protocol/actions/executor/dispatch';
 import { MachineLiveStreamDecodedEnvelopeV1Schema, type MachineLiveStreamRelayEnvelopeV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { ComputerControlStatusResponseV1Schema, ComputerSelectedTargetResponseV1Schema, ComputerTargetsListResponseV1Schema } from '@happier-dev/protocol/computer/v1';
@@ -67,6 +68,7 @@ export function buildDemoComputerWorld(readFrame = readFieldworkFrame) {
     const runtime = createComputerRuntimeActionExecutor({ executeOnMachine: machine, fallback: createUnavailableRuntimeActionExecutor() });
     const execute: ComputerActionExecute = async (actionId, input, context) => {
         if (!current) return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
+        if (!isRuntimeActionIdV1(actionId)) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         const spec = getActionSpec(actionId);
         const result = await runtime({ actionId, input: spec.inputSchema.parse(input), context });
         return { ok: true, result: spec.outputSchema ? spec.outputSchema.parse(result) : result };
