@@ -267,7 +267,7 @@ it.each([
 it.each([
     { provider: 'cold public-author', service: inventories.cold, defaultModeId: 'manual', modeIds: ['manual'], declarationLoads: 1 },
     { provider: 'Cloudflare', service: inventories.cloudflare, defaultModeId: 'oauth',
-        modeIds: ['token', 'oauth'], declarationLoads: 0 },
+        modeIds: [], machineModeIds: ['token', 'oauth'], declarationLoads: 0 },
     { provider: 'Antigravity', service: inventories.antigravity.service, defaultModeId: inventories.antigravity.modeId,
         modeIds: inventories.antigravity.modeIds, machineModeIds: ['native-import'], declarationLoads: 0, beginStatus: 'awaitingOAuth' },
     { provider: 'Codex', service: inventories.codex.service, defaultModeId: inventories.codex.modeId,
@@ -362,8 +362,11 @@ it.each([
     });
     expect(described.accountAuthenticationModes.status === 'available'
         ? [...described.accountAuthenticationModes.modeIds].sort() : []).toEqual([...modeIds].sort());
-    if ('machineModeIds' in testCase) expect(described.accountAuthenticationModes).toMatchObject({ machineRequiredModeIds: testCase.machineModeIds });
-    else expect(described.accountAuthenticationModes).not.toHaveProperty('machineRequiredModeIds');
+    if ('machineModeIds' in testCase) {
+        const machineModes = described.accountAuthenticationModes.status === 'available'
+            ? described.accountAuthenticationModes.machineRequiredModeIds ?? [] : [];
+        expect([...machineModes].sort()).toEqual([...testCase.machineModeIds].sort());
+    } else expect(described.accountAuthenticationModes).not.toHaveProperty('machineRequiredModeIds');
     expect(coldDeclarationLoads).toBe(priorDeclarationLoads + declarationLoads);
     // Description exposes modes without activating executable authentication.
     expect(packaged.reads).toBe(0);
@@ -386,7 +389,8 @@ it.each([
     { provider: 'device', service: inventories.device, modeId: 'configured-device', homeClient: false },
     { provider: 'Cloudflare without a Home client', service: inventories.cloudflare, modeId: 'oauth', homeClient: false },
     { provider: 'Cloudflare with a Home client', service: inventories.cloudflare, modeId: 'oauth', homeClient: true },
-])('reads effective browser $provider configuration through the actual Account authentication host without a Machine', async ({ service, modeId, homeClient }) => {
+])('reads effective $provider configuration through the native-HTTP Account authentication host without a Machine', async ({ service, modeId, homeClient }) => {
+    nativeHttpHost.available = true;
     const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
     const { createUiConnectedAccountAuthenticationHost } = await import('./connectedAccountAuthenticationHost');
     const { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, ConnectedAccountCatalogRecordV1Schema,
