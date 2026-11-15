@@ -25,6 +25,16 @@ const snapshot = {
 };
 
 describe('managed guest diagnostic disclosure', () => {
+    it('identifies the pre-collector doctor response as an incompatible guest CLI', async () => {
+        // 0.2 doctor ignores --include-daemon-log and emits DoctorSnapshot instead
+        // (../0.2/apps/cli/src/cli/commands/doctor.ts).
+        const stdout = JSON.stringify({ capturedAt: '2026-11-15T04:17:00Z',
+            server: { activeServerId: 'home', serverUrl: 'https://home.test', publicServerUrl: 'https://home.test', webappUrl: 'https://home.test' },
+            accountId: null, settings: { activeServerId: 'home', servers: [], knownAccountIds: [] } });
+        expect(await readManagedGuestDiagnostics({ machine, requesterAccountId: 'owner', transport, channel: 'dev',
+            native: { exec: async () => ({ status: 0, stdout, stderr: '' }) } }))
+            .toEqual({ status: 'unavailable', code: 'guest_cli_incompatible', phase: 'guest_capability' });
+    });
     it('names the missing enrollment before native collection and retains the inspect correlation', async () => {
         const result = await readManagedGuestDiagnostics({ machine: { ...machine, enrolledMachineId: undefined },
             requesterAccountId: 'owner', requestId: 'inspect-request', transport, channel: 'dev',

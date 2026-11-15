@@ -35,6 +35,7 @@ export async function runManagedMachineEnrollment(input: Readonly<{
   guestHostPublicKey?: string;
   /** The creating Action owns both the task question and its transient requester delivery. */
   operationId?: string;
+  replacePayload?: boolean;
   onInstalled?(): Promise<void>;
   reviewedChild?: HostReviewedChildPortV1;
   accountCredentials?: StoredCredentials;

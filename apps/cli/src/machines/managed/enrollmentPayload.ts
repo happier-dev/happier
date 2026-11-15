@@ -9,6 +9,7 @@ import { deliverManagedNativeFile } from './nativeFileDelivery';
 export async function installManagedNativePayload(input: ManagedNativePayloadInstallation): Promise<Readonly<{ binaryPath: string }>> {
   const { channel, signal, dedicatedIdentity, home, os, arch, remoteHomeDir, resource, exec, putFile, bootstrapExec, cleanupExec } = input;
   return await installRemoteFirstPartyComponentPayload({
+    requireHomePayload: true,
     componentId: 'happier-cli', channel, signal, onPhase: input.onPhase,
     ...(remoteHomeDir ? { remoteHomeDir } : {}),
   }, {

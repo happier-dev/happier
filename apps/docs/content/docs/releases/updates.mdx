@@ -47,6 +47,16 @@ The table below covers all user-facing released assets and how updates work.
 | **CLI npm package** (`@happier-dev/cli`) | `npm install -g @happier-dev/cli` | You upgrade the npm package | No (but it can show notices) | `npm install -g @happier-dev/cli@latest` (or `@next` for preview, `@dev` for the rolling dev channel) |
 | **Stack npm package** (`@happier-dev/stack`) | `npm install -g @happier-dev/stack` | You upgrade the npm package (or use `hstack self update` runtime install) | No (but it can show notices) | `hstack self update` (recommended in-stack) or `npm install -g @happier-dev/stack@latest` |
 
+## Provisioned guest machines (0.3 development)
+
+Update and Retry install use the guest CLI supplied by the connected Home, through
+the same installer used when creating the machine. They keep the guest on that
+Home's build even when a public release channel points to an older version.
+If the Home cannot supply its guest payload, the update refuses with
+`guest_payload_missing`. Make that payload available on the Home, then retry.
+An older guest that cannot provide diagnostic reports returns
+`guest_cli_incompatible` when inspected; use Retry install to replace its CLI.
+
 ## Integrity verification (binaries + bundles)
 
 Self-host and relay runtime downloads are verified before install:

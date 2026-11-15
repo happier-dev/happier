@@ -45,6 +45,42 @@ async function extractTarFixture(params: Readonly<{ archivePath: string }>): Pro
 describe('installRemoteFirstPartyComponent', () => {
   afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
+  it('refuses a Home-managed CLI install without its Home payload instead of resolving public latest', async () => {
+    vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', '');
+    let publicResolutions = 0;
+    await expect(installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli', requireHomePayload: true }, {
+      resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+      preparePayload: async () => { publicResolutions++; throw new Error('public latest is 0.2.20'); },
+      runRemoteText: async () => ({ status: 0, stdout: '', stderr: '' }),
+      copyLocalDirectoryToRemote: async () => {},
+    })).rejects.toMatchObject({ code: 'guest_payload_missing' });
+    expect(publicResolutions).toBe(0);
+  });
+
+  it('delivers the Home development payload instead of the older public release', async () => {
+    const fixture = await createPayloadRootFixture();
+    let delivered = false;
+    try {
+      await writeFile(join(fixture.payloadRoot, 'home-build.json'), JSON.stringify({ version: '0.3.0-dev' }));
+      vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', fixture.payloadRoot);
+      const installed = await installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli', requireHomePayload: true }, {
+        resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+        preparePayload: async () => { throw new Error('Public latest 0.2.20 must never be selected'); },
+        runRemoteText: async () => ({ status: 0, stdout: '', stderr: '' }),
+        copyLocalDirectoryToRemote: async ({ localPath }) => {
+          const extracted = await extractTarFixture({ archivePath: join(localPath, 'payload-root.tar.gz') });
+          try {
+            expect(JSON.parse(await readFile(join(extracted.extractRoot, 'payload-root', 'home-build.json'), 'utf8')))
+              .toEqual({ version: '0.3.0-dev' });
+            delivered = true;
+          } finally { await extracted.cleanup(); }
+        },
+      });
+      expect(installed.source).toContain('local-payload:');
+      expect(delivered).toBe(true);
+    } finally { await fixture.cleanup(); }
+  });
+
   it('archives a full-size installed payload without requiring a second uncompressed copy', async () => {
     const fixture = await createPayloadRootFixture();
     // The incident's installed payload contains 1,278,760,198 bytes. Model the

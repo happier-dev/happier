@@ -58,6 +58,22 @@ const resolveInstallPlan = async () => ({ binaryPath: '$HOME/.happier/cli/curren
     source: 'https://downloads.example/cli.tar.gz', command: INSTALL_COMMAND });
 
 describe('native SSH bootstrap host pinning', () => {
+    it('refuses a managed guest when native SSH cannot transfer the Home payload', async () => {
+        const boundary = createNativeBoundary();
+        const spec = createSpec({ trustedHostKey: HOST_KEY });
+        let publicResolutions = 0;
+        await expect(runNativeRemoteSshBootstrapTask({ taskId: 'managed-home-payload', ...boundary,
+            spec: { ...spec, params: { ...spec.params, managedEnrollment: {
+                homeId: 'srv_home', managedId: 'managed', requestId: 'request', expectedIntentRevision: 1,
+                controller: { machineId: 'controller', installationId: 'installation' },
+                resource: { contributionRef: { pluginId: 'test.provisioner', localId: 'vm' }, schemaVersion: 1, value: { nativeId: 'guest' } },
+            } } },
+            resolveInstallPlan: async () => { publicResolutions++; return resolveInstallPlan(); },
+        })).rejects.toMatchObject({ code: 'guest_payload_missing' });
+        expect(publicResolutions).toBe(0);
+        expect(boundary.phases).not.toContain('install');
+    });
+
     it.each([false, true])('pins every native command before installation and enrollment (provider evidence: %s)', async withEvidence => {
         const boundary = createNativeBoundary();
         await expect(runNativeRemoteSshBootstrapTask({ taskId: 'native-pin', ...boundary,

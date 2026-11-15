@@ -3,6 +3,7 @@ import { useOptionalScreenIsFocused } from '@/utils/navigation/useOptionalScreen
 import { useInstalledUpdates } from './useInstalledUpdates';
 import type { StoreUpdateRowFacts } from '@/components/store/updates/StoreUpdateRow';
 import * as React from 'react';
+import { ManagedMachineActionOutputSchemasV1, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 
 import { useReleaseNotesLauncher, useReleaseNotesUnread } from '@/changelog/releaseNotes';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
@@ -19,6 +20,7 @@ import { useMachinePresenceSummaries } from '@/sync/domains/machines/reachabilit
 import { storage } from '@/sync/domains/state/storageStore';
 import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { requireActionSuccess } from '@/sync/ops/actions/actionResult';
 import { registerUpdatesActionOwner, type UpdatesActionOwner } from './updatesActionRuntime';
 import { isUpdateItemActionable } from './items/updateItem';
 import { getInstallablesRegistryEntries } from '@/capabilities/installablesRegistry';
@@ -82,7 +84,8 @@ function selectSessionsRunningKey(state: ReturnType<typeof storage.getState>): s
 export function useUpdatesContentModel(options: Readonly<{
     /**
      * One Machine's rows only (its Security tab): only that Machine is read and asked, the This app group is
-     * left out, and the Updates surface keeps the one registered action owner and the completions it marks seen.
+     * left out. Every mounted surface exposes its rows to the shared action dispatcher;
+     * the Updates surface owns marking completions seen.
      */
     machineId?: string;
 }> = {}): UpdatesContentModel {
@@ -173,11 +176,25 @@ export function useUpdatesContentModel(options: Readonly<{
     );
     const executeItem = React.useCallback(async (item: UpdateItem) => {
         if (item.subject.kind === 'app') return app.run();
+        const managedRef = item.subject.kind === 'happier-cli'
+            ? allMachines.find(machine => machine.id === item.machineId)?.managedMachineRef : null;
+        if (managedRef) {
+            // Managed guests consume acquire's Home payload and lifecycle, never
+            // the guest's public release-channel self-updater.
+            const read = await executeAction('machines.managed.get', managedRef);
+            requireActionSuccess(read, 'machines.managed.get');
+            const machine = unwrapManagedMachineReadV1(ManagedMachineActionOutputSchemasV1['machines.managed.get'].parse(read.result));
+            const updated = await executeAction('machines.managed.bootstrap.retry', {
+                ...managedRef, expectedIntentRevision: machine.intentRevision,
+            });
+            requireActionSuccess(updated, 'machines.managed.bootstrap.retry');
+            return;
+        }
         if (item.subject.kind === 'happier-cli' && item.machineId === thisComputer.machineId) return thisComputer.run();
         const machineId = item.machineId;
         if (!machineId || !updateScope) return;
         await runMachineItemUpdate(item, { scope: updateScope, lastUpdateSignature: lastUpdateSignatureByMachine.get(machineId) });
-    }, [app, lastUpdateSignatureByMachine, updateScope, thisComputer]);
+    }, [allMachines, app, executeAction, lastUpdateSignatureByMachine, updateScope, thisComputer]);
 
     // Intent goes through the configurable Action policy; admitted updater progress stays inline.
     const runItem = React.useCallback(async (item: UpdateItem) => {
@@ -235,7 +252,7 @@ export function useUpdatesContentModel(options: Readonly<{
     }, [appItem.latestVersion, executeAction]);
     const actionOwner = React.useRef<UpdatesActionOwner>({ scope: updateScope, groups, check: runCheck, executeItem });
     actionOwner.current = { scope: updateScope, groups, check: runCheck, executeItem };
-    React.useEffect(() => only === null ? registerUpdatesActionOwner(() => actionOwner.current) : undefined, [only]);
+    React.useEffect(() => registerUpdatesActionOwner(() => actionOwner.current), []);
 
     const sessionsRunningKey = storage(selectSessionsRunningKey);
     const sessionsRunningOn = React.useMemo(

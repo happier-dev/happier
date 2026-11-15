@@ -32,8 +32,11 @@ it.each([
     { actionId: 'machines.managed.inspect', mode: 'e2ee', pendingPower: true },
     { actionId: 'machines.managed.bootstrap.retry', mode: 'plain', pendingPower: false },
     { actionId: 'machines.managed.bootstrap.retry', mode: 'e2ee', pendingPower: false },
+    { actionId: 'machines.managed.bootstrap.retry', mode: 'plain', pendingPower: false, retainedGuest: true },
 ] as const)(
-    'resumes $mode Account $actionId against Home retained identity with no allocation or Machine operation (pending power: $pendingPower)', async ({ actionId, mode, pendingPower }) => {
+    'resumes $mode Account $actionId against Home retained identity with no allocation or Machine operation (pending power: $pendingPower, retained guest: $retainedGuest)', async scenario => {
+    const { actionId, mode, pendingPower } = scenario;
+    const retainedGuest = 'retainedGuest' in scenario;
     const { Modal } = await import('@/modal');
     const confirm = vi.spyOn(Modal, 'confirm').mockResolvedValue(false);
     onTestFinished(() => confirm.mockRestore());
@@ -68,6 +71,7 @@ it.each([
     let machine = ManagedMachineV1Schema.parse({ id: 'retained', homeId, custodianAccountId: accountId,
         enrollmentAccountId: accountId, enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' }, launch,
         allocation: 'bound', creationState: 'active', desired: pendingPower ? 'stop' : 'start', desiredWhen: 'now', intentRevision: 2,
+        ...(retainedGuest ? { enrolledMachineId: 'joined', bootstrapInstalled: true } : {}),
         ...(pendingPower ? { submittedNativeEffect: { intent: 'stop', requestId: 'original-power', intentRevision: 1 } } : {}),
         resource: { contributionRef: provider, schemaVersion: 1, value: { id: 'same-native' } },
         retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
@@ -127,7 +131,8 @@ it.each([
     const base: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionRequestId: 'new-recovery-review',
         runtimeAccountId: accountId };
     const roles: string[] = [];
-    let running = false;
+    let running = retainedGuest;
+    let installed = 0;
     // Native role execution and Home HTTP are external effect boundaries. The
     // reviewed child port, reconciliation, bootstrap and pairing recipe stay real.
     const context: ActionExecutorContext = { ...base, hostReviewedChild: createHostReviewedChildPortV1({ actionId, input, context: base,
@@ -146,15 +151,20 @@ it.each([
                 return { ok: true, result: { observedAt: 2, availability: 'present', power: pendingPower ? 'stopped' : 'running', storage: 'retained' } };
             }
             if (role === 'bootstrap') return { ok: true, result: { kind: 'native',
+                ...(retainedGuest ? { guestHome: { homeDir: '/home/guest', happyHomeDir: '/home/guest/.happier', daemonStartup: 'native-process' } } : {}),
                 transport: { contributionRef: provider, schemaVersion: 1 } } };
             if (role !== 'exec' || !body.input || typeof body.input !== 'object' || !('argv' in body.input)
                 || !Array.isArray(body.input.argv) || typeof body.input.argv[2] !== 'string') {
                 throw new Error(`Unexpected native role ${role}`);
             }
             expect(body.input.argv.slice(0, 2)).toEqual(['sh', '-c']);
+            if ('processConfig' in body.input) {
+                running = true;
+                return { ok: true, result: { kind: 'process-configured' } };
+            }
             const command = body.input.argv[2];
             let stdout: string;
-            if (command.startsWith('uname -s;')) stdout = 'Linux\nx86_64\n/home/guest\n';
+            if (command.includes('uname -s;')) stdout = 'Linux\nx86_64\n/home/guest\n';
             else if (command.includes("'auth' 'request'")) stdout = JSON.stringify({
                 kind: 'remote_home_enrollment_pairing_request', protocolVersion: 1, homeServerIdentityId: homeId,
                 publicKey: encodeBase64(new Uint8Array(32).fill(1)), supportsTokenOnly: true, pairingRequirement: 'v3', remoteProfileId: 'guest-home',
@@ -176,7 +186,7 @@ it.each([
             } };
         } }) };
     const result = await executeManagedMachineNativeAction({ account, actionId, input, context,
-        installNativePayload: async () => ({ binaryPath: '/guest/happier', installedVersion: '1.0.0' }) });
+        installNativePayload: async () => { installed++; return { binaryPath: '/guest/happier', installedVersion: '1.0.0' }; } });
     expect(result, JSON.stringify(result)).toMatchObject(actionId === 'machines.managed.inspect'
         ? { ok: true, result: { machine: { id: machine.id, observation: { power: pendingPower ? 'stopped' : 'running' } } } }
         : { ok: true, result: { managedId: machine.id } });
@@ -188,7 +198,8 @@ it.each([
         expect(roles).toEqual(['inspect']);
         expect(approvals).toBe(0);
     }
-    else { expect(roles).toContain('bootstrap'); expect(machine.enrolledMachineId).toBe('joined'); expect(approvals).toBe(1); }
+    else { expect(roles).toContain('bootstrap'); expect(machine.enrolledMachineId).toBe('joined'); expect(approvals).toBe(retainedGuest ? 0 : 1); }
+    if (retainedGuest) expect(installed).toBe(1);
     expect(roles).not.toContain('acquire');
     expect(paths.some(path => /admit|submit|operations|execution-authorization/.test(path))).toBe(false);
     expect(confirm).not.toHaveBeenCalled();

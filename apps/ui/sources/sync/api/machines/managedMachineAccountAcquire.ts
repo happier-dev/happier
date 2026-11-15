@@ -11,6 +11,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 import { ManagedControllerContextOutputV1Schema, ManagedControllerIntentReportV1Schema,
     projectManagedOpaquePresetAcquireResultV1, projectManagedOpaquePresetIntentResultV1,
     projectManagedOpaquePresetResizeResultV1, type ManagedAcquireInputV1, type ManagedControllerResizeReportV1,
+    isManagedPresetAcquireInputV1, type ManagedAdmissionOutputV1,
     type ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedConfigurationFactsV1Schema, type ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { isManagedOpaquePresetMachineV1, resolveManagedMachineEnrollmentAdminAccessV1,
@@ -18,7 +19,7 @@ import { isManagedOpaquePresetMachineV1, resolveManagedMachineEnrollmentAdminAcc
     type ManagedOpaquePresetMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedMachinePresetStoredContentV1Schema, projectManagedMachinePresetForRecipientV1,
     readManagedMachinePresetContentOverrideForModeV1, resolveManagedMachinePresetResizeOverrideV1,
-    type ManagedMachinePresetNativeControlResultV1, type ManagedMachinePresetStoredContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+    type ManagedMachinePresetNativeControlResultV1, type ManagedMachinePresetStoredContentCarrierV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { AcquireResultV1Schema, projectManagedOpaquePresetObservationV1,
     ProviderObservationV1Schema, type AcquireResultV1, type ProviderObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { MachineProvisionerResizeResultV1Schema, type MachineProvisionerSizeV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
@@ -50,8 +51,8 @@ type UiManagedAccountRecipeParams = Readonly<{
 /** The Home carrier remains opaque until this captured Account opens its exact admitted snapshot. */
 export type UiManagedOpaquePresetCarrier = Readonly<{
     machine: ManagedOpaquePresetMachineV1;
-    presetContent: Readonly<{ content: unknown; recipients: readonly unknown[] }>;
-    presetContentOverride?: unknown;
+    presetContent: Extract<ManagedAdmissionOutputV1, { presetContent: unknown }>['presetContent'];
+    presetContentOverride?: Extract<ManagedAdmissionOutputV1, { presetContent: unknown }>['presetContentOverride'];
 }>;
 
 export type UiManagedOpaquePresetHydration = Readonly<{
@@ -59,7 +60,7 @@ export type UiManagedOpaquePresetHydration = Readonly<{
     admission: UiManagedAccountNativeAdmission;
     normalizer: UiManagedAccountMachineNormalizer;
     prepareResize(override: unknown): Readonly<{ machine: ManagedMachineFullV1; size: MachineProvisionerSizeV1 }>;
-    prepareResizeReport(body: unknown): ManagedControllerResizeReportV1 | null;
+    prepareResizeReport(body: unknown): Extract<ManagedControllerResizeReportV1, { presetContent: unknown }> | null;
     dispose(): void;
 }>;
 
@@ -90,7 +91,7 @@ async function prepareUiManagedOpaquePreset(params: Readonly<{
         resourceMode: params.preset.contentEncryptionMode, signal: params.signal });
     if (!custody) throw new ManagedMachineControllerError('content_unavailable');
     try {
-        const open = (content: ManagedMachinePresetStoredContentV1, snapshot: UiManagedOpaquePresetSnapshot) => custody.open({
+        const open = (content: ManagedMachinePresetStoredContentCarrierV1, snapshot: UiManagedOpaquePresetSnapshot) => custody.open({
             presetId: snapshot.id, mode: snapshot.contentEncryptionMode,
             projection: projectManagedMachinePresetForRecipientV1({ content, recipients: snapshot.recipients, recipientAccountId: custody.accountId }),
         });
@@ -143,8 +144,8 @@ export async function hydrateUiManagedOpaquePreset(params: Readonly<{
         // The admitted/replayed snapshot owns native resource facts and the
         // original per-Machine override; the source Preset does not.
         const prepared = await preparation.prepare(snapshot, params.carrier.presetContentOverride);
-        const open = (content: ManagedMachinePresetStoredContentV1) => preparation.open(content, snapshot);
-        let content = prepared.content;
+        const open = (content: ManagedMachinePresetStoredContentCarrierV1) => preparation.open(content, snapshot);
+        let content: ManagedMachinePresetStoredContentCarrierV1 = prepared.content;
         let opened = prepared.opened;
         let latestStructural = params.carrier.machine;
         const normalize = (machine: ManagedMachineV1): ManagedMachineFullV1 | null => {
@@ -193,7 +194,7 @@ export async function hydrateUiManagedOpaquePreset(params: Readonly<{
             if (!local) throw new ManagedMachineControllerError('content_unavailable');
             return { machine: local, size };
         };
-        const prepareResizeReport = (body: unknown): ManagedControllerResizeReportV1 | null => {
+        const prepareResizeReport = (body: unknown): Extract<ManagedControllerResizeReportV1, { presetContent: unknown }> | null => {
             if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
             const report = body as Readonly<Record<string, unknown>>;
             if (report.homeId !== latestStructural.homeId || report.managedId !== latestStructural.id
@@ -278,7 +279,7 @@ function readUiManagedAccountRequestEnvelopeDigest(params: Omit<UiManagedAccount
 /** Foreground Account work owns no fictitious Machine Action operation. */
 export async function executeUiManagedAccountAcquire(params: Omit<UiManagedAccountRecipeParams, 'input'> & { input: ManagedAcquireInputV1 }) {
     const host = await readRuntimeFetchHost(params.account.endpointUrl);
-    if (params.input.selection.kind === 'one-off') {
+    if (!isManagedPresetAcquireInputV1(params.input)) {
         const admitted = readUiManagedAccountAdmission(params.context);
         const client = createUiManagedAccountHome({ ...params, provisioner: admitted.provisioner });
         const acquired = await executeManagedMachineAcquire({
@@ -409,7 +410,7 @@ normalizer?: UiManagedAccountMachineNormalizer) {
                     }
                     // These demanded guest effects need the ordinary retained
                     // managedContinuation transport; never accept and omit them.
-                    const creation = 'selection' in params.input && params.input.selection.kind === 'one-off' ? params.input : machine;
+                    const creation = 'selection' in params.input && !isManagedPresetAcquireInputV1(params.input) ? params.input : machine;
                     if (creation.reviewedFacts?.setup !== undefined
                         || resolveManagedMachineEnrollmentAdminAccessV1(creation.enrollmentIdentity)
                         || resolveManagedMachineEnrollmentAgentIsolationV1(creation.enrollmentIdentity)) {
@@ -431,6 +432,7 @@ normalizer?: UiManagedAccountMachineNormalizer) {
                     }
                     const target = await params.account.resolveHomeTarget();
                     await runUiManagedMachineEnrollment({
+                        replacePayload: action === 'machines.managed.bootstrap.retry',
                         correlation: enrollment.correlation, homeCorrelation: enrollment.homeCorrelation,
                         carrier: enrollment.carrier, target,
                         channel: resolvePreferredPublicReleaseRingLabelForCurrentApp(), operationId: params.context.operationAcceptance?.operationId ?? params.requestId,

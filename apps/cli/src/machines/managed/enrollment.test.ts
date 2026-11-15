@@ -50,7 +50,7 @@ async function withReleaseMirror(run: (releases: string[]) => Promise<void>) {
   // GitHub is the external boundary; enrollment, task composition and HTTP selection stay real.
   const mirror = createServer((request, response) => {
     // Loopback discovery can probe `/`; only release API requests belong to
-    // this installer boundary. Unset-override cases below require the tag read.
+    // this installer boundary. Managed enrollment must never request a release.
     if (request.url?.startsWith('/repos/')) releases.push(request.url);
     response.writeHead(400, { 'content-type': 'application/json' });
     response.end('{}');
@@ -534,10 +534,10 @@ describe('runManagedMachineEnrollment', () => {
   });
 
   it.each([
-    ['preview', undefined, 'cli-preview'],
-    ['dev', undefined, 'cli-dev'],
-    ['preview', 'stable', 'cli-stable'],
-  ] as const)('selects the %s controller channel unless explicitly overridden by %s through the real installer', async (hostChannel, channel, releaseTag) => {
+    ['preview', undefined],
+    ['dev', undefined],
+    ['preview', 'stable'],
+  ] as const)('refuses a missing Home payload for controller channel %s and override %s without public fallback', async (hostChannel, channel) => {
     vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', '');
     vi.stubEnv('HAPPIER_PUBLIC_RELEASE_CHANNEL', hostChannel);
     await withReleaseMirror(async (releases) => {
@@ -545,9 +545,8 @@ describe('runManagedMachineEnrollment', () => {
         readCurrentManagedRow: async () => machine,
         native: { exec: async () => ({ status: 0, stdout: 'Linux\nx86_64\n/home/guest\n', stderr: '' }),
           putFile: async () => { throw new Error('No payload may be delivered after release lookup fails'); } },
-      })).rejects.toThrow(/first-party-release/);
-      expect(releases).toHaveLength(1);
-      expect(releases[0]).toBe(`/repos/happier-dev/happier/releases/tags/${releaseTag}`);
+      })).rejects.toMatchObject({ code: 'guest_payload_missing' });
+      expect(releases).toEqual([]);
     });
   });
   it.each([0, 1] as const)('updates an enrolled service-managed native guest without pairing another Machine (service exit %s)', async serviceExit => {

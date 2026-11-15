@@ -163,6 +163,7 @@ export async function installRemoteFirstPartyComponent(params: Readonly<{
   installerBinaryPath?: string;
   remoteHomeDir?: string;
   strategy?: 'scp-upload' | 'remote-self-download';
+  requireHomePayload?: boolean;
   signal?: AbortSignal;
   onPhase?(phase: 'prepare' | 'archive' | 'transfer' | 'promote'): void;
 }>, deps: RemoteFirstPartyInstallDeps): Promise<Readonly<{ binaryPath: string; versionId: string; source: string | null }>> {
@@ -185,6 +186,7 @@ export async function installRemoteFirstPartyComponentPayload(
   installerBinaryPath?: string;
   remoteHomeDir?: string;
   strategy?: 'scp-upload' | 'remote-self-download';
+  requireHomePayload?: boolean;
   signal?: AbortSignal;
   onPhase?(phase: 'prepare' | 'archive' | 'transfer' | 'promote'): void;
 }>, 'ssh' | 'knownHostsMode'>,
@@ -200,6 +202,9 @@ export async function installRemoteFirstPartyComponentPayload(
   const localCliPayloadRoot = params.componentId === 'happier-cli'
     ? String(process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT ?? '').trim()
     : '';
+  if (params.requireHomePayload && !localCliPayloadRoot) {
+    throw new SystemTaskExecutionError('guest_payload_missing', 'This Home has no guest CLI payload to install.');
+  }
   const remoteHomeDir = normalizeRemoteFirstPartyHomeDir(params.remoteHomeDir);
   const pruneRemoteVersions = async (): Promise<void> => {
     const layout = resolveRemoteFirstPartyInstallLayout({ componentId: params.componentId, channel, versionId: 'current', remoteHomeDir });

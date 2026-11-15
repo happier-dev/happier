@@ -6,6 +6,7 @@ import type { ManagedNativeBootstrapIO } from '../../systemTasks/kinds/managedMa
 import { buildDedicatedDaemonInvocationCommand, buildRemoteHappierInvocationCommand, DEDICATED_DAEMON_INSTALL_HOME } from '../../systemTasks/ssh/remoteBootstrapCommandBuilder.js';
 import { resolveRemoteInstalledFirstPartyBinaryPath } from '../../systemTasks/ssh/remoteFirstPartyInstallPath.js';
 import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { DoctorSnapshotSchema } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
 
 /** Explicit finite read: the installed collector owns selection, redaction and tail budgets. */
 export async function readManagedGuestDiagnostics(input: Readonly<{
@@ -35,6 +36,9 @@ export async function readManagedGuestDiagnostics(input: Readonly<{
         let value: unknown;
         try { value = JSON.parse(result.stdout); } catch { return unavailable('invalid_action_output', 'guest_output'); }
         const parsed = BugReportMachineDiagnosticsSnapshotSchema.safeParse(value);
+        // Pre-collector CLIs ignore --include-daemon-log and return ordinary
+        // doctor output. Name that unsupported capability without exposing it.
+        if (!parsed.success && DoctorSnapshotSchema.safeParse(value).success) return unavailable('guest_cli_incompatible', 'guest_capability');
         if (!parsed.success) return unavailable('invalid_action_output', 'guest_output');
         const { daemonState, sessionDiagnostics } = parsed.data;
         if (!daemonState?.machineId) return unavailable('guest_identity_unavailable', 'guest_identity');

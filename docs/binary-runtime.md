@@ -299,8 +299,9 @@ remains supported. Native ELF and Mach-O entrypoints must match the guest ABI;
 explicit operator scripts run through the guest's interpreter. The shared payload installer consumes
 this input for managed native, managed SSH and SSH setup, using the same archive,
 delivery and promotion path. A bad local payload fails with `invalid_payload`
-instead of falling back to a release; without the input, normal verified release
-acquisition is unchanged. A missing target executable or release archive reports
+instead of falling back to a release. Managed acquire, repair and Update require
+this Home payload; without it they report `guest_payload_missing`. Standalone SSH
+setup retains normal verified release acquisition. A missing target executable or release archive reports
 `guest_payload_missing` during installation, and a mismatched native executable
 reports `guest_architecture_unsupported`, before upload or guest mutation.
 Build the directory through the existing
@@ -319,7 +320,7 @@ the replacement root, and reload READY records its identity and source capture i
 build failure leaves the incumbent runtime selected.
 Custom interpreter-script roots without canonical target metadata remain manual
 overrides and do not receive a source-build identity.
-Normal released controllers retain verified release acquisition when no payload
+Standalone released SSH setup retains verified release acquisition when no payload
 root is supplied. Released CLI 0.2.17 predates the dedicated
 bootstrap interpreter and shared `HAPPIER_FIRST_PARTY_INSTALL_HOME` layout, so it
 cannot serve this current-source dedicated-user bootstrap. Current payload

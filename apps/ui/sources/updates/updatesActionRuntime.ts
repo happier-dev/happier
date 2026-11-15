@@ -25,8 +25,9 @@ const unavailable = () => ({ ok: false as const, errorCode: 'update_target_unava
 
 export function readCurrentMachineUpdateItem(scope: ServerAccountScope, machineId: string,
     subject: Readonly<{ kind: 'agent-cli'; agentId: string }> | Readonly<{ kind: 'installable'; capabilityId: string }>): UpdateItem | null {
-    const owner = [...owners].map(read => read()).reverse().find(candidate => areServerAccountScopesEqual(candidate.scope, scope));
-    const item = owner?.groups.flatMap(group => group.items).find(candidate => {
+    const item = [...owners].map(read => read()).reverse()
+        .filter(candidate => areServerAccountScopesEqual(candidate.scope, scope))
+        .flatMap(owner => owner.groups.flatMap(group => group.items)).find(candidate => {
         if (candidate.machineId !== machineId) return false;
         if (subject.kind === 'agent-cli') return candidate.subject.kind === 'agent-cli' && candidate.subject.agentId === subject.agentId;
         if (candidate.subject.kind !== 'installable') return false;
@@ -46,7 +47,10 @@ export function createUpdatesAction(account: LazyActionAccountContext | null | u
             stopUpdateBatch(scope);
             return { status: 'requested' };
         }
-        const owner = [...owners].map(read => read()).reverse().find(candidate => areServerAccountScopesEqual(candidate.scope, scope));
+        const currentOwners = [...owners].map(read => read()).reverse().filter(candidate => areServerAccountScopesEqual(candidate.scope, scope));
+        // The full Updates surface owns the Home-wide list and Check. A later
+        // Machine tab supplies its target's rows without narrowing that owner.
+        const owner = currentOwners.find(candidate => candidate.groups.some(group => group.kind === 'app')) ?? currentOwners[0];
         if (!owner) return unavailable();
         if (actionId === 'updates.get') {
             const installables = getInstallablesRegistryEntries();
@@ -74,13 +78,16 @@ export function createUpdatesAction(account: LazyActionAccountContext | null | u
             await owner.check();
         } else if (actionId === 'machines.cli.update') {
             const { target } = UpdatesActionInputSchemas[actionId].parse(input);
-            const group = owner.groups.find(candidate => target.kind === 'local'
-                ? candidate.kind === 'thisComputer' : candidate.kind === 'machine' && candidate.machineId === target.machineId);
+            const matchesTarget = (candidate: UpdatesGroup) => target.kind === 'local'
+                ? candidate.kind === 'thisComputer' : candidate.kind === 'machine' && candidate.machineId === target.machineId;
+            const targetOwner = currentOwners.find(candidate => candidate.groups.some(matchesTarget));
+            const group = targetOwner?.groups.find(matchesTarget);
             const item = group?.items.find(candidate => candidate.subject.kind === 'happier-cli');
-            if (!item || item.managedBy !== 'happier' || item.action.kind !== 'run'
+            if (!targetOwner || !item || item.managedBy !== 'happier' || item.action.kind !== 'run'
                 || item.action.verb !== 'update' && item.action.verb !== 'retry') return unavailable();
-            // Both platform owners update latest. Displayed versions never pin an install recipe.
-            await owner.executeItem(item);
+            // The owner selects Home payloads for managed guests and release
+            // channels for standalone installs; displayed versions never pin a recipe.
+            await targetOwner.executeItem(item);
         } else {
             const request = UpdatesActionInputSchemas['updates.batch.start'].parse(input);
             const group = request.groupId === null ? null : owner.groups.find(candidate => candidate.id === request.groupId);

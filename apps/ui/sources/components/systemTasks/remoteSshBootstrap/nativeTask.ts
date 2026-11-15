@@ -168,6 +168,9 @@ async function installRemoteCliViaNativeSelfDownload(params: Readonly<{
     }>>;
     resolveInstallPlan?: RunNativeRemoteSshBootstrapTaskParams['resolveInstallPlan'];
 } & RemoteCliInstallation>): Promise<Readonly<{ binaryPath: string }>> {
+    if (params.requireHomePayload) {
+        throw new SystemTaskExecutionError('guest_payload_missing', 'This Home cannot supply its guest CLI payload through native SSH.');
+    }
     const preflight = await params.runTextCommand([
         "printf '{\"platform\":\"%s\",\"arch\":\"%s\"}\\n'",
         '"$(uname -s | tr \'[:upper:]\' \'[:lower:]\')"',

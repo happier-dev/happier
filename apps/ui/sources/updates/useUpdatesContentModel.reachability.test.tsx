@@ -34,9 +34,10 @@ const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontD
 const before = storage.getState();
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 let machineRowReads = 0;
+let managedReads = 0;
 
 afterEach(async () => { standardCleanup(); await connection?.dispose(); connection = undefined;
-    storage.setState(before, true); clearMachineRequestReachabilityForTest(); network.resetRequests(); machineRowReads = 0; });
+    storage.setState(before, true); clearMachineRequestReachabilityForTest(); network.resetRequests(); machineRowReads = 0; managedReads = 0; });
 afterAll(() => network.dispose());
 
 async function restoreUpdatesHome() {
@@ -45,6 +46,10 @@ async function restoreUpdatesHome() {
     connection = await restoreServerAccountForTest({ serverUrl: accountHome.serverUrl, serverIdentityId, accountId: accountHome.accountId,
         credentials: { token: accountHome.token }, request: async (input, init) => {
             const path = new URL(String(input)).pathname;
+            if (path === '/v1/machines/managed/actions/get') {
+                managedReads++;
+                return Response.json({ code: 'controller_unavailable' }, { status: 503 });
+            }
             if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse({ capabilities: { serverIdentity: { serverIdentityId } } }));
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
@@ -65,6 +70,43 @@ async function restoreUpdatesHome() {
     await flushHookEffects();
     return scope;
 }
+
+it.each([undefined, 'studio'])('routes managed guest updates through their Home without public latest (surface %s)', async (machineId) => {
+    const scope = await restoreUpdatesHome();
+    const template = createMachineFixture();
+    const machine = createMachineFixture({ id: 'studio', activeAt: Date.now(), storageMode: 'plain',
+        managedMachineRef: { homeId: 'srv_updates_reachability', managedId: 'retained' },
+        // The incident's 0.3 development payload still reported package version 0.2.10.
+        metadata: { ...template.metadata!, cliUpdate: { currentVersion: '0.2.10', latestVersion: '0.2.20',
+            channel: 'stable', installSource: 'managed', updateCommand: null, canUpdateRemotely: true, lastUpdate: null } } });
+    storage.getState().applyMachines([machine], true, { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
+    recordMachineRequestSucceeded({ ...scope, machineId: machine.id });
+    network.respond(RPC_METHODS.CAPABILITIES_DETECT, { protocolVersion: 1, results: {} });
+    network.respond(RPC_METHODS.CAPABILITIES_INVOKE, { supported: false, reason: 'not-supported' });
+    const hook = await renderHook(() => useUpdatesContentModel({ machineId }));
+    // Retained Machine tabs can mount after the requested Machine's surface.
+    const otherMachine = await renderHook(() => useUpdatesContentModel({ machineId: 'other' }));
+    try {
+        await flushHookEffects();
+        const item = hook.getCurrent().groups.flatMap(group => group.items).find(item => item.subject.kind === 'happier-cli');
+        expect(item).toBeDefined();
+        if (!machineId) {
+            const listed = await createFrontDoorActionExecute().confirmed('updates.get', {}, {
+                surface: 'ui', authority: 'present_user', serverId: scope.serverId, expectedAccountId: scope.accountId,
+            });
+            expect(listed).toMatchObject({ ok: true, result: { groups: expect.arrayContaining([
+                expect.objectContaining({ groupId: 'app' }),
+            ]) } });
+        }
+        await act(async () => { const result = await createFrontDoorActionExecute().confirmed('machines.cli.update',
+            { target: { kind: 'machine', machineId: machine.id } }, { surface: 'ui', authority: 'present_user',
+                serverId: scope.serverId, expectedAccountId: scope.accountId });
+            expect(result).toMatchObject({ ok: false, errorCode: 'controller_unavailable' }); });
+        expect(managedReads).toBe(1);
+        expect(network.requests.filter(request => request.method === RPC_METHODS.CAPABILITIES_INVOKE
+            && JSON.stringify(request).includes('cli.update.v1'))).toHaveLength(0);
+    } finally { await otherMachine?.unmount(); await hook.unmount(); }
+});
 
 it('Checks updates explicitly on a request-unreachable machine through the mounted Action owner', async () => {
     const scope = await restoreUpdatesHome();
@@ -98,7 +140,7 @@ it('Checks updates explicitly on a request-unreachable machine through the mount
         expect(network.requests.filter(request => request.method === RPC_METHODS.CAPABILITIES_DETECT)).toHaveLength(0);
         const execute = createFrontDoorActionExecute();
         await act(async () => {
-            const checked = await execute('updates.check', {}, { surface: 'ui', authority: 'present_user',
+            const checked = await execute.confirmed('updates.check', {}, { surface: 'ui', authority: 'present_user',
                 serverId: scope.serverId, expectedAccountId: scope.accountId });
             if (!checked.ok) throw new Error(checked.errorCode);
             expect(UpdatesActionOutputSchemas['updates.check'].parse(checked.result)).toEqual({ status: 'requested' });
@@ -116,18 +158,17 @@ it('one Machine’s Security tab reads and asks only that Machine, without the T
     const scope = await restoreUpdatesHome();
     const machines = [createMachineFixture({ id: 'studio', activeAt: Date.now(), storageMode: 'plain' }),
         createMachineFixture({ id: 'vps-1', activeAt: Date.now(), storageMode: 'plain' })];
-    storage.setState(state => ({ profileScope: scope, profile: { ...state.profile, id: scope.accountId },
-        machines: Object.fromEntries(machines.map(row => [row.id, row])), machineListByServerId: { [scope.serverId]: machines },
-        machineListStatusByServerId: { [scope.serverId]: 'idle' } }));
+    storage.getState().applyMachines(machines, true, { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
     for (const machine of machines) recordMachineRequestSucceeded({ ...scope, machineId: machine.id });
     network.respond(RPC_METHODS.CAPABILITIES_DETECT, { protocolVersion: 1, results: {} });
     const hook = await renderHook(() => useUpdatesContentModel({ machineId: 'vps-1' }));
     try {
         await flushHookEffects();
         expect(hook.getCurrent().groups.map(group => group.machineId)).toEqual(['vps-1']);
+        expect(hook.getCurrent().groups[0]).toMatchObject({ online: true });
         await vi.waitFor(() => expect(network.requests.some(request => request.method === RPC_METHODS.CAPABILITIES_DETECT)).toBe(true));
-        expect(network.requests.filter(request => request.method === RPC_METHODS.CAPABILITIES_DETECT)
-            .map(request => request.targetId)).toEqual(['vps-1']);
+        expect(new Set(network.requests.filter(request => request.method === RPC_METHODS.CAPABILITIES_DETECT)
+            .map(request => request.targetId))).toEqual(new Set(['vps-1']));
     } finally { await hook.unmount(); }
 });
 

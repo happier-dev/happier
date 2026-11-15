@@ -6495,8 +6495,17 @@ which CLI the user's terminal and the service run.
 
 ### One CLI update transaction (plan R13 f)
 
-`runManagedCliUpdate` (`packages/cli-common/src/firstPartyRuntime/runManagedCliUpdate.ts`) is the
-only way a managed first-party CLI is updated in place. `happier self update`, the desktop's
+In unreleased 0.3, a provisioned guest's Update delegates to
+`machines.managed.bootstrap.retry`, the same enrollment and payload-transfer owner
+used by acquire and Retry install. The connected Home's guest payload is the
+target; a public release-channel version is never a substitute. Missing Home
+payloads or transports without Home-payload transfer settle as
+`guest_payload_missing`. Explicit Retry install replaces a retained native-process
+guest's payload before restarting its daemon; ordinary boot recovery only repairs
+the retained boot configuration. The guest keeps its enrolled Machine identity.
+
+`runManagedCliUpdate` (`packages/cli-common/src/firstPartyRuntime/runManagedCliUpdate.ts`) owns
+release-channel CLI updates. `happier self update`, the desktop's
 bootstrap `cli.update.v1` (`updateManagedLocalFirstPartyComponent`) and the daemon-hosted remote
 `cli.update.v1` all run it, always from the version being replaced:
 

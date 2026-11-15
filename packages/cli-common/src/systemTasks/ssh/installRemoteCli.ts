@@ -6,6 +6,7 @@ import { buildDedicatedDaemonAccountCommand, DEDICATED_DAEMON_INSTALL_HOME } fro
 
 /** Installation placement is selected once here; platform adapters supply only IO. */
 export type RemoteCliInstallation = Readonly<{
+  requireHomePayload?: boolean;
   remoteHomeDir?: string;
   daemonUsername?: 'happier';
 }>;
@@ -68,8 +69,11 @@ export async function installRemoteCli(input: Readonly<{
     }
     if (account.status !== 0) throw new SystemTaskExecutionError('dedicated_identity_unconfirmed', 'The dedicated daemon account could not be prepared.');
   }
-  const installed = await transport.install(identity?.kind === 'dedicatedDaemonUser' ? {
-    remoteHomeDir: DEDICATED_DAEMON_INSTALL_HOME, daemonUsername: 'happier',
-  } : {});
+  const installed = await transport.install({
+    ...(identity?.kind === 'dedicatedDaemonUser' ? {
+      remoteHomeDir: DEDICATED_DAEMON_INSTALL_HOME, daemonUsername: 'happier' as const,
+    } : {}),
+    ...(bootstrap?.parsed.managedEnrollment ? { requireHomePayload: true } : {}),
+  });
   if (prepare) await prepare(installed.binaryPath);
 }

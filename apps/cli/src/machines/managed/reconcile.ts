@@ -495,7 +495,7 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
                         provisioner: contribution.definition, localId, role,
                         execute: async (childInput, childContext) => {
                             childExecution = await executeRole(childInput, childContext);
-                            return childExecution.result.matched ? childExecution.result.result
+                            return childExecution.matched ? childExecution.result
                                 : { ok: false, errorCode: 'provider_unavailable', error: 'provider_unavailable' };
                         },
                     });
@@ -628,6 +628,7 @@ async function runManagedEnrollment(params: ManagedMachineReconciliationInput, e
     let enrollmentAttempted = false;
     try {
         const enrollment = await runManagedMachineEnrollment({ correlation, homeCorrelation, target, carrier, signal: params.options.signal,
+            replacePayload: params.action === 'machines.managed.bootstrap.retry',
             onInstalled: enrollmentInput.onInstalled,
             reviewedChild: params.options.context?.hostReviewedChild,
             accountCredentials: readRequesterAccountActionContext(params.options.context?.externalActionExecutionAuthorization)?.credentials,
