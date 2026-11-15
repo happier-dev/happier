@@ -47,7 +47,7 @@ function retryGuest(operation: AbortController | undefined, readyAtMs: number, s
 describe('retained native bootstrap readiness lifetime', () => {
   it.each([
     { step: 'install', response: 'typed' }, { step: 'restart', response: 'typed' },
-    { step: 'start', response: 'native' }, { step: 'install', response: 'invalid' },
+    { step: 'restart', response: 'native' }, { step: 'install', response: 'invalid' },
   ] as const)('retains the failing $step process diagnostic through Action settlement ($response)', async ({ step, response }) => {
     const commands: string[] = [];
     const secret = 'SERVICE_DIAGNOSTIC_PRIVATE_TOKEN';
@@ -57,7 +57,7 @@ describe('retained native bootstrap readiness lifetime', () => {
       carrier: { kind: 'native', transport: { contributionRef: resource.contributionRef, schemaVersion: 1 } },
     }, {
       readCurrentManagedRow: async () => ({ ...machine,
-        ...(step === 'start' ? { enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } as const } : {}) }),
+        ...(response === 'native' ? { enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } as const } : {}) }),
       createPromptId: () => 'unused',
       runTask: async () => { throw new Error('Retained retry must not pair again'); },
       approveLocalAuthRequest: async () => { throw new Error('Retained retry must not approve auth again'); },
@@ -68,11 +68,11 @@ describe('retained native bootstrap readiness lifetime', () => {
         if (command.startsWith('uname -s;')) return { status: 0, stdout: 'Linux\nx86_64\n/home/guest\n', stderr: '' };
         commands.push(command);
         return command.includes(`'${step}'`)
-          ? { status: 42, stdout: response === 'invalid' ? 'unrecognized service output' : step === 'start' ? '' : JSON.stringify({ ok: false,
+          ? { status: 42, stdout: response === 'invalid' ? 'unrecognized service output' : response === 'native' ? '' : JSON.stringify({ ok: false,
             error: 'service_command_failed', serviceStep: 'command', serviceStepStatus: 'failed',
             command: { program: 'systemctl', action: 'restart', args: [secret] },
             process: { exitStatus: 1, errorCode: 'EACCES', output: diagnostic },
-            message: diagnostic, privateField: secret }), stderr: step === 'start' ? diagnostic : response === 'invalid'
+            message: diagnostic, privateField: secret }), stderr: response === 'native' ? diagnostic : response === 'invalid'
               ? JSON.stringify({ ok: false, error: 'service_command_failed', serviceStep: 'command', serviceStepStatus: 'failed' }) : '' }
           : { status: 0, stdout: '', stderr: '' };
       } },
@@ -87,7 +87,7 @@ describe('retained native bootstrap readiness lifetime', () => {
     const { ok: _ok, ...operationFailure } = failure;
     const parsed = ActionOperationFailureV1Schema.parse(operationFailure);
     const serviceFailure = ManagedServiceFailureDetailsV1Schema.parse(parsed.details);
-    if (step === 'start') {
+    if (response === 'native') {
       expect(serviceFailure).toMatchObject({ stderrTail: expect.stringContaining(`service manager refused ${step}`) });
       if (!('stderrTail' in serviceFailure)) throw new Error('Expected native process diagnostic');
       expect(Buffer.byteLength(serviceFailure.stderrTail, 'utf8')).toBeLessThanOrEqual(DEFAULT_COMMAND_CAPTURE_MAX_BYTES);
@@ -101,19 +101,20 @@ describe('retained native bootstrap readiness lifetime', () => {
     const serialized = JSON.stringify(failure);
     expect(serialized).not.toContain(secret);
     expect(serialized).not.toContain('old output');
-    if (step === 'start') expect(serialized).toContain('[REDACTED]');
+    if (response === 'native') expect(serialized).toContain('[REDACTED]');
     expect(commands.filter(command => command.includes(`'${step}'`))).toHaveLength(1);
     expect(commands.some(command => command.includes("'status'"))).toBe(false);
   });
 
-  it('restarts the retained user service onto the promoted payload even when both payloads have the same version', async () => {
+  it.each(['user-service', 'native-process'] as const)('restarts the retained %s onto the promoted payload even when both payloads have the same version', async (mode) => {
     let currentPayload = 'old-payload';
     let runningPayload = currentPayload;
     let runningPid = 5376;
     const serviceCommands: string[] = [];
     const result = await runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, channel: 'stable',
       carrier: { kind: 'native', transport: { contributionRef: resource.contributionRef, schemaVersion: 1 } } }, {
-      readCurrentManagedRow: async () => ({ ...machine, enrollmentIdentity: undefined }),
+      readCurrentManagedRow: async () => ({ ...machine, enrollmentIdentity: mode === 'native-process'
+        ? { kind: 'guestProcess', role: 'sandbox' } as const : undefined }),
       createPromptId: () => 'unused',
       runTask: async () => { throw new Error('Retained retry must not pair again'); },
       approveLocalAuthRequest: async () => { throw new Error('Retained retry must not approve auth again'); },
@@ -121,12 +122,12 @@ describe('retained native bootstrap readiness lifetime', () => {
         currentPayload = 'promoted-payload';
         return { binaryPath: '/opt/happier/bin/happier' };
       },
-      // Native CLI/service-manager IO boundary: installing an unchanged unit is
-      // a no-op; restarting resolves its stable launcher onto the new payload.
+      // Native CLI/process IO boundary: starting a healthy daemon or installing
+      // an unchanged unit is a no-op; restart adopts the promoted payload.
       native: { putFile: async () => {}, exec: async ({ command }) => {
         if (command.startsWith('uname -s;')) return { status: 0, stdout: 'Linux\nx86_64\n/home/guest\n', stderr: '' };
-        if (command.includes("'service'")) serviceCommands.push(command);
-        if (command.includes("'service' 'restart'")) { runningPayload = currentPayload; runningPid = 8574; }
+        if (command.includes("'restart'") || command.includes("'install'") || command.includes("'start'")) serviceCommands.push(command);
+        if (command.includes("'restart'")) { runningPayload = currentPayload; runningPid = 8574; }
         return { status: 0, stderr: '', stdout: JSON.stringify({ daemon: { pid: runningPid, running: true, healthy: true,
           startedWithCliVersion: '0.2.10' }, service: { installed: true },
           auth: { needsAuth: false, machineId: 'same-machine' } }) };
@@ -135,7 +136,7 @@ describe('retained native bootstrap readiness lifetime', () => {
     expect(result).toEqual({ machineId: 'same-machine' });
     expect(runningPayload).toBe(currentPayload);
     expect(runningPid).toBe(8574);
-    expect(serviceCommands).toHaveLength(2); // One install and one lifecycle restart; no install retry.
+    expect(serviceCommands).toHaveLength(mode === 'native-process' ? 1 : 2); // One lifecycle restart; no installation retry.
   });
 
   afterEach(() => vi.useRealTimers());

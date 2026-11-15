@@ -192,10 +192,12 @@ the same durable bootstrap observations described above. An admitted retained
 native retry waits for daemon registration within its operation's cancellation
 lifecycle, without the standalone setup cutoff. Initial enrollment continues to
 supply its remaining pairing lifetime; callers without a containing operation
-keep the standalone readiness timeout. A retained service-managed native retry
-installs the promoted CLI and explicitly restarts its existing background service
-before waiting for registration. An unchanged service definition or CLI version
-does not prove that its running process adopted the promoted payload.
+keep the standalone readiness timeout. A retained native payload update installs
+the promoted CLI and explicitly restarts its existing daemon through the process
+or service lifecycle owner before waiting for registration. A healthy daemon,
+unchanged service definition or matching CLI version does not prove that its
+running process adopted the promoted payload. Native boot recovery continues to
+reuse its retained installation without another install or pairing.
 
 Approval replay in 0.3 development retains the credentialed executor's captured
 Account and Home. A mutable default profile cannot replace that identity: the
@@ -1624,6 +1626,23 @@ installed-tool availability or completed setup.
 
 In unreleased 0.3 source, the strict `projects.inspect` Action takes the qualified
 checkout address `{serverId, workspaceId, machineId, rootPath}` under `workspace`.
+The `applications` read also returns the native owner's observation time. At the
+existing UI Action acceptance boundary, the requesting Account records a compact
+`repositoryObservation` on its exact private WorkspaceRef through the existing
+mode-aware Account-row writer. The daemon's read Action receives no new write
+authority. The observation contains
+the observation time, coverage, checkout-relative application framework/runtime
+declarations, and presence of the conventional Dockerfile/Compose files at the
+checkout root. `absent` requires an observed absence; refused or uninspected files
+remain `unknown`. The Source binding is captured at publication, and later row
+reassociation cannot relabel the saved observation. A partial inspection retains
+an existing same-Source observation and its original timestamp; the first partial
+observation may be recorded when none exists. These are last observed facts, not
+current repository state or deployability. Your code opts into the Source read
+owner's join over the existing opened private checkout census: it selects the
+latest observation whose saved and current Source id/revision both match. Missing
+or unavailable Account data stays unknown. Other Source pickers demand no such
+facts, and no row starts an inspection, scan or timer.
 Its optional `read` selects demand at the same query owner: Overview and rail pass
 their displayed `detectedRows`; Scripts (the default) reads every undeclared finite
 Script reference (name and file, no per-row native resolution) and named Script

@@ -264,24 +264,24 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
       });
   });
   if (row.enrolledMachineId) {
-    // Service-managed guests can update the installed CLI without issuing a new
+    // Enrolled guests can update the installed CLI without issuing a new
     // sign-in or changing the existing Machine. Native-process boot recovery is
     // handled above and continues to reuse its retained installation.
     await installRemoteCli(input.signal);
-    const commands = nativeProcess ? [{ step: 'start' as const, args: ['daemon', 'start', '--json'] }]
+    const commands = nativeProcess ? [{ step: 'restart' as const, args: ['daemon', 'restart', '--json'] }]
       : (['install', 'restart'] as const).map(step => ({ step,
         args: ['daemon', 'service', step, ...(dedicatedIdentity ? ['--mode=user'] : []), '--json'] }));
-    // An unchanged service definition can keep running the old payload at the
-    // same CLI version. Adopt the promoted payload through its lifecycle owner.
+    // A healthy daemon or unchanged service can keep running the old payload at
+    // the same CLI version. Adopt the payload through its lifecycle owner.
     for (const { step, args } of commands) {
       const updated = await payloadExec({
         command: buildRemoteHappierInvocationCommand({ binaryPath, args, channel: configuration.channel }),
         signal: input.signal,
         timeoutMs: resolveLocalHappierCommandTimeoutMs(args),
       });
-      const cause = step === 'start' ? null : GuestServiceFailureFactsV1Schema.safeParse(readGuestCliFailureOutput(updated.stdout, ''));
+      const cause = nativeProcess ? null : GuestServiceFailureFactsV1Schema.safeParse(readGuestCliFailureOutput(updated.stdout, ''));
       if (updated.status !== 0 || cause?.success) throw new SystemTaskExecutionError('background_service_failed', 'The updated guest background service could not be activated.', {
-        details: step === 'start'
+        details: nativeProcess
           ? { kind: 'managedService', step, exitStatus: updated.status,
             stderrTail: trimBugReportTextToMaxBytes(redactBugReportSensitiveText(updated.stderr), DEFAULT_COMMAND_CAPTURE_MAX_BYTES) }
           : { kind: 'managedService', step, exitStatus: updated.status, cause: cause?.success ? cause.data : null },
