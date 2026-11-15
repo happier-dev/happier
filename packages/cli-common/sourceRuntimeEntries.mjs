@@ -150,7 +150,10 @@ export function workspaceSourceCompilerPaths(packages) {
 
 /** CLI exports/imports and the generated semantic projection are the entry
  * authority for both retained source QA and native artifact construction. */
+// readText/exists default to the checkout; the commit gate passes Git-revision readers so a candidate's
+// entries never depend on other lanes' uncommitted bytes.
 export async function readCliSourceEntries({ repoDir, manifest, transform,
+  readText = (path) => readFile(path, 'utf8'), exists = existsSync,
   projectionRoot = repoDir,
   cliPrefix = 'apps/cli', mainOutput = `${cliPrefix}/src/index`,
   publicPrefix = `${cliPrefix}/package-dist`,
@@ -168,19 +171,19 @@ export async function readCliSourceEntries({ repoDir, manifest, transform,
   }
   const pluginMetadata = [];
   const locatorPath = join(projectionDir, 'src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts');
-  if (existsSync(locatorPath)) {
-    const transformed = await transform(await readFile(locatorPath, 'utf8'), { loader: 'ts', format: 'esm' });
+  if (exists(locatorPath)) {
+    const transformed = await transform(await readText(locatorPath), { loader: 'ts', format: 'esm' });
     const generated = await import(`data:text/javascript;base64,${Buffer.from(transformed.code).toString('base64')}`);
     for (const locator of generated.BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS) {
       const packageName = locator.sourceSpec.locator;
       const pluginDir = join(repoDir, 'packages/plugins', packageName.slice('@happier-dev/plugins-'.length));
-      const pluginManifest = JSON.parse(await readFile(join(pluginDir, 'package.json'), 'utf8'));
+      const pluginManifest = JSON.parse(await readText(join(pluginDir, 'package.json')));
       const prefix = pluginPrefix(packageName);
       const key = `${prefix}/dist/index`;
       entries[key] = resolve(pluginDir, sourceExport(pluginManifest.exports['.'], packageName));
       // Locators are locator-only; the manifest lives in the generated asset beside them.
       const pluginManifestDocument = locator.manifest
-        ?? JSON.parse(await readFile(join(projectionDir, locator.manifestRelativePath), 'utf8'));
+        ?? JSON.parse(await readText(join(projectionDir, locator.manifestRelativePath)));
       // Declaration-only plugins still own packaged Resources and a package
       // root. A missing daemon contribution does not remove that closure.
       if (locator.daemonEntryPath) {
@@ -196,7 +199,7 @@ export async function readCliSourceEntries({ repoDir, manifest, transform,
       }
       for (const factory of pluginManifestDocument.runtime.agentFactories ?? []) {
         const stem = factory.locator.module.replace(/^\.\//, '').replace(/\.js$/, '');
-        const source = ['.ts', '.tsx', '.mts', '.js'].map((extension) => join(pluginDir, 'src', stem + extension)).find(existsSync);
+        const source = ['.ts', '.tsx', '.mts', '.js'].map((extension) => join(pluginDir, 'src', stem + extension)).find((path) => exists(path));
         if (!source) throw new Error(`Source runner leaf is missing: ${packageName}:${factory.locator.module}`);
         entries[`${prefix}/dist/${stem}`] = source;
         entries[`${prefix}/${factory.normalizedModulePath.replace(/\.js$/, '')}`] = source;
