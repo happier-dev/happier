@@ -34,8 +34,6 @@ test('shared bundle maintenance reclaims obsolete products without changing sele
     const selectionPath = join(stackBaseDir, 'source-runtime/selected-server.json');
     const selection = JSON.stringify({ entrypoint: selected.entrypoint });
     await writeFile(selectionPath, selection);
-    // Selections pin shared bundles while their Stack runs.
-    await writeFile(join(stackBaseDir, 'stack.runtime.json'), JSON.stringify({ ownerPid: process.pid, processes: {} }));
     // Process discovery is the OS boundary; retain the real pin and retirement owners.
     const readdir = fs.promises.readdir;
     t.mock.method(fs.promises, 'readdir', async (path, ...args) =>
@@ -51,38 +49,6 @@ test('shared bundle maintenance reclaims obsolete products without changing sele
     assert.equal(existsSync(newest.entrypoint), true, 'newest completed fallback remains available');
     assert.equal(existsSync(privateOutput), true, 'shared maintenance does not nominate private products');
     assert.equal(await readFile(selectionPath, 'utf8'), selection);
-  });
-
-test('a stopped Stack releases its selection pins; a running Stack keeps them',
-  { skip: process.platform !== 'linux' }, async t => {
-    const fixture = await createTempFixture(t, { prefix: 'hstack-stopped-stack-pins-' });
-    const stacksRoot = fixture.path('stacks');
-    const live = await completedBundle(stacksRoot, 'live', Date.now() - 30000);
-    const stopped = await completedBundle(stacksRoot, 'stopped', Date.now() - 20000);
-    const newest = await completedBundle(stacksRoot, 'newest');
-    const { spawnSync } = await import('node:child_process');
-    const deadPid = spawnSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' }).stdout;
-    for (const [name, bundle, ownerPid] of [['agent-qa-running', live, process.pid], ['agent-qa-stopped', stopped, Number(deadPid)]]) {
-      const stackBaseDir = join(stacksRoot, name);
-      await mkdir(join(stackBaseDir, 'source-runtime'), { recursive: true });
-      await writeFile(join(stackBaseDir, 'stack.runtime.json'), JSON.stringify({ ownerPid, processes: {} }));
-      await writeFile(join(stackBaseDir, 'source-runtime/selected-server.json'), JSON.stringify({ entrypoint: bundle.entrypoint }));
-    }
-    // Process discovery is the OS boundary; retain the real pin and retirement owners.
-    const readdir = fs.promises.readdir;
-    t.mock.method(fs.promises, 'readdir', async (path, ...args) =>
-      String(path) === '/proc' ? [] : await readdir(path, ...args));
-    syncBuiltinESMExports();
-    t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
-    const { reclaimSourceBundles } = await import('./build_source_runtime.mjs');
-    await reclaimSourceBundles({ stacksRoot, dryRun: false });
-    const remaining = (await fs.promises.readdir(join(stacksRoot, 'source-bundles'))).filter(name => name.startsWith('runtime-')).sort();
-    assert.deepEqual(remaining, ['runtime-live', 'runtime-newest'], 'only the running Stack selection and the newest fallback stay');
-    assert.equal(existsSync(newest.entrypoint), true);
-    // A later start of the stopped Stack treats its released selection as absent.
-    const { readSelectedSourceRuntimeRecord } = await import('../runtime/shared/source_bundle_record.mjs');
-    assert.equal(await readSelectedSourceRuntimeRecord({ stackBaseDir: join(stacksRoot, 'agent-qa-stopped'),
-      component: 'server', required: false }), null);
   });
 
 test('publication releases custody before process scans and recursive retirement',
@@ -171,11 +137,7 @@ test('a publication during reclamation pins a bundle before its retirement decis
     const adoptingStack = join(stacksRoot, 'adopter');
     const candidate = await completedBundle(stacksRoot, 'candidate', Date.now() - 10000);
     const newest = await completedBundle(stacksRoot, 'newest');
-    for (const stack of [firstStack, adoptingStack]) {
-      await mkdir(join(stack, 'source-runtime'), { recursive: true });
-      // Selections are written by a running start/reload; they pin while it runs.
-      await writeFile(join(stack, 'stack.runtime.json'), JSON.stringify({ ownerPid: process.pid, processes: {} }));
-    }
+    for (const stack of [firstStack, adoptingStack]) await mkdir(join(stack, 'source-runtime'), { recursive: true });
     const lockPath = join(stacksRoot, 'source-bundles/publication.lock');
     const readdir = fs.promises.readdir;
     let adopted = false;

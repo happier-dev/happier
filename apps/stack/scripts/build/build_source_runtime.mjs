@@ -387,20 +387,16 @@ function readSourceRetentionStack(stackBaseDir) {
   const state = readSourceRetentionRecord(join(stackBaseDir, 'stack.runtime.json'));
   const references = [];
   if (pending && isPidAlive(pending.pid)) references.push(...(pending.preparationDirs ?? []), pending.preparationDir);
-  const selections = ['daemon', 'server', 'ui'].flatMap(component =>
-    sourceRecordReferencePaths(readSourceRetentionRecord(join(sourceRoot, `selected-${component}.json`))));
+  for (const component of ['daemon', 'server', 'ui']) {
+    references.push(...sourceRecordReferencePaths(readSourceRetentionRecord(join(sourceRoot, `selected-${component}.json`))));
+  }
   if ([state?.ownerPid, state?.processes?.daemonPid, ...(state?.processes?.daemonPids ?? [])].some(isPidAlive)) {
     references.push(...sourceRecordReferencePaths(state?.sourceRuntimeLaunch));
   }
   if ([state?.ownerPid, state?.processes?.serverPid].some(isPidAlive)) {
     references.push(...sourceRecordReferencePaths(state?.sourceUiLaunch));
   }
-  // A Stack's own outputs stay pinned by its selections. A shared bundle stays
-  // pinned by a selection only while its Stack runs or prepares (owner ruling
-  // 2026-11-15, growth fixes): a stopped or removed Stack releases it, and its
-  // next start treats a reclaimed selection as absent.
-  return { state, pending, references: [...references, ...selections],
-    sharedReferences: privateSourceStackActive(state, pending) ? [...references, ...selections] : references };
+  return { state, pending, references };
 }
 
 function canonicalSourceReferences(references) {
@@ -462,7 +458,7 @@ async function retireSourceCandidates({ stacksRoot, bundleRoot, candidates, dryR
     const stacks = new Map(readdirSync(stacksRoot, { withFileTypes: true })
       .filter(entry => entry.isDirectory() && entry.name !== 'source-bundles')
       .map(entry => [join(stacksRoot, entry.name), readSourceRetentionStack(join(stacksRoot, entry.name))]));
-    const references = canonicalSourceReferences([...stacks.values()].flatMap(stack => stack.sharedReferences));
+    const references = canonicalSourceReferences([...stacks.values()].flatMap(stack => stack.references));
     for (const candidate of candidates) {
       const info = sourceRetentionStat(candidate.directory);
       const completion = candidate.privateStack ? null : sourceRetentionStat(join(candidate.directory, 'source-bundle.json'));
@@ -543,8 +539,8 @@ async function retainSourceBundles({ stacksRoot, bundleRoot, newest, dryRun = fa
     if (!entry.isDirectory() || entry.name === 'source-bundles') continue;
     const stackBaseDir = join(stacksRoot, entry.name);
     const sourceRoot = join(stackBaseDir, 'source-runtime');
-    const { pending, state, sharedReferences } = readSourceRetentionStack(stackBaseDir);
-    references.push(...sharedReferences);
+    const { pending, state, references: stackReferences } = readSourceRetentionStack(stackBaseDir);
+    references.push(...stackReferences);
     if (existsSync(sourceRoot)) {
       const entries = await readdir(sourceRoot, {withFileTypes:true});
       // Maintenance nominates only its exact private stacks; ordinary

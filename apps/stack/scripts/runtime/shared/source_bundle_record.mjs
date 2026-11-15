@@ -17,9 +17,6 @@ export async function readSelectedSourceRuntimeRecord({ stackBaseDir, component,
   const selected = await readOptionalJson(join(stackBaseDir, 'source-runtime', `selected-${component}.json`));
   if (!selected && !required) return null;
   const record = await readSourceRuntimeBundleRecord(selected?.entrypoint);
-  // A stopped Stack's selection no longer pins its bundle; optional readers
-  // select again once retention reclaimed it.
-  if (!record && !required) return null;
   if (!record?.identity || record.entrypoint !== selected?.entrypoint || !existsSync(record.entrypoint)) {
     throw Object.assign(
       new Error(`[source-bundle] selected source ${component} bundle is unavailable; explicitly restart the Stack to select current source`),
