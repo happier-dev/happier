@@ -5,6 +5,7 @@ import type { HttpRequest, HttpResponse } from '@happier-dev/plugin-sdk/http';
 import type { JsonValue } from '@happier-dev/protocol';
 import { SessionTeamCredentialBindingIntentV1Schema } from '@happier-dev/protocol/teams';
 import { ManagedControllerCredentialDeliveryReportV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { PLUGIN_MANIFEST as LIMA_MANIFEST } from '../../../../../packages/plugins/machine-lima/src/manifest';
 import { PLUGIN, PLUGIN_MANIFEST } from '../../../../../packages/plugins/machine-vercel/src/index';
 import { reference } from '../../../../../packages/plugins/machine-vercel/src/machine/schemas';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
@@ -33,7 +34,7 @@ const redacted = (policy: Policy) => policy.mode === 'allow-all' ? { mode: 'allo
 
 async function fixture() {
   const manifest = normalizePluginManifestV2(PLUGIN_MANIFEST);
-  const authored = await createPluginTestkit({ manifest, module: PLUGIN });
+  const authored = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: PLUGIN });
   const handlerEvents: unknown[] = [];
   const invocationSnapshots: string[] = [];
   const handlers = new Map(manifest.contributes.actions.map(action => {
@@ -113,11 +114,38 @@ async function fixture() {
 }
 
 describe('source-composed authored Vercel native credential delivery', () => {
+  it.each([false, true])('skips all credential HTTP for non-delivery rows (credential material available: %s)', async available => {
+    const manifest = normalizePluginManifestV2(LIMA_MANIFEST);
+    const provider = { pluginId: manifest.id, localId: manifest.contributes.machineProvisioners![0]!.id };
+    const f = await createNativeCredentialComposerFixture({
+      machine: { launch: { provider, schemaVersion: 1, name: 'Lima guest', choices: {} },
+        resource: { contributionRef: provider, schemaVersion: 1, value: {} } },
+      nativeOptions: { fixtureManifest: manifest, nativeCredentialDelivery: false },
+    });
+    const driver = createManagedMachineAcquisitionDriver({ ...f.driverInput,
+      externalActionMachineRequestPrivateKey: available ? f.driverInput.externalActionMachineRequestPrivateKey : undefined,
+      prepareTeamCredentialNativeSource: available ? f.input.prepareSource : undefined });
+    const machines = Array.from({ length: 16 }, (_, index) => ({ ...f.input.machine, id: `non-delivery-${index}` }));
+    const failures: unknown[] = [];
+    const runtime = createDaemonManagedMachinePolicyRuntime({
+      readCensus: async () => ({ machines, targets: [] }),
+      executePolicy: async () => { throw new Error('No compute policy requested'); },
+      reconcileNativeCredentials: (machine, signal) => driver.reconcileNativeCredentials(machine, { ...f.options, signal }),
+      onUnavailable: error => { failures.push(error); },
+    });
+    try {
+      vi.mocked(axios.post).mockClear();
+      await runtime.notifyChanged();
+      expect(failures).toEqual([]);
+      expect(vi.mocked(axios.post).mock.calls.filter(([url]) => /\/(policies|context)$/.test(String(url)))).toEqual([]);
+    } finally { await runtime.stop(); await f.cleanup(); }
+  });
+
   it.each(['guest-revoked', 'guest-re-enrolled', 'controller-reinstalled'] as const)(
     'removes retained injection rules once on reconnect without deleting Sessions: %s', async drift => {
     // Compile-contract assertion belongs to the shared p-closeout gate, not a runtime test.
     expectTypeOf<Parameters<ReturnType<typeof createManagedNativeInvocation<true>>['invoke']>[0]>()
-      .toEqualTypeOf<'nativeCredentialApply'>();
+      .toEqualTypeOf<'nativeCredentialApply' | 'renew'>();
     const f = await fixture();
     const driver = createManagedMachineAcquisitionDriver({ ...f.driverInput,
       prepareTeamCredentialNativeSource: f.input.prepareSource });

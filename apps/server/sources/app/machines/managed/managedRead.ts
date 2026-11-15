@@ -44,7 +44,6 @@ export async function readManagedResourceDependenciesInTx(tx: Tx, target: Manage
         // Immutable setup may carry additive reference fields; the matcher
         // below remains authoritative for those candidate rows.
         ...(secretIds.size > 0 ? [
-            { bootstrapCredentialRef: { not: getActivePrismaRuntime().DbNull } },
             { machineSetup: { not: getActivePrismaRuntime().DbNull } },
         ] : []),
     ] : [];
@@ -57,18 +56,33 @@ export async function readManagedResourceDependenciesInTx(tx: Tx, target: Manage
         },
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
-    const rows = await read(target.kind === 'account' ? { OR: ownedOrReferenced } : {});
+    const rows = await read(target.kind === 'account' ? { OR: ownedOrReferenced }
+        : target.kind === 'saved-secret' ? { OR: [
+            { bootstrapCredentialRef: jsonPathEquals(['resourceId'], target.resourceId) },
+            { machineSetup: { not: getActivePrismaRuntime().DbNull } },
+        ] } : {});
     if (target.kind === 'account') {
-        // The two selections are disjoint, keeping reference candidates and
-        // controller-owned custody without repeating either row across chunks.
+        // Custodian/setup and controller selections are disjoint.
         for (const ids of portableQueryChunks({ values: [...machineIds], bindingsPerValue: 1,
             fixedBindings: 4 + (secretIds.size > 0 ? 2 : 0) })) {
             rows.push(...await read({ controllerMachineId: { in: [...ids] }, NOT: { OR: ownedOrReferenced } }));
         }
+        // Bootstrap references are selected by the owned secrets, never by
+        // secret-owner Account on the retained allocation (shared references cross Accounts).
+        // Each JSON equality binds path/value for comparison and type qualification;
+        // allocation binds two values and the custodian exclusion binds one.
+        for (const ids of portableQueryChunks({ values: [...secretIds], bindingsPerValue: 4,
+            fixedBindings: 3 })) {
+            rows.push(...await read({ OR: ids.map(id => ({ bootstrapCredentialRef: jsonPathEquals(['resourceId'], id) })),
+                NOT: { OR: ownedOrReferenced } }));
+        }
         rows.sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id));
     }
     const dependencies: ManagedResourceDependencyV1[] = [];
-    for (const row of rows) {
+    // A controller-owned allocation can also carry a matching bootstrap
+    // reference; project it once after the bounded independent selections.
+    const selectedRows = target.kind === 'account' ? new Map(rows.map(row => [row.id, row])).values() : rows;
+    for (const row of selectedRows) {
         // Preset declaration and setup content is opaque. In particular, resource
         // dependency review must not turn a retained ciphertext row into a server
         // plaintext parser. Account retirement still needs structural custody for
@@ -105,6 +119,7 @@ export async function readManagedResourceDependenciesInTx(tx: Tx, target: Manage
                     : credentials.some(credential => sameQualifiedConnectedAccountRef(credential, target.ref));
         if (!matches) continue;
         const machine = projectManagedMachine(row);
+        if (isManagedOpaquePresetMachineV1(machine)) throw new ManagedMachineError('request_conflict');
         dependencies.push(ManagedResourceDependencyV1Schema.parse({
             managedId: machine.id, homeId: machine.homeId, custodianAccountId: machine.custodianAccountId,
             intentRevision: machine.intentRevision, controller: machine.controller, provider: machine.launch.provider,
@@ -126,7 +141,8 @@ export function acceptsManagedResourceDispositions(resources: readonly ManagedRe
                 && disposition.expectedIntentRevision === resource.intentRevision
                 && disposition.expectedAllocation === resource.allocation;
         }
-        return disposition?.responsibility === "manual" && disposition.expectedIntentRevision === resource.intentRevision
+        return disposition !== undefined && !isManagedOpaquePresetResourceDispositionV1(disposition)
+            && disposition.responsibility === "manual" && disposition.expectedIntentRevision === resource.intentRevision
             && disposition.expectedAllocation === resource.allocation
             && sameManagedInput(disposition.expectedResource, resource.resource)
             && sameManagedInput(disposition.expectedNativeOperationRef, resource.nativeOperationRef)
@@ -187,7 +203,10 @@ export function projectManagedMachineReadForActor(
     machine: ManagedMachineV1,
     actorAccountId: string,
 ): ManagedMachineReadV1 {
-    if (!isStoredOpaquePresetMachine(row)) return machine;
+    if (!isStoredOpaquePresetMachine(row)) {
+        if (isManagedOpaquePresetMachineV1(machine)) throw new ManagedMachineError('request_conflict');
+        return machine;
+    }
     if (!isManagedOpaquePresetMachineV1(machine)) throw new ManagedMachineError('request_conflict');
     const { content, recipients } = readStoredOpaquePresetLaunch(row.launch);
     return {

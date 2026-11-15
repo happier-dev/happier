@@ -35,6 +35,42 @@ function processBoundary(handler: (args: readonly string[], options?: Parameters
 }
 
 describe('public Lima native leaf', () => {
+  it.each(['exec', 'stream', 'putFile', 'power', 'destroy'] as const)('%s inspects native identity only at the shared effect boundary', async role => {
+    let status = 'Running';
+    let present = true;
+    const { executor, reads } = processBoundary(args => {
+      if (args[0] === 'stop') status = 'Stopped';
+      if (args[0] === 'delete') present = false;
+      return { exitCode: 0, out: present ? JSON.stringify({ ...native, status }) : '', err: '' };
+    });
+    const provider = createLimaProvider({ ...executor, channel: async () => 'channel' });
+    if (role === 'exec') expect(await provider.exec(resource, ['true'])).toMatchObject({ exitCode: 0 });
+    if (role === 'stream') expect(await provider.stream(resource, ['true'])).toBe('channel');
+    if (role === 'putFile') expect(await provider.putFile(resource, '/tmp/test', new Uint8Array())).toEqual({ kind: 'written' });
+    if (role === 'power') expect(await provider.power(resource, 'stop')).toEqual({ kind: 'confirmed' });
+    if (role === 'destroy') expect(await provider.destroy(resource)).toEqual({ kind: 'confirmed' });
+    expect(reads.filter(args => args[0] === 'list')).toHaveLength(role === 'power' || role === 'destroy' ? 2 : 1);
+  });
+
+  it.each(['absent', 'stopped', 'wrong-store', 'invalid-store', 'no-op-power', 'absent-delete'] as const)(
+    'preserves the shared native boundary control: %s', async control => {
+      const { executor, reads, effects } = processBoundary(() => ({ exitCode: 0, err: '',
+        out: control === 'absent' || control === 'absent-delete' ? '' : JSON.stringify({ ...native,
+          ...(control === 'stopped' ? { status: 'Stopped' } : {}),
+          ...(control === 'wrong-store' ? { dir: '/other/store/guest' } : {}) }) }));
+      const provider = createLimaProvider(executor);
+      if (control === 'absent' || control === 'stopped') await expect(provider.exec(resource, ['true']))
+        .rejects.toMatchObject({ code: 'LIMA_GUEST_UNAVAILABLE' });
+      if (control === 'wrong-store') expect(await provider.power(resource, 'stop'))
+        .toMatchObject({ kind: 'refused', code: 'LIMA_IDENTITY_MISMATCH' });
+      if (control === 'invalid-store') expect(await provider.power({ ...resource, store: '/private/../lima-test' }, 'stop'))
+        .toMatchObject({ code: 'LIMA_INVALID_IDENTITY' });
+      if (control === 'no-op-power') expect(await provider.power(resource, 'start')).toEqual({ kind: 'confirmed' });
+      if (control === 'absent-delete') expect(await provider.destroy(resource)).toEqual({ kind: 'confirmed' });
+      expect(effects).toEqual([]);
+      expect(reads.filter(args => args[0] === 'list')).toHaveLength(control === 'invalid-store' ? 0 : 1);
+    });
+
   it('resizes a stopped guest through native edit and observes its actual size', async () => {
     let resized = false;
     const size = { cpuCores: 4, memoryBytes: 8 * 1024 ** 3, diskBytes: 30 * 1024 ** 3 };

@@ -335,7 +335,8 @@ export function createLimaProvider<TResult extends LimaCommandResult, TChannel =
     },
     async power(rawResource: LimaResource, intent: 'start' | 'stop') {
       try {
-        const { resource } = await inspectExact(rawResource);
+        const resource = LimaResourceSchema.parse(rawResource);
+        validateLimaStore(resource.store);
         const power = await changeLimaPower({ executor, ...resource, intent });
         return { kind: power.status.toLowerCase() === (intent === 'start' ? 'running' : 'stopped') ? 'confirmed' as const : 'unknown' as const };
       } catch (error) {
@@ -346,7 +347,8 @@ export function createLimaProvider<TResult extends LimaCommandResult, TChannel =
     },
     async destroy(rawResource: LimaResource) {
       try {
-        const { resource } = await inspectExact(rawResource);
+        const resource = LimaResourceSchema.parse(rawResource);
+        validateLimaStore(resource.store);
         const result = await deleteLimaInstance({ executor, ...resource });
         return { kind: result.kind === 'absent' ? 'confirmed' as const : 'unknown' as const };
       } catch (error) {
@@ -356,18 +358,21 @@ export function createLimaProvider<TResult extends LimaCommandResult, TChannel =
       }
     },
     async exec(rawResource: LimaResource, argv: readonly string[], input?: Uint8Array) {
-      const { resource } = await inspectExact(rawResource);
+      const resource = LimaResourceSchema.parse(rawResource);
+      validateLimaStore(resource.store);
       return execLimaGuest({ executor, ...resource, argv, input });
     },
     /** The optional `stream` role: one long-lived guest shell process carrying the invocation channel. */
     async stream(rawResource: LimaResource, argv: readonly string[]): Promise<TChannel> {
-      const { resource } = await inspectExact(rawResource);
+      const resource = LimaResourceSchema.parse(rawResource);
+      validateLimaStore(resource.store);
       const { channel } = executor;
       if (!channel) throw Object.assign(new Error('native Lima channel is unavailable'), { code: 'LIMA_CHANNEL_UNSUPPORTED' });
       return openLimaGuestChannel({ executor: { ...executor, channel }, ...resource, argv });
     },
     async putFile(rawResource: LimaResource, guestPath: string, bytes: Uint8Array, mode?: string) {
-      const { resource } = await inspectExact(rawResource);
+      const resource = LimaResourceSchema.parse(rawResource);
+      validateLimaStore(resource.store);
       return putLimaGuestFile({ executor, ...resource, guestPath, bytes, mode });
     },
   };

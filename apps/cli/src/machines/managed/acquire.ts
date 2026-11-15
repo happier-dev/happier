@@ -9,7 +9,7 @@ import { MachineProvisionerSnapshotResultV1Schema, type MachineProvisionerSnapsh
 import { isExternalActionManagedWakeRootV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { redactManagedMachineCredentialReferences, ManagedMachineFullV1Schema, ManagedMachineV1Schema,
     isManagedOpaquePresetMachineV1, type ManagedControllerV1, type ManagedMachineFullV1,
-    type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+    type ManagedMachineV1, type ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { isDeepStrictEqual } from 'node:util';
 import type { ActionExecuteResult, ActionExecutorContext, JsonValue, ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol';
 import { ManagedPendingActivationFailureRequestV1Schema, PendingActivationFailureResponseV1Schema } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
@@ -176,7 +176,7 @@ export type ManagedMachineExecutionOptions = Readonly<{
     /** Scheduler retirement is separate from the independently admitted pending input. */
     policySchedulerSignal?: AbortSignal;
     policyPurpose?: ManagedPolicyPurposeV1;
-    policyMachine?: ManagedMachineFullV1;
+    policyMachine?: ManagedMachineReadSnapshotV1;
     /** Exact pending request projected from Home's current retention admission. */
     retentionContinuationRequestId?: string;
     /** Original admitted finite request; distinct from the controller's native policy authority. */
@@ -336,7 +336,7 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
             throw requestFailure(path, 'currentness', undefined, undefined, readManagedId(body));
         }
     }
-    function correlation(machine: ManagedMachineFullV1): ManagedControllerCurrentnessV1 & Readonly<{ controller: ManagedControllerV1 }> {
+    function correlation(machine: Pick<ManagedMachineV1, 'id' | 'intentRevision'>): ManagedControllerCurrentnessV1 & Readonly<{ controller: ManagedControllerV1 }> {
         const current = ManagedControllerCurrentnessV1Schema.parse({
             homeId: input.homeId, managedId: machine.id, expectedIntentRevision: machine.intentRevision,
             requestId: options.requestId, controller: input.controller,
@@ -427,8 +427,8 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
             // this already-issued identity when new-effect authority retires.
             const path = `/v1/machines/managed/controller/${reportPath}`;
             const prepared = reportPath === 'report'
-                ? await hydrator.prepareControllerReport('report', body, null)
-                : await hydrator.prepareControllerReport('report-intent', body, null);
+                ? await hydrator.prepareControllerReport('report', body)
+                : await hydrator.prepareControllerReport('report-intent', body);
             let headers: ReturnType<typeof resolveExternalActionServerRequestHeaders>;
             try {
                 headers = resolveExternalActionServerRequestHeaders({ context: options.context, effectActionId: action,
@@ -634,6 +634,10 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 && current.observation.power === 'running' && current.observation.nativeExpiry !== undefined);
         },
         async reconcileNativeCredentials(machine: ManagedMachineV1, options: ManagedMachineExecutionOptions): Promise<void> {
+            const ref = machine.resource?.contributionRef;
+            const contribution = input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
+                candidate.identity.pluginId === ref?.pluginId && candidate.identity.localId === ref?.localId);
+            if (!contribution?.definition.nativeCredentialDelivery) return;
             if (!input.externalActionMachineRequestPrivateKey || !input.prepareTeamCredentialNativeSource) {
                 throw new ManagedMachineControllerError('credential_unavailable');
             }
@@ -654,10 +658,6 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
             }, ManagedControllerContextOutputV1Schema);
             const retained = await normalizeManagedPresetCarrier(context, hydrator, options.signal);
             client.assertConnection(retained.machine);
-            const contribution = input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
-                candidate.identity.pluginId === retained.machine.launch.provider.pluginId
-                && candidate.identity.localId === retained.machine.launch.provider.localId);
-            if (!contribution?.definition.nativeCredentialDelivery) return;
             const invocation = createManagedNativeInvocation({ input, options, client, machine: retained.machine, action,
                 nativePolicyAdmission: true }, () => retained.machine);
             const result = await applyManagedNativeCredentialPolicy({ machine: retained.machine, bindings: policy.bindings,
@@ -836,7 +836,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 const admission = await normalizeManagedPresetCarrier(rawAdmission, hydrator, options.signal);
                 // Move's destination is in the input; the current executor is
                 // validated by the admitted row/server, not that destination.
-                if (action === MANAGED_RESIZE_ACTION_ID_V1) {
+                if (request.action === MANAGED_RESIZE_ACTION_ID_V1) {
                     const machine = admission.machine;
                     client.assertConnection(machine);
                     // The Home projection deliberately has no private provider
@@ -849,8 +849,8 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     if (!provisioner) throw new ManagedMachineControllerError('provider_unavailable');
                     options.context?.operationOwnerUpdate?.update({ domainRef: { kind: 'managedMachine', id: machine.id } });
                     const size = hydrator.isOpaque(machine)
-                        ? await hydrator.prepareResize(machine, 'presetContentOverride' in parsed ? parsed.presetContentOverride : undefined, options.signal)
-                        : 'size' in parsed ? parsed.size
+                        ? await hydrator.prepareResize(machine, 'presetContentOverride' in request.input ? request.input.presetContentOverride : undefined, options.signal)
+                        : 'size' in request.input ? request.input.size
                             : (() => { throw new ManagedMachineControllerError('credential_unavailable'); })();
                     let native: ReturnType<typeof createManagedNativeInvocation> | undefined;
                     const resize = await executeManagedMachineResize({ machine, provisioner,
@@ -865,9 +865,9 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     const reported = await hydrator.prepareResizeReport({ homeId: machine.homeId,
                         managedId: machine.id, requestId: options.requestId, ...resize }, options.signal);
                     await client.post('/v1/machines/managed/controller/report-resize', reported.report, ManagedControllerMachineOutputV1Schema, null);
-                    return ManagedResizeOutputV1Schema.parse(reported.output);
+                    return projectNativeJsonValueForTransport(ManagedResizeOutputV1Schema.parse(reported.output));
                 }
-                if (!executesIntent) return hydrator.structural(admission.machine);
+                if (!executesIntent) return projectNativeJsonValueForTransport(hydrator.structural(admission.machine));
                 client.assertConnection(admission.machine);
                 if (!operationId) throw new ManagedMachineControllerError('admission_unavailable');
                 const accepted = ManagedIntentResultSchema.parse({ kind: 'accepted', managedId: admission.machine.id,
@@ -1073,7 +1073,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     && identity.adminAccessAtCreation === 'ask'
                     && (options.context?.surface === 'agent' || options.context?.surface === 'mcp'
                         || options.context?.authority === 'account_automation' || options.context?.actionCaller?.kind === 'session');
-                if (acquisition.selection.kind === 'one-off' && hasAttendedEnrollmentRequirement(acquisition.enrollmentIdentity)) {
+                if (!isManagedPresetAcquireInputV1(acquisition) && hasAttendedEnrollmentRequirement(acquisition.enrollmentIdentity)) {
                     throw new ManagedMachineControllerError('enrollment_attendance_required');
                 }
                 const operationId = options.context?.operationAcceptance?.operationId;
@@ -1241,8 +1241,8 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 }
                 // Reconciliation keeps its private custodian snapshot. Only the
                 // public Action result crosses back to an exact creator.
-                return requester && requester !== output.machine.custodianAccountId
-                    ? { ...output, machine: redactManagedMachineCredentialReferences(output.machine) } : output;
+                return projectNativeJsonValueForTransport(requester && requester !== output.machine.custodianAccountId
+                    ? { ...output, machine: redactManagedMachineCredentialReferences(output.machine) } : output);
             }
             if (action in ManagedMachineActionOutputSchemasV1) {
                 const output = ManagedMachineActionOutputSchemasV1[action as keyof typeof ManagedMachineActionOutputSchemasV1];
