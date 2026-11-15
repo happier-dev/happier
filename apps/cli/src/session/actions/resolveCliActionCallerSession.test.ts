@@ -5,6 +5,19 @@ import { resolveSessionTransportContext } from '@/session/services/resolveSessio
 import { createCliBoundSessionMetadataReader, resolveCliActionCallerSession, resolveCliActionCallerWorkflowTarget } from './resolveCliActionCallerSession';
 
 describe('Account Action caller Session metadata authority', () => {
+  it('uses the bound Session Machine workspace for caller admission', async () => {
+    const sessionId = 'bound-session';
+    const directory = 'relative/repo';
+    const machineId = 'caller-machine';
+    await expect(resolveCliActionCallerSession({
+      context: { defaultSessionId: sessionId }, boundSessionId: sessionId,
+      readBoundSession: async () => ({ machineId, directory, workDepth: 0, backendTarget: null,
+        metadata: { path: directory, machineId, sessionWorkspaceLocationV1: {
+          v: 1, machineId, agentPath: directory, machinePath: '/owner/repo',
+        } } }),
+      resolveTransportForSession: async () => { throw new Error('bound_session_must_not_fetch'); },
+    })).resolves.toMatchObject({ sessionId, machineId, directory: '/owner/repo' });
+  });
   it('settles an unloaded live snapshot without fetching and reads later metadata on the next admission', async () => {
     const credentials = { token: 'token', encryption: null };
     let snapshot: Readonly<Record<string, unknown>> | null = null;
@@ -108,10 +121,12 @@ describe('Account Action caller Session metadata authority', () => {
   it.each([0, 1] as const)('opens caller workspace and Agent using layout %s, not the bound host', async (layout) => {
     const sessionId = 'c111111111111111111111111';
     const credentials = { token: 'token', encryption: null };
+    const sessionWorkspaceLocationV1 = { v: 1, machineId: 'caller-machine',
+      agentPath: 'relative/repo', machinePath: '/owner/repo' };
     const rawSession = createSessionRecordFixture({ id: sessionId, active: false, encryptionMode: 'plain', workDepth: 2,
-      ...(layout === 0 ? { metadata: JSON.stringify({ path: '/owner/repo', machineId: 'caller-machine', flavor: 'codex' }) }
+      ...(layout === 0 ? { metadata: JSON.stringify({ path: 'relative/repo', machineId: 'caller-machine', flavor: 'codex', sessionWorkspaceLocationV1 }) }
         : { metadataLayoutVersion: 1, share: null, metadata: JSON.stringify({ v: 1, agentPresentation: { agentId: 'codex' } }),
-          ownerMetadata: { t: 'plain', v: { v: 1, workspace: { path: '/owner/repo', machineId: 'caller-machine' },
+          ownerMetadata: { t: 'plain', v: { v: 1, workspace: { path: 'relative/repo', machineId: 'caller-machine', sessionWorkspaceLocationV1 },
             nativeSession: { runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: { backendMode: 'appServer' } } } } } }),
     });
     // Only HTTP is replaced; transport identity, content-mode opening and
@@ -180,7 +195,8 @@ describe('Account Action caller Session metadata authority', () => {
       })).resolves.toBeNull();
       await expect(resolveCliActionCallerSession({ ...params,
         context: { surface: 'agent', actionCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 }, defaultSessionId: sessionId },
-      })).resolves.toBeNull();
+      })).rejects.toMatchObject({ code: 'session_detail_invalid_response',
+        issues: [expect.objectContaining({ path: ['session', 'id'] })] });
     } finally { get.mockRestore(); }
   });
 });

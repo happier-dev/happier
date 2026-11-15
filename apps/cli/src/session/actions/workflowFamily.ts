@@ -70,6 +70,8 @@ import type { CliMachineActionCall } from './cliActionDeps/machineTransport';
 import type { CliWorkflowRunStorage } from './workflowRunStorage';
 import type { SessionPullRequestBindingResultV1 } from '@happier-dev/channels-protocol/v1';
 import type { WorkflowIngressContextV1 } from '@happier-dev/protocol';
+import { resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
+import { readSessionLegacyMetadata } from './cliActionDeps/sessionStateReaders';
 
 export type CliWorkflowFamilyHost = Readonly<{
   readLocalActionSpec: ReadLocalWorkflowActionSpec;
@@ -195,7 +197,8 @@ export function createCliWorkflowFamily(
         if (!transport.ok) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
         const metadata = readTransportSessionOwnerMetadata(transport);
         const machineId = normalizeStringValue(transport.rawSession.machineId) ?? normalizeStringValue(metadata?.machineId);
-        const directory = normalizeStringValue(metadata?.path) ?? normalizeStringValue(transport.rawSession.path);
+        const candidatePath = normalizeStringValue(metadata?.path) ?? normalizeStringValue(transport.rawSession.path) ?? '';
+        const directory = machineId ? resolveSessionWorkspaceRootForMachine({ metadata, machineId, candidatePath }).machinePath : null;
         if (!machineId || !directory) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
         let nativeGoalOwner: boolean | null = transport.rawSession.active === true ? null : false;
         if (options?.checkNativeGoalOwner === true && transport.rawSession.active === true) {
@@ -657,7 +660,9 @@ export function createCliWorkflowFamily(
           const target = await resolveCliActionCallerWorkflowTarget({ ...callerSessionResolution(context),
             // Bound Workflow ingress needs only the live workspace, not an
             // Account metadata read before Workflow availability is decided.
-            readBoundSession: async () => ({ metadata: null, workDepth: undefined, backendTarget: undefined,
+            readBoundSession: async () => ({
+              metadata: params.getCurrentSessionMetadata ? params.getCurrentSessionMetadata() : readSessionLegacyMetadata(params),
+              workDepth: undefined, backendTarget: undefined,
               machineId: await resolveCurrentSessionValue('machineId', context.signal),
               directory: await resolveCurrentSessionValue('path', context.signal) }),
             ...(context.externalActionTarget ? { target: context.externalActionTarget } : {}) });

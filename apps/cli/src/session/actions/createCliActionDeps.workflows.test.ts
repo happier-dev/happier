@@ -384,7 +384,11 @@ describe('createCliActionDeps workflow boundary', () => {
         ...enabledFeatures.features, capabilities: { serverIdentity: { serverIdentityId: 'srv_cli_person' } },
       }) };
       if (url.includes(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: createSessionRecordFixture({
-        id: sessionId, share: null, encryptionMode: 'plain', metadata: JSON.stringify({ machineId: 'machine-1', path: target.project.directory }),
+        id: sessionId, share: null, encryptionMode: 'plain', metadata: JSON.stringify({ machineId: 'machine-1',
+          path: actor === 'bound_cli' ? 'relative/repo' : target.project.directory,
+          ...(actor === 'bound_cli' ? { sessionWorkspaceLocationV1: { v: 1, machineId: 'machine-1',
+            agentPath: 'relative/repo', machinePath: target.project.directory } } : {}),
+        }),
       }) } };
       if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
       if (url.endsWith('/v1/account/security')) return { status: 200, data: { v: 1, encryptionMode: 'plain',
@@ -535,6 +539,7 @@ describe('createCliActionDeps workflow boundary', () => {
         binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId },
         envelope: parseWorkflowStoredContentEnvelopeV1(admitted.acceptedEnvelope) });
       if (accepted.kind !== 'available') throw new Error('accepted_snapshot_unavailable');
+      expect(accepted.content.workspaceTarget.project.directory).toBe(target.project.directory);
       expect(accepted.content.origin?.actionPolicy).toMatchObject({ surface: 'cli' });
       expect(accepted.content.origin?.authenticatedStarterV1).toMatchObject({
         requestRef: actor === 'compiled_cli' ? expect.any(String) : 'workflow-cli-person-start',
@@ -1007,6 +1012,50 @@ describe('createCliActionDeps workflow boundary', () => {
     });
   });
 
+  it('admits a bound Workflow into its mapped Machine workspace without an explicit target', async () => {
+    const lease = await pluginReloadController.acquireRuntimeRegistry({
+      resolveRuntimeRegistry: () => resolveExecutablePluginRuntimeRegistry({ contributes: createResolvedContributionRegistry({}) }),
+    });
+    await lease.release();
+    const sessionId = 'c123456789012345678901234';
+    const metadata = { machineId: 'machine-1', path: 'relative/repo',
+      sessionWorkspaceLocationV1: { v: 1, machineId: 'machine-1', agentPath: 'relative/repo', machinePath: tmpdir() } };
+    const get = http.get.getMockImplementation()!;
+    http.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/v2/account/settings')) return { status: 200, data: { version: 1, content: { t: 'plain', v: {} } } };
+      if (url.endsWith('/v2/account/settings/history')) return { status: 200, data: { snapshots: [] } };
+      if (url.includes('/v1/artifacts?')) return readEmptyPlainArtifactListFixture(url, 'account-1');
+      if (url.endsWith(PROMPT_LIBRARY_ROWS_ROUTE_V1)) return { status: 200, data: PromptLibraryRowsListResponseV1Schema.parse({
+        status: 'listed', rows: PromptLibraryCatalogKeyV1Schema.options.map(key => ({ key, revision: 1,
+          content: { t: 'plain', v: emptyPromptLibraryRecordV1(key) } })),
+      }) };
+      if (url.endsWith(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: createSessionRecordFixture({
+        id: sessionId, encryptionMode: 'plain', metadata: JSON.stringify(metadata),
+      }) } };
+      return get(url);
+    });
+    const deps = createCliActionDeps({ token: workflowAccountPersonToken,
+      credentials: { token: workflowAccountPersonToken, encryption: null, credentialProvenance: 'stored_session' },
+      sessionId, rawSession: { machineId: metadata.machineId, path: metadata.path },
+      getCurrentSessionMetadata: () => metadata,
+      resolveServerFeaturesSnapshot: () => enabledFeatures, mode: 'plain', ctx: null });
+    const runId = '77777777-7777-4777-8777-777777777778';
+    const result = await deps.workflowAction!({ actionId: 'workflow.run.start', input: {
+      runId, source: { kind: 'inline', definition: { version: 1, blocks: [
+        { kind: 'wait', id: 'review', document: { text: 'Review', references: [], attachments: [] } },
+      ] } },
+    }, context: { surface: 'cli', authority: 'present_user', defaultSessionId: sessionId } });
+    expect(result, JSON.stringify(result)).toMatchObject({ admission: 'created' });
+    const admitted = http.post.mock.calls.find(([, body]) => body.operation === 'admit')?.[1];
+    expect(admitted).toBeDefined();
+    const accepted = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+      binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId },
+      envelope: parseWorkflowStoredContentEnvelopeV1(admitted.acceptedEnvelope) });
+    expect(accepted).toMatchObject({ kind: 'available', content: { workspaceTarget: {
+      project: { machineId: 'machine-1', directory: tmpdir() },
+    } } });
+  });
+
   it('reaches Workflow storage through the public Session-bound CLI without fetching features twice', async () => {
     const diagnostics = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
     const sessionId = 'c123456789012345678901234';
@@ -1166,6 +1215,42 @@ describe('createCliActionDeps workflow boundary', () => {
       await expect(actions.execute('workflow.run.get', { runId }, context))
         .resolves.toMatchObject({ ok: false, errorCode: 'storage_unavailable' });
     }
+  });
+
+  it('creates a Session trigger in the mapped Machine workspace', async () => {
+    const sessionId = 'c' + '2'.repeat(24);
+    const project = { machineId: 'machine-1', directory: '/machine/repo' };
+    const baseGet = http.get.getMockImplementation()!;
+    http.get.mockImplementation(async (url: string) => {
+      if (url.includes(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: createSessionRecordFixture({
+        id: sessionId, active: false, encryptionMode: 'plain', metadata: JSON.stringify({ machineId: project.machineId,
+          path: 'relative/repo', sessionWorkspaceLocationV1: { v: 1, machineId: project.machineId,
+            agentPath: 'relative/repo', machinePath: project.directory } }),
+      }) } };
+      if (url.includes('/v3/automations?')) return { status: 200, data: { automations: [], nextCursor: null } };
+      return baseGet(url);
+    });
+    http.request.mockImplementation(async ({ data }: { data: unknown }) => {
+      const input = AutomationDefinitionCreateRequestSchema.parse(data);
+      return { status: 200, data: AutomationDefinitionDetailSchema.parse({
+        id: input.automationId, name: input.name, description: input.description ?? null, enabled: input.enabled,
+        targetType: null, existingSessionId: null, templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1,
+        workflowDefinitionId: null, scopeSessionId: sessionId, executionRecipe: input.executionRecipe,
+        assignments: input.assignments?.map(assignment => ({ ...assignment, enabled: assignment.enabled ?? true,
+          priority: assignment.priority ?? 0, updatedAt: 1 })) ?? [],
+        triggers: input.triggers.map(item => ({ ...item.trigger, id: item.triggerId, revision: 0,
+          createdAt: 1, updatedAt: 1, remainingOccurrences: 1, nextRunAt: null, triggerDefinitionEnvelope: null })),
+      }) };
+    });
+    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
+      resolveServerFeaturesSnapshot: () => enabledFeatures, sessionId: 'cli-global', mode: 'plain', ctx: null });
+    const result = await createActionExecutor({ ...deps, isActionApprovalRequired: () => false }).execute('session.trigger.add', {
+      sessionId, project, target: { kind: 'inline', definition: { version: 1, blocks: [{ kind: 'action', id: 'notify',
+        actionId: 'notifications.notify_me', input: { message: { kind: 'literal', value: 'Ready' } } }] } },
+      trigger: { kind: 'schedule', enabled: false,
+        schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: 'UTC' } },
+    }, { surface: 'cli', authority: 'present_user' });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { set: { project } } });
   });
 
   it.each(['session', 'detached', 'wrong_run', 'invalid_response', 'transport_failure', 'wrong_machine'] as const)(

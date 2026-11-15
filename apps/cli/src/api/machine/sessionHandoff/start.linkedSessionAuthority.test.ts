@@ -89,7 +89,12 @@ const enabledServerFeaturesSnapshot = {
 };
 
 describe('session handoff start — source-derived transcript-storage authority', () => {
-  it.each(['server_routed_stream', 'direct_peer'] as const)('exports supported native source state once after its single stop over %s', async (strategy) => {
+  it.each([
+    { strategy: 'server_routed_stream', sameMachine: false, sameDirectory: false },
+    { strategy: 'direct_peer', sameMachine: false, sameDirectory: false },
+    { strategy: 'direct_peer', sameMachine: true, sameDirectory: false },
+    { strategy: 'direct_peer', sameMachine: true, sameDirectory: true },
+  ] as const)('exports supported native source state once after its single stop ($strategy, sameMachine=$sameMachine, sameDirectory=$sameDirectory)', async ({ strategy, sameMachine, sameDirectory }) => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'handoff-supported-source-'));
     const runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
       runtimeOptions: { pluginIds: ['happier.agent.claude'] } });
@@ -98,6 +103,8 @@ describe('session handoff start — source-derived transcript-storage authority'
     try {
       const configDir = join(activeServerDir, 'claude');
       const projectDir = join(configDir, 'projects', 'source-project');
+      const workspaceDirectory = join(activeServerDir, 'workspace');
+      await mkdir(workspaceDirectory);
       await mkdir(projectDir, { recursive: true });
       const transcriptPath = join(projectDir, 'native-claude.jsonl');
       await writeFile(transcriptPath, '{"type":"assistant","text":"before_stop"}\n');
@@ -109,7 +116,9 @@ describe('session handoff start — source-derived transcript-storage authority'
       const rpcHandlerManager = { registerHandler: (method: string, handler: RpcHandler<unknown, unknown>) => handlers.set(method, handler) } as unknown as RpcHandlerManager;
       registerMachineSessionHandoffRpcHandlers({
         rpcHandlerManager, runtimeConfig: { activeServerDir }, runtimeDependencies: { createUuid: () => 'test' },
-        loadSessionMetadata: async () => ({ machineId: 'machine-source', path: '/source',
+        loadSessionMetadata: async () => ({ machineId: 'machine-source', path: sameMachine ? 'relative/source' : '/source',
+          ...(sameMachine ? { sessionWorkspaceLocationV1: { v: 1, machineId: 'machine-source',
+            agentPath: 'relative/source', machinePath: workspaceDirectory } } : {}),
           externalSessionV1: { v: 1, agentId: 'claude', machineId: 'machine-source', remoteSessionId: 'native-claude',
             source: { kind: 'claudeConfig', configDir, projectId: 'source-project' } } }),
         stopSessionForHandoff: stop, resolveServerFeaturesSnapshot: () => enabledServerFeaturesSnapshot,
@@ -120,10 +129,16 @@ describe('session handoff start — source-derived transcript-storage authority'
         } } : {}),
       });
       const result = await handlers.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3)!({
-        sessionId: 'session', sourceMachineId: 'machine-source', targetMachineId: 'machine-target',
+        sessionId: 'session', sourceMachineId: 'machine-source', targetMachineId: sameMachine ? 'machine-source' : 'machine-target',
+        ...(sameMachine ? { targetPath: sameDirectory ? workspaceDirectory : join(activeServerDir, 'target') } : {}),
         sessionStorageMode: 'direct', preferredTransportStrategies: [strategy, 'server_routed_stream'],
         negotiatedTransportStrategy: strategy,
       });
+      if (sameDirectory) {
+        expect(result).toMatchObject({ ok: false, errorCode: 'invalid_target_path' });
+        expect(stop).not.toHaveBeenCalled();
+        return;
+      }
       expect(result).toMatchObject({ handoffId: 'handoff_test', status: { status: 'pending' } });
       if (strategy === 'direct_peer') expect(result).toMatchObject({ handoffMetadataV2: {
         agentBundleTransferPublication: { transferId: 'session-handoff:handoff_test:provider-bundle-file' },
@@ -181,14 +196,24 @@ describe('session handoff start — source-derived transcript-storage authority'
     await sourceExportStore.load('existing');
     const initialFiles = await readdir(activeServerDir);
     const stop = vi.fn(async () => 'stopped' as const);
+    const sameMachine = errorCode === 'existing_session_state_unavailable';
+    const sourcePath = join(activeServerDir, 'source');
+    const admitExistingSessionState: NonNullable<Parameters<typeof createSessionHandoffStartActionHandler>[0]['admitExistingSessionState']> =
+      async (_machineId, _context, checkRequest) => {
+        expect(checkRequest?.targetPath).toBe(sourcePath);
+        return { ok: false, errorCode };
+      };
     const exportSessionBundle = async () => { throw new Error('Unexpected native export'); };
     try {
     const handler = createSessionHandoffStartActionHandler({
       activeServerDir, createUuid: () => 'existing',
-      loadSessionMetadata: async () => ({ path: '/source', machineId: 'machine-source' }),
+      loadSessionMetadata: async () => ({ path: sameMachine ? 'relative/source' : '/source', machineId: 'machine-source',
+        ...(sameMachine ? { sessionWorkspaceLocationV1: { v: 1, machineId: 'machine-source',
+          agentPath: 'relative/source', machinePath: sourcePath } } : {}),
+      }),
       machineTransferChannelPresent: true, directPeerTransfer: undefined,
       resolveServerFeaturesSnapshot: () => enabledServerFeaturesSnapshot,
-      ...(errorCode === 'existing_session_state_unavailable' ? { admitExistingSessionState: async () => ({ ok: false as const, errorCode }) } : {}),
+      ...(sameMachine ? { admitExistingSessionState } : {}),
       stopSessionForHandoff: stop, prepareJobStore, sourceExportStore,
       prepareStartedState: async callInput => await prepareStartedState({ activeServerDir, callInput,
         sourceExportStore, exportSessionBundle, directPeerTransfer: undefined, buildStartPendingStatus }),
@@ -197,8 +222,9 @@ describe('session handoff start — source-derived transcript-storage authority'
       sessionOperationExclusion: createExternalSessionOperationExclusion({ activeServerDir, ownerId: 'existing-admission-test' }),
       retainSessionOperationClaim: () => undefined, releaseSessionOperationClaim: async () => undefined,
     });
-    await expect(handler({ sessionId: 'session', sourceMachineId: 'machine-source', targetMachineId: 'machine-target',
-      stateTransfer: 'existing', targetPath: '/target', sessionStorageMode: 'persisted', preferredTransportStrategies: ['server_routed_stream'] })).resolves.toMatchObject({ ok: false, errorCode });
+    await expect(handler({ sessionId: 'session', sourceMachineId: 'machine-source', targetMachineId: sameMachine ? 'machine-source' : 'machine-target',
+      stateTransfer: 'existing', ...(sameMachine ? {} : { targetPath: '/target' }),
+      sessionStorageMode: 'persisted', preferredTransportStrategies: ['server_routed_stream'] })).resolves.toMatchObject({ ok: false, errorCode });
     expect(stop).not.toHaveBeenCalled();
     expect(await sourceExportStore.load('existing')).toBeNull();
     expect(await prepareJobStore.findByHandoffId('existing')).toBeNull();

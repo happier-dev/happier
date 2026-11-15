@@ -5,6 +5,7 @@ import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/s
 import type { SessionHandoffMetadataV2, SessionHandoffStartRequest, SessionHandoffStatus, TransferEndpointCandidate } from '@happier-dev/protocol';
 import { SessionHandoffStartRequestSchema } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
 import { resolveMachineTransferRoute } from '@happier-dev/transfers';
+import { resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
 
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import type { SessionHandoffPrepareTargetJobRecordInput } from '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
@@ -199,7 +200,7 @@ export function createSessionHandoffStartActionHandler(
     const negotiatedTransportStrategy = transport.strategy === 'server_relay_stream'
       ? 'server_routed_stream'
       : transport.strategy;
-    const request: SessionHandoffStartRequest = {
+    let request: SessionHandoffStartRequest = {
       ...parsed.data,
       negotiatedTransportStrategy,
     };
@@ -223,10 +224,15 @@ export function createSessionHandoffStartActionHandler(
     if (!metadata) {
       return { ok: false, errorCode: 'session_not_found' } as const;
     }
+    const sourcePath = resolveSessionWorkspaceRootForMachine({ metadata, machineId: request.sourceMachineId,
+      candidatePath: typeof metadata.path === 'string' ? metadata.path : '' }).machinePath;
+    if (sameMachine && request.stateTransfer === 'existing' && typeof request.targetPath !== 'string') {
+      request = { ...request, targetPath: sourcePath };
+    }
     if (sameMachine && request.targetDirectory?.kind !== 'managed') {
       const homeDir = resolveHomeDirFromEnvironment();
-      const targetDirectory = await resolveSessionHandoffLocalDirectory({ path: typeof request.targetPath === 'string' ? request.targetPath : request.stateTransfer === 'existing' && typeof metadata.path === 'string' ? metadata.path : '', homeDir });
-      const sourceDirectory = await resolveSessionHandoffLocalDirectory({ path: typeof metadata.path === 'string' ? metadata.path : '', homeDir });
+      const targetDirectory = await resolveSessionHandoffLocalDirectory({ path: typeof request.targetPath === 'string' ? request.targetPath : '', homeDir });
+      const sourceDirectory = await resolveSessionHandoffLocalDirectory({ path: sourcePath, homeDir });
       if (!targetDirectory || !sourceDirectory || (request.stateTransfer !== 'existing' && targetDirectory === sourceDirectory)) {
         return { ok: false, errorCode: 'invalid_target_path', error: 'Choose a different working directory for same-machine handoff' } as const;
       }

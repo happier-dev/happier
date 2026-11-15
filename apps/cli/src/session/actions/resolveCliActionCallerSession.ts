@@ -9,6 +9,7 @@ import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SessionAgentStartSelectionResponseV1Schema } from './agentStartSelectionRpc';
 import type { ExecutionRunAppliedParentSelection } from '../../agent/runtime/bridges/executionRun/runtime/openInputs';
 import type { CliSessionActionTransport } from '../transport/cliActionTransport';
+import { resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
 
 type SessionMetadataReaderInput = Parameters<typeof readSessionLegacyMetadata>[0];
 
@@ -82,7 +83,12 @@ export async function resolveCliActionCallerSession(params: Readonly<{
   if (!sessionId || (params.context.actionCaller?.kind === 'session'
     && params.context.defaultSessionId !== sessionId)) return null;
   const isBoundSession = sessionId === params.boundSessionId;
-  if (isBoundSession && params.readBoundSession) return { sessionId, ...await params.readBoundSession() };
+  if (isBoundSession && params.readBoundSession) {
+    const session = await params.readBoundSession();
+    return { sessionId, ...session, directory: session.machineId ? resolveSessionWorkspaceRootForMachine({
+      metadata: session.metadata, machineId: session.machineId, candidatePath: session.directory ?? '',
+    }).machinePath || null : session.directory };
+  }
   // A selector is not authenticated Session identity.
   if (params.context.actionCaller?.kind !== 'session' && !isBoundSession) return null;
   const transport = await params.resolveTransportForSession(sessionId, params.context.signal);
@@ -112,10 +118,13 @@ export async function resolveCliActionCallerSession(params: Readonly<{
       return parsed.data.selection;
     } catch { params.context.signal?.throwIfAborted(); return { status: 'unavailable' }; }
   };
+  const machineId = readString(transport.rawSession.machineId) ?? readString(metadata?.machineId);
+  const candidatePath = readString(metadata?.path) ?? readString(transport.rawSession.path) ?? '';
   return { sessionId, metadata, workDepth: transport.rawSession.workDepth,
     backendTarget, ...(!isBoundSession && params.context.actionCaller?.kind === 'session' ? { readAppliedChildSelection } : {}),
-    machineId: readString(transport.rawSession.machineId) ?? readString(metadata?.machineId),
-    directory: readString(metadata?.path) ?? readString(transport.rawSession.path) };
+    machineId,
+    directory: machineId ? resolveSessionWorkspaceRootForMachine({ metadata, machineId, candidatePath }).machinePath || null
+      : candidatePath || null };
 }
 
 /** The caller's workspace is resolved before signing, never from the relay host. */

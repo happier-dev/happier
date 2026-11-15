@@ -776,6 +776,29 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
     expect(layout.items).toMatchObject([{ instance: copy('one', selectedSessionId) }, { instance: copy('two', 'B'), frameStyle: 'plain', size: 'full' }]);
     expect(layout.items).toHaveLength(2);
   });
+  it('prepares a host-selected Session board publication from its mapped Machine workspace', async () => {
+    await writeFile(join(root, 'workspace', 'document.html'), '<h1>Machine workspace</h1>');
+    const sessionId = 'c000000000000000000000001';
+    const metadata = { machineId: 'local-machine', path: 'relative/workspace', sessionWorkspaceLocationV1: {
+      v: 1, machineId: 'local-machine', agentPath: 'relative/workspace', machinePath: join(root, 'workspace'),
+    } };
+    http.get.mockImplementation(async (url: string) => ({ status: 200, data:
+      url.endsWith('/v1/account/encryption/currentness')
+        ? { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }
+        : { session: createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain',
+          effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
+            capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) },
+          machineId: metadata.machineId, path: metadata.path, metadata: JSON.stringify(metadata) }) } }));
+    const host = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
+      sessionId: 'cli-global', mode: 'plain', ctx: null });
+    const prepared = await host.sessionBoardPrepareItem!({ context: { defaultSessionId: sessionId, actionCaller: { kind: 'host' } },
+      input: { sessionId, itemId: 'page', expectedItemRevision: null, destination: 'transcript', item: {
+        v: 1, title: 'Machine workspace', frame: 'card', height: { mode: 'auto', fallback: 'regular' },
+        source: { kind: 'hostedHtml', publicationSource: { path: 'document.html' } },
+      } } });
+    expect(http.get.mock.calls.some(([url]) => String(url).includes(`/v2/sessions/${sessionId}`))).toBe(true);
+    expect(prepared).toMatchObject({ item: { source: { kind: 'hostedHtml', source: { entrypoint: 'index.html' } } } });
+  });
   it('creates, updates, reads and publishes private HTML through approved Artifact Actions without byte-bearing URLs', async () => {
     await writeFile(join(root, 'workspace', 'document.html'), '<h1>Published HTML</h1>');
     let row: Record<string, unknown> = {};

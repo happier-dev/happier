@@ -35,6 +35,7 @@ import type { readActiveConnectedAccountCatalog } from '@/settings/connectedAcco
 import type { CliMachineActionCall } from './machineTransport';
 import type { CliProjectAdmission, CliAdmittedProjectRowsReader } from './projectAdmission';
 import type { ArtifactWorkspaceCaller } from '../publishArtifactFromWorkspaceFile';
+import { resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
 type ResolvedSessionTransport = Extract<Awaited<ReturnType<typeof resolveSessionTransportContext>>, Readonly<{ ok: true }>>;
 export type CliWidgetActionDeps = Pick<ActionExecutorDeps, 'widgetAccountScope' | 'widgetCatalog' | 'sessionBoardAction' | 'sessionBoardPrepareItem'> & Readonly<{
   area: ReturnType<typeof createCliWidgetAreaActionDepsV1>;
@@ -225,7 +226,8 @@ export function createCliWidgetActionDeps(
       const metadata = readTransportSessionOwnerMetadata(transport);
       if (!metadata) return null;
       const machineId = normalizeStringValue(transport.rawSession.machineId) ?? normalizeStringValue(metadata.machineId);
-      const directory = normalizeStringValue(metadata.path) ?? normalizeStringValue(transport.rawSession.path);
+      const candidatePath = normalizeStringValue(metadata.path) ?? normalizeStringValue(transport.rawSession.path) ?? '';
+      const directory = machineId ? resolveSessionWorkspaceRootForMachine({ metadata, machineId, candidatePath }).machinePath : null;
       if (!machineId || !directory || !(await requireLocalPromptActionMachine(machineId)).ok) return null;
       return { sessionId, machineId, directory };
     },
