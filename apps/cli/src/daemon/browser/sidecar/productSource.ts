@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { BrowserHttpUrlV1Schema } from '@happier-dev/protocol/browser/url';
 
 import type {
@@ -13,7 +12,7 @@ import { invalidateProcessLaunchDiscovery } from '@/processes/launchNotification
 import type { MachineResourcesPolicyReader } from '@/processes/toolIdleTimeouts';
 import { browserCommandDispatchFailure, isBrowserDaemonControlAdapterKind } from '../control/types';
 import type { BrowserExistingProfile } from '../control/types';
-import type { BrowserProfileStore } from '../profiles/store';
+import { deriveSessionBrowserProfileId, type BrowserProfileStore } from '../profiles/store';
 import { createConfiguredBrowserProfileStore } from '../profiles/configuredStore';
 import { resolveProductBrowserSidecarBinary } from './binary';
 import type {
@@ -97,8 +96,6 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
         const interactionListeners = new Set<Parameters<BrowserSidecarInteractions['subscribe']>[0]>();
         let disposal: Promise<void> | null = null;
 
-        const profileIdForSession = (sessionId: string): string =>
-            `browser_session_${createHash('sha256').update(sessionId).digest('hex')}`;
         function sessionCreatedEvent(browserSessionId: string) {
             const profileId = sessions.get(browserSessionId)?.profileId;
             const profile = profileId ? profileStore.getProfile(profileId) : null;
@@ -177,7 +174,7 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
                 }
                 return existing.promise;
             }
-            const profileId = requestedProfileId ?? profileIdForSession(sessionId);
+            const profileId = requestedProfileId ?? deriveSessionBrowserProfileId(sessionId);
             if (requestedProfileId && [...sessions.values()].some(current => current.profileId === profileId)) {
                 return unavailable('profile_policy_denied', 'This browser profile is already open in another Session.');
             }

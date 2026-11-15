@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { lstat, readFile, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -10,6 +11,10 @@ import type { BrowserStoragePartitionOwner } from '../storage/partitions';
 import { readProfileExtensions, removeProfileExtension, writeProfileExtension } from './extensions';
 
 const PROFILE_STORAGE_DIRNAME = 'profiles';
+
+export function deriveSessionBrowserProfileId(sessionId: string): string {
+  return `browser_session_${createHash('sha256').update(sessionId).digest('hex')}`;
+}
 
 export type BrowserProfileRegistration = Readonly<{
   profileId: string;
@@ -313,6 +318,18 @@ export function createBrowserProfileStore(options: BrowserProfileStoreOptions): 
     resolveProfileDirectory,
 
     async purgeForSessionDeleted(input) {
+      const defaultProfileId = deriveSessionBrowserProfileId(input.sessionId);
+      if (!profilesById.has(defaultProfileId) && (await readProfileDirectory(defaultProfileId)).exists) {
+        // Default Session storage survives daemon restart without a registration.
+        // A saved profile may use the same ID: its existing metadata owns retention.
+        await loadPersistentProfile(defaultProfileId);
+        if (!profilesById.has(defaultProfileId)) {
+          profilesById.set(defaultProfileId, buildRegisteredProfile({
+            profileId: defaultProfileId, storageMode: 'ephemeral',
+            owner: { kind: 'session', id: input.sessionId }, cleanupOnSessionClose: true,
+          }));
+        }
+      }
       const targets = [...profilesById.values()].filter(
         (profile) => (profile.storageMode === 'session'
             || (profile.storageMode === 'ephemeral' && profile.cleanupOnSessionClose))

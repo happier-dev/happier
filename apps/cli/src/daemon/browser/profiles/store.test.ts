@@ -39,6 +39,57 @@ async function createExtensionObservationFixture() {
 }
 
 describe('browser profile store disk purge', () => {
+  it('purges the inactive Session default profile after daemon recreation without touching other profiles', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-browser-restarted-profile-'));
+    const createStore = () => createBrowserProfileStore({ storageRootDirectory: root,
+      partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: root }) });
+    // Captured C15 profile identity from the daemon lifetime preceding Session deletion.
+    const sessionId = 'cmwi66y46008dmc4di0js9wi4';
+    const profileId = 'browser_session_a8245d74e927e1819089953585fde6c9a96d028a31628109095bbdc7bc75b3c3';
+    try {
+      const previous = createStore();
+      previous.register({ profileId, storageMode: 'ephemeral', owner: { kind: 'session', id: sessionId },
+        cleanupOnSessionClose: true });
+      const directory = previous.resolveProfileDirectory(profileId);
+      await mkdir(directory, { recursive: true });
+      await writeFile(join(directory, 'Cookies'), 'private browser state');
+      const retained = await previous.registerPersistentProfile({ profileId: 'personal', storageMode: 'user',
+        owner: { kind: 'user', id: 'person' } });
+      const unrelatedDirectory = previous.resolveProfileDirectory('browser_session_unrelated');
+      await mkdir(unrelatedDirectory, { recursive: true });
+
+      const restarted = createStore();
+      expect(restarted.listProfiles()).toEqual([]);
+      expect(await restarted.purgeForSessionDeleted({ sessionId })).toEqual({
+        purgedProfileIds: [profileId], failedProfileIds: [],
+      });
+      expect(await pathExists(directory)).toBe(false);
+      expect(await restarted.loadPersistentProfile('personal')).toEqual(retained);
+      expect(await pathExists(unrelatedDirectory)).toBe(true);
+      expect(await restarted.purgeForSessionDeleted({ sessionId })).toEqual({ purgedProfileIds: [], failedProfileIds: [] });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it('retains a saved profile using the default Session profile identity after daemon recreation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-browser-saved-session-identity-'));
+    const createStore = () => createBrowserProfileStore({ storageRootDirectory: root,
+      partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: root }) });
+    const sessionId = 'cmwi66y46008dmc4di0js9wi4';
+    const profileId = 'browser_session_a8245d74e927e1819089953585fde6c9a96d028a31628109095bbdc7bc75b3c3';
+    try {
+      const previous = createStore();
+      const saved = await previous.registerPersistentProfile({ profileId, storageMode: 'user',
+        owner: { kind: 'user', id: profileId } });
+      const directory = previous.resolveProfileDirectory(profileId);
+      await writeFile(join(directory, 'Cookies'), 'saved browser state');
+
+      const restarted = createStore();
+      expect(await restarted.purgeForSessionDeleted({ sessionId })).toEqual({ purgedProfileIds: [], failedProfileIds: [] });
+      expect(await restarted.loadPersistentProfile(profileId)).toEqual(saved);
+      expect(await pathExists(join(directory, 'Cookies'))).toBe(true);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
   it('discards a late upstream observation for a superseded installed version', async () => {
     const fixture = await createExtensionObservationFixture();
     const { root, profiles, profileId, extension, resumeCheck, observation, createStore } = fixture;
