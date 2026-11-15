@@ -11,9 +11,17 @@ const READ_ONLY_SHELL_PATTERNS: Array<{ kind: 'exact' | 'prefix'; value: string 
     { kind: 'prefix', value: 'ls' },
     { kind: 'prefix', value: 'cat' },
     { kind: 'prefix', value: 'git status' },
+    { kind: 'exact', value: 'git diff' },
+    { kind: 'exact', value: 'git log' },
+    { kind: 'exact', value: 'git branch --show-current' },
+    { kind: 'exact', value: 'git rev-parse --show-toplevel' },
     { kind: 'exact', value: 'git --no-pager diff --no-ext-diff --no-textconv --stat' },
     { kind: 'exact', value: 'git --no-pager diff --no-ext-diff --no-textconv --name-only' },
 ];
+
+export function isReadOnlyWorkspaceShellCommand(command: string): boolean {
+    return isShellCommandAllowed(command, READ_ONLY_SHELL_PATTERNS);
+}
 
 export function isWorkspaceWriteDeniedByRole(input: Readonly<{
     workspaceWrites?: 'allow' | 'deny';
@@ -30,7 +38,7 @@ export function isWorkspaceWriteDeniedByRole(input: Readonly<{
     const normalized = input.toolName.trim().toLowerCase();
     if (normalized === 'bash' || normalized === 'execute' || normalized === 'shell') {
         const command = extractShellCommand(input.toolInput);
-        return !command || !isShellCommandAllowed(command, READ_ONLY_SHELL_PATTERNS);
+        return !command || !isReadOnlyWorkspaceShellCommand(command);
     }
     return isSharedPermissionWriteLikeToolName(input.toolName);
 }

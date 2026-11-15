@@ -12,7 +12,7 @@ import { resolveCausalPermissionMode } from '@/agent/permissions/causalPermissio
 import type { PermissionMode } from '@/api/types';
 import { resolveProviderPermissionForHappierAction } from '@/agent/tools/happierTools/resolveHappierActionForMcpToolName';
 import { extractShellCommand } from '@happier-dev/protocol/activity/shellCommand';
-import { isWorkspaceWriteDeniedByRole } from '@/agent/permissions/workspaceWritePolicy';
+import { isReadOnlyWorkspaceShellCommand, isWorkspaceWriteDeniedByRole } from '@/agent/permissions/workspaceWritePolicy';
 import { applyAllowedToolsToAllowlist } from '@/agent/permissions/applyPermissionAllowlistUpdates';
 import { isToolAllowedForSession } from '@/agent/permissions/permissionToolIdentifier';
 import type { AgentSessionConfigurationSnapshotV1 } from '@happier-dev/protocol/runtime/agentSessionV1';
@@ -60,14 +60,6 @@ export function resolveExecutionRunInputAuthority(input: Readonly<{
     ? { ok: true, causalPermissionAuthority: parsed.data, effectiveCallerPermissionMode: resolved.effectiveMode }
     : failure;
 }
-
-const EXECUTION_RUN_EXACT_READ_ONLY_SHELL_COMMANDS = new Set([
-  'git status',
-  'git diff',
-  'git log',
-  'git branch --show-current',
-  'git rev-parse --show-toplevel',
-]);
 
 export type ExecutionRunPermissionHandler = Omit<AcpPermissionHandler, 'handleToolCall'> & Readonly<{
   handleToolCall: ProviderEnforcedPermissionHandler['handleToolCall'];
@@ -165,7 +157,7 @@ function resolveExecutionRunImmediateDecision(args: Readonly<{
       || normalizedToolName === 'execute'
     ) {
       const command = extractShellCommand(args.input);
-      if (command && EXECUTION_RUN_EXACT_READ_ONLY_SHELL_COMMANDS.has(command.trim())) {
+      if (command && isReadOnlyWorkspaceShellCommand(command)) {
         return { decision: 'approved' };
       }
     }

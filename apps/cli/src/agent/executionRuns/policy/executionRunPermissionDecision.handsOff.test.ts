@@ -3,6 +3,29 @@ import { createExecutionRunPermissionHandler, resolveExecutionRunInputAuthority 
 import { createRunScopedExecutionPermissionHandler } from './runScopedExecutionPermissionHandler';
 
 describe('execution-run hands-off permission ceiling', () => {
+  it('uses the workspace read policy for Runs while refusing the compound Morning command', async () => {
+    const admitted = resolveExecutionRunInputAuthority({ permissionMode: 'read_only' });
+    if (!admitted.ok) throw new Error(admitted.error);
+    const handler = createExecutionRunPermissionHandler({
+      permissionMode: 'read_only', backendId: 'muse', workspaceWrites: 'deny',
+    });
+    const context = { causalPermissionAuthority: admitted.causalPermissionAuthority,
+      callerPermissionMode: admitted.effectiveCallerPermissionMode };
+    for (const command of ['ls -la', 'git log', 'ls -la && cat README.md']) {
+      await expect(handler.handleToolCall(command, 'bash', { command }, context))
+        .resolves.toEqual({ decision: 'approved' });
+    }
+    for (const command of [
+      'ls -la; git log --since="1 day ago" --oneline 2>&1 | head -n 50; echo ---; git remote -v 2>&1 | head',
+      'git status > changed.txt',
+    ]) {
+      await expect(handler.handleToolCall(command, 'bash', { command }, context))
+        .resolves.toEqual({ decision: 'denied' });
+    }
+    await expect(handler.handleToolCall('read-file', 'read_file', { path: '/repo/README.md' }, context))
+      .resolves.toEqual({ decision: 'approved' });
+  });
+
   it('admits public inputs from Run policy and refuses missing private authority', () => {
     const publicInput = resolveExecutionRunInputAuthority({ permissionMode: 'read_only' });
     if (!publicInput.ok) throw new Error(publicInput.error);
