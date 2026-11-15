@@ -1376,8 +1376,41 @@ pub fn register(app: &mut App) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Main boots hidden and is revealed only by its rendered shell (`desktop_main_window_content_rendered`),
+/// and desktop Sync stays connected while the window is hidden. WebKit's default inactive policy
+/// suspends the content process of a web view that is not visible, so the hidden boot never reaches
+/// its first render and the window never appears. Keep this web view's content process scheduled.
+#[cfg(all(desktop, target_os = "macos"))]
+fn keep_main_webview_scheduled_while_hidden(window: &WebviewWindow) {
+    use objc2::{msg_send, runtime::{AnyObject, Bool}, sel};
+    let result = window.with_webview(|webview| unsafe {
+        // SAFETY: Tauri supplies its live WKWebView on the native GUI thread.
+        let view = webview.inner().cast::<AnyObject>();
+        let configuration: *mut AnyObject = msg_send![view, configuration];
+        let preferences: *mut AnyObject = msg_send![configuration, preferences];
+        // WKInactiveSchedulingPolicyNone (macOS 14+); earlier systems have no such policy.
+        let supported: Bool = msg_send![preferences, respondsToSelector: sel!(setInactiveSchedulingPolicy:)];
+        if supported.as_bool() {
+            let _: () = msg_send![preferences, setInactiveSchedulingPolicy: 2isize];
+        }
+        // A hidden page also aligns every DOM timer to one-second boundaries, so each async hop of
+        // the boot waits up to a second. WebKit exposes no public switch for it.
+        let unthrottled: Bool = msg_send![preferences, respondsToSelector: sel!(_setHiddenPageDOMTimerThrottlingEnabled:)];
+        if unthrottled.as_bool() {
+            let _: () = msg_send![preferences, _setHiddenPageDOMTimerThrottlingEnabled: Bool::NO];
+        }
+    });
+    if let Err(error) = result {
+        log::warn!("failed to keep the hidden main web view scheduled: {error}");
+    }
+}
+
+#[cfg(all(desktop, not(target_os = "macos")))]
+fn keep_main_webview_scheduled_while_hidden(_window: &WebviewWindow) {}
+
 #[cfg(desktop)]
 fn configure_main_window(app: &tauri::AppHandle, window: &WebviewWindow) {
+    keep_main_webview_scheduled_while_hidden(window);
     // New native windows have no effect yet; retain the last request across recreation.
     if let Ok(mut inner) = app.state::<DesktopGlassRuntime>().0.lock() {
         inner.windows.remove(MAIN_WINDOW_LABEL);

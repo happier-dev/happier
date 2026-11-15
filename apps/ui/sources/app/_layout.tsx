@@ -942,7 +942,7 @@ function RootShellChromeFrame(props: React.PropsWithChildren<Readonly<{
     fullChrome: boolean;
     isTerminalConnectRoute: boolean;
 }>>) {
-    const onContentLayout = useDesktopMainWindowContentReady();
+    const contentReady = useDesktopMainWindowContentReady();
     const chromeSafeArea = useChromeSafeAreaInsets();
     const isTablet = useIsTablet();
     const desktopHost = isDesktopHost();
@@ -952,7 +952,7 @@ function RootShellChromeFrame(props: React.PropsWithChildren<Readonly<{
         isTablet,
         isTerminalConnectRoute: props.isTerminalConnectRoute,
     });
-    const shell = <View onLayout={onContentLayout} style={{ flex: 1, position: 'relative' }}>
+    const shell = <View ref={contentReady.ref} onLayout={contentReady.onLayout} style={{ flex: 1, position: 'relative' }}>
         {chromeHost === 'narrow-desktop-fallback' ? <DesktopFallbackShellChrome chromeSafeArea={chromeSafeArea} /> : null}
         <View style={{ flex: 1 }}>{props.children}</View>
     </View>;
