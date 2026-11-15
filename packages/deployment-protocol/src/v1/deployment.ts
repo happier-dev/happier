@@ -201,9 +201,9 @@ export const DeploymentProviderTeardownContentV1Schema = z.extend(z.omit(Deploym
 }), { sourceIntent: z.optional(z.never()), sourceMethod: z.optional(z.never()),
     teardown: z.strictObject({ ...DeploymentTeardownContentV1Schema.shape,
         // Provider effects have no native installation/resource proof inventory.
-        machines: z.array(DeploymentTeardownContentV1Schema.shape.machines.element).check(z.maxLength(0)),
-        resources: z.array(DeploymentTeardownContentV1Schema.shape.resources.element).check(z.maxLength(0)),
-        proofs: z.array(DeploymentTeardownContentV1Schema.shape.proofs.element).check(z.maxLength(0)),
+        machines: z.array(DeploymentTeardownContentV1Schema.shape.machines._zod.def.element).check(z.maxLength(0)),
+        resources: z.array(DeploymentTeardownContentV1Schema.shape.resources._zod.def.element).check(z.maxLength(0)),
+        proofs: z.array(DeploymentTeardownContentV1Schema.shape.proofs._zod.def.element).check(z.maxLength(0)),
     }),
 });
 export type DeploymentProviderTeardownContentV1 = z.infer<typeof DeploymentProviderTeardownContentV1Schema>;
