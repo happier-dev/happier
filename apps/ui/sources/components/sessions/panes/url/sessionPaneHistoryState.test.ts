@@ -124,6 +124,38 @@ describe('sessionPaneHistoryState', () => {
         expect(consumeSessionPaneHistoryTraversalForCurrentLocation()).toBe(true);
     });
 
+    it('keeps stored pane state when popstate lands on a file link opened inside the session', async () => {
+        installSessionStorage();
+        // Every file link a Session produces is serialized with its `details=file` target.
+        const windowStub = installWindow('http://localhost:19364/session/history-file?details=file&path=src%2Fa.ts');
+
+        const { primeSessionPaneHistoryTraversalTracking } = await import('./sessionPaneHistoryState');
+        const { readStoredSessionPaneUrlState, writeStoredSessionPaneUrlState } = await import('./sessionPaneStoredState');
+
+        writeStoredSessionPaneUrlState('session:history-file', { bottomTabId: 'terminal' });
+        primeSessionPaneHistoryTraversalTracking();
+
+        windowStub.dispatchEvent({ type: 'popstate' });
+
+        expect(readStoredSessionPaneUrlState('session:history-file')).toEqual({ bottomTabId: 'terminal' });
+    });
+
+    it('treats a popstate url as pane-less when its params do not parse as pane state', async () => {
+        installSessionStorage();
+        // `path` alone is a file-link part, not a pane target: the pane URL fact reads no state here.
+        const windowStub = installWindow('http://localhost:19364/session/history-stray?path=src%2Fa.ts');
+
+        const { primeSessionPaneHistoryTraversalTracking } = await import('./sessionPaneHistoryState');
+        const { readStoredSessionPaneUrlState, writeStoredSessionPaneUrlState } = await import('./sessionPaneStoredState');
+
+        writeStoredSessionPaneUrlState('session:history-stray', { bottomTabId: 'terminal' });
+        primeSessionPaneHistoryTraversalTracking();
+
+        windowStub.dispatchEvent({ type: 'popstate' });
+
+        expect(readStoredSessionPaneUrlState('session:history-stray')).toBeNull();
+    });
+
     it('clears only the exact Home pane state for a qualified session popstate', async () => {
         installSessionStorage();
         const windowStub = installWindow('http://localhost:19364/session/same-session?serverId=server-a');

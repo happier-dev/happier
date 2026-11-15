@@ -1,4 +1,5 @@
 import { writeStoredSessionPaneUrlState } from './sessionPaneStoredState';
+import { parseSessionPaneUrlState } from './sessionPaneUrlState';
 import { createSessionPaneScopeId } from '../sessionPaneScopeId';
 
 const SESSION_PANE_HISTORY_STATE_KEY = 'happierSessionPane';
@@ -6,7 +7,6 @@ let pendingHistoryStateWriteTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingHistoryTraversalLocationKey: string | null = null;
 let historyTraversalSubscribers = 0;
 let removeHistoryTraversalListener: (() => void) | null = null;
-const SESSION_PANE_URL_PARAM_KEYS = ['right', 'bottom', 'details', 'path', 'sha'] as const;
 
 type SessionPaneHistoryState = Readonly<{
     scopeKey: string;
@@ -71,16 +71,10 @@ function readSessionScopeKeyFromCurrentLocation(): string | null {
     }
 }
 
+/** The same parser the pane URL fact reads, so "this location carries pane state" has one owner. */
 function currentLocationHasExplicitPaneParams(): boolean {
     const url = readCurrentUrl();
-    if (!url) {
-        return false;
-    }
-
-    return SESSION_PANE_URL_PARAM_KEYS.some((key) => {
-        const value = url.searchParams.get(key);
-        return typeof value === 'string' && value.length > 0;
-    });
+    return url !== null && parseSessionPaneUrlState(Object.fromEntries(url.searchParams)) !== null;
 }
 
 function readHistoryStateRecord(): Record<string, unknown> | null {
