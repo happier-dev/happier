@@ -65,6 +65,21 @@ function formatResetAt(error: unknown): string {
 }
 
 /**
+ * A refused or unavailable sign-in's typed cause: its message, then its remediation when it carries one.
+ * The authentication owner redacts these structured probe messages; transport Error.message stays outside
+ * this display contract, and a message that only repeats its code stays in Details.
+ */
+function readAuthenticationCauseMessage(errorLike: ErrorLike): string | null {
+    if (errorLike.status !== 'rejected' && errorLike.status !== 'unavailable') return null;
+    const diagnostic = errorLike.diagnostic;
+    if (diagnostic === null || typeof diagnostic !== 'object' || !('message' in diagnostic) || typeof diagnostic.message !== 'string') return null;
+    const message = diagnostic.message.trim();
+    if (!message || 'code' in diagnostic && message === diagnostic.code) return null;
+    const remediation = 'remediation' in diagnostic && typeof diagnostic.remediation === 'string' ? diagnostic.remediation.trim() : '';
+    return remediation ? `${message} ${remediation}` : message;
+}
+
+/**
  * What the failing step was doing. `load`: reading a sign-in (its description, its form, a waiting
  * attempt) — nothing was changed, so an unexplained failure there says the sign-in couldn't load.
  */
@@ -77,6 +92,9 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
     const unexplained = context?.phase === 'load'
         ? t('connectedServices.errors.signInLoadFailed', { service: context.serviceName })
         : t('connectedServices.errors.generic');
+    // The typed cause names what actually failed, so it wins over any generic copy for the code.
+    const cause = readAuthenticationCauseMessage(errorLike);
+    if (cause) return cause;
 
     switch (code) {
         case 'connected_account_machine_required':
@@ -376,13 +394,6 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
             if (catalogHttpStatus) return t('connectedServices.errors.requestFailedWithStatus', { status: Number(catalogHttpStatus) });
             if (errorLike.status === 'reconnectRequired') return t('connectedServices.errors.accountAuthenticationRestartRequired');
             if (errorLike.status === 'outcomeUnknown') return t('connectedServices.errors.accountStateUncertain');
-            // The authentication owner redacts these structured probe messages.
-            // Transport Error.message remains outside this display contract.
-            if ((errorLike.status === 'rejected' || errorLike.status === 'unavailable')
-                && errorLike.diagnostic !== null && typeof errorLike.diagnostic === 'object'
-                && 'message' in errorLike.diagnostic && typeof errorLike.diagnostic.message === 'string'
-                && (!('code' in errorLike.diagnostic) || errorLike.diagnostic.message.trim() !== errorLike.diagnostic.code)
-                && errorLike.diagnostic.message.trim()) return errorLike.diagnostic.message;
             if (errorLike.status === 'rejected') return t('connectedServices.errors.accountAuthenticationRejected');
             if (errorLike.status === 'unavailable') {
                 return code === null && readConnectedServiceSettingsErrorDetailsCode(error) !== null

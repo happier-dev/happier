@@ -339,6 +339,9 @@ const ConnectedAccountServiceController = React.memo(
     const [pendingIntent, setPendingIntent] = React.useState<PendingIntent | null>(null);
     // The settings step of this add/reconnect flow was saved, so signing in is its second step.
     const [settingsStepSaved, setSettingsStepSaved] = React.useState(false);
+    // The person submitted one settings-and-key draft: it stays on screen with their values through
+    // its save, its sign-in and a failure, so a retry never asks them to type it again.
+    const [combinedDraftSubmitted, setCombinedDraftSubmitted] = React.useState(false);
     const [activeModeId, setActiveModeId] = React.useState<string | null>(controllerProps.panel?.modeId ?? null);
     const declaredAuthentication = service ? getConnectedAccountAuthentication(service, connectedServicesRegistry) : null;
     const selectedSetupMode = resolveConnectedAccountSetupMode(declaredAuthentication?.modes ?? [], activeModeId);
@@ -1124,8 +1127,9 @@ const ConnectedAccountServiceController = React.memo(
         if (!isControllerCurrent() || retryingDescription || !('scope' in accountLifetime)) return;
         setRetryingDescription(true);
         try {
-            // A known rejection is finished. Retry starts the same intent with a fresh form;
-            // uncertain transport outcomes still recover the exact existing attempt below.
+            // A known rejection is finished. Retry starts the same intent again (a submitted
+            // settings-and-key draft is queued and continues it); uncertain transport outcomes
+            // still recover the exact existing attempt below.
             if (pendingIntent && attempt && (isTerminalAttempt(attempt) || attempt.status === 'reconnectRequired')) {
                 if ('attemptId' in attempt && attempt.attemptId) cancelDiscardedAttempt(attempt.attemptId);
                 const refreshed = await refreshDescription();
@@ -1637,8 +1641,13 @@ const ConnectedAccountServiceController = React.memo(
         ...presentSetup(activeMode.setup),
         ...(activeMode.callbackUrl ? { copyValue: { label: t('connectedServicesSettings.keyRedirectUrl'), value: activeMode.callbackUrl } } : {}),
     } : undefined;
-    const combinesManualConfiguration = activeMode?.kind === 'manual' && activeMode.configuration !== undefined
-        && (panelIntent?.kind === 'add' || pendingIntent !== null || configurationContinuationAttemptId !== null);
+    const combinedFlowActive = panelIntent?.kind === 'add' || pendingIntent !== null || configurationContinuationAttemptId !== null;
+    const combinesManualConfiguration = activeMode?.kind === 'manual' && activeMode.configuration !== undefined && combinedFlowActive;
+    // A submitted draft belongs to its flow; the next flow starts from the saved settings again.
+    if (combinedDraftSubmitted && !combinedFlowActive) setCombinedDraftSubmitted(false);
+    const holdsCombinedDraft = combinesManualConfiguration && combinedDraftSubmitted;
+    // A known rejection ends its attempt; submitting again starts the same intent over (`retryDescription`).
+    const restartsFailedAttempt = pendingIntent !== null && attempt !== null && isTerminalAttempt(attempt);
     // Settings then sign-in is one flow of two steps; a sign-in with no settings step carries no cue.
     const setupStep: ConnectedAccountSetupStep | null = combinesManualConfiguration ? null
         : configuration && activeMode?.configuration && (pendingIntent || configurationContinuationAttemptId)
@@ -1653,11 +1662,34 @@ const ConnectedAccountServiceController = React.memo(
         diagnostic: attempt && 'code' in attempt && attempt.code === errorCode && 'diagnostic' in attempt
             ? attempt.diagnostic : undefined,
     } : null;
+    /** One failure line with its one next step, through the shared state owner; no step when the form beside it is the fix. */
+    const renderSetupError = (retry: (() => void) | null) => errorCode ? (
+        <SurfaceStateCard
+            testID="connected-account:error"
+            size="line"
+            kind="error"
+            // ONE owner turns a daemon error code into copy, so this
+            // screen never re-decides which failures are explainable.
+            title={resolveConnectedServiceSettingsErrorMessage(setupError, errorPhase === 'load' ? { phase: 'load', serviceName: title } : undefined)}
+            action={retry ? {
+                label: resolveConnectedServiceSettingsErrorRecovery(setupError) === 'edit' ? t('common.edit') : t('common.retry'),
+                testID: 'connected-account:error:retry',
+                busy: retryingDescription,
+                disabled: busy || retryingDescription,
+                onPress: retry,
+            } : undefined}
+            // One row: Details sits beside Retry on the trailing edge; it opens the typed code and the
+            // request identity, never provider prose. A new failure starts it closed.
+            key={`${errorDetailsCode ?? errorCode}:${errorRequestId ?? attemptId ?? ''}`}
+            diagnosticCode={errorDetailsCode ?? errorCode}
+            diagnosticDetail={errorRequestId ?? attemptId}
+        />
+    ) : null;
     const renderFlow = (embedded: boolean) => (
         <>
             {setupStep && activeMode ? <ConnectedAccountSetupStepCue step={setupStep} signInLabel={resolveConnectedAccountModeTitle(activeMode, localizeServiceText)} /> : null}
             {!setupCompleted && (attempt?.status === 'awaitingManual' || accountDirectMode
-                || combinesManualConfiguration && configuration !== null
+                || combinesManualConfiguration && (configuration !== null || combinedDraftSubmitted)
                 || panelIntent?.kind === 'add' && !attempt) && activeMode?.kind === 'manual' ? (
                 <ConnectedAccountManualForm
                     embedded={embedded}
@@ -1668,7 +1700,7 @@ const ConnectedAccountServiceController = React.memo(
                     fields={activeMode.fields}
                     accountLifetime={(!accountDirectMode || panelIntent?.kind === 'add') && 'scope' in accountLifetime ? accountLifetime : undefined}
                     configuration={combinesManualConfiguration && activeMode.configuration
-                        && (!attempt || configuration) ? {
+                        && (!attempt || configuration || combinedDraftSubmitted) ? {
                             fields: activeMode.configuration.fields,
                             values: configuration?.configuration.values ?? {},
                             configuredSecretFieldIds: configuration?.configuration.configuredSecretFieldIds ?? [],
@@ -1676,12 +1708,16 @@ const ConnectedAccountServiceController = React.memo(
                             accountLifetime: 'scope' in accountLifetime ? accountLifetime : undefined,
                         } : undefined}
                     guided={manualGuide}
-                    submitting={busy}
+                    submitting={busy || retryingDescription}
                     navigation={navigation}
                     onCancel={panelCancel}
+                    // The failure sits with the draft it refused; its Retry submits the values on screen.
+                    renderFailure={holdsCombinedDraft && errorCode ? resubmit => renderSetupError(
+                        resolveConnectedServiceSettingsErrorRecovery(setupError) === 'retry' ? resubmit : null) : undefined}
                     onSubmit={async ({ fields, selectedSecrets, displayName, configuration: configurationDraft }) => {
                         if (accountDirectMode) return saveAccountCredential({ fields, ...(selectedSecrets ? { selectedSecrets } : {}), ...(displayName ? { displayName } : {}) });
-                        if (!attempt || configuration) {
+                        if (!attempt || configuration || restartsFailedAttempt) {
+                            if (configurationDraft) setCombinedDraftSubmitted(true);
                             submittedManualDraftRef.current = { fields, displayName, selectedTarget: targetSelection.selectedTarget,
                                 ...(selectedSecrets ? { selectedSecrets } : {}),
                                 ...(configurationDraft && !configuration ? { configuration: configurationDraft } : {}),
@@ -1690,6 +1726,11 @@ const ConnectedAccountServiceController = React.memo(
                             if (configuration && configurationDraft) {
                                 await saveConfiguration(configurationDraft);
                                 // The queued credential still belongs to this mounted form.
+                                return false;
+                            }
+                            if (restartsFailedAttempt) {
+                                // The queued draft continues the restarted intent, settings first.
+                                await retryDescription();
                                 return false;
                             }
                             if (panelIntent?.kind === 'add' && !pendingIntent && !errorCode) {
@@ -1806,29 +1847,9 @@ const ConnectedAccountServiceController = React.memo(
                 </ConnectedAccountFormSection>
             )) : null}
 
-            {errorCode ? (
-                // One failure line with its one next step, through the shared state owner.
+            {errorCode && !holdsCombinedDraft ? (
                 <ConnectedAccountFormSection embedded={embedded}>
-                    <SurfaceStateCard
-                        testID="connected-account:error"
-                        size="line"
-                        kind="error"
-                        // ONE owner turns a daemon error code into copy, so this
-                        // screen never re-decides which failures are explainable.
-                        title={resolveConnectedServiceSettingsErrorMessage(setupError, errorPhase === 'load' ? { phase: 'load', serviceName: title } : undefined)}
-                        action={{
-                            label: resolveConnectedServiceSettingsErrorRecovery(setupError) === 'edit' ? t('common.edit') : t('common.retry'),
-                            testID: 'connected-account:error:retry',
-                            busy: retryingDescription,
-                            disabled: busy || retryingDescription,
-                            onPress: () => { if (accountDirectMode) setErrorCode(null); else void retryDescription(); },
-                        }}
-                        // One row: Details sits beside Retry on the trailing edge; it opens the typed code and the
-                        // request identity, never provider prose. A new failure starts it closed.
-                        key={`${errorDetailsCode ?? errorCode}:${errorRequestId ?? attemptId ?? ''}`}
-                        diagnosticCode={errorDetailsCode ?? errorCode}
-                        diagnosticDetail={errorRequestId ?? attemptId}
-                    />
+                    {renderSetupError(() => { if (accountDirectMode) setErrorCode(null); else void retryDescription(); })}
                 </ConnectedAccountFormSection>
             ) : null}
 

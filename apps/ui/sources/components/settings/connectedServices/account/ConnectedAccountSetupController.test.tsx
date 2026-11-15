@@ -1453,6 +1453,80 @@ describe('ConnectedAccountSetupController real ownership', () => {
         } finally { await screen?.unmount(); captured.dispose(); }
     });
 
+    it('keeps a failed combined draft on screen and Retry resubmits the same settings and key', async () => {
+        const manualMode = { ...authentication.modes[0]!, setup: { url: 'https://provider.example/keys', checklist: ['Create a key'] },
+            configuration: configuredMode.configuration };
+        installDescription({ ...described, descriptor: { ...described.descriptor, authentication: { ...authentication, modes: [manualMode] } } });
+        waiveConfigurationConfirmation();
+        const previousControl = handleControl;
+        let attemptNumber = 0;
+        const targetFor = () => ({ ...configurationTarget, attemptId: `attempt-${attemptNumber}`, modeId: manualMode.id });
+        handleControl = command => command.operation === 'readConfiguration'
+            ? { ...configurationReply, mode: manualMode, target: targetFor(),
+                configuration: { ...configurationReply.configuration, values: {} } }
+            : command.operation === 'replaceConfiguration' ? { ...configurationReply, mode: manualMode, target: targetFor(), status: 'configurationCommitted',
+                configuration: { ...configurationReply.configuration, status: 'ready', revision: `config-${attemptNumber}-saved` } }
+                : previousControl(command);
+        const [{ captureLazyActionAccountContext }, { createNativeAttemptAddressBoundary, answerAttemptTransaction }] = await Promise.all([
+            import('@/sync/ops/actions/actionAccountContext'),
+            import('@/dev/testkit/fixtures/connectedAccountAuthentication'),
+        ]);
+        const captured = await captureLazyActionAccountContext(account.home.id);
+        const address = await createNativeAttemptAddressBoundary(captured, selection.selectedTarget!.machineId);
+        const transactions: Parameters<typeof answerAttemptTransaction>[2] = new Map();
+        const previousHttp = handleHttp;
+        handleHttp = async (input, init) => {
+            const transaction = await answerAttemptTransaction(new URL(String(input)), init, transactions);
+            return transaction ?? previousHttp(input, init);
+        };
+        const nativeAuthentication = handleAuthentication;
+        const attemptCreatedAtMs = Date.now();
+        handleAuthentication = async command => {
+            const response = ConnectedAccountAttemptResponseSchema.parse(command.operation === 'beginConnect'
+                ? { status: 'configurationRequired', attemptId: `attempt-${++attemptNumber}`, target: targetFor(), missingFieldIds: [] }
+                : command.operation === 'continueConnect' ? { status: 'awaitingManual', attemptId: `attempt-${attemptNumber}` }
+                    : command.operation === 'submitManual' ? attemptNumber === 1
+                        // The provider could not verify the key this time: nothing was saved.
+                        ? { status: 'unavailable', attemptId: 'attempt-1', code: 'connected_account_service_unavailable' }
+                        : { status: 'connected', attemptId: `attempt-${attemptNumber}`, account: { service, accountId: 'new-account' } }
+                        : await nativeAuthentication(command));
+            if ((command.operation === 'beginConnect' || command.operation === 'continueConnect')
+                && (response.status === 'awaitingManual' || response.status === 'configurationRequired') && response.attemptId) {
+                await address.acknowledge({ attemptId: response.attemptId, kind: 'manual', phase: response.status,
+                    createdAtMs: attemptCreatedAtMs, intent: 'connect', service, modeId: manualMode.id });
+            } else if ('attemptId' in response && response.attemptId && response.status !== 'awaitingManual' && response.status !== 'configurationRequired') {
+                await address.clear(response.attemptId);
+            }
+            return response;
+        };
+        const screen = await renderScreen(element(selection));
+        try {
+            await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-manual:token'), screen.getTextContent()).not.toBeNull());
+            await act(async () => screen.findHostByTestId('connected-account-manual:token')!.props.onChangeText('secret-token'));
+            await act(async () => screen.changeTextByTestId('connected-account-manual:name', 'Build server'));
+            await act(async () => screen.changeTextByTestId('connected-account-configuration:endpoint', 'https://new.example'));
+            await screen.pressByTestIdAsync('connected-account-manual:submit');
+            await vi.waitFor(() => expect(screen.findHostByTestId('connected-account:error:retry'), screen.getTextContent()).not.toBeNull());
+            // The failure sits with the person's draft: every value they typed is still there to fix or retry.
+            expect(screen.findHostByTestId('connected-account-manual:token')?.props.value, screen.getTextContent()).toBe('secret-token');
+            expect(screen.findHostByTestId('connected-account-manual:name')?.props.value).toBe('Build server');
+            expect(screen.findHostByTestId('connected-account-configuration:endpoint')?.props.value).toBe('https://new.example');
+
+            await screen.pressByTestIdAsync('connected-account:error:retry');
+            await vi.waitFor(() => expect(onConnected, JSON.stringify({
+                rendered: screen.getTextContent(), authentication: authenticationCommands.map(command => command.operation),
+            })).toHaveBeenCalledWith({ service, accountId: 'new-account' }));
+            expect(controlCommands.filter(command => command.operation === 'replaceConfiguration')).toEqual([
+                expect.objectContaining({ values: { endpoint: 'https://new.example' } }),
+                expect.objectContaining({ values: { endpoint: 'https://new.example' } }),
+            ]);
+            expect(authenticationCommands.filter(command => command.operation === 'submitManual')).toEqual([
+                { operation: 'submitManual', attemptId: 'attempt-1', fields: { token: 'secret-token' } },
+                { operation: 'submitManual', attemptId: 'attempt-2', fields: { token: 'secret-token' } },
+            ]);
+        } finally { await screen.unmount(); captured.dispose(); }
+    });
+
     it.each(['oauth', 'device'] as const)('retires the acknowledged %s form before notifying the setup host', async kind => {
         const callbackUrl = 'http://127.0.0.1:4000/auth/callback';
         installDescription({ ...described, descriptor: { ...described.descriptor,

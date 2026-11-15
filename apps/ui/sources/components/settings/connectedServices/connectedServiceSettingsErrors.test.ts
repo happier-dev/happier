@@ -147,6 +147,18 @@ describe('connected-service settings errors', () => {
       diagnostic: { code, severity: 'error', message } })).toBe(message);
   });
 
+  it.each([
+    { status: 'unavailable', code: 'connected_account_service_unavailable' },
+    { status: 'unavailable', code: 'connected_account_authentication_unavailable' },
+    { status: 'rejected', code: 'connected_account_authentication_rejected' },
+  ])('names the typed cause over the generic $code copy, with its remediation', ({ status, code }) => {
+    const message = 'Cloudflare could not verify this connection. No token was saved.';
+    expect(resolveConnectedServiceSettingsErrorMessage({ status, code,
+      diagnostic: { code: 'cloudflare_verification_unavailable', severity: 'error', message } })).toBe(message);
+    expect(resolveConnectedServiceSettingsErrorMessage({ status, code, diagnostic: { code: 'cloudflare_verification_unavailable',
+      severity: 'error', message, remediation: 'Try again in a minute.' } })).toBe(`${message} Try again in a minute.`);
+  });
+
   it('preserves typed rejection when no probe message is available without exposing untyped errors', () => {
     expect(resolveConnectedServiceSettingsErrorMessage({ status: 'rejected', code: 'another_leaf_rejection' }))
       .toBe(t('connectedServices.errors.accountAuthenticationRejected'));

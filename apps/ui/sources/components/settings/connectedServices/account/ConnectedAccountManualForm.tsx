@@ -86,6 +86,8 @@ type ConnectedAccountManualFormProps = Readonly<{
     navigation?: unknown;
     /** In a setup panel: a compact footer with Cancel (local) beside Continue. */
     onCancel?: () => void;
+    /** Why the last submission failed, shown above the submit button; `resubmit` sends the values on screen again. */
+    renderFailure?: (resubmit: () => void) => React.ReactNode;
     onSubmit(input: Readonly<{
         fields: Readonly<Record<string, string>>;
         selectedSecrets?: Readonly<Record<string, SharedSavedSecretReferenceSelectionV1>>;
@@ -396,6 +398,7 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
                 </ConnectedAccountAdvancedFields>
             ) : null}
             {guided?.billingNote ? <Text style={[styles.note, styles.billing]}>{guided.billingNote}</Text> : null}
+            {props.renderFailure ? <SectionContentRow showDivider={false}>{props.renderFailure(() => void submit())}</SectionContentRow> : null}
             {props.onCancel ? (
                 <SectionContentRow showDivider={false}><View style={styles.panelActions}>
                     <ConnectedServiceSetupFlowActions
