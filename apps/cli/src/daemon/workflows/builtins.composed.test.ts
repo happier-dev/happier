@@ -404,6 +404,15 @@ function harness(fixtures: Fixtures = {}) {
 }
 
 describe('built-ins through accepted materialization and native leaf adapters', () => {
+  it.each(['bug', 'question', 'request'] as const)('preserves the original issue in the %s response after classification', async kind => {
+    const issue = 'Write exactly FIXED_224 to the scoped issue file; preserve this instruction verbatim.';
+    const h = harness({ agentResult: { kind, summary: 'A deliberately lossy summary' } });
+    const definition = getWorkflowStarterExamplesV1().find(example => example.key === 'triage-an-issue')!.definition;
+    await h.run(definition, { issue }, false);
+    const response = h.store.list().find(row => row.blockId === (kind === 'bug' ? 'fix' : 'reply'));
+    expect(response?.input?.input).toContain(issue);
+    expect(response?.input?.input).toContainEqual({ kind, summary: 'A deliberately lossy summary' });
+  });
   const participants = ['one', 'two'].map(sessionId => ({ kind: 'session' as const, session: { serverId: 'home', sessionId } }));
   it('executes every captured role participant and preserves exact nested answer dependencies after a roster edit', async () => {
     const discussion = { serverId: 'home', discussionId: 'discussion' };
