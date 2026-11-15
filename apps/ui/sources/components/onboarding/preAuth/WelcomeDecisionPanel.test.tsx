@@ -520,7 +520,7 @@ describe('WelcomeDecisionPanel', () => {
 
     it('connects to a Home directly through the welcome step on every width, not the Home chooser', async () => {
         // No Home yet, with a sign-in service the person chose: the action is "Connect to a Home directly" (owner 11-13: one flow).
-        const { callbacks, screenPromise } = renderPanel({ homeTarget: null, requestedHomeTarget: null, homeLabel: null, serverUrlForCopy: '' },
+        const { callbacks, screenPromise } = renderPanel({ homeTarget: undefined, requestedHomeTarget: undefined, homeLabel: undefined, serverUrlForCopy: '' },
             chosenAccountServiceEntry(readyAccountServiceEntry(['github'])));
         const screen = await screenPromise;
         expect(screen.findByTestId('welcome-use-different-home-title')?.props.children).toBe('Connect to a Home directly');
