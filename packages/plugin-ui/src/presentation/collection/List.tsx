@@ -50,6 +50,7 @@ import {
   HappierListRowOpenContext,
   HappierListRowPrecedesSelectedContext,
   HappierCardSelectionRingContext,
+  HappierCardFillsCellContext,
   HappierCardActionsCornerContext,
   resolveHappierCollectionListRowPadding,
   useHappierCollectionListRow,
@@ -149,6 +150,9 @@ export const HAPPIER_ROW_CONTENT_POINTER_EVENTS = Platform.OS === 'web' ? 'none'
 /** A layered row's control: its own press target over the row's. */
 export const HAPPIER_ROW_CONTROL_POINTER_EVENTS = 'auto';
 const ROW_LAYER_STYLE: ViewStyle = { width: '100%', minWidth: 0 };
+/** A web grid card's layers take its stretched cell's height: in flow, and across a row's cross axis. */
+const CELL_FILL_STYLE: ViewStyle = { height: '100%' };
+const CELL_FILL_CROSS_STYLE: ViewStyle = { alignSelf: 'stretch' };
 const ROW_LAYER_TARGET_STYLE: HappierPortableStyle = { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, minHeight: 0 };
 
 export type HappierListItemProps = Readonly<{
@@ -725,6 +729,7 @@ export function HappierListItem({
   const openRow = useContext(HappierListRowOpenContext);
   const precedesSelected = useContext(HappierListRowPrecedesSelectedContext);
   const cardRing = useContext(HappierCardSelectionRingContext);
+  const cardFillsCell = useContext(HappierCardFillsCellContext);
   const cardCorner = useContext(HappierCardActionsCornerContext);
   const [cardActionsShown, setCardActionsShown] = useState({ hovered: false, focused: false });
   const reducedMotion = useOptionalHappierUiAccessibility()?.reducedMotion === true;
@@ -894,9 +899,9 @@ export function HappierListItem({
       />
     ) : null;
     if (!hasSemanticContent) return (
-      <View style={{ flexDirection: 'row', alignItems: 'center', minWidth: 0 }}>
+      <View style={[{ flexDirection: 'row', alignItems: 'center', minWidth: 0 }, fillCell ? CELL_FILL_STYLE : null]}>
         {/* This slot stays mounted when pending changes; custom row state belongs to its author. */}
-        <View style={{ flex: 1, minWidth: 0 }}>{customContent}</View>
+        <View style={[{ flex: 1, minWidth: 0 }, fillCell ? CELL_FILL_CROSS_STYLE : null]}>{customContent}</View>
         {busyIndicator}
       </View>
     );
@@ -1107,6 +1112,7 @@ export function HappierListItem({
     && behavior.accessoryPlacement === 'outside' && !overlayRowActions && precisePointer;
   const rowActionsRevealed = cardActionsShown.focused || selected === true || openRow || accessoryHeld === true;
   const layered = contentBesidePressable === true && isInteractive && resolvedTheme !== undefined && resolvedTheme !== null;
+  const fillCell = cardFillsCell && Platform.OS === 'web';
   const withRowLayer = (style: HappierPortableStyle): HappierPortableStyle => layered ? { ...style, ...ROW_LAYER_TARGET_STYLE } : style;
   const pressTarget = isInteractive && resolvedTheme ? (
     <HappierPressable
@@ -1192,9 +1198,9 @@ export function HappierListItem({
   ) : renderSemanticContent(busy === true, includeAccessory);
   // The press target fills the row under its content; the content lies over it and lets presses through.
   const row = layered ? (
-    <View style={ROW_LAYER_STYLE}>
+    <View style={fillCell ? [ROW_LAYER_STYLE, CELL_FILL_STYLE] : ROW_LAYER_STYLE}>
       {pressTarget}
-      <View pointerEvents={HAPPIER_ROW_CONTENT_POINTER_EVENTS} style={{ minHeight: rowHeight, borderWidth: 1, borderColor: 'transparent' }}>
+      <View pointerEvents={HAPPIER_ROW_CONTENT_POINTER_EVENTS} style={[{ minHeight: rowHeight, borderWidth: 1, borderColor: 'transparent' }, fillCell ? CELL_FILL_STYLE : null]}>
         {renderSemanticContent(busy === true, includeAccessory)}
       </View>
     </View>
@@ -1220,7 +1226,7 @@ export function HappierListItem({
     <ListGridRow
       primaryStyle={cardCornerAccessory !== null ? { flex: 1, minWidth: 0, alignSelf: 'stretch' }
         : outsideAccessory && stackPageAccessory ? { width: '100%', minWidth: 0 }
-        : { flex: 1, minWidth: outsideAccessory && accessoryWraps ? '50%' : 0 }}
+        : { flex: 1, minWidth: outsideAccessory && accessoryWraps ? '50%' : 0, ...(fillCell ? { alignSelf: 'stretch' as const } : {}) }}
       accessory={cardCornerAccessory !== null ? (
         // @ts-expect-error React Native's role union omits RNW's standard gridcell role.
         <View role="gridcell" style={[{

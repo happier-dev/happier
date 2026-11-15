@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, type ReactElement, type ReactNode } from 'react';
-import { ScrollView, View } from 'react-native';
+import { Platform, ScrollView, View } from 'react-native';
 import { HappierChevron } from '../presentation/collection/DisclosureChevron.js';
 import { useOptionalPluginUiPresentationHost } from '../presentationHost/context.js';
 
@@ -13,7 +13,7 @@ import {
 import type { HappierTypeRole } from '../environment/types.js';
 import type { HappierCollectionKey, HappierCollectionSection } from '../presentation/collection/collectionModel.js';
 import { resolveHappierCollectionGridRows } from '../presentation/collection/collectionModel.js';
-import { HappierCardActionsCornerContext, HappierCardSelectionRingContext } from '../presentation/collection/CollectionList.js';
+import { HappierCardActionsCornerContext, HappierCardFillsCellContext, HappierCardSelectionRingContext } from '../presentation/collection/CollectionList.js';
 import { resolveHappierCollectionGridGeometry } from '../presentation/collection/collectionTable.js';
 import { useHappierCollectionViewport, type HappierCollectionModel, type HappierCollectionViewport } from '../presentation/collection/useCollection.js';
 import { HappierSkeletonBlock } from '../presentation/feedback/Skeleton.js';
@@ -190,7 +190,9 @@ function BoardCard<Item>(props: Readonly<{ item: Item; anatomy: CollectionAnatom
   /** The grid track's height for this card's edge, so a row's cards share one edge and one facts baseline. */
   minHeight?: number;
   /** A grid card's preview band height: the frame's edge wraps the band, and its header starts below it. */
-  previewInset?: number }>): ReactElement {
+  previewInset?: number;
+  /** A grid card's frame takes its cell's height where the grid row stretches (web). */
+  fillsCell?: boolean }>): ReactElement {
   const { item, anatomy } = props;
   const card = useCardLayout();
   const { palette } = useCardColors();
@@ -231,7 +233,7 @@ function BoardCard<Item>(props: Readonly<{ item: Item; anatomy: CollectionAnatom
   const titleSuffix = anatomy.byline === undefined ? anatomy.titleSuffix : undefined;
   return <HappierWidgetFrame frameStyle="card" placement="board" anatomy={previewCard ? 'previewItem' : 'item'} testID={testID === undefined ? undefined : `${testID}:chrome`}
     cardStyle={[boardCardStyle, { backgroundColor: palette.sheet, borderColor: palette.sheetBorder }, props.minHeight === undefined ? null : { minHeight: props.minHeight },
-      props.previewInset ? { paddingTop: props.previewInset } : null]}
+      props.previewInset ? { paddingTop: props.previewInset } : null, props.fillsCell && Platform.OS === 'web' ? CELL_FILL_STYLE : null]}
     mark={board ? undefined : anatomy.glyph(item)} title={titleSuffix || anatomy.titleMeta ? <View pointerEvents="none" style={[card.lineStyle, { flexWrap: 'wrap' }]}>
       {boardMark}
       <HappierText variant="heading" tone="neutral">{anatomy.title(item)}</HappierText>
@@ -711,7 +713,7 @@ function GridCardView<Item>(props: Readonly<{
       // takes the whole grid's height under React Native's Yoga errata, and every card stretched to it on iOS.
       testID={testID} style={GRID_CARD_ITEM_STYLE}
     >
-      <BoardCard item={item} anatomy={anatomy} selected={false} reserveActions={hasRowActions} previewInset={geometry.previewHeight}
+      <BoardCard item={item} anatomy={anatomy} selected={false} reserveActions={hasRowActions} previewInset={geometry.previewHeight} fillsCell
         minHeight={geometry.fitContent ? undefined : geometry.cardHeight - CARD.rowLayerEdge} />
     </List.Item>
   );
@@ -731,9 +733,11 @@ function GridCardView<Item>(props: Readonly<{
         rowIndex: props.rowIndex, rowCount: props.count,
       }}>
         <HappierCardSelectionRingContext.Provider value>
-          <HappierCardActionsCornerContext.Provider value={actionsCorner}>
-            {renderCollectionItemDestination(host, anatomy, item, row)}
-          </HappierCardActionsCornerContext.Provider>
+          <HappierCardFillsCellContext.Provider value>
+            <HappierCardActionsCornerContext.Provider value={actionsCorner}>
+              {renderCollectionItemDestination(host, anatomy, item, row)}
+            </HappierCardActionsCornerContext.Provider>
+          </HappierCardFillsCellContext.Provider>
         </HappierCardSelectionRingContext.Provider>
       </ListItemSelectionContext.Provider>
       {geometry.previewHeight === 0 ? null : (
@@ -967,7 +971,9 @@ function CollectionGrid<Item>(props: CollectionCardsProps<Item>): ReactElement {
  */
 function GridRow(props: Readonly<{ paged: boolean; snapInterval: number; testID?: string; children?: ReactNode }>): ReactElement {
   if (!props.paged) {
-    return <View style={[gridRowStyle, { flexWrap: 'wrap' }]} {...(props.testID === undefined ? {} : { testID: props.testID })}>{props.children}</View>;
+    // On the web each wrapped line stretches its cards to the tallest (lab nav-N3, QA-DESIGN-R2 G1). Native keeps
+    // `flex-start`: Yoga's wrapped-row erratum stretches a growing child to the whole grid's height.
+    return <View style={[gridRowStyle, GRID_ROW_WRAP_STYLE]} {...(props.testID === undefined ? {} : { testID: props.testID })}>{props.children}</View>;
   }
   return (
     <ScrollView horizontal pagingEnabled snapToInterval={props.snapInterval} snapToAlignment="start"
@@ -1074,7 +1080,10 @@ const pagedRowStyle: HappierPortableStyle = { marginRight: -GUTTER, flexGrow: 0 
 const pagedRowContentStyle: HappierPortableStyle = { paddingRight: GUTTER };
 const pagedSkeletonRowStyle: HappierPortableStyle = { overflow: 'hidden', marginRight: -GUTTER };
 const gridCardStyle: HappierPortableStyle = { borderRadius: RADIUS };
-const GRID_CARD_ITEM_STYLE = { padding: 0, borderRadius: RADIUS - 1 } as const;
+const GRID_CARD_ITEM_STYLE = Platform.OS === 'web'
+  ? { padding: 0, borderRadius: RADIUS - 1, height: '100%' } as const : { padding: 0, borderRadius: RADIUS - 1 } as const;
+const GRID_ROW_WRAP_STYLE: HappierPortableStyle = Platform.OS === 'web' ? { flexWrap: 'wrap', alignItems: 'stretch' } : { flexWrap: 'wrap' };
+const CELL_FILL_STYLE: HappierPortableStyle = { height: '100%' };
 // Inside the row layer's ring and the frame's 1 px edge, so the band reads as the card's top and the edge runs
 // around it (its corners are `RADIUS - 2`, concentric with the frame).
 const PREVIEW_INSET = CARD.rowLayerEdge / 2 + 1;
