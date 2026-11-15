@@ -2,7 +2,7 @@ import React, { useCallback, useRef } from 'react';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import type { SharingAuthoritySession } from '@/sync/domains/social/sessionSharingMutationAuthority';
-import { useMachineListStatusByServerId, useServerScopedMachine, useMachineListByServerId } from '@/sync/domains/state/storage';
+import { useIsMachineListSettled, useServerScopedMachine } from '@/sync/domains/state/storage';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
@@ -49,16 +49,8 @@ export function useExternalSessionSharingAvailability({ serverId, sessionId, ses
         return () => { controller.abort(); retirement.dispose(); };
     }, [accountScopeKey, presentationActive, serverId, sessionId, sourceKey]);
     const machineScopeServerId = serverId;
-    const machineListByServerId = useMachineListByServerId();
-    const machineListStatusByServerId = useMachineListStatusByServerId();
-    const scopedMachineList = machineScopeServerId
-        ? machineListByServerId[machineScopeServerId]
-        : undefined;
-    const sourceMachineListStatus = machineScopeServerId
-        ? machineListStatusByServerId[machineScopeServerId]
-        : undefined;
-    const machineScopeSettled = machineScopeServerId === null
-        || (sourceMachineListStatus === 'idle' && Array.isArray(scopedMachineList));
+    // Only this Home's settled fact: another Machine's row publication is not an input here.
+    const machineScopeSettled = useIsMachineListSettled(machineScopeServerId);
     const machine = useServerScopedMachine(
         machineScopeServerId,
         externalSessionLink?.machineId ?? '',
