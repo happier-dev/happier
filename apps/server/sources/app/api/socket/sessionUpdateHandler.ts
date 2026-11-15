@@ -684,7 +684,7 @@ export function sessionUpdateHandler(
                 authorityMode: "snapshot",
                 isolationLevel: "Serializable", // Follow sources, access and frontiers must describe one observation.
                 operation: async (authority, tx) => {
-                    if (!await hasExactCurrentPublisherAuthorityInTx(tx, authority, userId, request.data.sessionId)) return null;
+                    if (!await hasExactCurrentPublisherAuthorityInTx(tx, authority, userId, request.data.sessionId, undefined, { admittedWork: true })) return null;
                     const machine = await tx.machine.findUnique({
                         where: { id: authority.machineId },
                         select: { operationProtocolCapabilities: true },
@@ -775,7 +775,7 @@ export function sessionUpdateHandler(
                 isolationLevel: "Serializable", // Frontier acceptance composes current edge, source and destination authority.
                 operation: async (authority, tx) => {
                     phase = 'publisher_authority';
-                    if (!await hasExactCurrentPublisherAuthorityInTx(tx, authority, userId, destinationSessionId)) return { ok: false as const, rejection: "stale_publisher_generation" as const };
+                    if (!await hasExactCurrentPublisherAuthorityInTx(tx, authority, userId, destinationSessionId, undefined, { admittedWork: true })) return { ok: false as const, rejection: "stale_publisher_generation" as const };
                     phase = 'machine_capability';
                     const machine = await tx.machine.findUnique({
                         where: { id: authority.machineId },
@@ -859,7 +859,7 @@ export function sessionUpdateHandler(
                 socket,
                 isolationLevel: "Serializable", // Voice-follow admission, active target and source observations share one snapshot.
                 operation: async (authority, tx) => {
-                    if (!await hasExactCurrentPublisherAuthorityInTx(tx, authority, userId, request.data.voiceSessionId)) return null;
+                    if (!await hasExactCurrentPublisherAuthorityInTx(tx, authority, userId, request.data.voiceSessionId, undefined, { admittedWork: true })) return null;
                     const machine = await tx.machine.findUnique({
                         where: { id: authority.machineId },
                         select: { operationProtocolCapabilities: true },
@@ -934,7 +934,7 @@ export function sessionUpdateHandler(
                 socket,
                 isolationLevel: "Serializable", // Voice frontier acceptance participates in the target/edge replacement family.
                 operation: async (authority, tx) => {
-                    if (!await hasExactCurrentPublisherAuthorityInTx(tx, authority, userId, request.data.voiceSessionId)) return null;
+                    if (!await hasExactCurrentPublisherAuthorityInTx(tx, authority, userId, request.data.voiceSessionId, undefined, { admittedWork: true })) return null;
                     const machine = await tx.machine.findUnique({
                         where: { id: authority.machineId },
                         select: { operationProtocolCapabilities: true },

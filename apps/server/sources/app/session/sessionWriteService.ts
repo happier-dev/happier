@@ -1522,7 +1522,8 @@ async function createSessionMessageAttempt(
                 // Both trusted branches above already fenced this publisher in
                 // this transaction; only an unfenced write reads it here.
                 && (hasTrustedProvenance
-                    || await hasExactCurrentPublisherAuthorityInTx(tx, params.publisherAuthority, actorUserId, sessionId))
+                    || await hasExactCurrentPublisherAuthorityInTx(tx, params.publisherAuthority, actorUserId, sessionId,
+                        undefined, { admittedWork: true }))
                 ? readPublishedOriginalFollowEvent(content, localId, readPlainRecord) : undefined;
             if (params.inputAdmission === "authenticatedAccount" && resolvedRole === "user") {
                 for (const recipientAccountId of access.recipientAccountIds) {

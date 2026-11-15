@@ -29,6 +29,8 @@ import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { sessionPendingRoutes } from '@/app/api/routes/session/pendingRoutes';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
+import { removeMachineAccessGrantInTx } from '@/app/machines/machineAccess';
+import { setEligibleMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
 
 import {
     admitSessionFollowRelationsForInputInTx,
@@ -91,6 +93,27 @@ async function createSession(accountId: string, overrides: Record<string, unknow
             ...overrides,
         },
     });
+}
+
+/** Commits the Session's input placement on a Machine (owned by `custodianAccountId`, default the Session owner). */
+async function placeSessionOnMachine(session: { id: string; accountId: string }, custodianAccountId = session.accountId) {
+    const machine = await db.machine.create({ data: { id: randomUUID(), accountId: custodianAccountId, installationId: randomUUID(),
+        active: true, metadata: encodePlainMachineStoredContent({ host: 'follow-wake', platform: 'linux', happyCliVersion: 'test',
+            homeDir: '/home/session', happyHomeDir: '/home/session/.happier' }),
+        daemonState: encodePlainMachineStoredContent({ status: 'running' }), dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
+        operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1, 2, 3] }, requesterExecutionIsolation: { protocolVersions: [1] } },
+        operationProtocolCapabilitiesRevision: 1 } });
+    if (custodianAccountId !== session.accountId) {
+        expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodianAccountId, machineId: machine.id,
+            principal: { kind: 'account', accountId: session.accountId }, level: 'view' }))).toMatchObject({ kind: 'saved' });
+    }
+    await db.accessKey.create({ data: { accountId: session.accountId, machineId: machine.id, sessionId: session.id,
+        data: MACHINE_PLAIN_DATA_KEY_MARKER } });
+    await db.session.update({ where: { id: session.id }, data: { runtimeMachineTarget: {
+        homeId: await getOrCreateServerIdentityId(), accountId: session.accountId, sessionId: session.id,
+        machineId: machine.id, installationId: machine.installationId!,
+    } } });
+    return machine;
 }
 
 async function grantAccess(
@@ -616,12 +639,50 @@ describe('SessionFollowEdge service', () => {
             .toMatchObject({ ok: true, delivered: { transcriptSeq: 2 } });
     });
 
+    it('holds a Follow wake once the destination owner loses the Machine grant, while observation stays admitted', async () => {
+        const custodian = await createAccount();
+        const guest = await createAccount();
+        const source = await createSession(guest.id);
+        const destination = await createSession(guest.id);
+        const machine = await placeSessionOnMachine(destination, custodian.id);
+        expect((await setSessionFollowSource({ policy: { preset: 'everything' as const }, accountId: guest.id,
+            sourceSessionId: source.id, destinationSessionId: destination.id })).ok).toBe(true);
+        const originalLocalId = `original-${randomUUID()}`;
+        const sourceTurnId = `source-turn-${randomUUID()}`;
+        await db.sessionMessage.create({ data: { sessionId: source.id, localId: originalLocalId, seq: 1, messageRole: 'user',
+            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'investigate' } } },
+            inputAdmissionReceipt: { v: 1, issuer: 'authenticatedAccount', actorAccountId: guest.id, sessionRelationship: 'owner' },
+            acceptedTurnId: sourceTurnId, acceptedTurnKind: 'newTurn', turnStartWitnessId: sourceTurnId } });
+        await db.sessionTurn.create({ data: { sessionId: source.id, turnId: sourceTurnId, status: 'completed', startedAt: 1n, updatedAt: 1n } });
+        await db.session.update({ where: { id: source.id }, data: { seq: 1, latestTurnId: sourceTurnId, latestTurnStatus: 'completed' } });
+        const observation = (await inTx(tx => observeSessionFollowForDestinationInTx(tx, {
+            principal: runtimePrincipal(guest.id), destinationSessionId: destination.id,
+        }))).observations.find(row => 'sourceSessionId' in row);
+        if (!observation) throw new Error('Expected pending Session source');
+        const observations = [{ policy: { preset: 'everything' as const }, sourceSessionId: source.id, relation: 'follower' as const,
+            expected: observation.delivered, consumed: observation.observed }];
+        const input = { principal: runtimePrincipal(guest.id), destinationSessionId: destination.id, wakeAdmission: {
+            eventLocalId: deriveSessionFollowWakeEventLocalIdV1({ destinationSessionId: destination.id,
+                publisherGeneration: (await loadPublisherGeneration(destination.id)).toString(), observations }),
+            observations, autonomousCheckIn: { afterTurns: null } } };
+        expect(await inTx(tx => observeSessionFollowForDestinationInTx(tx, input)))
+            .toMatchObject({ wakeAdmission: { status: 'allowed' } });
+        expect(await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: machine.id,
+            principal: { kind: 'account', accountId: guest.id } }))).toMatchObject({ kind: 'removed' });
+        const afterWithdrawal = await inTx(tx => observeSessionFollowForDestinationInTx(tx, input));
+        // A wake starts a new provider Turn on the custodian's Machine: refused at the next boundary.
+        expect(afterWithdrawal).toMatchObject({ wakeAdmission: { status: 'held', code: 'session_input_target_unavailable' } });
+        // Plain observation of the admitted Session continues.
+        expect(afterWithdrawal.observations.some(row => 'sourceSessionId' in row && row.sourceSessionId === source.id)).toBe(true);
+    });
+
     it.each([{ crossAccount: false, discussion: false }, { crossAccount: true, discussion: false },
         { crossAccount: false, discussion: true }])('admits a Follow wake only while its Account-local root has check-in capacity (%j)', async ({ crossAccount, discussion }) => {
         const owner = await createAccount();
         const sourceOwner = crossAccount ? await createAccount() : owner;
         const source = await createSession(sourceOwner.id);
         const destination = await createSession(owner.id);
+        await placeSessionOnMachine(destination);
         if (crossAccount) await grantAccess(source, owner.id, 'view');
         expect((await setSessionFollowSource({ policy: { preset: 'everything' as const }, accountId: owner.id,
             sourceSessionId: source.id, destinationSessionId: destination.id })).ok).toBe(true);

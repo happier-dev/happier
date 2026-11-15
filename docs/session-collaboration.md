@@ -83,12 +83,17 @@ withdraws credentials and sockets. Machine
 control withdrawal retains readable Session history. In 0.3 development source,
 Machine grant withdrawal closes open Machine access and interactive terminals/streams,
 while the exact admitted Session publisher may finish its turn, including transcript,
-Activity, heartbeat, metadata and terminal settlement. Publisher lifetime is fenced by
-the Session registration; the next Send, reconnect and work-starting Session RPC require
-current Machine access. The canonical Session RPC method policy marks new provider
-operations and workspace mutations; the RPC admission owner checks the Session
-owner's exact Machine binding once before forwarding them. Stop, cancel, reads and
-admitted-turn settlement stay open.
+Activity, heartbeat, metadata, Follow observation and acknowledgement, and terminal
+settlement. Publisher lifetime is fenced by the Session registration; the publisher's own
+events read no Machine access, except a Follow wake: it starts a new provider Turn, so it
+requires the Session's committed Machine placement to be admitted now. The next Send, reconnect, work-starting Session RPC,
+relayed raw RPC (transfer init requires Use, raw filesystem operations Manage),
+Session-scoped RPC call, Session access-key read, token minting, Action execution and
+broker admission each require current Machine access. The canonical Session RPC method
+policy marks new provider operations and workspace mutations; the RPC admission owner
+checks the Session owner's exact Machine binding once before forwarding them and attaches
+its receipt, which the receiving Session host and daemon consume without re-proving it
+to Home. Stop, cancel, reads and admitted-turn settlement stay open.
 Machine revocation, replacement and AccessKey invalidation retain their exact socket
 eviction. Terminal custody and Archive have their own lifecycle. Ordinary handoff changes execution placement without transferring Session
 ownership. Older producers may omit the optional observation cursor; ordinary-list omission

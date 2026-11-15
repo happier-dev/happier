@@ -486,7 +486,7 @@ export async function observeSessionFollowSourceRoutes(input: Readonly<{
                 // this same publisher heartbeats. Validate its registration,
                 // not the notification's superseded liveness timestamp.
                 publisherGeneration: source.publisherGeneration,
-            }, input.accountId, source.id)) return denied;
+            }, input.accountId, source.id, undefined, { admittedWork: true })) return denied;
         } else if ('receiver' in input.request) {
             if (input.authentication.apiTokenGrant && isApiTokenGrantRestrictedV1(input.authentication.apiTokenGrant)
                 || !await canReadSession(tx, input.accountId, source.id, input.authentication)) return denied;
@@ -1324,6 +1324,10 @@ export async function observePendingSessionFollowForDestinationInTx(tx: Tx, inpu
     const combined = { ...result, currentSourceSessionIds: [...new Set([...result.currentSourceSessionIds,
         ...admittedObservations.flatMap(row => 'sourceSessionId' in row ? [row.sourceSessionId] : [])])], observations: [...result.observations, ...admittedObservations] };
     if (!input.wakeAdmission) return combined;
+    // Observation finishes admitted work; a wake starts a new Turn, so it needs the destination's
+    // committed Machine placement to be admitted now, as every other Follow wake path requires.
+    const placement = await readCurrentCommittedSessionInputMachineTargetInTx(tx, destination.id);
+    if (!placement || placement.accountId !== destinationRuntimeAccountId) return { ...combined, wakeAdmission: unavailableWake };
     return { ...combined, wakeAdmission: await readFollowWakeAdmissionInTx(tx, {
         destinationSessionId: destination.id, destinationAccountId: destinationRuntimeAccountId,
         publisherGeneration: destination.publisherGeneration,
