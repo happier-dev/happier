@@ -3,7 +3,9 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
-import { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { PluginDevelopmentStatusV1Schema } from '@happier-dev/protocol/capabilities';
 import type { CapabilitiesInvokeRequest } from '@/sync/api/capabilities/capabilitiesProtocol';
@@ -154,6 +156,7 @@ async function renderRemovalOwner(
     let catalogInstalled = false;
     let nativeInstallCommits = 0;
     const nativeExecutions: unknown[] = [];
+    const nativeInvocations: Array<ExternalActionRequesterInvocationV1 | undefined> = [];
     const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-owner', encryptionMode: 'plain' });
     // This is the receiving daemon behind the HTTP boundary. Policy, approval
     // creation/CAS, decision and mounted observation all use their real owners.
@@ -222,8 +225,37 @@ async function renderRemovalOwner(
         roots: [{ kind: 'explicit', rootPath: sourceRootPath, trusted: true, persisted: true }],
         plugins: [{ pluginId, sourceRootPath, phase: 'active' }],
     });
+    const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+    const nativeInstallBoundaries = options.deferredInstall ? await Promise.all(
+        (twoMachines ? ['controller-1', 'controller-2'] : ['controller-1']).map(machineId => createExternalActionAccountHttpBoundary({
+            serverUrl: `https://plugin-removal-${scenario}.test`, serverIdentityId, accountId: 'account-owner',
+            machineId, installationId: machineId === 'controller-1' ? 'installation-1' : 'installation-2',
+            actionId: 'plugins.install', tokenEpoch: 0, requesterInvocation: 'optional',
+            failure: result => {
+                const failure = ActionExecuteFailureSchema.safeParse(result);
+                return failure.success ? failure.data : null;
+            },
+            execute: async (input, context) => {
+                actionRequests.push({ actionId: 'plugins.install', envelope: ExternalActionRequestEnvelopeV1Schema.parse(context.envelope) });
+                await options.beforeActionResponse?.(context.signal);
+                const installError = options.installErrorsByMachine?.[machineId];
+                if (installError) return { ok: false, errorCode: installError, error: installError };
+                nativeInvocations.push(context.invocation);
+                const execution = await nativeExecutor.execute('plugins.install', input, {
+                    surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+                    serverId: serverIdentityId, serverIdentityId, runtimeAccountId: 'account-owner',
+                    actionRequestId: context.requestId, externalActionTarget: context.target,
+                    ...(context.invocation?.presentUserConfirmation
+                        ? { presentUserConfirmation: context.invocation.presentUserConfirmation } : {}),
+                });
+                nativeExecutions.push(execution);
+                return execution.ok ? execution.result : execution;
+            },
+        })),
+    ) : [];
     let machineCensus = {
         ...createPlainMachineRowFixture({ id: 'controller-1', accountId: 'account-owner' }),
+        ...nativeInstallBoundaries[0]?.machine,
         installationId: 'installation-1', runnerContentKeyBinding: null,
     };
     boundary.rpc.mockImplementation(async request => {
@@ -287,7 +319,18 @@ async function renderRemovalOwner(
             if (path === '/v1/machines') return Response.json(twoMachines ? [machineCensus, { ...machineCensus, id: 'controller-2' }] : [machineCensus]);
             if (path === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body,
                 id => id === machineCensus.id ? machineCensus
-                    : twoMachines && id === 'controller-2' ? { ...machineCensus, id: 'controller-2' } : null);
+                    : twoMachines && id === 'controller-2' ? nativeInstallBoundaries[1]?.machine ?? { ...machineCensus, id: 'controller-2' } : null);
+            if (options.deferredInstall) {
+                const raw = init?.body ? JSON.parse(String(init.body)) : undefined;
+                const authorized = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(raw);
+                const envelope = ExternalActionRequestEnvelopeV1Schema.safeParse(authorized.success ? authorized.data.envelope : raw);
+                const target = envelope.success ? envelope.data.target : null;
+                const native = target?.kind === 'machine'
+                    ? nativeInstallBoundaries.find(item => item.machine.id === target.machineId)
+                    : nativeInstallBoundaries.find(item => path === `/v1/machines/${item.machine.id}`);
+                const response = await native?.handle(new URL(String(rawUrl)), init);
+                if (response) return response;
+            }
             if (path.startsWith('/v1/actions/')) {
                 const actionId = path.slice('/v1/actions/'.length);
                 const envelope = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
@@ -391,7 +434,7 @@ async function renderRemovalOwner(
         publishHomeAccountChange(scope.serverId, [artifactId], { changeKinds: ['artifact'] });
         return result;
     };
-    return { hook, requests, actionRequests, storage, scope, machine, publishMachine, publishAccountEnabled, catalog, censusReads, artifacts, decideInstall, nativeExecutions,
+    return { hook, requests, actionRequests, storage, scope, machine, publishMachine, publishAccountEnabled, catalog, censusReads, artifacts, decideInstall, nativeExecutions, nativeInvocations,
         nativeInstallCommitCount: () => nativeInstallCommits };
 }
 
@@ -503,9 +546,10 @@ describe('Plugin install/update originating approval state', () => {
     it.each([
         { method: 'install', decision: 'approve' }, { method: 'install', decision: 'reject' },
         { method: 'install', decision: 'cancel' }, { method: 'update', decision: 'approve' },
-    ] as const)('exposes the same pending $method and settles $decision without another install request', async ({ method, decision }) => {
-        const { hook, catalog, artifacts, decideInstall, nativeInstallCommitCount, actionRequests, nativeExecutions } =
+    ] as const)('confirms the carried $method review in flow and settles $decision without a self-approval Artifact', async ({ method, decision }) => {
+        const { hook, catalog, artifacts, nativeInstallCommitCount, actionRequests, nativeExecutions, nativeInvocations } =
             await renderRemovalOwner('disable', [], { catalog: method === 'install', browse: method === 'install', deferredInstall: true });
+        const { Modal } = await import('@/modal');
         if (method === 'install') {
             await act(async () => hook.getCurrent().openDiscoverListing({ sourceId: catalog.source.id, pluginId: 'example.compute',
                 itemId: 'example.compute', version: '1.2.3' }));
@@ -514,45 +558,42 @@ describe('Plugin install/update originating approval state', () => {
         } else {
             await act(async () => hook.getCurrent().runInstalledPluginAction('update', 'example.compute'));
         }
-        await vi.waitFor(() => expect(artifacts.list(), JSON.stringify({ nativeExecutions, alerts: boundary.alert.mock.calls,
-            actionRequestCount: actionRequests.length })).toHaveLength(1));
-        const artifactId = artifacts.list()[0]!.id;
+        await vi.waitFor(() => expect(vi.mocked(Modal.show).mock.calls.filter(([config]) =>
+            config.chrome?.testID === 'actions.confirmation-review.modal')).toHaveLength(1));
+        const review = vi.mocked(Modal.show).mock.calls.find(([config]) =>
+            config.chrome?.testID === 'actions.confirmation-review.modal')![0];
+        const props = review.props;
+        if (typeof props?.onAnswer !== 'function') throw new Error('Expected the carried review decision');
+        const answer = props.onAnswer;
         expect(nativeExecutions[0]).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
-        expect(actionRequests.filter(request => request.actionId === 'approval.request.create')).toMatchObject([{
-            envelope: { target: { kind: 'machine', machineId: 'controller-1' }, input: {
-                actionId: 'plugins.install', actionArgs: actionRequests.find(request => request.actionId === 'plugins.install')!.envelope.input,
-            } },
-        }]);
-        await vi.waitFor(() => expect(hook.getCurrent().pluginActionApproval).toMatchObject({
-            approvalId: artifactId, approvalPending: true, serverId: connection!.home.id, artifact: { id: artifactId },
-        }));
-        expect(hook.getCurrent().pluginActionApproval.artifact?.body).toBe(artifacts.readPlainBody(artifactId));
-        expect(ApprovalRequestV2Schema.parse(JSON.parse(artifacts.readPlainBody(artifactId)!))).toMatchObject({
-            preview: { pluginInstall: { pendingReview: { review: {
+        expect(props.actionArgs).toEqual(actionRequests[0]!.envelope.input);
+        expect(props.preview).toMatchObject({ pluginInstall: { pendingReview: { review: {
                 requiredHostAccess: [{ capability: 'storage.account', normalizedScope: { enabled: true } }],
-            } } } },
-        });
+            } } } });
+        expect(artifacts.list()).toHaveLength(0);
+        expect(actionRequests.some(request => request.actionId === 'approval.request.create')).toBe(false);
+        expect(nativeInvocations[0]?.presentUserConfirmation).toBeUndefined();
         expect(hook.getCurrent().isPluginActionInFlight('example.compute')).toBe(true);
         expect(nativeInstallCommitCount()).toBe(0);
-        if (method === 'install' && decision === 'approve') {
-            await act(async () => expect(await decideInstall(artifactId, 'approve', 'account_automation'))
-                .toMatchObject({ ok: false, errorCode: 'present_user_required' }));
-            expect(ApprovalRequestV2Schema.parse(JSON.parse(artifacts.readPlainBody(artifactId)!)).status).toBe('open');
-            expect(nativeInstallCommitCount()).toBe(0);
-        }
         await act(async () => {
-            const result = await decideInstall(artifactId, decision);
-            expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+            if (decision === 'cancel') review.onRequestClose?.();
+            else answer(decision === 'approve');
         });
         await vi.waitFor(() => expect(hook.getCurrent().isPluginActionInFlight('example.compute')).toBe(false));
         expect(hook.getCurrent().pluginActionApproval.approvalId).toBeNull();
         expect(hook.getCurrent().routineOperationSettlement).toMatchObject({ scope: method === 'install' ? 'discover' : 'installed',
-            // A declined change says what did not happen: "Install declined", not a bare status.
-            message: decision === 'approve' ? 'common.done' : decision === 'reject' ? `settingsPlugins.${method}Declined` : `settingsPlugins.${method}Canceled` });
+            message: decision === 'approve' ? 'common.done' : `settingsPlugins.${method}Canceled` });
         expect(nativeInstallCommitCount()).toBe(decision === 'approve' ? 1 : 0);
-        expect(actionRequests.filter(request => request.actionId === 'plugins.install')).toHaveLength(1);
-        expect(ApprovalRequestV2Schema.parse(JSON.parse(artifacts.readPlainBody(artifactId)!)).status)
-            .toBe(decision === 'approve' ? 'executed' : decision === 'reject' ? 'rejected' : 'canceled');
+        expect(artifacts.list()).toHaveLength(0);
+        expect(actionRequests.filter(request => request.actionId === 'plugins.install')).toHaveLength(decision === 'approve' ? 2 : 1);
+        if (decision === 'approve') {
+            const refusal = ActionExecuteFailureSchema.parse(nativeExecutions[0]);
+            if (!refusal.details || typeof refusal.details !== 'object' || !('reviewDigest' in refusal.details)) {
+                throw new Error('Expected the receiving Machine review digest');
+            }
+            expect(nativeInvocations[1]?.presentUserConfirmation).toMatchObject({ actionId: 'plugins.install',
+                reviewDigest: refusal.details.reviewDigest, target: { kind: 'machine', machineId: 'controller-1' } });
+        }
     });
 
     it('presents the created review where Install was pressed, reopens it after a close and withdraws it on the decision', async () => {
