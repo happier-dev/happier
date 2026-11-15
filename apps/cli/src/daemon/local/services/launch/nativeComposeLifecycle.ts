@@ -1571,8 +1571,12 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
                 if (incumbentQuiesced) await request.onIncumbentServicesChanged?.([]);
                 await runAuthorized(launch, request.signal, true, authority);
                 if (request.runningServices?.length) {
-                    const start = await authorize([...capture.composeArgs, 'start', '--wait', ...request.runningServices], request.signal,
-                        undefined, false, runtimeProjection(['start', '--wait', ...request.runningServices]));
+                    // Supported Compose builds expose --wait on up but not start.
+                    // The preceding up created every container; start only the
+                    // admitted running set without recreating it or starting dependencies.
+                    const startArgs = ['up', '--wait', '--no-deps', '--no-recreate', '--no-build', '--pull', 'never', ...request.runningServices];
+                    const start = await authorize([...capture.composeArgs, ...startArgs], request.signal,
+                        undefined, false, runtimeProjection(startArgs));
                     try { await runAuthorized(start, request.signal, true, authority); } finally { await start.release(); }
                 }
                 input.onReferenceAddresses?.(launch.deploymentReferenceAddresses ?? []);

@@ -48,7 +48,8 @@ export type OwnServerNativeRestoreInput = Readonly<{
     /** Planned interruption, published before stop; actual custody remains separate. */
     onExpectedDownServicesChanged?(services: readonly string[]): Promise<void>;
     onIncumbentServicesChanged?(services: readonly string[]): Promise<void>;
-    onNamedVolumeBindingsChanged?(bindings: NativeComposeProjectRender['namedVolumes']): Promise<void>;
+    onNamedVolumeBindingsChanged?(bindings: NativeComposeProjectRender['namedVolumes'],
+        activated: Readonly<{ project: NativeComposeActivatedProject; render: NativeComposeProjectRender }>): Promise<void>;
     operationProgress?: ActionExecutorContext['operationProgress'];
     onBackupSettled?: DeploymentBackupRunInputV1['onSettled'];
 }>;
@@ -280,7 +281,7 @@ async function withNativeRestore<T>(input: OwnServerNativeRestoreInput | OwnServ
                         await input.retainSource();
                         const active = await project.activate({ render, context: input.context, signal,
                             runningServices: request.destination.runningServices });
-                        await input.onNamedVolumeBindingsChanged?.(bindings);
+                        await input.onNamedVolumeBindingsChanged?.(bindings, { project: active, render });
                         for (const name of request.destination.writerServices) stoppedServices.delete(name);
                         await input.onIncumbentServicesChanged?.([...stoppedServices]);
                         await input.onExpectedDownServicesChanged?.([...stoppedServices]);
@@ -539,6 +540,7 @@ export async function executeOwnServerNativeRestore(factory: OwnServerNativeRest
     if (result.kind !== 'restored' || result.verified !== true) {
         throw new PluginError({ code: result.kind === 'outcome_unknown' ? 'outcome_unknown' : result.code ?? 'restore_failed',
             message: 'Native database recovery did not verify restoration',
+            ...(result.failureCause ? { failureCause: result.failureCause } : {}),
             details: { kind: result.kind, nextAction: result.nextAction, ...(result.steps ? { steps: result.steps } : {}),
                 ...(result.nativeFailure ? { nativeFailure: result.nativeFailure } : {}) } });
     }

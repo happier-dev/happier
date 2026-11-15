@@ -66,6 +66,20 @@ process.on('uncaughtExceptionMonitor', error => event({kind:'boundaryFailure',
     errorClass:error?.name, fixtureCode:/^(?:unexpected|missing)_[a-z_]+$/.test(error?.message) ? error.message : undefined}));
 const command = args.indexOf('exec');
 const native = JSON.parse(fs.readFileSync(path.join(__dirname, 'docker-state.json'),'utf8'));
+// The incident guest's Compose supports up --wait, but not start --wait.
+if (args.includes('compose') && args.includes('start') && args.includes('--wait')) {
+    process.stderr.write('unknown flag: --wait\n'); process.exit(1);
+}
+// up --no-recreate starts the already-created selected containers. Keep
+// deliberately stopped siblings and each container's existing mounts intact.
+if (args.includes('compose') && args.includes('up') && args.includes('--no-recreate') && args.includes('--no-deps')) {
+    const selected = args.slice(args.indexOf('--pull') + 2);
+    for (const row of native.containers) {
+        if (selected.includes(row.Config.Labels['com.docker.compose.service'])) row.State.Status = 'running';
+    }
+    fs.writeFileSync(path.join(__dirname, 'docker-state.json'), JSON.stringify(native));
+    process.exit(0);
+}
 if (args.includes('compose') && args.includes('up') && state.failVolumeActivation) {
     state.failVolumeActivation = false; save();
     event({kind:'volumeActivationFailure'}); process.exit(1);

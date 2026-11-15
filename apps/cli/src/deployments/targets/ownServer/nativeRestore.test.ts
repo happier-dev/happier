@@ -275,7 +275,8 @@ describe('native restore adapter', () => {
                             const nativeOperations = (await docker.readInvocations()).slice(-8).map(row => row.args.slice(0, 3));
                             expect(restored, JSON.stringify({ restored, nativeOperations, nativeFailures: await docker.readFailures() }))
                                 .toMatchObject(mode === 'volumeRestoreFailure'
-                                    ? { kind: 'rolledBack', verified: false, nextAction: 'checkServiceHealth' }
+                                    ? { kind: 'rolledBack', verified: false, nextAction: 'checkServiceHealth', code: 'restore_failed',
+                                        failureCause: { phase: 'deployment.native.compose.native_compose_command_failed' } }
                                     : { kind: 'restored', verified: true });
                             const stateAfter = JSON.parse(await readFile(`${root}/tools/docker-state.json`, 'utf8'));
                             expect(stateAfter.containers.filter((row: { State: { Status: string }; Config: { Labels: Record<string, string> } }) =>

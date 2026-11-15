@@ -7,6 +7,7 @@ import { runDeploymentBackupV1, type DeploymentBackupNativeResultV1, type Deploy
 import { readResticNativeJsonV1 } from './manifestV1.js';
 import { readBackupNativeFailureEvidenceV1, verifyDeploymentBackupV1 } from './verificationV1.js';
 import { buildResticRequestV1, type ResticAccessV1, type ResticRequestV1 } from './resticExecutor.js';
+import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 /** Exact native identities and supported tools are captured by P41/P30 at admission.
  * Staging/recovery names belong to this operation, not a caller-selected live database. */
@@ -84,6 +85,7 @@ type RestoreFailureCode = 'backup_required' | 'backup_failed' | 'backup_integrit
 export type DeploymentRestoreResultV1 = Readonly<{
     source: DeploymentBackupManifestV1 | DeploymentRestoreUploadSourceV1; destination: DeploymentRestoreDestinationV1;
     safetyBackup?: DeploymentBackupRunResultV1; code?: RestoreFailureCode; nativeFailure?: DeploymentBackupNativeFailureV1;
+    failureCause?: ActionFailureCauseV1;
     steps?: readonly DeploymentRestoreStepV1[];
 }> & (Readonly<{ kind: 'restored'; verified: true; nextAction: 'none' }>
     | Readonly<{ kind: 'rolledBack' | 'outcome_unknown' | 'recoveryRequired'; verified: false;
@@ -94,6 +96,7 @@ function refuse(code: RestoreFailureCode): never { throw Object.assign(new Error
 function codeOf(error: unknown): RestoreFailureCode {
     if (error && typeof error === 'object' && 'code' in error) {
         const code = error.code;
+        if (code === 'native_failed') return 'restore_failed';
         if (code === 'backup_required' || code === 'backup_failed' || code === 'backup_integrity_failed' || code === 'restore_failed'
             || code === 'stale_input' || code === 'cancelled' || code === 'unsupported_action') return code;
     }
@@ -249,6 +252,7 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
         code?: RestoreFailureCode, error?: unknown): DeploymentRestoreResultV1 => {
         const nativeFailure = readDeploymentBackupMaintenanceFailureEvidenceV1(error)?.nativeFailure;
         const evidence = { source: prepare.source, destination, steps: steps.snapshot(),
+            ...(error === undefined ? {} : { failureCause: projectActionFailureCauseV1(error, 'restore') }),
             ...(nativeFailure ? { nativeFailure } : {}),
             ...(prepare.safetyBackup ? { safetyBackup: prepare.safetyBackup } : {}), ...(code ? { code } : {}) };
         return kind === 'restored' ? { ...evidence, kind, verified: true, nextAction: 'none' }
@@ -331,8 +335,13 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
                     return result('restored', 'none');
                 } catch (error) {
                     if (switchAttempted) {
-                        const recovered = await execute({ kind: 'switchVolume', destination, physicalName: destination.currentVolume });
-                        if (recovered.kind === 'health' && recovered.status === 'healthy') return result('rolledBack', 'checkServiceHealth', codeOf(error), error);
+                        try {
+                            const recovered = await execute({ kind: 'switchVolume', destination, physicalName: destination.currentVolume });
+                            if (recovered.kind === 'health' && recovered.status === 'healthy') return result('rolledBack', 'checkServiceHealth', codeOf(error), error);
+                        } catch {
+                            // Undo did not verify. Keep the activation's first cause
+                            // with the recovery action instead of replacing it with undo's failure.
+                        }
                     } else completed(await execute({ kind: 'writers', operation: 'start', services: destination.writerServices }));
                     return result('recoveryRequired', 'restorePreviousVolume', codeOf(error), error);
                 }

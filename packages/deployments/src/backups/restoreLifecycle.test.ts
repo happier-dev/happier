@@ -162,7 +162,10 @@ describe('exact PostgreSQL restore semantic owner', () => {
             if (request.kind === 'stageVolume') return complete();
             if (request.kind === 'switchVolume') {
                 switches.push(request.physicalName);
-                throw Object.assign(new Error('Engine activation unavailable'), { code: 'restore_failed' });
+                throw Object.assign(new Error('Engine activation unavailable'), { code: 'native_failed',
+                    failureCause: { phase: request.physicalName === volumeDestination.stagingVolume
+                        ? 'deployment.native.compose.native_compose_command_failed' : 'deployment.native.rollback.failed',
+                        errorClass: 'Error', errorCode: 'native_compose_command_failed', httpStatus: null } });
             }
             return native.execute(request);
         };
@@ -171,7 +174,9 @@ describe('exact PostgreSQL restore semantic owner', () => {
         const prepared = await owners.prepareDeploymentRestoreV1({ ...capture, operationId: 'volume-restore' });
         const result = await owners.confirmDeploymentRestoreV1({ ...capture, prepare: prepared, runProtectedStage: effect => effect() });
         expect(result).toMatchObject({ kind: 'recoveryRequired', verified: false, nextAction: 'restorePreviousVolume',
-            destination: { currentVolume: 'old-content', stagingVolume: 'new-content' }, code: 'restore_failed' });
+            destination: { currentVolume: 'old-content', stagingVolume: 'new-content' }, code: 'restore_failed',
+            failureCause: { phase: 'deployment.native.compose.native_compose_command_failed',
+                errorCode: 'native_compose_command_failed' } });
         expect(switches).toEqual(['new-content', 'old-content']);
     });
 
