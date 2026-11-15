@@ -10,6 +10,7 @@ import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs
 import { resolveMachineReachability } from '@/sync/domains/machines/reachability/machineReachability';
 import type { InstalledScopeAdmission } from './storeAccountAdmission';
 import type { InstalledFamilyResult, StoreDemand, StoreInstalledInput } from './storeKinds';
+import { retainDeep, retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 
 const WEB_STORE_HOSTS = new Set([
   'chromewebstore.google.com',
@@ -96,7 +97,12 @@ export function useBrowserExtensionsInventory(input: Readonly<{
     });
     const coverage: NativeInventory['coverage'] = held.some(machineId => !answers.has(machineId)) ? 'loading'
       : failures.length === 0 ? 'available' : failures.length === held.length ? { unavailable: failures } : { partial: failures };
-    setSnapshot({ basis, result: { rows, coverage, continuation: refresh } });
+    setSnapshot(previous => {
+      if (previous?.basis !== basis) return { basis, result: { rows, coverage, continuation: refresh } };
+      return retainDeep(previous, { basis, result: {
+        rows: retainKeyedRows(previous.result.rows, rows, row => row.key), coverage, continuation: refresh,
+      } });
+    });
   }, [basis]);
   // A different basis, a refresh or a close ends the open: its pending Machine reads stop.
   React.useEffect(() => () => {
@@ -128,10 +134,8 @@ export function useBrowserExtensionsInventory(input: Readonly<{
           if (!response.ok) return { machineId, reason: { kind: 'action' as const, code: response.errorCode } };
           const parsed = BrowserExtensionsListResultV1Schema.safeParse(response.result);
           if (!parsed.success) return { machineId, reason: { kind: 'invalid_response' as const } };
-          // A Machine-wide list from a Machine with no managed browser is an answer: it holds no extensions. Only a
-          // profile's own list needs that browser (its section offers to open it), so there it stays a typed refusal.
-          if (parsed.data.status === 'unavailable' && parsed.data.code === 'managed_browser_required'
-            && input.profileId === undefined) return [];
+          // A Machine whose managed browser isn't available stays a typed failure (REVIEW-2 R4): its persisted
+          // profiles may hold extensions the read could not reach, so it is never an empty inventory.
           if (parsed.data.status === 'unavailable') return { machineId, reason: { kind: 'browser' as const, value: parsed.data } };
           const extensions = parsed.data.entries.map((native): InstalledBrowserExtensionRow => ({ kind: 'browserExtension', subject: 'extension',
             key: serverAccountScopedResourceKey(scope, 'browserExtension', machineId, native.profileId, native.extension.id), scope, machineId, native }));

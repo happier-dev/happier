@@ -14,6 +14,30 @@ const unselected = { consentGranted: false, approvalDisplay: { machineDisplayNam
 const identity = { target, sourceId: selection.sourceId, targetLabel: selection.approvalDisplay.target.title };
 
 describe('computer Action-answer projection', () => {
+    it('publishes only changed answers and preserves unchanged selection facts across control changes', () => {
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture());
+        const projection = getComputerSessionProjection({ machineId: 'machine', sessionId: 'stable-answer-facts' }, executor.execute);
+        let publications = 0;
+        const unsubscribe = projection.subscribe(() => { publications++; }, false);
+        try {
+            projection.applySelection(structuredClone(selection));
+            const initial = projection.getSnapshot();
+            for (let i = 0; i < 20; i++) projection.applySelection(structuredClone(selection));
+            expect(publications).toBe(1);
+            expect(projection.getSnapshot()).toBe(initial);
+            projection.applyStatus({ target, sourceId: selection.sourceId, controller: 'human', controlEpoch: 1, stopping: false, uncertain: false });
+            const controlled = projection.getSnapshot();
+            expect(controlled.selection).toBe(initial.selection);
+            projection.applyStatus({ target: { ...target }, sourceId: selection.sourceId, controller: 'agent', controlEpoch: 2, stopping: false, uncertain: false });
+            expect(projection.getSnapshot().selection).toBe(initial.selection);
+            expect(projection.getSnapshot().status?.target).toBe(controlled.status?.target);
+            const agentStatus = projection.getSnapshot().status;
+            projection.applySelection({ ...structuredClone(selection), access: 'view' });
+            expect(projection.getSnapshot().selection?.approvalDisplay).toBe(initial.selection?.approvalDisplay);
+            expect(projection.getSnapshot().status).toBe(agentStatus);
+            expect(publications).toBe(4);
+        } finally { unsubscribe(); }
+    });
     it('exchanges clipboard text for a Machine-person through the private present-user Action path', async () => {
         let text = 'remote clipboard';
         const observations: unknown[] = [];

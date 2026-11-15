@@ -57,30 +57,36 @@ it('retains finite list loading, profile-qualified entries, typed unavailable an
     await hook.rerender();
     await flushHookEffects();
     expect(homes.requestsFor(path)).toHaveLength(1);
+    const unchangedProfile = hook.getCurrent().rows[1];
+    if (value.status !== 'ready') throw new Error('Expected the ready extension fixture');
+    value = { ...value, entries: value.entries.map((entry, index) => index === 0
+      ? { ...entry, extension: { ...entry.extension, version: '2.0' } } : entry) };
+    await act(async () => hook.getCurrent().refresh());
+    await vi.waitFor(() => {
+      const updated = hook.getCurrent().rows[0];
+      expect(updated?.subject === 'extension' && updated.native.extension.version).toBe('2.0');
+    });
+    expect(hook.getCurrent().rows[1]).toBe(unchangedProfile);
     value = { status: 'unavailable', code: 'managed_browser_required' };
     // A refresh of the same list keeps its last settled rows until the new answer lands.
     const refreshed = createDeferred<void>();
     gate = refreshed.promise;
     await act(async () => hook.getCurrent().refresh());
-    await vi.waitFor(() => expect(homes.requestsFor(path)).toHaveLength(2));
+    await vi.waitFor(() => expect(homes.requestsFor(path)).toHaveLength(3));
     expect(hook.getCurrent().rows).toHaveLength(2);
     gate = null;
     await act(async () => refreshed.resolve());
-    // QA-DEPLOY-1114 #41 (UI refinements 03:05Z): a Machine with no managed browser answered its list: it holds no
-    // extensions. Store read that as "Couldn't load these right now" on every Account without a managed browser.
-    await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ rows: [], coverage: 'available' }));
-    // A profile's own list still says it needs the managed browser (the profile section offers to open it).
-    const profileHook = await renderHook(() => useBrowserExtensionsInventory({ scope: account.accountLifetime.scope,
-      machineIds: [machineId], profileId: 'work', presented: true }));
-    try {
-      await vi.waitFor(() => expect(profileHook.getCurrent().coverage).toMatchObject({ unavailable: [{
-        machineId, reason: { kind: 'browser', value: { status: 'unavailable', code: 'managed_browser_required' } },
-      }] }));
-    } finally { await profileHook.unmount(); }
+    // REVIEW-2 R4 (UI refinements 09:23Z): a Machine whose managed browser isn't available (its runtime wasn't acquired)
+    // stays a typed failure, never an empty inventory, and the Store's coverage line carries its reason.
+    await vi.waitFor(() => expect(hook.getCurrent().coverage).toMatchObject({ unavailable: [{
+      machineId, reason: { kind: 'browser', value: { status: 'unavailable', code: 'managed_browser_required' } },
+    }] }));
+    expect(hook.getCurrent().rows).toEqual([]);
+    const { inventoryFamilyDiagnosticCode } = await import('@/components/store/inventory/inventoryCoverage');
+    expect(inventoryFamilyDiagnosticCode(hook.getCurrent().coverage as never)).toBe('managed_browser_required');
     value = { status: 'ready', entries: [] };
     await act(async () => hook.getCurrent().refresh());
     await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ rows: [], coverage: 'available' }));
-    // Three Machine-wide lists and the profile's own list.
     expect(homes.requestsFor(path)).toHaveLength(4);
   } finally { await hook.unmount(); account.dispose(); }
 });

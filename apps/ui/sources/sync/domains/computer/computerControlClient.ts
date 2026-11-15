@@ -11,6 +11,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
 import type { UiActionExecutorContext } from '@/sync/ops/actions/defaultActionExecutor';
 import { resolveComputerRecovery } from './targets';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import { ComputerClipboardResultV1Schema, type ComputerClipboardOperationV1, type ComputerClipboardResultV1 } from '@happier-dev/protocol/computer/v1';
 
 /** The Session and machine whose shared window the person is acting on. */
@@ -137,8 +138,9 @@ function createComputerSessionProjection(scope: ComputerScope, execute: Computer
     const hasDemand = () => client.isCurrent() && [...listeners.values()].some(Boolean);
     let retirement: Readonly<{ dispose(): void }> | null = null;
     function publish(next: ComputerProjectionSnapshot): void {
-        if (JSON.stringify(snapshot) === JSON.stringify(next)) return;
-        snapshot = next;
+        const retained = retainDeep(snapshot, next);
+        if (retained === snapshot) return;
+        snapshot = retained;
         for (const listener of listeners.keys()) listener();
     }
     function applySelection(selection: ComputerSelectedTargetResponseV1, invalidate = true): void {
