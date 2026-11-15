@@ -265,7 +265,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       // Reuse the native custody census. The observer is born after this
       // snapshot and never becomes a consumer merely by inheriting bindings.
       const processIds = process.argv.includes('--census') ? readProcessCensus() : undefined;
-      const references = processReferences('/proc', process.getuid(), { bindingsOnly: true, processIds });
+      const references = processReferences('/proc', process.getuid(), { bindingsOnly: !process.argv.includes('--references'), processIds });
       const users = new Set();
       for (const path of references.paths) {
         // Native cleanup consumers match exact roots; a binding below a root

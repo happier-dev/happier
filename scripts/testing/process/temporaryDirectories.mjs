@@ -11,6 +11,10 @@ const inheritedRoots = String(process.env.HAPPIER_TEST_TEMP_ROOTS ?? '').split('
 const nativeIdentity = fileURLToPath(new NodeURL('../../../apps/stack/scripts/utils/proc/native_process_identity.sh', import.meta.url));
 const custody = fileURLToPath(new NodeURL('../../../apps/stack/scripts/utils/dev_targets/remote_execution_custody.sh', import.meta.url));
 let owner;
+// A run's top-level producer (one that inherited no binding) owns reclaiming
+// roots abandoned by earlier runs: pool workers end by signal, so their exit
+// cleanup never runs, and roots retained for a live descendant outlive it.
+const reapParents = new Set();
 
 function publishRoots() {
   const owned = [...roots].map(fixture => fixture.root).filter(root => !/[\r\n]/.test(root));
@@ -58,6 +62,19 @@ function ownerMarker() {
   return owner;
 }
 
+function reapAbandonedRoots() {
+  for (const parent of reapParents) {
+    // The custody owner decides abandonment (creator gone, group gone, no
+    // binding user). The reaper is an observer and must not hold any binding.
+    const env = { ...process.env, TMPDIR: parent };
+    delete env.HAPPIER_TEST_TEMP_ROOTS;
+    const result = spawnSync('/bin/bash', [custody, 'reap-test-temp-roots', '-', '-'], { env, encoding: 'utf8', stdio: ['ignore', 'ignore', 'pipe'] });
+    const reclaimed = String(result.stderr ?? '').split('\n').filter(line => line.startsWith('[preferred-execution] removing abandoned test temporary root ')).length;
+    if (result.status !== 0) process.stderr.write(`[test-temp] abandoned-root reclamation failed in ${parent} (status ${result.status ?? result.signal})\n${result.stderr ?? ''}`);
+    else if (reclaimed) process.stderr.write(`[test-temp] reclaimed ${reclaimed} abandoned test temporary root(s) in ${parent}\n`);
+  }
+}
+
 function cleanupOnExit() {
   try { cleanupFixtures([...roots]); }
   catch (error) {
@@ -76,6 +93,10 @@ export function createTestTempDirectory(prefix, parentDirectory = tmpdir()) {
   };
   if (!roots.size) process.once('exit', cleanupOnExit);
   roots.add(fixture);
+  if (process.platform === 'linux' && !inheritedRoots.length && !reapParents.has(parentDirectory)) {
+    if (!reapParents.size) process.once('exit', reapAbandonedRoots);
+    reapParents.add(parentDirectory);
+  }
   // A root's creator has a kernel identity; detached children inherit this
   // explicit binding even after that creator and its process group are gone.
   // Line breaks cannot be represented in the binding, so do not grant orphan

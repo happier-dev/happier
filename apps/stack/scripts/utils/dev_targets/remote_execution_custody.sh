@@ -162,18 +162,22 @@ read_test_temp_root_users() {
   # One owner observes native and historical custody. Query only bindings for
   # native teardown; same-UID denial reuses its read-only privileged observer.
   # The probe is not a consumer and must not publish inherited temp bindings.
-  test_temp_root_users=$(TMPDIR= HAPPIER_TEST_TEMP_ROOTS= node "${BASH_SOURCE[0]%/*}/historical_temp_roots.mjs" --test-temp-users --census <<< "$1")
+  # Reclamation passes $2=--references: a root is in use by a process working in
+  # it (cwd, descriptor, mapping) even after that process dropped the binding.
+  test_temp_root_users=$(TMPDIR= HAPPIER_TEST_TEMP_ROOTS= node "${BASH_SOURCE[0]%/*}/historical_temp_roots.mjs" --test-temp-users --census ${2-} <<< "$1")
 }
 
 reap_test_temp_roots() {
   # Marked producer teardown does not use an age deadline. The separately
   # requested historical sweep also checks cwd, descriptors and mappings.
   [ -r /proc/sys/kernel/random/boot_id ] || return 0
-  local temp_parent boot_id directory marker owner_boot owner_pid owner_token owner_group snapshot test_temp_root_users
+  local temp_parent boot_id directory marker owner_boot owner_pid owner_token owner_group snapshot test_temp_root_users index
+  local -a candidates=() candidate_pids=() candidate_tokens=() candidate_groups=()
   temp_parent=${TMPDIR:-/tmp}
   boot_id=$(cat /proc/sys/kernel/random/boot_id) || return 0
-  snapshot=$(ps -eo pid=,pgid=,stat=,uid=) || return 0
-  for directory in "$temp_parent"/happier-stack-unit-* "$temp_parent"/happier-dev-test-* "$temp_parent"/happier-external-hooks-config-* "$temp_parent"/docs-check-*; do
+  # The marker is the producer's authority; the name families are the ones the
+  # historical owner may remove (knownRoot), so unrelated marked scratch stays.
+  for directory in "$temp_parent"/happier-* "$temp_parent"/hstack-* "$temp_parent"/docs-check-*; do
     case "$directory" in *$'\n'*|*$'\r'*) continue ;; esac
     [ -d "$directory" ] && [ ! -L "$directory" ] && [ -O "$directory" ] || continue
     marker=$directory/.happier-test-temp-owner
@@ -187,18 +191,22 @@ reap_test_temp_roots() {
     [ "$owner_pid" -gt 1 ] && [ "$owner_group" -gt 1 ] || continue
     [ "$owner_boot" = "$boot_id" ] || continue
     heavyweight_process_is_current "$owner_pid" "$owner_token" && continue
-    read_test_temp_root_users "$snapshot" || continue
+    candidates+=("$directory"); candidate_pids+=("$owner_pid"); candidate_tokens+=("$owner_token"); candidate_groups+=("$owner_group")
+  done
+  [ "${#candidates[@]}" -gt 0 ] || return 0
+  # One fresh observation of every candidate, taken after discovery and
+  # immediately before removal (a per-root census scales with the abandoned
+  # set). It includes cwd, descriptors and mappings: a process working in a
+  # root uses it even after dropping the binding. A live descendant remains an
+  # owner after its creator dies; shared or recycled groups are retained
+  # conservatively; no process is signaled.
+  snapshot=$(ps -eo pid=,pgid=,stat=,uid=) || return 0
+  read_test_temp_root_users "$snapshot" --references || return 0
+  for index in "${!candidates[@]}"; do
+    directory=${candidates[$index]}
     printf '%s\n' "$test_temp_root_users" | grep -Fx -- "$directory" >/dev/null && continue
-    # A live descendant remains an owner after its creator dies. Shared or
-    # recycled groups are retained conservatively; no process is signaled.
-    printf '%s\n' "$snapshot" | awk -v group="$owner_group" '$2 == group && $3 !~ /^Z/ {found=1} END {exit !found}' && continue
-    # Recheck the group immediately before removal, rather than trusting an
-    # earlier process snapshot while a dispatch or another reaper runs.
-    snapshot=$(ps -eo pid=,pgid=,stat=,uid=) || return 0
-    read_test_temp_root_users "$snapshot" || continue
-    printf '%s\n' "$test_temp_root_users" | grep -Fx -- "$directory" >/dev/null && continue
-    printf '%s\n' "$snapshot" | awk -v group="$owner_group" '$2 == group && $3 !~ /^Z/ {found=1} END {exit !found}' && continue
-    heavyweight_process_is_current "$owner_pid" "$owner_token" && continue
+    printf '%s\n' "$snapshot" | awk -v group="${candidate_groups[$index]}" '$2 == group && $3 !~ /^Z/ {found=1} END {exit !found}' && continue
+    heavyweight_process_is_current "${candidate_pids[$index]}" "${candidate_tokens[$index]}" && continue
     printf '[preferred-execution] removing abandoned test temporary root %s\n' "$directory" >&2
     rm -rf -- "$directory" 2>/dev/null || node "${BASH_SOURCE[0]%/*}/historical_temp_roots.mjs" --remove-owned-temp-root "$directory"
   done
