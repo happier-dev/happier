@@ -32,7 +32,6 @@ import { t } from '@/text';
 import { catalogText, showStoreAppPreparation } from './StoreAppPreparation';
 import { StoreAddToPresetButton, StorePresetEditorHandoff, type StorePresetChoice } from './presets/StoreAddToPreset';
 import { storeAppPresetItem, type StorePresetDoorItem } from './presets/storePresetDoor';
-import { useStoreListingPaneTitle } from './storeListingPaneTitle';
 import {
   useStoreAppListing,
   type StoreAppListingSelection,
@@ -142,9 +141,6 @@ export function StoreAppListing(
   const templateRef = ready?.templateRef;
   const presetItem = React.useMemo((): StorePresetDoorItem | null => templateRef ? storeAppPresetItem(name, templateRef) : null, [templateRef, name]);
   const [presetHandoff, setPresetHandoff] = React.useState<StorePresetChoice | null>(null);
-  // As its own page (a phone push) the bar names the App, as every pushed detail names its subject; a preset
-  // hand-off names its editor instead.
-  useStoreListingPaneTitle(props.pushed && !presetHandoff ? name : null);
   const returnFromPreset = React.useCallback(() => setPresetHandoff(null), []);
   // The listing that asked owns its install sheet: once it stops being presented (a route change, Back, a
   // closed pane) the sheet is withdrawn with it, never left open over another page.
@@ -202,11 +198,10 @@ export function StoreAppListing(
     return list;
   }, [app, summary.license]);
 
-  // A catalog App's summary version pins its template catalog, not the App's own release: it belongs in Versions
-  // with that note rather than being mistaken for the App's own release.
+  // A catalog App's summary version pins its template catalog's content, not the App's own release: Versions shows
+  // only a real release, never the content digest.
   const catalogSource = useRegistrySources('app').sources.find((source) => source.id === summary.sourceId);
   const catalogFacts = appListingCatalogFacts({ version: summary.version, repository: summary.links?.repository, catalog: catalogSource });
-  const catalogPin = catalogFacts.catalogPin ?? catalogFacts.version;
   const prose = appListingProse({ summary: summary.description, about: catalogText(app?.description) });
   const website = summary.links?.website ?? app?.documentationUrl;
   const glyph = (icon: IconName) => (
@@ -371,10 +366,8 @@ export function StoreAppListing(
         <CapabilityListingSections
           testID="store.app.listing"
           facts={{
-            version: catalogPin,
-            versionNote: catalogPin
-              ? t('capabilities.store.appPage.catalogRevision')
-              : null,
+            version: catalogFacts.version,
+            versionNote: null,
             license: summary.license ?? null,
             sourceTitle: catalogFacts.sourceTitle,
             links: {

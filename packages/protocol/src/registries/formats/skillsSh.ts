@@ -34,7 +34,7 @@ export const skillsShRegistryAdapterV1: RegistrySkillFormatAdapterV1 = {
     }
     const unique=new Map(entries.map(entry=>[`${entry.source}/${entry.skillId}`,entry]));
     return {sourceId:req.source.id,status:{state:'ok',fetchedAt},nextCursor:null,items:[...unique].map(([itemId,entry])=>({
-      sourceId:req.source.id,kind:'skill' as const,itemId,title:entry.name ?? entry.skillId,description:entry.source,
+      sourceId:req.source.id,kind:'skill' as const,itemId,title:entry.name ?? entry.skillId,
       ...(entry.installs !== undefined ? {installs:entry.installs}:{}),links:{repository:`https://github.com/${entry.source}`,website:`${base}/${itemId}`},
     }))};
   },

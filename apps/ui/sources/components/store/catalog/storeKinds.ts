@@ -149,6 +149,8 @@ function pluginSummary(item: PluginMarketplaceCatalogEntry): StoreItemSummary<Pl
 /** Closed host UI adapters. Each kind is mounted by a static leaf; never iterate this map to call hooks. */
 export const storeKinds = {
     app: { ...APP_STORE_KIND, summary: registrySummary, useList: useAppList, useInstalled: useInstalledApps },
+    // Software second: what a Machine runs sits beside the Apps it hosts (S40-R02).
+    software: { summary: softwareSummary, useList: useSoftwareList, useInstalled: useInstalledSoftware },
     starter: { summary: registrySummary, useList: useStarterList, useInstalled: undefined },
     browserExtension: { summary: registrySummary, useList: useBrowserExtensionList, useInstalled: useInstalledBrowserExtensions },
     mcpServer: { summary: registrySummary, useList: useMcpList, useInstalled: useInstalledMcpServers },
@@ -156,7 +158,6 @@ export const storeKinds = {
     agent: { summary: agentSummary, useList: useAgentList, useInstalled: useInstalledAgents },
     provider: { summary: providerSummary, useList: useProviderList, useInstalled: useInstalledProviders },
     plugin: { summary: pluginSummary, useList: usePluginList, useInstalled: useInstalledPlugins },
-    software: { summary: softwareSummary, useList: useSoftwareList, useInstalled: useInstalledSoftware },
 } as const;
 export type StoreKind = keyof typeof storeKinds;
 /** Adapter declaration order is the shared browse/search order. */

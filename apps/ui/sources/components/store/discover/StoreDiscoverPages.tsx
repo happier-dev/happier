@@ -375,6 +375,7 @@ function CurationUnavailable(
       <RegistrySourcesUnavailable
         testID={props.testID}
         failures={unavailable.map(state => ({ key: state.sourceId ?? 'sources', message: state.message,
+          ...(state.sourceId === null ? { allSources: true } : {}),
           ...(state.details ? { details: state.details } : {}), onRetry: state.onRetry }))}
       />
     </View>
@@ -517,18 +518,19 @@ const DiscoverBody = React.memo(function DiscoverBody(
   const { curation, nav, page } = props;
   const held =
     page.featured !== null || page.suggestions.length > 0 || page.jobs.length > 0 || page.sections.length > 0;
-  // No curated shelf to show because its catalogs failed: everything else the Store can read stays on the page.
-  const curationOut = !curation.loading && !held && (curation.error !== null || curation.sourceFailures.length > 0);
+  // No curated shelf to show because its catalogs failed: everything else the Store can read stays on the page. A
+  // Retry of that outage keeps the fallen-back catalogs mounted, so their read owners keep what they last showed.
+  const curationOut = !held && (curation.error !== null || curation.sourceFailures.length > 0);
   const openJob = React.useCallback(
     (job: StoreDiscoverJob) => nav.openJob(job.id, job.sourceId),
     [nav],
   );
-  if (curation.loading && !held)
+  if (curation.loading && !held && !curationOut)
     return <DiscoverLoading testID="store.discover.loading" />;
   return (
     <>
       {/* Falling back to the catalogs, the shelves say the curated outage on their one line with the others'. */}
-      {curationOut && curation.sourceFailures.length > 0 ? null : <CurationUnavailable
+      {curationOut ? null : <CurationUnavailable
         curation={curation}
         testID="store.discover.unavailable"
       />}
@@ -613,10 +615,14 @@ const NO_CURATION: RegistryCuration['curation'] = [];
 function DiscoverWithoutCuration(props: Readonly<{ curation: RegistryCuration; presented: boolean; onOpenKind: (kind: string) => void }>) {
   const fields = useStoreFilterFields(NO_CURATION, props.presented);
   const demand = React.useMemo(() => ({ presented: props.presented }), [props.presented]);
+  // A curated read that failed without naming its catalog is still the curated outage: the shelves' one line says it.
+  const { sourceFailures, status, refresh } = props.curation;
+  const curationFailures = React.useMemo(() => sourceFailures.length > 0 ? sourceFailures
+    : [{ sourceId: null, status, onRetry: refresh }], [sourceFailures, status, refresh]);
   return (
     <StoreSearch demand={demand} fields={fields} curation={NO_CURATION} curationComplete={false}>
       {(state) => <StoreCatalogShelves state={state} presented={props.presented} softwareTarget={null}
-        onOpenKind={props.onOpenKind} curationFailures={props.curation.sourceFailures} />}
+        onOpenKind={props.onOpenKind} curationFailures={curationFailures} />}
     </StoreSearch>
   );
 }

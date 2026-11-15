@@ -961,6 +961,7 @@ export function Directory(
         // narrowed to, else the catalogs), with what the source said behind Details (the Plugins pattern).
         failures={failures.map((failure) => ({
           key: failure.sourceId ?? 'index',
+          ...(failure.sourceId === null && !catalogId ? { allSources: true } : {}),
           ...registrySourceFailureLine(failure, failure.sourceId
             ? props.sourceTitle?.(failure.sourceId) ?? anyCatalogTitle(failure.sourceId) : catalogId ? anyCatalogTitle(catalogId) : null),
           onRetry: failure.onRetry,

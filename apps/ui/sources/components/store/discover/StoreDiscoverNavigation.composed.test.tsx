@@ -326,6 +326,26 @@ it('says the curated outage and the other catalogs\' outage as one line when Dis
   expect(lines()[0]!.props.failures.length).toBeGreaterThan(1);
 });
 
+it('keeps the catalogs it fell back to on the page while Retry reads the curated outage again', async () => {
+  // A refresh of the failed curation must not swap the page to its first-load skeleton: that unmounted every kind's
+  // read owner, and a later failed read left only the built-in kinds (FIDELITY-STORE-OPS-1115 D1).
+  const { screen } = await renderDiscoverWithOneJob({ view: 'discover', focused: true, visible: true, curatedUnavailable: true });
+  const line = () => screen.findAllHostsByTestId('store.kind.search.failure')[0];
+  await waitForHomeGovernance(() => expect(line()).toBeDefined());
+  await flushHookEffects();
+  const shown = line();
+  const skeletons: number[] = [];
+  const retry = screen.findAllByTestId('store.kind.search.failure.retry')[0]!;
+  await act(async () => {
+    retry.props.onPress();
+    skeletons.push(screen.findAllByTestId('store.discover.loading').length);
+  });
+  await flushHookEffects();
+  skeletons.push(screen.findAllByTestId('store.discover.loading').length);
+  expect(skeletons).toEqual([0, 0]);
+  expect(line() === shown).toBe(true);
+});
+
 it('keeps the retained Discover choices mounted while presentation withdraws native demand', async () => {
   const { screen, tree, catalogReads } = await renderDiscoverWithOneJob({ view: 'discover', focused: true, visible: true });
   await waitForHomeGovernance(() => expect(screen.findAllHostsByTestId('store.discover.directory.review-skill').length).toBeGreaterThan(0));

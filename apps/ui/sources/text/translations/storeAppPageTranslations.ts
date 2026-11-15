@@ -75,7 +75,6 @@ export type StoreAppPageTranslation = Readonly<{
   inNewProject: (params: Name) => string;
   inProject: (params: Project) => string;
   refused: (params: Name) => string;
-  catalogRevision: string;
   approvalWaiting: string;
   approvalDescription: string;
 }>;
@@ -157,7 +156,6 @@ const en: StoreAppPageTranslation = {
   inNewProject: ({ name }) => `In a new project, ${name} · no repository`,
   inProject: ({ project }) => `In ${project}`,
   refused: ({ name }) => `Couldn’t prepare ${name}`,
-  catalogRevision: 'The revision of the template catalog it comes from',
   approvalWaiting: 'Waiting for approval',
   approvalDescription: 'Once it’s approved, review it again here.',
 };
@@ -239,7 +237,6 @@ const ca: StoreAppPageTranslation = {
   inNewProject: ({ name }) => `En un projecte nou, ${name} · sense repositori`,
   inProject: ({ project }) => `A ${project}`,
   refused: ({ name }) => `No s’ha pogut preparar ${name}`,
-  catalogRevision: 'La revisió del catàleg de plantilles d’on prové',
   approvalWaiting: 'Esperant l’aprovació',
   approvalDescription: 'Quan s’aprovi, torna-la a revisar aquí.',
 };
@@ -322,7 +319,6 @@ const de: StoreAppPageTranslation = {
     `In einem neuen Projekt, ${name} · ohne Repository`,
   inProject: ({ project }) => `In ${project}`,
   refused: ({ name }) => `${name} konnte nicht vorbereitet werden`,
-  catalogRevision: 'Die Revision des Vorlagenkatalogs, aus dem sie stammt',
   approvalWaiting: 'Wartet auf Freigabe',
   approvalDescription: 'Sobald sie freigegeben ist, prüfe sie hier erneut.',
 };
@@ -404,7 +400,6 @@ const es: StoreAppPageTranslation = {
   inNewProject: ({ name }) => `En un proyecto nuevo, ${name} · sin repositorio`,
   inProject: ({ project }) => `En ${project}`,
   refused: ({ name }) => `No se pudo preparar ${name}`,
-  catalogRevision: 'La revisión del catálogo de plantillas del que proviene',
   approvalWaiting: 'Esperando aprobación',
   approvalDescription: 'Cuando se apruebe, revísala de nuevo aquí.',
 };
@@ -486,7 +481,6 @@ const fr: StoreAppPageTranslation = {
   inNewProject: ({ name }) => `Dans un nouveau projet, ${name} · sans dépôt`,
   inProject: ({ project }) => `Dans ${project}`,
   refused: ({ name }) => `Impossible de préparer ${name}`,
-  catalogRevision: 'La révision du catalogue de modèles dont elle provient',
   approvalWaiting: 'En attente d’approbation',
   approvalDescription: 'Une fois approuvée, vérifie-la à nouveau ici.',
 };
@@ -569,7 +563,6 @@ const it: StoreAppPageTranslation = {
     `In un nuovo progetto, ${name} · senza repository`,
   inProject: ({ project }) => `In ${project}`,
   refused: ({ name }) => `Impossibile preparare ${name}`,
-  catalogRevision: 'La revisione del catalogo di modelli da cui proviene',
   approvalWaiting: 'In attesa di approvazione',
   approvalDescription: 'Quando viene approvata, verificala di nuovo qui.',
 };
@@ -645,7 +638,6 @@ const ja: StoreAppPageTranslation = {
   inNewProject: ({ name }) => `新しいプロジェクト ${name} · リポジトリなし`,
   inProject: ({ project }) => `${project} 内`,
   refused: ({ name }) => `${name} を準備できませんでした`,
-  catalogRevision: '取得元テンプレートカタログのリビジョン',
   approvalWaiting: '承認待ち',
   approvalDescription: '承認されたら、ここで再度確認してください。',
 };
@@ -727,7 +719,6 @@ const pl: StoreAppPageTranslation = {
   inNewProject: ({ name }) => `W nowym projekcie, ${name} · bez repozytorium`,
   inProject: ({ project }) => `W ${project}`,
   refused: ({ name }) => `Nie udało się przygotować ${name}`,
-  catalogRevision: 'Wersja katalogu szablonów, z którego pochodzi',
   approvalWaiting: 'Czeka na zatwierdzenie',
   approvalDescription: 'Po zatwierdzeniu przejrzyj ją tu ponownie.',
 };
@@ -808,7 +799,6 @@ const pt: StoreAppPageTranslation = {
   inNewProject: ({ name }) => `Num novo projeto, ${name} · sem repositório`,
   inProject: ({ project }) => `Em ${project}`,
   refused: ({ name }) => `Não foi possível preparar ${name}`,
-  catalogRevision: 'A revisão do catálogo de modelos de onde vem',
   approvalWaiting: 'À espera de aprovação',
   approvalDescription: 'Quando for aprovada, revê-a aqui de novo.',
 };
@@ -886,7 +876,6 @@ const ru: StoreAppPageTranslation = {
   inNewProject: ({ name }) => `В новом проекте ${name} · без репозитория`,
   inProject: ({ project }) => `В ${project}`,
   refused: ({ name }) => `Не удалось подготовить ${name}`,
-  catalogRevision: 'Ревизия каталога шаблонов, из которого оно взято',
   approvalWaiting: 'Ожидает одобрения',
   approvalDescription: 'После одобрения проверьте его здесь ещё раз.',
 };
@@ -959,7 +948,6 @@ const zhHans: StoreAppPageTranslation = {
   inNewProject: ({ name }) => `在新项目 ${name} 中 · 无仓库`,
   inProject: ({ project }) => `在 ${project} 中`,
   refused: ({ name }) => `无法准备 ${name}`,
-  catalogRevision: '其来源模板目录的修订版本',
   approvalWaiting: '等待批准',
   approvalDescription: '批准后，请在这里再次审核。',
 };
@@ -1032,7 +1020,6 @@ const zhHant: StoreAppPageTranslation = {
   inNewProject: ({ name }) => `在新專案 ${name} 中 · 無儲存庫`,
   inProject: ({ project }) => `在 ${project} 中`,
   refused: ({ name }) => `無法準備 ${name}`,
-  catalogRevision: '其來源範本目錄的修訂版本',
   approvalWaiting: '等待核准',
   approvalDescription: '核准後，請在這裡再次審核。',
 };

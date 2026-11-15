@@ -413,10 +413,12 @@ export function StoreCatalogShelves(props: SearchSectionsInput & Readonly<{
     return kind ? { label: t('capabilities.store.discover.all'), onPress: () => onOpenKind(kind), kind: 'link' } : null;
   }, [onOpenKind]);
   // One outage line for the page: the curated sources and the other named catalogs together (the Directory keeps one
-  // entry per catalog). A kind read that failed without naming a catalog is that same outage reaching it, so it doesn't
-  // add another. Shelves preview; each kind's All › pages the rest, so there is no Load more here.
-  const shown: DirectoryList = { ...list, hasNextPage: false, sourceFailures: [...curationFailures, ...(list.sourceFailures ?? [])]
-    .filter(failure => failure.sourceId !== null) };
+  // entry per catalog). A read that failed without naming a catalog is that same outage reaching it: it adds nothing
+  // when a catalog is named, and is the line itself when none is. Shelves preview; each kind's All › pages the rest,
+  // so there is no Load more here.
+  const failures = [...curationFailures, ...(list.sourceFailures ?? [])];
+  const named = failures.filter(failure => failure.sourceId !== null);
+  const shown: DirectoryList = { ...list, hasNextPage: false, sourceFailures: named.length > 0 ? named : failures.slice(0, 1) };
   if (Object.values(byKind).every(kindRows => kindRows.length === 0) && !list.loading && shown.sourceFailures!.length === 0) return null;
   return (
     <Directory kind="search" label={t('capabilities.store.discover.title')} rows={rows} groups={groups} list={shown}

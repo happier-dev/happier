@@ -12,6 +12,8 @@ export type RegistrySourceFailure = Readonly<{
   reason?: string;
   /** Technical facts for support, shown only when asked for. */
   details?: readonly string[];
+  /** The line names no one catalog ("Couldn't reach the catalogs"): what it hides is every catalog's items. */
+  allSources?: boolean;
   onRetry: () => void | Promise<void>;
 }>;
 
@@ -61,6 +63,7 @@ export function HappierRegistrySourcesUnavailable(props: RegistrySourcesUnavaila
   const pageState = props.size === 'page' && single?.source && single.reason ? single : null;
   const details = failures.flatMap((failure) => failure.details ?? []);
   const revealable = !single || details.length > 0;
+  const hiddenCount = failures.some((failure) => failure.allSources) ? Number.POSITIVE_INFINITY : failures.length;
   return (
     <View>
       <props.host.State
@@ -73,7 +76,7 @@ export function HappierRegistrySourcesUnavailable(props: RegistrySourcesUnavaila
             : props.labels.sourcesUnreachable(failures.length))
         }
         {...(pageState?.reason ? { reason: pageState.reason }
-          : !pageState && props.labels.sourcesHidden ? { reason: props.labels.sourcesHidden(failures.length) } : {})}
+          : !pageState && props.labels.sourcesHidden ? { reason: props.labels.sourcesHidden(hiddenCount) } : {})}
         action={{
           label: props.labels.retry,
           onPress: retry,
