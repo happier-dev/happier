@@ -284,7 +284,7 @@ export function TriageChangedFilesList<TRow extends TriageChangedFileV1>(
       keyForItem={(row) => row.path}
       header={props.header}
       endContent={props.endContent}
-      revealRequest={revealRequest}
+      {...(revealRequest === undefined ? {} : { revealRequest })}
       renderItem={(row) => (
         <FileRow
           row={row}

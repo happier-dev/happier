@@ -5,6 +5,8 @@ import { createCliActionExecutorFromCredentials } from '@/session/actions/create
 import { registerAccountHomeHttp } from '@/session/actions/widgetApproval.testkit';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { registerAuthoredAccountActionRelease } from './accountPluginActions.testkit';
+import { TESTKIT_SOURCE_INSTANCE_ID, testkitEntryRef } from '../../../../../packages/plugins/triage/src/corpus/testkit/observations.test-support';
+import { TriageRunConfiguredActionInputV1Schema } from '../../../../../packages/plugins/triage/src/actions/configuredActionRunProtocol';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -85,5 +87,40 @@ it('lists the real Channels PR Watch through the finite Account Action host', as
         }, { surface: 'cli', runtimeAccountId: accountId, serverId: 'channels-settings', serverIdentityId: 'srv_channels_settings' });
         expect(result, result.ok ? 'ok' : result.errorCode).toMatchObject({ ok: true, result: { sessions: [] } });
         expect(recordReads).toBe(1);
+    } finally { restore(); await app.close(); }
+});
+
+it('lets a configured Triage CLI run resolve selected entries through its nested Account reads', async () => {
+    const app = fastify();
+    const endpoint = 'http://triage-configured.test';
+    const accountId = 'triage-configured-owner';
+    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`,
+        encryption: null, credentialProvenance: 'stored_session' as const };
+    const { pluginId } = await registerAuthoredAccountActionRelease(app, accountId, { includeBundledPluginIds: ['happier.triage'] });
+    const features = registerAccountHomeHttp(app, { accountId, serverId: 'srv_triage_configured' });
+    app.post('/v1/plugins/data/query', async () => ({ rows: [], changeCursor: 0 }));
+    await app.ready();
+    const restore = installAxiosFastifyAdapter({ app, origin: endpoint });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json(features));
+    const executor = createCliActionExecutorFromCredentials({ credentials, serverId: 'triage-configured',
+        serverIdentityId: 'srv_triage_configured', serverApiUrl: endpoint, readCredentials: async () => credentials });
+    const entry = { entryRef: testkitEntryRef(), sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID };
+    try {
+        const result = await executor.execute('action.invoke', {
+            action: { pluginId: 'happier.triage', localId: 'sessions/run-configured-v1' }, input: TriageRunConfiguredActionInputV1Schema.parse({ v: 1, handoff: {
+                task: 'fix', configuredActionId: 'fix', context: { kind: 'entries', entries: [entry], destination: 'oneSessionPerEntry' },
+                evidence: [{ kind: 'entry', entry }], sessionChoice: { kind: 'configured' },
+                agentChoice: { kind: 'configured' }, delivery: 'configured',
+            } }),
+        }, { surface: 'cli', runtimeAccountId: accountId, serverId: 'triage-configured', serverIdentityId: 'srv_triage_configured' });
+        // The real reobserve handler resolves an absent configured instance.
+        // A plugin-surface refusal would instead fail the containing Action.
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'unavailable', reason: 'noEntriesAvailable' } });
+        const detail = await executor.execute('action.invoke', {
+            action: { pluginId, localId: 'invoke-contributed' }, input: {
+                action: { pluginId: 'happier.triage', localId: 'entries/read-detail-v1' }, input: { v: 1, ...entry },
+            },
+        }, { surface: 'cli', runtimeAccountId: accountId, serverId: 'triage-configured', serverIdentityId: 'srv_triage_configured' });
+        expect(detail, JSON.stringify(detail)).toMatchObject({ ok: true, result: { kind: 'unavailable' } });
     } finally { restore(); await app.close(); }
 });

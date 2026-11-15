@@ -1,6 +1,6 @@
 import { definePlugin, PluginError } from '@happier-dev/plugin-sdk';
 import type { ConnectedAccountPortableRuntime, ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
-import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
+import { defineProtocolJsonValue, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 
 const input = defineProtocolObject({ key: defineProtocolString() }, { policy: 'closed' });
 const writeInput = defineProtocolObject({ key: defineProtocolString(), value: defineProtocolString() }, { policy: 'closed' });
@@ -150,6 +150,13 @@ const plugin = definePlugin({
         source: { title: 'Read a Machine source', surfaces: ['plugin', 'cli', 'agent', 'mcp', 'ui'], placementBindings: [],
             execution, inputSchema: input, dangerLevel: 'safe',
             run: async ({ key }, context) => context.services.actions.execute({ pluginId: 'acme.account-source-provider', localId: 'read' }, { key }),
+        },
+        'invoke-contributed': { title: 'Invoke a contributed Action', surfaces: ['cli'], placementBindings: [],
+            execution, dangerLevel: 'safe', inputSchema: defineProtocolObject({
+                action: defineProtocolObject({ pluginId: defineProtocolString(), localId: defineProtocolString() }, { policy: 'closed' }),
+                input: defineProtocolJsonValue(),
+            }, { policy: 'closed' }),
+            run: async ({ action, input }, context) => context.services.actions.execute(action, input),
         },
         'record-source': { title: 'Record through an Account source', surfaces: ['plugin', 'cli', 'agent', 'mcp', 'ui'], placementBindings: [],
             execution, inputSchema: input, dangerLevel: 'writesLocal',

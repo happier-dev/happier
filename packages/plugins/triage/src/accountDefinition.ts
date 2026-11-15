@@ -390,9 +390,9 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         readOnly: true,
         title: 'Read the durable facts of one entry',
         description: 'Reads the configured connection and linked Sessions for an exact entry. First resolve a GitHub issue or pull request URL with entries/resolve-resource-v1, or search entries/search-v1. Pass v:1, its entryRef and sourceInstanceId from sourceInstance.sourceInstanceId. On kind read, result.instance is the configured instance required by source read and mutation Actions. The localRef uses kindId, collisionScope and entryId from entryRef; routingToken comes from the resolved locator. Non-secret configuration: instance.configuration.token contains source-selection data, not a credential. Copy the entire returned instance unchanged into source read and mutation Action inputs; never replace its configuration with [REDACTED]. Credentials are acquired internally through the account binding. Keep configuration contents out of user-facing prose. No mounted UI is required.',
-        // Mounted self and host automated callers resolve the exact connection;
-        // unrelated plugins cannot borrow private source configuration.
-        surfaces: ['ui', 'agent', 'mcp', 'cli'],
+        // Explicit reads select any admitted source in the invoking Account,
+        // including nested configured runs; callerSource owns source admission.
+        surfaces: ['ui', 'plugin', 'agent', 'mcp', 'cli'],
         placementBindings: [],
         inputSchema: TriageReadEntryDetailInputV1Schema,
         resultSchema: TriageReadEntryDetailResultV1Schema,
@@ -418,7 +418,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         readOnly: true,
         title: 'Re-read an entry after a provider change',
         description: 'Reads the exact selected entry through its configured source after a provider Action settles.',
-        surfaces: ['ui', 'agent', 'mcp', 'cli'],
+        surfaces: ['ui', 'plugin', 'agent', 'mcp', 'cli'],
         placementBindings: [],
         inputSchema: TriageReobserveEntryInputV1Schema,
         resultSchema: TriageReobserveEntryResultV1Schema,
