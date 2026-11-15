@@ -21,17 +21,18 @@ import {
     type WorkflowItemExecutionMode,
     type WorkflowMaxIterationsV1,
     type WorkflowRepetition,
+    workflowInputToFieldHint,
 } from '@happier-dev/protocol/workflows/workflowV1';
 
 import type { WorkflowBlockAction } from './WorkflowBlockActionsMenu';
 import { WorkflowBlockHeading, type WorkflowBlockNameEditor } from './WorkflowBlockHeading';
-import { formatWorkflowConditionSentence, resolveWorkflowConditionHeadline } from '../presentation/workflowConditionPresentation';
+import { formatWorkflowConditionSentence, resolveWorkflowConditionProse } from '../presentation/workflowConditionPresentation';
 import { WorkflowConditionEditor } from './WorkflowConditionEditor';
 import { WorkflowContainerBody, WorkflowContainerLane, WorkflowContainerOptionsControl, WorkflowSpineSegment } from './WorkflowContainerBody';
 import { failurePolicyLabel, WorkflowFailurePolicyControl, WorkflowMaxConcurrentControl } from './WorkflowGroupEditor';
 import { WORKFLOW_BLOCK_KIND_GLYPH } from '@/components/workflows/presentation/workflowBlockKindGlyph';
 import { WorkflowNumberField } from './WorkflowNumberField';
-import { formatWorkflowValueReference } from '../presentation/workflowValuePresentation';
+import { formatWorkflowFieldLabel, formatWorkflowValueReference } from '../presentation/workflowValuePresentation';
 import { WorkflowReferenceSentence, WorkflowValueReferenceEditor } from './WorkflowStepDataEditor';
 import { useWorkflowDocumentGridStyles, workflowEditorStyles } from './workflowEditorStyles';
 import { resolveWorkflowUnnamedHeading, workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
@@ -122,10 +123,19 @@ export function formatWorkflowLoopSentence(draft: WorkflowEditorDraft, block: Lo
     }
 }
 
-/** The round guard as a reader says it; a cleared field says nothing while the validator asks for a number. */
-function formatWorkflowRoundLimit(maxIterations: WorkflowMaxIterationsV1): string | null {
-    if (typeof maxIterations !== 'number') return t('workflows.loop.roundLimitInput', { name: maxIterations.name });
-    return Number.isFinite(maxIterations) ? t('workflows.loop.roundLimit', { count: maxIterations }) : null;
+/**
+ * The round guard as a reader says it: a number, or the run input that supplies it, read by its
+ * default when it has one ("At most 4 rounds") and otherwise by its title. A cleared field says
+ * nothing while the validator asks for a number.
+ */
+function formatWorkflowRoundLimit(draft: WorkflowEditorDraft, maxIterations: WorkflowMaxIterationsV1): string | null {
+    if (typeof maxIterations !== 'number') {
+        const input = draft.inputs.find((candidate) => candidate.name === maxIterations.name);
+        if (typeof input?.default === 'number' && Number.isFinite(input.default)) return t('workflows.loop.atMostRounds', { count: input.default });
+        const name = input === undefined ? maxIterations.name : formatWorkflowFieldLabel(input.name, workflowInputToFieldHint(input).title);
+        return t('workflows.loop.atMostRoundsInput', { name });
+    }
+    return Number.isFinite(maxIterations) ? t('workflows.loop.atMostRounds', { count: maxIterations }) : null;
 }
 
 /**
@@ -359,12 +369,13 @@ export function WorkflowLoopEditor(props: Readonly<{
     const repetition = block.repetition;
     const stopWhen = repetition.kind === 'until' ? repetition.stopWhen : null;
     const sentence = formatWorkflowLoopSentence(props.draft, block);
-    const stopHeadline = stopWhen === null ? null : resolveWorkflowConditionHeadline(props.draft, stopWhen);
+    // The stop rule reads whole where the round ends, one sentence with every arm (owner 2026-11-15).
+    const stopHeadline = stopWhen === null ? null : resolveWorkflowConditionProse(props.draft, stopWhen);
     const unnamed = resolveWorkflowUnnamedHeading(block);
-    const roundRule = repetition.kind === 'until' ? t('workflows.loop.againUntil', { condition: stopHeadline?.sentence ?? '' })
-        : repetition.kind === 'evaluate' ? t('workflows.loop.againUntilDecided') : null;
-    const roundLimit = repetition.kind === 'until' || repetition.kind === 'evaluate' ? formatWorkflowRoundLimit(repetition.maxIterations) : null;
-    const turnSentence = roundRule === null ? null : roundLimit === null ? roundRule : `${roundRule} · ${roundLimit}`;
+    const roundRule = repetition.kind === 'until' ? t('workflows.loop.repeatsUntil', { condition: stopHeadline?.sentence ?? '' })
+        : repetition.kind === 'evaluate' ? t('workflows.loop.repeatsUntilDecided') : null;
+    const roundLimit = repetition.kind === 'until' || repetition.kind === 'evaluate' ? formatWorkflowRoundLimit(props.draft, repetition.maxIterations) : null;
+    const turnSentence = roundRule === null ? null : roundLimit === null ? roundRule : `${roundRule} ${roundLimit}`;
     const turn = turnSentence === null ? null : (
         <View testID={`${idPrefix}-turn`} style={grid.laneTurn}>
             <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants"

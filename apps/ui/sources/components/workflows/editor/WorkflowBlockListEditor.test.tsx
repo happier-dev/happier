@@ -1916,24 +1916,37 @@ describe('document anatomy (DESIGN-4)', () => {
             right: { kind: 'literal', value: 'converged' } };
         const until = (id: string, name: string | undefined, maxIterations: unknown) => ({ kind: 'loop', id, ...(name ? { name } : {}), body: [step(`${id}-check`, 'Check')],
             repetition: { kind: 'until', maxIterations, stopWhen } });
-        const draft = buildDraft(harness, [
-            until('rounds', 'Review until it converges', 5),
-            until('byInput', 'Review by input', { kind: 'input', name: 'rounds' }),
-            until('anonymous', undefined, 5),
-        ] as never);
+        const anyOf = { kind: 'any', conditions: [stopWhen, { kind: 'compare', operator: 'eq',
+            left: { kind: 'result', producer: { blockId: 'check', scope: { kind: 'current' } }, path: ['verdict'] }, right: { kind: 'literal', value: 'stuck' } }] };
+        const draft = {
+            ...buildDraft(harness, [
+                until('rounds', 'Review until it converges', 5),
+                until('byInput', 'Review by input', { kind: 'input', name: 'rounds' }),
+                until('anonymous', undefined, 5),
+                { ...until('compound', 'Keep going', 4), repetition: { kind: 'until', maxIterations: 4, stopWhen: anyOf } },
+            ] as never),
+            inputs: [{ name: 'rounds', valueType: 'number', required: false, default: 4 }],
+        } as never;
         const screen = await renderList(harness, { draft });
         type TextNode = string | { children: readonly TextNode[] };
         const read = (node: TextNode): string => typeof node === 'string' ? node : node.children.map(read).join('');
         const textOf = (testID: string) => { const host = screen.findHostByTestId(testID); return host ? read(host as never) : ''; };
 
         expect(screen.findHostByTestId('workflow-editor-loop-rounds-label-meta')).toBeNull();
-        expect(textOf('workflow-editor-loop-rounds-turn')).toContain('workflows.loop.againUntil');
-        expect(textOf('workflow-editor-loop-rounds-turn')).toContain('workflows.loop.roundLimit');
-        expect(textOf('workflow-editor-loop-byInput-turn')).toContain('workflows.loop.roundLimitInput');
+        // One sentence where the round ends (owner 2026-11-15): "Repeats until …. At most 5 rounds."
+        expect(textOf('workflow-editor-loop-rounds-turn')).toContain('workflows.loop.repeatsUntil');
+        expect(textOf('workflow-editor-loop-rounds-turn')).toContain('workflows.loop.atMostRounds:{"count":5}');
+        expect(textOf('workflow-editor-loop-rounds-turn')).not.toContain(' · ');
+        // A round limit an input supplies reads as that input's default number.
+        expect(textOf('workflow-editor-loop-byInput-turn')).toContain('workflows.loop.atMostRounds:{"count":4}');
+        // Every arm of a compound stop rule is in the sentence, never "+1 more".
+        expect(textOf('workflow-editor-loop-compound-turn')).toContain('workflows.condition.listOr');
+        expect(textOf('workflow-editor-loop-compound-turn')).toContain('stuck');
+        expect(textOf('workflow-editor-loop-compound-turn')).not.toContain('workflows.page.inspector.conditionMore');
         expect(screen.getTextContent()).toContain('workflows.loop.eachRound');
         // An unnamed loop's heading is its kind, so the rule still reads once: at the end of the lane.
         expect(textOf('workflow-editor-loop-anonymous-label-meta')).not.toContain('workflows.page.inspector.repeatUntil');
-        expect(textOf('workflow-editor-loop-anonymous-turn')).toContain('workflows.loop.againUntil');
+        expect(textOf('workflow-editor-loop-anonymous-turn')).toContain('workflows.loop.repeatsUntil');
     });
 
     it('keeps a container name whole on a narrow line: sized to its words, meta after it, the consequence wrapping beneath (DESIGN-5 N1)', async () => {
@@ -1972,7 +1985,7 @@ describe('document anatomy (DESIGN-4)', () => {
         expect(reading.findByTestId('workflow-editor-parallel-panel-branch-one-label')?.props.children).toBe('Changelog');
     });
 
-    it('keeps a step\'s footer to facts, the same selected or at rest (DESIGN-5 M1, DESIGN-7 N27)', async () => {
+    it('keeps a step\'s card free of Returns and Add lines, the same selected or at rest (owner 2026-11-15)', async () => {
         const harness = await loadHarness();
         const named = { ...step('gather', 'Gather'), result: { kind: 'json', schema: { type: 'object', properties: { issues: { type: 'array' }, summary: { type: 'string' } } } } };
         const draft = buildDraft(harness, [step('plain', 'Plain'), named] as never);
@@ -1982,8 +1995,8 @@ describe('document anatomy (DESIGN-4)', () => {
             expect(screen.findHostByTestId('workflow-editor-step-plain-returns')).toBeNull();
             expect(screen.findHostByTestId('workflow-editor-step-plain-add-input')).toBeNull();
             expect(screen.findHostByTestId('workflow-editor-step-plain-add-named-results')).toBeNull();
-            // Named results say what they are.
-            expect(screen.findHostByTestId('workflow-editor-step-gather-returns')?.props.children).toContain('workflows.page.blocks.returnsFields');
+            // Named results are Step options' Result row, not a line under the prompt.
+            expect(screen.findHostByTestId('workflow-editor-step-gather-returns')).toBeNull();
             await screen.unmount();
         }
     });
@@ -2095,7 +2108,7 @@ describe('document anatomy (DESIGN-4)', () => {
         await selected.unmount();
     });
 
-    it('removing a prompt input cannot silently bind its token to the next value', async () => {
+    it('edits only the values a prompt does not mention, and removing one keeps the prompt\'s token on its own value (owner 2026-11-15)', async () => {
         const harness = await loadHarness();
         const { WorkflowValueReferenceEditor } = await import('./WorkflowStepDataEditor');
         const draft = buildDraft(harness, [{ kind: 'step', id: 'write',
@@ -2104,14 +2117,13 @@ describe('document anatomy (DESIGN-4)', () => {
         }]);
         let changed = draft;
         const screen = await renderList(harness, { draft, selectedBlockId: 'write', onChange: next => { changed = next as typeof draft; } });
-        const row = screen.findAllByType(WorkflowValueReferenceEditor)[0]!;
-        await act(async () => { row.props.onRemove!(); });
-        const validation = harness.validateWorkflowEditorDraft(changed);
-        expect(validation.valid).toBe(false);
-        expect(validation.issues).toEqual(expect.arrayContaining([
-            expect.objectContaining({ code: 'invalid_input', path: '/blocks/0/document/references/0/ref' }),
-        ]));
-        expect(changed.blocks[0]).toMatchObject({ input: [{ kind: 'literal', value: 'version' }] });
+        // The mentioned value is its token in the prompt; only the trailing one has a row.
+        const rows = screen.findAllByType(WorkflowValueReferenceEditor);
+        expect(rows.map((row) => row.props.index)).toEqual([1]);
+        await act(async () => { rows[0]!.props.onRemove!(); });
+        expect(harness.validateWorkflowEditorDraft(changed).valid).toBe(true);
+        expect(changed.blocks[0]).toMatchObject({ input: [{ kind: 'literal', value: 'topic' }],
+            document: { references: [{ ref: 'workflowInput:0' }] } });
         await screen.unmount();
     });
     it('reads a typed card\'s set values as values until its step is selected, then edits them (DESIGN-6 N5)', async () => {
@@ -2147,7 +2159,7 @@ describe('document anatomy (DESIGN-4)', () => {
             ?.findAll((node) => node.props?.children === 'workflows.page.blocks.notSet').length).toBeGreaterThan(0);
     });
 
-    it('marks an offending card row, says a root Wait pauses the workflow, and names result fields as words (DESIGN-6 P3, M4)', async () => {
+    it('marks an offending card row and says a root Wait pauses the workflow (DESIGN-6 P3)', async () => {
         const harness = await loadHarness();
         const named = { ...step('judge', 'Judge'), result: { kind: 'json', schema: { type: 'object', properties: { missingEvidence: { type: 'string' } } } } };
         const draft = buildDraft(harness, [
@@ -2158,7 +2170,6 @@ describe('document anatomy (DESIGN-4)', () => {
         const screen = await renderList(harness, { draft });
         expect(screen.findHostByTestId('workflow-editor-action-notify-field-message-issue')).not.toBeNull();
         expect(screen.getTextContent()).toContain('workflows.page.blocks.waitSubRoot');
-        expect(screen.findHostByTestId('workflow-editor-step-judge-returns')?.props.children).toContain('missing evidence');
     });
 
     it('drops the authoring "waits until you continue" hint once a Run\'s Wait has settled, and keeps it before then', async () => {

@@ -11,6 +11,8 @@ import type { WorkflowActionFieldBindingV1 } from '@happier-dev/protocol/workflo
 import type { WorkflowActionTextBindingV1 } from '@happier-dev/protocol/workflows/workflowActionTextV1';
 import type { WorkflowResultContract, WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
 import { projectWorkflowResultFields } from '@happier-dev/protocol/workflows/workflowResultFieldsV1';
+import { readWorkflowStepInputIndexV1 } from '@happier-dev/protocol/workflows/workflowComposerDocumentV1';
+import { MENTION_KIND_V1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
@@ -24,7 +26,6 @@ import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEdito
 import { findWorkflowBlock } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { t } from '@/text';
 
-import { listWorkflowDeclaredResultFields } from '@/components/workflows/flow/workflowFlowProjection';
 import { workflowEditorStyles } from './workflowEditorStyles';
 import { listWorkflowActionFieldTextParts } from './workflowActionTextField';
 import { WorkflowReferenceRawPathInput, WorkflowValuePicker } from './WorkflowValuePicker';
@@ -274,7 +275,7 @@ const ACTION_FIELD_LABEL_COLUMN_PX = 120;
  * A typed row's label column and value track (lab `.uwe-kr`): the label says what the value is, on the
  * card's one label track, and the value starts where every other value on the card starts.
  */
-function WorkflowFieldPair(props: Readonly<{
+export function WorkflowFieldPair(props: Readonly<{
     /** Empty on a field's further values: they keep the label column, so they line up under the first. */
     label: string;
     /** Identifies the row on the card's label track. */
@@ -334,13 +335,6 @@ export const WorkflowKindCardLabelTrack = React.createContext<Readonly<{
     report: (rowKey: string, width: number) => void;
 }> | null>(null);
 
-/** A declared result field inside the "Returns …" sentence: its words, lower-case ("missingEvidence" → "missing evidence"). */
-function formatWorkflowResultFieldWord(name: string): string {
-    const words = name.replace(/([a-z\d])([A-Z])/gu, '$1 $2').replace(/[_\-.]+/gu, ' ').trim();
-    // Only a key is lower-cased; an authored title keeps its own capitals.
-    return /^[a-z][A-Za-z\d_\-.]*$/u.test(name) ? words.toLocaleLowerCase() : words;
-}
-
 /** The Result row's one line: "Named fields · fixed Yes/No, notes Text". */
 export function formatWorkflowNamedResultSummary(
   result: WorkflowResultContract | undefined,
@@ -356,18 +350,7 @@ export function formatWorkflowNamedResultSummary(
 }
 
 
-/**
- * The step footer's returns line (DESIGN-7 N27), at rest and selected: named results ("Returns
- * issues, commits, summary"), a decision, or `null` for plain text (lab E1). Field names read as
- * words in a sentence ("missing evidence, next step"), never as wire keys.
- */
-export function formatWorkflowStepReturns(result: WorkflowResultContract | undefined): string | null {
-    const namedFields = listWorkflowDeclaredResultFields(result);
-    if (namedFields !== undefined) return t('workflows.page.blocks.returnsFields', { fields: namedFields.map(formatWorkflowResultFieldWord).join(', ') });
-    return result === undefined || result.kind === 'text' ? null : formatWorkflowResultSummary(result);
-}
-
-/** What a result contract returns, in the footer and in Step options' Result row. */
+/** What a result contract returns, in Step options' Result row. */
 export function formatWorkflowResultSummary(result: WorkflowResultContract | undefined): string {
     if (result === undefined || result.kind === 'text') return t('workflows.page.blocks.returnsText');
     if (result.kind === 'json') return formatWorkflowNamedResultSummary(result) ?? t('workflows.page.inspector.returnsStructured');
@@ -491,21 +474,24 @@ export function WorkflowValueReferenceEditor(props: Readonly<{
     );
 }
 
+/**
+ * The values a step's prompt gets without naming them (owner 2026-11-15: no "Uses …" or
+ * "Returns …" lines). A value the prompt mentions reads in the prompt as its token; the runtime
+ * appends every other bound value after the prompt text, so those trail the prompt as tokens, in
+ * the card body. Selected, each trailing value is its binding editor; at rest pressing one selects
+ * the step. What a step returns is Step options' Result row.
+ */
 export function WorkflowStepDataEditor(props: Readonly<{
     draft: WorkflowEditorDraft;
     step: WorkflowStep;
     editable?: boolean;
-    /**
-     * Whether the input bindings' editors show: while the step is selected, as a typed card's
-     * values do (`WorkflowBindingRow`). At rest an editable step reads its inputs as the document
-     * reads them, tokens on the footer line, and pressing them selects the step.
-     */
+    /** Whether the trailing values' binding editors show: while the step is selected. */
     editing?: boolean;
-    /** Selects the step so its inputs can be edited (pressing them at rest). */
+    /** Selects the step so its values can be edited (pressing them at rest). */
     onEdit?: () => void;
     onChangeInput: (input: readonly WorkflowValueReference[]) => void;
     onRemoveInput?: (index: number) => void;
-    /** A reader's fact that ends the footer line (05's "Open conversation"). */
+    /** A reader's fact on the step's footer line (05's "Open conversation", a Test Run's output). */
     footerAccessory?: React.ReactNode;
     testIDPrefix: string;
 }>): React.ReactElement | null {
@@ -513,45 +499,32 @@ export function WorkflowStepDataEditor(props: Readonly<{
     const id = `${props.testIDPrefix}-step-${props.step.id}`;
     const editable = props.editable !== false;
     const editing = editable && props.editing !== false;
-    // The footer says facts only, the same selected or at rest. Adding named results or an input
-    // is Step options' (Result, Add input), so selecting moves nothing.
-    const returns = formatWorkflowStepReturns(props.step.result);
-    const inputTokens = editing ? [] : props.step.input;
-    const showsLine = returns !== null || inputTokens.length > 0 || props.footerAccessory != null;
-    // Nothing to say renders nothing: an empty line would still take the step's row gap.
-    if (!showsLine && (!editing || props.step.input.length === 0)) return null;
-    const tokens = inputTokens.map((reference, index) => (
-        <WorkflowValueReferenceToken key={index} draft={props.draft} reference={reference} testID={`${id}-input-${index}`} />
+    const trailing = listWorkflowStepTrailingInputIndexes(props.step);
+    if (trailing.length === 0 && props.footerAccessory == null) return null;
+    const tokens = editing ? [] : trailing.map((index) => (
+        <WorkflowValueReferenceToken key={index} draft={props.draft} reference={props.step.input[index]!} testID={`${id}-input-${index}`} />
     ));
     return (
         <View>
-            {/* Selected, the inputs are a labelled field: "Uses" (the footer's word for them at rest), then one
-                binding per value, each on the value track under the first. */}
-            {!editing ? null : props.step.input.map((reference, index) => (
+            {!editing ? null : trailing.map((index) => (
                 <View key={index} testID={`${id}-input-${index}-row`} style={workflowEditorStyles.actionFieldRow}>
-                    <WorkflowFieldPair label={index === 0 ? t('workflows.page.blocks.uses') : ''} trackKey={`${id}-input-${index}`}>
-                        <WorkflowValueReferenceEditor
-                            reference={reference}
-                            index={index}
-                            draft={props.draft}
-                            stepId={props.step.id}
-                            onChange={(value) => props.onChangeInput(props.step.input.map((current, candidate) => (
-                                candidate === index ? value : current
-                            )))}
-                            onRemove={props.onRemoveInput ? () => props.onRemoveInput?.(index) : undefined}
-                            // Rows are addressed by their step, exactly as the loop editors
-                            // address theirs; the bare editor prefix gave every step's first
-                            // input the same identity.
-                            testIDPrefix={id}
-                        />
-                    </WorkflowFieldPair>
+                    <WorkflowValueReferenceEditor
+                        reference={props.step.input[index]!}
+                        index={index}
+                        draft={props.draft}
+                        stepId={props.step.id}
+                        onChange={(value) => props.onChangeInput(props.step.input.map((current, candidate) => (
+                            candidate === index ? value : current
+                        )))}
+                        onRemove={props.onRemoveInput ? () => props.onRemoveInput?.(index) : undefined}
+                        // Rows are addressed by their step, exactly as the loop editors
+                        // address theirs; the bare editor prefix gave every step's first
+                        // input the same identity.
+                        testIDPrefix={id}
+                    />
                 </View>
             ))}
-            {/* One footer line (07 S7): what the step returns. A reading document has no binding
-                controls, so the step's inputs sit on that line as tokens. */}
-            {!showsLine ? null : <View testID={`${id}-footer`} style={workflowEditorStyles.metaRow}>
-                {/* The card's own line (owner 2026-11-06): what the step uses, then what it returns. */}
-                {tokens.length === 0 ? null : <Text testID={`${id}-uses`} style={workflowEditorStyles.metaText}>{t('workflows.page.blocks.uses')}</Text>}
+            {tokens.length === 0 && props.footerAccessory == null ? null : <View testID={`${id}-footer`} style={workflowEditorStyles.metaRow}>
                 {editable && tokens.length > 0 && props.onEdit !== undefined ? (
                     <HappierPressable
                         testID={`${id}-inputs-edit`}
@@ -565,9 +538,19 @@ export function WorkflowStepDataEditor(props: Readonly<{
                         {tokens}
                     </HappierPressable>
                 ) : tokens}
-                {returns === null ? null : <Text testID={`${id}-returns`} style={workflowEditorStyles.groupSummary}>{returns}</Text>}
                 {props.footerAccessory ?? null}
             </View>}
         </View>
     );
+}
+
+/** The step's bound values its prompt does not mention by token, in their bound order. */
+export function listWorkflowStepTrailingInputIndexes(step: WorkflowStep): readonly number[] {
+    const mentioned = new Set<number>();
+    for (const reference of step.document.references) {
+        if (reference.kind !== MENTION_KIND_V1.workflowInput) continue;
+        const index = readWorkflowStepInputIndexV1(reference.ref);
+        if (index !== null) mentioned.add(index);
+    }
+    return step.input.flatMap((_, index) => (mentioned.has(index) ? [] : [index]));
 }

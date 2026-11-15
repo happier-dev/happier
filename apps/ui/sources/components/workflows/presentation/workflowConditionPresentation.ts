@@ -135,3 +135,26 @@ export function resolveWorkflowConditionHeadline(draft: WorkflowValuePresentatio
     return rest.length === 0 ? head
         : { sentence: `${head.sentence} · ${t('workflows.page.inspector.conditionMore', { count: rest.length })}`, references: head.references };
 }
+
+/**
+ * A condition read whole as one sentence, every arm in it ("Check progress · Verdict is done,
+ * Tokens used is at least Goal token budget or …"), with its references as tokens. A loop's stop
+ * rule reads this way (owner 2026-11-15): it sits where the round ends, so nothing hides behind "+2 more".
+ */
+export function resolveWorkflowConditionProse(draft: WorkflowValuePresentationContext, authored: WorkflowCondition): Readonly<{
+    sentence: string;
+    references: readonly WorkflowValueReference[];
+}> {
+    const condition = foldWorkflowConditionGuards(authored);
+    if (isWorkflowConditionUnset(condition)) return { sentence: t('workflows.condition.unsetSentence'), references: [] };
+    if ((condition.kind !== 'all' && condition.kind !== 'any') || condition.conditions.length === 0) {
+        return resolveWorkflowConditionHeadline(draft, condition);
+    }
+    const arms = condition.conditions.map((arm) => resolveWorkflowConditionProse(draft, arm));
+    const sentences = arms.map((arm) => arm.sentence);
+    const last = sentences.at(-1)!;
+    const sentence = sentences.length === 1 ? last : t(condition.kind === 'any' ? 'workflows.condition.listOr' : 'workflows.condition.listAnd', {
+        list: sentences.slice(0, -1).join(t('workflows.condition.listSeparator')), last,
+    });
+    return { sentence, references: arms.flatMap((arm) => arm.references) };
+}

@@ -204,7 +204,7 @@ describe('the document grid, as a browser lays it out', () => {
             ], 900);
             const layout = await measureWebLayout(container, { viewport: { width: 900, height: 1400 }, settle });
             const nameEdge = layout.rect('workflow-editor-step-gather-prompt').left;
-            for (const id of ['workflow-editor-step-gather-label', 'workflow-editor-step-gather-returns',
+            for (const id of ['workflow-editor-step-gather-label',
                 'workflow-editor-action-notify-label', 'workflow-editor-action-notify-card', 'workflow-editor-action-notify-only-when',
                 'workflow-editor-loop-each-label']) {
                 expect(Math.abs(layout.rect(id).left - nameEdge), id).toBeLessThanOrEqual(1);

@@ -205,12 +205,35 @@ describe('WorkflowStepDataEditor field selects', () => {
         const draft = createWorkflowEditorDraft({ draftId: 'draft-1', name: 'Review', blocks: [producer, step] });
         const screen = await renderEditor(draft, step);
         expect(fieldSelect(screen.root, 'editor-step-step-a-input-0-value').props.selectedId).not.toBeNull();
-        // The selected step's binding says what it is, in the footer's word for it at rest (QA-DESIGN R3).
+        // No "Uses" label beside it (owner 2026-11-15): the value trails the prompt as itself.
         expect(screen.findByTestId('editor-step-step-a-input-0-row')?.findAll((node) => typeof node.type === 'string'
-            && node.props.children === 'workflows.page.blocks.uses')).toHaveLength(1);
+            && node.props.children === 'workflows.page.blocks.uses')).toHaveLength(0);
         for (const old of ['kind', 'producer', 'input-name', 'workspace-field', 'item-field', 'iteration-field']) {
             expect(screen.findByTestId(`editor-step-step-a-input-0-${old}`)).toBeNull();
         }
+    });
+
+    it('trails only the values the prompt does not mention by token, and says nothing else (owner 2026-11-15)', async () => {
+        const producer = stepBlock('producer-a', []);
+        const result = { kind: 'result' as const, producer: { blockId: 'producer-a', scope: { kind: 'current' as const } }, path: [] };
+        const step = { ...stepBlock('step-a', [result, { kind: 'session_context', recentTurns: 1 }]),
+            document: { text: 'Fix @producer', references: [{ kind: 'happier.workflowInput', ref: 'workflowInput:0', token: '@producer', label: '@producer' }], attachments: [] } } as WorkflowStep;
+        const draft = createWorkflowEditorDraft({ draftId: 'draft-1', name: 'Review', blocks: [producer, step] });
+        const screen = await renderScreen(
+            <WorkflowStepDataEditor draft={draft as Parameters<typeof WorkflowStepDataEditor>['0']['draft']} step={step}
+                editing={false} onEdit={() => {}} onChangeInput={() => {}} testIDPrefix="editor" />,
+        );
+        // The mentioned value reads in the prompt, so it is not repeated here; the other one trails.
+        expect(screen.findByTestId('editor-step-step-a-input-0')).toBeNull();
+        expect(screen.findByTestId('editor-step-step-a-input-1')).not.toBeNull();
+        expect(screen.getTextContent()).not.toContain('workflows.page.blocks.uses');
+        expect(screen.getTextContent()).not.toContain('workflows.page.blocks.returns');
+        // A step whose values are all in its prompt has no line at all.
+        const quiet = await renderScreen(
+            <WorkflowStepDataEditor draft={draft as Parameters<typeof WorkflowStepDataEditor>['0']['draft']}
+                step={{ ...step, input: [result] }} editing={false} onChangeInput={() => {}} testIDPrefix="quiet" />,
+        );
+        expect(quiet.findByTestId('quiet-step-step-a-footer')).toBeNull();
     });
 
     it('moves a typed value to a chosen one and back, through the same picker', async () => {

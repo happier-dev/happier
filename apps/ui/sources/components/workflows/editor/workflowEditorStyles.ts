@@ -599,6 +599,62 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         borderBottomWidth: StyleSheet.hairlineWidth,
         borderBottomColor: theme.colors.border.default,
     },
+    /** A page card beside its gutter mark (`WorkflowCardGutterRow`): the card takes the name column's width. */
+    cardGutterRow: {
+        alignItems: 'flex-start',
+    },
+    /** The mark sits level with the card's title line. */
+    cardGutterMark: {
+        paddingTop: theme.space.s12,
+    },
+    cardGutterBody: {
+        flex: 1,
+        minWidth: 0,
+    },
+    /** A first card's header carries its sentence under the title (lab r16 "When it runs"). */
+    kindCardHeaderTall: {
+        alignItems: 'flex-start',
+        paddingVertical: theme.space.s12,
+    },
+    /** Phone: the header wraps so its wider action takes its own line under the title. */
+    kindCardHeaderWrapped: {
+        flexWrap: 'wrap',
+        rowGap: theme.space.s4,
+    },
+    /** The header action on its own line, starting on the title's edge. */
+    kindCardHeaderActionBelow: {
+        flexBasis: '100%',
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    /** Closed, the card is its header alone: no rule under it. */
+    kindCardHeaderAlone: {
+        borderBottomWidth: 0,
+    },
+    kindCardTitleBlock: {
+        flex: 1,
+        minWidth: 0,
+        gap: theme.space.s2,
+    },
+    kindCardTitleLine: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s8,
+        minWidth: 0,
+    },
+    kindCardSummary: {
+        ...Typography.variant('meta'),
+        color: theme.colors.text.secondary,
+    },
+    kindCardToggle: {
+        flex: 1,
+        minWidth: 0,
+        borderRadius: theme.borderRadius.sm,
+    },
+    kindCardCaret: {
+        padding: theme.space.s4,
+        borderRadius: theme.borderRadius.sm,
+    },
     kindCardSource: {
         ...Typography.variant('meta'),
         color: theme.colors.text.tertiary,

@@ -18,7 +18,6 @@ import {
 
 import type { WorkflowBlockAction } from './WorkflowBlockActionsMenu';
 import { WorkflowBlockHeading } from './WorkflowBlockHeading';
-import { formatWorkflowStepReturns } from './WorkflowStepDataEditor';
 import { useWorkflowStepOptionsSummary } from './useWorkflowStepOptionsSummary';
 import {
   WorkflowStepSessionDropZone,
@@ -28,7 +27,7 @@ import { workflowEditorStyles } from './workflowEditorStyles';
 
 /**
  * The least height a summary row holds (px), also before its words mount: its heading, one prompt
- * line and the line under it (a step's engine · options · returns, a Wait's caption).
+ * line and the line under it (a step's engine · options, a Wait's caption).
  */
 export const WORKFLOW_SUMMARY_ROW_ESTIMATE = { step: 66, wait: 66 } as const;
 
@@ -37,7 +36,7 @@ const SUMMARY_PROMPT_LINES = 3;
 
 /**
  * A prompt block that is not being worked on (lab S1 "collapsed summary row", E1): its number, its
- * name, up to three lines of its prompt, a step's quiet engine · options · returns line, its
+ * name, up to three lines of its prompt, a step's quiet engine · options line, its
  * overflow actions, and the problem it has, if any.
  *
  * A long workflow mounts one block editor, not one per block: activating this row (a press, the
@@ -169,7 +168,7 @@ export function WorkflowBlockSummary(
   );
 }
 
-/** A step at rest names what runs it and how, quietly (lab E1): "Opus 5.5 · Workflow defaults · Returns issues". */
+/** A step at rest names what runs it and how, quietly (lab E1): "Opus 5.5 · Workflow defaults". */
 function WorkflowStepSummaryMeta(props: Readonly<{
   step: WorkflowStep;
   draft: WorkflowEditorDraft;
@@ -184,7 +183,7 @@ function WorkflowStepSummaryMeta(props: Readonly<{
     ...(props.authoringFacts === undefined ? {} : { facts: props.authoringFacts }),
   });
   const options = useWorkflowStepOptionsSummary(draft, step);
-  const line = [engine, options.label, formatWorkflowStepReturns(step.result)]
+  const line = [engine, options.label]
     .filter((part): part is string => part !== null && part.trim().length > 0)
     .join(' · ');
   return (

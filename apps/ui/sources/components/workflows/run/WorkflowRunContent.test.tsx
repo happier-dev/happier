@@ -1681,9 +1681,10 @@ describe('WorkflowRunContent', () => {
       }),
     });
     expect(screen.getTextContent()).toContain('Recorded input');
+    // What the step returns is not a line under it (owner 2026-11-15).
     expect(
       screen.findByTestId('workflow-run-steps-step-first-returns'),
-    ).toBeTruthy();
+    ).toBeNull();
     expect(
       screen.findByTestId('workflow-run-steps-step-first-add-input'),
     ).toBeNull();
