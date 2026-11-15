@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { accountSettingsParse } from '@happier-dev/protocol';
-import type { DaemonProviderModelProjectionRequestV1 } from '@happier-dev/protocol/rpc/providers';
+import { DaemonProviderModelProjectionRequestV1Schema, type DaemonProviderModelProjectionRequestV1 } from '@happier-dev/protocol/rpc/providers';
 import type { StoredCredentials } from '@/persistence';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
@@ -31,8 +31,8 @@ describe('Account-scoped remote Provider projection transport', () => {
     transport.call.mockReset().mockResolvedValue({ status: 'error', error: createProviderErrorV1('agent_error') });
     const read = createAccountScopedProviderModelProjectionReader({ serverUrl: 'https://home.example.test',
       readCredentials: async () => credentials, readAccountSettingsSnapshot: async () => snapshot, isCurrent: () => true });
-    await expect(read({ ...request, providerConnection: { connectionId: 'pc_actual',
-      expectedConnectionSecurityFingerprint: 'connection-security:v1:source' } }, new AbortController().signal))
+    await expect(read(DaemonProviderModelProjectionRequestV1Schema.parse({ ...request, providerConnection: { connectionId: 'pc_actual',
+      expectedConnectionSecurityFingerprint: 'connection-security:v1:source' } }), new AbortController().signal))
       .resolves.toMatchObject({ status: 'error', error: {
         code: 'agent_error', connectionId: 'pc_actual', machineId: request.machineId,
       } });

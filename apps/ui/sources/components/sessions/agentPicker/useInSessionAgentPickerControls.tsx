@@ -398,6 +398,8 @@ export type InSessionAgentPickerControls = Readonly<{
      * RPC leaves this process. The existing arm remains the one persisted owner.
      */
     recordArmedContinuationSubmission: (submission: SessionArmedAgentContinuationSubmission) => boolean;
+    applyDraftAgentIntent: (intent: NewSessionDraftAgentIntent) => Promise<boolean>;
+    applyDraftModelIntent: (intent: NewSessionDraftModelIntent) => Promise<boolean>;
     /**
      * The composer's Agent picker became visible or hidden. It scopes the rail
      * decision: one open popover keeps the one shape it opened with.

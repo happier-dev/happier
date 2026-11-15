@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
+import { ConnectedAccountPurposeDeclarationsV1Schema } from '@happier-dev/protocol/connect/connectedAccountPurposes';
 import { CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV } from '@happier-dev/plugin-sdk/connected-accounts';
 import { prepareKiloConnectedAccount } from '../../../../../packages/plugins/kilo/src/agent/runtime/connectedAccounts';
 import { PLUGIN_MANIFEST as KILO_MANIFEST } from '../../../../../packages/plugins/kilo/src/manifest';
@@ -147,7 +148,8 @@ it('replaces static membership with one exact current account observation across
     new URL('../../../assets/bundled-plugin-manifests/kilo.json', import.meta.url), 'utf8')));
   models = [{ id: 'gpt-6-luna', name: 'Luna' }];
   for (const manifest of [KILO_MANIFEST, publishedKilo]) {
-    const kiloPurpose = manifest.contributes.agents?.[0]?.connectedAccounts?.find(purpose => purpose.purpose === 'openai-codex-model-request');
+    const kiloPurposes = ConnectedAccountPurposeDeclarationsV1Schema.parse(manifest.contributes.agents?.[0]?.connectedAccounts);
+    const kiloPurpose = kiloPurposes.find(purpose => purpose.purpose === 'openai-codex-model-request');
     if (!kiloPurpose) throw new Error('Missing declared Kilo subscription purpose');
     const kiloTarget = 'agent:happier.agent.kilo/kilo';
     const kilo = await projectConnectedAccountCatalog({ ...input,

@@ -44,7 +44,7 @@ beforeEach(async () => {
     scope = { serverId: account.home.id, accountId: 'account-1' };
     await purposes.hydrate(scope);
     storage.setState({ sessions: { 'session-1': createSessionFixture({ id: 'session-1', serverId: scope.serverId,
-        metadata: { machineId: 'machine-1', path: '/repo', flavor: 'claude' } }) } });
+        metadata: { machineId: 'machine-1', path: '/repo', host: 'tester.local', flavor: 'claude' } }) } });
     resetSessionDraftRepositoryForTests();
     writeExistingSessionDraft({ scope, sessionId: 'session-1', materializationIntent: 'userEdit', patch: { text: 'Keep my unsent message' } });
     inspectionAvailable = true;

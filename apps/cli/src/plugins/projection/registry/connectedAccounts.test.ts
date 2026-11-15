@@ -26,12 +26,12 @@ describe('connectedAccountProjectionFamily', () => {
     const definition = PluginConnectedAccountDescriptorContributionV2Schema.parse({
       id: 'subscription', title: 'Acme Login', authentication: manualAuthentication(),
     });
-    const agent = projectManifestAgentFields({ pluginId: 'acme.accounts', provenance: 'external', source: { kind: 'installed' },
+    const agent = projectManifestAgentFields({ pluginId: 'acme.accounts', provenance: 'external', source: { kind: 'path' },
       definition: { id: 'native', title: 'Acme Native', runtime: { kind: 'custom' }, primary: 'sessions',
         capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
         connectedAccounts: [{ purpose: 'login', service: 'subscription', materializationKinds: ['environment'] }] } });
     const projected = connectedAccountProjectionFamily.project({ generation: 1, registry: {
-      agents: [agent], connectedAccountDescriptors: [{ provenance: 'external', source: { kind: 'installed' }, pluginId: 'acme.accounts', definition }],
+      agents: [agent], connectedAccountDescriptors: [{ provenance: 'external', source: { kind: 'path' }, pluginId: 'acme.accounts', definition }],
       scmHostingProviders: [], pluginDiagnosticsByPluginId: {},
     } as never });
     expect(projected.entriesById['acme.accounts/subscription']).toMatchObject({

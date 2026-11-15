@@ -7,7 +7,7 @@ import { storage } from '@/sync/domains/state/storage';
 /** The inspection Action resolves its Machine from the real Session record. */
 export function publishSessionDraftPickerFixture(scope: ServerAccountScope, sessionId: string) {
     storage.setState({ sessions: { ...storage.getState().sessions, [sessionId]: createSessionFixture({
-        id: sessionId, serverId: scope.serverId, metadata: { machineId: 'machine-1', path: '/repo', flavor: 'claude' },
+        id: sessionId, serverId: scope.serverId, metadata: { machineId: 'machine-1', path: '/repo', host: 'tester.local', flavor: 'claude' },
     }) } });
 }
 
