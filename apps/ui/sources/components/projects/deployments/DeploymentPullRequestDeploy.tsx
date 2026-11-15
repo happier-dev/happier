@@ -17,6 +17,9 @@ import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel
 import { t } from '@/text';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { getScmUserFacingError } from '@/scm/scmUserFacingErrors';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { GITHUB_CONNECTED_SERVICE_ROUTE } from '@/sync/domains/connectedServices/githubConnectedServiceRoute';
 
 type RepositorySource = Extract<DeploymentSourceIntentV1, { kind: 'repository' }>;
 /** The SCM reader selects the displayed head. Deploy admission still fetches and verifies that exact base-repository PR head. */
@@ -40,6 +43,9 @@ export function DeploymentPullRequestDeploy(props: Readonly<{
   /** The number a successful read found no pull request for. */
   const [notFoundNumber, setNotFoundNumber] = React.useState<number | null>(null);
   const [readFailure, setReadFailure] = React.useState<string | null>(null);
+  /** The read refused for a missing forge sign-in: on GitHub, connecting it is the fix (the prerequisite, not a retry). */
+  const [authRequired, setAuthRequired] = React.useState(false);
+  const router = useRouter();
   const read = React.useRef<AbortController | null>(null);
   React.useEffect(() => () => read.current?.abort(), []);
   const workspace = props.workspaceRef;
@@ -54,6 +60,7 @@ export function DeploymentPullRequestDeploy(props: Readonly<{
     setPending(true);
     setNotFoundNumber(null);
     setReadFailure(null);
+    setAuthRequired(false);
     try {
       const result = await machineScmPullRequestGet(workspace.machineId, { cwd: workspace.rootPath, prReference: parsedReference.data },
         { serverId: props.serverId, accountId: props.accountId, signal: abort.signal });
@@ -69,6 +76,7 @@ export function DeploymentPullRequestDeploy(props: Readonly<{
         setReadFailure(null);
       } else {
         setNotFoundNumber(null);
+        setAuthRequired(result.errorCode === SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED);
         setReadFailure(getScmUserFacingError({ errorCode: result.errorCode, error: result.error,
           fallback: t('projects.deployments.editors.prUnavailable'), subject: 'pullRequest' }));
       }
@@ -96,7 +104,7 @@ export function DeploymentPullRequestDeploy(props: Readonly<{
           <View style={styles.number}>
             <FieldTextInput testID="project-deployments.pr.number" accessibilityLabel={t('projects.deployments.editors.pullRequestNumber')}
               value={reference} keyboardType="number-pad" editable={!pending}
-              onChangeText={value => { setReference(value); setCandidate(null); setNotFoundNumber(null); setReadFailure(null); }} />
+              onChangeText={value => { setReference(value); setCandidate(null); setNotFoundNumber(null); setReadFailure(null); setAuthRequired(false); }} />
           </View>
           <RoundButton testID="project-deployments.pr.load" size="small" display="secondary" title={t('projects.deployments.editors.loadPrHead')}
             loading={pending} disabled={pending || !parsedReference.success} onPress={() => { void load(); }} />
@@ -114,7 +122,12 @@ export function DeploymentPullRequestDeploy(props: Readonly<{
         rightElement={<RoundButton testID="project-deployments.pr.deploy" size="small" display="secondary"
           title={t('projects.deployments.editors.deployPrHead')} disabled={props.disabled || pending || exactSource === null}
           onPress={() => { if (exactSource) void props.onDeploy(exactSource); }} />} /> : null}
-      {readFailure ? <SurfaceStateCard testID="project-deployments.pr.unavailable" size="line" kind="error" title={readFailure} /> : null}
+      {readFailure && authRequired && workspace.repositoryIdentity?.kind === 'github' ? (
+        <SurfaceStateCard testID="project-deployments.pr.connect" size="line" kind="unavailable"
+          title={t('projects.deployments.editors.prNeedsGithub')}
+          action={{ label: t('files.sourceControlOperations.update.publishRepository.remediation.connectGitHub'),
+            testID: 'project-deployments.pr.connect.action', onPress: () => router.push(GITHUB_CONNECTED_SERVICE_ROUTE as never) }} />
+      ) : readFailure ? <SurfaceStateCard testID="project-deployments.pr.unavailable" size="line" kind="error" title={readFailure} /> : null}
       {notFoundNumber !== null ? <SurfaceStateCard testID="project-deployments.pr.empty" size="line" kind="empty"
         title={t('projects.deployments.editors.prNotFound', { number: notFoundNumber })} /> : null}
       {candidate && exactSource === null ? <SurfaceStateCard testID="project-deployments.pr.sourceUnavailable" size="line" kind="unavailable"

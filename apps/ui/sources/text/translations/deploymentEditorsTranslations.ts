@@ -22,6 +22,7 @@ type DeploymentEditorsTranslations = Readonly<{
   prHead: string;
   prNotFound: (params: { number: number }) => string;
   prUnavailable: string;
+  prNeedsGithub: string;
   survival: string;
   runtimeData: string;
   runtimeDataDescription: string;
@@ -141,6 +142,7 @@ export const deploymentEditorsTranslations = {
     prHead: "Latest head",
     prNotFound: ({ number }) => `No pull request #${number} found. Check the number.`,
     prUnavailable: "The exact pull request head is unavailable. Read latest head to try again.",
+    prNeedsGithub: "Reading a pull request from this repository needs a GitHub connection.",
     survival: "Apps keep running when Happier stops. Restarting after a reboot follows the Compose restart policy.",
     runtimeData: "Runtime and data",
     runtimeDataDescription: "How this version runs, and the folders its services share. Shared data stays until you delete it.",
@@ -260,6 +262,7 @@ export const deploymentEditorsTranslations = {
     prHead: "Последняя версия",
     prNotFound: ({ number }) => `Pull request #${number} не найден. Проверьте номер.`,
     prUnavailable: "Точная версия pull request недоступна. Нажмите «Прочитать последнюю версию», чтобы повторить.",
+    prNeedsGithub: "Чтобы прочитать pull request из этого репозитория, нужно подключение к GitHub.",
     survival: "Приложения работают после остановки Happier. После перезагрузки действует политика restart из Compose.",
     runtimeData: "Среда и данные",
     runtimeDataDescription: "Как работает эта версия и какие папки делят её сервисы. Общие данные остаются, пока вы их не удалите.",
@@ -380,6 +383,7 @@ export const deploymentEditorsTranslations = {
     prHead: "Najnowsza wersja",
     prNotFound: ({ number }) => `Nie znaleziono pull requesta #${number}. Sprawdź numer.`,
     prUnavailable: "Dokładna wersja pull requesta jest niedostępna. Użyj „Odczytaj najnowszą wersję”, aby spróbować ponownie.",
+    prNeedsGithub: "Odczytanie pull requesta z tego repozytorium wymaga połączenia z GitHubem.",
     survival: "Aplikacje działają dalej po zatrzymaniu Happier. Po ponownym uruchomieniu obowiązuje polityka restart z Compose.",
     runtimeData: "Środowisko i dane",
     runtimeDataDescription: "Jak działa ta wersja i jakie foldery współdzielą jej usługi. Dane współdzielone zostają, dopóki ich nie usuniesz.",
@@ -499,6 +503,7 @@ export const deploymentEditorsTranslations = {
     prHead: "Última revisión",
     prNotFound: ({ number }) => `No se encontró el pull request #${number}. Comprueba el número.`,
     prUnavailable: "La revisión exacta no está disponible. Usa «Leer la última revisión» para reintentar.",
+    prNeedsGithub: "Leer un pull request de este repositorio requiere una conexión con GitHub.",
     survival: "Las aplicaciones siguen funcionando cuando Happier se detiene. Tras reiniciar, se aplica la política restart de Compose.",
     runtimeData: "Ejecución y datos",
     runtimeDataDescription: "Cómo se ejecuta esta versión y qué carpetas comparten sus servicios. Los datos compartidos permanecen hasta que los elimines.",
@@ -619,6 +624,7 @@ export const deploymentEditorsTranslations = {
     prHead: "Dernière révision",
     prNotFound: ({ number }) => `Aucune pull request #${number} trouvée. Vérifie le numéro.`,
     prUnavailable: "La révision exacte est indisponible. Utilise « Lire la dernière révision » pour réessayer.",
+    prNeedsGithub: "Lire une pull request de ce dépôt nécessite une connexion à GitHub.",
     survival: "Les applications continuent lorsque Happier s’arrête. Après un redémarrage, la politique restart de Compose s’applique.",
     runtimeData: "Exécution et données",
     runtimeDataDescription: "Comment cette version s’exécute et les dossiers que ses services partagent. Les données partagées restent jusqu’à ce que vous les supprimiez.",
@@ -739,6 +745,7 @@ export const deploymentEditorsTranslations = {
     prHead: "Ultima revisione",
     prNotFound: ({ number }) => `Nessuna pull request #${number} trovata. Controlla il numero.`,
     prUnavailable: "La revisione esatta non è disponibile. Usa «Leggi ultima revisione» per riprovare.",
+    prNeedsGithub: "Leggere una pull request da questo repository richiede una connessione a GitHub.",
     survival: "Le app continuano quando Happier si arresta. Dopo il riavvio si applica la politica restart di Compose.",
     runtimeData: "Esecuzione e dati",
     runtimeDataDescription: "Come viene eseguita questa versione e le cartelle condivise dai suoi servizi. I dati condivisi restano finché non li elimini.",
@@ -859,6 +866,7 @@ export const deploymentEditorsTranslations = {
     prHead: "Última revisão",
     prNotFound: ({ number }) => `Nenhum pull request #${number} encontrado. Confira o número.`,
     prUnavailable: "A revisão exata está indisponível. Use “Ler a revisão mais recente” para tentar novamente.",
+    prNeedsGithub: "Ler um pull request deste repositório requer uma ligação ao GitHub.",
     survival: "Os apps continuam quando o Happier para. Após reiniciar, aplica-se a política restart do Compose.",
     runtimeData: "Execução e dados",
     runtimeDataDescription: "Como esta versão é executada e as pastas que os serviços compartilham. Os dados compartilhados permanecem até você excluí-los.",
@@ -978,6 +986,7 @@ export const deploymentEditorsTranslations = {
     prHead: "Última revisió",
     prNotFound: ({ number }) => `No s’ha trobat cap pull request #${number}. Comprova el número.`,
     prUnavailable: "La revisió exacta no està disponible. Fes servir «Llegeix l’última revisió» per tornar-ho a provar.",
+    prNeedsGithub: "Llegir una pull request d’aquest repositori necessita una connexió amb GitHub.",
     survival: "Les aplicacions continuen quan Happier s’atura. Després de reiniciar s’aplica la política restart de Compose.",
     runtimeData: "Execució i dades",
     runtimeDataDescription: "Com s’executa aquesta versió i les carpetes que comparteixen els seus serveis. Les dades compartides es mantenen fins que les eliminis.",
@@ -1098,6 +1107,7 @@ export const deploymentEditorsTranslations = {
     prHead: "Neuester Stand",
     prNotFound: ({ number }) => `Kein Pull Request #${number} gefunden. Prüfe die Nummer.`,
     prUnavailable: "Der genaue Pull-Request-Stand ist nicht verfügbar. Wähle „Neuesten Stand lesen“, um es erneut zu versuchen.",
+    prNeedsGithub: "Zum Lesen eines Pull Requests aus diesem Repository ist eine GitHub-Verbindung nötig.",
     survival: "Apps laufen weiter, wenn Happier stoppt. Nach einem Neustart gilt die restart-Richtlinie von Compose.",
     runtimeData: "Laufzeit und Daten",
     runtimeDataDescription: "Wie diese Version läuft und welche Ordner ihre Dienste teilen. Gemeinsame Daten bleiben, bis du sie löschst.",
@@ -1217,6 +1227,7 @@ export const deploymentEditorsTranslations = {
     prHead: "最新提交",
     prNotFound: ({ number }) => `未找到拉取请求 #${number}。请检查编号。`,
     prUnavailable: "无法获取确切的拉取请求提交。请点击“读取最新提交”重试。",
+    prNeedsGithub: "从此仓库读取拉取请求需要连接 GitHub。",
     survival: "Happier 停止后应用仍会运行。重启后遵循 Compose 的 restart 策略。",
     runtimeData: "运行与数据",
     runtimeDataDescription: "此版本的运行方式，以及其服务共享的文件夹。共享数据会保留，直到你删除。",
@@ -1336,6 +1347,7 @@ export const deploymentEditorsTranslations = {
     prHead: "最新提交",
     prNotFound: ({ number }) => `找不到提取要求 #${number}。請檢查編號。`,
     prUnavailable: "無法取得確切的提取要求提交。請點選「讀取最新提交」重試。",
+    prNeedsGithub: "從此儲存庫讀取拉取要求需要連接 GitHub。",
     survival: "Happier 停止後應用程式仍會執行。重新啟動後遵循 Compose 的 restart 原則。",
     runtimeData: "執行與資料",
     runtimeDataDescription: "此版本的執行方式，以及其服務共用的資料夾。共用資料會保留，直到你刪除。",
@@ -1455,6 +1467,7 @@ export const deploymentEditorsTranslations = {
     prHead: "最新のコミット",
     prNotFound: ({ number }) => `プルリクエスト #${number} が見つかりません。番号を確認してください。`,
     prUnavailable: "正確なコミットを取得できません。「最新のコミットを読み取る」で再試行してください。",
+    prNeedsGithub: "このリポジトリのプルリクエストを読むには GitHub の接続が必要です。",
     survival: "Happier が停止してもアプリは動作します。再起動後は Compose の restart ポリシーに従います。",
     runtimeData: "実行とデータ",
     runtimeDataDescription: "このバージョンの実行方法と、サービスが共有するフォルダー。共有データは削除するまで残ります。",

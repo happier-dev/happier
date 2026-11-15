@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { GITHUB_CONNECTED_SERVICE_ROUTE } from '@/sync/domains/connectedServices/githubConnectedServiceRoute';
 import type { Router } from 'expo-router';
 import { ScrollView, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
@@ -46,7 +47,7 @@ function GitRemotesAndMergesSheetBody(props: Props) {
     }, [machineId, props, router, serverId]);
     const openGitHub = React.useCallback(() => {
         props.onClose();
-        router.push({ pathname: '/(app)/settings/connected-services/[serviceId]', params: { serviceId: 'github' } });
+        router.push(GITHUB_CONNECTED_SERVICE_ROUTE as never);
     }, [props, router]);
     return (
         <ScrollView style={{ maxHeight: 640 }} contentContainerStyle={{ paddingBottom: theme.space.s12 }}>

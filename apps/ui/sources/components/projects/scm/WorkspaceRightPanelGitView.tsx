@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { GITHUB_CONNECTED_SERVICE_ROUTE } from '@/sync/domains/connectedServices/githubConnectedServiceRoute';
 import { View } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useUnistyles } from 'react-native-unistyles';
@@ -393,7 +394,7 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
         [scope.machineId, scope.rootPath, scmCallOptions],
     );
     const openGitHubConnectedService = React.useCallback(() => {
-        router.push({ pathname: '/(app)/settings/connected-services/[serviceId]', params: { serviceId: 'github' } });
+        router.push(GITHUB_CONNECTED_SERVICE_ROUTE as never);
     }, []);
     const openMachineInstallables = React.useCallback(() => {
         router.push(machinePageHref({ door: 'rail', target: { machineId: scope.machineId, serverId: scope.serverId }, tab: { id: 'setup', page: 'tools' } }) as never);
