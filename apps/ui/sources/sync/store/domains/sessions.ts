@@ -1681,6 +1681,12 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 },
             );
 
+            // The reachable-peer and transcript reconcile passes write the active Home's rows into
+            // `mergedRenderables`; publish them (a no-op when the merge pass already published this object).
+            if (activeServerId && mergedRenderables !== activeRows) {
+                mergedRowsByServerId = publishSessionListHomeValue(mergedRowsByServerId, activeServerId, mergedRenderables);
+            }
+
             syncPerformanceTelemetry.count('sync.store.sessions.apply.merge.outcome', {
                 sessions: sessions.length,
                 changedSessions: changedSessionCount,

@@ -5,6 +5,7 @@ import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { storage } from '@/sync/domains/state/storageStore';
 import * as warmCachePersistence from '@/sync/domains/state/warmCachePersistence';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { createSessionMessagesFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { setActiveServerId, setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
@@ -95,3 +96,25 @@ describe('sessions domain: single-Session apply cost', () => {
     });
 });
 
+describe('sessions domain: transcript reconcile publication', () => {
+    it('publishes the list row reconciled from a loaded transcript when the Session row itself did not move', () => {
+        const { get, set, domain } = createHarness();
+        const base = session('s-0', 0, { active: true, presence: 'online', agentStateVersion: 2, agentState: { requests: {
+            pending: { kind: 'permission', tool: 'Bash', arguments: {}, createdAt: 5_000, turnId: 'turn-a' },
+        } } } as never);
+        domain.applySessions([base]);
+        domain.applyServerScopedSessionListRows(SERVER_ID, [buildSessionListRenderableFromSession(base)], { source: 'ordinary', mode: 'replace' });
+        set({ sessionMessages: { ...get().sessionMessages, 's-0': createSessionMessagesFixture({ isLoaded: true }) } });
+
+        // The same Session again: the loaded transcript now folds the pending request in.
+        domain.applySessions([base]);
+
+        const messages = get().sessionMessages['s-0']!;
+        const transcript = messages.messageIdsOldestFirst.map(id => messages.messagesById[id]!);
+        expect(transcript).toHaveLength(1);
+        const published = get().sessionListRowsByServerId[SERVER_ID]?.['s-0'];
+        const reconciled = buildSessionListRenderableFromSession(get().sessions['s-0']!, published, transcript);
+        expect(published?.meaningfulActivityAt).toBe(reconciled.meaningfulActivityAt);
+        expect(published?.meaningfulActivityAt).toBe(5_000);
+    });
+});
