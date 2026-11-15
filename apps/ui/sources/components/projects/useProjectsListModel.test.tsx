@@ -249,6 +249,20 @@ describe('PF3 real Projects model → tree cost', () => {
 });
 
 describe('Projects model Action admission', () => {
+    // Owner 11-15 (MOBILE-FIX-1115 H6): rows read "Loading… · /path". A Machine whose name is still loading has no
+    // name yet: the row leaves it out rather than printing the placeholder, or calling it unlisted.
+    it('gives a Machine whose name is still loading no name, never the loading placeholder', async () => {
+        const machine = createMachineFixture({ id: 'machine', activeAt: Date.now() });
+        storage.getState().applyMachines([{ ...machine, metadata: null, availability: undefined }], true, { sourceServerId: serverId });
+        const hook = await renderHook(() => useProjectsListModel());
+        const { t } = await import('@/text');
+        const name = hook.getCurrent().treeProjects[0]?.checkouts[0]?.machineName;
+        expect(name).not.toBe(t('common.loading'));
+        expect(name).not.toBe(t('machine.unlistedMachine'));
+        expect(name).toBeNull();
+        await hook.unmount();
+    });
+
     it('uses canonical display names while Machine content is hydrating and follows name updates without fetching', async () => {
         const machine = createMachineFixture({ id: 'machine', activeAt: Date.now() });
         const hydrating = { ...machine, metadata: null, availability: undefined };

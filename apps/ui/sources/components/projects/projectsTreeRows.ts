@@ -1,4 +1,5 @@
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
+import { t } from '@/text';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { readSourceTeamId } from './sources/projectSourceGroups';
@@ -39,7 +40,8 @@ export type ProjectsTreeCheckout = Readonly<{
     refId: string;
     workspaceAddress?: WorkspaceAddressV1;
     machineId: string;
-    machineName: string;
+    /** `null` while the Machine's name is still loading: lines leave it out, never a placeholder (owner 11-15). */
+    machineName: string | null;
     /** Branch, or the checkout's folder name when its branch is not known. */
     label: string;
     /** Unknown SCM facts remain null; the display label may still use the folder. */
@@ -368,7 +370,7 @@ export function buildProjectsTreeRows(input: Readonly<{
             kind: 'checkout',
             title: checkout.label,
             titleQualifier: null,
-            subtitle: underMachine ? checkout.path : `${checkout.machineName} · ${checkout.path}`,
+            subtitle: underMachine ? checkout.path : joinFacts(checkout.machineName, checkout.path),
             machineId: checkout.machineId,
             glyph: 'branch',
             expandable: false,
@@ -405,7 +407,7 @@ export function buildProjectsTreeRows(input: Readonly<{
                 source: project.source,
                 title: project.name,
                 titleQualifier: project.teamLabel ?? null,
-                subtitle: `${only.machineName} · ${selected ? only.path : checkoutWhere(only)}`,
+                subtitle: joinFacts(only.machineName, selected ? only.path : checkoutWhere(only)),
                 machineId: only.machineId,
                 glyph: 'project',
                 expandable: environments.length > 0,
@@ -472,7 +474,7 @@ export function buildProjectsTreeRows(input: Readonly<{
                 key: machineKey,
                 level: 1,
                 kind: 'machine',
-                title: machine.machineName,
+                title: machine.machineName ?? t('common.machine'),
                 subtitle: null,
                 machineId: machine.machineId,
                 glyph: 'machine',
@@ -503,13 +505,18 @@ export function buildProjectsTreeHiddenItems(projects: readonly ProjectsTreeProj
     return projects.flatMap((project) => {
         const first = project.checkouts[0];
         if (!first) return [];
-        return [{ key: project.key, title: project.name, subtitle: `${first.machineName} · ${first.path}`, refId: first.refId,
+        return [{ key: project.key, title: project.name, subtitle: joinFacts(first.machineName, first.path), refId: first.refId,
             ...(first.workspaceAddress ? { workspaceAddress: first.workspaceAddress } : {}) }];
     });
 }
 
 /** `online` is null while presence is unknown (a Machine this Home does not list): never guessed. */
-export type ProjectsTreeMachineFacts = Readonly<{ name: string; homeDir: string | null; online: boolean | null }>;
+export type ProjectsTreeMachineFacts = Readonly<{ name: string | null; homeDir: string | null; online: boolean | null }>;
+
+/** A row's facts on one line; a fact not known yet (a Machine name still loading) drops out whole. */
+function joinFacts(...parts: readonly (string | null | undefined)[]): string {
+    return parts.filter((part): part is string => Boolean(part)).join(' · ');
+}
 
 /**
  * A one-row Project's second line after its Machine: the branch when it is known, otherwise where the
@@ -681,9 +688,9 @@ export function buildProjectsPhoneTreeRows(input: Readonly<{
         const single = checkouts.length === 1 ? checkouts[0]! : null;
         const offlineMachines = machines.filter((group) => group.every((checkout) => checkout.offline === true)).length;
         const subtitle = single
-            ? `${single.machineName} · ${checkoutWhere(single)}`
+            ? joinFacts(single.machineName, checkoutWhere(single))
             : machines.length === 1
-                ? `${machines[0]![0]!.machineName} · ${input.describe.checkoutCount(checkouts.length)}`
+                ? joinFacts(machines[0]![0]!.machineName, input.describe.checkoutCount(checkouts.length))
                 : [input.describe.machineCount(machines.length), offlineMachines > 0 ? input.describe.offlineCount(offlineMachines) : null]
                     .filter((part): part is string => part !== null).join(' · ');
         const expandable = !single || environments.length > 0;
@@ -721,7 +728,7 @@ export function buildProjectsPhoneTreeRows(input: Readonly<{
                 kind: 'checkout',
                 title: checkout.label,
                 titleQualifier: null,
-                subtitle: `${checkout.machineName} · ${checkout.path}`,
+                subtitle: joinFacts(checkout.machineName, checkout.path),
                 machineId: checkout.machineId,
                 glyph: 'branch',
                 expandable: false,

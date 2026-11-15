@@ -35,7 +35,7 @@ import { readSessionListRowsForServerId } from '@/sync/domains/session/listing/s
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { isWorkspacePathWithinRootV1 } from '@happier-dev/protocol/workspaces';
 import { resolveWorkspacePathBasenameV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
-import { isMachineDisplayHydrating, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
+import { isMachineDisplayHydrating, resolveSettledMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { useMachinePresenceSummaries } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { resolveWorkspaceRefByAddress } from '@/sync/domains/workspaces/workspaceRefs';
 import { ActionApprovalRequestCreatedResultSchema, type ActionApprovalRequestCreatedResult,
@@ -122,8 +122,9 @@ export function useProjectsListModel() {
     const machineDisplays = useMachineDisplayById(displays => allMachines.map(machine =>
         isMachineDisplayHydrating(machine) ? displays[machine.id] ?? machine : machine));
     // One naming owner for every Machine the tree shows: listed Machines with the same name get the
-    // suffix the pickers use, and a checkout on a Machine this Home no longer lists says so.
-    const machineNames = React.useMemo(() => resolveMachineDisplayNames([
+    // suffix the pickers use, and a checkout on a Machine this Home no longer lists says so. A Machine whose name is still
+    // loading has none yet (never "Loading…", owner 11-15): its rows leave it out until the name arrives.
+    const machineNames = React.useMemo(() => resolveSettledMachineDisplayNames([
         ...machineDisplays,
         ...[...new Set(treeRefs.map(ref => ref.machineId))].filter(id => !machinesById.has(id)).map(id => ({ id, absence: 'unlisted' as const })),
     ]), [machineDisplays, machinesById, treeRefs]);
@@ -147,7 +148,7 @@ export function useProjectsListModel() {
             groups: projectGroups, projectName: resolveWorkspaceRefDisplayName,
             machine: machineId => {
                 const facts = treeMachines[machineId];
-                return { name: facts?.name ?? t('machine.unlistedMachine'), homeDir: facts?.homeDir ?? null, online: facts?.online ?? null };
+                return { name: facts ? facts.name : t('machine.unlistedMachine'), homeDir: facts?.homeDir ?? null, online: facts?.online ?? null };
             },
             sources: composition.sources, teamName: composition.teamName,
         });
@@ -412,7 +413,7 @@ export function useProjectsListModel() {
     const readFromSessions = React.useCallback(() => {
         const machine = (machineId: string) => {
             const facts = treeMachines[machineId];
-            return { name: facts?.name ?? t('machine.unlistedMachine'), homeDir: facts?.homeDir ?? null, online: facts?.online ?? null };
+            return { name: facts ? facts.name : t('machine.unlistedMachine'), homeDir: facts?.homeDir ?? null, online: facts?.online ?? null };
         };
         const accepted = buildProjectsTreeProjects({ groups: groups.unlistedProjectGroups, projectName: resolveWorkspaceRefDisplayName, machine });
         const refs = Array.isArray(workspaceRefsV1) ? workspaceRefsV1 : [];

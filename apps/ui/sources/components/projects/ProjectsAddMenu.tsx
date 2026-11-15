@@ -89,7 +89,7 @@ export const ProjectsAddMenu = React.memo(function ProjectsAddMenu(props: Readon
                 id: `session:${project.key}`,
                 testID: `${props.testID}:session:${project.key}`,
                 title: project.name,
-                ...(where ? { subtitle: `${where.machineName} · ${where.path}` } : {}),
+                ...(where ? { subtitle: [where.machineName, where.path].filter(Boolean).join(' · ') } : {}),
                 icon: <Icon name="folder" size={16} />,
             };
         }) : [];

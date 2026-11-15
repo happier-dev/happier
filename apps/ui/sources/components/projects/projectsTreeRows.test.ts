@@ -191,6 +191,22 @@ describe('buildProjectsTreeRows (lab p-projects RULES)', () => {
         expect(rows[2]).toMatchObject({ offline: true, refId: 'i2' });
     });
 
+    // Owner 11-15 (MOBILE-FIX-1115 H6): a Machine whose name is still loading is left out of the meta, never "Loading…".
+    it('leaves a Machine without a name yet out of its checkout lines and titles its group plainly', async () => {
+        const { t } = await import('@/text');
+        const rows = buildProjectsTreeRows({
+            projects: [project('infra', [checkout('i1', 'build-01', 'main', { machineName: null }), checkout('i2', 'studio', 'dev')])],
+            openRefId: null, expandedKeys: new Set(['infra']),
+        });
+        expect(rows.slice(1).map(row => row.subtitle)).toEqual(['~/src/main', 'studio · ~/src/dev']);
+        const grouped = buildProjectsTreeRows({
+            projects: [project('infra', [checkout('i1', 'build-01', 'main', { machineName: null }), checkout('i3', 'build-01', 'next', { machineName: null }),
+                checkout('i2', 'studio', 'dev')])],
+            openRefId: null, expandedKeys: new Set(['infra']),
+        });
+        expect(grouped.find(row => row.kind === 'machine')?.title).toBe(t('common.machine'));
+    });
+
     it('keeps the full Project → machine → worktree tree and rolls status up when collapsed', () => {
         const projects = [project('happier', [
             checkout('h1', 'devbox', 'fix-settings-modal', { attention: 'working' }),
