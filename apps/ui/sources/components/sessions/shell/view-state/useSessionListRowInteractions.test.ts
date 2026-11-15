@@ -102,6 +102,33 @@ describe('session list drag commit outcomes', () => {
         await hook.unmount();
     });
 
+    it('keeps at most one trailing re-measure behind an in-flight native measurement pass', async () => {
+        const { hook, pointer } = await geometryHarness('a');
+        // Native measurement is asynchronous; hold every callback until released.
+        const held: Array<() => void> = [];
+        let y = 40;
+        const rowB = { measureInWindow: vi.fn((callback: (x: number, y: number, w: number, h: number) => void) => {
+            const measuredY = y;
+            held.push(() => callback(0, measuredY, 300, 40));
+        }) };
+        await act(async () => { hook.getCurrent().registerTreeRowBounds('session:server-a:b', rowB); });
+        const firstPass = rowB.measureInWindow.mock.calls.length;
+        expect(firstPass).toBe(1);
+        // Recycled-cell churn while that pass is still measuring.
+        for (let index = 0; index < 4; index += 1) {
+            y = 200;
+            await act(async () => { hook.getCurrent().handleTreeContentSizeChange(300, 500 + index); });
+        }
+        expect(rowB.measureInWindow).toHaveBeenCalledTimes(1);
+        await act(async () => { held.splice(0).forEach((release) => release()); });
+        // One trailing pass picks up every notification that arrived meanwhile.
+        expect(rowB.measureInWindow).toHaveBeenCalledTimes(2);
+        await act(async () => { held.splice(0).forEach((release) => release()); });
+        expect(rowB.measureInWindow).toHaveBeenCalledTimes(2);
+        expect(hook.getCurrent().resolveDropResult(pointer(205)).geometry).toMatchObject({ targetId: 'session:server-a:b' });
+        await hook.unmount();
+    });
+
     it('resolves and commits consecutive pointer drags from different pinned rows', async () => {
         const hook = await renderHook(() => {
             const [order, setOrder] = useState<Record<string, string[]>>({ 'pinned-v1': ['server-a:a', 'server-a:b', 'server-a:c'] });

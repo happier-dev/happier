@@ -324,7 +324,7 @@ export function useSessionListRowInteractions({
         if (!ref) return;
         const snapshot = activeDragSnapshotRef.current;
         if (!snapshot) return;
-        const topologyRow = snapshot.topology.rows.find((row) => row.rowId === rowId);
+        const topologyRow = snapshot.topology.rowsById.get(rowId);
         if (!topologyRow) return;
         const windowBounds = await measureWindowBounds(ref);
         if (!windowBounds) return;
@@ -357,16 +357,37 @@ export function useSessionListRowInteractions({
         refreshDropOverlayRef.current();
     }, [registerRowContentGeometry]);
 
-    const geometryRefreshQueuedRef = React.useRef(false);
-    const scheduleGeometryRefresh = React.useCallback(() => {
-        if (!activeDragSnapshotRef.current || geometryRefreshQueuedRef.current) return;
-        geometryRefreshQueuedRef.current = true;
-        // Coalesce the layout/ref notifications from a single React commit.
-        queueMicrotask(() => {
-            geometryRefreshQueuedRef.current = false;
-            if (activeDragSnapshotRef.current) void remeasureAllRegisteredRows();
-        });
+    // One re-measure pass runs at a time per drag. Notifications that arrive
+    // while it measures (native measurement is async; autoscroll recycles cells
+    // every few frames) collapse into a single trailing pass.
+    const geometryRefreshRef = React.useRef<{ running: SessionListDragSnapshot | null; pending: boolean }>({
+        running: null,
+        pending: false,
+    });
+    const runGeometryRefresh = React.useCallback(async () => {
+        const state = geometryRefreshRef.current;
+        const snapshot = activeDragSnapshotRef.current;
+        state.pending = false;
+        if (!snapshot) return;
+        state.running = snapshot;
+        try {
+            await remeasureAllRegisteredRows();
+        } finally {
+            if (state.running === snapshot) state.running = null;
+        }
+        if (state.pending && activeDragSnapshotRef.current === snapshot) queueMicrotask(() => void runGeometryRefresh());
     }, [remeasureAllRegisteredRows]);
+    const scheduleGeometryRefresh = React.useCallback(() => {
+        const snapshot = activeDragSnapshotRef.current;
+        const state = geometryRefreshRef.current;
+        if (!snapshot || state.pending) return;
+        state.pending = true;
+        // A pass for this drag is measuring; it schedules the trailing pass.
+        // A pass left over from an earlier drag never holds this one.
+        if (state.running === snapshot) return;
+        // Coalesce the layout/ref notifications from a single React commit.
+        queueMicrotask(() => void runGeometryRefresh());
+    }, [runGeometryRefresh]);
 
     const registerTreeRowBounds = React.useCallback<RegisterSessionListTreeRowBounds>((rowId, ref) => {
         if (ref) {
