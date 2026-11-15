@@ -24,7 +24,9 @@
       "@happier-dev/plugin-sdk/storage": ["../../src/storage/index.ts"],
       "@happier-dev/plugin-sdk/testing": ["../../src/testing/index.ts"],
       "@happier-dev/plugin-sdk/ui": ["../../src/ui.ts"],
-      "@happier-dev/plugin-sdk/voice/speech": ["../../src/voice/speech.ts"]
+      "@happier-dev/plugin-sdk/voice/speech": ["../../src/voice/speech.ts"],
+      "@happier-dev/plugin-ui": ["../../../plugin-ui/src/index.ts"],
+      "@happier-dev/plugin-ui/components": ["../../../plugin-ui/src/components/index.ts"]
     }
   },
   "include": ["accountCollections.ts", "actions.ts", "browser.ts", "agentRuntimeSurfaces.ts", "index.ts", "languageServers.ts", "managedProvider.ts", "machineAccess.ts", "machineProvisioners.ts", "providerEndpointPolicies.ts", "providerEndpointPolicyEditor.tsx", "promptAsset.ts", "projectWorkers.ts", "publicServices.ts", "run.ts", "sessionRecap.ts", "targetedContributions.ts", "testing.ts", "workflowTriggers.ts"]
