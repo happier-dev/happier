@@ -66,8 +66,11 @@ describe('Ask Happier ordinary authoring', () => {
             ? Response.json({ version: 1, content: { t: 'plain', v: { actionsSettingsV1: {
                 v: 1, actions: { 'session.authoring.open': { enabled: false } },
             } } } }) : null);
-        expect(await openNewBotDraft(lifetime, executeAction)).toMatchObject({ kind: 'unavailable', reason: 'client_unavailable' });
-        expect(unavailableNotice).toHaveBeenCalledTimes(1);
+        expect(await openNewBotDraft(lifetime, executeAction)).toMatchObject({ kind: 'refused', errorCode: expect.any(String) });
+        // The authoring owner shows the typed refusal once; the Bot entry adds no second alert.
+        const { readPresentationNotice } = await import('@/components/sessions/presentation/presentationNotices');
+        expect(readPresentationNotice()).toMatchObject({ severity: 'error' });
+        expect(unavailableNotice).not.toHaveBeenCalled();
         expect(navigation.push).not.toHaveBeenCalled();
     });
     it('captures the mounted screen for an Ask opener reparented outside its React provider', async () => {
@@ -134,7 +137,7 @@ describe('Ask Happier ordinary authoring', () => {
         expect(navigation.push).not.toHaveBeenCalled();
         expect(f.boundary.list()).toHaveLength(actionId === 'prompt_doc.create' ? 0 : 1);
         if (actionId === 'session.authoring.open') expect(result.guideRef?.artifactId).toBe(f.boundary.list()[0]?.id);
-        expect((await openNewBotDraft(lifetime, executeAction)).kind).toBe(actionId === 'session.authoring.open' ? 'unavailable' : 'opened');
+        expect((await openNewBotDraft(lifetime, executeAction)).kind).toBe(actionId === 'session.authoring.open' ? 'refused' : 'opened');
     });
 
     it('cancels mounted interest in a pending guide approval without creating a document or substituting a blank draft', async () => {

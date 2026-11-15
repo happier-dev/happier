@@ -136,7 +136,8 @@ describe('Usage Ask composer handoff', () => {
     navigation.push.mockImplementation(() => { throw new Error('navigation unavailable'); });
     await act(async () => { await ask!.onPress!(); });
     expect(normalizeUsageQuery(JSON.parse(openedDraft()?.input ?? 'null'))).toEqual(query);
-    expect(readPresentationNotice()).toMatchObject({ key: 'usage-ask:usage_daily', severity: 'error' });
+    // The authoring owner shows it, once, with its typed reason.
+    expect(readPresentationNotice()).toMatchObject({ severity: 'error' });
   });
 
   it('lends no query action when the body has no admitted shown query', async () => {

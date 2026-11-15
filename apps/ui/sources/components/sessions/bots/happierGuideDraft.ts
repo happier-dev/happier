@@ -1,5 +1,4 @@
 import { CurrentUiContextSnapshotV1Schema, type CurrentUiContextSnapshotV1 } from '@happier-dev/protocol/plugins/ui/currentUiContext';
-import type { SessionAuthoringOpenResultV1 } from '@happier-dev/protocol/plugins/ui';
 import { buildSessionInstructionsContextIntentV1 } from '@happier-dev/protocol/actions/sessionStateFieldActions';
 import { SessionPromptStackV1Schema, writeSessionContextIntentV1ToMetadata } from '@happier-dev/protocol/sessions/context/sessionContextV1';
 import { PromptDocArtifactRefV1Schema, type PromptDocArtifactRefV1 } from '@happier-dev/protocol/prompts/library/promptArtifactRefsV1';
@@ -11,11 +10,11 @@ import { getActivePendingServerUrl } from '@/sync/domains/pending/pendingServerS
 import { resolveWizardAuthReturnToRoute } from '@/components/onboarding/state/wizardResume';
 import { createPromptDoc } from '@/sync/ops/promptLibrary/promptDocs';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
-import { openSessionAuthoringAction, type MountedAuthoringActionExecute } from '@/sync/ops/actions/sessionAuthoringActions';
+import { openSessionAuthoringAction, type MountedAuthoringActionExecute, type SessionAuthoringOpenOutcome } from '@/sync/ops/actions/sessionAuthoringActions';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 
 export type { AskHappierContext } from '@/sync/domains/pending/pendingSetupIntent.shared';
-export type AskHappierDraftResult = (SessionAuthoringOpenResultV1 | Readonly<{
+export type AskHappierDraftResult = (SessionAuthoringOpenOutcome | Readonly<{
     kind: 'documentUnavailable'; reason: 'guide_unavailable';
 }> | Readonly<{ kind: 'authenticationRequired' }>) & Readonly<{ guideRef: PromptDocArtifactRefV1 | null }>;
 
@@ -23,8 +22,10 @@ const HAPPIER_BOT_SEED = { sessionName: 'Happier', initialSessionFacts: { bot: {
 
 /** The explicit blank alternative uses the same ordinary draft owner. */
 export async function openBlankAskHappierDraft(lifetime: ServerAccountScopeLifetime,
-    executeAction?: MountedAuthoringActionExecute): Promise<SessionAuthoringOpenResultV1> {
-    return openSessionAuthoringAction({ seed: HAPPIER_BOT_SEED }, lifetime, undefined, executeAction);
+    executeAction?: MountedAuthoringActionExecute): Promise<SessionAuthoringOpenOutcome> {
+    // Bot authoring needs its mounted approval custodian, like the guide below.
+    if (!executeAction) return { kind: 'unavailable', reason: 'client_unavailable' };
+    return openSessionAuthoringAction({ seed: HAPPIER_BOT_SEED }, lifetime, { executeAction });
 }
 
 /** Start imports a real editable guide, then opens a draft. Only the ordinary composer can Send. */
@@ -101,7 +102,7 @@ export async function openAskHappierDraft(params: Readonly<{
         const metadata = writeSessionContextIntentV1ToMetadata({ work: { promptStack: [] } }, buildSessionInstructionsContextIntentV1(guideRef));
         const promptStack = SessionPromptStackV1Schema.parse(metadata.work.promptStack);
         const outcome = await openSessionAuthoringAction({ seed: { ...HAPPIER_BOT_SEED, promptStack,
-            ...(prompt ? { prompt } : {}), ...(context ? { currentUiContext: context } : {}) } }, lifetime, cancellation.signal, params.executeAction);
+            ...(prompt ? { prompt } : {}), ...(context ? { currentUiContext: context } : {}) } }, lifetime, { signal: cancellation.signal, executeAction: params.executeAction });
         return { ...outcome, guideRef };
     } finally {
         retirement.dispose();

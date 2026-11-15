@@ -12,7 +12,7 @@ import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { openSessionAuthoringAction } from '@/sync/ops/actions/sessionAuthoringActions';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { resolveHomeDisplayName } from '@/components/settings/server/homeDisplayName';
 import { areServerProfileIdentifiersEquivalent, getServerProfileById } from '@/sync/domains/server/serverProfiles';
@@ -145,12 +145,9 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
         if (returning) { returnToComposer(machine); return; }
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime) return;
-        await createFrontDoorActionExecute()('session.authoring.open', {
+        await openSessionAuthoringAction({
             seed: { placement: { kind: 'exactTarget', serverId: machine.serverId, machineId: machine.machineId } },
-        }, {
-            surface: 'ui', authority: 'present_user', serverId: lifetime.scope.serverId,
-            expectedAccountId: lifetime.scope.accountId,
-        });
+        }, lifetime);
     }, [returning, returnToComposer]);
 
     return (

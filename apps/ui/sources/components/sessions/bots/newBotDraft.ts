@@ -1,10 +1,7 @@
-import type { SessionAuthoringOpenResultV1 } from '@happier-dev/protocol/plugins/ui';
 import type { SessionIdentityAdditions } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 
-import { openSessionAuthoringAction, type MountedAuthoringActionExecute } from '@/sync/ops/actions/sessionAuthoringActions';
+import { openSessionAuthoringAction, type MountedAuthoringActionExecute, type SessionAuthoringOpenOutcome } from '@/sync/ops/actions/sessionAuthoringActions';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
-import { Modal } from '@/modal';
-import { t } from '@/text';
 
 /** A new Bot is an ordinary editable draft that is born a Bot; only the composer's Send creates it. */
 export const NEW_BOT_SEED = {
@@ -15,10 +12,10 @@ export const NEW_BOT_SEED = {
 export async function openNewBotDraft(
   lifetime: ServerAccountScopeLifetime,
   executeAction?: MountedAuthoringActionExecute,
-): Promise<SessionAuthoringOpenResultV1> {
-  const result = await openSessionAuthoringAction({ seed: NEW_BOT_SEED }, lifetime, undefined, executeAction);
-  if (result.kind === 'unavailable') await Modal.alertAsync(t('bots.new'), t('common.unavailable'));
-  return result;
+): Promise<SessionAuthoringOpenOutcome> {
+  // Bot authoring needs its mounted approval custodian; the authoring owner shows a refusal or a waiting approval.
+  if (!executeAction) return { kind: 'unavailable', reason: 'client_unavailable' };
+  return openSessionAuthoringAction({ seed: NEW_BOT_SEED }, lifetime, { executeAction });
 }
 
 /**

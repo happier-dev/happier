@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { openSessionAuthoringAction } from '@/sync/ops/actions/sessionAuthoringActions';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
@@ -16,11 +16,8 @@ export function useMachineStartSession(target: Readonly<{ serverId?: string | nu
         if (!target.machineId || !targetServerId || !activeAccountScope) return;
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime || !areServerAccountScopesEqual(lifetime.scope, activeAccountScope)) return;
-        await createFrontDoorActionExecute()('session.authoring.open', {
+        await openSessionAuthoringAction({
             seed: { placement: { kind: 'exactTarget', serverId: targetServerId, machineId: target.machineId } },
-        }, {
-            surface: 'ui', authority: 'present_user', serverId: lifetime.scope.serverId,
-            expectedAccountId: lifetime.scope.accountId,
-        });
+        }, lifetime);
     }, [activeAccountScope, target.machineId, target.serverId]);
 }

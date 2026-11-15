@@ -324,7 +324,6 @@ function ProjectShellHeaderContent(props: ProjectShellHeaderHostProps) {
           look={<ProjectAtmosphereLookChip />}
         />;
         }}</ProjectPageChromeCounts>
-        {newSession.approvalNotice}
       </>
     );
 }

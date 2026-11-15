@@ -108,6 +108,9 @@ it('asks an agent to set it up: a New Session opens with the deploy request writ
       actions: { 'session.authoring.open': { enabled: false } } }) });
     await screen.pressByTestIdAsync('newApp.askAgent');
     expect(routerMock.spies.push, 'Ask an agent obeys the same Action policy as agent and MCP callers').not.toHaveBeenCalled();
+    const { readPresentationNotice, retirePresentationNotice } = await import('@/components/sessions/presentation/presentationNotices');
+    expect(readPresentationNotice(), 'the refusal stays visible after the sheet stepped aside').toMatchObject({ severity: 'error' });
+    retirePresentationNotice();
     onClose.mockClear();
     storage.getState().applySettingsLocal({ actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: {} }) });
     await screen.pressByTestIdAsync('newApp.askAgent');

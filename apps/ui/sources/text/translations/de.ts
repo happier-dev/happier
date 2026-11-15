@@ -16708,7 +16708,6 @@ settingsSession: {
             drillFilterTo: ({ name }: { name: string | number }) => `Nur ${name} anzeigen`,
             drillRemove: ({ name }: { name: string | number }) => `Alles anzeigen, nicht nur ${name}`,
             askAgent: "Einen Agenten dazu fragen",
-            askUnavailable: "Dafür konnte keine neue Sitzung geöffnet werden.",
             askPrompt: ({ widget, period, query }: { widget: string | number; period: string | number; query: string | number }) => `Zu meiner Nutzung: ${widget} · ${period}.\nLies sie mit der Aktion usage.query und genau dieser Abfrage und beantworte dann meine Frage.\n\n${query}\n\nMeine Frage: `,
             copyQuery: "Abfrage kopieren",
             copyQueryDone: "Abfrage kopiert",

@@ -56,21 +56,15 @@ export function useUsageQueryActions(
         icon: 'chat-circle',
         onPress: async () => {
           if (!lifetime.isCurrent()) return;
-          const outcome = await openSessionAuthoringAction({
+          // The authoring owner shows a refusal or a waiting approval itself.
+          await openSessionAuthoringAction({
             seed: {
               prompt: buildUsageAskPrompt({
                 widget: t(`usage.widgets.${id}`),
                 query,
               }),
             },
-          }, lifetime, undefined, execution.execute);
-          if (!lifetime.isCurrent()) return;
-          if (outcome.kind !== 'opened')
-            publishPresentationNotice({
-              key: `usage-ask:${id}`,
-              severity: 'error',
-              message: t('usage.board.page.askUnavailable'),
-            });
+          }, lifetime, { executeAction: execution.execute });
         },
       },
       {

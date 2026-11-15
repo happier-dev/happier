@@ -60,23 +60,6 @@ export function isScmActionNotRun(result: unknown): boolean {
     return flags.declined === true || flags.awaitingApproval === true;
 }
 
-/** The neutral pending notice for a created approval request, with a way to open it (the Home hub's pattern). */
-async function announceScmApprovalPending(artifactId: string, serverId: string | undefined): Promise<void> {
-    const [{ publishPresentationNotice }, { buildApprovalHref }, { t }, { getActiveServerAccountScope }] = await Promise.all([
-        import('@/components/sessions/presentation/presentationNotices'),
-        import('@/components/approvals/approvalNavigation'),
-        import('@/text'),
-        import('@/sync/domains/scope/activeServerAccountScope'),
-    ]);
-    const approvalServerId = serverId ?? getActiveServerAccountScope()?.serverId;
-    publishPresentationNotice({
-        key: `scm-approval:${artifactId}`, severity: 'info', message: t('approvals.waitingForYou'),
-        ...(approvalServerId ? { undo: { label: t('approvals.review'), run: () => {
-            void import('expo-router').then(({ router }) => router.push(buildApprovalHref(artifactId, approvalServerId)));
-        } } } : {}),
-    });
-}
-
 /** UI adapters enter the Action owner; only its admitted terminal calls SCM RPC. */
 export async function invokeUiScmAction<T>(params: Readonly<{
     actionId: ActionId; input: unknown; schema: core.$ZodType<T>;
@@ -107,7 +90,8 @@ export async function invokeUiScmAction<T>(params: Readonly<{
         if (!response.ok) return { success: false, errorCode: response.errorCode ?? 'result_unavailable', error: response.error };
         const approval = ActionApprovalRequestCreatedResultSchema.safeParse(response.result);
         if (approval.success) {
-            await announceScmApprovalPending(approval.data.artifactId, params.context.serverId ?? undefined);
+            const { announceActionApprovalPending } = await import('@/components/approvals/announceActionApprovalPending');
+            announceActionApprovalPending(approval.data.artifactId, params.context.serverId ?? undefined);
             return { success: false, errorCode: APPROVAL_REQUIRED,
                 error: 'The Action awaits approval.', approvalArtifactId: approval.data.artifactId };
         }

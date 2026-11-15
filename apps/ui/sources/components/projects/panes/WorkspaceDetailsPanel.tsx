@@ -449,9 +449,6 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         effectiveRootPath,
         newSession.open,
     ]);
-    // A pending approval must stay in sight: it rides with the pane's controls, into a single tab's header too.
-    const { approvalNotice } = newSession;
-    const renderLiveActions = React.useCallback(() => approvalNotice, [approvalNotice]);
 
     // The pane's own control: the docked column or drawer closes here (Editor first keeps its editor column).
     const editorArrangement = useOptionalAppPaneScopeLayout()?.arrangement === 'editor';
@@ -509,7 +506,6 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
             renderTabContent={renderTabContent}
             renderOverlay={renderOverlay}
             renderStripActions={renderStripActions}
-            renderLiveActions={renderLiveActions}
             renderHeaderActions={renderHeaderActions}
             renderEmptyState={renderEmptyState}
         />

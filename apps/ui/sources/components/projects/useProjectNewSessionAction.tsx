@@ -1,15 +1,11 @@
-import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
 import * as React from 'react';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { SessionAuthoringOpenResultV1Schema, type PluginUiNewSessionSeedV1 } from '@happier-dev/protocol/plugins/ui';
+import type { PluginUiNewSessionSeedV1 } from '@happier-dev/protocol/plugins/ui';
 
-import { useLocalSearchParams, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useLocalSearchParams, usePathname } from '@/components/appShell/workspace/destinationRoute';
 import { useDestinationPaneScopeId } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { AppPaneContext } from '@/components/appShell/panes/AppPaneContext';
 import { buildDetailsWorkspaceStateView } from '@/components/appShell/panes/details/workspace/detailsWorkspaceSelectors';
-import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
-import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { useActiveServerAccountScope, useWorkspaceRefs } from '@/sync/domains/state/storage';
@@ -19,11 +15,7 @@ import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/work
 import { buildProjectNewSessionOrigin, readProjectSelectedRouteResource, type ProjectPageV1 } from './detail/projectRouteState';
 import { buildProjectPaneScopeId } from './detail/projectPaneScope';
 import { resolveProjectCockpitRouteFromPathname } from '@/components/workspaceCockpit/project/projectCockpitState';
-import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
-import { Modal } from '@/modal';
-import { t } from '@/text';
-
-const authoringExecuted = () => {};
+import { openSessionAuthoringAction } from '@/sync/ops/actions/sessionAuthoringActions';
 
 /** Both ordinary Project launchers use the admitted draft owner, never a private seed route. */
 export function useProjectNewSessionAction(input: Readonly<{
@@ -32,7 +24,6 @@ export function useProjectNewSessionAction(input: Readonly<{
     page?: ProjectPageV1;
     scopeId?: string;
 }>) {
-    const router = useRouter();
     const accountScope = useActiveServerAccountScope();
     const workspaceRefs = useWorkspaceRefs();
     const routeParams = useLocalSearchParams<Record<string, string | string[]>>();
@@ -70,40 +61,14 @@ export function useProjectNewSessionAction(input: Readonly<{
         mounted.current = true;
         return () => { mounted.current = false; };
     }, []);
-    const approval = useActionApprovalContinuation({
-        scopeKey: JSON.stringify([accountScope?.serverId, accountScope?.accountId, targetKey]),
-        serverId: target.serverId, onExecuted: authoringExecuted,
-    });
     const open = React.useCallback(async () => {
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime || !origin || !areServerProfileIdentifiersEquivalent(target.serverId, lifetime.scope.serverId)) return;
-        const current = () => mounted.current && lifetime.isCurrent() && currentTargetKey.current === targetKey;
-        const unavailable = () => {
-            if (current()) Modal.alert(t('projects.identity.newSessionUnavailable'));
-        };
         const seed = { placement: { kind: 'exactTarget', serverId: target.serverId,
             machineId: target.machineId, directory: target.rootPath }, origin } satisfies PluginUiNewSessionSeedV1;
-        try {
-            const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
-            if (!current()) return;
-            const result = await createFrontDoorActionExecute(createDefaultActionExecutor())('session.authoring.open', { seed }, {
-                surface: 'ui', authority: 'present_user', serverId: lifetime.scope.serverId,
-                expectedAccountId: lifetime.scope.accountId,
-            });
-            if (!current()) return;
-            if (!result.ok) { unavailable(); return; }
-            const pending = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
-            if (pending.success) { approval.requestApproval(pending.data.artifactId); return; }
-            const outcome = SessionAuthoringOpenResultV1Schema.safeParse(result.result);
-            if (!outcome.success || outcome.data.kind === 'unavailable') unavailable();
-        } catch { unavailable(); }
-    }, [approval.requestApproval, target.serverId, target.machineId, target.rootPath, targetKey, origin]);
-    const approvalId = approval.approvalId;
-    // One element per pending approval: the panes that lend it to a header republish only when it changes.
-    const approvalPending = approval.approvalPending;
-    const approvalNotice = React.useMemo(() => approvalPending && approvalId
-        ? <ActionApprovalPendingNotice message={t('approvals.status.open')} testID="project-new-session-approval"
-            onOpenApproval={() => router.push(buildApprovalHref(approvalId, target.serverId))} />
-        : null, [approvalId, approvalPending, router, target.serverId]);
-    return { open, approvalNotice };
+        // The authoring owner shows a refusal or a waiting approval, and stays quiet once this target is gone.
+        await openSessionAuthoringAction({ seed }, lifetime,
+            { isCurrent: () => mounted.current && currentTargetKey.current === targetKey });
+    }, [target.serverId, target.machineId, target.rootPath, targetKey, origin]);
+    return { open };
 }

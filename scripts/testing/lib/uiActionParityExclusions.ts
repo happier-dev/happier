@@ -10,6 +10,11 @@ export const SOURCE_PARITY_EXCLUSIONS: readonly Readonly<{
   filePath: string; operation: string; reason: string;
 }>[] = [
   {
+    filePath: 'apps/ui/sources/components/sessions/new/hooks/useCreateNewSession.ts',
+    operation: 'seedAndOpenNewSession:submittedPoolRecovery',
+    reason: 'Post-launch Pool refusal recovery restores the already-admitted submitted draft after its launcher retires. This is not a new user authoring open; a fresh Action would re-admit the existing operation and could block its recovery.',
+  },
+  {
     filePath: 'apps/ui/sources/sync/domains/workflows/workflowRunDetailActions.ts',
     operation: 'AsExpression: actionId as ActionId',
     reason: 'Private call helper forwards the literal workflow.run.* operands authored by this same detail facade to callWorkflowAction; every concrete call remains scanned.',
@@ -344,6 +349,11 @@ export const SOURCE_PARITY_EXCLUSIONS: readonly Readonly<{
     filePath: "apps/ui/sources/components/terminal/embedded/keys/terminalArrowPadState.ts",
     operation: "local:terminalArrowPadPlacement",
     reason: "Per-orientation terminal pad drag geometry; tucked interaction is separately persisted",
+  },
+  {
+    filePath: "apps/ui/sources/hooks/ui/useTabState.ts",
+    operation: "local:mainAppTab",
+    reason: "The phone's last-selected main tab is device-local navigation state, not a preference (OWNER-RULINGS 2026-11-15 'Phone last-selected tab is device-local'); a tap never reaches the Account or an Action",
   },
   {
     filePath: "apps/ui/sources/sync/domains/machines/administration/selectionPreferences.ts",

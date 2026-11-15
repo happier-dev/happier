@@ -16173,7 +16173,6 @@ settingsSession: {
             drillFilterTo: ({ name }: { name: string | number }) => `仅显示 ${name}`,
             drillRemove: ({ name }: { name: string | number }) => `显示全部，而不只是 ${name}`,
             askAgent: "就此询问智能体",
-            askUnavailable: "无法为此打开新会话。",
             askPrompt: ({ widget, period, query }: { widget: string | number; period: string | number; query: string | number }) => `关于我的用量：${widget} · ${period}。\n请使用 usage.query 操作并严格按此查询读取，然后回答我的问题。\n\n${query}\n\n我的问题：`,
             copyQuery: "复制查询",
             copyQueryDone: "已复制查询",

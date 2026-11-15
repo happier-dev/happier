@@ -10,8 +10,7 @@ import { ComposerBannerCollapseProvider } from '@/components/sessions/composerBa
 import { NewSessionScreen } from '@/components/sessions/new/NewSessionScreen';
 import { NewSessionEmbeddedHostProvider } from '@/components/sessions/new/navigation/newSessionHost';
 import { useNewSessionEmbeddedHostState } from '@/components/sessions/new/navigation/useNewSessionEmbeddedHostState';
-import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
-import { SessionAuthoringOpenResultV1Schema } from '@happier-dev/protocol/plugins/ui/hostApiRequests';
+import { openSessionAuthoringAction } from '@/sync/ops/actions/sessionAuthoringActions';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { readHappierStorageBytes } from '@/components/machines/storage/storageViewModel';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
@@ -138,16 +137,13 @@ export const MachineResourcesAskBlock = React.memo(
     const fillGlobalComposer = React.useCallback(async (suggestion: HomeComposerSuggestionFill) => {
       const lifetime = captureActiveServerAccountScopeLifetime();
       const scope = selectActiveServerAccountScopeForServer(lifetime?.scope ?? null, props.serverId);
-      const result = lifetime && scope && await createFrontDoorActionExecute()('session.authoring.open', {
-        seed: { prompt: suggestion.prompt },
-      }, {
-        surface: 'ui', authority: 'present_user', serverId: lifetime.scope.serverId,
-        expectedAccountId: lifetime.scope.accountId,
-      });
-      const outcome = result?.ok ? SessionAuthoringOpenResultV1Schema.safeParse(result.result) : null;
-      if (!outcome?.success || outcome.data.kind !== 'opened') {
+      // A Machine on a Home other than the active Account's has no Account to open New Session in.
+      if (!lifetime || !scope) {
         Modal.alert(t('common.error'), t('errors.operationFailed'));
+        return;
       }
+      // The authoring owner shows a refusal or a waiting approval.
+      await openSessionAuthoringAction({ seed: { prompt: suggestion.prompt } }, lifetime);
     }, [props.serverId]);
 
     return (

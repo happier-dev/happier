@@ -16640,7 +16640,6 @@ settingsSession: {
             drillFilterTo: ({ name }: { name: string | number }) => `Mostrar apenas ${name}`,
             drillRemove: ({ name }: { name: string | number }) => `Mostrar tudo, não apenas ${name}`,
             askAgent: "Perguntar a um agente sobre isto",
-            askUnavailable: "Não foi possível abrir uma nova sessão para isto.",
             askPrompt: ({ widget, period, query }: { widget: string | number; period: string | number; query: string | number }) => `Sobre o meu uso: ${widget} · ${period}.\nLeia-o com a ação usage.query usando exatamente esta consulta e depois responda à minha pergunta.\n\n${query}\n\nA minha pergunta: `,
             copyQuery: "Copiar consulta",
             copyQueryDone: "Consulta copiada",

@@ -113,7 +113,7 @@ import { createSessionActionInfoItemProps } from '@/components/sessions/actions/
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { sessionSetManualReadStateWithServerScope } from '@/sync/ops/sessionReadState';
-import { SessionAuthoringOpenResultV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { openSessionAuthoringAction } from '@/sync/ops/actions/sessionAuthoringActions';
 import { useCurrentUiContextLocalCommands, type CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { buildSessionDestinationRouteHref } from '@/components/workspaceCockpit/session/sessionCockpitNavigation';
 import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit/useMobileWorkspaceExperienceState';
@@ -559,12 +559,13 @@ function SessionInfoContent({
     const input = {
       sourceSession: { serverId: sessionServerId, sessionId: session.id },
     };
-    const result = await (invocation ? invocation.execute(sessionActions, 'session.authoring.open', input)
-      : sessionActions.execute('session.authoring.open', input));
-    requireActionSuccess(result);
-    const opened = SessionAuthoringOpenResultV1Schema.parse(result.result);
-    if (opened.kind !== 'opened') throw new HappyError(t('errors.unknownError'), false,
-      { code: opened.reason });
+    const binding = sessionActions.binding;
+    if (!binding) return false;
+    // The authoring owner shows a refusal or a waiting approval; a command caller reads the boolean.
+    const opened = await openSessionAuthoringAction(input, binding, { executeAction: (_actionId, actionInput) => invocation
+      ? invocation.execute(sessionActions, 'session.authoring.open', actionInput)
+      : sessionActions.execute('session.authoring.open', actionInput) });
+    return opened.kind === 'opened';
   }, [sessionActions.execute, sessionActions.executeForCaller, sessionActions.binding, session.id, sessionServerId]);
   const [openingSameSetup, handleNewSessionSameSetup] = useHappyAction(async () => { await handleOpenSameSetup(); });
 

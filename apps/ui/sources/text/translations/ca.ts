@@ -15694,7 +15694,6 @@ settingsSession: {
           drillFilterTo: ({ name }: { name: string | number }) => `Mostra només ${name}`,
           drillRemove: ({ name }: { name: string | number }) => `Mostra-ho tot, no només ${name}`,
           askAgent: "Pregunta-ho a un agent",
-          askUnavailable: "No s’ha pogut obrir una sessió nova per a això.",
           askPrompt: ({ widget, period, query }: { widget: string | number; period: string | number; query: string | number }) => `Sobre el meu ús: ${widget} · ${period}.
 Llegeix-lo amb l’acció usage.query fent servir exactament aquesta consulta i després respon la meva pregunta.
 

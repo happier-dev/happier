@@ -20033,7 +20033,6 @@ const enUsage = {
       drillFilterTo: ({ name }: { name: string | number }) => `Show only ${name}`,
       drillRemove: ({ name }: { name: string | number }) => `Show everything, not only ${name}`,
       askAgent: "Ask an agent about this",
-      askUnavailable: "Couldn't open a new session for this.",
       askPrompt: ({ widget, period, query }: { widget: string | number; period: string | number; query: string | number }) => `About my usage: ${widget} · ${period}.\nRead it with the usage.query action using exactly this query, then answer my question.\n\n${query}\n\nMy question: `,
       copyQuery: "Copy query",
       copyQueryDone: "Query copied",

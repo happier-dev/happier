@@ -42,10 +42,8 @@ import { resolveMachineActionCandidates } from '@/utils/sessions/resolveMachineA
 import { machineScmHostingRepositoryDescribePublishTargets } from '@/sync/ops/scm/machineScm';
 import type { ScmHostingRepositoryDescribePublishTargetsResponse } from '@happier-dev/protocol/scm';
 import { resolveSourceControlPublishRepositoryRemediation } from '@/components/workspaces/scm/update/resolveSourceControlPublishRepositoryRemediation';
-import {
-  createFrontDoorUiActionExecutor,
-  createFrontDoorActionExecute,
-} from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { openSessionAuthoringAction } from '@/sync/ops/actions/sessionAuthoringActions';
 import { t } from '@/text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
@@ -94,7 +92,6 @@ const catalogDoor = (item: RegistryCatalogItemSummary): Door => `catalog:${JSON.
 
 /** The Action each control uses (lab s1 NOTES "actions"). */
 const CREATE_ACTION = 'projects.starters.create' as const;
-const SESSION_OPEN_ACTION = 'session.authoring.open' as const;
 
 type OwnerFact =
   | Readonly<{ kind: 'loading' }>
@@ -336,13 +333,11 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime) return;
     stepAside();
-    await createFrontDoorActionExecute()(SESSION_OPEN_ACTION, {
+    // The authoring owner shows a refusal or a waiting approval; the sheet has already stepped aside.
+    await openSessionAuthoringAction({
       seed: { prompt: t('newApp.askAgentPrompt'),
         ...(props.machine ? { placement: { kind: 'exactTarget', serverId: props.machine.serverId, machineId: props.machine.machineId } } : {}) },
-    }, {
-      surface: 'ui', authority: 'present_user', serverId: lifetime.scope.serverId,
-      expectedAccountId: lifetime.scope.accountId,
-    }).catch(() => null);
+    }, lifetime);
   };
   const askAgentRef = React.useRef(askAgent);
   askAgentRef.current = askAgent;
@@ -386,32 +381,23 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     async (
       outcome: Extract<StarterCreateOutcome, { kind: 'created' }>,
     ): Promise<boolean> => {
-      if (!scope) return false;
+      const lifetime = captureActiveServerAccountScopeLifetime();
+      if (!scope || !lifetime) return false;
       // The existing New session owner takes it from here: the description is the first message, in the
       // new checkout, with the person's agent and model defaults (P60-R2: no second Session path).
-      const execute = createFrontDoorActionExecute();
-      const result = await execute(
-        SESSION_OPEN_ACTION,
-        {
-          seed: {
-            placement: {
-              kind: 'exactTarget',
-              serverId: scope.serverId,
-              machineId: outcome.handoff.machineId,
-              directory: outcome.handoff.directory,
-            },
-            prompt: outcome.handoff.initialMessage,
-            ...(name.trim() ? { sessionName: name.trim() } : {}),
+      const opened = await openSessionAuthoringAction({
+        seed: {
+          placement: {
+            kind: 'exactTarget',
+            serverId: scope.serverId,
+            machineId: outcome.handoff.machineId,
+            directory: outcome.handoff.directory,
           },
+          prompt: outcome.handoff.initialMessage,
+          ...(name.trim() ? { sessionName: name.trim() } : {}),
         },
-        {
-          surface: 'ui',
-          authority: 'present_user',
-          serverId: scope.serverId,
-          expectedAccountId: scope.accountId,
-        },
-      ).catch(() => null);
-      return result?.ok === true;
+      }, lifetime);
+      return opened.kind === 'opened';
     },
     [name, scope],
   );

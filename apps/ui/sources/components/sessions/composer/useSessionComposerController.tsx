@@ -203,7 +203,7 @@ import { getVoiceAdapterRegistry } from "@/voice/session/voiceAdapterRegistry";
 import { resolveVoiceSessionComposerRouting } from "@/voice/binding/voiceSessionComposerRouting";
 import { sendVoiceSessionComposerText } from "@/voice/binding/sendVoiceSessionComposerText";
 import { createDefaultActionExecutor } from "@/sync/ops/actions/defaultActionExecutor";
-import { SessionAuthoringOpenResultV1Schema } from '@happier-dev/protocol/plugins/ui/hostApiRequests';
+import { openSessionAuthoringAction } from '@/sync/ops/actions/sessionAuthoringActions';
 import { createFrontDoorActionExecute } from "@/sync/ops/actions/frontDoorRuntimeActionExecutor";
 import { ActionApprovalRequestCreatedResultSchema } from "@happier-dev/protocol/actions/actionExecutionResult";
 import { PendingResetStartSetResultV1Schema } from "@happier-dev/protocol/sessions/pending/pendingRequestedActionV1";
@@ -3736,10 +3736,9 @@ export function useSessionComposerController({
             serverId: sessionRouteServerId,
             mode,
             applyTiming: settings.sessionPermissionModeApplyTiming === 'next_prompt' ? 'next_prompt' : 'immediate',
-            draftScope: sessionAccountLifetime?.isCurrent() ? sessionAccountScope : null,
             executeAction: actionExecutor.execute,
         }).catch((error: unknown) => presentSessionActionOutcome(error, sessionAccountLifetime)), { tag: 'SessionView.updatePermissionMode' });
-    }, [actionExecutor, presentSessionActionOutcome, sessionAccountLifetime, sessionAccountScope, sessionId, sessionRouteServerId, settings.sessionPermissionModeApplyTiming]);
+    }, [actionExecutor, presentSessionActionOutcome, sessionAccountLifetime, sessionId, sessionRouteServerId, settings.sessionPermissionModeApplyTiming]);
 
     const updateAcpSessionModeOverride = React.useCallback((modeId: string) => {
         const normalized = typeof modeId === 'string' ? modeId.trim() : '';
@@ -4291,12 +4290,10 @@ export function useSessionComposerController({
                     // creates the child. The legacy `session.continueWithReplay`
                     // RPC stays a compatibility ingress with no UI product use.
                     try {
-                        const outcome = openNewSessionSourceContextNavigation({
-                            session,
+                        const outcome = await openNewSessionSourceContextNavigation({
                             sourceSessionId: sessionId,
                             forkPoint: { type: 'latest' },
                             serverId: sessionRouteServerId ?? null,
-                            machineId: resumeMachineId,
                             accountLifetime: sessionAccountLifetime,
                             navigateToNewSession: route => router.push(route),
                         });
@@ -5247,13 +5244,11 @@ export function useSessionComposerController({
             if (action === 'resume' || action === 'retry') await handleResumeSession();
             else if (action === 'new_session') {
                 if (!sessionAccountLifetime?.isCurrent() || !sessionAccountScope) return;
-                const result = await actionExecutor.execute('session.authoring.open', {
-                    sourceSession: { sessionId, serverId: sessionAccountScope.serverId },
-                }, { serverId: sessionAccountScope.serverId, expectedAccountId: sessionAccountScope.accountId, surface: 'ui' });
-                const opened = SessionAuthoringOpenResultV1Schema.safeParse(result.ok ? result.result : null);
-                if (sessionAccountLifetime.isCurrent() && (!opened.success || opened.data.kind !== 'opened')) {
-                    Modal.alert(t('common.error'), t('errors.operationFailed'));
-                }
+                // The authoring owner shows a refusal or a waiting approval.
+                await openSessionAuthoringAction({ sourceSession: { sessionId, serverId: sessionAccountScope.serverId } },
+                    sessionAccountLifetime, { executeAction: (_actionId, input, invocation) => actionExecutor.execute('session.authoring.open', input, {
+                        serverId: sessionAccountScope.serverId, expectedAccountId: sessionAccountScope.accountId, surface: 'ui',
+                        ...(invocation?.signal ? { signal: invocation.signal } : {}) }) });
             }
             else if (action === 'choose_account') openSessionAccountChooser();
             // Signing a refused account in again is the existing Connected services recovery.

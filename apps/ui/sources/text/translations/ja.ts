@@ -16809,7 +16809,6 @@ settingsSession: {
             drillFilterTo: ({ name }: { name: string | number }) => `${name} のみ表示`,
             drillRemove: ({ name }: { name: string | number }) => `${name} だけでなくすべて表示`,
             askAgent: "これについてエージェントに聞く",
-            askUnavailable: "新しいセッションを開けませんでした。",
             askPrompt: ({ widget, period, query }: { widget: string | number; period: string | number; query: string | number }) => `使用量について: ${widget} · ${period}。\nusage.query アクションでこのクエリをそのまま使って読み取り、質問に答えてください。\n\n${query}\n\n質問: `,
             copyQuery: "クエリをコピー",
             copyQueryDone: "クエリをコピーしました",

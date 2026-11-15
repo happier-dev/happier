@@ -16476,7 +16476,6 @@ settingsSession: {
             drillFilterTo: ({ name }: { name: string | number }) => `Показать только ${name}`,
             drillRemove: ({ name }: { name: string | number }) => `Показать всё, а не только ${name}`,
             askAgent: "Спросить агента об этом",
-            askUnavailable: "Не удалось открыть новую сессию для этого.",
             askPrompt: ({ widget, period, query }: { widget: string | number; period: string | number; query: string | number }) => `О моём использовании: ${widget} · ${period}.\nПрочитай его действием usage.query именно с этим запросом, затем ответь на мой вопрос.\n\n${query}\n\nМой вопрос: `,
             copyQuery: "Скопировать запрос",
             copyQueryDone: "Запрос скопирован",
