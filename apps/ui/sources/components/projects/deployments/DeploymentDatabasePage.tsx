@@ -36,7 +36,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
-import { Icon } from '@/components/ui/icons/Icon';
+import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
 import type { CustomModalInjectedProps } from '@/modal/types';
@@ -523,7 +523,7 @@ export function DeploymentDatabasePage(
             <Item testID={`${id}.query`} title={t('projects.deployments.databaseQuery.title')}
               {...(database.kind === 'managed' && queryDeclarations.state.status === 'loading'
                 ? { subtitle: t('projects.deployments.loading') } : {})}
-              icon={<Icon name="terminal" size={18} color={theme.colors.text.secondary} />}
+              icon={<Icon name="terminal" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
               {...(openQuery ? { onPress: openQuery } : { mode: 'info' as const })} />
           </ItemGroup>
           {missed ? (
@@ -592,7 +592,7 @@ export function DeploymentDatabasePage(
                 <Item
                   testID={`${id}.backups.setUp`}
                   title={t('projects.deployments.settingsSections.setupTitle')}
-                  icon={<Icon name="gear" size={18} color={theme.colors.text.secondary} />}
+                  icon={<Icon name="gear" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
                   onPress={() => props.onNavigate({ tab: 'settings', section: 'backups' })}
                 />
               ) : null}
@@ -618,7 +618,7 @@ export function DeploymentDatabasePage(
                 testID={`${id}.destination`}
                 title={t('projects.deployments.backupDestination')}
                 subtitle={t('projects.deployments.databaseDestinationDetail')}
-                icon={<Icon name="gear" size={18} color={theme.colors.text.secondary} />}
+                icon={<Icon name="gear" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
                 onPress={() =>
                   props.onNavigate({ tab: 'settings', section: 'backups' })
                 }
@@ -696,7 +696,7 @@ export function DeploymentDatabasePage(
             <Item
               testID={`${id}.variables`}
               title={t('projects.deployments.dataVariables')}
-              icon={<Icon name="list" size={18} color={theme.colors.text.secondary} />}
+              icon={<Icon name="list" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
               {...(databaseVariableNames.length > 0 ? { subtitle: databaseVariableNames.join(', ') } : {})}
               onPress={() =>
                 props.onNavigate({ tab: 'variables', section: null })

@@ -32,7 +32,8 @@ import { Modal } from '@/modal';
 import { InvestigationOutcomeBanner } from './InvestigationOutcomeBanner';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { Icon } from '@/components/ui/icons/Icon';
+import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
+import { AccountNoticeRecoveryChoices } from '@/components/inbox/cards/AccountNoticeRecoveryChoices';
 import type { AccountNoticeArtifact } from '@/sync/domains/artifacts/usageNoticeArtifacts';
 import { useMachineDisplayNamesById } from '@/sync/store/hooks';
 import {
@@ -43,7 +44,7 @@ import { InvestigationAgentActionButtons } from './InvestigationAgentActionButto
 import { useBoundFailureInvestigation } from '@/hooks/inbox/useInvestigateFailure';
 import { t } from '@/text';
 
-import { INBOX_ITEM_DETAIL_REGISTRY, createInboxItemRoute, readInboxView, resolveInboxItemPageRoute, resolveInboxNoticeOwnPageRoute, type InboxItemFocus } from '../inboxItemFocus';
+import { INBOX_ITEM_DETAIL_REGISTRY, createInboxItemRoute, readInboxView, resolveInboxItemPageRoute, resolveInboxNoticeOwnPageRoute, resolveInboxNoticeSubjectRoute, type InboxItemFocus } from '../inboxItemFocus';
 
 function describeOpenPage(focus: InboxItemFocus): string {
   return t(INBOX_ITEM_DETAIL_REGISTRY[focus.kind].openLabel);
@@ -178,6 +179,8 @@ function NoticeDetailAdapter(props: DetailBodyProps) {
   const entry = model?.accountNotices.find(candidate => candidate.artifact.id === props.focus.id);
   const investigation = React.useMemo(() => entry && model && model.noticeInvestigation.isEligible(entry)
     ? bindNoticeInvestigation(model.noticeInvestigation, entry) : null, [model?.noticeInvestigation, entry]);
+  const recovery = React.useMemo(() => entry && model ? { entry, binding: model.noticeInvestigation } : null,
+    [model?.noticeInvestigation, entry]);
   const ownPage = resolveInboxNoticeOwnPageRoute(entry?.header
     ?? model?.openUsageNotices.find(candidate => candidate.artifact.id === props.focus.id)?.header, props.focus.serverId);
   // Its page is this Inbox item: while the notices load, wait; a notice that is gone says so.
@@ -191,6 +194,8 @@ function NoticeDetailAdapter(props: DetailBodyProps) {
   const content = ownPage ? <PageDetailAdapter {...props} plugin={plugin} /> : <InboxNoticeDetail title={item?.title ?? entry.header.title} body={item?.excerpt ?? entry.header.body ?? null}
     source={item?.source.displayName ?? null} createdAt={item?.createdAt ?? entry.artifact.createdAt}
     serverId={props.focus.serverId} subject={subject} investigation={investigation}
+    subjectRoute={resolveInboxNoticeSubjectRoute(entry.header)}
+    recovery={recovery}
     onDismiss={async () => { await model.dismissAccountNotice(entry); props.onClose(); }} />;
   return entry.header.source.kind === 'plugin'
     ? <InboxPluginAvailability detail serverId={props.focus.serverId} pluginId={entry.header.source.pluginId}
@@ -216,8 +221,15 @@ export const InboxNoticeDetail = React.memo(function InboxNoticeDetail(props: Re
   serverId: string;
   subject?: NoticeInvestigationSubject | null;
   investigation?: BoundHealthNoticeInvestigation | null;
+  /** Where the notice's cause lives (its Environment or its service), resolved by the notice route owner. */
+  subjectRoute?: string | null;
+  /** The notice's recovery choices (Restart, Roll back…) as its owner offers and runs them. */
+  recovery?: Readonly<{ entry: AccountNoticeArtifact; binding: React.ComponentProps<typeof AccountNoticeRecoveryChoices>['recovery'] }> | null;
 }>) {
   const { theme } = useUnistyles();
+  const router = useRouter();
+  const { subjectRoute } = props;
+  const openSubject = React.useCallback(() => { if (subjectRoute) router.push(subjectRoute as never); }, [router, subjectRoute]);
   const age = useWorkRelativeTime(props.createdAt);
   const [pending, setPending] = React.useState(false);
   const { onDismiss, subject } = props;
@@ -228,7 +240,8 @@ export const InboxNoticeDetail = React.memo(function InboxNoticeDetail(props: Re
     catch { Modal.alert(t('common.error'), t('errors.unknownError')); setPending(false); }
   }, [onDismiss]);
   const machineNames = useMachineDisplayNamesById(service ? [service.machineId] : NO_MACHINES);
-  const machine = service ? machineNames[service.machineId] ?? service.machineId : null;
+  // The Machine is named by its display-name owner; an unnamed one is left out, never shown as its raw id.
+  const machine = service ? machineNames[service.machineId] ?? null : null;
   const canInvestigate = subject?.investigable === true && props.investigation != null;
   const investigation = useBoundFailureInvestigation(canInvestigate ? props.investigation ?? null : null,
     { agentActions: 'withDefault' });
@@ -259,16 +272,31 @@ export const InboxNoticeDetail = React.memo(function InboxNoticeDetail(props: Re
         actionsPlacement="page"
       />
       {investigation.showOutcome && investigation.outcome ? <InvestigationOutcomeBanner outcome={investigation.outcome} serverId={props.serverId} onChoosePlacement={investigation.investigateWithPlacement} pending={investigation.pending} /> : null}
-      {ineligible && !service ? (
+      {props.recovery ? (
+        // The decisions the notice offers lead; its owner decides which exist and runs them.
+        <ItemGroup surface="none" header="none">
+          <AccountNoticeRecoveryChoices entry={props.recovery.entry} recovery={props.recovery.binding} testID="inbox.notice.recovery" />
+        </ItemGroup>
+      ) : null}
+      {ineligible && !service && subject?.kind !== 'environment' ? (
         <ItemGroup testID="inbox.notice.investigate.ineligible" surface="none" description={ineligible}>{null}</ItemGroup>
       ) : null}
-      {service && machine ? (
+      {service || subject?.kind === 'environment' ? (
         <ItemGroup testID="inbox.notice.health" title={t('inbox.work.healthNotice.where')}
           description={canInvestigate ? investigateHint : ineligible}>
-          <Item testID="inbox.notice.health.service" icon={<Icon name="stack" size={18} color={theme.colors.text.secondary} />}
-            title={t('inbox.work.healthNotice.service')} detail={service.service} mode="info" />
-          <Item testID={`inbox.notice.health.machine.${service.machineId}`} icon={<Icon name="hard-drives" size={18} color={theme.colors.text.secondary} />}
-            title={t('inbox.work.healthNotice.machine')} detail={machine} mode="info" />
+          {subject?.kind === 'environment' ? (
+            <Item testID="inbox.notice.health.environment" icon={<Icon name="hard-drives" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
+              title={t('inbox.work.healthNotice.environment')} {...(subjectRoute ? { onPress: openSubject, showChevron: true } : { mode: 'info' as const })} />
+          ) : null}
+          {service ? (
+            <Item testID="inbox.notice.health.service" icon={<Icon name="stack" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
+              title={t('inbox.work.healthNotice.service')} detail={service.service}
+              {...(subjectRoute ? { onPress: openSubject, showChevron: true } : { mode: 'info' as const })} />
+          ) : null}
+          {service && machine ? (
+            <Item testID={`inbox.notice.health.machine.${service.machineId}`} icon={<Icon name="hard-drives" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
+              title={t('inbox.work.healthNotice.machine')} detail={machine} mode="info" />
+          ) : null}
         </ItemGroup>
       ) : null}
     </ItemList>

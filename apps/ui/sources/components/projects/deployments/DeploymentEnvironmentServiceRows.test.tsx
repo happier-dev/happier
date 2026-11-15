@@ -405,6 +405,36 @@ describe('Environment service row ⋯ (P1 §3)', () => {
     } finally { await act(async () => { controller.retire(); }); }
   });
 
+  it('says a service the person stopped as that stop, through the service state owner (FIDELITY G10)', async () => {
+    const { detail, serving, controller, scope } = environment();
+    const service = serving.content.ownServer?.approvedInputBasis.services[0] ?? serving.content.images[0]!.service;
+    const instance = 'instance-a';
+    const stopped = MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [MachineServiceRowV1Schema.parse({
+      serviceId: `${instance}/${service}`, name: service, authority: 'project', lifecyclePurpose: 'deployment',
+      generation: 'generation-7', state: 'stopped', environmentId: detail.environment.id,
+      health: { status: 'down', observedAtMs: 1, freshness: 'current', expectedDown: 'stop' },
+      deployment: { deploymentId: serving.deployment.id, installationId: 'installation-a', service: { kind: 'deployment', machineId,
+        environmentId: detail.environment.id, environmentInstanceId: instance, composeService: service, serviceId: `${instance}/${service}` } },
+      capabilities: { start: true, stop: true, restart: true, logs: true, accounting: false },
+    })] });
+    answerServices(stopped);
+    const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+    const { ModalProvider } = await import('@/modal');
+    const screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller}
+      environmentId={detail.environment.id} demand={{ mounted: true, visible: true, focused: true }} accountId={accountId}
+      serverId={serverId} phone={false} deploy={null} review={{ pendingId: null, request: () => {}, open: () => {} }}
+      onOpenReceipt={() => {}} lifetime={lifetime} /></ModalProvider>);
+    try {
+      const row = `project-deployments.environment.services.${service}`;
+      await waitForHomeGovernance(() => expect(screen.findByTestId(row)).not.toBeNull());
+      const { t } = await import('@/text');
+      // The owner's word for a stop the person asked for, never the bare state; the row's accessible name says it too.
+      await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('machineServices.expectedDown.stopped')));
+      expect(screen.root.findAll(node => node.props.testID === row && typeof node.props.accessibilityLabel === 'string'
+        && node.props.accessibilityLabel.includes(t('machineServices.expectedDown.stopped'))).length).toBeGreaterThan(0);
+    } finally { await act(async () => { controller.retire(); }); }
+  });
+
   it('shows Runtime logs for the row the Environment list knows, the same list the rows read (PAGE-ACCEPT-100 D6b)', async () => {
     const { detail, serving, controller, scope } = environment();
     const service = serving.content.ownServer?.approvedInputBasis.services[0] ?? serving.content.images[0]!.service;

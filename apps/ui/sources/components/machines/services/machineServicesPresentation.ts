@@ -381,6 +381,12 @@ export function machineServiceExpectedStop(
   }
 }
 
+/** A service's state word: a stop the person asked for reads as that stop, otherwise the service's own state. */
+export function machineServiceStateLabel(row: Pick<MachineServiceRowV1, 'state' | 'health'>): string {
+  const expectedStop = machineServiceExpectedStop(row);
+  return expectedStop ? t(`machineServices.expectedDown.${expectedStop}`) : t(`machineServices.state.${row.state}`);
+}
+
 /** What a Machine does for an Environment beyond running its services (lab J13 role chips), in the reading order the
  * Services tab's role rows use: what it decides, then what it builds and serves. */
 export const MACHINE_DEPLOYMENT_ROLES = ['controller', 'build', 'edge'] as const;

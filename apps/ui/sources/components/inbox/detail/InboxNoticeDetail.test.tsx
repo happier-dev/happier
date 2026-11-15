@@ -57,6 +57,44 @@ function render(answer: ActionExecuteResult | ((call: number, options: unknown, 
   );
 }
 
+describe('Inbox notice detail: the way to the cause (COR5B #162 "1 of 1 servers down")', () => {
+  const environment = { serverId: 'home-a', projectSourceId: 'source-1', environmentId: 'env-1' };
+  const header = (page: Record<string, unknown>) => ({ kind: 'account_notice.v1', source: { kind: 'host', topic: 'service_health' },
+    page: { kind: 'host', ...page } }) as unknown as Parameters<typeof resolveInboxNoticeSubjectRoute>[0];
+  let resolveInboxNoticeSubjectRoute: typeof import('../inboxItemFocus')['resolveInboxNoticeSubjectRoute'];
+
+  it('resolves a health notice to its Environment or its service on the Machine, never to a raw id line', async () => {
+    ({ resolveInboxNoticeSubjectRoute } = await import('../inboxItemFocus'));
+    expect(resolveInboxNoticeSubjectRoute(header({ page: 'environment', environment }))).toContain('env-1');
+    const service = { kind: 'adopted', machineId: 'machine-1', serviceId: 'svc-1' };
+    const href = resolveInboxNoticeSubjectRoute(header({ page: 'machine_service', machine: { serverId: 'home-a', machineId: 'machine-1' }, service }));
+    expect(href).toContain('machine-1');
+    expect(href).toContain('svc-1');
+    expect(resolveInboxNoticeSubjectRoute(undefined)).toBeNull();
+  });
+
+  it('opens the Environment from the notice and offers its recovery choices through the notice owner', async () => {
+    const entry = { artifact: { id: 'notice-1' } } as never;
+    const runRecoveryChoice = vi.fn(async () => ({ ok: true as const }));
+    const screen = await renderScreen(
+      <InboxNoticeDetail
+        title="1 of 1 servers down" body={null} source="Service health" createdAt={Date.now() - 60_000} serverId="home-a"
+        onDismiss={async () => {}}
+        subject={{ kind: 'environment', environment, open: true, investigable: false }}
+        subjectRoute="/deployments/source-1?deploymentEnvironment=env-1"
+        recovery={{ entry, binding: {
+          readRecoveryChoices: () => [{ label: 'Restart', actionId: 'deployments.restart' }] as never,
+          runRecoveryChoice,
+        } }}
+      />,
+    );
+    await screen.pressByTestIdAsync('inbox.notice.health.environment');
+    expect(router.push).toHaveBeenCalledWith('/deployments/source-1?deploymentEnvironment=env-1');
+    expect(screen.findByTestId('inbox.notice.recovery')).not.toBeNull();
+    expect(screen.getTextContent()).toContain('Restart');
+  });
+});
+
 describe('Inbox notice detail', () => {
   it('shows the typed refusal when the Session exists but its input was rejected', async () => {
     const screen = await render({ ok: true, result: { v: 1, handoff: {
