@@ -10,12 +10,13 @@ import {
 import { useProjectSourceAddress } from '@/components/projects/sources/useProjectSourceAddress';
 import { presentProjectSourceAddressRefusal } from '@/components/projects/sources/resolveProjectSourceAddress';
 import { useProjectSources } from '@/components/projects/sources/useProjectSources';
-import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
+import { describeCodeSource } from './codeSourcePresentation';
+import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import {
   SelectionTiles,
   type SelectionTile,
 } from '@/components/ui/forms/SelectionTiles';
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Text } from '@/components/ui/text/Text';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -54,7 +55,7 @@ export function NewAppCodeSources(
   }>,
 ): React.ReactNode {
   const { theme } = useUnistyles();
-  const { state } = useProjectSources(props.scope, { repositoryFacts: true });
+  const { state, repositoryFacts } = useProjectSources(props.scope, { repositoryFacts: true });
   const rows = state.rows ?? NO_ROWS;
   const withCode = React.useMemo(
     () => rows.filter((row) => row.repository !== undefined),
@@ -100,21 +101,20 @@ export function NewAppCodeSources(
       ...shown.map((row) => ({
         id: row.id,
         title: row.name,
-        subtitle: t('newApp.codeSubtitle', {
-          repository: row.repository!.repository.nameWithOwner,
-          provider: row.repository!.provider.displayName,
-        }),
+        subtitle: describeCodeSource({ nameWithOwner: row.repository!.repository.nameWithOwner,
+          provider: row.repository!.provider.displayName }, repositoryFacts.get(row.id)),
         icon: 'git-branch' as const,
       })),
     ],
-    [pasted, shown],
+    [pasted, repositoryFacts, shown],
   );
   return (
     <>
       {/* The search leads the step (lab f1src), on the same edge as the sections' tiles beneath it. */}
       <ItemGroup testID="newApp.search" header="none" surface="none">
       <View style={[styles.field, props.insetStyle]}>
-        <FieldTextInput
+        {/* The app's one search field; Enter also reads a pasted repository link. */}
+        <CompactSearchField
           testID="newApp.code.address"
           value={query}
           onChangeText={(text) => {
@@ -125,12 +125,10 @@ export function NewAppCodeSources(
             if (query.trim()) void address.resolve(query.trim());
           }}
           placeholder={t('newApp.codeSearchPlaceholder')}
-          accessibilityLabel={t('newApp.codeSearchPlaceholder')}
-          autoCapitalize="none"
-          returnKeyType="search"
-          leading={<Icon name="magnifying-glass" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />}
-          error={refusal}
         />
+        {refusal ? (
+          <SurfaceStateCard testID="newApp.code.address.refusal" size="line" kind="unavailable" title={refusal} />
+        ) : null}
       </View>
       </ItemGroup>
       {tiles.length > 0 || (needle && withCode.length > 0) ? (
@@ -163,5 +161,5 @@ export function NewAppCodeSources(
 
 const styles = StyleSheet.create((theme) => ({
   column: { gap: theme.space.s8 },
-  field: { paddingTop: theme.space.s8 },
+  field: { paddingTop: theme.space.s8, gap: theme.space.s8 },
 }));
