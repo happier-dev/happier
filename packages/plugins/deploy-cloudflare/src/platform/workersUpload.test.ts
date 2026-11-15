@@ -127,7 +127,7 @@ it('builds exact source in the pinned container and uploads executable multipart
     expect(spawn.deploymentEnv).toBeUndefined();
     expect(h.disposeProcess).toHaveBeenCalledOnce();
     expect(await h.invoke({ providerDeploymentId: providerReference })).toMatchObject({ state: 'succeeded', providerDeploymentId: providerReference });
-    expect(h.requests.map(request => request.method)).toEqual(['PUT', 'GET']);
+    expect(h.requests.map(request => request.method)).toEqual(['PUT', 'GET', 'GET']);
     expect(h.spawn).toHaveBeenCalledOnce();
   } finally { await h.dispose(); }
 });
@@ -140,7 +140,7 @@ it('observes the canonical version UUID after the legacy script upload returns a
     if (!accepted || typeof accepted !== 'object' || Array.isArray(accepted)) throw new Error('Expected upload observation');
     expect(await h.invoke({ providerDeploymentId: accepted.providerDeploymentId }))
       .toMatchObject({ state: 'succeeded', providerDeploymentId: providerReference });
-    expect(h.requests.map(request => request.method)).toEqual(['PUT', 'GET']);
+    expect(h.requests.map(request => request.method)).toEqual(['PUT', 'GET', 'GET']);
     expect(h.spawn).toHaveBeenCalledOnce();
   } finally { await h.dispose(); }
 });
@@ -182,16 +182,16 @@ it('checks retained upload version serving evidence without rebuilding or repeat
     expect(await h.invoke({ providerDeploymentId: providerReference })).toMatchObject({ state: 'succeeded', providerDeploymentId: providerReference });
     expect(h.materialize).not.toHaveBeenCalled();
     expect(h.spawn).not.toHaveBeenCalled();
-    expect(h.requests.map(request => request.method)).toEqual(['GET']);
+    expect(h.requests.map(request => request.method)).toEqual(['GET', 'GET']);
     expect(await h.kit.invokeAction('workers-observe', { ...preparation, targetLinkId: 'link', expectedTargetLinkRevision: 1,
       deploymentId: 'receipt', expectedDeploymentRevision: 1, actionOperationId: 'operation', providerDeploymentId: providerReference,
       preparedNative: { projectName: 'app', triggerUuid: 'git-link-trigger' } }))
       .toMatchObject({ state: 'succeeded', providerDeploymentId: providerReference });
-    expect(h.requests.map(request => request.method)).toEqual(['GET', 'GET']);
+    expect(h.requests.map(request => request.method)).toEqual(['GET', 'GET', 'GET', 'GET']);
     await expect(h.kit.invokeAction('workers-cancel', { ...preparation, targetLinkId: 'link', expectedTargetLinkRevision: 1,
       deploymentId: 'receipt', expectedDeploymentRevision: 1, actionOperationId: 'operation', providerDeploymentId: providerReference }))
       .rejects.toMatchObject({ code: 'unsupported_action', details: { phase: 'cancel' } });
-    expect(h.requests.map(request => request.method)).toEqual(['GET', 'GET']);
+    expect(h.requests.map(request => request.method)).toEqual(['GET', 'GET', 'GET', 'GET']);
   } finally { await h.dispose(); }
 });
 
@@ -204,7 +204,7 @@ it('recovers a retained compact version reference through the public observer wi
       .toMatchObject({ state: 'succeeded', providerDeploymentId: compactReference });
     expect(h.materialize).not.toHaveBeenCalled();
     expect(h.spawn).not.toHaveBeenCalled();
-    expect(h.requests.map(request => request.method)).toEqual(['GET']);
+    expect(h.requests.map(request => request.method)).toEqual(['GET', 'GET']);
   } finally { await h.dispose(); }
 });
 

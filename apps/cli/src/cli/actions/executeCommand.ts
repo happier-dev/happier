@@ -308,7 +308,8 @@ export async function runCompiledActionCliCommand(params: Readonly<{
     await reportFailure({
       json,
       kind,
-      failure: { errorCode: composed.code, errorMessage: composed.message },
+      failure: { errorCode: composed.code, errorMessage: composed.message,
+        ...(composed.details === undefined ? {} : { details: composed.details }) },
       extraFields: null,
       humanSuffix: null,
       unexpected: false,

@@ -81,6 +81,9 @@ describe('deployment target catalog at the admitted registry boundary', () => {
         expect(targets).toHaveLength(2);
         expect(readTarget(OWN_SERVER_DEPLOYMENT_TARGET_V1.source, declarations))
             .toEqual(OWN_SERVER_DEPLOYMENT_TARGET_V1);
+        expect(OWN_SERVER_DEPLOYMENT_TARGET_V1).toMatchObject({ actions: {
+            teardown: { kind: 'host', actionId: 'deployments.teardown' },
+        } });
         const source = { kind: 'plugin', contribution: { pluginId: 'example.deploy', localId: 'own-server' } } as const;
         const plugin = readTarget(source, declarations);
         if (!plugin || plugin.role !== 'runtime') throw new Error('Expected the admitted runtime target.');

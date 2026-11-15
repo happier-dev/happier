@@ -25,6 +25,7 @@ import { createHealthCheckSourceInstanceIdV1 } from '@happier-dev/protocol/deplo
 import { readSavedHealthCheckSourcesForHost } from './healthChecks/readSavedHealthCheckSource';
 import { readHealthCheckReadiness, readHealthAlertReadiness } from './healthChecks/readiness';
 import type { CurrentDomainEdgeObservation } from './healthChecks/currentDomainEdgeObservation';
+import { readDeploymentHealthCurrentPlacementFailure } from './healthChecks/currentHealthPlacement';
 import { createCliNotificationCatalogForHost } from '@/session/actions/cliActionDeps/notifications';
 import { createHostPluginNotificationChannels, readSavedHealthAlertDestinationAvailabilityForHost } from '@/notifications/activity/pluginNotificationChannels';
 import { createPlatformFailureEnrollmentForHost } from './platformFailureEnrollment';
@@ -66,6 +67,7 @@ import {
     type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1, type DeploymentContentV1,
     type DeploymentMachineResultV1, type DeploymentReceiptHeaderV1, type DeploymentSourceIntentV1,
     DeploymentContentV1Schema, DeploymentEnvironmentContentV1Schema, DeploymentDataTeardownContentV1Schema, DeploymentOwnServerContentV1Schema, DeploymentPlatformContentV1Schema,
+    DeploymentProviderTeardownContentV1Schema,
     OwnServerDeploymentInputBasisV1Schema, getDeploymentTargetLinkLineageV1, findExistingNativeComposeTargetLinkV1,
 } from '@happier-dev/deployment-protocol';
 import { DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
@@ -594,9 +596,20 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     if (typeof title !== 'string') return failure('deployment_content_unavailable');
                     contentReference = { contentArtifactId: artifact.artifactId, contentHeaderVersion: artifact.revision.headerVersion,
                         contentBodyVersion: artifact.revision.bodyVersion };
+                    const retained = readDeploymentReceiptArtifactV1({ contentArtifactId: artifact.artifactId,
+                        contentHeaderVersion: artifact.revision.headerVersion, contentBodyVersion: artifact.revision.bodyVersion }, artifact);
+                    if (!retained.ok) return failure('deployment_content_unavailable');
+                    // Only the admitted root can capture its first execution actor. Later
+                    // observation/recovery keeps the historical actor, including unknown.
+                    const acceptance = request.context.operationAcceptance;
+                    const isFirstExecution = receipt.state === 'queued' && acceptance?.operationId === receipt.actionOperationId
+                        && acceptance.actionId !== undefined && deploymentOperationForRootActionV1(acceptance.actionId) === receipt.operation;
+                    const actor = retained.content.actor ?? content.actor
+                        ?? (isFirstExecution ? acceptance?.actor : undefined);
+                    const historicalContent = actor ? { ...content, actor } : content;
                     return atHome(() => resource.prepareJsonUpdate({
-                        header: createDeploymentReceiptArtifactHeaderV1(title, content),
-                        body: JSON.stringify(content), beforeWrite: () => assertCurrent(request.context) }));
+                        header: createDeploymentReceiptArtifactHeaderV1(title, historicalContent),
+                        body: JSON.stringify(historicalContent), beforeWrite: () => assertCurrent(request.context) }));
                 })() : null;
                 if (prepared && !prepared.ok) return prepared;
                 const binding = request.context.externalActionExecutionAuthorization?.binding;
@@ -891,6 +904,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
     }
     const dispatchReceipt: NonNullable<Parameters<typeof createCliDeploymentActionDeps>[0]['dispatchReceipt']> = async request => {
+        let providerTeardownReceipt: DeploymentReceiptDetailV1 | undefined;
         if (request.actionId === 'deployments.teardown') {
             let receipt = await targetHostReaders.readAnyReceipt({ environmentId: request.input.environmentId,
                 deploymentId: request.receipt.deploymentId, context: request.context });
@@ -922,10 +936,12 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 }
             }
             if (DeploymentDataTeardownContentV1Schema.safeParse(receipt.content).success) return dataTeardown.execute(request, receipt);
+            if (DeploymentProviderTeardownContentV1Schema.safeParse(receipt.content).success) providerTeardownReceipt = receipt;
         }
         const environment = await readEnvironmentMetadata({ environmentId: request.input.environmentId, context: request.context });
         const link = environment.targetLinks.find(item => item.id === request.input.targetLinkId);
         if (!link) return failure('target_mismatch');
+        if (providerTeardownReceipt && link.role === 'data') return dataTeardown.executeProject(request, providerTeardownReceipt, link);
         return link.source.kind === 'plugin' ? contributedTarget.execute(request)
             : request.actionId === 'deployments.teardown'
                 ? host.teardownBoundary ? injectedTeardown(request) : ownServerTeardown.execute(request)
@@ -958,24 +974,25 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 contentBodyVersion: artifact.revision.bodyVersion }, artifact);
             if (!opened.ok) return failure(opened.error, opened);
             const intent = opened.content.teardown;
-            const retained = await findTeardownReceipt(input, context);
-            const retainedIntent = retained?.deployment.operation === 'teardown'
-                && retained.deployment.contentArtifactId === input.contentArtifactId;
-            // A newly prepared receipt contains intent only. Native completion
-            // is admitted solely by the installation-signed transition owner.
-            if (initial && intent?.proofs.length) {
-                if (!retainedIntent) return failure('deployment_invalid');
-            }
             // A changed head is only a retry candidate. Storage must resolve the
             // original requestKey and Artifact identity; new stale references
             // cannot pass storage admission. Execution then reads its pinned ref.
             const environment = await targetHostReaders.readEnvironment({ environmentId: input.environmentId,
                 targetLinkId: input.targetLinkId, context });
-            if (!host.teardownBoundary) {
+            const link = environment.targetLinks.find(item => item.targetLink.id === input.targetLinkId)?.targetLink;
+            const providerTeardown = link?.source.kind === 'plugin'
+                && DeploymentProviderTeardownContentV1Schema.safeParse(opened.content).success;
+            const retained = providerTeardown ? null : await findTeardownReceipt(input, context);
+            const retainedIntent = retained?.deployment.operation === 'teardown'
+                && retained.deployment.contentArtifactId === input.contentArtifactId;
+            // Provider receipts have no native completion inventory. Storage
+            // resolves their original requestKey without reading native history.
+            // Native completion requires the installation-signed transition owner.
+            if (initial && intent?.proofs.length && !retainedIntent) return failure('deployment_invalid');
+            if (!host.teardownBoundary && !providerTeardown) {
                 const denied = await ownServerTeardown.admit(environment, input.targetLinkId, opened.content, input, context, retainedIntent);
                 if (denied) return denied;
             }
-            const link = environment.targetLinks.find(item => item.targetLink.id === input.targetLinkId)?.targetLink;
             if (!intent || !link || intent.reason !== input.reason || intent.targetLinkRevision !== input.expectedTargetLinkRevision
                 || !isDeepStrictEqual(intent.machines.map(member => member.machineId), input.machines ?? link.machines)
                 || intent.machines.some(member => !link.members.some(current => current.machineId === member.machineId
@@ -1272,10 +1289,10 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         if (request.serverId !== host.serverId || request.machineId !== host.machineId) return failure('target_mismatch');
         const detail = admitted ?? await readEnvironmentMetadata({ environmentId: request.environmentId, context });
         const environment = detail.environment;
-        if (!environment.capabilities.read) return failure('action_forbidden');
+        const placement = readDeploymentHealthCurrentPlacementFailure(request, environment, detail.targetLinks);
+        if (placement) return placement;
         const link = detail.targetLinks.find(item => item.id === request.targetLinkId);
-        if (!link || link.targetKind !== 'ownServer' || environment.runtimeTargetLinkId !== link.id
-            || environment.controllerMachineId !== request.machineId) return failure('target_mismatch');
+        if (!link) return failure('target_mismatch');
         if (!admitted?.current) lease = host.acquirePluginRuntimeRegistryLease
             ? await host.acquirePluginRuntimeRegistryLease() : tryAcquireAuthoritativePluginRuntimeRegistryLease();
         const current = admitted?.current ?? lease?.registry.currentDomainEdgeObservation;
@@ -1507,17 +1524,11 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     targetLinkId: request.input.targetLinkId, context: request.context });
                 const targetLinkId = request.input.targetLinkId ?? environment.environment.runtimeTargetLinkId;
                 if (targetLinkId) {
-                    const detached = await contributedTarget.prepareTeardownDetach({ environmentId: request.input.environmentId,
-                        targetLinkId, reason: request.input.reason, requestKey: request.input.requestKey ?? randomUUID(),
-                        context: request.context }, environment);
-                    if (detached) {
-                        if ('input' in detached && request.input.removeEnvironment) return {
-                            ...failure('unsupported_action'), effectAttempted: false,
-                            details: { reason: 'environment_removal_unavailable', requiredFact: 'environmentRemoval',
-                                remedy: 'This target cannot prove workload removal. Use its removal owner before Stop and remove, or explicitly Detach to keep resources running.' },
-                        };
-                        return detached;
-                    }
+                    const data = await dataTeardown.prepareProject({ ...request, input: { ...request.input, targetLinkId } }, environment);
+                    if (data) return data;
+                    const contributed = await contributedTarget.prepareTeardown({ ...request.input,
+                        environmentId: request.input.environmentId, targetLinkId, context: request.context }, environment);
+                    if (contributed) return contributed;
                 }
                 return await ownServerTeardown.prepare(request, environment);
             } catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }

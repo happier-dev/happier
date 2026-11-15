@@ -19,22 +19,24 @@ import type { OwnServerDeploymentTargetHostInput, OwnServerDeploymentTransition 
 import { readWorkflowDataCreationResult } from '../targets/workflowDataCreationResult';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
+import { createDataProjectTeardownForHost } from './dataProjectTeardown';
+import { DeploymentProviderTeardownContentV1Schema, type DeploymentProviderTeardownContentV1 } from '@happier-dev/deployment-protocol';
 
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
 const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
 type Reference = Pick<DeploymentTeardownInputV1, 'contentArtifactId' | 'contentHeaderVersion' | 'contentBodyVersion'>;
-type Host = Pick<OwnServerDeploymentTargetHostInput, 'serverId' | 'machineId'> & Readonly<{
+export type DataTeardownHost = Pick<OwnServerDeploymentTargetHostInput, 'serverId' | 'machineId'> & Readonly<{
     credentials: StoredCredentials; serverHttpBaseUrl: string;
     resolveRequesterIdentity: import('../readDeploymentSourceIntentForHost').DeploymentSourceRequesterIdentityResolver;
     assertCurrent(context: ActionExecutorContext): Promise<void>;
     readEnvironment(request: Readonly<{ environmentId: string; targetLinkId?: string; context: ActionExecutorContext }>): Promise<DeploymentEnvironmentDetailV1>;
     readReceipt(request: Readonly<{ environmentId: string; deploymentId: string; context: ActionExecutorContext }>): Promise<DeploymentReceiptDetailV1>;
-    writeTransition(request: Omit<OwnServerDeploymentTransition, 'content'> & Readonly<{ content: DeploymentDataTeardownContentV1 }>):
+    writeTransition(request: Omit<OwnServerDeploymentTransition, 'content'> & Readonly<{ content: DeploymentDataTeardownContentV1 | DeploymentProviderTeardownContentV1 }>):
         ReturnType<OwnServerDeploymentTargetHostInput['writeTransition']>;
     acquirePluginRuntimeRegistryLease?(): Promise<PluginRuntimeRegistryLease>;
     findReceipt(input: Pick<DeploymentTeardownInputV1, 'environmentId' | 'targetLinkId' | 'requestKey'>, context: ActionExecutorContext): Promise<DeploymentReceiptDetailV1 | null>;
     readContent(input: Reference, context: ActionExecutorContext): Promise<DeploymentContentV1>;
-    createCandidate(environment: DeploymentEnvironmentDetailV1, content: DeploymentDataTeardownContentV1,
+    createCandidate(environment: DeploymentEnvironmentDetailV1, content: DeploymentDataTeardownContentV1 | DeploymentProviderTeardownContentV1,
         context: ActionExecutorContext): Promise<Reference>;
 }>;
 
@@ -54,20 +56,28 @@ function children(input: DeploymentTeardownInputV1, content: DeploymentDataTeard
 }
 
 /** Ordinary teardown uses the exact opened Workflow result, then the existing receipt and child issuer. */
-export function createDataTeardownForHost(host: Host) {
+export function createDataTeardownForHost(host: DataTeardownHost) {
+    const projectTeardown = createDataProjectTeardownForHost(host);
     const readPrepared = async (input: DeploymentTeardownInputV1, context: ActionExecutorContext) =>
         DeploymentDataTeardownContentV1Schema.safeParse(await host.readContent(input, context));
     return {
+        ...projectTeardown,
         async prepare(request: Parameters<NonNullable<ActionExecutorDeps['prepareDeploymentTeardown']>>[0]) {
             try {
                 const { input, context } = request;
                 if (input.serverId !== host.serverId) return failure('server_scope_mismatch');
+                const preparedContent = 'contentArtifactId' in input ? await host.readContent(input, context) : undefined;
+                if (DeploymentProviderTeardownContentV1Schema.safeParse(preparedContent).success) {
+                    const environment = await host.readEnvironment({ environmentId: input.environmentId, targetLinkId: input.targetLinkId, context });
+                    const prepared = await projectTeardown.prepareProject(request, environment);
+                    if (prepared) return prepared;
+                }
                 if (!('dataCreation' in input) && !('contentArtifactId' in input)) return failure('unsupported_action');
                 const supplied = 'dataCreation' in input;
                 if (supplied && input.volumes !== undefined) return failure('deployment_invalid');
                 const prior = supplied ? await host.findReceipt(input, context) : null;
                 const existing = prior ? DeploymentDataTeardownContentV1Schema.safeParse(prior.content)
-                    : supplied ? null : await readPrepared(input, context);
+                    : supplied ? null : DeploymentDataTeardownContentV1Schema.safeParse(preparedContent);
                 if (existing?.success && input.volumes !== undefined) return failure('deployment_invalid');
                 if (prior && (!existing?.success || prior.deployment.operation !== 'teardown'
                     || !sameStrictJsonValue(existing.data.platform.dataCreation.reference, 'dataCreation' in input ? input.dataCreation : undefined))) return failure('deployment_conflict');

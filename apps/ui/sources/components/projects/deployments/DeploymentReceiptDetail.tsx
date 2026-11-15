@@ -229,6 +229,8 @@ export const DeploymentReceiptDetail = React.memo(
       );
     }
     const { deployment, content, facts } = value;
+    // Where it ran is the facts owner's answer (placement), never re-read from the content here.
+    const platform = facts.placement === 'platform';
     // The canonical remedy and next action for the recorded cause (RECOVERY-COPY); no page-local copy.
     const recovery = deployment.state === 'failed' && facts.failure
       ? readDeploymentRefusalRecoveryV1(facts.failure.code, facts.failure) : null;
@@ -547,6 +549,8 @@ export const DeploymentReceiptDetail = React.memo(
                 live={live}
                 machine={firstMachine}
                 serving={serving}
+                platform={platform}
+                onOpenDomains={props.onOpenRecoveryDestination ? () => props.onOpenRecoveryDestination?.('domains') : undefined}
               />
             ) : null}
             {showInvestigationOutcome && investigation.outcome ? <InvestigationOutcomeBanner outcome={investigation.outcome} serverId={props.serverId}
@@ -748,12 +752,15 @@ const SucceededOutcome = React.memo(function SucceededOutcome(props: Readonly<{
   live: DeploymentLiveAddress | null;
   machine: string;
   serving: boolean;
+  platform: boolean;
+  onOpenDomains?: () => void;
   serverId: string;
   accountId: string;
 }>) {
   const url = props.live?.url ?? null;
   const attention = props.live?.attention ?? null;
   const address = url ? formatDeploymentLiveAddress(url) : null;
+  const needsDomain = props.platform && props.serving && !props.live && props.facts.urls?.length === 0;
   const members = props.facts.health.members;
   const parts: string[] = [];
   if (members.length > 0 && members.every((member) => member.health === 'healthy')) parts.push(t('projects.deployments.receiptHealthPassed'));
@@ -774,7 +781,9 @@ const SucceededOutcome = React.memo(function SucceededOutcome(props: Readonly<{
               ? t('projects.deployments.servingOn', { machine: props.machine })
               : t('projects.deployments.ranOn', { machine: props.machine })}
         // A Domain that needs a look says so first, as the Domains tab does; Open then steps back.
-        subtitle={attention ? <DomainStateLine state={attention} route={parts.join(' · ') || null} />
+        onPress={needsDomain ? props.onOpenDomains : undefined}
+        subtitle={needsDomain ? t('projects.deployments.receipt.platformDomainRequired')
+          : attention ? <DomainStateLine state={attention} route={parts.join(' · ') || null} />
           : parts.length > 0 ? parts.join(' · ') : undefined}
         rightElement={url ? (
           <DeploymentLiveAddressActions url={url} serverId={props.serverId} accountId={props.accountId}

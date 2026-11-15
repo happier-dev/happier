@@ -17,6 +17,7 @@ export type ActionCliParseFailure = Readonly<{
   ok: false;
   code: 'invalid_arguments' | 'invitation_token_expected';
   message: string;
+  details?: unknown;
 }>;
 
 export type ActionCliParseSuccess = Readonly<{
@@ -54,21 +55,16 @@ function parseInputBeforeSecretPreparation(
     ? { success: true as const, data: input } : parsed;
 }
 
-function describeSchemaIssues(error: z.core.$ZodError): string {
-  return error.issues
-    .slice(0, 4)
-    .map((issue) => {
-      const path = issue.path.join('.');
-      return path ? `${path}: ${issue.message}` : issue.message;
-    })
-    .join('; ');
-}
-
 function schemaFailure(error: z.core.$ZodError): ActionCliParseFailure {
   const refusal = actionInputValidationFailure(error);
-  return refusal.errorCode === 'invitation_token_expected'
-    ? { ok: false, code: 'invitation_token_expected', message: refusal.error }
-    : failure(describeSchemaIssues(error));
+  if (refusal.details === undefined) {
+    return { ok: false, code: 'invitation_token_expected', message: refusal.error };
+  }
+  const messages = refusal.details.issues.map(issue => {
+    const path = issue.path.join('.');
+    return path ? `${path}: ${issue.message}` : issue.message;
+  });
+  return { ok: false, code: 'invalid_arguments', message: [...new Set(messages)].join('; '), details: refusal.details };
 }
 
 /**
@@ -127,25 +123,20 @@ function parsePartialInputFields(
   secretInput?: SecretInputDeclaration,
 ): Readonly<Record<string, unknown>> | ActionCliParseFailure {
   const parsed: Record<string, unknown> = {};
-  const issues: string[] = [];
+  const issues: z.core.$ZodIssue[] = [];
   for (const [field, value] of Object.entries(supplied)) {
     const fieldSchema = Object.hasOwn(shape, field) ? shape[field] : undefined;
     if (!fieldSchema) {
-      issues.push(`${field}: unrecognized field`);
+      issues.push({ code: 'unrecognized_keys', keys: [field], path: [], message: 'Unrecognized input fields' });
       continue;
     }
     const result = parseInputBeforeSecretPreparation(fieldSchema, value, secretInput, { input: supplied, field });
     if (result.success) parsed[field] = result.data;
     else {
-      const refusal = schemaFailure(result.error);
-      if (refusal.code === 'invitation_token_expected') return refusal;
-      issues.push(...result.error.issues.map((issue) => {
-        const path = [field, ...issue.path].join('.');
-        return `${path}: ${issue.message}`;
-      }));
+      issues.push(...result.error.issues.map(issue => ({ ...issue, path: [field, ...issue.path] })));
     }
   }
-  if (issues.length > 0) return failure(issues.slice(0, 4).join('; '));
+  if (issues.length > 0) return schemaFailure(new z.core.$ZodError(issues));
   const checks = schema ? readObjectLevelChecks(schema) : [];
   if (checks.length > 0) {
     const partialShape = Object.fromEntries(Object.entries(shape).map(([field, fieldSchema]) => (

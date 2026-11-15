@@ -52,6 +52,13 @@ export type DeploymentDispositionSheetInput = Readonly<{
   name: string;
   /** Where its services run, by name ("vps-1"); null when no Machine is linked. */
   machine: string | null;
+  /** The hosting provider, when the target is a contributed platform. */
+  provider?: string | null;
+  /**
+   * The provider resource a contributed platform target names: its name (typed to confirm deletion), what the provider
+   * deletes with it, and the removal owner's default (`selectDeploymentTargetRemovalChoicesV1`). Absent for Machines.
+   */
+  providerResource?: Readonly<{ name: string; consequence: string | null; defaultChoice: 'unlink' | 'delete' }>;
   /** Something Happier deployed is running there now. */
   running: boolean;
   /** The services a removal stops, by Compose name; empty when not known. */
@@ -59,8 +66,7 @@ export type DeploymentDispositionSheetInput = Readonly<{
   /** A retained target association can be detached even without an active deployment. */
   hasRetainedAssociations?: boolean;
   /**
-   * Whether Stop and remove can be offered. A running subject is stopped first by one teardown the controller
-   * prepares, so the page offers it whenever the person may delete.
+   * Whether the target declares teardown. Unavailable removal is omitted; Detach keeps its workload running.
    */
   canRemove: boolean;
   /** The existing Domain read owner names retirement consequences in this confirmation. */
@@ -86,9 +92,16 @@ function DeploymentDispositionSheet(
   props: DeploymentDispositionSheetInput & CustomModalInjectedProps,
 ) {
   const [choice, setChoice] = React.useState<Choice>(
-    // Something running starts on the choice that stops nothing; Stop and remove is one deliberate press away.
-    props.running ? 'detach' : 'remove',
+    // A provider resource starts where the removal owner says: Delete for what Happier created, Unlink otherwise.
+    // On a Machine, something running starts on the choice that stops nothing; Stop and remove is one press away.
+    // A subject Happier cannot remove never starts on that unavailable choice.
+    props.providerResource ? props.providerResource.defaultChoice === 'delete' ? 'remove' : 'detach'
+      : props.running || !props.canRemove ? 'detach' : 'remove',
   );
+  // Provider deletion is irreversible and outside Happier: the person types the resource's name to enable it.
+  const [typedResource, setTypedResource] = React.useState('');
+  const resource = props.providerResource ?? null;
+  const resourceConfirmed = !resource || choice !== 'remove' || typedResource === resource.name;
   const [busy, setBusy] = React.useState(false);
   const [volumeReview, setVolumeReview] = React.useState<DeploymentTeardownPreviewV1['volumes'] | null>(null);
   const [volumeError, setVolumeError] = React.useState<ActionExecuteFailure | null>(null);
@@ -116,15 +129,24 @@ function DeploymentDispositionSheet(
   const cancellation = useDeploymentCancellation({ receipt: blockedId ? blockedReceipt.snapshot.value : null,
     cancel: props.recovery?.cancel ?? null, review: props.recovery?.review ?? NO_REVIEW,
     onOpenReceipt: props.recovery?.onOpenReceipt ?? (() => {}) });
-  const machine = keepNamesWhole(props.machine ?? t('projects.deployments.aMachine'));
+  const machine = keepNamesWhole(props.provider ?? props.machine ?? t('projects.deployments.aMachine'));
   const target = props.subject.kind === 'target';
   const domainInput = choice === 'remove' ? props.domains : undefined;
   const domains = useDeploymentEnvironmentDomains(domainInput?.controller ?? null, domainInput?.environmentId ?? null, PRESENTED);
   const domainsReady = !domainInput || domains.result.status === 'ready' || domains.result.status === 'empty';
   const failure = refused?.failure ? presentActionFailureOutcome(refused.failure, 'deployment') : null;
   const volumeFailure = volumeError ? presentActionFailureOutcome(volumeError, 'deployment') : null;
-  const confirmTitle =
-    choice === 'detach'
+  const platform = props.provider ? keepNamesWhole(props.provider) : null;
+  const resourceName = resource ? keepNamesWhole(resource.name) : null;
+  const confirmTitle = resource && platform && resourceName
+    ? choice === 'remove'
+      ? target
+        ? t('projects.deployments.platformLink.confirmDelete', { resource: resourceName })
+        : t('projects.deployments.platformLink.confirmDeleteWithEnvironment', { name: props.name, resource: resourceName })
+      : target
+        ? t('projects.deployments.unlinkConfirm', { machine: resourceName })
+        : t('projects.deployments.deleteConfirm', { name: props.name })
+    : choice === 'detach'
       ? target
         ? t('projects.deployments.unlinkConfirmDetach', { machine })
         : t('projects.deployments.deleteConfirmDetach', { name: props.name })
@@ -135,7 +157,7 @@ function DeploymentDispositionSheet(
           : t('projects.deployments.deleteConfirm', { name: props.name });
   const { onClose, onApproval, onDone, run } = props;
   const confirm = async () => {
-    if (busy || (choice === 'remove' && (!props.canRemove || !domainsReady || !volumesReady || !volumesConfirmed))) return;
+    if (busy || (choice === 'remove' && (!props.canRemove || !domainsReady || !volumesReady || !volumesConfirmed || !resourceConfirmed))) return;
     setBusy(true);
     setRefused(null);
     const outcome = await run(choice, choice === 'remove' && volumeReview ? volumeReview.map(volume =>
@@ -179,10 +201,11 @@ function DeploymentDispositionSheet(
       <RoundButton
         testID="project-deployments.disposition.confirm"
         size="normal"
-        display="destructive"
+        // Unlinking a provider target keeps everything running, so it is the plain primary; every removal is destructive.
+        display={resource && target && choice === 'detach' ? 'default' : 'destructive'}
         titleNumberOfLines="complete"
         loading={busy}
-        disabled={busy || (choice === 'remove' && (!props.canRemove || !domainsReady || !volumesReady || !volumesConfirmed))}
+        disabled={busy || (choice === 'remove' && (!props.canRemove || !domainsReady || !volumesReady || !volumesConfirmed || !resourceConfirmed))}
         title={confirmTitle}
         onPress={() => {
           void confirm();
@@ -203,7 +226,25 @@ function DeploymentDispositionSheet(
     domainNames.length > 0 ? t('projects.deployments.factStopsDomains', { domains: domainNames.join(', ') }) : null,
   );
   const facts: Array<Readonly<{ key: string; label: string; value: string }>> =
-    choice === 'detach'
+    resource
+      // A provider resource's tile already says where it keeps running or what the provider deletes.
+      ? choice === 'detach'
+        ? [
+            {
+              key: 'stops',
+              label: t('projects.deployments.factStops'),
+              value: target
+                ? t('projects.deployments.factStopsTargetValue', { name: props.name, machine })
+                : t('projects.deployments.factStopsValue', { name: props.name }),
+            },
+            { key: 'secrets', label: t('projects.deployments.factSecrets'), value: t('projects.deployments.factSecretsValue') },
+            { key: 'costs', label: t('projects.deployments.factCosts'), value: t('projects.deployments.factCostsValue', { machine }) },
+          ]
+        : [
+            ...(stopsValue ? [{ key: 'stops', label: t('projects.deployments.factStops'), value: stopsValue }] : []),
+            { key: 'keeps', label: t('projects.deployments.factKeeps'), value: t('projects.deployments.factKeepsValue') },
+          ]
+    : choice === 'detach'
       ? [
           {
             key: 'keeps-running',
@@ -250,11 +291,26 @@ function DeploymentDispositionSheet(
           },
         ];
 
+  const removeOption = props.canRemove ? [resource && platform && resourceName ? {
+    id: 'remove' as const,
+    icon: 'trash' as const,
+    title: t('projects.deployments.platformLink.deleteTitle', { platform }),
+    subtitle: t('projects.deployments.platformLink.deleteBody', { resource: resourceName, platform }),
+  } : {
+    id: 'remove' as const,
+    icon: 'stop-circle' as const,
+    title: t('projects.deployments.deleteStopTitle'),
+    subtitle: t('projects.deployments.deleteStopBody', { machine }),
+  }] : [];
   return (
     <ListPresentationProvider value="page" pageInsets="contained">
     <View testID="project-deployments.disposition" style={deploymentSheetStyles.body}>
       <Text style={deploymentSheetStyles.lead}>
-        {props.running
+        {resource && platform && resourceName && props.canRemove
+          ? t('projects.deployments.platformLink.removalLead', { resource: resourceName, platform })
+          : props.provider && !props.canRemove
+          ? t('projects.deployments.platformLink.detachLead', { name: resourceName ?? props.name, platform: props.provider })
+          : props.running
           ? target
             ? t('projects.deployments.unlinkLead', {
                 name: props.name,
@@ -287,26 +343,33 @@ function DeploymentDispositionSheet(
           // The consequence is read whole before a destructive choice; a tile never cuts it short.
           subtitleLines={0}
           options={[
-            {
-              id: 'remove',
-              icon: 'stop-circle',
-              title: t('projects.deployments.deleteStopTitle'),
-              subtitle: props.canRemove
-                ? t('projects.deployments.deleteStopBody', { machine })
-                : t('projects.deployments.deleteStopUnavailable', { machine }),
-              disabled: !props.canRemove,
-            },
+            // A provider's resource lists the choice that keeps it first; deleting it is the last, deliberate choice.
+            ...(resource ? [] : removeOption),
             {
               id: 'detach',
               icon: 'link-break',
-              title: t('projects.deployments.deleteDetachTitle'),
-              subtitle: target
+              title: platform ? t('projects.deployments.platformLink.keepTitle', { platform })
+                : t('projects.deployments.deleteDetachTitle'),
+              subtitle: resource && platform && resourceName && props.canRemove
+                ? t('projects.deployments.platformLink.keepBody', { resource: resourceName, platform })
+                : props.provider
+                ? t('projects.deployments.platformLink.detachBody', { platform: props.provider })
+                : target
                 ? t('projects.deployments.unlinkDetachBody', { name: props.name, machine })
                 : t('projects.deployments.deleteDetachBody', { name: props.name, machine }),
             },
+            ...(resource ? removeOption : []),
           ]}
         />
       ) : null}
+      {resource && platform && resourceName && choice === 'remove' ? <ItemGroup testID="project-deployments.disposition.resource"
+        title={resource.consequence ?? t('projects.deployments.platformLink.deleteConsequence', { resource: resourceName, platform })}>
+        <Item title={t('projects.deployments.platformLink.typeToDelete', { resource: resourceName })} accessoryLayout="adaptive"
+          showChevron={false} rightElement={<FieldTextInput testID="project-deployments.disposition.resourceConfirmation"
+            accessibilityLabel={t('projects.deployments.platformLink.typeToDelete', { resource: resourceName })}
+            value={typedResource} editable={!busy} monospace autoCapitalize="none" autoComplete="off"
+            onChangeText={setTypedResource} />} />
+      </ItemGroup> : null}
       {choice === 'remove' && props.reviewVolumes ? <ItemGroup title={t('projects.deployments.factData')}
         {...(volumeReview?.length ? { description: t('projects.deployments.factDataValue') } : {})}>
         {volumeReview === null ? <SurfaceStateCard size="line" kind={volumeError ? 'error' : 'loading'}
@@ -388,12 +451,16 @@ function DeploymentDispositionSheet(
 export function showDeploymentDispositionSheet(
   input: DeploymentDispositionSheetInput,
 ): void {
-  const machine = input.machine ?? t('projects.deployments.aMachine');
+  const machine = input.provider ?? input.machine ?? t('projects.deployments.aMachine');
   showDeploymentSheet({
     component: DeploymentDispositionSheet,
     props: input,
     title: input.subject.kind === 'target'
-          ? t('projects.deployments.unlinkTitle', { machine })
+          ? input.providerResource
+            ? input.canRemove
+              ? t('projects.deployments.platformLink.removalTitle', { resource: keepNamesWhole(input.providerResource.name) })
+              : t('projects.deployments.unlinkTitle', { machine: keepNamesWhole(input.providerResource.name) })
+            : t('projects.deployments.unlinkTitle', { machine })
           : t('projects.deployments.deleteTitle', { name: input.name }),
     testID: 'project-deployments.disposition.modal',
   });

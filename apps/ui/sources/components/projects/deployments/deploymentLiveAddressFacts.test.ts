@@ -54,6 +54,19 @@ const serving = (state: 'succeeded' | 'running_unverified' | 'failed') => {
 };
 
 describe('the live address (FIRST-DEPLOY-URL-1112, DEPLOY-ACCEPT-143 A1/A2)', () => {
+  it('uses the platform target Domain when workers.dev supplies no address', () => {
+    const base = serving('succeeded');
+    const receipt = { ...base, content: { platform: {} }, facts: { ...base.facts, urls: [] } };
+    const providerDomain = { ...domain(receipt.deployment.targetLinkId, 'active'),
+      content: { hostname: 'shop.example.test', target: { kind: 'provider' as const } } };
+    expect(deploymentLiveAddressDemand(receipt, true)).toBe(true);
+    expect(resolveDeploymentLiveAddress(receipt, [providerDomain], true)?.url).toBe('https://shop.example.test/');
+    expect(resolveDeploymentLiveAddress(receipt, [domain(receipt.deployment.targetLinkId, 'active')], true)).toBeNull();
+    const addressed = { ...receipt, facts: { ...receipt.facts, urls: ['https://app.actual.workers.dev'] } };
+    expect(deploymentLiveAddressDemand(addressed, true)).toBe(false);
+    expect(resolveDeploymentLiveAddress(addressed, [providerDomain], true)?.url).toBe('https://app.actual.workers.dev');
+  });
+
   it.each(['succeeded', 'running_unverified'] as const)(
     'reads one serving %s receipt as live for every surface',
     (state) => {

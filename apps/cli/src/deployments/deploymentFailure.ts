@@ -15,6 +15,7 @@ import { DeploymentMissingRequiredSecretsV1Schema, readDeploymentBackupMaintenan
 import { MachineCarrierError } from '@/daemon/peer/iroh/machineCarrier';
 import type { DeploymentArtifactReadFailureV1 } from '@happier-dev/protocol/deployments/deploymentArtifactContentReferenceV1';
 import { ManagedMachineControllerError, readManagedNativeFailureDetails } from '@/machines/managed/controllerErrors';
+import type { DeploymentTargetRoleResultV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 
 /** Throwing host readers retain the Artifact owner's code-only validation cause. */
 export function refuseDeploymentArtifactRead(failure: DeploymentArtifactReadFailureV1): never {
@@ -55,6 +56,17 @@ export function projectDeploymentReceiptFailure(result: ActionExecuteFailure,
         ...(sourceAdmission.success ? { sourceAdmission: sourceAdmission.data } : {}),
         failureCause: result.failureCause ?? normalizeActionExecutorThrownError(result, `deployment.${fallbackPhase}`).failureCause,
         ...(typeof result.effectAttempted === 'boolean' ? { effectAttempted: result.effectAttempted } : {}) }));
+}
+
+/** Provider deletion settles only when the declared role confirms native absence. */
+export function readProviderTeardownAbsenceFailure(
+    observation: Pick<DeploymentTargetRoleResultV1, 'state' | 'providerResourceAbsent'>,
+): ActionExecuteFailure | null {
+    if ((observation.state !== 'succeeded' && observation.state !== 'running_unverified')
+        || observation.providerResourceAbsent === true) return null;
+    return { ...projectDeploymentFailure('outcome_unknown', Object.assign(new Error('provider_absence_unconfirmed'),
+        { code: 'provider_absence_unconfirmed' }), 'deployment.teardown.observe'), effectAttempted: true,
+        details: { reason: 'provider_absence_unconfirmed' as const, requiredFact: 'providerResourceAbsent' } };
 }
 
 /** Preserve typed owner diagnostics across deployment exceptions and child transport. */

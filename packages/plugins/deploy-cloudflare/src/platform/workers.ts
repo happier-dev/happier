@@ -1,4 +1,4 @@
-import { type DeploymentTargetDeployInputV1, type DeploymentTargetObserveInputV1,
+import { isPluginError, type DeploymentTargetDeployInputV1, type DeploymentTargetObserveInputV1,
   type DeploymentTargetProviderIdentityV1, type DeploymentTargetProviderEnvironmentV1,
   type DeploymentTargetRepositoryAccessV1, type DeploymentTargetRoleFailureV1,
   type DeploymentTargetRoleResultV1 } from '@happier-dev/plugin-sdk';
@@ -74,7 +74,30 @@ export async function workerVersionHasBuild(accountId: string, versionId: string
 }
 
 async function observation(value: unknown, input: WorkerObservation, context: WorkerContext, phase: Phase, expectedId?: string): Promise<Outcome> {
-  return observeBuild(value, context, phase, expectedId, buildId => serving(input, buildId, context));
+  const result = await observeBuild(value, context, phase, expectedId, buildId => serving(input, buildId, context));
+  return 'state' in result && result.state === 'succeeded' ? withWorkerAddress(result, input, context) : result;
+}
+
+/** Address availability is independent of version activation. Never advertise a disabled workers.dev route.
+ * https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/subdomain/
+ * https://developers.cloudflare.com/api/resources/workers/subresources/subdomains/
+ */
+async function withWorkerAddress(result: DeploymentTargetRoleResultV1, input: WorkerObservation, context: WorkerContext): Promise<DeploymentTargetRoleResultV1> {
+  if (input.providerEnvironment.kind !== 'script') return result;
+  try {
+    const accountId = input.providerIdentity.providerAccountId;
+    const scriptName = input.providerEnvironment.scriptName;
+    const route = await request(context, accountId, `/workers/scripts/${encodeURIComponent(scriptName)}/subdomain`, 'observe');
+    // A failed address read must not turn proven activation into a failed deployment or claim no address exists.
+    if ('code' in route || !isObject(route.value) || typeof route.value.enabled !== 'boolean') return result;
+    if (!route.value.enabled) return { ...result, urls: [] };
+    const account = await request(context, accountId, '/workers/subdomain', 'observe');
+    if ('code' in account || !isObject(account.value) || !text(account.value.subdomain)) return result;
+    return { ...result, urls: [`https://${scriptName}.${account.value.subdomain}.workers.dev`] };
+  } catch (error) {
+    if (context.signal.aborted || isPluginError(error)) return result;
+    throw error;
+  }
 }
 
 /** One finite read; the existing operation/demand owner decides when to observe. */
@@ -163,5 +186,6 @@ export async function observeUploadedWorker(input: WorkerObservation, context: W
   if ('code' in versions) return versions;
   const allTraffic = input.operation === 'promote' || input.operation === 'rollback';
   const active = versions.some(version => version.versionId === versionId && (!allTraffic || version.percentage === 100));
-  return { v: 1, state: active ? 'succeeded' : 'outcome_unknown', providerDeploymentId: input.providerDeploymentId, observedAtMs: context.now() };
+  const result: DeploymentTargetRoleResultV1 = { v: 1, state: active ? 'succeeded' : 'outcome_unknown', providerDeploymentId: input.providerDeploymentId, observedAtMs: context.now() };
+  return active ? withWorkerAddress(result, input, context) : result;
 }

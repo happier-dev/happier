@@ -1,17 +1,20 @@
 import { randomUUID } from 'node:crypto';
-import { DeploymentDeployInputV1Schema, DeploymentReceiptObserveInputV1Schema, DeploymentTeardownDetachInputV1Schema,
+import { buildDeploymentTeardownInputV1, DeploymentDeployInputV1Schema, DeploymentReceiptObserveInputV1Schema, DeploymentTeardownDetachInputV1Schema,
     type ActionExecutorContext } from '@happier-dev/protocol';
 import type { HostReviewedChildrenPlanV1, HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1,
     type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { DeploymentPlatformContentV1Schema, resolveDeploymentSourceMethodV1, type DeploymentPlatformContentV1,
+import { DeploymentProviderTeardownContentV1Schema, type DeploymentProviderTeardownContentV1, DeploymentPlatformContentV1Schema, resolveDeploymentSourceMethodV1, type DeploymentPlatformContentV1,
     type DeploymentContentV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1,
     type DeploymentReceiptFailureV1 } from '@happier-dev/deployment-protocol';
+import { selectDeploymentTargetRemovalChoicesV1 } from '@happier-dev/deployments';
+import type { DeploymentTeardownRequestInputV1 } from '@happier-dev/protocol/deployments/deploymentTeardownRequestV1';
 import type { DeploymentExecutionFailureDetailsV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { DeploymentTargetRoleCommonInputV1Schema, DeploymentTargetRoleInputSchemasV1,
     DeploymentTargetRoleResultV1Schema, type DeploymentTargetRuntimeRoleV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/publicTypes';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
@@ -27,11 +30,18 @@ import type { OwnServerDeploymentTransition, OwnServerDeploymentTargetHostInput 
 import { readDeploymentSourceIntentForHost } from '../readDeploymentSourceIntentForHost';
 import { readDeploymentTargetV1 } from './deploymentTargetCatalog';
 import { admitDeploymentTargetRoleForHost } from './admitDeploymentTargetRoleForHost';
-import { projectDeploymentException, projectDeploymentFailure as failure, projectDeploymentReceiptFailure } from '../deploymentFailure';
+import { projectDeploymentException, projectDeploymentFailure as failure, projectDeploymentReceiptFailure,
+    readProviderTeardownAbsenceFailure } from '../deploymentFailure';
 import { readDeploymentObservationTargetFailure } from '../readObservationForHost';
 import { resolveScmHostingRefForHost, type ExecuteScmSourceReadAction } from '@/scm/hostingProviders/resolveRefForHost';
 import { DeploymentLogsReadSuccessV1Schema, type DeploymentLogsReadInputV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { DeploymentTargetLogsResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
+
+type ContributedReceiptContent = DeploymentPlatformContentV1 | DeploymentProviderTeardownContentV1;
+const readContributedReceiptContent = (content: unknown): ContributedReceiptContent => {
+    const teardown = DeploymentProviderTeardownContentV1Schema.safeParse(content);
+    return teardown.success ? teardown.data : DeploymentPlatformContentV1Schema.parse(content);
+};
 
 type ContentReference = Pick<ReturnType<typeof DeploymentDeployInputV1Schema.parse>,
     'contentArtifactId' | 'contentHeaderVersion' | 'contentBodyVersion'>;
@@ -47,21 +57,21 @@ type Host = Readonly<{
     readPreparedDeploymentContent(request: Readonly<{ input: ReturnType<typeof DeploymentDeployInputV1Schema.parse>; context: ActionExecutorContext }>):
         Promise<Readonly<{ ok: true; content: DeploymentContentV1 }> | ActionExecuteFailure>;
     assertCurrent(context: ActionExecutorContext): Promise<void>;
-    createCandidate(request: Readonly<{ environment: DeploymentEnvironmentDetailV1; content: DeploymentPlatformContentV1;
+    createCandidate(request: Readonly<{ environment: DeploymentEnvironmentDetailV1; content: ContributedReceiptContent;
         context: ActionExecutorContext; assertCurrent(): Promise<void> }>): Promise<ContentReference>;
-    writeTransition(request: Omit<OwnServerDeploymentTransition, 'content'> & Readonly<{ content: DeploymentPlatformContentV1 }>):
+    writeTransition(request: Omit<OwnServerDeploymentTransition, 'content'> & Readonly<{ content: ContributedReceiptContent }>):
         ReturnType<OwnServerDeploymentTargetHostInput['writeTransition']>;
 }>;
 const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
 const deployRole = (method: 'gitIntegration' | 'upload'): Role => method === 'upload' ? 'uploadDeploy' : 'deploy';
 
-function receiptFailureContent(content: DeploymentPlatformContentV1, result: ActionExecuteFailure,
-    fallbackPhase: DeploymentReceiptFailureV1['phase']): DeploymentPlatformContentV1 & { failure: DeploymentReceiptFailureV1 } {
+function receiptFailureContent(content: ContributedReceiptContent, result: ActionExecuteFailure,
+    fallbackPhase: DeploymentReceiptFailureV1['phase']): ContributedReceiptContent & { failure: DeploymentReceiptFailureV1 } {
     return { ...content, failure: projectDeploymentReceiptFailure(result, fallbackPhase) };
 }
 
-function observedReceiptContent(content: DeploymentPlatformContentV1,
-    observation: ReturnType<typeof DeploymentTargetRoleResultV1Schema.parse>): DeploymentPlatformContentV1 {
+function observedReceiptContent(content: ContributedReceiptContent,
+    observation: ReturnType<typeof DeploymentTargetRoleResultV1Schema.parse>): ContributedReceiptContent {
     const uploadProvenance = content.platform.observation.uploadProvenance ?? observation.uploadProvenance;
     const { failure: _previousFailure, ...retained } = content;
     return { ...retained, steps: observation.steps ?? content.steps,
@@ -220,22 +230,58 @@ export function createContributedDeploymentTargetForHost(host: Host) {
         });
     }
 
-    async function prepareTeardownDetach(request: ScopeRequest & Pick<ReturnType<typeof DeploymentTeardownDetachInputV1Schema.parse>,
-        'reason' | 'requestKey'>, environment: DeploymentEnvironmentDetailV1) {
+    async function prepareTeardown(request: ScopeRequest & DeploymentTeardownRequestInputV1, environment: DeploymentEnvironmentDetailV1) {
         const row = environment.targetLinks.find(item => item.targetLink.id === request.targetLinkId);
-        if (!row || row.targetLink.source.kind !== 'plugin') return null;
+        if (!row) return null;
+        const link = row.targetLink;
+        const source = link.source;
+        if (source.kind !== 'plugin') return null;
         if (!host.acquirePluginRuntimeRegistryLease) return refuse('deployment_target_role_unavailable');
         const lease = await host.acquirePluginRuntimeRegistryLease();
         try {
-            const link = row.targetLink;
-            const descriptor = readDeploymentTargetV1(link.source, lease.registry.contributes.deploymentTargets);
+            const descriptor = readDeploymentTargetV1(source, lease.registry.contributes.deploymentTargets);
             if (!descriptor || descriptor.role !== 'runtime' || descriptor.role !== link.role || descriptor.targetKind !== link.targetKind)
                 return refuse('deployment_target_role_unavailable');
-            if (descriptor.actions.teardown) return null;
+            const choices = selectDeploymentTargetRemovalChoicesV1(source, [{
+                pluginId: source.contribution.pluginId, targetId: source.contribution.localId,
+                ...(descriptor.actions.teardown ? { teardown: true as const } : {}),
+            }], row.content?.providerResourceOrigin);
+            const removal = request.providerRemoval ?? choices.defaultChoice;
+            if (!choices.choices.includes(removal)) return refuse('unsupported_action');
+            if (removal === 'delete') {
+                return await withRole(request, environment, 'teardown', async scope => {
+                    await scope.admit(scope.common, 'preparation');
+                    const content = DeploymentProviderTeardownContentV1Schema.parse({ machines: [], images: [],
+                        machineResults: [], steps: [], teardown: { reason: request.reason,
+                            targetLinkRevision: link.revision, machines: [], resources: [], proofs: [] },
+                        platform: { targetLinkRevision: link.revision,
+                            credentialPrincipal: scope.common.credentialPrincipal, providerIdentity: scope.common.providerIdentity,
+                            providerEnvironment: scope.common.providerEnvironment,
+                            ...(scope.common.repositoryAccess ? { repositoryAccess: scope.common.repositoryAccess } : {}),
+                            ...(scope.common.preparedNative ? { preparedNative: scope.common.preparedNative } : {}),
+                            observation: { v: 1, state: 'queued', observedAtMs: Date.now() } } });
+                    const reference = await host.createCandidate({ environment, content, context: request.context,
+                        assertCurrent: scope.assertCurrent });
+                    const { providerRemoval: _providerRemoval, mode: _mode, context: _context, ...intent } = request;
+                    return { input: buildDeploymentTeardownInputV1(intent, { requestKey: request.requestKey ?? randomUUID(),
+                        expectedRevision: environment.environment.revision, targetLinkId: link.id,
+                        expectedTargetLinkRevision: link.revision, candidate: reference }),
+                        hostReviewedChildren: { children: scope.children }, preview: normalizeStrictJsonValue({
+                            environmentId: environment.environment.id, targetLinkId: link.id,
+                            summary: 'Delete this linked resource at its provider.', providerIdentity: scope.common.providerIdentity,
+                            providerEnvironment: scope.common.providerEnvironment }) };
+                });
+            }
             await host.assertCurrent(request.context);
+            if (request.removeEnvironment) {
+                const provider = resolvePluginLocalizedStringV2Text(descriptor.title);
+                return { ...failure('unsupported_action'), effectAttempted: false,
+                    details: { reason: 'environment_removal_unavailable', requiredFact: 'environmentRemoval', provider,
+                        remedy: `Use Detach to stop managing this Environment in Happier. Its workload keeps running on ${provider}; stop or delete it in ${provider}.` } };
+            }
             return { input: DeploymentTeardownDetachInputV1Schema.parse({ serverId: host.serverId,
                 environmentId: environment.environment.id, expectedRevision: environment.environment.revision,
-                targetLinkId: link.id, expectedTargetLinkRevision: link.revision, requestKey: request.requestKey,
+                targetLinkId: link.id, expectedTargetLinkRevision: link.revision, requestKey: request.requestKey ?? randomUUID(),
                 reason: request.reason, detachKeepRunning: true }),
                 preview: deploymentTeardownDetachPreview };
         } finally { await lease.release(); }
@@ -249,9 +295,16 @@ export function createContributedDeploymentTargetForHost(host: Host) {
         });
     }
 
-    async function writeObservation(receipt: DeploymentReceiptDetailV1, content: DeploymentPlatformContentV1,
+    async function writeObservation(receipt: DeploymentReceiptDetailV1, content: ContributedReceiptContent,
         observation: ReturnType<typeof DeploymentTargetRoleResultV1Schema.parse>, context: ActionExecutorContext,
         environmentRevision: number) {
+        const absenceFailure = receipt.deployment.operation === 'teardown' ? readProviderTeardownAbsenceFailure(observation) : null;
+        if (absenceFailure) {
+            await host.writeTransition({ environmentId: receipt.deployment.environmentId, deploymentId: receipt.deployment.id,
+                receiptHeader: receipt.deployment, expectedRevision: receipt.deployment.revision, state: 'outcome_unknown',
+                content: receiptFailureContent(content, absenceFailure, 'teardown'), context });
+            return absenceFailure;
+        }
         const observed = observedReceiptContent(content, observation);
         // A provider's read timestamp is liveness, not new receipt content.
         if (receipt.deployment.state === observation.state && sameStrictJsonValue(
@@ -280,7 +333,7 @@ export function createContributedDeploymentTargetForHost(host: Host) {
             const targetFailure = row && readDeploymentObservationTargetFailure(row.targetLink.targetKind);
             if (targetFailure) return targetFailure;
             if (row?.targetLink.source.kind !== 'plugin') return failure('unsupported_action');
-            const content = DeploymentPlatformContentV1Schema.parse(receipt.content);
+            const content = readContributedReceiptContent(receipt.content);
             const identity = readInstallationIdentityIfExistsSync();
             const accepted = receipt.deployment.acceptedExecution;
             if (!identity || !accepted || accepted.controller.machineId !== host.machineId
@@ -294,7 +347,7 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                 } }) };
             }
             // A queued receipt without a provider id has not handed off its native effect yet.
-            if (!content.platform.observation.providerDeploymentId) return failure('outcome_unknown');
+            if (receipt.deployment.operation !== 'teardown' && !content.platform.observation.providerDeploymentId) return failure('outcome_unknown');
             return await withRole<HostReviewedChildrenPreparationV1>({ environmentId: request.input.environmentId,
                 targetLinkId: receipt.deployment.targetLinkId, context: request.context }, environment, 'observe', async scope => {
                 const input = DeploymentTargetRoleInputSchemasV1.observe.parse({ ...scope.common,
@@ -311,7 +364,8 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                                 input: normalizeStrictJsonValue(input) });
                             if (!result.ok) return result;
                             const observation = DeploymentTargetRoleResultV1Schema.safeParse(result.result);
-                            if (!observation.success || observation.data.providerDeploymentId !== content.platform.observation.providerDeploymentId)
+                            if (!observation.success || receipt.deployment.operation !== 'teardown'
+                                && observation.data.providerDeploymentId !== content.platform.observation.providerDeploymentId)
                                 return failure('outcome_unknown');
                             const written = await writeObservation(receipt, content, observation.data, context, environment.environment.revision);
                             return written.ok ? { ok: true, result: written } : written;
@@ -326,13 +380,13 @@ export function createContributedDeploymentTargetForHost(host: Host) {
         let providerInvocationStarted = false;
         let providerEffectObserved = false;
         let transitionAttempted = false;
-        let effectContent: DeploymentPlatformContentV1 | undefined;
+        let effectContent: ContributedReceiptContent | undefined;
         let ownsReceipt = false;
         try {
             const environment = await host.readEnvironment({ environmentId: request.input.environmentId, context: request.context });
             receipt = await host.readReceipt({ environmentId: request.input.environmentId,
                 deploymentId: request.receipt.deploymentId, context: request.context });
-            const content = DeploymentPlatformContentV1Schema.parse(receipt.content);
+            const content = readContributedReceiptContent(receipt.content);
             effectContent = content;
             const accepted = receipt.deployment.acceptedExecution;
             const identity = readInstallationIdentityIfExistsSync();
@@ -341,7 +395,8 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                 || receipt.deployment.actionOperationId !== request.context.operationAcceptance?.operationId
                 || receipt.deployment.requestKey !== request.input.requestKey) return failure('target_mismatch');
             ownsReceipt = true;
-            let deploymentSource: Pick<DeploymentPlatformContentV1, 'sourceIntent' | 'sourceMethod'> = content;
+            let deploymentSource = content.sourceMethod === undefined ? undefined
+                : { sourceIntent: content.sourceIntent, sourceMethod: content.sourceMethod };
             let preparedPlatform = content.platform;
             if (request.actionId === 'deployments.deploy' && receipt.deployment.state === 'queued') {
                 const candidate = await host.readPreparedDeploymentContent({ input: request.input, context: request.context });
@@ -355,10 +410,10 @@ export function createContributedDeploymentTargetForHost(host: Host) {
             if (!request.context.hostReviewedChild) return refuse('unsupported_action');
             // A retained running/uncertain operation is observed by its exact provider id, never sent again.
             const role: Role = receipt.deployment.state !== 'queued' ? 'observe'
-                : request.actionId === 'deployments.deploy' ? deployRole(deploymentSource.sourceMethod)
+                : request.actionId === 'deployments.deploy' ? deployRole(deploymentSource?.sourceMethod ?? refuse('deployment_conflict'))
                     : request.actionId === 'deployments.rollback' ? 'rollback'
                         : request.actionId === 'deployments.promote' ? 'promote' : 'teardown';
-            if (role === 'observe' && !content.platform.observation.providerDeploymentId) return failure('outcome_unknown');
+            if (role === 'observe' && receipt.deployment.operation !== 'teardown' && !content.platform.observation.providerDeploymentId) return failure('outcome_unknown');
             return await withRole({ ...request.input, context: request.context }, environment, role, async scope => {
                 const previous = request.actionId === 'deployments.rollback' ? await host.readReceipt({ environmentId: request.input.environmentId,
                     deploymentId: request.input.deploymentId, context: request.context }) : request.actionId === 'deployments.promote'
@@ -401,7 +456,7 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                 const deferred = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
                 if (deferred.success) return refuse('action_interactive_review_required');
                 const observation = DeploymentTargetRoleResultV1Schema.safeParse(result.result);
-                if (!observation.success || role === 'observe'
+                if (!observation.success || role === 'observe' && receipt!.deployment.operation !== 'teardown'
                     && observation.data.providerDeploymentId !== content.platform.observation.providerDeploymentId) {
                     providerEffectObserved = true;
                     transitionAttempted = true;
@@ -482,5 +537,5 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                 remedy: 'Choose a log kind declared by this deployment target.' } } : failure(code, error);
         }
     }
-    return { withTargetRole: withRole, prepareCandidate, prepareAction, prepareTeardownDetach, prepareTeardownChildren, prepareObservation, prepareLogs, execute };
+    return { withTargetRole: withRole, prepareCandidate, prepareAction, prepareTeardown, prepareTeardownChildren, prepareObservation, prepareLogs, execute };
 }

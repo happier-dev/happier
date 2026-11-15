@@ -1,6 +1,7 @@
 import { showDeploymentMoveSheet } from './DeploymentMoveSheet';
 import * as React from 'react';
 import { resolveDeploymentSourceMethodV1 } from '@happier-dev/deployment-protocol/v1';
+import { selectDeploymentTargetRemovalChoicesV1 } from '@happier-dev/deployments';
 import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectTriggersSection';
 import { useProjectSource } from '@/components/projects/sources/useProjectSources';
 import { View } from 'react-native';
@@ -169,6 +170,7 @@ import { DeploymentPendingRequest } from './DeploymentPendingRequest';
 import { DeploymentLiveAddressActions } from './deploymentLiveAddress';
 import { formatDeploymentLiveAddress, resolveDeploymentLiveAddress } from './deploymentLiveAddressFacts';
 import { DomainStateLine } from './DeploymentDomainRow';
+import { readPlatformResourceName } from './platformTargetLink';
 import { usePinnedEnvironmentIds } from '@/sync/domains/workspaces/projectAccountRows';
 import { pinProjectService } from '@/sync/ops/actions/projectWorkspaceActions';
 
@@ -608,6 +610,16 @@ export const DeploymentEnvironmentDetail = React.memo(
       const machines = subject ? subject.machines : machineIds;
       const neverDeployed = !running && hasNoDeploymentHistory(targetLinkId);
       const { onDeleted } = props;
+      const dispositionRow = detail.targetLinks.find(row => row.targetLink.id === (targetLinkId ?? detail.environment.runtimeTargetLinkId));
+      const dispositionLink = dispositionRow?.targetLink;
+      const dispositionPlatformRef = dispositionLink?.source.kind === 'plugin' ? dispositionLink.source.contribution : null;
+      const dispositionPlatform = platforms.state.status === 'ready' && dispositionPlatformRef
+        ? platforms.state.targets.find(target => target.pluginId === dispositionPlatformRef.pluginId
+          && target.targetId === dispositionPlatformRef.localId) : null;
+      const provider = dispositionPlatformRef ? dispositionPlatform?.title ?? dispositionLink?.targetKind ?? null : null;
+      // The removal owner decides which choices exist and where the review starts (created: Delete; linked: Unlink).
+      const removal = selectDeploymentTargetRemovalChoicesV1(dispositionLink?.source,
+        platforms.state.status === 'ready' ? platforms.state.targets : [], dispositionRow?.content?.providerResourceOrigin);
       showDeploymentDispositionSheet({
         subject: targetLinkId ? { kind: 'target', targetLinkId } : { kind: 'environment' },
         // Stop and remove tears down first; then the target is unlinked or the Environment deleted.
@@ -615,11 +627,15 @@ export const DeploymentEnvironmentDetail = React.memo(
           targetLinkId ? DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1 : DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1] },
         name: detail.content.name,
         machine: machines.length > 0 ? machines.map(machineName).join(', ') : null,
+        provider,
         running,
         services: services.map((service) => service.name),
         hasRetainedAssociations: targetLinkId ? subject !== null : links.length > 0,
-        canRemove: true,
-        ...(detail.targetLinks.find(row => row.targetLink.id === (targetLinkId ?? detail.environment.runtimeTargetLinkId))?.targetLink.source.kind === 'host'
+        canRemove: removal.choices.includes('delete'),
+        ...(dispositionPlatformRef && provider ? { providerResource: {
+          name: readPlatformResourceName(dispositionRow?.content) ?? detail.content.name,
+          consequence: dispositionPlatform?.teardownConsequence ?? null, defaultChoice: removal.defaultChoice } } : {}),
+        ...(dispositionLink?.source.kind === 'host'
           ? { reviewVolumes: async (signal: AbortSignal) => {
               if (neverDeployed) return [];
               const result = await props.disposition!.teardown({ environmentId: detail.environment.id,
@@ -634,7 +650,11 @@ export const DeploymentEnvironmentDetail = React.memo(
         ...(!targetLinkId || running ? { domains: { controller: props.controller, environmentId: detail.environment.id } } : {}),
         // This review is the person's confirmation of the exact Actions, so the front door does not ask again.
         // Deployment history requires teardown; Home admits removal of a resource-free configured record.
-        run: (choice, volumes) => choice === 'remove' && (running || (!neverDeployed && !targetLinkId && detail.environment.runtimeTargetLinkId != null))
+        // Provider deletion is one teardown the provider carries out; deleting only the target keeps the Environment.
+        run: (choice, volumes) => choice === 'remove' && dispositionPlatformRef
+          ? disposition.stopAndRemove(targetLinkId, undefined, undefined,
+            { providerRemoval: 'delete', ...(targetLinkId ? { removeEnvironment: false } : {}) })
+          : choice === 'remove' && (running || (!neverDeployed && !targetLinkId && detail.environment.runtimeTargetLinkId != null))
           ? disposition.stopAndRemove(targetLinkId, undefined, volumes)
           : targetLinkId
             ? disposition.unlink(targetLinkId, choice === 'detach' ? { kind: 'detachKeepRunning' } : { kind: 'afterTeardown' },
@@ -1668,6 +1688,8 @@ const DeploymentReceiptRow = React.memo(function DeploymentReceiptRow(
  */
 type HistoryOutcome = 'all' | 'succeeded' | 'failed';
 const HISTORY_STATED_FIELDS: readonly string[] = Object.freeze(['state']);
+/** The History registry's field marks in the filter editor. */
+const HISTORY_FILTER_FIELD_ICONS = Object.freeze({ state: 'circle-half', actorAccountId: 'user-circle', operation: 'lightning' } as const);
 
 function DeploymentHistoryPage(
   props: Readonly<{
@@ -1695,6 +1717,7 @@ function DeploymentHistoryPage(
     testIDPrefix: 'project-deployments.history',
     registry,
     bindings,
+    fieldIcons: HISTORY_FILTER_FIELD_ICONS,
     filters,
     setFilters,
     baseFilter: EMPTY_DEPLOYMENT_HISTORY_FILTER,

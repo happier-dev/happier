@@ -21,6 +21,7 @@ export const OWN_SERVER_DEPLOYMENT_TARGET_V1: DeploymentTargetV1 = DeploymentTar
         deploy: { kind: 'host', actionId: 'deployments.deploy' },
         observe: { kind: 'host', actionId: 'deployments.receipts.get' },
         rollback: { kind: 'host', actionId: 'deployments.rollback' },
+        teardown: { kind: 'host', actionId: 'deployments.teardown' },
     },
 });
 

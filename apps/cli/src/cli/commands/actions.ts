@@ -180,7 +180,8 @@ export function resolveInvokeActionInput(
         output: wantsJson(args) ? 'json' : 'human',
       },
     });
-    if (!composed.ok) invalidInvokeArguments(composed.message, args[1], composed.code);
+    if (!composed.ok) throwActionFailure({ ok: false, errorCode: composed.code,
+      error: `${composed.message}\n${invokeUsage(args[1])}`, ...(composed.details === undefined ? {} : { details: composed.details }) });
     return composed.input;
   }
   // A discovered definition publishes canonical top-level data fields only and

@@ -342,8 +342,11 @@ describe('Receipt → upload provenance', () => {
         target: { kind: 'account', account: { service: { pluginId: 'acme.platform', localId: 'account' }, accountId: 'profile' } } },
         providerIdentity: { providerAccountId: 'account', providerResourceId: 'project', providerEnvironment: 'production' },
         providerEnvironment: { kind: 'production' }, observation: { v: 1, state: 'succeeded', observedAtMs: 1,
-          providerDeploymentId: 'native-deployment', uploadProvenance: provenance } } } });
-    const detail = createDeploymentEnvironmentDetailV1();
+          providerDeploymentId: 'native-deployment', urls: [], uploadProvenance: provenance } } } });
+    const baseEnvironment = createDeploymentEnvironmentDetailV1();
+    const detail = createDeploymentEnvironmentDetailV1({ targetLinks: baseEnvironment.targetLinks.map(row => ({ ...row,
+      targetLink: { ...row.targetLink, activeDeploymentId: location === 'controller' ? receipt.deployment.id : 'newer' } })) });
+    const navigate = vi.fn();
     const controller = createDeploymentReadControllerV1({ scope, transport: {
       listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
       readEnvironment: async () => ({ ok: true, value: detail }),
@@ -354,7 +357,7 @@ describe('Receipt → upload provenance', () => {
       environmentId={detail.environment.id} deploymentId={receipt.deployment.id} environmentName="Staging"
       demand={{ mounted: true, visible: true, focused: true }} accountId={scope.accountId} serverId={scope.serverId}
       readLogs={null} onBack={() => {}} rollback={null} cancel={null} deploy={null} phone={false} linkPath={null}
-      review={{ pendingId: null, request() {}, open() {} }} onOpenReceipt={() => {}} />
+      review={{ pendingId: null, request() {}, open() {} }} onOpenReceipt={() => {}} onOpenRecoveryDestination={navigate} />
       <EnvironmentLogsCompanion open onClose={() => {}} services={[]} service={null} serverId={scope.serverId}
         environmentId={detail.environment.id} machineId={null} machineName="Controller" machineNames={{}}
         controller={controller} deploymentId={receipt.deployment.id}
@@ -375,6 +378,13 @@ describe('Receipt → upload provenance', () => {
           expect(row(`${prefix}.output`)?.props.subtitle).toBe('recorded-output-manifest');
         } else expect(screen.findByTestId(`${prefix}.image`)).toBeNull();
       }
+      const outcome = screen.findAll(node => node.props.testID === 'project-deployments.receipt.outcome.succeeded.row'
+        && node.props.title !== undefined)[0];
+      if (location === 'controller') {
+        expect(outcome?.props.subtitle).toBe(t('projects.deployments.receipt.platformDomainRequired'));
+        await screen.pressByTestIdAsync('project-deployments.receipt.outcome.succeeded.row');
+        expect(navigate).toHaveBeenCalledWith('domains');
+      } else expect(outcome?.props.onPress).toBeUndefined();
     } finally { await screen.unmount(); controller.retire(); }
   });
 });

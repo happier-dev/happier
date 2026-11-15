@@ -13,6 +13,7 @@ import { resolvePluginActionConnectedAccountUseRequestsV2 } from '@happier-dev/p
 import { projectConnectedAccountHostAccessScopes } from '@happier-dev/cli-common/connectedAccounts';
 import type { DeploymentTargetCredentialPrincipalV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import type { ScmHostingRepositoryIdentityV1 } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 
 import { readDeploymentRefusal, type DeploymentRefusalReason } from './deploymentActionOutcome';
 
@@ -35,6 +36,8 @@ export type DeploymentPlatformTarget = Readonly<{
   fields: readonly EffectiveActionInputField[];
   sourceMethods: readonly DeploymentSourceMethodV1[];
   runtimeLogs?: true;
+  teardown?: true;
+  teardownConsequence?: string;
   create?: Readonly<{
     localId: string;
     actionId: string;
@@ -60,6 +63,26 @@ const record = (value: unknown): value is UnknownRecord =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 const text = (value: unknown): value is string =>
   typeof value === 'string' && value.length > 0;
+
+/** The teardown Action's declared confirmation names what the provider deletes with the resource. */
+function readTeardownConsequence(actions: readonly unknown[], localId: string) {
+  const action = actions.find(entry => record(entry) && entry.id === localId);
+  const title = record(action) && record(action.confirmation) ? action.confirmation.title : undefined;
+  const consequence = title === undefined ? '' : resolvePluginLocalizedStringV2Text(title);
+  return consequence ? { teardownConsequence: consequence } : {};
+}
+
+/**
+ * The name a person knows a linked provider resource by, as the provider recorded it: a Preview's name, else the
+ * project or Worker name captured at preparation, else the provider's resource id.
+ */
+export function readPlatformResourceName(content: Partial<DeploymentTargetLinkProviderContentV1> | undefined): string | null {
+  const environment = content?.providerEnvironment;
+  if (environment?.kind === 'preview' && 'previewName' in environment) return environment.previewName;
+  return content?.preparedNative?.projectName
+    ?? (environment?.kind === 'script' ? environment.scriptName : null)
+    ?? content?.providerIdentity?.providerResourceId ?? null;
+}
 
 export function readDeploymentPlatformTargets(
   declarations: readonly Declaration[],
@@ -128,6 +151,8 @@ export function readDeploymentPlatformTargets(
           service: { pluginId: service.pluginId, localId: service.localId },
           fields: hints as EffectiveActionInputField[],
           sourceMethods,
+          ...(record(target.actions) && text(target.actions.teardown) ? { teardown: true as const,
+            ...readTeardownConsequence(actions, target.actions.teardown) } : {}),
           ...(record(target.actions) && record(target.actions.logs) && text(target.actions.logs.runtime)
             ? { runtimeLogs: true as const } : {}),
           ...(create ? { create } : {}),

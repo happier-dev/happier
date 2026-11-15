@@ -35,6 +35,7 @@ type ReceiptCopy = Readonly<{
   operationTeardown: string;
   imagesTitle: string;
   imagesDescription: string;
+  platformDomainRequired: string;
   prunedTitle: string;
   prunedBody: (params: { sha: string }) => string;
   deployShaAgain: (params: { sha: string }) => string;
@@ -49,6 +50,7 @@ type ReceiptCopy = Readonly<{
 
 export const deploymentReceiptTranslations = {
   "en": {
+    platformDomainRequired: "Add a Domain in the Environment to reach this deployment.",
     state: "State",
     actor: "Started by",
     operation: "Operation",
@@ -95,6 +97,7 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "Cancel deploy",
   },
   "fr": {
+    platformDomainRequired: "Ajoutez un domaine dans l’environnement pour accéder à ce déploiement.",
     state: "État",
     actor: "Démarré par",
     operation: "Opération",
@@ -141,6 +144,7 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "Annuler le déploiement",
   },
   "de": {
+    platformDomainRequired: "Füge in der Umgebung eine Domain hinzu, um dieses Deployment zu erreichen.",
     state: "Status",
     actor: "Gestartet von",
     operation: "Vorgang",
@@ -187,6 +191,7 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "Bereitstellung abbrechen",
   },
   "es": {
+    platformDomainRequired: "Añade un dominio en el entorno para acceder a este despliegue.",
     state: "Estado",
     actor: "Iniciado por",
     operation: "Operación",
@@ -233,6 +238,7 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "Cancelar despliegue",
   },
   "it": {
+    platformDomainRequired: "Aggiungi un dominio nell’ambiente per raggiungere questa distribuzione.",
     state: "Stato",
     actor: "Avviato da",
     operation: "Operazione",
@@ -279,6 +285,7 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "Annulla distribuzione",
   },
   "pt": {
+    platformDomainRequired: "Adicione um domínio no ambiente para acessar esta implantação.",
     state: "Estado",
     actor: "Iniciado por",
     operation: "Operação",
@@ -325,6 +332,7 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "Cancelar implantação",
   },
   "ca": {
+    platformDomainRequired: "Afegeix un domini a l’entorn per accedir a aquest desplegament.",
     state: "Estat",
     actor: "Iniciat per",
     operation: "Operació",
@@ -371,6 +379,7 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "Cancel·la el desplegament",
   },
   "pl": {
+    platformDomainRequired: "Dodaj domenę w środowisku, aby uzyskać dostęp do tego wdrożenia.",
     state: "Stan",
     actor: "Uruchomione przez",
     operation: "Operacja",
@@ -417,6 +426,7 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "Anuluj wdrożenie",
   },
   "ru": {
+    platformDomainRequired: "Добавьте домен в окружении, чтобы открыть это развёртывание.",
     state: "Состояние",
     actor: "Кто запустил",
     operation: "Операция",
@@ -463,6 +473,7 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "Отменить развёртывание",
   },
   "ja": {
+    platformDomainRequired: "このデプロイにアクセスするには、環境にドメインを追加してください。",
     state: "状態",
     actor: "開始した人",
     operation: "操作",
@@ -509,6 +520,7 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "デプロイをキャンセル",
   },
   "zh-Hans": {
+    platformDomainRequired: "请在环境中添加域名以访问此部署。",
     state: "状态",
     actor: "发起人",
     operation: "操作",

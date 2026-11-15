@@ -58,6 +58,26 @@ it('preserves invitation token guidance at actions invoke dispatch', async () =>
 
 describe('public Action failure evidence', () => {
   it.each([
+    { actionId: 'deployments.rollback', input: { serverId: 'home', environmentId: 'environment' }, missing: 'deploymentId' },
+    { actionId: 'deployments.teardown', input: { serverId: 'home', environmentId: 'environment', mode: 'preview' }, missing: 'reason' },
+  ])('preserves $actionId missing-field diagnostics at invoke output', async ({ actionId, input, missing }) => {
+    let output = '';
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
+      output += String(chunk);
+      const callback = args.find(argument => typeof argument === 'function');
+      if (typeof callback === 'function') callback();
+      return true;
+    });
+    await handleActionsCommand(['invoke', actionId, '--input-json', JSON.stringify(input), '--json']);
+    expect(JSON.parse(output)).toMatchObject({ ok: false, error: {
+      code: 'invalid_arguments', message: expect.stringContaining(missing),
+      details: { issues: expect.arrayContaining([expect.objectContaining({
+        code: actionId === 'deployments.teardown' ? 'invalid_value' : 'invalid_type', path: [missing],
+      })]) },
+    } });
+  });
+
+  it.each([
     { cooperation: 'cooperative', prepared: false },
     { cooperation: 'noncooperative', prepared: false },
     { cooperation: 'noncooperative', prepared: true },

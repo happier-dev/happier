@@ -21,7 +21,7 @@ type LiveReceipt = Readonly<{
 export type DeploymentLiveAddress = Readonly<{
   url: string;
   attention: DomainAttention | null;
-  /** The Domain behind a native address, for its own recovery (Check again); a platform's observed URL has none. */
+  /** The Domain behind an address, for its own recovery (Check again); a provider's observed URL has none. */
   domain: Readonly<{ id: string; revision: number }> | null;
 }>;
 
@@ -32,12 +32,12 @@ function servesLive(receipt: LiveReceipt): boolean {
 
 /** Whether the receipt page reads current Domains for this receipt's address; the same rule the resolver applies. */
 export function deploymentLiveAddressDemand(receipt: LiveReceipt | null, serving: boolean): boolean {
-  return serving && receipt !== null && servesLive(receipt) && !receipt.content.platform;
+  return serving && receipt !== null && servesLive(receipt) && !receipt.facts.urls?.[0];
 }
 
 /**
  * The address a serving receipt is live at: a platform's observed URL, else the current Domain that routes its
- * primary service on its own runtime link. The receipt page and the Environment page read it here, once.
+ * runtime link (and primary service for native targets). Both pages read it here, once.
  */
 export function resolveDeploymentLiveAddress(
   receipt: LiveReceipt,
@@ -53,12 +53,13 @@ export function resolveDeploymentLiveAddress(
     intent?.kind === 'repository'
       ? intent.compose?.primaryService
       : intent?.primaryService;
-  if (!primaryService) return null;
+  if (!receipt.content.platform && !primaryService) return null;
   const domain = domains.find(
     (item) =>
       item.domain.targetLinkId === receipt.deployment.targetLinkId &&
       (item.domain.state === 'active' || item.domain.state === 'warning') &&
-      item.content.target.service === primaryService,
+      (receipt.content.platform ? item.content.target.kind === 'provider'
+        : item.content.target.kind !== 'provider' && item.content.target.service === primaryService),
   );
   const url = domain ? readDeploymentDomainServingUrlV1(domain.content) : null;
   if (!domain || !url) return null;

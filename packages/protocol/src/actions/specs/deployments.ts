@@ -18,6 +18,8 @@ import { createDeploymentReadScopeV1, DEPLOYMENT_DATA_ROLE_CHILD_METADATA_READS_
 
 const deploymentDeployActionCompletionV1 = createDeploymentDeployActionCompletionV1(DeploymentActionOutputSchemasV1[deploymentActionIds.DEPLOYMENT_DEPLOY_ACTION_ID_V1]);
 const deploymentDeployDescription = 'Deploy an existing saved Environment to a linked target. Discover the named Environment with deployments.environments.list, then use deployments.environments.get to choose its linked target. To deploy that saved definition, supply only serverId, environmentId and targetLinkId from those results. The Action prepares the exact deployment candidate, revisions and hashes for review. The contentArtifactId/contentHeaderVersion/contentBodyVersion input branch accepts an already prepared deployment candidate; Environment and target content Artifacts are not deployment candidates. No caller-authored candidate or shell hash calculation is needed.';
+const deploymentRollbackDescription = 'Roll back to a historical deployment. Discover the saved Environment with deployments.environments.list or deployments.environments.get, then select deploymentId from deployments.receipts.list. Supply serverId, environmentId and deploymentId; requestKey and restoreBackupId are optional. Preparation resolves the current target, revisions and exact content for review. The prepared contentArtifactId/contentHeaderVersion/contentBodyVersion branch is also accepted.';
+const deploymentTeardownDescription = 'Stop and remove a deployment from a saved Environment. Supply serverId, environmentId and reason: "manual" for an explicit request; the controller resolves the current target and exact runtime inventory. Set mode: "preview" to inspect the teardown first, and removeEnvironment: true to remove the saved Environment after teardown. targetLinkId, requestKey, volumes and machines are optional selections. Prepared content and revision fields are only needed when continuing an already prepared operation.';
 const deploymentBackupConfigureDescription = 'Configure backups for a saved Environment, including before its first deployment. Test proves the selected repository without saving configuration; initializeAndSave explicitly creates a missing repository. Retain returned destinationSetup and setupOperation when continuing receiver setup. After kind: "configured", a captured nonnull review.creationDefaults.values.backupSchedule is a separate follow-up: resolve the Nightly backups starter through workflow.starters.list and workflow.starters.resolve, then call workflow.trigger.add with that exact schedule, backupEnvironment: { serverId, environmentId }, and backupPolicy containing the returned configuration except configRevision. Include verificationLevel: "manifestReadBack". The standing approval binds the Environment and destination policy; each occurrence resolves its current deployment. A null schedule means no schedule Action. If schedule authoring fails, retry only workflow.trigger.add; do not repeat Configure. Stopping after Configure leaves the backup configured with no schedule.';
 
 type DeploymentActionSpec<TId extends DeploymentActionIdV1> = ActionSpecProjectionMetadata & Readonly<{
@@ -154,7 +156,29 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       { path: 'target', title: 'Target reference', widget: 'json' },
       { path: 'sessionRef', title: 'Existing Session', widget: 'json' },
       { path: 'importFrom', title: 'Import configuration references', widget: 'json' },
-    ] } as const : {
+    ] } as const : id === deploymentActionIds.DEPLOYMENT_ROLLBACK_ACTION_ID_V1 ? {
+      description: deploymentRollbackDescription,
+      fields: [
+        { path: 'serverId', title: 'Home', widget: 'text', required: true },
+        { path: 'environmentId', title: 'Environment', widget: 'text', required: true },
+        { path: 'deploymentId', title: 'Historical deployment receipt', widget: 'text', required: true },
+        { path: 'requestKey', title: 'Request identity', widget: 'text' },
+        { path: 'restoreBackupId', title: 'Backup to restore', widget: 'text' },
+      ],
+    } as const : id === deploymentActionIds.DEPLOYMENT_TEARDOWN_ACTION_ID_V1 ? {
+      description: deploymentTeardownDescription,
+      fields: [
+        { path: 'serverId', title: 'Home', widget: 'text', required: true },
+        { path: 'environmentId', title: 'Environment', widget: 'text', required: true },
+        { path: 'reason', title: 'Teardown reason', widget: 'text', required: true },
+        { path: 'mode', title: 'Preview without applying', widget: 'text' },
+        { path: 'removeEnvironment', title: 'Remove saved Environment', widget: 'boolean' },
+        { path: 'targetLinkId', title: 'Deployment target', widget: 'text' },
+        { path: 'requestKey', title: 'Request identity', widget: 'text' },
+        { path: 'volumes', title: 'Volume dispositions', widget: 'json' },
+        { path: 'machines', title: 'Selected Machines', widget: 'json' },
+      ],
+    } as const : {
       ...(id === deploymentActionIds.DEPLOYMENT_DEPLOY_ACTION_ID_V1 ? { description: deploymentDeployDescription } : {}),
       fields: [
       { path: 'serverId', title: 'Home', widget: 'text', required: true },
@@ -241,6 +265,8 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
   return {
     id, title, safety: read ? 'safe' : 'danger', sideEffectClass: read ? 'read' : 'write',
     ...(id === deploymentActionIds.DEPLOYMENT_DEPLOY_ACTION_ID_V1 ? { description: deploymentDeployDescription } : {}),
+    ...(id === deploymentActionIds.DEPLOYMENT_ROLLBACK_ACTION_ID_V1 ? { description: deploymentRollbackDescription } : {}),
+    ...(id === deploymentActionIds.DEPLOYMENT_TEARDOWN_ACTION_ID_V1 ? { description: deploymentTeardownDescription } : {}),
     ...(backupConfigure ? { description: deploymentBackupConfigureDescription } : {}),
     ...(previewForInput ? { safetyForInput: (input: unknown): 'safe' | 'danger' => previewForInput(input) ? 'safe' : 'danger' } : {}),
     ...(id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 ? { permissionChangingForInput: (input: unknown): boolean => {

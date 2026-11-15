@@ -6,17 +6,17 @@ import type { ActionFailureCauseV1 } from '../actions/actionExecutionResult.js';
 
 /** Shared storage address, independent of Action catalog initialization. */
 export const DeploymentArtifactContentReferenceV1Schema = lazyZodSchema(() => z.strictObject({
-  contentArtifactId: DeploymentIdentifierV1Schema,
-  contentHeaderVersion: DeploymentRevisionV1Schema,
-  contentBodyVersion: DeploymentRevisionV1Schema,
+  contentArtifactId: DeploymentIdentifierV1Schema.check(z.describe('Exact prepared deployment content Artifact ID returned by preparation. Omit for compact rollback or teardown requests.')),
+  contentHeaderVersion: DeploymentRevisionV1Schema.check(z.describe('Header revision of that prepared content Artifact.')),
+  contentBodyVersion: DeploymentRevisionV1Schema.check(z.describe('Body revision of that prepared content Artifact.')),
 }));
 export type DeploymentArtifactContentReferenceV1 = z.infer<typeof DeploymentArtifactContentReferenceV1Schema>;
 
 /** Exact Environment content CAS, shared without initializing the Action catalog. */
 export const DeploymentEnvironmentContentCasV1Schema = lazyZodSchema(() => z.strictObject({
-  serverId: DeploymentIdentifierV1Schema,
-  environmentId: DeploymentIdentifierV1Schema,
-  expectedRevision: DeploymentRevisionV1Schema,
+  serverId: DeploymentIdentifierV1Schema.check(z.describe('Home ID that owns the Environment.')),
+  environmentId: DeploymentIdentifierV1Schema.check(z.describe('Saved Environment ID from deployments.environments.list or deployments.environments.get.')),
+  expectedRevision: DeploymentRevisionV1Schema.check(z.describe('Exact Environment revision captured by preparation; compact rollback and teardown requests resolve it automatically.')),
   ...DeploymentArtifactContentReferenceV1Schema.shape,
 }));
 
@@ -73,7 +73,7 @@ export function readDeploymentArtifactJsonBodyV1(
 
 /** Exact runtime content CAS shared by prepared deployment operation inputs. */
 export const DeploymentRuntimeContentCasV1Schema = lazyZodSchema(() => z.extend(DeploymentEnvironmentContentCasV1Schema, {
-  requestKey: DeploymentIdentifierV1Schema,
-  targetLinkId: DeploymentIdentifierV1Schema,
-  expectedTargetLinkRevision: DeploymentRevisionV1Schema,
+  requestKey: DeploymentIdentifierV1Schema.check(z.describe('Request identity retained when retrying the same prepared operation.')),
+  targetLinkId: DeploymentIdentifierV1Schema.check(z.describe('Linked deployment target ID selected for the operation.')),
+  expectedTargetLinkRevision: DeploymentRevisionV1Schema.check(z.describe('Exact target-link revision captured by preparation.')),
 }));

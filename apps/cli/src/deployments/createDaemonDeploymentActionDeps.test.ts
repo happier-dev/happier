@@ -22,7 +22,7 @@ import { encodePlainArtifactStoredContent, decodePlainArtifactStoredContent, ART
 import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
     DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DEPLOYMENT_TEARDOWN_STEPS_V1,
-    DeploymentContentV1Schema, DeploymentEnvironmentContentV1Schema, DeploymentPlatformContentV1Schema,
+    DeploymentContentV1Schema, DeploymentEnvironmentContentV1Schema, DeploymentProviderTeardownContentV1Schema, DeploymentPlatformContentV1Schema,
     OwnServerDeploymentInputBasisV1Schema, DeploymentOwnServerContentV1Schema,
     readDeploymentEnvironmentArtifactHeaderV1, readDeploymentEnvironmentArtifactV1 } from '@happier-dev/deployment-protocol';
 import { ArtifactJsonUpdateHttpInputV1Schema, DeploymentTransitionInputV1Schema, DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema,
@@ -696,6 +696,17 @@ describe('installed deployment storage and target composition', () => {
         const health = await deps.deploymentAction('deployments.health.current', input, context);
         expect(health, JSON.stringify(health)).toMatchObject({ ok: true, observation: null });
         expect(requests).toHaveBeenCalled();
+        // A platform (Vercel-shaped) runtime link reaches the same controller owner,
+        // which answers with a typed reason instead of an authorization refusal.
+        link.targetKind = 'platform';
+        await expect(deps.deploymentAction('deployments.health.current', input, context)).resolves.toMatchObject({
+            ok: false, errorCode: 'unsupported_action', effectAttempted: false,
+            details: { reason: 'target_not_supported', targetKind: 'platform', supportedAction: 'deployments.observation.get' } });
+        link.targetKind = 'ownServer';
+        detail.environment.controllerMachineId = 'machine-b';
+        await expect(deps.deploymentAction('deployments.health.current', input, context)).resolves.toMatchObject({
+            ok: false, errorCode: 'target_mismatch', details: { reason: 'controller_placement', controllerMachineId: 'machine-b' } });
+        detail.environment.controllerMachineId = 'machine-a';
         const logsInput = { serverId: 'home', machineId: target.machineId, installationId: 'installation-a',
             environmentId: detail.environment.id, deploymentId: receipt.deployment.id,
             targetLinkId: link.id, kind: 'runtime' as const,
@@ -1286,9 +1297,10 @@ describe('installed deployment storage and target composition', () => {
             expect(childLookups, JSON.stringify(dispatchTrace)).toEqual([{ machineId: kind === 'build' ? 'captured-builder' : 'machine-a', receiptReads: 1 }]);
         } finally { await requester.dispose(); }
     });
-    it.each(['promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain retained native teardown', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
+    it.each(['provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown recovery', 'provider teardown review', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain retained native teardown', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
     'admits the declared platform target without native history, a builder or an app-host Machine (%s)', async scenario => {
         const pluginId = 'example.platform';
+        const providerTeardown = scenario.startsWith('provider teardown');
         const retainedTraffic = scenario === 'promote retained platform' || scenario === 'rollback retained platform';
         const variableScenario = scenario.startsWith('variable ');
         const runtimeLogs = scenario === 'runtime logs';
@@ -1334,7 +1346,7 @@ describe('installed deployment storage and target composition', () => {
             repository: { kind: 'github' as const, deployment: 'https://github.com', repository: 'owner/project' } };
         // Retained older links/receipts did not carry a native preparation.
         const capturedPreparation = scenario === 'retained receipt observe' ? {} : { preparedNative, repositoryAccess };
-        const roles = ['inspect', 'link', 'deploy', 'observe', 'uploadDeploy', ...(retainedTraffic ? ['promote' as const, 'rollback' as const] : []), ...(scenario === 'build logs' ? ['logs.build' as const] : []), ...(runtimeLogs ? ['logs.runtime' as const] : []), ...(variableScenario ? ['variables.read' as const, 'variables.sync' as const] : []), ...(domainScenario ? [domainRole, ...(domainTeardown ? ['teardown' as const] : [])] : [])] as const;
+        const roles = ['inspect', 'link', 'deploy', 'observe', 'uploadDeploy', ...(retainedTraffic ? ['promote' as const, 'rollback' as const] : []), ...(scenario === 'build logs' ? ['logs.build' as const] : []), ...(runtimeLogs ? ['logs.runtime' as const] : []), ...(variableScenario ? ['variables.read' as const, 'variables.sync' as const] : []), ...(domainScenario ? [domainRole, ...(domainTeardown ? ['teardown' as const] : [])] : []), ...(providerTeardown ? ['teardown' as const] : [])] as const;
         const credentials: StoredCredentials = { token: `h.${Buffer.from(JSON.stringify({ sub: 'owner', ...(sdkBackgroundObservation ? {
             tokenEpoch: 1, provenance: { v: 1, kind: 'account', authority: 'present_user' } } : {}) })).toString('base64url')}.s`, encryption: null };
         let sdkHomeUrl = 'https://platform.test';
@@ -1391,7 +1403,7 @@ describe('installed deployment storage and target composition', () => {
         if (nativeDomainKit) onTestFinished(() => nativeDomainKit.dispose());
         const runtime = await runWithServerHttpBaseUrl(sdkHomeUrl, () => createAuthoredAdmittedPluginRuntimeFixture({
             // Observe only the physically admitted fixture plugin, independent of bundled dependencies.
-            ...(scenario === 'background receipt observe' ? { resolveContributes: async (happyHomeDir: string) => createResolvedContributionRegistry(
+            ...(scenario === 'background receipt observe' || providerTeardown ? { resolveContributes: async (happyHomeDir: string) => createResolvedContributionRegistry(
                 projectLoadedPluginContributes({ loadResult: await loadInstalledPlugins({ happyHomeDir }),
                     provenance: 'external' })) } : {}),
             // SCM materialization consumes the real daemon-applied registry owner.
@@ -1445,7 +1457,7 @@ describe('installed deployment storage and target composition', () => {
                             ...(scenario === 'build logs' ? { logs: { build: 'build-logs-read' } } : runtimeLogs ? { logs: { runtime: 'runtime-logs-read' } } : {}),
                             ...(variableScenario ? { variables: { read: 'variables-read', sync: 'variables-sync' } } : {}),
                             ...(domainScenario ? { domains: domainRole === 'domains.remove' ? { remove: 'domains-remove' } : domainRole === 'domains.add' ? { add: 'domains-add' } : { verify: 'domains-verify' } } : {}),
-                            ...(domainTeardown ? { teardown: 'teardown' } : {}) } }) }] } },
+                            ...(domainTeardown || providerTeardown ? { teardown: 'teardown' } : {}) } }) }] } },
             files: { 'daemon.mjs': `import { PluginError } from '@happier-dev/plugin-sdk/errors';
                 import { readFile } from 'node:fs/promises';
                 import { join } from 'node:path';
@@ -1472,6 +1484,8 @@ describe('installed deployment storage and target composition', () => {
                     finally { finishBackground(); }
                 });` : ''}
                 ${roles.filter(role => !vercelActiveDomainAdd || role !== 'domains.add').map(role => `api.actions.register('${role === 'uploadDeploy' ? 'upload-deploy' : role === 'logs.build' ? 'build-logs-read' : role === 'logs.runtime' ? 'runtime-logs-read' : role === 'variables.read' ? 'variables-read' : role === 'variables.sync' ? 'variables-sync' : role === 'domains.verify' ? 'domains-verify' : role === 'domains.remove' ? 'domains-remove' : role === 'domains.add' ? 'domains-add' : role}', async (input, context) => {
+                    ${providerTeardown && (role === 'teardown' || role === 'observe') ? `if (input.providerIdentity.providerResourceId !== 'project' || input.providerIdentity.providerAccountId !== 'provider-account' || input.providerIdentity.providerEnvironment !== 'production' || input.operation !== 'teardown') throw new Error('Wrong exact resource');
+                    observationCount++; return { v: 1, state: '${scenario === 'provider teardown ambiguous unverified' ? 'running_unverified' : 'succeeded'}', observedAtMs: 1, ${scenario.startsWith('provider teardown ambiguous') ? '' : 'providerResourceAbsent: true'} };` : ''}
                     ${role === 'domains.remove' ? `return { v: 1, hostname: input.domain.hostname, state: 'removed', dns: [] };` : ''}
                     ${role === 'domains.verify' || role === 'domains.add' ? `return { v: 1, hostname: input.domain.hostname, state: 'pending', dns: [{ type: 'TXT', name: '_verification.example.test', value: 'private-dns-token' }] };` : ''}
                     ${role === 'variables.read' ? `observationCount++; return { v: 1, variables: [{ key: 'MODE', providerId: 'provider-mode', present: true, secret: false, owned: true, drift: 'current', providerRevision: '10' }] };` : ''}
@@ -1550,7 +1564,7 @@ describe('installed deployment storage and target composition', () => {
             row.targetLink.targetKind = 'platform'; row.targetLink.machines = []; row.targetLink.members = [];
             row.targetLink.createdByAccountId = 'owner';
             // Unlike upload, a daemon-hosted observer uses the target's admitted installation.
-            if (scenario === 'compact repository missing SCM provider' || scenario === 'retained receipt observe' || backgroundObservation || retainedTraffic) Object.assign(row.targetLink,
+            if (scenario === 'compact repository missing SCM provider' || scenario === 'retained receipt observe' || backgroundObservation || retainedTraffic || providerTeardown) Object.assign(row.targetLink,
                 { machineId: 'machine-a', installationId: 'installation-a' });
             row.content = { credentialPrincipal: { kind: 'account', accountId: 'owner',
                 purpose: { consumer: { pluginId, localId: 'link' }, purpose: 'manage' },
@@ -1560,7 +1574,7 @@ describe('installed deployment storage and target composition', () => {
             environment.content.definition = await normalizeStoredComposeDefinitionInput({ from: 'compose',
                 document: 'services: {}', profiles: [], services: [] });
             const sourceIntent = environment.content.definition;
-            if (scenario === 'compact repository missing SCM provider') environment.content.definition = { kind: 'repository', ref: 'main' };
+            if (providerTeardown || scenario === 'compact repository missing SCM provider') environment.content.definition = { kind: 'repository', ref: 'main' };
             if (variableScenario) environment.content.bindings.push({ purpose: 'registry', targetLinkId: row.targetLink.id,
                 access: 'pull', registryOrigin: 'https://registry.example.test',
                 source: { kind: 'secret', ref: 'happier:shared-secret:v1:registry', resourceRevision: 1 } });
@@ -1671,6 +1685,128 @@ describe('installed deployment storage and target composition', () => {
                     return lease;
                 },
                 runtime: { async acquire() { throw new Error('Platform must not acquire native execution'); } } });
+            if (providerTeardown) {
+                const denied = scenario === 'provider teardown denied';
+                if (scenario === 'provider teardown created default') {
+                    row.content = { ...row.content, providerResourceOrigin: 'created' };
+                    put(row.targetLink.contentArtifactId, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, row.content);
+                }
+                if (denied) environment.environment.capabilities.deploy = false;
+                const intent = { serverId: 'home', environmentId: environment.environment.id,
+                    targetLinkId: row.targetLink.id, reason: 'manual' as const, requestKey: 'provider-delete',
+                    ...(scenario === 'provider teardown explicit unlink' ? { providerRemoval: 'unlink' as const }
+                        : scenario === 'provider teardown linked default' || scenario === 'provider teardown created default' ? {}
+                            : { providerRemoval: 'delete' as const }) };
+                if (scenario === 'provider teardown preview') {
+                    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps });
+                    const result = await executor.execute('deployments.teardown', { ...intent, mode: 'preview' }, {
+                        ...ownerContext, surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+                        runtimeAccountId: 'owner', serverId: 'home', serverIdentityId: 'home',
+                        actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) });
+                    expect(result).toMatchObject({ ok: false, errorCode: 'unsupported_action', effectAttempted: false });
+                    expect(candidatesCreated).toBe(0);
+                    expect(nativeReads).toBe(0);
+                    const module = runtime.modulesByPluginId.get(pluginId);
+                    if (typeof module?.readObservationCount !== 'function') throw new Error('Expected provider invocation probe');
+                    expect(module.readObservationCount()).toBe(0);
+                    return;
+                }
+                const prepared = await deps.prepareDeploymentTeardown!({ input: intent, context: ownerContext,
+                    readWorkflowInvocation: async () => { throw new Error('Runtime deletion has no Workflow custody'); } });
+                if (scenario === 'provider teardown linked default' || scenario === 'provider teardown explicit unlink') {
+                    expect(prepared).toMatchObject({ input: { detachKeepRunning: true } });
+                    expect(candidatesCreated).toBe(0);
+                    expect(nativeReads).toBe(0);
+                    return;
+                }
+                if (denied) {
+                    expect(prepared).toMatchObject({ ok: false, errorCode: 'deployment_access_denied' });
+                    expect(candidatesCreated).toBe(0);
+                    return;
+                }
+                expect(prepared, JSON.stringify(prepared)).toMatchObject({ input: { serverId: intent.serverId, environmentId: intent.environmentId, targetLinkId: intent.targetLinkId, reason: intent.reason, requestKey: intent.requestKey,
+                    expectedRevision: environment.environment.revision, expectedTargetLinkRevision: row.targetLink.revision },
+                    hostReviewedChildren: { children: [{ role: 'teardown' }, { role: 'observe' }] } });
+                if (!('input' in prepared) || !('contentArtifactId' in prepared.input)) throw new Error('Expected provider teardown candidate');
+                const input = prepared.input;
+                const document = documents.get(input.contentArtifactId)!;
+                const content = DeploymentProviderTeardownContentV1Schema.parse(JSON.parse(z.object({ body: z.string() }).parse(
+                    decodePlainArtifactStoredContent(String(document.body))).body));
+                expect(content.sourceIntent).toBeUndefined();
+                expect(content.sourceMethod).toBeUndefined();
+                expect(content.platform).toMatchObject({ providerIdentity: row.content.providerIdentity,
+                    credentialPrincipal: row.content.credentialPrincipal, observation: { state: 'queued' } });
+                const receipt = createDeploymentReceiptHeaderV1({ id: 'provider-teardown', environmentId: intent.environmentId,
+                    targetLinkId: row.targetLink.id, operation: 'teardown', requestKey: intent.requestKey,
+                    actionOperationId: 'provider-delete-operation', state: scenario === 'provider teardown recovery' ? 'outcome_unknown' : 'queued',
+                    startedAtMs: undefined, settledAtMs: undefined, contentArtifactId: input.contentArtifactId,
+                    acceptedExecution: { v: 1, controller: { machineId: 'machine-a', installationId: 'installation-a' } } });
+                const previousHttp = vi.mocked(axios.request).getMockImplementation()!;
+                const states: string[] = [];
+                vi.mocked(axios.request).mockImplementation(async request => {
+                    const path = new URL(request.url!).pathname;
+                    if (path.endsWith('/domains')) return { status: 200, data: { ok: true,
+                        environmentId: intent.environmentId, revision: environment.environment.revision, domains: [], nextCursor: null } };
+                    if (path.endsWith(`/receipts/${receipt.id}`)) return { status: 200, data: { ok: true, deployment: receipt } };
+                    if (path.endsWith('/teardown')) return { status: 200, data: { ok: true, environmentId: intent.environmentId,
+                        revision: environment.environment.revision, deploymentId: receipt.id, deploymentRevision: receipt.revision, state: receipt.state } };
+                    if (path.endsWith('/transitions')) {
+                        const transition = DeploymentTransitionInputV1Schema.parse(request.data);
+                        states.push(transition.state);
+                        if (scenario.startsWith('provider teardown ambiguous')) {
+                            const body = transition.contentUpdate?.body;
+                            if (typeof body !== 'string') throw new Error('Expected retained failure content');
+                            const stored = JSON.parse(z.object({ body: z.string() }).parse(decodePlainArtifactStoredContent(body)).body);
+                            expect(DeploymentProviderTeardownContentV1Schema.parse(stored)).toMatchObject({ failure: {
+                                failureCause: { errorCode: 'provider_absence_unconfirmed', phase: 'deployment.teardown.observe' } } });
+                        }
+                        return { status: 200, data: { ok: true, environmentId: intent.environmentId,
+                            revision: environment.environment.revision, deploymentId: receipt.id,
+                            deploymentRevision: receipt.revision + 1, state: transition.state } };
+                    }
+                    return previousHttp(request);
+                });
+                const acquireLease = async () => {
+                    const lease = runtime.controller.tryAcquireRuntimeRegistry();
+                    if (!lease) throw new Error('Fixture registry retired');
+                    return lease;
+                };
+                const operations = createHostActionOperationRuntime({ machineId: 'machine-a', resolveAccountId: async () => 'owner',
+                    generateOperationId: () => receipt.actionOperationId });
+                const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps,
+                    runActionOperation: operations.runActionOperation,
+                    listContributedActionDefinitions: selection => listRuntimeContributedActionDefinitions(runtime.registry, selection),
+                    invokeContributedAction: createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: acquireLease }) });
+                const context: ActionExecutorContext = { ...ownerContext, surface: 'cli', authority: 'present_user',
+                    serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'owner', actionRequestId: 'provider-delete-request',
+                    actionCaller: { kind: 'host' }, interactivePresentation: 'unavailable',
+                    actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'deployments.teardown': ['cli'] },
+                        ...(scenario === 'provider teardown review' ? { actions: {
+                            [formatQualifiedPluginActionId({ pluginId, localId: 'teardown' })]: { approvalRequiredSurfaces: ['cli'] } } } : {}) }) };
+                if (scenario === 'provider teardown changed identity') {
+                    const linked = DeploymentTargetLinkProviderContentV1Schema.parse(row.content);
+                    row.content = { ...linked, providerIdentity: { ...linked.providerIdentity, providerResourceId: 'different-project' } };
+                    put(row.targetLink.contentArtifactId, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, row.content);
+                }
+                const result = await executor.execute('deployments.teardown', input, context);
+                if (scenario === 'provider teardown changed identity') {
+                    expect(result).toMatchObject({ ok: false, errorCode: 'deployment_access_denied', effectAttempted: false });
+                    expect(states.at(-1)).toBe('failed');
+                } else if (scenario === 'provider teardown review') {
+                    expect(result).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+                    expect(states).toEqual([]);
+                } else {
+                    expect(result, JSON.stringify(result)).toMatchObject(scenario.startsWith('provider teardown ambiguous')
+                        ? { ok: false, errorCode: 'outcome_unknown', details: { reason: 'provider_absence_unconfirmed' },
+                            failureCause: { errorCode: 'provider_absence_unconfirmed', phase: 'deployment.teardown.observe' } } : { ok: true, result: { state: 'succeeded' } });
+                    expect(states.at(-1)).toBe(scenario.startsWith('provider teardown ambiguous') ? 'outcome_unknown' : 'succeeded');
+                }
+                const module = runtime.modulesByPluginId.get(pluginId);
+                if (typeof module?.readObservationCount !== 'function') throw new Error('Expected provider invocation probe');
+                expect(module.readObservationCount()).toBe(scenario === 'provider teardown review' || scenario === 'provider teardown changed identity' ? 0 : 1);
+                expect(nativeReads).toBe(0);
+                return;
+            }
             if (domainScenario) {
                 Object.assign(row.targetLink, { machineId: 'machine-a', installationId: 'installation-a' });
                 const content = { hostname: 'app.example.test', target: { kind: 'provider' } };
@@ -1892,12 +2028,12 @@ describe('installed deployment storage and target composition', () => {
                     readWorkflowInvocation: async () => { throw new Error('Detach has no Workflow custody'); } });
                 if (scenario === 'teardown without role, remove Environment') {
                     expect(prepared).toMatchObject({ ok: false, errorCode: 'unsupported_action',
-                        details: { reason: 'environment_removal_unavailable', requiredFact: 'environmentRemoval', remedy: expect.any(String) } });
+                        details: { reason: 'environment_removal_unavailable', requiredFact: 'environmentRemoval', provider: 'Platform', remedy: expect.any(String) } });
                     expect(candidatesCreated).toBe(0);
                     expect(nativeReads).toBe(0);
                     return;
                 }
-                if (scenario === 'teardown without role, descriptor unavailable' || scenario === 'teardown with data target') {
+                if (scenario === 'teardown without role, descriptor unavailable') {
                     expect(prepared).toMatchObject({ ok: false, errorCode: 'deployment_target_role_unavailable' });
                     expect(candidatesCreated).toBe(0);
                     return;
@@ -1993,6 +2129,8 @@ describe('installed deployment storage and target composition', () => {
             const receiptContent = scenario === 'receipt source differs'
                 ? { ...candidate.content, sourceIntent: { ...sourceIntent, contentRevision: sourceIntent.contentRevision + 1 } }
                 : scenario === 'build logs' || runtimeLogs || scenario === 'retained receipt observe' || backgroundObservation ? { ...platformCandidate,
+                    ...(scenario === 'retained receipt observe' ? { actor: { actorKind: 'agent' as const,
+                        sessionId: 'original-session', onBehalfOf: { serverId: 'original-home', accountId: 'original-requester' } } } : {}),
                     platform: { ...platformCandidate.platform, observation: { v: 1, state: backgroundObservation ? 'queued' : 'running',
                         providerDeploymentId: 'existing-provider-deployment', observedAtMs: 1,
                         ...(scenario === 'retained receipt observe' ? { uploadProvenance: { sourceManifestFingerprint: 'approved-manifest',
@@ -2472,6 +2610,7 @@ describe('installed deployment storage and target composition', () => {
                     const stored = decodePlainArtifactStoredContent(String(documents.get(receipt.contentArtifactId)!.body));
                     const content = DeploymentPlatformContentV1Schema.parse(JSON.parse(z.object({ body: z.string() }).parse(stored).body));
                     expect(content).not.toHaveProperty('failure');
+                    expect(content).not.toHaveProperty('actor');
                     expect(reserved).toBe(false);
                     expect(providerSends).toBe(0);
                     return;
@@ -2511,12 +2650,10 @@ describe('installed deployment storage and target composition', () => {
                 expect(transitionWrites).toBe(1);
                 return;
             }
-            const runner = createActionOperationRunner({ store: createActionOperationStore(), generateOperationId: () => 'platform-operation',
-                resolveAction: actionId => ({ actionId, title: 'Deploy', operation: getActionSpec('deployments.deploy').operation }) });
-            const invocation = { actionId: 'deployments.deploy', scope, input: candidate.input, requestId: 'platform-request',
-                execute: operation => executor.execute('deployments.deploy', candidate.input, { ...context, signal: operation.signal,
-                    operationAcceptance: operation.operationAcceptance, operationOwnerUpdate: { update: operation.publishOwnerUpdate } }) } satisfies Parameters<typeof runner.observe>[0];
-            const result = await runner.observe(invocation);
+            const invokeRoot = () => operations.runActionOperation({ actionId: 'deployments.deploy', input: candidate.input,
+                context: { ...context, actionRequestId: 'platform-request' },
+                execute: operationContext => executor.execute('deployments.deploy', candidate.input, operationContext) });
+            const result = await invokeRoot();
             expect(reserved).toBe(!requiresChildApproval);
             if (scenario === 'admission cause retained approval' || roleFails) {
                 const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'executing', createdAtMs: 1, updatedAtMs: 2,
@@ -2592,6 +2729,10 @@ describe('installed deployment storage and target composition', () => {
                     throw new Error('Expected the written receipt body');
                 }
                 const persisted = DeploymentPlatformContentV1Schema.parse(JSON.parse(body.body));
+                if (scenario === 'upload source') expect(persisted).toHaveProperty('actor', { actorKind: 'person', accountId: 'owner' });
+                if (scenario === 'retained receipt observe') expect(persisted).toHaveProperty('actor', {
+                    actorKind: 'agent', sessionId: 'original-session',
+                    onBehalfOf: { serverId: 'original-home', accountId: 'original-requester' } });
                 expect(persisted.steps).toContainEqual(expect.objectContaining({ streamRef: 'masked-provider-stream' }));
                 expect(persisted.platform.observation.urls).toEqual(['https://app.example.test']);
                 if (scenario === 'retained receipt observe') expect(persisted.platform.observation.uploadProvenance)
@@ -2606,7 +2747,7 @@ describe('installed deployment storage and target composition', () => {
             expect(childInvocations).toBe(childSucceeds || settlementPointerChanged || roleFails ? 1 : 0);
             expect(providerSends).toBe(0);
             if (childSucceeds) {
-                await expect(runner.observe(invocation)).resolves.toEqual(result);
+                await expect(invokeRoot()).resolves.toEqual(result);
                 expect(childInvocations).toBe(1);
             }
             if (scenario === 'receipt source differs') {
@@ -2616,7 +2757,7 @@ describe('installed deployment storage and target composition', () => {
                 expect(environment.environment.revision).not.toBe(candidate.input.expectedRevision);
                 // Retained operation snapshots expose the stable failure carrier,
                 // rather than replaying private executor details or its request id.
-                await expect(runner.observe(invocation)).resolves.toEqual({ ok: false, errorCode: 'deployment_conflict',
+                await expect(invokeRoot()).resolves.toEqual({ ok: false, errorCode: 'deployment_conflict',
                     error: 'deployment_conflict', effectAttempted: false, failureCause: {
                         phase: 'deployment.failure', errorClass: 'Error', errorCode: 'deployment_conflict', httpStatus: null } });
                 expect(childInvocations).toBe(0);

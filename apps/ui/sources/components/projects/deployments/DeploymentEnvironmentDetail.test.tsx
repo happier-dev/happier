@@ -959,6 +959,112 @@ describe('Project deployments page', () => {
     } finally { await act(async () => { controller.retire(); }); }
   });
 
+  it('unlinks a platform target without Machine wording and starts on Detach (COR4B ui-44)', async () => {
+    const base = environmentDetailForHome();
+    const detail = { ...base, targetLinks: base.targetLinks.map(item => ({ ...item, targetLink: { ...item.targetLink,
+      activeDeploymentId: undefined, source: { kind: 'plugin' as const, contribution: { pluginId: 'vercel', localId: 'project' } },
+      targetKind: 'vercel', machines: [], members: [] } })) };
+    const { controller } = controllerFor({ detail, history: [] });
+    const { ModalProvider } = await import('@/modal');
+    const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+    const { createDeploymentActions } = await import('./deploymentActions');
+    const actions = createDeploymentActions(lifetime, scope.projectSourceId);
+    try {
+      const screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller}
+        environmentId={detail.environment.id} demand={shown} accountId={scope.accountId} serverId={scope.serverId}
+        phone={false} deploy={null} review={noReview} onOpenReceipt={() => {}} lifetime={lifetime} disposition={actions} />
+      </ModalProvider>);
+      await selectEnvironmentTab(screen, 'settings');
+      await screen.pressByTestIdAsync('project-deployments.environment.settings.servers-build.unlink');
+      await waitForContent(screen, 'project-deployments.disposition.confirm');
+      // Happier cannot stop a provider's workload from here: Stop and remove is unavailable, Detach is the start.
+      expect(screen.findByTestId('project-deployments.disposition.choice:remove')).toBeNull();
+      expect(screen.findByTestId('project-deployments.disposition.choice:detach')).not.toBeNull();
+      expect(screen.findByTestId('project-deployments.disposition.confirm')?.props.disabled).toBe(false);
+      // The confirm names the kept choice: Unlink keeps the project running on vercel, nothing is deleted.
+      expect(screen.findByTestId('project-deployments.disposition.confirm')?.props.title).toMatch(/^Unlink /);
+      expect(screen.getTextContent()).toMatch(/leave it on vercel/);
+      expect(screen.getTextContent()).not.toMatch(/Delete at vercel|Stop and remove/i);
+      // The sheet's own sentences (ui-44), not the Settings page behind it.
+      expect(screen.getTextContent()).not.toMatch(/recorded on a machine|Unlink a machine|services on a machine|cor4b-prod on a machine/i);
+      await screen.pressByTestIdAsync('project-deployments.disposition.cancel');
+    } finally { await act(async () => { controller.retire(); }); }
+  });
+
+  it.each([
+    { origin: 'created' as const, starts: 'remove' },
+    { origin: undefined, starts: 'detach' },
+  ])('deletes a provider resource only after its name is typed (origin $origin starts on $starts)', async ({ origin, starts }) => {
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
+    const { createDeploymentTargetsTestPlugin, DEPLOYMENT_TARGETS_TEST_EXECUTION } = await import('./deploymentPlatformTargetPlugin.testFixture');
+    const { createDeploymentReadTransport } = await import('./deploymentReadTransport');
+    const { createDeploymentActions } = await import('./deploymentActions');
+    const { ModalProvider } = await import('@/modal');
+    const authored = createDeploymentTargetsTestPlugin('com.example.provider-delete', undefined, { teardown: true });
+    scope.serverId = await homes.addHome({ name: 'Provider delete', serverUrl: `https://provider-delete-${origin ?? 'linked'}.test`,
+      serverIdentityId: `srv_provider_delete_${origin ?? 'linked'}`, accountId: scope.accountId, currentAccount: true });
+    const context = await captureLazyActionAccountContext(scope.serverId);
+    const installed = await installPortableAccountPluginReleaseForTest({ manifest: authored.manifest,
+      activate: api => authored.activateAccount(api, DEPLOYMENT_TARGETS_TEST_EXECUTION.account),
+      accountLifetime: context.accountLifetime, publishProjection: true });
+    const base = environmentDetailForHome();
+    const detail = { ...base, targetLinks: base.targetLinks.map(row => ({ ...row,
+      targetLink: { ...row.targetLink, activeDeploymentId: undefined,
+        source: { kind: 'plugin' as const, contribution: { pluginId: authored.manifest.id, localId: 'beta' } },
+        targetKind: 'beta', machines: [], members: [] },
+      content: { ...(origin ? { providerResourceOrigin: origin } : {}),
+        credentialPrincipal: { kind: 'account' as const, accountId: scope.accountId,
+          purpose: { consumer: { pluginId: authored.manifest.id, localId: 'inspect-beta' }, purpose: 'beta.manage' },
+          target: { kind: 'account' as const, account: { service: { pluginId: 'com.example.cloud', localId: 'cloud-account' }, accountId: 'selected' } } },
+        providerIdentity: { providerAccountId: 'cloud', providerResourceId: 'prj_7Hq2', providerEnvironment: 'production' },
+        providerEnvironment: { kind: 'production' as const }, preparedNative: { projectName: 'acme-web' } },
+    })) };
+    await context.createArtifactDocument({ artifactId: detail.environment.contentArtifactId,
+      header: { kind: 'deployment-environment.v1', title: detail.content.name }, body: JSON.stringify(detail.content) });
+    for (const row of detail.targetLinks) await context.createArtifactDocument({ artifactId: row.targetLink.contentArtifactId,
+      header: { kind: 'deployment-target-link.v1', title: 'acme-web' }, body: JSON.stringify(row.content) });
+    homes.answer(scope.serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: { ok: true,
+      environment: detail.environment, targetLinks: detail.targetLinks.map(row => row.targetLink) } });
+    homes.answer(scope.serverId, `GET /v1/deployments/environments/${detail.environment.id}/deployments`,
+      { body: { ok: true, items: [], nextCursor: null } });
+    const controller = createDeploymentReadControllerV1({ scope, transport: createDeploymentReadTransport(context.accountLifetime) });
+    const actions = createDeploymentActions(context.accountLifetime, scope.projectSourceId);
+    const teardown = vi.fn(async () => ({ ok: true as const, environmentId: detail.environment.id,
+      revision: detail.environment.revision, deploymentId: 'provider-teardown', deploymentRevision: 1, state: 'queued' as const }));
+    const screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller}
+      environmentId={detail.environment.id} demand={shown} accountId={scope.accountId} serverId={scope.serverId}
+      phone={false} deploy={null} review={noReview} onOpenReceipt={() => {}} lifetime={context.accountLifetime}
+      disposition={{ ...actions, teardown } as never} /></ModalProvider>);
+    try {
+      await selectEnvironmentTab(screen, 'settings');
+      // The Account's declarations name the platform once they are read; the review offers Delete from them.
+      await vi.waitFor(() => expect(screen.getTextContent()).toContain('Beta runtime'), { timeout: 15_000 });
+      await screen.pressByTestIdAsync('project-deployments.environment.settings.servers-build.unlink');
+      await waitForContent(screen, 'project-deployments.disposition.confirm');
+      // The removal owner picks the start: Happier-created resources start on Delete, linked ones on Unlink.
+      await vi.waitFor(() => expect(screen.findByTestId(`project-deployments.disposition.choice:${starts}`)
+        ?.props.accessibilityState).toMatchObject({ selected: true }));
+      expect(screen.getTextContent()).not.toMatch(/a machine/i);
+      if (starts === 'detach') {
+        expect(screen.findByTestId('project-deployments.disposition.confirm')?.props.disabled).toBe(false);
+        expect(screen.findByTestId('project-deployments.disposition.resourceConfirmation')).toBeNull();
+        await screen.pressByTestIdAsync('project-deployments.disposition.choice:remove');
+      }
+      // Delete names the provider's own consequence and stays disabled until the resource name is typed.
+      expect(screen.getTextContent()).toContain('Delete this Beta project and its deployments?');
+      expect(screen.findByTestId('project-deployments.disposition.confirm')?.props.disabled).toBe(true);
+      await act(async () => screen.findByTestId('project-deployments.disposition.resourceConfirmation')!.props.onChangeText('acme-we'));
+      expect(screen.findByTestId('project-deployments.disposition.confirm')?.props.disabled).toBe(true);
+      await act(async () => screen.findByTestId('project-deployments.disposition.resourceConfirmation')!.props.onChangeText('acme-web'));
+      expect(screen.findByTestId('project-deployments.disposition.confirm')?.props.disabled).toBe(false);
+      await screen.pressByTestIdAsync('project-deployments.disposition.confirm');
+      await vi.waitFor(() => expect(teardown).toHaveBeenCalledTimes(1));
+      expect(teardown.mock.calls[0]![0]).toMatchObject({ targetLinkId: detail.environment.runtimeTargetLinkId, providerRemoval: 'delete' });
+      expect(teardown.mock.calls[0]![0]).not.toHaveProperty('removeEnvironment');
+    } finally { await screen.unmount(); controller.retire(); await installed.dispose(); }
+  });
+
   it('offers removal when the target has never deployed', async () => {
     const base = environmentDetailForHome();
     const detail = { ...base, targetLinks: base.targetLinks.map(item => ({ ...item,

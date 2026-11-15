@@ -88,6 +88,40 @@ it.each(['json', 'flags'])('keeps invitation links refused with typed guidance w
   expect(compose(token)).toMatchObject({ ok: true, input: { v: 1, token } });
 });
 
+it.each([
+  { actionId: 'deployments.rollback', input: { serverId: 'home', environmentId: 'environment', deploymentId: 'selected' }, missing: 'deploymentId' },
+  { actionId: 'deployments.teardown', input: { serverId: 'home', environmentId: 'environment', reason: 'manual', mode: 'preview' }, missing: 'reason' },
+] as const)('accepts compact $actionId and preserves missing-field repair facts', ({ actionId, input, missing }) => {
+  const spec = getActionSpec(actionId);
+  const compiled = compileActionCliFields(spec);
+  const compose = (value: Readonly<Record<string, unknown>>) => {
+    const parsed = parseActionCliInput({ fields: compiled.fields, positionals: [] }, ['--input-json', JSON.stringify(value)]);
+    if (!parsed.ok) return parsed;
+    return composeActionCliInput({ parsed, canonicalSchema: spec.inputSchema,
+      callerSchema: compiled.callerSchema, wholeInputSchema: compiled.wholeInputSchema,
+      bindInput: compiled.bindInput, context: { actionId, invocationId: 'deployment-input', commandPath: ['actions', 'invoke'] } });
+  };
+  expect(compose(input)).toMatchObject({ ok: true, input });
+  const incomplete = Object.fromEntries(Object.entries(input).filter(([key]) => key !== missing));
+  expect(compose(incomplete)).toMatchObject({ ok: false, code: 'invalid_arguments',
+    message: expect.stringContaining(missing), details: { issues: expect.arrayContaining([
+      expect.objectContaining({ code: actionId === 'deployments.teardown' ? 'invalid_value' : 'invalid_type', path: [missing] }),
+    ]) } });
+});
+
+it('keeps nested union repair paths when JSON is composed with friendly flags', () => {
+  const schema = z.strictObject({
+    choice: z.union([z.strictObject({ id: z.string() }), z.strictObject({ id: z.number() })]),
+    note: z.optional(z.string()),
+  });
+  expect(composeActionCliInput({
+    parsed: { ok: true, canonicalBase: { choice: {} }, callerOverlay: { note: 'continue' } },
+    canonicalSchema: schema, callerSchema: schema,
+    context: { actionId: 'deployments.rollback', invocationId: 'partial-diagnostics' },
+  })).toMatchObject({ ok: false, code: 'invalid_arguments', message: expect.stringContaining('choice.id'),
+    details: { issues: expect.arrayContaining([expect.objectContaining({ code: 'invalid_type', path: ['choice', 'id'] })]) } });
+});
+
 const CallerSchema = z.strictObject({
   sessionId: z.string().check(z.minLength(1)),
   message: z.string().check(z.minLength(1)),

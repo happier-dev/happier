@@ -86,6 +86,15 @@ const repository = {
 };
 
 describe('platform target link model', () => {
+  it('offers teardown only when the runtime target declares it', () => {
+    const runtime = manifest.contributes.deploymentTargets![0]!;
+    if (runtime.role !== 'runtime') throw new Error('Expected the runtime target descriptor');
+    const withTeardown = { ...manifest, contributes: { ...manifest.contributes,
+      deploymentTargets: [{ ...runtime, actions: { ...runtime.actions, teardown: 'teardown' } }],
+    } } as PluginPortableReleaseManifestV1;
+    expect(readDeploymentPlatformTargets([{ manifest: withTeardown }])[0]).toHaveProperty('teardown', true);
+    expect(readDeploymentPlatformTargets([{ manifest }])[0]).not.toHaveProperty('teardown');
+  });
   it('offers runtime logs only when the runtime target declares that canonical role', () => {
     const runtime = manifest.contributes.deploymentTargets![0]!;
     if (runtime.role !== 'runtime') throw new Error('Expected the runtime target descriptor');

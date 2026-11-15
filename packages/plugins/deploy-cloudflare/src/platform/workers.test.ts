@@ -29,6 +29,38 @@ function fixture(responses: unknown[]) {
 }
 const observed = { ...scope, providerDeploymentId: 'build-1' };
 
+it.each([false, true])('reports only provider-enabled workers.dev addresses (enabled=%s)', async enabled => {
+  const h = fixture([{ deployments: [{ versions: [{ version_id: 'exact', percentage: 100 }] }] },
+    { enabled, previews_enabled: false }, ...(enabled ? [{ subdomain: 'my-account' }] : [])]);
+  const outcome = await entry.observeUploadedWorker({ ...scope, providerDeploymentId: 'version:exact' }, h.context);
+  expect(outcome).toMatchObject({ state: 'succeeded', urls: enabled ? ['https://app.my-account.workers.dev'] : [] });
+  expect(h.request.mock.calls.every(([request]) => request.method === 'GET')).toBe(true);
+  expect(h.request).toHaveBeenCalledTimes(enabled ? 3 : 2);
+});
+
+it('preserves proven activation when address discovery is unavailable', async () => {
+  const h = fixture([{ deployments: [{ versions: [{ version_id: 'exact', percentage: 100 }] }] },
+    new PluginError({ code: 'deployment_access_denied', retryable: false })]);
+  const outcome = await entry.observeUploadedWorker({ ...scope, providerDeploymentId: 'version:exact' }, h.context);
+  expect(outcome).toMatchObject({ state: 'succeeded' });
+  expect(outcome).not.toHaveProperty('urls');
+});
+
+it('preserves proven activation when optional address discovery is cancelled', async () => {
+  const h = fixture([{ deployments: [{ versions: [{ version_id: 'exact', percentage: 100 }] }] }]);
+  const read = h.request.getMockImplementation()!;
+  h.request.mockImplementation(async request => {
+    if (request.url.endsWith('/subdomain')) {
+      h.controller.abort();
+      throw h.controller.signal.reason;
+    }
+    return read(request);
+  });
+  const outcome = await entry.observeUploadedWorker({ ...scope, providerDeploymentId: 'version:exact' }, h.context);
+  expect(outcome).toMatchObject({ state: 'succeeded' });
+  expect(outcome).not.toHaveProperty('urls');
+});
+
 it('prepares the exact tag/trigger and repository once, without credential or native scope duplication', async () => {
   const h = fixture([[{ trigger_uuid: triggerUuid, external_script_id: workerTag, deleted_on: null,
     repo_connection: { provider_type: 'github', provider_account_name: 'example', repo_name: 'app', repo_id: '123', deleted_on: null } }]]);
@@ -69,9 +101,9 @@ it('proves every traffic-bearing version by documented build association, not ma
   expect(DeploymentTargetRoleResultV1ProtocolSchema.parse(await entry.observeWorker(observed, h.context)))
     .toEqual({ v: 1, state: 'succeeded', providerDeploymentId: 'build-1', observedAtMs: 123 });
   expect(h.request.mock.calls.map(([request]) => request.url).slice(2)).toEqual([
-    `${root}/builds/builds?version_ids=version-a`, `${root}/builds/builds?version_ids=version-b`,
+    `${root}/builds/builds?version_ids=version-a`, `${root}/builds/builds?version_ids=version-b`, `${root}/workers/scripts/app/subdomain`,
   ]);
-  expect(h.request).toHaveBeenCalledTimes(4);
+  expect(h.request).toHaveBeenCalledTimes(5);
 });
 
 it.each(['fail', 'cancelled', 'terminated', 'skipped'] as const)('normalizes terminal %s without serving reads or invented success', async outcome => {
@@ -138,7 +170,7 @@ it('does not re-enforce the provider traffic total with a competing floating-poi
     { version_id: 'version-a', percentage: 0.01 }, { version_id: 'version-b', percentage: 64.04 }, { version_id: 'version-c', percentage: 35.95 },
   ] }] }, ...Array.from({ length: 3 }, () => ({ builds: { arbitraryKey: build } }))]);
   expect(await entry.observeWorker(observed, h.context)).toMatchObject({ state: 'succeeded' });
-  expect(h.request).toHaveBeenCalledTimes(5);
+  expect(h.request).toHaveBeenCalledTimes(6);
 });
 
 it('retains the canonical cancel phase when the native cancel response is lost', async () => {

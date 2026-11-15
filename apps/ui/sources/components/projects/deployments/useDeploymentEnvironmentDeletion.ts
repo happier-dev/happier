@@ -129,12 +129,18 @@ export function useDeploymentEnvironmentDeletion(options: DeploymentEnvironmentD
             return result.ok ? { kind: 'linked', targetLinkId: result.targetLinkId } : readDeploymentActionResult(result);
         }, operation, 'manageTargets');
     }
-    /** Stop and remove is one admitted teardown; its owner also removes the Environment. */
-    function stopAndRemove(targetLinkId: string | null, operation?: UiActionOperation, volumes?: DeploymentTeardownVolumesV1) {
+    /**
+     * Stop and remove is one admitted teardown; its owner also removes the Environment unless only a provider target's
+     * resource goes. `providerRemoval` carries the person's reviewed choice to the provider teardown owner.
+     */
+    function stopAndRemove(targetLinkId: string | null, operation?: UiActionOperation, volumes?: DeploymentTeardownVolumesV1,
+        options?: Readonly<{ providerRemoval?: 'unlink' | 'delete'; removeEnvironment?: false }>) {
         return run(async (actions, value, invoked) => {
             const link = targetLinkId ?? value.environment.runtimeTargetLinkId ?? null;
             const torn = await actions.teardown({ environmentId: value.environment.id, reason: 'manual',
-                ...(link ? { targetLinkId: link } : {}), ...(volumes ? { volumes } : {}), requestKey: randomUUID(), removeEnvironment: true },
+                ...(link ? { targetLinkId: link } : {}), ...(volumes ? { volumes } : {}), requestKey: randomUUID(),
+                ...(options?.providerRemoval ? { providerRemoval: options.providerRemoval } : {}),
+                ...(options?.removeEnvironment === false ? {} : { removeEnvironment: true as const }) },
             { ...invoked, confirmed: true });
             if (torn.ok && 'environmentRemoved' in torn && torn.environmentRemoved === true) {
                 return { kind: 'deleted', detached: false };

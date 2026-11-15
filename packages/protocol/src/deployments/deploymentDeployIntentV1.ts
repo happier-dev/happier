@@ -47,12 +47,15 @@ export const DeploymentDeployActionInputV1Schema = lazyZodSchema(() => z.union([
 ]));
 export const DeploymentRollbackInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...DeploymentRuntimeContentCasV1Schema.shape,
-  deploymentId: DeploymentIdentifierV1Schema,
-  restoreBackupId: z.optional(DeploymentIdentifierV1Schema),
+  deploymentId: DeploymentIdentifierV1Schema.check(z.describe('Historical deployment receipt ID to roll back to, selected from deployments.receipts.list.')),
+  restoreBackupId: z.optional(DeploymentIdentifierV1Schema.check(z.describe('Explicit backup ID to restore with this rollback; omit to roll back code only.'))),
 }));
 export const DeploymentRollbackIntentInputV1Schema = lazyZodSchema(() => z.strictObject({
-  serverId: DeploymentIdentifierV1Schema, environmentId: DeploymentIdentifierV1Schema, deploymentId: DeploymentIdentifierV1Schema,
-  requestKey: z.optional(DeploymentIdentifierV1Schema), restoreBackupId: z.optional(DeploymentIdentifierV1Schema),
+  serverId: DeploymentRuntimeContentCasV1Schema.shape.serverId,
+  environmentId: DeploymentRuntimeContentCasV1Schema.shape.environmentId,
+  deploymentId: DeploymentRollbackInputV1Schema.shape.deploymentId,
+  requestKey: z.optional(DeploymentRuntimeContentCasV1Schema.shape.requestKey),
+  restoreBackupId: DeploymentRollbackInputV1Schema.shape.restoreBackupId,
 }));
 export const DeploymentRollbackActionInputV1Schema = lazyZodSchema(() => z.union([
   DeploymentRollbackInputV1Schema, DeploymentRollbackIntentInputV1Schema,
