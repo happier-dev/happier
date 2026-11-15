@@ -205,6 +205,7 @@ export const OH_MY_PI_PLUGIN = definePlugin({
             product: OH_MY_PI_SESSION_FILE_STORE_DESCRIPTOR_V1,
             settings: input.pluginSettings.account ?? {},
             env: input.environment,
+            cwd: input.parsed.directory,
           });
           return {
             ok: true,
