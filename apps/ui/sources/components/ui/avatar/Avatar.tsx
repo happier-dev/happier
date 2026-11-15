@@ -15,6 +15,7 @@ import { shadowLevelStyle } from '@/shadowElevation';
 import {
     resolveAgentIdFromFlavor,
     getAgentAvatarOverlaySizes,
+    hasAgentIconMark,
 } from '@/agents/catalog/catalog';
 
 interface AvatarProps {
@@ -90,6 +91,11 @@ export const Avatar = React.memo((props: AvatarProps) => {
     const showFlavorIcons = useSetting('showFlavorIcons');
 
     const agentId = resolveAgentIdFromFlavor(flavor);
+    // An Agent the catalog carries no presentation for — an installed Agent, a session whose Agent is
+    // unreadable, or a bundled Agent with no mark of its own (Muse) — has no mark to show. Wearing the
+    // default Agent's mark would claim the session belongs to that Agent, and an empty badge is a blank
+    // disc over the avatar, so it stays bare.
+    const overlayAgentId = showFlavorIcons && agentId && hasAgentIconMark(agentId, theme) ? agentId : null;
 
     const unreadBadgeSize = Math.round(size * 0.4);
     const unreadBadgeElement = hasUnreadMessages ? (
@@ -114,7 +120,6 @@ export const Avatar = React.memo((props: AvatarProps) => {
             />
         );
 
-        const overlayAgentId = showFlavorIcons ? agentId : null;
         if (overlayAgentId || hasUnreadMessages) {
             const { circleSize, iconSize } = getAgentAvatarOverlaySizes(overlayAgentId ?? '', size);
 
@@ -156,10 +161,6 @@ export const Avatar = React.memo((props: AvatarProps) => {
     const firstGrapheme = monogramName ? resolveHappierBrandFallback(monogramName)
         : props.title ? resolveHappierBrandFallback(props.id) : undefined;
 
-    // An Agent the catalog carries no presentation for — an installed Agent, or a
-    // session whose Agent is unreadable — has no mark to show. Wearing the default
-    // Agent's mark would claim the session belongs to that Agent, so it stays bare.
-    const overlayAgentId = showFlavorIcons ? agentId : null;
     const { circleSize, iconSize } = getAgentAvatarOverlaySizes(overlayAgentId ?? '', size);
 
     if (overlayAgentId || hasUnreadMessages || firstGrapheme || testID || accessibilityLabel) {
