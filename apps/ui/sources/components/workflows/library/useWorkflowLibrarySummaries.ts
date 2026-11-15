@@ -163,8 +163,10 @@ function createSummaryOwner(lifetime: ActiveServerAccountScopeLifetime) {
 const owners = new WeakMap<ActiveServerAccountScopeLifetime, ReturnType<typeof createSummaryOwner>>();
 
 /** Concurrent mounts union their ids before transport; later mounts join in-flight ids. A single
- * Account wake refreshes current demand and equal replies retain row/map identities. */
-function useWorkflowSummaries<T>(requestedIds: readonly string[], selector: SummarySelection<T>, explicitLifetime?: ServerAccountScopeLifetime | null): SummaryRead<T> {
+ * Account wake refreshes current demand and equal replies retain row/map identities. An undemanded
+ * reader keeps selecting the held summaries for its ids without demanding them. */
+function useWorkflowSummaries<T>(requestedIds: readonly string[], selector: SummarySelection<T>, explicitLifetime?: ServerAccountScopeLifetime | null,
+    demanded = true): SummaryRead<T> {
     const activeLifetime = useActiveServerAccountScopeLifetime();
     const addressedLifetime = useWorkflowAccountLifetime(explicitLifetime);
     const selectedLifetime = addressedLifetime === undefined ? activeLifetime : addressedLifetime;
@@ -207,14 +209,14 @@ function useWorkflowSummaries<T>(requestedIds: readonly string[], selector: Summ
         };
         return { owner, keys, get };
     }, [key, lifetime, selector]);
-    React.useEffect(() => selection.owner?.demand(selection.keys), [selection]);
+    React.useEffect(() => demanded ? selection.owner?.demand(selection.keys) : undefined, [demanded, selection]);
     return React.useSyncExternalStore(selection.owner?.subscribe ?? subscribeInactive, selection.get, selection.get);
 }
 
-export function useWorkflowLibrarySummaries(sourceArtifactIds: readonly string[], options?: Readonly<{ accountLifetime?: ServerAccountScopeLifetime | null }>): SummaryRead<WorkflowLibraryRunSummary> {
-    return useWorkflowSummaries(sourceArtifactIds, SOURCE_SELECTION, options?.accountLifetime);
+export function useWorkflowLibrarySummaries(sourceArtifactIds: readonly string[], options?: Readonly<{ accountLifetime?: ServerAccountScopeLifetime | null; demanded?: boolean }>): SummaryRead<WorkflowLibraryRunSummary> {
+    return useWorkflowSummaries(sourceArtifactIds, SOURCE_SELECTION, options?.accountLifetime, options?.demanded !== false);
 }
 
-export function useWorkflowAutomationSummaries(automationIds: readonly string[]): SummaryRead<WorkflowAutomationRunSummary> {
-    return useWorkflowSummaries(automationIds, AUTOMATION_SELECTION);
+export function useWorkflowAutomationSummaries(automationIds: readonly string[], options?: Readonly<{ demanded?: boolean }>): SummaryRead<WorkflowAutomationRunSummary> {
+    return useWorkflowSummaries(automationIds, AUTOMATION_SELECTION, undefined, options?.demanded !== false);
 }

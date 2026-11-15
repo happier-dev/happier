@@ -12,14 +12,20 @@ import { useActiveHomeSettling } from '@/components/navigation/connectionStatus/
 
 const EMPTY_SETS: readonly WorkflowTriggerSetV1[] = [];
 
-/** Read lifecycle only; the existing Account Automation projection remains the row owner. */
-export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | null, accountLifetime?: ServerAccountScopeLifetime | null): {
+/**
+ * Read lifecycle only; the existing Account Automation projection remains the row owner.
+ * `demanded: false` keeps the held sets and their change observation but issues no read; demand
+ * returning reads again only when a change arrived meanwhile or the last read did not settle.
+ */
+export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | null, accountLifetime?: ServerAccountScopeLifetime | null,
+    options?: Readonly<{ demanded?: boolean }>): {
     sets: readonly WorkflowTriggerSetV1[];
     status: 'loading' | 'ready' | 'failed';
     retry: () => void;
     acknowledge: (written: WorkflowTriggerSetV1) => void;
 } {
     const addressed = accountLifetime !== undefined;
+    const demanded = options?.demanded !== false;
     const activeLifetime = useActiveServerAccountScopeLifetime();
     const lifetime = addressed ? accountLifetime ?? null : activeLifetime;
     const scope = lifetime?.scope ?? null;
@@ -70,6 +76,8 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
         }
     }, [addressed, focused, identity, lifetime, sets, state]);
     const [attempt, setAttempt] = React.useState(0);
+    // The read inputs the last settled answer covered. Demand returning with the same inputs reads nothing.
+    const settledRead = React.useRef<readonly unknown[] | null>(null);
     const readNotCurrent = React.useRef(false);
     readNotCurrent.current = state.identity !== identity || state.status !== 'ready';
     React.useEffect(() => !accountLifetime ? undefined : subscribeHomeAccountChange(event => {
@@ -79,7 +87,10 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
         setAttempt(value => value + 1);
     }, { reconnect: { readNotCurrent: () => readNotCurrent.current } }), [accountLifetime]);
     React.useEffect(() => {
-        if (readRequest === null || (addressed && !accountLifetime?.isCurrent())) return;
+        if (!demanded || readRequest === null || (addressed && !accountLifetime?.isCurrent())) return;
+        const inputs = [attempt, changeSignal, identity, readRequest, accountLifetime, lifetime];
+        const covered = settledRead.current;
+        if (covered && covered.length === inputs.length && covered.every((value, index) => value === inputs[index])) return;
         // No Account scope yet is not a failed read: right after sign-in the page mounts before its Account
         // is established. The lifetime is a dependency, so the read starts, and settles, once it arrives.
         if (!lifetime) {
@@ -99,6 +110,7 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
             ...(addressed ? { accountLifetime } : {}) }).then(result => {
             if (!controller.signal.aborted && lifetime.isCurrent()) {
                 if (addressed) snapshot.current = { identity, sets: result };
+                settledRead.current = inputs;
                 setState({ identity, status: 'ready' });
             }
         }).catch(() => {
@@ -110,7 +122,7 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
             controller.abort(); retirement.dispose();
             if (pendingRead.current === pending) pendingRead.current = null;
         };
-    }, [attempt, changeSignal, identity, readRequest, addressed, accountLifetime, lifetime]);
+    }, [attempt, changeSignal, demanded, identity, readRequest, addressed, accountLifetime, lifetime]);
     const retry = React.useCallback(() => setAttempt((value) => value + 1), []);
     // A settled failure stays actionable even while realtime reconnects. Home recovery
     // still retries the read automatically without turning its failed answer into loading.

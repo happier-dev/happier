@@ -574,9 +574,13 @@ const INACTIVE_DEFINITION_LIBRARY: WorkflowDefinitionLibrary = Object.freeze({
     retry: retryDefinitions, loadMore: requestMoreDefinitions,
 });
 
-/** The saved definitions: last-good on reopen, read when this Account lifetime has not followed them. */
+/**
+ * The saved definitions: last-good on reopen, read when this Account lifetime has not followed them.
+ * `enabled: false` observes nothing. `demanded: false` keeps observing the held rows while releasing
+ * read demand, so a hidden list keeps its last-good rows instead of rebuilding them on return.
+ */
 export function useWorkflowDefinitionLibrary(options?: Readonly<{
-    enabled?: boolean; accountLifetime?: ServerAccountScopeLifetime | null; definitionIds?: readonly string[];
+    enabled?: boolean; demanded?: boolean; accountLifetime?: ServerAccountScopeLifetime | null; definitionIds?: readonly string[];
 }>): WorkflowDefinitionLibrary {
     const addressedLifetime = useWorkflowAccountLifetime(options?.accountLifetime);
     const enabled = options?.enabled ?? true;
@@ -585,13 +589,15 @@ export function useWorkflowDefinitionLibrary(options?: Readonly<{
     const definitionIds = React.useMemo(() => options?.definitionIds === undefined ? undefined
         : [...new Set(options.definitionIds)].sort(), [options?.definitionIds]);
     const reader = definitionLibraryForLifetime(definitionIds === undefined ? addressedLifetime : lifetime, definitionIds);
-    const readable = enabled && (definitionIds === undefined ? addressedLifetime === undefined || lifetime?.isCurrent() === true
+    const observable = enabled && (definitionIds === undefined ? addressedLifetime === undefined || lifetime?.isCurrent() === true
         : definitionIds.length > 0 && lifetime?.isCurrent() === true);
+    // A reader subscription is demand (its wakes read); the cell alone only observes held rows.
+    const readable = observable && options?.demanded !== false;
     const scopeKey = lifetime === null ? null : serverAccountScopeKeySuffix(lifetime.scope);
     const state = React.useSyncExternalStore(
-        readable ? reader.subscribe : subscribeInactiveDefinitions,
-        readable ? reader.cell.get : readInactiveDefinitions,
-        readable ? reader.cell.get : readInactiveDefinitions,
+        readable ? reader.subscribe : observable ? reader.cell.subscribe : subscribeInactiveDefinitions,
+        observable ? reader.cell.get : readInactiveDefinitions,
+        observable ? reader.cell.get : readInactiveDefinitions,
     );
     React.useEffect(() => { if (readable && lifetime) reader.demand(); }, [readable, lifetime, reader]);
     if (!enabled) return INACTIVE_DEFINITION_LIBRARY;

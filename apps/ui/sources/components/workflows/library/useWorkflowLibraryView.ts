@@ -55,7 +55,10 @@ function resolveLibraryViews(rows: readonly WorkflowLibraryRow[], summaries: Rea
     return ['all', ...(triggered ? ['triggered' as const] : []), ...(running ? ['running' as const] : [])] satisfies WorkflowLibraryView[];
 }
 
+const ACCOUNT_INLINE = { scope: 'account_inline' } as const;
 const ACCOUNT_CLEANUP = { scope: 'account_source_unavailable' } as const;
+const DEMANDED = { demanded: true } as const;
+const UNDEMANDED = { demanded: false } as const;
 
 /** The one Workflow draft every mounted library list narrows through (column and library home, R8-7). */
 const workflowLibraryDraft = createCollectionSpaceDraftStore<'workflow'>();
@@ -67,22 +70,24 @@ const workflowLibraryDraft = createCollectionSpaceDraftStore<'workflow'>();
  */
 export function useWorkflowLibraryView(focused: boolean) {
     const language = usePreferredLanguage();
-    const library = useWorkflowDefinitionLibrary({ enabled: focused });
-    const accountInline = useWorkflowTriggerSets(focused ? { scope: 'account_inline' } : null);
+    // Unfocused, the library releases its demand but keeps its last-good rows: a hidden list that
+    // returns shows them as they stood rather than rebuilding every row (P03-TAB-CONTENT-2 W6).
+    const demand = focused ? DEMANDED : UNDEMANDED;
+    const library = useWorkflowDefinitionLibrary(demand);
+    const accountInline = useWorkflowTriggerSets(ACCOUNT_INLINE, undefined, demand);
     // Its failure leaves these additive cleanup rows absent, never the Library partial.
-    const accountCleanup = useWorkflowTriggerSets(focused ? ACCOUNT_CLEANUP : null);
+    const accountCleanup = useWorkflowTriggerSets(ACCOUNT_CLEANUP, undefined, demand);
     const accountWorkflows = React.useMemo(() => {
         return { ...accountInline, sets: accountCleanup.sets.length ? [...accountInline.sets, ...accountCleanup.sets] : accountInline.sets,
             retry: () => { accountInline.retry(); accountCleanup.retry(); } };
     }, [accountInline.sets, accountInline.status, accountInline.retry, accountInline.acknowledge, accountCleanup.sets, accountCleanup.retry]);
     const split = React.useMemo(() => splitLibraryDefinitions(library.definitions, library.pluginWorkflows), [library.definitions, library.pluginWorkflows]);
     // The same per-definition summary read for every reader (one request owner, shared demand).
-    const summaryIds = React.useMemo(() => focused
-        ? [...split.library, ...split.sharedWithYou].map((definition) => definition.definitionId) : [],
-        [focused, split.library, split.sharedWithYou]);
-    const { summaries } = useWorkflowLibrarySummaries(summaryIds);
-    const automationIds = React.useMemo(() => focused ? accountWorkflows.sets.map(set => set.automationId) : [], [focused, accountWorkflows.sets]);
-    const automationSummaries = useWorkflowAutomationSummaries(automationIds);
+    const summaryIds = React.useMemo(() => [...split.library, ...split.sharedWithYou].map((definition) => definition.definitionId),
+        [split.library, split.sharedWithYou]);
+    const { summaries } = useWorkflowLibrarySummaries(summaryIds, demand);
+    const automationIds = React.useMemo(() => accountWorkflows.sets.map(set => set.automationId), [accountWorkflows.sets]);
+    const automationSummaries = useWorkflowAutomationSummaries(automationIds, demand);
     const previousRecords = React.useRef<readonly WorkflowLibraryRecordRow[]>([]);
     const records = React.useMemo(() => {
         const next = projectWorkflowLibraryRecords({ definitions: split, accountTriggers: accountWorkflows.sets,

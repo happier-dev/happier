@@ -272,6 +272,15 @@ describe('WorkflowsColumn', () => {
         const libraryRows = screen.findAll(node => typeof node.props?.testID === 'string' && typeof node.props.onPress === 'function'
             && /^workflows-column:library:/.test(node.props.testID) && node.props.title !== undefined).map(node => node.props.testID as string);
         expect([...new Set(libraryRows)]).toEqual(['workflows-column:library:account-trigger:digest', `workflows-column:library:${definitionId}`]);
+        // Hiding Definitions releases its demand but keeps its last-good rows: a return shows the same rows,
+        // never a rebuilt list (P03-TAB-CONTENT-2 W6). Identity, compared as booleans.
+        const accountRow = screen.findHostByTestId('workflows-column:library:account-trigger:digest');
+        const savedRow = screen.findHostByTestId(`workflows-column:library:${definitionId}`);
+        await pressView(screen, 'runs');
+        await pressView(screen, 'definitions');
+        expect({ accountRowKept: screen.findHostByTestId('workflows-column:library:account-trigger:digest') === accountRow,
+            savedRowKept: screen.findHostByTestId(`workflows-column:library:${definitionId}`) === savedRow })
+            .toEqual({ accountRowKept: true, savedRowKept: true });
         // Every Library row would carry the same workflow glyph, so none draws a leading mark: the names start
         // on the list's edge, while built-ins keep their own marks (LIST-ICONS-1108).
         const libraryMarks = screen.findAll(node => /^workflows-column:library:/.test(String(node.props?.testID ?? '')) && node.props.title !== undefined)
