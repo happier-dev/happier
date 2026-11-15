@@ -3,7 +3,7 @@ import { WorkspaceSyncController } from './workspaceSyncController';
 import { deriveWorkspaceSyncConflictAsidePaths } from '@happier-dev/protocol';
 import { computeWorkspaceSyncPolicyDigest, type WorkspaceSyncRelationshipV1, type WorkspaceSyncStatusV1 } from './workspaceSyncTypes';
 import { deriveWorkspaceSyncEndpointId, type MutagenControlCommandV1, type MutagenSessionSummaryV1 } from './transport/workspaceSyncBrokerProtocol';
-import { access, mkdir, mkdtemp, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, open, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -3045,6 +3045,57 @@ describe('WorkspaceSyncController', () => {
     expect(openLocalWorkspaceAgentStream).not.toHaveBeenCalled();
     await controller.shutdown();
     await rm(fixture, { recursive: true, force: true });
+  });
+
+  it('rejects pending ingress from a replaced physical root after same-definition ensure reacquires custody', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'workspace-sync-pending-root-recovery-'));
+    const rootPath = join(fixture, 'root');
+    await mkdir(rootPath);
+    await writeFile(join(rootPath, 'payload.txt'), 'old physical root');
+    let opened!: () => void;
+    const openingBoundary = new Promise<void>(resolve => { opened = resolve; });
+    let release!: () => void;
+    const boundaryRelease = new Promise<void>(resolve => { release = resolve; });
+    const staleStream = new PassThrough();
+    let staleFile: Awaited<ReturnType<typeof open>> | undefined;
+    const controller = new WorkspaceSyncController({
+      adapter: completeAdapter(), lifecycle: lifecycle(), localMachineId: 'm1',
+      rootOwnershipManager: createWorkspaceRootOwnershipManager({ lockDirectory: join(fixture, 'locks') }),
+      resolveWorkspaceRef: id => id === 'a'
+        ? { machineId: 'm1', rootPath }
+        : { machineId: 'm2', rootPath: '/remote/b' },
+      // The local process boundary retains the old file object while its ACK is held.
+      openLocalWorkspaceAgentStream: async ({ canonicalRoot }) => {
+        staleFile = await open(join(canonicalRoot, 'payload.txt'));
+        opened();
+        await boundaryRelease;
+        staleStream.end(await staleFile.readFile('utf8'));
+        return ownedLocalAgent(staleStream, async () => { await staleFile?.close(); });
+      },
+    });
+    try {
+      await controller.ensure(definition);
+      const opening = controller.openExternalStream({ endpointId: deriveWorkspaceSyncEndpointId('r1', 'alpha') });
+      await openingBoundary;
+      await rename(rootPath, join(fixture, 'old-root'));
+      await mkdir(rootPath);
+      await writeFile(join(rootPath, 'payload.txt'), 'replacement physical root');
+      await expect(controller.flush('r1')).rejects.toMatchObject({ code: 'workspace_root_ownership_lost' });
+      await controller.ensure(definition);
+      release();
+      const outcome = await opening.then(async stream => {
+        const chunks: Buffer[] = [];
+        for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+        return { retainedBytes: Buffer.concat(chunks).toString('utf8') };
+      }, error => ({ error }));
+      expect(outcome).toMatchObject({ error: { code: 'relationship_not_owned' } });
+      expect(staleStream.destroyed).toBe(true);
+    } finally {
+      release();
+      await controller.shutdown();
+      await staleFile?.close();
+      await rm(fixture, { recursive: true, force: true });
+    }
   });
 
   it('wakes and closes a status subscription immediately when its signal aborts', async () => {

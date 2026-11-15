@@ -1189,7 +1189,10 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
       // A cold staged row may already occupy definitions. After successful
       // transient engine admission, retain its live definition, not that
       // disabled restart intent, for the existing reconciliation owner.
-      this.retainLiveDefinition(runtimeDefinition);
+      // Reacquired roots own a new physical custody lifetime, even when the
+      // saved definition is unchanged. Pending ingress from lost roots retires.
+      if (needsOwnership) this.definitions.set(valid.relationshipId, runtimeDefinition);
+      else this.retainLiveDefinition(runtimeDefinition);
       if (preparation?.transient) this.transientDefinitions.add(valid.relationshipId);
       else this.transientDefinitions.delete(valid.relationshipId);
       this.ownershipLost.delete(valid.relationshipId);
@@ -1207,7 +1210,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
   }
   private retainLiveDefinition(definition: WorkspaceSyncRelationshipV1): void {
     // Native ingress captures this identity while opening. Refreshing the same
-    // schema-owned value preserves its custody; changed intent replaces it.
+    // schema-owned value with unchanged root custody preserves it; changed intent replaces it.
     const current = this.definitions.get(definition.relationshipId);
     if (!current || !isDeepStrictEqual(current, definition)) {
       this.definitions.set(definition.relationshipId, definition);
