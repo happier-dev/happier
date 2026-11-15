@@ -8792,6 +8792,8 @@ settingsSession: {
     inputBehavior: {
         keepFocusTitle: "送信後もコンポーザーにフォーカスを保つ",
         keepFocusSubtitle: "入力欄に留まり、すぐ次のメッセージを書けます。",
+        typeToFocusTitle: "どこからでも入力",
+        typeToFocusSubtitle: "テキスト欄の外で入力を始めると、メッセージ欄に移動します。",
         title: '入力の動作',
         footer: 'Enterで送信とメッセージ履歴の動作を設定します。',
         enterToSendEnabledNativeSubtitle: 'Enterで送信',

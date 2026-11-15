@@ -7258,6 +7258,8 @@ settingsSession: {
         inputBehavior: {
             keepFocusTitle: "傳送後保持編輯器焦點",
             keepFocusSubtitle: "留在訊息欄位，以便立即撰寫下一則訊息。",
+            typeToFocusTitle: "隨處輸入",
+            typeToFocusSubtitle: "在文字欄位外直接輸入即可跳到訊息欄位。",
             title: '輸入行為',
             footer: '設定按 Enter 傳送與訊息歷史行為。',
             enterToSendEnabledNativeSubtitle: '按 Enter 傳送',

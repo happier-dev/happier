@@ -8540,6 +8540,8 @@ settingsSession: {
       inputBehavior: {
           keepFocusTitle: "Mantener el editor enfocado al enviar",
           keepFocusSubtitle: "Permanece en el campo de mensaje para escribir el siguiente enseguida.",
+          typeToFocusTitle: "Escribir desde cualquier lugar",
+          typeToFocusSubtitle: "Empieza a escribir fuera de un campo de texto para ir al campo de mensaje.",
           title: 'Comportamiento de la entrada',
           footer: 'Configura Enviar con Intro y el comportamiento del historial de mensajes.',
           enterToSendEnabledNativeSubtitle: 'Pulsa Intro para enviar',

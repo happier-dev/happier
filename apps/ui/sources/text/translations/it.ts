@@ -8871,6 +8871,8 @@ settingsSession: {
       inputBehavior: {
           keepFocusTitle: "Mantieni l’editor attivo dopo l’invio",
           keepFocusSubtitle: "Resta nel campo del messaggio per scrivere subito il successivo.",
+          typeToFocusTitle: "Scrivi da qualsiasi punto",
+          typeToFocusSubtitle: "Inizia a digitare fuori da un campo di testo per passare al campo del messaggio.",
           title: 'Comportamento dell\'immissione',
           footer: 'Configura Invio con Enter e il comportamento della cronologia dei messaggi.',
           enterToSendEnabledNativeSubtitle: 'Premi Invio per inviare',
