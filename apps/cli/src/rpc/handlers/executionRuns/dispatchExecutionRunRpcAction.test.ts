@@ -320,6 +320,30 @@ describe('execution-run RPC Action settings provider', () => {
     expect(listPublicForRequest).not.toHaveBeenCalled();
   });
 
+  // The shared router owns approval: a Machine-scoped Require reaches it with the admitted scope.
+  it('routes a Machine-scoped Require through the shared approval router', async () => {
+    const approvalsCreate = vi.fn<NonNullable<ExecutionRunRpcApprovalDeps['approvalsCreate']>>(
+      async () => ({ artifactId: 'approval_machine_scope' }),
+    );
+    const executor = createExecutionRunRpcActionExecutor({
+      manager: createExecutionRunBridgeWithRun({}),
+      context: { sessionId: 'sess_1', cwd: '/workspace' },
+      policy: resolveExecutionRunPolicy({ defaults: { boundedTimeoutMs: null, reviewBoundedTimeoutMs: null, maxTurns: null } }),
+      isExecutionRunsEnabled: () => true,
+      actionsSettingsProvider: createScopedRuntimeActionSettingsProvider(normalizeActionsSettingsV1({
+        v: 1, actions: {}, scopedApprovalPreferences: [{ actionId: 'machines.reachability.inspect',
+          scope: { kind: 'machine', machineId: 'machine-1' }, approvalRequiredSurfaces: ['agent'], approvalWaivedSurfaces: [] }],
+      })),
+      approvalDeps: { approvalsCreate, approvalsUpdate: async () => ({ ok: true }) },
+    });
+
+    await expect(executor.execute('machines.reachability.inspect', { machineId: 'machine-1' }, {
+      surface: 'agent', authority: 'account_automation', defaultSessionId: 'sess_1',
+      serverId: 'server-1', runtimeAccountId: 'account-1', actionRequestId: 'machine-scope-request-1',
+    })).resolves.toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'approval_machine_scope' } });
+    expect(approvalsCreate).toHaveBeenCalledOnce();
+  });
+
   it('retains environment overrides through the ordinary Account settings provider', async () => {
     vi.stubEnv('HAPPIER_ACTIONS_SETTINGS_V1', JSON.stringify({
       v: 1,

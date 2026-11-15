@@ -300,7 +300,7 @@ export async function executeClaimedRun(params: {
         settlementCurrentness = started;
         const result = await params.actionExecutor.execute('action.invoke', {
           action: materialized.target.action, input: materialized.target.input,
-        }, { surface: 'cli', authority: 'account_automation', signal: executionController.signal,
+        }, { surface: 'agent', authority: 'account_automation', signal: executionController.signal,
           actionCaller: { kind: 'automationRun', runId: claimed.run.id,
             automationId: claimed.run.automationId, cause: claimed.run.cause } });
         if (!isCurrent()) return;

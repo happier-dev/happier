@@ -9521,7 +9521,12 @@ Action on UI or CLI; opening a form or pressing its ordinary submit button is no
 policy confirmation. A trusted person's direct UI submit answers the automation
 default, while declared product reviews and contextual host preflight reviews remain.
 Explicit per-surface Ask settings still apply to automation and other-person
-requests, and waivers suppress the default for waivable Actions. The person's own
+requests, and waivers suppress the default for waivable Actions. Automation Runs
+invoke their Action on the `agent` surface with `account_automation` authority and an
+`automationRun` caller, the same surface as workflow steps (owner decision,
+2026-11-15), so they follow Agent approval routing. A CLI approval prompt decides
+only when a person is at an interactive terminal; otherwise the request stays open
+for another surface to decide. The person's own
 UI interaction retains the designed confirmation without a self-approval request.
 Contextual safety uses that same policy; it does not grant execution authority. The executor supplies contextual safety
 after input admission, never from a caller's assertion that a target is private.

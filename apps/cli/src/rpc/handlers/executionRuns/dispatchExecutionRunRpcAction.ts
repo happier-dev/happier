@@ -2,7 +2,6 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { carryActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { ExecutionRunEnsureOrStartRequestSchema, ExecutionRunEnsureRequestSchema, ExecutionRunActionRequestSchema, ExecutionRunSendRequestSchema } from '@happier-dev/protocol/execution/runs/index';
 import { ExecutionRunCancelTurnRequestSchema } from '@happier-dev/protocol/execution/runs/cancelTurn';
 import { ExecutionRunGetRequestSchema, ExecutionRunListRequestSchema, readExecutionRunStartRunCreation, withExecutionRunStartFailureDetails, ExecutionRunTransportErrorCodeSchema, type ExecutionRunStartFailureDetailsV1 } from '@happier-dev/protocol/execution/runs/responseSchemas';
@@ -1058,29 +1057,22 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
         placement: ctx.placement ?? null,
       },
     ),
-    isActionApprovalRequired: (id, ctx, input, _defaultUiConfirmation, _approvedOperation, _approvalScope, defaultSafety) => isApprovalRequiredByActionsSettings(
-      id,
-      actionsSettingsProvider.getActionsSettings(),
-      {
-        surface: ctx.surface ?? null,
-        authority: ctx.authority,
-        presentUserConfirmation: ctx.presentUserConfirmation,
-      },
-      defaultSafety,
-      undefined,
-      input,
-    ),
   };
   return actionDeps;
 }
 
 export function createExecutionRunRpcActionExecutor(
-  params: ExecutionRunRpcActionDepsParams,
+  inputParams: ExecutionRunRpcActionDepsParams,
 ): RpcActionExecutor {
+  const actionsSettingsProvider = inputParams.actionsSettingsProvider ?? createActionSettingsProvider();
+  const params = { ...inputParams, actionsSettingsProvider };
   const deps = createExecutionRunRpcActionDeps(params);
   const executor = createActionExecutor(deps);
   return {
-    execute: async (actionId, input, context) => {
+    execute: async (actionId, input, callerContext) => {
+      // This host owns the settings source; the shared router decides approval
+      // from them with the full invocation context (no host-local re-decision).
+      let context = { ...(callerContext ?? {}), actionsSettings: actionsSettingsProvider.getActionsSettings() };
       // Account governance precedes Project custody/preparation. A disabled
       // Action must still report its own policy result without a launch context.
       try {
@@ -1118,7 +1110,7 @@ export function createExecutionRunRpcActionExecutor(
           ...(context.operationReview ? { operationReview: context.operationReview } : {}),
         } : undefined;
       if ((createsRun || resumesRun) && (params.context.resolveProjectLaunchContext || projectSetupOperation)) {
-        const projectLaunchContext = await params.context.resolveProjectLaunchContext?.(context ?? { surface: 'rpc' });
+        const projectLaunchContext = await params.context.resolveProjectLaunchContext?.(callerContext ? context : { surface: 'rpc' });
         if (createsRun && params.context.resolveProjectLaunchContext && !projectLaunchContext) return { ok: false, errorCode: 'project_requester_credentials_unavailable',
           error: 'Project launch requester custody is unavailable', details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated') };
         const { resolveProjectLaunchContext: _resolve, ...captured } = params.context;

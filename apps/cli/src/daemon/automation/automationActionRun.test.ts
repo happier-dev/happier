@@ -74,6 +74,18 @@ describe('claimed Automation Action execution', () => {
     expect(succeedRun).not.toHaveBeenCalled();
     expect(failRun).not.toHaveBeenCalled();
   });
+  // Owner decision Q7 (2026-11-15): automations identify as 'agent', like workflows, so agent
+  // approval routing and the Machine Isolation automation origin read one trusted stamp.
+  it('invokes the Action as an agent-surface automation caller', async () => {
+    const daemon = vi.fn(async () => ({ matched: true as const, result: { ok: true as const, result: null } }));
+    await executeClaimedRun({ machineId: 'machine-1', claimed: claim(), heartbeatMs: 60_000, leaseDurationMs: 120_000,
+      actionExecutor: createPluginActionExecutor({ base: createActionExecutor({}), requestPluginActionExecution: daemon }),
+      claimClient: { heartbeatRun: vi.fn(), startRun: async () => witness, succeedRun: vi.fn(async () => {}), failRun: vi.fn() },
+      resolveAutomationAccountEncryption: async () => ({ kind: 'available', witness }) });
+    expect(daemon).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({
+      context: expect.objectContaining({ surface: 'agent', authority: 'account_automation',
+        actionCaller: expect.objectContaining({ kind: 'automationRun' }) }) }));
+  });
   it.each([true, false])('settles the Run with the daemon Action outcome (available=%s)', async available => {
     // The daemon process transport is the boundary; Action routing and recipe materialization stay real.
     const daemon = vi.fn(async () => ({ matched: true as const, result: available
