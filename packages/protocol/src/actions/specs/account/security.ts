@@ -12,6 +12,7 @@ function createAccountSecurityActionSpecs() {
   return Object.freeze([
   {
     id: 'account.plugins.data.erase', executionPlacement: 'account', approval: {result: 'required'},
+    bindings: { mcpToolName: 'account_plugins_data_erase' },
     irreversible: true,
     title: 'Erase Account plugin data',
     description: 'Erase the current Account’s retained data for one plugin without uninstalling local plugin code.',
@@ -20,8 +21,8 @@ function createAccountSecurityActionSpecs() {
     surfaces: {
       ui: true,
       voice: false,
-      agent: false,
-      mcp: false,
+      agent: true,
+      mcp: true,
       cli: false,
       rpc: false,
     },

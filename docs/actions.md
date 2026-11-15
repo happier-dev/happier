@@ -8694,6 +8694,11 @@ scoped to the mounted Account's own Session store.
 
 ## Approval is decided in one place
 
+In 0.3 development, `account.plugins.data.erase` is available to Agents and MCP
+through `account_plugins_data_erase`. It defaults to Ask through the ordinary
+approval policy: requesting erasure creates an approval request, and the original
+executor erases the selected plugin’s retained Account data after approval.
+
 In 0.3 development, CLI Actions forwarded to the daemon with live-only results
 return the typed
 `approval_request_created` result and its Artifact id as soon as approval is
