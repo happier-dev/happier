@@ -370,6 +370,125 @@ describe('apiProviderAccountUsage', () => {
         expect(projectionRequests.slice(beforeStateless)).toEqual(['GET', 'GET']);
     });
 
+    it.each(['projection', 'backfill'] as const)('releases replaced encrypted %s history generations across twenty fixed two-scope rounds', async acquisition => {
+        await activateTestHome();
+        const { Session: InspectorSession } = await import('node:inspector');
+        const { buildProviderAccountUsagePageProjectionV1 } = await import('@happier-dev/protocol/connect/providerAccountUsagePageProjection');
+        const { sealProviderAccountUsagePageProjectionV1 } = await import('@happier-dev/protocol/connect/providerAccountUsagePageProjectionCrypto');
+        const { parseQualifiedConnectedAccountV4StructuredQueryValue } = await import('@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec');
+        const { QualifiedProviderAccountUsageHistoryRequestV4Schema } = await import('@happier-dev/protocol/connect/providerAccountUsageHistory');
+        const snapshot = { ...makeSnapshot(), observedAtMs: 90, fetchedAtMs: 90, staleAfterMs: 1_000 };
+        const source = { ref: { service: { pluginId: 'example.usage', localId: 'usage' }, accountId: 'account' }, bindingKind: 'account' as const };
+        const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
+        const record = (value: ProviderAccountUsageSnapshotV1) => {
+            const sealed = sealProviderAccountUsageSnapshot({ snapshot: value, material, randomBytes: length => new Uint8Array(length).fill(9) });
+            return { content: { t: 'encrypted' as const, c: sealed.ciphertext, recoveryCreditDetails: sealed.recoveryCreditDetails },
+                metadata: { fetchedAt: value.fetchedAtMs, staleAfterMs: value.staleAfterMs, status: 'ok' }, sources: [source] };
+        };
+        const ranges = [{ startAtMs: 0, endAtMs: 100 }, { startAtMs: 25, endAtMs: 100 }];
+        let projectionReads = 0;
+        let exactReads = 0;
+        let writes = 0;
+        // Only the HTTP boundary is replaced. Ciphertext opening, validation,
+        // projection admission, derivation and replacement all remain real.
+        const request = async (path: string, init?: RequestInit) => {
+            if (path.includes('/history')) {
+                if (init?.method === 'PUT') { writes++; return Response.json({ success: true }); }
+                const query = parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema,
+                    new URL(path, 'https://test.invalid').searchParams.get('query')!);
+                if (!('projection' in query) && !('history' in query)) throw new Error('Expected a history range');
+                const range = 'projection' in query ? query.projection.range : query.history.range;
+                const entries = [10, 50, 90].filter(at => at >= range.startAtMs && at < range.endAtMs)
+                    .map(at => ({ id: `accepted-${at}`, observedAtMs: at,
+                        snapshot: { ...snapshot, observedAtMs: at, fetchedAtMs: at } }));
+                if ('history' in query) {
+                    exactReads++;
+                    return Response.json({ entries: entries.map(entry => ({ id: entry.id, observedAtMs: entry.observedAtMs,
+                        record: record(entry.snapshot) })), nextCursor: null });
+                }
+                projectionReads++;
+                if (acquisition === 'backfill') return Response.json({ projection: null, complete: false });
+                const projection = buildProviderAccountUsagePageProjectionV1({ recordId: snapshot.recordId, range,
+                    history: { entries, nextCursor: null } });
+                return Response.json({ projection: { recordId: snapshot.recordId,
+                    demand: { range, resolution: 'accepted_observations' }, observationCount: entries.length,
+                    frontier: { id: 'accepted-90', observedAtMs: 90 },
+                    content: sealProviderAccountUsagePageProjectionV1({ projection, accountMode: 'e2ee', material,
+                        randomBytes: length => new Uint8Array(length).fill(9) }) }, complete: true },
+                { headers: { etag: `"generation-${projectionReads}"` } });
+            }
+            return Response.json(path.includes('/sources/resolve') ? { source, recordId: snapshot.recordId,
+                providerAccountId: snapshot.recordKey.accountSubjectId, fetchedAt: 90, staleAfterMs: snapshot.staleAfterMs } : record(snapshot));
+        };
+        const { getProviderAccountUsageQuota } = await loadApi();
+        const projectionDocuments: import('./apiProviderAccountUsage').ProviderAccountUsageProjectionDocuments = new Map();
+        const generations: WeakRef<object>[] = [];
+        const histories: WeakRef<object>[] = [];
+        const interiorEntries: WeakRef<object>[] = [];
+        const interiorSnapshots: WeakRef<object>[] = [];
+        const views: WeakRef<object>[] = [];
+        const retentionControl: { value?: object } = {};
+        const liveCount = (references: WeakRef<object>[]) => {
+            const live = new Set<object>();
+            for (const reference of references) {
+                const value = reference.deref();
+                if (value) live.add(value);
+            }
+            return live.size;
+        };
+        const read = async (range: typeof ranges[number]) => {
+            const result = await getProviderAccountUsageQuota(credentials,
+                { source, projection: { range, resolution: 'accepted_observations' } },
+                { accountMode: 'e2ee', material, request, projectionDocuments, includePendingWork: false, nowMs: 90 });
+            expect(result.current?.fetchedAtMs).toBe(90);
+            expect(result.pageFacts?.resetWitness?.id).toBe('accepted-90');
+            expect(result.history).toBeUndefined();
+            const admitted = projectionDocuments.get(snapshot.recordId)!.admitted!;
+            // This observation is inside both scopes, but is neither the
+            // current record nor the terminal/reset witness retained by facts.
+            const interior = admitted.opened.history.entries.find(entry => entry.id === 'accepted-50')!;
+            expect(interior.snapshot.fetchedAtMs).toBe(50);
+            if (generations.length === 0) retentionControl.value = admitted.opened;
+            generations.push(new WeakRef(admitted.opened));
+            histories.push(new WeakRef(admitted.opened.history.entries));
+            interiorEntries.push(new WeakRef(interior));
+            interiorSnapshots.push(new WeakRef(interior.snapshot));
+            views.push(new WeakRef(admitted.view!));
+        };
+        const inspector = new InspectorSession();
+        inspector.connect();
+        try {
+            for (let round = 0; round < 20; round++) for (const range of ranges) await read(range);
+            expect(projectionReads).toBe(40);
+            expect(exactReads).toBe(acquisition === 'backfill' ? 40 : 0);
+            expect(writes).toBe(acquisition === 'backfill' ? 40 : 0);
+            expect(projectionDocuments.size).toBe(1);
+            // End the WeakRef job before collecting, while the real owner and
+            // its current admitted history remain strongly reachable.
+            await new Promise<void>(resolve => setImmediate(resolve));
+            await new Promise<void>((resolve, reject) => inspector.post('HeapProfiler.collectGarbage', error => error ? reject(error) : resolve()));
+            // A deliberately held retired generation must keep its interior
+            // observation alive, proving sensitivity to a real retaining root.
+            for (const references of [generations, histories, interiorEntries, interiorSnapshots]) {
+                expect(references[0]!.deref()).toBeDefined();
+                // Equal facts may legitimately share objects after a future
+                // reuse optimization; count objects, not WeakRef handles.
+                expect(liveCount(references)).toBe(references[0]!.deref() === references.at(-1)!.deref() ? 1 : 2);
+            }
+            expect(generations[0]!.deref()).toBe(retentionControl.value);
+            delete retentionControl.value;
+            // Successful deref calls above keep targets alive until this job ends.
+            await new Promise<void>(resolve => setImmediate(resolve));
+            await new Promise<void>((resolve, reject) => inspector.post('HeapProfiler.collectGarbage', error => error ? reject(error) : resolve()));
+            for (const [name, references] of Object.entries({ generations, histories, interiorEntries, interiorSnapshots, views })) {
+                expect(liveCount(references),
+                    `forty acquisitions retain only the current ${name}`).toBe(1);
+            }
+            expect(generations.at(-1)!.deref()).toBe(projectionDocuments.get(snapshot.recordId)!.admitted!.opened);
+            expect(interiorSnapshots.at(-1)!.deref()).toBe(projectionDocuments.get(snapshot.recordId)!.admitted!.opened.history.entries[0]!.snapshot);
+        } finally { inspector.disconnect(); }
+    });
+
     it.each(['plain', 'e2ee'] as const)('derives unchanged %s observations once across rolling range and clock reads, but keeps reset and stale transitions', async accountMode => {
         await activateTestHome();
         const { buildProviderAccountUsagePageProjectionV1 } = await import('@happier-dev/protocol/connect/providerAccountUsagePageProjection');
