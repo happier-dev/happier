@@ -213,10 +213,13 @@ export const ConnectedServicesAddMenu = React.memo(
               : choice.title;
           // A disabled entry says its own reason; one only waiting for a machine keeps saying what it is for
           // (the menu's notice says once why it can't be added).
+          // A line naming only the Agent the title already names ("Cursor / Cursor") says nothing: it is dropped.
+          const repeatsTitle = entry?.usedBy.length === 1
+            && title.toLocaleLowerCase().includes(entry.usedBy[0]!.toLocaleLowerCase());
           const purpose = choice.disabled && choice.reason
             ? choice.reason
             : choice.kind === 'account' && entry && entry.usedBy.length > 0
-              ? formatAgentNames(entry.usedBy)
+              ? (repeatsTitle ? undefined : formatAgentNames(entry.usedBy))
               : (choice.purpose ?? undefined);
           return {
             id: choice.key,

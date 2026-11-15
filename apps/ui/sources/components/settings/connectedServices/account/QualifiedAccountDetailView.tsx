@@ -34,7 +34,7 @@ import { ConnectedServiceMark } from '../ConnectedServiceMark';
 import { AgentDefaultMenuButton } from '../defaults/AgentDefaultMenuButton';
 import type { AgentDefaultChoice } from '../defaults/agentDefaultChoices';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
-import { useCredentialShareAction } from '@/components/sharing/credentials/CredentialShareSheet';
+import { CredentialShareButton, useCredentialShareAction } from '@/components/sharing/credentials/CredentialShareSheet';
 import type { TeamCredentialSourceHint } from '@/components/settings/teams/teamsRoutes';
 import { AccountDetailUsedBySectionView, type AccountDetailUsedBySlots } from './AccountDetailSections';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
@@ -279,6 +279,8 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
     const connectionTestUnavailable = connectionTest?.disabledReason
         ?? (!connectionTest ? t('connectedServicesSettings.testConnectionUnsupported') : undefined);
     const connectionTestTitle = t('connectedServicesSettings.testConnection');
+    // A key has no sign-in (lab `muse-accounts` A1): Replace lives with the key and the page ends with "Remove key".
+    const isKey = props.accessMode?.kind === 'apiKey';
     const hasSignInRow = Boolean(onReconnect || props.authenticationModeTitle || props.signInFlow);
     const defaultControl = props.agentDefaults ? (
         <AgentDefaultMenuButton
@@ -384,6 +386,10 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                     </View>
                 )}
                 actions={<View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 }}>
+                    {/* Wide, Share is the header's one button (lab `muse-accounts` A1); a phone keeps it in the ⋯ menu. */}
+                    {share && !compact && props.shareSource ? (
+                        <CredentialShareButton testID={`${testID}:share`} name={presentation.primaryLabel} source={props.shareSource} />
+                    ) : null}
                     {/* Wide, the Usage section's "As of · Refresh" owns refresh; a phone's Usage drops its button, so the bar carries it. */}
                     {props.onRefresh && !signedOut && compact
                         ? <RoundButton testID={`${testID}:refresh`} display="inverted" title={t('common.refresh')} leading={<Icon name="arrow-clockwise" size={14} />} loading={props.refreshing} disabled={props.refreshing} onPress={props.onRefresh} />
@@ -393,16 +399,16 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                         triggerTestID={`${testID}:more`}
                         accessibilityLabel={t('connectedServicesPool.moreActions')}
                         onOpenChange={onMenuOpenChange}
+                        // Rare actions only: Rename, Sign in again, Test connection and Remove each have their place on
+                        // the page, so the menu never repeats them (DESIGN-ACCEPT-1115 §5). A key has no Sign-in
+                        // section, so its connection test lives here.
                         actions={[
-                            ...(rename ? [{ id: 'rename', title: t('connectedServicesPool.rename'), onSelect: () => setRenameOpen(true) }] : []),
                             ...(providerAccount ? [{ id: 'copy-account-id', title: t('connectedServicesSettings.detailCopyAccountId'), onSelect: () => copyProviderAccountId(providerAccount) }] : []),
-                            { id: 'test-connection', title: connectionTestTitle,
+                            ...(isKey ? [{ id: 'test-connection', title: connectionTestTitle,
                                 disabled: !connectionTest || Boolean(connectionTestUnavailable), loading: connectionTest?.pending,
                                 subtitle: connectionTestUnavailable ?? connectionTest?.message,
-                                onSelect: () => connectionTest?.run() },
-                            ...(onReconnect ? [{ id: 'reconnect', title: t('connectedServicesSettings.signInAgain'), onSelect: onReconnect }] : []),
-                            ...(share ? [{ id: 'share', testID: `${testID}:share`, title: t('secretsSettings.share'), onSelect: (intent?: PageHeaderMenuIntent) => share(intent?.anchor) }] : []),
-                            ...(onDisconnect ? [{ id: 'disconnect', title: t('connectedServicesSettings.detailRemoveAccount'), destructive: true, loading: disconnectPending, onSelect: handleDisconnect }] : []),
+                                onSelect: () => connectionTest?.run() }] : []),
+                            ...(share && compact ? [{ id: 'share', testID: `${testID}:share`, title: t('secretsSettings.share'), onSelect: (intent?: PageHeaderMenuIntent) => share(intent?.anchor) }] : []),
                         ]}
                     />
                 </View>}
@@ -428,16 +434,19 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
 
             {/* Lab `s2svc:account`: identity, Usage, Used by and pools, then Sign-in with where it works and the
                 machine its operations run on, configuration, sharing, and removal last. */}
-            <ItemGroup title={t('connectedServicesSettings.detailSignInTitle')}>
+            {isKey ? (
+                props.machineScopeLine ? <ItemGroup>{props.machineScopeLine}</ItemGroup> : null
+            ) : <ItemGroup title={t('connectedServicesSettings.detailSignInTitle')}>
                     {hasSignInRow ? <Item
                         testID={`${testID}:sign-in`}
                         title={props.authenticationModeTitle ?? t('connectedServices.detail.actions.reconnect')}
                         // Provenance and freshness are said only when they are held (a native import or an older
-                        // record knows neither); last use is the quiet fallback, never an invented sign-in.
+                        // record knows neither); last use is the quiet fallback, then the credential's own state —
+                        // never an invented sign-in, and never a row without a state line.
                         subtitle={[
                             signedOut ? t('connectedServicesSettings.detailSignInNeeded') : null,
                             ...(signInFacts.length > 0 ? signInFacts : [lastUsedFact]),
-                        ].filter(Boolean).join(' · ') || undefined}
+                        ].filter(Boolean).join(' · ') || (status && !signedOut ? resolveConnectedAccountCredentialStatusLabel(status) : undefined)}
                         mode="info"
                         showChevron={false}
                         // Signed out, the banner above owns Sign in again; a running sign-in owns this section.
@@ -452,17 +461,19 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                         ) : undefined}
                         rightElementOutsidePressable
                     /> : null}
+                    {/* One row, one decision: the row names what it checks and its last result; the button is the verb. */}
                     <Item
                         testID={`${testID}:test-connection`}
-                        title={connectionTestTitle}
-                        subtitle={connectionTestUnavailable ?? connectionTest?.message}
+                        title={t('connectedServicesSettings.detailConnectionTitle')}
+                        subtitle={connectionTestUnavailable ?? connectionTest?.message ?? t('connectedServicesSettings.detailConnectionHint')}
                         mode="info"
                         showChevron={false}
                         rightElement={<RoundButton
                             testID={`${testID}:action:test-connection`}
                             size="small"
                             display="secondary"
-                            title={connectionTestTitle}
+                            title={t('connectedServicesSettings.detailConnectionTest')}
+                            accessibilityLabel={connectionTestTitle}
                             loading={connectionTest?.pending}
                             disabled={!connectionTest || Boolean(connectionTestUnavailable) || connectionTest.pending}
                             onPress={() => { void connectionTest?.run(); }}
@@ -480,7 +491,7 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                     /> : null}
                     {props.worksOnSection ?? null}
                     {props.machineScopeLine ?? null}
-            </ItemGroup>
+            </ItemGroup>}
             {props.machineSetupSection ?? null}
 
             {props.onConfigureAccount ? (
@@ -535,7 +546,7 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                             testID={`${testID}:action:disconnect`}
                             size="small"
                             display="destructive"
-                            title={t('connectedServicesSettings.detailRemoveAccount')}
+                            title={isKey ? t('connectedServicesSettings.detailRemoveKey') : t('connectedServicesSettings.detailRemoveAccount')}
                             loading={disconnectPending}
                             onPress={handleDisconnect}
                         />
@@ -543,6 +554,7 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                     <Text style={stylesheet.dangerNote}>
                         {memberships.length > 0
                             ? t('connectedServicesSettings.detailRemovePooledNote', { pool: poolLabel(memberships[0]!) })
+                            : isKey ? t('connectedServicesSettings.detailRemoveKeyNote')
                             : t('connectedServicesSettings.detailRemoveNote', { service: serviceLabel })}
                     </Text>
                 </ItemGroup>

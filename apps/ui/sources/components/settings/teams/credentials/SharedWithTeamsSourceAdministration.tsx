@@ -264,9 +264,17 @@ export const SharedWithTeamsSourceAdministration = React.memo(function SharedWit
     // section that only says "none" (or a loading row for it) is not shown. A share, a failure or a
     // pending approval still speaks.
     if (!approval.approvalId && !error && (rows === null || rows.length === 0)) return null;
-    // One explanation: when every share stands the same way, the section says it once and the rows name the Teams.
-    const stateLabels = rows?.map((row) => resourceStateLabel(row.readiness)) ?? [];
-    const sharedState = stateLabels.length > 1 && stateLabels.every((label) => label === stateLabels[0]) ? stateLabels[0] : null;
+    // One explanation: when every share stands the same way (the same failure, or the same state), the section
+    // says it once and the rows name the Teams (DESIGN-ACCEPT-1115 §5: one broker outage, twelve rows).
+    const rowLine = (row: TeamCredentialSourceResourceAdministrationV1) => credentialDirectExportFailureMessage(row.directExportFailure)
+        ?? resourceStateLabel(row.readiness);
+    const stateLabels = rows?.map(rowLine) ?? [];
+    const labelCounts = new Map<string, number>();
+    for (const label of stateLabels) labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
+    const [commonLabel, commonCount] = [...labelCounts].reduce<[string | null, number]>(
+        (best, entry) => (entry[1] > best[1] ? entry : best), [null, 0]);
+    // The state most shares have is said once; a share that stands differently keeps its own line.
+    const sharedState = commonCount > 1 && commonCount * 2 > stateLabels.length ? commonLabel : null;
 
     const renderRow = (row: TeamCredentialSourceResourceAdministrationV1) => {
         const busy = !rowsCurrent || pendingId === row.id || approval.approvalPending;
@@ -295,7 +303,7 @@ export const SharedWithTeamsSourceAdministration = React.memo(function SharedWit
                 key={row.id}
                 testID={`shared-with-teams:resource:${row.id}`}
                 title={displayName}
-                subtitle={credentialDirectExportFailureMessage(row.directExportFailure) ?? (sharedState === null ? resourceStateLabel(row.readiness) : undefined)}
+                subtitle={sharedState !== null && rowLine(row) === sharedState ? undefined : rowLine(row)}
                 showChevron={false}
                 rightElement={actions.length > 0 ? (
                     <ItemRowActions title={displayName} actions={actions} overflowOnly

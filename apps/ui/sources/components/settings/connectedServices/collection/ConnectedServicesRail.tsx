@@ -626,10 +626,13 @@ const RailAccountRow = React.memo(function RailAccountRow(props: Readonly<{
     selected: boolean;
     onPress: () => void;
 }>) {
-    const live = props.meta === undefined && !isSignedOut(props.account) && props.account.kind === 'qualified' && resolveConnectedAccountAccessMode(props.account.profile)?.kind !== 'apiKey';
+    const recordedMode = props.account.kind === 'qualified' ? resolveConnectedAccountAccessMode(props.account.profile) : null;
+    const live = props.meta === undefined && !isSignedOut(props.account) && props.account.kind === 'qualified' && recordedMode?.kind !== 'apiKey';
+    // A key says its mode on line 2 through the one mode presenter (lab `muse-accounts` A1), never as an end tag.
     return live && props.account.kind === 'qualified'
         ? <QualifiedRailAccountRow {...props} account={props.account} />
-        : <RailAccountRowView {...props} plan={null} status={props.meta !== undefined ? props.meta : <LiveAccountMeta sheet={props.sheet} account={props.account} />} />;
+        : <RailAccountRowView {...props} plan={recordedMode?.kind === 'apiKey' ? presentConnectedAccountAccessMode(recordedMode, null) : null}
+            status={props.meta !== undefined ? props.meta : <LiveAccountMeta sheet={props.sheet} account={props.account} />} />;
 });
 
 const QualifiedRailAccountRow = React.memo(function QualifiedRailAccountRow(props: React.ComponentProps<typeof RailAccountRow> & Readonly<{
@@ -707,7 +710,7 @@ const LiveAccountMeta = React.memo(function LiveAccountMeta(props: Readonly<{
 }>) {
     if (isSignedOut(props.account)) return <RailAccountMeta meta={{ kind: 'signedOut', statusReason: props.account.kind === 'qualified' ? props.account.profile.statusReason : undefined }} />;
     if (props.account.kind !== 'qualified') return null;
-    if (resolveConnectedAccountAccessMode(props.account.profile)?.kind === 'apiKey') return <RailAccountMeta meta={{ kind: 'key' }} />;
+    // A key's mode is its second line; its end stays quiet unless it reports a limit.
     return <QualifiedAccountMeta account={props.account} />;
 });
 

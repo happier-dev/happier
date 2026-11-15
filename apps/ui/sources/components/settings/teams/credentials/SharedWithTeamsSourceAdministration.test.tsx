@@ -508,6 +508,26 @@ describe('SharedWithTeamsSourceAdministration', () => {
         expect(screen.getTextContent().split(resourceStateLabel(readiness)).length - 1).toBe(1);
     });
 
+    it('says a state most shares have once, and keeps a different state on its own row', async () => {
+        const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://home.example', accountId: 'owner' });
+        await harness.selectHomes([serverId]);
+        const readiness = { kind: 'source_unavailable' } as const;
+        const other = { kind: 'broker_unavailable' } as const;
+        harness.answer(serverId, LIST_PATH, { body: { resources: [
+            ...['resource-1', 'resource-2', 'resource-3'].map((id) => teamCredentialSourceResourceFixture({ id, displayName: `Team ${id}`, readiness })),
+            teamCredentialSourceResourceFixture({ id: 'resource-4', displayName: 'Team resource-4', readiness: other }),
+        ], nextCursor: null } });
+        const { SharedWithTeamsSourceAdministration } = await import('./SharedWithTeamsSourceAdministration');
+        const screen = await renderScreen(<SharedWithTeamsSourceAdministration
+            scope={{ serverId, accountId: 'owner' }}
+            source={{ v: 1, kind: 'provider_connection', connectionId: CONNECTION_ID }}
+        />);
+        await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('shared-with-teams:resource:resource-4'));
+        const { resourceStateLabel } = await import('./teamCredentialPresentation');
+        expect(screen.getTextContent().split(resourceStateLabel(readiness)).length - 1).toBe(1);
+        expect(screen.getTextContent().split(resourceStateLabel(other)).length - 1).toBe(1);
+    });
+
     it('stays quiet while nothing is shared: no section that only says "none"', async () => {
         const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://home.example', accountId: 'owner' });
         await harness.selectHomes([serverId]);

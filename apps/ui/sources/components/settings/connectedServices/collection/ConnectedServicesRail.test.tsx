@@ -318,6 +318,28 @@ describe('ConnectedServicesRailView (lab csvc C1 rail)', () => {
         expect(text).toContain('le•••@c•••.com');
     });
 
+    // Lab muse-accounts A1 / D1: a key row says its mode on line 2 through the one mode presenter, never as an end tag.
+    it('says an API-key account\'s mode on its second line, with no "key" tag at its end', async () => {
+        const keyAccount = { ...account(KEYS, 'build', 'build@company.com'), accessMode: 'apiKey' } as QualifiedConnectedAccountProfileV4;
+        const model = buildConnectedServicesIndexModel({
+            transport: 'advertised-v4',
+            entries: [entry(KEYS, 'Anthropic API key')],
+            qualifiedAccounts: [keyAccount],
+            qualifiedGroups: [],
+            legacyServices: [],
+            defaultAccountByServiceKey: {},
+            resolveLabel: (candidate) => String(candidate?.projectedTitle ?? ''),
+            resolveFallbackEntry: () => null,
+            presentDiagnostics: () => ({ primary: null, supportDetails: null }),
+            loadingLabel: 'Loading',
+            agentUses: [{ agentId: 'claude', title: 'Claude Code', services: [KEYS], defaults: [] }],
+        });
+        const screen = await render({ model });
+        const row = screen.findAll((node) => node.props?.testID === 'connected-services-rail:account:happier.agent.claude/anthropic:build'
+            && node.props?.subtitle !== undefined)[0];
+        expect(String(row?.props.subtitle).endsWith(t('connectedServicesSettings.accessApiKey'))).toBe(true);
+    });
+
     it('says what an account needs at its end: its tightest limit, a stale read, or that it is signed out', async () => {
         const usage = await renderScreen(<RailAccountMeta meta={{ kind: 'usage', tightestPct: 6.4, stale: false }} />);
         expect(usage.getTextContent()).toContain('6%');

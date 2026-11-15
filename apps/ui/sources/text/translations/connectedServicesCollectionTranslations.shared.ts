@@ -100,7 +100,7 @@ export const en = {
     gatewaysDescription: 'Let other agents use your accounts through one address.',
     searchCredentials: 'Search credentials',
     sharedWithYouDescription: 'Credentials friends, teammates and Teams let you use.',
-    addServiceAccount: ({ service }: { service: string }) => `Add another ${service} account`,
+    addServiceAccount: ({ service }: { service: string }) => `Add to ${service}`,
     newSecret: 'New secret',
     secretsDescription: 'Keys, tokens and passwords that aren’t tied to one service. Values stay hidden; pick them wherever Happier asks for one.',
     secretsGroup: 'Secrets',

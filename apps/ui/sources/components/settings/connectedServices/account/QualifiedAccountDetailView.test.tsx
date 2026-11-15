@@ -102,22 +102,61 @@ function hasTitle(root: ReactTestInstance, title: string): boolean {
     return root.findAll((node) => node.props?.title === title).length > 0;
 }
 
-it('offers the same connection test from Sign-in and overflow, including unsupported accounts', async () => {
+it('offers the connection test once, in Sign-in, with its unsupported reason', async () => {
     const run = vi.fn(async () => {});
     const screen = await renderDetail({ testConnection: { run, pending: false } });
     await screen.pressByTestIdAsync('qualified-account-detail:action:test-connection');
-    const menu = screen.root.findByType(DropdownMenu);
-    expect(menu.props.items.some((item: { id: string }) => item.id === 'test-connection')).toBe(true);
-    await act(async () => { await menu.props.onSelect('test-connection'); });
-    expect(run).toHaveBeenCalledTimes(2);
+    expect(run).toHaveBeenCalledTimes(1);
+    const menuItems = screen.root.findAllByType(DropdownMenu).flatMap((menu) => menu.props.items as { id: string }[]);
+    expect(menuItems.map((item) => item.id)).not.toContain('test-connection');
     await screen.update(<QualifiedAccountDetailView account={ACCOUNT} serviceLabel="Codex"
         presentation={{ primaryLabel: 'Work account', accessibilityLabel: 'Work account' }}
         testConnection={{ run, pending: false, disabledReason: 'This service does not offer a connection test.' }} />);
     const row = screen.root.findAll(node => node.props.testID === 'qualified-account-detail:test-connection' && node.props.subtitle)[0];
     expect(row?.props.subtitle).toBe('This service does not offer a connection test.');
-    const unsupportedMenu = screen.root.findByType(DropdownMenu).props.items.find((item: { id: string }) => item.id === 'test-connection');
-    expect(unsupportedMenu?.disabled).toBe(true);
-    expect(unsupportedMenu?.subtitle).toBe('This service does not offer a connection test.');
+});
+
+// DESIGN-ACCEPT-1115 §5: every action is said once. The page owns Rename (pencil), Test connection, Sign in
+// again and Remove; the overflow holds only what the page doesn't show.
+it('says each account action once: the overflow holds only what the page does not show', async () => {
+    const screen = await renderDetail({
+        status: 'connected',
+        providerAccountId: 'acct_123',
+        rename: { currentLabel: 'Work', onRename: vi.fn() },
+        testConnection: { run: vi.fn(async () => {}), pending: false },
+        onReconnect: vi.fn(),
+        onDisconnect: vi.fn(),
+    });
+    const ids = screen.root.findAllByType(DropdownMenu).flatMap((menu) => (menu.props.items as { id: string }[]).map((item) => item.id));
+    expect(ids).toContain('copy-account-id');
+    for (const onPage of ['rename', 'test-connection', 'reconnect', 'disconnect']) expect(ids).not.toContain(onPage);
+    expect(screen.findByTestId('qualified-account-detail:action:edit-label')).toBeTruthy();
+    expect(screen.findByTestId('qualified-account-detail:action:test-connection')).toBeTruthy();
+    expect(screen.findByTestId('qualified-account-detail:action:reconnect')).toBeTruthy();
+    expect(screen.findByTestId('qualified-account-detail:action:disconnect')).toBeTruthy();
+});
+
+// Lab muse-accounts A1: a key has no sign-in; Replace lives with the key, and the page ends with "Remove key".
+it('gives an API-key account no Sign-in section and ends its page with Remove key', async () => {
+    const run = vi.fn(async () => {});
+    const screen = await renderDetail({
+        status: 'connected',
+        accessMode: { kind: 'apiKey', keySuffix: null },
+        authenticationModeTitle: 'Enter a token',
+        testConnection: { run, pending: false },
+        onReconnect: vi.fn(),
+        onDisconnect: vi.fn(),
+    });
+    expect(hasTitle(screen.root, 'Sign-in')).toBe(false);
+    expect(screen.findByTestId('qualified-account-detail:sign-in')).toBeNull();
+    expect(screen.findByTestId('qualified-account-detail:action:reconnect')).toBeNull();
+    expect(screen.findByTestId('qualified-account-detail:test-connection')).toBeNull();
+    expect(rowTitleOf(screen.root, 'qualified-account-detail:action:disconnect')).toBe('Remove key');
+    // Testing a key stays reachable, from the overflow, since the page has no Sign-in section for it.
+    const menu = screen.root.findAllByType(DropdownMenu).find((candidate) => (candidate.props.items as { id: string }[]).some((item) => item.id === 'test-connection'));
+    expect(menu).toBeTruthy();
+    await act(async () => { await menu!.props.onSelect('test-connection'); });
+    expect(run).toHaveBeenCalledOnce();
 });
 
 it('leaves usage refresh to its Usage section on a wide page (lab s2svc:account)', async () => {
@@ -350,11 +389,11 @@ describe('QualifiedAccountDetailView', () => {
         expect(groupOf(probe)).toBe(groupOf(signIn));
     });
 
-    it('promises no sign-in freshness it cannot show (no "keeps it fresh" line)', async () => {
+    it('promises no sign-in freshness it cannot show: with nothing held, the row says only the credential state', async () => {
         const screen = await renderDetail({ status: 'connected', onReconnect: vi.fn(), authenticationModeTitle: 'Signed in with a code' });
         const row = screen.root.findAll((node) => node.props?.testID === 'qualified-account-detail:sign-in' && typeof node.props?.title === 'string')[0];
         expect(row).toBeTruthy();
-        expect(row!.props.subtitle || undefined).toBeUndefined();
+        expect(row!.props.subtitle).toBe('Connected');
     });
 
     it('says where and when an account signed in only when that evidence is held, never from last use alone', async () => {
@@ -613,7 +652,7 @@ describe('QualifiedAccountDetailView', () => {
     });
 
     // Owner ruling 2026-11-07: pool membership requires confirmation, never blocks removal.
-    it.each(['button', 'menu'] as const)('allows removing a pooled account through the %s and retains the separate leave-pool action', async (entry) => {
+    it('allows removing a pooled account and retains the separate leave-pool action', async () => {
         const onDisconnect = vi.fn();
         const onOpenPool = vi.fn();
         const props = {
@@ -631,13 +670,7 @@ describe('QualifiedAccountDetailView', () => {
         pooled.pressByTestId('qualified-account-detail:action:leave-pool:work-pool');
         expect(onOpenPool).toHaveBeenCalledWith('work-pool');
         expect(onDisconnect).not.toHaveBeenCalled();
-        if (entry === 'button') {
-            await pooled.pressByTestIdAsync('qualified-account-detail:action:disconnect');
-        } else {
-            const menu = pooled.root.findByType(DropdownMenu);
-            expect(menu.props.items.find((item: { id: string }) => item.id === 'disconnect')?.disabled).toBeFalsy();
-            await act(async () => { await menu.props.onSelect('disconnect'); });
-        }
+        await pooled.pressByTestIdAsync('qualified-account-detail:action:disconnect');
         expect(onDisconnect).toHaveBeenCalledOnce();
 
         const alone = await renderDetail({ groups: [], onOpenPool, onDisconnect });

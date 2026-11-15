@@ -5,7 +5,7 @@ import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { act } from '@/dev/testkit';
 import { ItemList } from '@/components/ui/lists/ItemList';
 
-import { AccountDetailFactsSectionsView, AccountDetailUsageSectionView, AccountDetailSubscriptionSectionView, AccountDetailResetsSectionView, AccountDetailWorksOnSection, AccountDetailWorksOnSectionView, projectAccountDetailMachines, type AccountDetailUsageFacts } from './AccountDetailSections';
+import { AccountDetailFactsSectionsView, AccountDetailUsageSectionView, projectAccountDetailUsedByRows, AccountDetailSubscriptionSectionView, AccountDetailResetsSectionView, AccountDetailWorksOnSection, AccountDetailWorksOnSectionView, projectAccountDetailMachines, type AccountDetailUsageFacts } from './AccountDetailSections';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { buildMachineDisplayRenderableFromMachine } from '@/sync/domains/machines/machineDisplayRenderable';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -76,7 +76,10 @@ describe('AccountDetailUsageSectionView', () => {
             facts={{ ...FACTS, meters: [], fetchedAt, usageState: 'not_loaded', refresh: vi.fn() }}
             signedOut={false} now={2_000}
         /></ItemList>);
-        expect(screen.getTextContent()).toContain('Unavailable');
+        // An empty state says why and what brings usage, never the bare word (brief UI-FIX-COMMON-1115).
+        expect(screen.findByTestId('account-detail-usage:none')).toBeTruthy();
+        expect(screen.getTextContent()).not.toContain('Unavailable');
+        expect(screen.getTextContent()).toContain('Usage appears after a Session reports it.');
         expect(screen.findByTestId('account-detail-usage:as-of')).toBeNull();
         expect(screen.findByTestId('account-detail-usage:error')).toBeNull();
     });
@@ -112,7 +115,22 @@ describe('AccountDetailUsageSectionView', () => {
         expect(screen.findByTestId('account-detail-usage:error')).toBeTruthy();
         await screen.update(<AccountDetailUsageSectionView facts={{ ...FACTS, meters: [] }} signedOut={false} now={2_000} />);
         expect(screen.getTextContent()).not.toContain('billed per use');
-        expect(screen.getTextContent()).toContain('Unavailable');
+        expect(screen.findByTestId('account-detail-usage:none')).toBeTruthy();
+    });
+
+    // Lab muse-accounts A1: a key has no allowance; the row says so with an em dash, never "Unavailable".
+    it('gives an API-key account an Allowance row instead of an empty usage state', async () => {
+        const screen = await renderScreen(<ItemList><AccountDetailUsageSectionView
+            facts={{ ...FACTS, meters: [], fetchedAt: null }} accessMode={{ kind: 'apiKey', keySuffix: null }} signedOut={false} now={2_000}
+        /></ItemList>);
+        expect(screen.findByTestId('account-detail-usage:allowance')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('No allowance for API keys');
+        expect(screen.getTextContent()).not.toContain('Unavailable');
+        expect(screen.findByTestId('account-detail-usage:none')).toBeNull();
+        // A key that reports a balance keeps its meters.
+        await screen.update(<ItemList><AccountDetailUsageSectionView facts={FACTS} accessMode={{ kind: 'apiKey', keySuffix: null }} signedOut={false} now={2_000} /></ItemList>);
+        expect(screen.findByTestId('account-detail-usage:meter:five_hour')).toBeTruthy();
+        expect(screen.findByTestId('account-detail-usage:allowance')).toBeNull();
     });
 
     it('keeps compact usage timestamp without repeating the page refresh control', async () => {
@@ -313,5 +331,31 @@ describe('projectAccountDetailMachines', () => {
         const devboxNames = rows.filter((row) => row.id !== 'cccc3333').map((row) => row.name);
         expect(new Set(devboxNames).size).toBe(2);
         expect(rows.find((row) => row.id === 'cccc3333')?.name).toBe('studio');
+    });
+});
+
+// DESIGN-ACCEPT-1115 §5: the account's own Agent (contributed by the service's plugin) leads Used by with its
+// real role, rather than being folded into the "others" clause behind another Agent's default.
+describe('projectAccountDetailUsedByRows', () => {
+    const base = {
+        usedBy: ['Codex', 'Muse', 'oh-my-pi', 'OpenCode', 'Pi'],
+        usedByAgentIds: ['codex', 'muse', 'oh-my-pi', 'opencode', 'pi'],
+        defaultFor: ['Pi'],
+        pools: [],
+        ownAgentIds: ['muse'],
+    } as const;
+
+    it('leads with the account\'s own Agent, then its defaults, then the others in one row', () => {
+        const rows = projectAccountDetailUsedByRows(base);
+        expect(rows.map((row) => row.title)).toEqual(['Muse', 'Pi', 'Codex, oh-my-pi and OpenCode']);
+        expect(rows[0]).toMatchObject({ agentId: 'muse', isDefault: false });
+        expect(rows[0]!.subtitle).not.toBe(rows[2]!.subtitle);
+        expect(rows[1]).toMatchObject({ agentId: 'pi', isDefault: true });
+    });
+
+    it('reads the own Agent as Default when this account is its default', () => {
+        const rows = projectAccountDetailUsedByRows({ ...base, defaultFor: ['Muse'] });
+        expect(rows.map((row) => row.title)).toEqual(['Muse', 'Codex, oh-my-pi, OpenCode and Pi']);
+        expect(rows[0]).toMatchObject({ agentId: 'muse', isDefault: true });
     });
 });

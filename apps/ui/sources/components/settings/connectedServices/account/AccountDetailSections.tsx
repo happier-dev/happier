@@ -90,6 +90,8 @@ export const AccountDetailUsageSectionView = React.memo(function AccountDetailUs
     now: number;
     /** Each window can be pinned: pinned windows show as extra gauges beside the composer. */
     pins?: Readonly<{ pinnedMeterIds: readonly string[]; onToggle: (meterId: string) => void }>;
+    /** A key has no allowance: with no reported meters its Usage says so in one row (lab `muse-accounts` A1). */
+    accessMode?: ConnectedAccountAccessMode | null;
     testID?: string;
     compact?: boolean;
 }>) {
@@ -139,6 +141,8 @@ export const AccountDetailUsageSectionView = React.memo(function AccountDetailUs
                                     tone={resolveQuotaMeterTone(meter)}
                                     estimated={meter.status === 'estimated'}
                                     size="wide"
+                                    // A phone keeps only a short value beside the name; the reset moves beneath.
+                                    layout={props.compact ? 'stacked' : undefined}
                                     now={props.now}
                                 />
                             );
@@ -167,12 +171,23 @@ export const AccountDetailUsageSectionView = React.memo(function AccountDetailUs
                 </SectionContentRow>
             ) : facts.refreshing ? null : facts.loading ? (
                 <SurfaceStateCard testID={`${testID}:loading`} size="line" kind="loading" title={t('common.loading')} />
-            ) : failure ? null : (
+            ) : failure ? null : props.accessMode?.kind === 'apiKey' ? (
+                <Item
+                    testID={`${testID}:allowance`}
+                    title={t('connectedServicesSettings.detailUsageAllowance')}
+                    subtitle={t('connectedServicesSettings.detailUsageNoAllowanceForKeys')}
+                    detail={'\u2014'}
+                    mode="info"
+                    showChevron={false}
+                />
+            ) : (
                 <SurfaceStateCard
                     testID={`${testID}:none`}
                     size="line"
                     kind="empty"
-                    title={t('common.unavailable')}
+                    title={facts.usageState === 'observed'
+                        ? t('connectedServicesCollection.meterNotReported')
+                        : t('connectedServicesSettings.usageAppearsAfterSession')}
                 />
             )}
             {failure ? (
@@ -279,7 +294,7 @@ export const AccountDetailFactsSectionsView = React.memo(function AccountDetailF
     }, []);
     const facts = { ...props.facts, ...projectConnectedAccountSubscriptionFacts(props.accessMode, props.facts) };
     const subscription = <AccountDetailSubscriptionSectionView key="subscription" subscription={facts.subscription} serviceLabel={props.serviceLabel} planLabel={facts.planLabel} now={props.now} compact={compact} />;
-    const usage = <AccountDetailUsageSectionView key="usage" facts={facts} signedOut={props.signedOut} now={props.now} pins={props.pins} compact={compact} />;
+    const usage = <AccountDetailUsageSectionView key="usage" facts={facts} accessMode={props.accessMode} signedOut={props.signedOut} now={props.now} pins={props.pins} compact={compact} />;
     const resets = props.resetsSection ?? <AccountDetailResetsSectionView
         recoveryCredits={props.facts.recoveryCredits}
         recoveryCreditDetails={props.facts.recoveryCreditDetails}
@@ -494,49 +509,52 @@ export const AccountDetailUsedBySectionView = React.memo(function AccountDetailU
     );
 });
 
-/** The live Used by rows, from the one Connected services index. */
-export const AccountDetailUsedBySection = React.memo(function AccountDetailUsedBySection(props: Readonly<{
-    account: QualifiedConnectedAccountRef;
-    testID?: string;
-} & AccountDetailUsedBySlots>) {
-    const router = useRouter();
-    const serviceKey = buildQualifiedPluginContributionKey(props.account.service);
-    const { indexModel } = useConnectedServicesIndex({ agents: 'cached', serviceKey });
-    const sheet = indexModel.sheets.find((candidate) => candidate.serviceKey === serviceKey);
-    const accountUse = sheet?.usedByByAccountId?.[props.account.accountId];
-    if (!sheet || !accountUse || accountUse.usedBy.length === 0) return <AccountDetailUsedBySectionView rows={[]} testID={props.testID} action={props.action}>{props.children}</AccountDetailUsedBySectionView>;
-    const agentIdByTitle = new Map(accountUse.usedBy.map((title, index) => [title, accountUse.usedByAgentIds[index] ?? null]));
-    const roles = sheet.rolesByAccountId[props.account.accountId];
-    const direct = new Set((roles?.defaultFor ?? []).filter(agent => accountUse.usedBy.includes(agent)));
-    const throughPools = (roles?.pools ?? []).flatMap((membership) => {
-        const pool = sheet.pools.find((candidate) => candidate.ref.groupId === membership.groupId);
-        return (pool?.defaultFor ?? []).filter(agent => accountUse.usedBy.includes(agent)).map((agent) => ({ agent, pool, inUse: membership.inUse }));
+/** What the index knows about who uses one account; the projection below orders it for the page. */
+export type AccountDetailUsedByInput = Readonly<{
+    usedBy: readonly string[];
+    usedByAgentIds: readonly string[];
+    /** Agents whose default is this account. */
+    defaultFor: readonly string[];
+    pools: readonly Readonly<{ agent: string; pool: string; inUse: boolean }>[];
+    /** Agents contributed by the plugin that contributes this account's service: the account's own Agent. */
+    ownAgentIds: readonly string[];
+}>;
+
+/**
+ * Used by, in reading order (lab `muse-accounts` A1): the account's own Agent first with its real role, then
+ * the Agents that default to it, then those through a pool, then the rest in one row.
+ */
+export function projectAccountDetailUsedByRows(
+    input: AccountDetailUsedByInput,
+    openAgent: (agentId: string | null) => (() => void) | undefined = () => undefined,
+): AccountDetailUsedByRow[] {
+    const agentIdByTitle = new Map(input.usedBy.map((title, index) => [title, input.usedByAgentIds[index] ?? null]));
+    const direct = new Set(input.defaultFor.filter((agent) => input.usedBy.includes(agent)));
+    const throughPools = input.pools.filter((entry) => input.usedBy.includes(entry.agent) && !direct.has(entry.agent));
+    const own = input.usedBy.filter((agent) => {
+        const agentId = agentIdByTitle.get(agent);
+        return agentId != null && input.ownAgentIds.includes(agentId);
     });
-    const using = new Set([...direct, ...throughPools.map((entry) => entry.agent)]);
-    const others = accountUse.usedBy.filter((agent) => !using.has(agent));
-    const openAgent = (agentId: string | null) => agentId ? () => router.push(`/settings/agents/${agentId}` as never) : undefined;
-    const rows: AccountDetailUsedByRow[] = [
-        ...[...direct].map((agent) => ({
-            key: `direct:${agent}`,
-            agentId: agentIdByTitle.get(agent) ?? null,
-            title: agent,
-            subtitle: t('connectedServicesCollection.usedByDefault'),
-            isDefault: true,
-            onPress: openAgent(agentIdByTitle.get(agent) ?? null),
-        })),
-        ...throughPools.filter((entry) => !direct.has(entry.agent)).map((entry) => {
-            const pool = entry.pool?.displayName ?? entry.pool?.ref.groupId ?? '';
-            return {
-                key: `pool:${entry.agent}`,
-                agentId: agentIdByTitle.get(entry.agent) ?? null,
-                title: entry.agent,
-                subtitle: entry.inUse
-                    ? t('connectedServicesSettings.detailUsedByPoolInUse', { pool })
-                    : t('connectedServicesSettings.detailUsedByPool', { pool }),
-                isDefault: false,
-                onPress: openAgent(agentIdByTitle.get(entry.agent) ?? null),
-            };
-        }),
+    const placed = new Set([...own, ...direct, ...throughPools.map((entry) => entry.agent)]);
+    const others = input.usedBy.filter((agent) => !placed.has(agent));
+    const row = (agent: string, key: string, subtitle: string, isDefault: boolean): AccountDetailUsedByRow => {
+        const agentId = agentIdByTitle.get(agent) ?? null;
+        return { key, agentId, title: agent, subtitle, isDefault, onPress: openAgent(agentId) };
+    };
+    const describe = (agent: string): AccountDetailUsedByRow => {
+        if (direct.has(agent)) return row(agent, `direct:${agent}`, t('connectedServicesCollection.usedByDefault'), true);
+        const pooled = throughPools.find((entry) => entry.agent === agent);
+        if (pooled) {
+            return row(agent, `pool:${agent}`, pooled.inUse
+                ? t('connectedServicesSettings.detailUsedByPoolInUse', { pool: pooled.pool })
+                : t('connectedServicesSettings.detailUsedByPool', { pool: pooled.pool }), false);
+        }
+        return row(agent, `own:${agent}`, t('connectedServicesSettings.detailUsedByOwnCould'), false);
+    };
+    return [
+        ...own.map(describe),
+        ...[...direct].filter((agent) => !own.includes(agent)).map(describe),
+        ...throughPools.filter((entry) => !own.includes(entry.agent)).map((entry) => describe(entry.agent)),
         ...(others.length > 0 ? [{
             key: 'others',
             agentId: null,
@@ -545,6 +563,34 @@ export const AccountDetailUsedBySection = React.memo(function AccountDetailUsedB
             isDefault: false,
         }] : []),
     ];
+}
+
+/** The live Used by rows, from the one Connected services index. */
+export const AccountDetailUsedBySection = React.memo(function AccountDetailUsedBySection(props: Readonly<{
+    account: QualifiedConnectedAccountRef;
+    testID?: string;
+} & AccountDetailUsedBySlots>) {
+    const router = useRouter();
+    const serviceKey = buildQualifiedPluginContributionKey(props.account.service);
+    const { indexModel, agentEntries } = useConnectedServicesIndex({ agents: 'cached', serviceKey });
+    const sheet = indexModel.sheets.find((candidate) => candidate.serviceKey === serviceKey);
+    const accountUse = sheet?.usedByByAccountId?.[props.account.accountId];
+    if (!sheet || !accountUse || accountUse.usedBy.length === 0) return <AccountDetailUsedBySectionView rows={[]} testID={props.testID} action={props.action}>{props.children}</AccountDetailUsedBySectionView>;
+    const roles = sheet.rolesByAccountId[props.account.accountId];
+    const pools = (roles?.pools ?? []).flatMap((membership) => {
+        const pool = sheet.pools.find((candidate) => candidate.ref.groupId === membership.groupId);
+        const name = pool?.displayName ?? pool?.ref.groupId ?? '';
+        return (pool?.defaultFor ?? []).map((agent) => ({ agent, pool: name, inUse: membership.inUse }));
+    });
+    const rows = projectAccountDetailUsedByRows({
+        usedBy: accountUse.usedBy,
+        usedByAgentIds: accountUse.usedByAgentIds,
+        defaultFor: roles?.defaultFor ?? [],
+        pools,
+        ownAgentIds: agentEntries
+            .filter((agent) => agent.identity?.pluginId === props.account.service.pluginId)
+            .map((agent) => agent.agentId),
+    }, (agentId) => agentId ? () => router.push(`/settings/agents/${agentId}` as never) : undefined);
     return <AccountDetailUsedBySectionView rows={rows} testID={props.testID} action={props.action}>{props.children}</AccountDetailUsedBySectionView>;
 });
 
