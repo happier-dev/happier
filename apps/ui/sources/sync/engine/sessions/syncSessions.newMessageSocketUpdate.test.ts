@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { socketApplyFrame } from '@/sync/engine/sessions/socketApplyFrame';
 import type { DecryptedMessage, Session } from '@/sync/domains/state/storageTypes';
 import { handleNewMessageSocketUpdate } from './sessionSocketUpdate';
 import type { NormalizedMessage } from '@/sync/typesRaw';
@@ -126,6 +127,7 @@ describe('handleNewMessageSocketUpdate', () => {
     });
 
     afterEach(() => {
+        socketApplyFrame.flushNow();
         vi.useRealTimers();
         resetRealtimeFanoutTelemetry();
         syncPerformanceTelemetry.configure({ enabled: false });
@@ -1039,15 +1041,12 @@ describe('handleNewMessageSocketUpdate', () => {
             updateData: buildUpdate({ sid: 's1', messageId: 'm3', messageSeq: 3 }),
         });
 
-        expect(applied).toEqual([{ sessionId: 's1', ids: ['m2'] }]);
-        expect(onNormalizedMessagesApplied).toHaveBeenCalledTimes(1);
+        expect(applied).toEqual([]);
+        expect(onNormalizedMessagesApplied).not.toHaveBeenCalled();
 
         await vi.runAllTimersAsync();
 
-        expect(applied).toEqual([
-            { sessionId: 's1', ids: ['m2'] },
-            { sessionId: 's1', ids: ['m3'] },
-        ]);
-        expect(onNormalizedMessagesApplied).toHaveBeenCalledTimes(2);
+        expect(applied).toEqual([{ sessionId: 's1', ids: ['m2', 'm3'] }]);
+        expect(onNormalizedMessagesApplied).toHaveBeenCalledTimes(1);
     });
 });

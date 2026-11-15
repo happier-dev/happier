@@ -100,6 +100,8 @@ import {
 } from '@/sync/domains/session/organization';
 import { fetchAndApplySessionOrganizationSnapshot } from '@/sync/ops/sessionOrganization';
 import { createSessionListOrganizationSnapshotRequest } from '@/sync/engine/sessions/sessionListOrganizationSnapshotRequest';
+import { socketApplyFrame } from '@/sync/engine/sessions/socketApplyFrame';
+import { settleReceivedSessionMessages } from '@/sync/engine/sessions/sessionMessageMaterializationBarrier';
 import { ActivityUpdateAccumulator, type ActivityUpdateAccumulatorFlushOptions } from './reducer/activityUpdateAccumulator';
 import { MachineActivityAccumulator, type MachineActivityUpdate } from './reducer/machineActivityAccumulator';
 import { randomUUID } from '@/platform/randomUUID';
@@ -2335,6 +2337,8 @@ class Sync {
 
 
         onSessionVisible = (sessionId: string) => {
+            // Entering a Session presents its current state, not the state one frame behind.
+            socketApplyFrame.flushNow();
             this.ensureSessionViewportHydrated();
             // Opening a session grows the hydrated working set; bound it (coalesced sweep).
             this.sessionTranscriptRetention.scheduleSweep();
@@ -2667,6 +2671,9 @@ class Sync {
             onLocalPendingProjectionCreated?: (event: Readonly<{ localId: string }>) => void;
         }>
     ) {
+        // The send reads the Session from the store: publish socket updates still waiting for
+        // their frame first, so it never builds on a frame-old snapshot.
+        socketApplyFrame.flushNow();
         let session = storage.getState().sessions[sessionId] ?? null;
         if (!session) {
             let hydration: EnsureSessionVisibleForRouteResult;
@@ -5720,6 +5727,10 @@ class Sync {
     }
 
     private fetchMessages = async (sessionId: string) => {
+        // Decide what to fetch from the transcript this client has already received: live rows
+        // still waiting for their frame are applied first, so a gap fetch starts at the covered prefix.
+        const settling = settleReceivedSessionMessages(sessionId);
+        if (settling) await settling;
         if (this.hasFetchedSessionsSnapshotForActiveServer && !this.isSessionKnownOnResolvedOwnerServer(sessionId)) {
             // Do not fetch messages when we cannot resolve the session to either the active server
             // or a locally known owner server. This avoids cross-server message fetches. The owner
@@ -8206,7 +8217,9 @@ class Sync {
               shouldContinue,
               artifactDataKeys: this.artifactDataKeys,
               retireSession: ({ sessionId }) => this.retireLocalSession(sessionId, sourceServerId),
-              applySessions: (sessions) => this.applySessions(sessions),
+              // Stable identity: the socket session coalescer flushes everything queued when its
+              // apply handler changes, so a per-update closure would publish every arrival alone.
+              applySessions: this.applySessions,
               fetchSessions: () => {
                   fireAndForget(this.fetchSessions(), {
                       tag: 'Sync.handleUpdate.fetchSessions',
@@ -8251,7 +8264,7 @@ class Sync {
         flushActivityUpdatesEngine({
             updates,
             sourceServerId: options?.sourceServerId,
-            applySessions: (sessions) => this.applySessions(sessions),
+            applySessions: this.applySessions,
         });
     }
 
