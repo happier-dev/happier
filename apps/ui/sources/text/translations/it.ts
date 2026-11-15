@@ -3400,6 +3400,14 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
   },
 
   time: {
+    compactAge: {
+      minutes: ({ count }: { count: number }) => `${count}min`,
+      hours: ({ count }: { count: number }) => `${count}h`,
+      days: ({ count }: { count: number }) => `${count}g`,
+      weeks: ({ count }: { count: number }) => `${count}sett`,
+      months: ({ count }: { count: number }) => `${count}mesi`,
+      years: ({ count }: { count: number }) => `${count}a`,
+    },
     justNow: "proprio ora",
     minutesAgo: ({ count }: { count: number }) =>
       `${count} ${count === 1 ? "minuto" : "minuti"} fa`,

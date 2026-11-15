@@ -1894,6 +1894,9 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     // proof the definition is unavailable or deleted.
     if (hydrationFailure !== null) {
         const problem = resolveWorkflowProblemPresentation(hydrationFailure.error);
+        if (problem.missingDefinition) {
+            return <WorkflowMissingDefinitionState onOpenCollection={() => openSection('/workflows', true)} />;
+        }
         return (
             <SurfaceStateCard
                 testID="workflow-editor-error"

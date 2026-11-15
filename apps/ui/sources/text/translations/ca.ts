@@ -3041,6 +3041,14 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
     },
 
     time: {
+        compactAge: {
+            minutes: ({ count }: { count: number }) => `${count}min`,
+            hours: ({ count }: { count: number }) => `${count}h`,
+            days: ({ count }: { count: number }) => `${count}d`,
+            weeks: ({ count }: { count: number }) => `${count}setm`,
+            months: ({ count }: { count: number }) => `${count}mes`,
+            years: ({ count }: { count: number }) => `${count}a`,
+        },
         justNow: 'ara mateix',
         minutesAgo: ({ count }: { count: number }) => `fa ${count} minut${count !== 1 ? 's' : ''}`,
         hoursAgo: ({ count }: { count: number }) => `fa ${count} hora${count !== 1 ? 'es' : ''}`,

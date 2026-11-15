@@ -3251,6 +3251,14 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
     },
 
   time: {
+    compactAge: {
+      minutes: ({ count }: { count: number }) => `${count}min`,
+      hours: ({ count }: { count: number }) => `${count}h`,
+      days: ({ count }: { count: number }) => `${count}d`,
+      weeks: ({ count }: { count: number }) => `${count}sem`,
+      months: ({ count }: { count: number }) => `${count}mês`,
+      years: ({ count }: { count: number }) => `${count}a`,
+    },
     justNow: "agora mesmo",
     minutesAgo: ({ count }: { count: number }) =>
       `há ${count} minuto${count !== 1 ? "s" : ""}`,

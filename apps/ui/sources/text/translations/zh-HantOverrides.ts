@@ -3514,6 +3514,14 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     time: {
+        compactAge: {
+            minutes: ({ count }: { count: number }) => `${count}分`,
+            hours: ({ count }: { count: number }) => `${count}小時`,
+            days: ({ count }: { count: number }) => `${count}天`,
+            weeks: ({ count }: { count: number }) => `${count}週`,
+            months: ({ count }: { count: number }) => `${count}個月`,
+            years: ({ count }: { count: number }) => `${count}年`,
+        },
         justNow: '剛剛',
         minutesAgo: ({ count }: { count: number }) => `${count} 分鐘前`,
         hoursAgo: ({ count }: { count: number }) => `${count} 小時前`,

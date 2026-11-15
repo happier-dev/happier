@@ -2898,6 +2898,14 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
     },
 
     time: {
+        compactAge: {
+            minutes: ({ count }: { count: number }) => `${count}min`,
+            hours: ({ count }: { count: number }) => `${count}h`,
+            days: ({ count }: { count: number }) => `${count}T`,
+            weeks: ({ count }: { count: number }) => `${count}W`,
+            months: ({ count }: { count: number }) => `${count}Mon`,
+            years: ({ count }: { count: number }) => `${count}J`,
+        },
         justNow: 'gerade eben',
         minutesAgo: ({ count }: { count: number }) => `${count} Minute${count !== 1 ? 'n' : ''} zuvor`,
         hoursAgo: ({ count }: { count: number }) => `${count} Stunde${count !== 1 ? 'n' : ''} zuvor`,

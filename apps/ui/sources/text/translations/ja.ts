@@ -3565,6 +3565,14 @@ export const ja: TranslationStructure = {
 	  },
 
   time: {
+    compactAge: {
+      minutes: ({ count }: { count: number }) => `${count}分`,
+      hours: ({ count }: { count: number }) => `${count}時間`,
+      days: ({ count }: { count: number }) => `${count}日`,
+      weeks: ({ count }: { count: number }) => `${count}週`,
+      months: ({ count }: { count: number }) => `${count}か月`,
+      years: ({ count }: { count: number }) => `${count}年`,
+    },
     justNow: "たった今",
     minutesAgo: ({ count }: { count: number }) => `${count}分前`,
     hoursAgo: ({ count }: { count: number }) => `${count}時間前`,

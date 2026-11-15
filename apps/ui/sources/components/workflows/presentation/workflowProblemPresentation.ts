@@ -37,6 +37,8 @@ import { discussionFailureLabel } from '@/components/discussions/discussionFailu
 export type WorkflowProblemRepair = 'retry' | 'refresh' | 'settings' | 'none';
 
 export type WorkflowProblemPresentation = Readonly<{
+    /** Only an owner-reported missing definition uses the missing-link recovery. */
+    missingDefinition?: true;
     /** The closed Workflow Protocol code, or `null` for other failures. */
     code: WorkflowOperationErrorCodeV1 | null;
     technicalDetails?: readonly TechnicalDetailsLine[];
@@ -297,6 +299,10 @@ function resolveWorkflowProblemCopy(
                 ? { messageKey: 'machineAgents.unsupportedArch' } : {}) });
     }
     if (failure?.errorCode === 'content_unavailable' && failure.details !== undefined) {
+        if (failure.details.reason === 'not_found') {
+            return { ...present(code, { ...WORKFLOW_PROBLEM_SHAPES.content_unavailable,
+                messageKey: WORKFLOW_CONTENT_REASON_KEYS.not_found }), missingDefinition: true };
+        }
         if (failure.details.reason === 'account_role_overrides_unavailable') {
             return present(code, { ...WORKFLOW_PROBLEM_SHAPES.content_unavailable,
                 titleKey: 'workflows.problem.accountRolesUnavailableTitle',

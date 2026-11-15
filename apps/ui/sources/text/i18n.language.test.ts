@@ -8,6 +8,13 @@ import { zhHant } from './translations/zh-Hant';
 import * as i18n from './i18n';
 
 describe('text/i18n language state', () => {
+    it('uses German copy for unnamed Run map forks and lanes', async () => {
+        await i18n.preloadTranslationsForSettings('de');
+        i18n.setPreferredLanguageFromSettings('de');
+        expect(i18n.t('workflows.editor.addParallel')).toBe('Nebeneinander');
+        expect(i18n.t('workflows.page.inspector.laneCount', { count: 3 })).toBe('3 Spuren');
+        expect(i18n.t('workflows.page.inspector.lane', { position: 2 })).toBe('Spur 2');
+    });
     it('retains Chinese locale composition after readiness', async () => {
         await i18n.preloadTranslationsForSettings('zh-Hant');
         i18n.setPreferredLanguageFromSettings('zh-Hant');

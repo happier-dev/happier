@@ -2776,6 +2776,15 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(readBodyProps()!.draftStore.get()).toBe(accepted);
         await screen.unmount();
     });
+    it('returns a stale saved-definition link to the workflow collection', async () => {
+        missingStoredArtifact = true;
+        const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('workflow-missing-definition-open-collection')).not.toBeNull());
+        expect(readBodyProps()).toBeNull();
+        await screen.pressByTestIdAsync('workflow-missing-definition-open-collection');
+        expect(routerSpy.replace).toHaveBeenCalledWith('/workflows');
+        await screen.unmount();
+    });
     it('shows an unavailable header reason when the saved definition cannot open', async () => {
         corruptStoredHeader = true;
         const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);

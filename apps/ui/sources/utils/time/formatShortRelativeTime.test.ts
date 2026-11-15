@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { formatRelativeTimeOrAbsolute, formatRelativeTimeShort, formatShortRelativeTime, formatShortRelativeTimeAt, readRelativeTimeShortRefreshAtMs, readShortRelativeTimeRefreshAtMs } from './formatShortRelativeTime';
+import { preloadTranslationsForSettings, setPreferredLanguageFromSettings } from '@/text/i18n';
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
@@ -24,6 +25,16 @@ describe('compact localized age display boundaries', () => {
 });
 
 describe('formatShortRelativeTime', () => {
+    it('localizes Run column ages through the shared compact formatter', async () => {
+        await preloadTranslationsForSettings('de');
+        setPreferredLanguageFromSettings('de');
+        try {
+            expect(formatShortRelativeTimeAt(NOW, NOW)).toBe('jetzt');
+            expect(formatShortRelativeTimeAt(NOW - 4 * MINUTE, NOW)).toBe('4min');
+            expect(formatShortRelativeTimeAt(NOW - 2 * DAY, NOW)).toBe('2T');
+            expect(formatShortRelativeTimeAt(NOW - 14 * DAY, NOW)).toBe('2W');
+        } finally { setPreferredLanguageFromSettings(null); }
+    });
     it('falls back to a date when RelativeTimeFormat is unavailable', () => {
         const original = Intl.RelativeTimeFormat;
         Object.defineProperty(Intl, 'RelativeTimeFormat', { configurable: true, value: undefined });

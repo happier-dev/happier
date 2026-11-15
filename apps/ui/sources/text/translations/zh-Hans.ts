@@ -3015,6 +3015,14 @@ export const zhHans: TranslationStructure = {
   },
 
   time: {
+    compactAge: {
+      minutes: ({ count }: { count: number }) => `${count}分`,
+      hours: ({ count }: { count: number }) => `${count}小时`,
+      days: ({ count }: { count: number }) => `${count}天`,
+      weeks: ({ count }: { count: number }) => `${count}周`,
+      months: ({ count }: { count: number }) => `${count}个月`,
+      years: ({ count }: { count: number }) => `${count}年`,
+    },
     justNow: "刚刚",
     minutesAgo: ({ count }: { count: number }) => `${count} 分钟前`,
     hoursAgo: ({ count }: { count: number }) => `${count} 小时前`,

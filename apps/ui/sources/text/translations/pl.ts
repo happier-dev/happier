@@ -3054,6 +3054,14 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
 	  },
 
   time: {
+    compactAge: {
+      minutes: ({ count }: { count: number }) => `${count}min`,
+      hours: ({ count }: { count: number }) => `${count}godz`,
+      days: ({ count }: { count: number }) => `${count}d`,
+      weeks: ({ count }: { count: number }) => `${count}tyg`,
+      months: ({ count }: { count: number }) => `${count}mies`,
+      years: ({ count }: { count: number }) => `${count}lat`,
+    },
     justNow: "teraz",
     minutesAgo: ({ count }: { count: number }) =>
       `${count} ${plural({ count, one: "minuta", few: "minuty", many: "minut" })} temu`,

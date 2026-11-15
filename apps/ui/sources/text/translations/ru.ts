@@ -8479,6 +8479,14 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
   },
 
   time: {
+    compactAge: {
+      minutes: ({ count }: { count: number }) => `${count}мин`,
+      hours: ({ count }: { count: number }) => `${count}ч`,
+      days: ({ count }: { count: number }) => `${count}д`,
+      weeks: ({ count }: { count: number }) => `${count}нед`,
+      months: ({ count }: { count: number }) => `${count}мес`,
+      years: ({ count }: { count: number }) => `${count}г`,
+    },
     justNow: "только что",
     minutesAgo: ({ count }: { count: number }) =>
       `${count} ${plural({ count, one: "минуту", few: "минуты", many: "минут" })} назад`,

@@ -3290,6 +3290,14 @@ const enConnectionStatus = {
 };
 
 const enTime = {
+  compactAge: {
+    minutes: ({ count }: { count: number }) => `${count}m`,
+    hours: ({ count }: { count: number }) => `${count}h`,
+    days: ({ count }: { count: number }) => `${count}d`,
+    weeks: ({ count }: { count: number }) => `${count}w`,
+    months: ({ count }: { count: number }) => `${count}mo`,
+    years: ({ count }: { count: number }) => `${count}y`,
+  },
   justNow: 'just now',
   minutesAgo: ({ count }: { count: number }) =>
     `${count} minute${count !== 1 ? 's' : ''} ago`,
