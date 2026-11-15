@@ -73,7 +73,9 @@ if (!isCliDistIntegrityProbe && isTopLevelVersionRequest(readCliProcessArgs())) 
 } else {
   // A pending Promise alone does not keep Node alive. Keep the CLI process
   // referenced until async command dispatch (including install cleanup) settles.
-  const cliLifetimeKeepAlive = isCliDistIntegrityProbe ? null : setInterval(() => undefined, 60_000);
+  // One maximal-delay timeout references the loop without waking a long-lived command (daemon,
+  // session host) every minute; it is cleared when dispatch settles.
+  const cliLifetimeKeepAlive = isCliDistIntegrityProbe ? null : setTimeout(() => undefined, 2_147_483_647);
   const runBootstrap = () => import('./cli/bootstrap').then(async ({ runCliBootstrap }) => {
     if (!isCliDistIntegrityProbe) await runCliBootstrap(import.meta.url);
   });
@@ -92,6 +94,6 @@ if (!isCliDistIntegrityProbe && isTopLevelVersionRequest(readCliProcessArgs())) 
       process.exitCode = 1;
     })
     .finally(() => {
-      if (cliLifetimeKeepAlive !== null) clearInterval(cliLifetimeKeepAlive);
+      if (cliLifetimeKeepAlive !== null) clearTimeout(cliLifetimeKeepAlive);
     });
 }

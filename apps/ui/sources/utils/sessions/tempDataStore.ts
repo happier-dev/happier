@@ -110,30 +110,12 @@ export interface NewSessionData {
 // In-memory store for temporary data
 const tempDataMap = new Map<string, TempDataEntry>();
 
-// Cleanup entries older than 5 minutes
-const CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 minutes
+// Entries older than this are abandoned navigation data: expired on read and pruned at the next
+// store, so pending data arms no timer.
 const MAX_AGE = 10 * 60 * 1000; // 10 minutes
 
-let cleanupTimer: ReturnType<typeof setInterval> | null = null;
-
-function stopCleanupWhenEmpty(): void {
-    if (tempDataMap.size === 0 && cleanupTimer !== null) {
-        clearInterval(cleanupTimer);
-        cleanupTimer = null;
-    }
-}
-
-function startCleanup(): void {
-    if (cleanupTimer !== null) return;
-    cleanupTimer = setInterval(() => {
-        const now = Date.now();
-        for (const [key, entry] of tempDataMap.entries()) {
-            if (now - entry.timestamp > MAX_AGE) {
-                tempDataMap.delete(key);
-            }
-        }
-        stopCleanupWhenEmpty();
-    }, CLEANUP_INTERVAL);
+function isExpired(entry: TempDataEntry, now: number): boolean {
+    return now - entry.timestamp > MAX_AGE;
 }
 
 /**
@@ -141,11 +123,12 @@ function startCleanup(): void {
  */
 export function storeTempData(data: any): string {
     const key = randomUUID();
+    const now = Date.now();
+    for (const [staleKey, entry] of tempDataMap) if (isExpired(entry, now)) tempDataMap.delete(staleKey);
     tempDataMap.set(key, {
         data,
-        timestamp: Date.now()
+        timestamp: now
     });
-    startCleanup();
     return key;
 }
 
@@ -155,12 +138,9 @@ export function storeTempData(data: any): string {
  */
 export function getTempData<T = any>(key: string): T | null {
     const entry = tempDataMap.get(key);
-    if (entry) {
-        tempDataMap.delete(key); // Remove after retrieval
-        stopCleanupWhenEmpty();
-        return entry.data as T;
-    }
-    return null;
+    if (!entry) return null;
+    tempDataMap.delete(key); // Remove after retrieval
+    return isExpired(entry, Date.now()) ? null : entry.data as T;
 }
 
 /**
@@ -168,7 +148,10 @@ export function getTempData<T = any>(key: string): T | null {
  */
 export function peekTempData<T = any>(key: string): T | null {
     const entry = tempDataMap.get(key);
-    return entry ? entry.data as T : null;
+    if (!entry) return null;
+    if (!isExpired(entry, Date.now())) return entry.data as T;
+    tempDataMap.delete(key);
+    return null;
 }
 
 /**
@@ -176,5 +159,4 @@ export function peekTempData<T = any>(key: string): T | null {
  */
 export function clearTempData(): void {
     tempDataMap.clear();
-    stopCleanupWhenEmpty();
 }

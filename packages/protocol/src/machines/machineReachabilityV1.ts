@@ -1,7 +1,8 @@
 import { RPC_ERROR_CODES, readRpcErrorCode } from '../rpc/errors.js';
 
-// Released 0.2 clients age real observations after 60s; leave delivery margin.
-export const MACHINE_HEARTBEAT_INTERVAL_MS = 50_000;
+// Owner ruling 2026-11-04 (3): Machines beat every 60 s. 0.3 Homes own presence expiry
+// (`presenceProtocolVersion: 1`), so the 0.2-client 60 s grace no longer sets the cadence.
+export const MACHINE_HEARTBEAT_INTERVAL_MS = 60_000;
 /** The existing deadline tolerates three missed Machine heartbeat intervals. */
 export const DEFAULT_MACHINE_PRESENCE_TIMEOUT_MS = 3 * MACHINE_HEARTBEAT_INTERVAL_MS;
 export const DEFAULT_MACHINE_ONLINE_GRACE_MS = 60_000;

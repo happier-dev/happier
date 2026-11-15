@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 describe('createKeyedLatestWorkScheduler', () => {
   it('retains every pending write across long disconnection when no caller capacity or age bound exists', async () => {
@@ -164,5 +164,29 @@ describe('createKeyedLatestWorkScheduler', () => {
     await scheduler.flushAll(100);
 
     expect(writes).toEqual(['first', 'latest']);
+  });
+  it('waits for a key to settle without polling while its work is parked offline', async () => {
+    const { createKeyedLatestWorkScheduler } = await import('./createKeyedLatestWorkScheduler');
+    vi.useFakeTimers();
+    let connected = false;
+    const scheduler = createKeyedLatestWorkScheduler<string, number>({
+      run: async () => {}, maxConcurrent: 1, minKeyIntervalMs: 0, isConnected: () => connected,
+    });
+    try {
+      scheduler.enqueue('parked', 1);
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+      let settled: boolean | null = null;
+      void scheduler.flushKey('parked', 60_000).then(value => { settled = value; });
+      await vi.advanceTimersByTimeAsync(1_000);
+      // One deadline timer for the waiter; no 25 ms re-checks while nothing changes.
+      expect({ timersArmed: setTimeoutSpy.mock.calls.length, settled }).toEqual({ timersArmed: 1, settled: null });
+      connected = true;
+      scheduler.notifyConnectivityChanged();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(true);
+    } finally {
+      scheduler.dispose();
+      vi.useRealTimers();
+    }
   });
 });

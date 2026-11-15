@@ -81,6 +81,11 @@ export function createKeyedLatestWorkScheduler<TKey extends string, TPayload>(
   }>,
 ): KeyedLatestWorkScheduler<TKey, TPayload> {
   const entries = new Map<TKey, Entry<TPayload>>();
+  // Flush waiters re-check their key when it may have settled; nothing polls.
+  const settleWaiters = new Map<TKey, Set<() => void>>();
+  const notifySettleWaiters = (key: TKey): void => {
+    for (const check of [...(settleWaiters.get(key) ?? [])]) check();
+  };
   const readyQueue: TKey[] = [];
   const maxConcurrent = normalizePositiveInteger(options.maxConcurrent);
   const minKeyIntervalMs = normalizeNonNegativeMs(options.minKeyIntervalMs);
@@ -122,8 +127,8 @@ export function createKeyedLatestWorkScheduler<TKey extends string, TPayload>(
   }
 
   function maybeDeleteEntry(key: TKey, entry: Entry<TPayload>): void {
-    if (entry.pending || entry.inFlight || entry.timer || entry.queued || entry.lastRunAtMs !== null) return;
-    entries.delete(key);
+    if (!(entry.pending || entry.inFlight || entry.timer || entry.queued || entry.lastRunAtMs !== null)) entries.delete(key);
+    notifySettleWaiters(key);
   }
 
   function dropPending(key: TKey, entry: Entry<TPayload>, reason: string): void {
@@ -313,35 +318,25 @@ export function createKeyedLatestWorkScheduler<TKey extends string, TPayload>(
   function waitForKeySettled(key: TKey, timeoutMs: number): Promise<boolean> {
     const timeout = normalizeNonNegativeMs(timeoutMs);
     return new Promise((resolve) => {
-      let settled = false;
       let timer: ReturnType<typeof setTimeout> | null = null;
-      let pollTimer: ReturnType<typeof setTimeout> | null = null;
       const finish = (value: boolean) => {
-        if (settled) return;
-        settled = true;
+        const waiters = settleWaiters.get(key);
+        if (!waiters?.delete(check) && timer === null) return;
+        if (waiters?.size === 0) settleWaiters.delete(key);
         if (timer) clearTimeout(timer);
-        if (pollTimer) clearTimeout(pollTimer);
+        timer = null;
         resolve(value);
       };
-      const schedulePoll = () => {
-        if (settled) return;
-        pollTimer = setTimeout(poll, Math.min(25, Math.max(1, timeout)));
-      };
-      const poll = () => {
-        pollTimer = null;
+      // Every transition that can leave a key idle runs maybeDeleteEntry, which re-checks waiters.
+      function check(): void {
         const entry = entries.get(key);
-        if (!entry || (!entry.pending && !entry.inFlight && !entry.timer && !entry.queued)) {
-          finish(true);
-          return;
-        }
-        if (entry.inFlight) {
-          void entry.inFlight.finally(schedulePoll);
-          return;
-        }
-        schedulePoll();
-      };
+        if (!entry || (!entry.pending && !entry.inFlight && !entry.timer && !entry.queued)) finish(true);
+      }
+      const waiters = settleWaiters.get(key) ?? new Set<() => void>();
+      settleWaiters.set(key, waiters);
+      waiters.add(check);
       timer = setTimeout(() => finish(false), timeout);
-      poll();
+      check();
     });
   }
 
@@ -415,6 +410,7 @@ export function createKeyedLatestWorkScheduler<TKey extends string, TPayload>(
       }
       readyQueue.length = 0;
       entries.clear();
+      for (const key of [...settleWaiters.keys()]) notifySettleWaiters(key);
     },
     notifyConnectivityChanged: () => {
       if (disposed || !isConnected()) return;
