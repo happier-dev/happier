@@ -376,7 +376,7 @@ import type {
     AutomationDefinition,
     AutomationDefinitionRun,
 } from './domains/automations/automationTypes';
-import { getUserProfile } from './api/social/apiFriends';
+import { getUserProfiles } from './api/social/apiFriends';
 import {
     clearAutomationRunHistory,
     deleteAutomationDefinition,
@@ -7243,18 +7243,14 @@ class Sync {
         
         if (missingIds.length === 0) return;
 
-        // The API owns 404-to-null normalization. Other failures must reach the
+        // One exact People read for every missing person; the batch omits absent
+        // people, who are cached as unknown (null). Other failures must reach the
         // Feed retry owner before it publishes a snapshot without these users.
-        const results = await Promise.all(
-            missingIds.map(async (id) => ({
-                id,
-                profile: await getUserProfile(credentials, id, { request, retry: 'none' }),
-            })),
-        );
-
+        const profiles = await getUserProfiles(credentials, missingIds, { request, retry: 'none' });
+        const byId = new Map(profiles.map(profile => [profile.id, profile]));
         const usersMap: Record<string, UserProfile | null> = {};
-        for (const r of results) {
-            usersMap[r.id] = r.profile;
+        for (const id of missingIds) {
+            usersMap[id] = byId.get(id) ?? null;
         }
 
         if (shouldContinue() && Object.keys(usersMap).length > 0) {

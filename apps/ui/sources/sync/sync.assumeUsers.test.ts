@@ -66,4 +66,22 @@ describe('sync.assumeUsers', () => {
         expect(storage.getState().users.user_transient).toBeNull();
     });
 
+    it('reads every missing person of one feed page in one request and caches the absent ones as unknown', async () => {
+        const people = ['friend-a', 'friend-b'].map(id => ({ id, name: id, firstName: '', lastName: null, avatar: null,
+            username: '', bio: null, badges: [], status: 'friend', publicKey: null }));
+        // HTTP is the system boundary. Both the singleton and the batch respond validly, so the count is the contract.
+        const request = vi.fn(async (path: string, init?: RequestInit) => {
+            const person = people.find(row => row.id === path.split('/').at(-1));
+            const payload = init?.method === 'POST' ? { users: people } : person ? { user: person } : { error: 'User not found' };
+            return new Response(JSON.stringify(payload), { status: init?.method === 'POST' || person ? 200 : 404,
+                headers: { 'Content-Type': 'application/json' } });
+        });
+        const { sync } = await import('./sync');
+        await sync.assumeUsers(['friend-a', 'friend-b', 'friend-gone'], { request });
+        expect(request).toHaveBeenCalledTimes(1);
+        expect(storage.getState().users['friend-a']?.id).toBe('friend-a');
+        expect(storage.getState().users['friend-b']?.id).toBe('friend-b');
+        expect(storage.getState().users['friend-gone']).toBeNull();
+    });
+
 });
