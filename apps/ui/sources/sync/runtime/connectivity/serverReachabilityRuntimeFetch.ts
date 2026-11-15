@@ -71,7 +71,7 @@ export async function runtimeFetchWithServerReachability<T>(params: ReachableFet
         try {
             return await withServerReadLifetime<T>({ ...params.init, signal: cancellation.signal },
                 (init, consume) => performReachableFetch({ ...params, signal: undefined, init }, consume),
-                consumeResponse, { responseSizeBounded: readPolicy === 'paged' });
+                consumeResponse);
         } finally { cancellation.dispose(); }
     }
     return await performReachableFetch(params, consumeResponse);

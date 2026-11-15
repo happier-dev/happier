@@ -235,29 +235,34 @@ describe('captured Home recovery read lifetime', () => {
         } finally { release?.(); await pending; }
     });
 
-    it.each(['paged', 'unbounded'] as const)('keeps native %s reads recoverable without imposing a deadline on large unpaged transfers', async recoveryRead => {
-        platform.OS = 'android';
+    it.each(['web', 'android'] as const)('allows one slow-first-byte %s read to finish without abort-retry duplication', async os => {
+        platform.OS = os;
         vi.stubGlobal('AbortController', NativeAbortController);
         vi.stubEnv('EXPO_PUBLIC_HAPPIER_SERVER_READ_INACTIVITY_TIMEOUT_MS', '50');
         vi.useFakeTimers();
         const entered = createDeferred<void>();
         const transfer = createDeferred<Response>();
+        let computations = 0;
+        let signal: AbortSignal | null | undefined;
         setRuntimeFetch(async (_url, init) => {
+            computations++;
+            signal = init?.signal;
             init?.signal?.addEventListener('abort', () => transfer.reject(new DOMException('Aborted', 'AbortError')), { once: true });
             entered.resolve();
             return transfer.promise;
         });
         let settled = false;
         const request = createServerFetchAtEndpoint({ endpointUrl: 'https://native-read.example.test', credentials: null });
-        const pending = request('/read', undefined, { recoveryRead, retry: 'none' })
+        const pending = request('/read', undefined, { recoveryRead: 'paged', retry: 'none' })
             .then(response => ({ response }), (error: unknown) => ({ error })).finally(() => { settled = true; });
         try {
             await entered.promise;
             await vi.advanceTimersByTimeAsync(51);
-            expect(settled).toBe(recoveryRead === 'paged');
+            expect.soft(settled).toBe(false);
+            expect.soft(signal?.aborted).toBe(false);
             transfer.resolve(Response.json({ ok: true }));
-            expect(await pending).toMatchObject(recoveryRead === 'paged'
-                ? { error: { name: 'ServerFetchReadTimeoutError' } } : { response: { ok: true } });
+            expect(await pending).toMatchObject({ response: { ok: true } });
+            expect(computations).toBe(1);
         } finally { transfer.resolve(Response.json({ ok: true })); await pending; }
     });
 

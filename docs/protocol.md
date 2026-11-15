@@ -54,8 +54,9 @@ same explicit opt-out rather than inherit buffered compression behavior.
 
 The HTTP request owner retains read cancellation through response consumption,
 including captured Home/Account requests and read-only POST operations. Web reads
-use an inactivity window while waiting for headers or a nonempty body chunk,
-rather than a total transfer deadline. The timer stops between transport reads
+use an inactivity window while waiting for a nonempty response-body chunk.
+Waiting for response headers has no computation deadline: a healthy query may
+produce no bytes while computing. The timer stops between transport reads
 and at EOF; opening, projecting and persisting received data remain cancellable
 without counting consumer work as network inactivity. The default is the server
 peer-liveness window (15s ping interval plus 45s timeout);
@@ -63,9 +64,9 @@ peer-liveness window (15s ping interval plus 45s timeout);
 can override it with a positive timer-safe millisecond value. Timeout activation
 is logged without request content or credentials.
 
-Native fetch may expose no progress until the whole response arrives. Only
-owner-declared server-bounded pages acquire a deadline in that phase; large,
-unpaged reads remain cancellable without a total deadline. Read recovery never
+Native fetch may expose no progress until the whole response arrives. Reads
+remain cancellable without a deadline in that phase, including bounded pages.
+Read recovery never
 opts mutations into cancellation or retry. HTTP readiness remains independent of
 socket-only failures: the socket transport retains its own managed retry demand,
 and suspends dialing when HTTP reachability is genuinely unavailable.

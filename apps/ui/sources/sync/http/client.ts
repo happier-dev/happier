@@ -1,5 +1,4 @@
 import { mergeAbortSignals, throwIfAborted } from '@/utils/runtime/abortSignals';
-import { Platform } from 'react-native';
 import { log } from '@/log';
 import { readServerReadInactivityTimeoutMs } from '@/sync/runtime/connectivity/serverReachabilityTuning';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
@@ -235,7 +234,7 @@ export async function withServerReadLifetime<T = Response>(
     init: RequestInit | undefined,
     request: (init: RequestInit, consume: (response: Response) => Promise<Response | T>) => Promise<Response | T>,
     consumeResponse?: (response: Response) => Promise<T>,
-    options: Readonly<{ active?: boolean; responseSizeBounded?: boolean }> = {},
+    options: Readonly<{ active?: boolean }> = {},
 ): Promise<Response | T> {
     const controller = new AbortController();
     // React Native's abort-controller discards abort(reason). Preserve the cause
@@ -261,12 +260,8 @@ export async function withServerReadLifetime<T = Response>(
     const timeoutMs = readServerReadInactivityTimeoutMs();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let reader: ReadableStreamDefaultReader<ResponseBodyChunk> | undefined;
-    // Native fetch resolves after the whole XHR body: a large unpaged response
-    // must not acquire a total deadline until native exposes body progress.
-    let canObserveInactivity = Platform.OS === 'web' || options.responseSizeBounded === true;
     const resetInactivity = () => {
         clearTimeout(timer);
-        if (!canObserveInactivity) return;
         timer = setTimeout(() => {
             log.log(`[serverFetch] recovery read inactivity timeout (${timeoutMs}ms)`);
             cancellation.reason = new ServerFetchReadTimeoutError();
@@ -291,7 +286,9 @@ export async function withServerReadLifetime<T = Response>(
     });
     if (upstream?.aborted) abortFromUpstream();
     else upstream?.addEventListener('abort', abortFromUpstream, { once: true });
-    resetInactivity();
+    // Before headers, silence may be healthy server computation, not a dead
+    // transport. Only a pending response-body read owns the inactivity window;
+    // caller cancellation still covers the entire request on every platform.
     try {
         if (controller.signal.aborted) return await cancelled;
         return await Promise.race([cancelled, request({ ...init, signal: controller.signal }, async response => {
@@ -299,7 +296,6 @@ export async function withServerReadLifetime<T = Response>(
             clearTimeout(timer);
             let ownedResponse = response;
             if (typeof response.body?.getReader === 'function') {
-                canObserveInactivity = true;
                 reader = response.body.getReader();
                 const bodyReader = reader;
                 ownedResponse = createReadLifetimeResponse(response, new ReadableStream<ResponseBodyChunk>({
@@ -429,7 +425,7 @@ async function requestAtEndpoint<T>(
         try {
             return await withServerReadLifetime<T>({ ...init, signal: cancellation.signal },
                 (ownedInit, consume) => requestAtEndpoint(context, path, ownedInit, { ...options, recoveryRead: false }, consume),
-                consumeResponse, { active: context.active, responseSizeBounded: readPolicy === 'paged' });
+                consumeResponse, { active: context.active });
         } catch (error) {
             assertRequestContextCurrent(context);
             throw error;

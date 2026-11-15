@@ -3,8 +3,8 @@
  */
 export const SERVER_PEER_LIVENESS_WINDOW_MS = 15_000 + 45_000;
 
-/** Web bodies reset this window on progress. Native XHR fetch exposes no body
- * progress, so only server-bounded reads may use it before fetch resolves.
+/** Streaming bodies reset this window on progress. Waiting for a response is
+ * not timed: a server may still be computing, and native XHR exposes no progress.
  */
 export function readServerReadInactivityTimeoutMs(): number {
     const raw = String(process.env.EXPO_PUBLIC_HAPPIER_SERVER_READ_INACTIVITY_TIMEOUT_MS ?? '').trim();
