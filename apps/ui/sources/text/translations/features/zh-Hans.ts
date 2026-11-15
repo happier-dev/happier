@@ -16413,6 +16413,7 @@ const zhHans: WorkflowsDestinationTranslations = {
         loadFailedBody: '你的工作不受影响。',
         review: '查看',
         rowMeta: ({ origin, machine, age }) => `${origin} · ${machine} · ${age}`,
+        triggerEmpty: ({ when }) => `还没有运行。下一次将于${when}开始。`,
     },
     rowMenu: {
         accessibility: '工作流选项',
@@ -16706,6 +16707,7 @@ const zhHans: WorkflowTriggersCopy = {
         turnOn: '开启',
         deleteTrigger: '删除触发器',
         repeat: '重复',
+        everyHour: '每小时',
         everyDay: '每天',
         weekdays: '工作日',
         weekly: '每周',

@@ -16418,6 +16418,7 @@ const ja: WorkflowsDestinationTranslations = {
         loadFailedBody: '作業には影響ありません。',
         review: '確認',
         rowMeta: ({ origin, machine, age }) => `${origin} · ${machine} · ${age}`,
+        triggerEmpty: ({ when }) => `まだ実行はありません。次回は${when}に始まります。`,
     },
     rowMenu: {
         accessibility: 'ワークフローのオプション',
@@ -16711,6 +16712,7 @@ const ja: WorkflowTriggersCopy = {
         turnOn: 'オンにする',
         deleteTrigger: 'トリガーを削除',
         repeat: '繰り返し',
+        everyHour: '毎時',
         everyDay: '毎日',
         weekdays: '平日',
         weekly: '毎週',

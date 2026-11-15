@@ -64,6 +64,7 @@ export const en = {
         loadFailedBody: 'Your work is unaffected.',
         review: 'Review',
         rowMeta: ({ origin, machine, age }: { origin: string; machine: string; age: string }) => `${origin} · ${machine} · ${age}`,
+        triggerEmpty: ({ when }: { when: string }) => `No runs yet. The next one starts ${when}.`,
     },
     rowMenu: {
         accessibility: 'Workflow options',

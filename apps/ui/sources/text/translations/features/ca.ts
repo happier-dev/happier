@@ -16456,6 +16456,7 @@ const ca: WorkflowsDestinationTranslations = {
         loadFailedBody: 'La teva feina no es veu afectada.',
         review: 'Revisa',
         rowMeta: ({ origin, machine, age }) => `${origin} · ${machine} · ${age}`,
+        triggerEmpty: ({ when }) => `Encara no hi ha execucions. La següent comença ${when}.`,
     },
     rowMenu: {
         accessibility: 'Opcions del flux de treball',
@@ -16749,6 +16750,7 @@ const ca: WorkflowTriggersCopy = {
         turnOn: 'Activa',
         deleteTrigger: "Elimina l'activador",
         repeat: 'Repeteix',
+        everyHour: 'Cada hora',
         everyDay: 'Cada dia',
         weekdays: 'Dies feiners',
         weekly: 'Setmanal',

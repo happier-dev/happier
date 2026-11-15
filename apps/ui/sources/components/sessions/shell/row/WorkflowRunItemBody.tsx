@@ -18,7 +18,7 @@ import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflo
 import { workStatusWordStyle } from '@/components/work/status/workStatusTreatment';
 import { WorkStatusGlyph } from '@/components/work/status/WorkStatusGlyph';
 import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
-import { resolveWorkStatusRowMark } from '@/components/work/status/workStatusRowMark';
+import { resolveWorkStatusRowMark } from '@/components/work/status/workStatusRowMarkModel';
 import { CollectionRequestPeek } from '@/components/ui/lists/collection/CollectionRequestPeek';
 import type { CollectionRequestRef } from '@/components/ui/lists/collection/collectionRequestRef';
 import { getStorage, useWorkflowRun, useUser } from '@/sync/domains/state/storage';
@@ -211,9 +211,10 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
         props.presentation === 'work' && destinationProgress.length === 0 ? formatAsOfTime(Date.parse(summary.createdAt)) : null,
         describeWorkflowRunProgress(summary.stepProgress),
         props.presentation !== 'work' ? starterLabel : null, unreadable].filter(Boolean).join(' · ');
+    // A Run without a final output keeps its own status line; "No final output selected" is the editor's phrase.
     const resultLine = !resultEnabled ? null : result.text
-        ?? t(result.status === 'failed' ? 'workflows.contentUnavailable'
-            : result.status === 'pending' ? 'common.loading' : 'workflows.finalOutput.none');
+        ?? (result.status === 'failed' ? t('workflows.contentUnavailable')
+            : result.status === 'pending' ? t('common.loading') : null);
     const depth = props.reportsDepth ?? 0;
     // At the list's one-line density a Run reads as a Session row does (calm ruling 2026-11-01): its name, then
     // the calm row mark (or its age), the word only when the person asked for status words, the one decider

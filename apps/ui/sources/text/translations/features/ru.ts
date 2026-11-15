@@ -16466,6 +16466,7 @@ const ru: WorkflowsDestinationTranslations = {
         loadFailedBody: 'Ваша работа не затронута.',
         review: 'Просмотреть',
         rowMeta: ({ origin, machine, age }) => `${origin} · ${machine} · ${age}`,
+        triggerEmpty: ({ when }) => `Запусков пока нет. Следующий начнётся ${when}.`,
     },
     rowMenu: {
         accessibility: 'Параметры рабочего процесса',
@@ -16759,6 +16760,7 @@ const ru: WorkflowTriggersCopy = {
         turnOn: 'Включить',
         deleteTrigger: 'Удалить триггер',
         repeat: 'Повтор',
+        everyHour: 'Каждый час',
         everyDay: 'Каждый день',
         weekdays: 'По будням',
         weekly: 'Каждую неделю',

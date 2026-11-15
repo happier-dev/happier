@@ -120,13 +120,13 @@ async function initializeRun(triggerId?: string) {
         finalResult: { kind: 'happier.workflow-final-result.v1', result: { kind: 'text', value: resultText },
             producerInvocation: { recordId: 'chosen-output' } } }));
     const stored = { run: summary, acceptedEnvelope, keyCensus, checkpointEnvelope: null, resultEnvelope };
-    const serve = (options: { summary?: WorkflowRunSummaryV1; refuse?: boolean; respondAfter?: Promise<void> } = {}) => {
+    const serve = (options: { summary?: WorkflowRunSummaryV1; refuse?: boolean; respondAfter?: Promise<void>; noResult?: boolean } = {}) => {
         const run = options.summary ?? summary;
         http.answer(id, route, { select: (input) => {
             if (!input || typeof input !== 'object' || !('operation' in input)) throw new Error('Missing Workflow operation');
             if (input.operation === 'get') return options.refuse
                 ? { status: 503, body: { error: 'content_unavailable' } }
-                : { body: stored, respondAfter: options.respondAfter };
+                : { body: options.noResult ? { ...stored, resultEnvelope: null } : stored, respondAfter: options.respondAfter };
             if (input.operation === 'run-key.census') return { body: keyCensus };
             if (input.operation === 'invocations.list') return { body: { invocations: [], parentRevision: run.revision } };
             if (input.operation === 'list') {
@@ -542,6 +542,19 @@ describe('opened habit History result', () => {
         expect(http.requestsFor(route).filter(request => request.input && typeof request.input === 'object'
             && 'operation' in request.input && request.input.operation === 'get').map(request => request.input))
             .toEqual([{ operation: 'get', runId: 'habit-run' }]);
+    });
+
+    it('keeps the Run status line when the Run has no final output, never the editor\'s "no final output selected"', async () => {
+        const { home, serve } = await initializeRun();
+        serve({ noResult: true });
+        const screen = await renderScreen(<WorkflowRunItemBody kind="workflow_run" runId="habit-run" serverId={home.id}
+            {...{ includeResult: true }} />);
+        await waitForHomeGovernance(() => {
+            expect(storage.getState().workflowRunsById[workflowRunStoreKey('habit-run')]?.detail).toBeDefined();
+        });
+        await flushHookEffects({ cycles: 10 });
+        expect(screen.getTextContent()).not.toContain('workflows.finalOutput.none');
+        expect(screen.getTextContent()).not.toContain('common.loading');
     });
 
     it.each([true, false])('refuses an unavailable exact result and keeps the summary and retry reachable (press event: %s)', async (withPressEvent) => {

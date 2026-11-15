@@ -212,6 +212,17 @@ it('shows and clears pushed observation backoff in trigger History without rerea
     expect(home.requestsFor('/v3/automations')).toHaveLength(definitionReads);
 });
 
+it('says when an empty trigger History runs next, in one sentence (07 S4)', async () => {
+    home.answer(serverId, route, { body: { runs: [], acceptedEnvelopesByRunId: {}, keyCensusByRunId: {} } });
+    const nextRunAt = Date.now() + 22 * 60_000 + 10_000;
+    const screen = await renderScreen(<WorkflowTriggerRunHistory automationId="hourly" triggerId="hourly-trigger" nextRunAt={nextRunAt} />);
+    const sentence = t('workflows.destination.history.triggerEmpty', { when: t('workflows.triggers.row.nextMinutes', { count: 22 }) });
+    await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(sentence));
+    // The next occurrence is said once, in the empty sentence, not again as its own line.
+    expect(screen.getTextContent()).not.toContain(t('workflows.empty.runsTitle'));
+    expect(screen.getTextContent()).not.toContain(t('workflows.triggers.row.nextRun', { time: t('workflows.triggers.row.nextMinutes', { count: 22 }) }));
+});
+
 it('lists a fired Once Run while its accepted snapshot is pending, then opens initialized content', async () => {
     const trigger = { kind: 'schedule' as const, schedule: { kind: 'once' as const, scheduleExpr: null,
         everyMs: null, timezone: 'UTC' }, remainingOccurrences: 0 };
@@ -378,10 +389,12 @@ it.each(['later-schedule', 'disabled-schedule', 'event', 'older-summary'] as con
     await screen.pressByTestIdAsync(historyId);
     await waitForHomeGovernance(() => expect(home.requestsFor(route)).toHaveLength(1));
     expect(home.requestsFor(route)[0]?.input).toMatchObject({ operation: 'list', request: { triggerId: 'team-schedule' } });
-    await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('workflows.empty.runsTitle')));
-    const { formatNextScheduledRun } = await import('../triggers/formatTriggerSummary');
+    const { formatNextScheduledRun, formatNextScheduledRunTime } = await import('../triggers/formatTriggerSummary');
+    // An empty History names the trigger's own next occurrence in its one empty sentence (07 S4).
+    await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(triggerNextRunAt === null ? t('workflows.empty.runsTitle')
+        : t('workflows.destination.history.triggerEmpty', { when: formatNextScheduledRunTime(triggerNextRunAt) })));
     expect(screen.getTextContent()).not.toContain(formatNextScheduledRun(workflowNextRunAt));
-    if (triggerNextRunAt !== null) expect(screen.getTextContent()).toContain(formatNextScheduledRun(triggerNextRunAt));
+    expect(screen.getTextContent()).not.toContain(formatNextScheduledRunTime(workflowNextRunAt));
 });
 
 const artifactInventoryReads = () => home.requests.filter(request => request.input === null

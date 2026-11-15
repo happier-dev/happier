@@ -43,14 +43,16 @@ export function resolveOnceSchedule(draft: OnceScheduleDraft, nowMs = Date.now()
 
 /**
  * The simple schedules a person picks (07 S4: Repeat Every day · Weekdays · Weekly, At a time) and
- * the cron they are stored as. The summary and the popover both read a cron through this one parser,
- * so a trigger never reads as "Every day" in one place and as its expression in another.
+ * the cron they are stored as. A saved hourly cron also reads as Every hour at a minute, so it is
+ * edited as a schedule, never as its expression. The summary and the popover both read a cron through
+ * this one parser, so a trigger never reads as "Every day" in one place and as its expression in another.
  */
 export const SIMPLE_SCHEDULE_REPEATS = ['daily', 'weekdays', 'weekly'] as const;
-export type SimpleScheduleRepeat = typeof SIMPLE_SCHEDULE_REPEATS[number];
+export type SimpleScheduleRepeat = typeof SIMPLE_SCHEDULE_REPEATS[number] | 'hourly';
 
 export type SimpleSchedule = Readonly<{
     repeat: SimpleScheduleRepeat;
+    /** Kept while the schedule is hourly, so switching back to a day keeps its time. */
     hour: number;
     minute: number;
     /** Cron day of week, 0 = Sunday; only for `weekly`. */
@@ -63,11 +65,12 @@ function readNumber(field: string, max: number): number | null {
     return value <= max ? value : null;
 }
 
-/** The daily, weekday and weekly crons; any other expression is `null` and stays as written. */
+/** The hourly, daily, weekday and weekly crons; any other expression is `null` and stays as written. */
 export function parseSimpleSchedule(expression: string): SimpleSchedule | null {
     const fields = expression.trim().split(/\s+/u);
     if (fields.length !== 5 || fields[2] !== '*' || fields[3] !== '*') return null;
     const minute = readNumber(fields[0]!, 59);
+    if (minute !== null && fields[1] === '*' && fields[4] === '*') return { repeat: 'hourly', hour: 9, minute, day: 1 };
     const hour = readNumber(fields[1]!, 23);
     if (minute === null || hour === null) return null;
     const weekdays = fields[4]!;
@@ -149,6 +152,7 @@ export function formatCalendarDate(schedule: Readonly<{ month: number; day: numb
 }
 
 export function buildSimpleScheduleCron(schedule: SimpleSchedule): string {
+    if (schedule.repeat === 'hourly') return `${schedule.minute} * * * *`;
     const weekdays = schedule.repeat === 'daily' ? '*' : schedule.repeat === 'weekdays' ? '1-5' : String(schedule.day);
     return `${schedule.minute} ${schedule.hour} * * ${weekdays}`;
 }
@@ -161,6 +165,19 @@ export function formatClockTime(schedule: Pick<SimpleSchedule, 'hour' | 'minute'
 /** The editable field's round-trippable 24-hour value, independent of the display locale. */
 export function formatClockTimeInput(schedule: Pick<SimpleSchedule, 'hour' | 'minute'>): string {
     return `${String(schedule.hour).padStart(2, '0')}:${String(schedule.minute).padStart(2, '0')}`;
+}
+
+/** The At field's value: "HH:MM", or ":MM" past every hour. */
+export function formatScheduleTimeInput(schedule: SimpleSchedule): string {
+    return schedule.repeat === 'hourly' ? `:${String(schedule.minute).padStart(2, '0')}` : formatClockTimeInput(schedule);
+}
+
+/** The At field typed for this schedule: a clock time, or for an hourly one the minute (":15" or "15"). */
+export function parseScheduleTime(schedule: SimpleSchedule, text: string): Pick<SimpleSchedule, 'hour' | 'minute'> | null {
+    if (schedule.repeat !== 'hourly') return parseClockTime(text);
+    const match = /^:?(\d{1,2})$/u.exec(text.trim());
+    const minute = match ? Number(match[1]) : NaN;
+    return minute <= 59 ? { hour: schedule.hour, minute } : null;
 }
 
 /** "HH:MM" (or "H:MM") typed by a person, or null while it is not a time yet. */

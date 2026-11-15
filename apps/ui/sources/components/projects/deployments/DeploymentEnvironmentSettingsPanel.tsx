@@ -98,7 +98,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
       machineName: (machineId: string) => string;
       /** Names the template a preview was made from, from the page's Environment list. */
       environmentTitle: (environmentId: string) => string | null;
-      /** A section another tab linked to (Permissions → Controller); it scrolls into view when the tab opens. */
+      /** A section another page or tab linked to (Permissions → Controller, Open backups); it scrolls into view when the tab opens. */
       focusSection?: DeploymentEnvironmentSettingsSectionV1 | null;
       /** Opens the irreversible Unlink review for a target; null where this viewer cannot remove it. */
       onUnlink?: ((targetLinkId: string) => void) | null;
@@ -129,7 +129,9 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
     const router = useRouter();
     const editing = props.detail.environment.capabilities.role === 'manager' ? props.editing ?? null : null;
     const change = useDeploymentChangePress(editing?.review ?? null, editing?.onChanged ?? noop);
-    const controllerReveal = useSettingReveal(props.focusSection === 'controller', 0);
+    // One reveal for whichever section the address names; only that section's host takes its ref.
+    const sectionReveal = useSettingReveal(props.focusSection != null, 0);
+    const revealHost = (id: DeploymentEnvironmentSettingsSectionV1) => props.focusSection === id ? sectionReveal.hostRef : undefined;
     const { detail, machineName } = props;
     const previewEnrollmentEnabled = detail.environment.purpose !== 'preview' && detail.content.previewTemplate?.enabled === true;
     const previewEnrollment = useWorkflowTriggerSets(previewEnrollmentEnabled && props.lifetime
@@ -187,6 +189,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
               params: { serverId: props.detail.environment.serverId } })} />
         </ItemGroup>
         {changeOutcome(null)}
+        <View ref={revealHost('servers-build')} collapsable={false}>
         <ItemGroup
           testID={section('servers-build')}
           title={t('projects.deployments.sectionServersBuild')}
@@ -297,6 +300,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
           ) : null}
           <DeploymentFleetIngress detail={detail} editing={editing} machineName={machineName} />
         </ItemGroup>
+        </View>
 
         {/* Where it runs leads (lab envSet); what it runs, the definition, follows. */}
         {detail.content.definition.kind === 'stored' ? <StoredDefinitionEditor environment={detail.environment}
@@ -305,7 +309,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
           move={editing.actions.moveToRepository ?? null} review={editing.review} onChanged={editing.onChanged} machineName={machineName} /> : null}
         <DeploymentPrivateServiceExports detail={detail} editing={editing} />
 
-        <View ref={controllerReveal.hostRef} collapsable={false}>
+        <View ref={revealHost('controller')} collapsable={false}>
         <ItemGroup
           testID={section('controller')}
           title={t('projects.deployments.sectionController')}
@@ -484,6 +488,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
             })}
           />
         ) : null}
+        <View ref={revealHost('backups')} collapsable={false}>
         <ItemGroup
           testID={section('backups')}
           title={t('projects.deployments.sectionBackups')}
@@ -491,7 +496,9 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
         >
           <BackupRows {...props} testID={section('backups')} />
         </ItemGroup>
+        </View>
         {detail.environment.purpose === 'preview' || props.lifetime || detail.content.previewTemplate ? (
+          <View ref={revealHost('previews')} collapsable={false}>
           <ItemGroup
             testID={section('previews')}
             title={t('projects.deployments.sectionPreviews')}
@@ -536,6 +543,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
               />
             ) : null}
           </ItemGroup>
+          </View>
         ) : null}
         {detail.environment.purpose !== 'preview' && detail.content.previewTemplate && props.lifetime && props.review && props.previewBindings ? (
           <DeploymentPreviewVariables detail={detail} lifetime={props.lifetime} draft={props.previewBindings}

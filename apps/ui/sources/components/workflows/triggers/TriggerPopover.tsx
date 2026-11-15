@@ -70,7 +70,7 @@ import {
     type TriggerThenValue,
     type TriggerWhenValue,
 } from './sessionTriggerForm';
-import { buildSimpleScheduleCron, formatClockTimeInput, resolveOnceSchedule, SIMPLE_SCHEDULE_REPEATS as REPEATS } from './triggerSchedule';
+import { buildSimpleScheduleCron, formatScheduleTimeInput, resolveOnceSchedule, SIMPLE_SCHEDULE_REPEATS as REPEATS } from './triggerSchedule';
 import { LocalDateTimeEditor } from '@/components/ui/dateTime/LocalDateTimeEditor';
 import { parseHappierLocalDateTime } from '@happier-dev/plugin-ui/presentation';
 import { useTriggerScheduleCommands } from './useTriggerScheduleCommands';
@@ -535,7 +535,8 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
         >
             {({ maxHeight, placement, presentation }) => <TriggerPushedPageHost page={props.pushedPage} presentation={presentation}
                 renderPage={(page, sheetHeaderBack) => (
-                <FloatingOverlay maxHeight={maxHeight} scrollEnabled surfaceChrome="theme" arrow={placement ? { placement } : false}>
+                // Its own scroller: reusing the form's kept the form's scroll offset and hid Back and the title (D13).
+                <FloatingOverlay key="pushed-page" maxHeight={maxHeight} scrollEnabled surfaceChrome="theme" arrow={placement ? { placement } : false}>
                     <ListPresentationProvider value="page">
                         <View style={styles.surface}>
                             {sheetHeaderBack ? null : <View style={styles.back}><ToolbarButton testID={`${props.testID}-back`}
@@ -797,10 +798,12 @@ export function ScheduleRows(props: Readonly<{
         { id: 'once', label: t('workflows.triggers.once.label') },
         ...REPEATS.map(repeat => ({ id: repeat, label: t(`workflows.triggers.popover.${REPEAT_LABEL_KEYS[repeat]}`) })),
     ];
-    const repeatRow = everyMs !== undefined || repeatValue === 'custom' ? <FieldSelect
+    // A saved repeat a person doesn't pick here (an interval, every hour, an expression) leads a field select of the picked ones.
+    const repeatRow = everyMs !== undefined || repeatValue === 'custom' || repeatValue === 'hourly' ? <FieldSelect
         testID={`${props.testID}-repeat`}
         title={t('workflows.triggers.popover.repeat')}
-        items={[{ id: repeatValue, title: everyMs === undefined ? t('workflows.triggers.popover.expression') : formatTriggerInterval(everyMs) },
+        items={[{ id: repeatValue, title: everyMs !== undefined ? formatTriggerInterval(everyMs)
+            : repeatValue === 'hourly' ? t('workflows.triggers.popover.everyHour') : t('workflows.triggers.popover.expression') },
             ...repeatOptions.map(option => ({ id: option.id, title: option.label }))]}
         selectedId={repeatValue} onSelect={commands.changeRepeat} /> : <SegmentedChoiceItem
         accessoryLayout="stacked" labelSize="field" testIDPrefix={`${props.testID}-repeat`}
@@ -849,7 +852,7 @@ export function ScheduleRows(props: Readonly<{
                 fieldStyle={CLOCK_FIELD_STYLE}
                 title={t('workflows.triggers.popover.at')}
                 {...(when.timezone ? { subtitle: when.timezone } : {})}
-                value={formatClockTimeInput(schedule)}
+                value={formatScheduleTimeInput(schedule)}
                 onCommit={commands.commitTime}
             />
         </>

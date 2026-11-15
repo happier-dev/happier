@@ -264,3 +264,34 @@ it('opens Environment alert setup before its first deployment instead of showing
     await vi.waitFor(() => expect(screen.findByTestId('workflows-column-new-trigger-popover')).not.toBeNull());
   } finally { controller.retire(); context.dispose(); }
 });
+
+it('brings the addressed Settings section into view: Open backups lands on Backups, not Servers & build', async () => {
+  home = await createSecretSettingsTestHarness({ mode: 'plain', settings: authoringSettings,
+    token: authoringToken, serverIdentityId: `srv_${'e'.repeat(32)}`,
+    handleRequest: async path => path === '/v3/automations/query'
+      ? Response.json({ automations: [], nextCursor: null }) : null });
+  const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+  const context = await captureLazyActionAccountContext(home.scope.serverId);
+  const { createDeploymentReadTransport } = await import('./deploymentReadTransport');
+  const { DeploymentEnvironmentSettingsPanel } = await import('./DeploymentEnvironmentSettingsPanel');
+  const { ModalProvider } = await import('@/modal');
+  const initial = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId: context.serverIdentityId! }) });
+  const detail = { ...initial, runtimeTargetLink: null, memberVersions: {}, secretRevisions: [] };
+  const controller = createDeploymentReadControllerV1({ scope: { ...home.scope, projectSourceId: detail.environment.projectSourceId },
+    transport: createDeploymentReadTransport(context.accountLifetime) });
+  const revealed: string[] = [];
+  try {
+    // The scroll boundary: a section host reports which section it holds when the page scrolls it into view.
+    await renderScreen(<ModalProvider><DeploymentEnvironmentSettingsPanel detail={detail} controller={controller}
+      definitionDocument={{ document: detail.content.definition.kind === 'stored' ? detail.content.definition.document : '', change() {} }}
+      demand={{ mounted: false, visible: false, focused: false }} machineName={id => id} environmentTitle={() => null}
+      focusSection="backups" /></ModalProvider>, {
+      createNodeMock: (element) => {
+        const testID = (element.props as { children?: { props?: { testID?: unknown } } }).children?.props?.testID;
+        return typeof testID === 'string' && testID.startsWith('project-deployments.environment.settings.')
+          ? { scrollIntoView: () => { revealed.push(testID); } } : null;
+      },
+    });
+    await vi.waitFor(() => expect(revealed).toEqual(['project-deployments.environment.settings.backups']));
+  } finally { controller.retire(); context.dispose(); }
+});

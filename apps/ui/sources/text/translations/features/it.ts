@@ -16435,6 +16435,7 @@ const it: WorkflowsDestinationTranslations = {
         loadFailedBody: 'Il tuo lavoro non è interessato.',
         review: 'Rivedi',
         rowMeta: ({ origin, machine, age }) => `${origin} · ${machine} · ${age}`,
+        triggerEmpty: ({ when }) => `Ancora nessuna esecuzione. La prossima parte ${when}.`,
     },
     rowMenu: {
         accessibility: 'Opzioni del flusso di lavoro',
@@ -16728,6 +16729,7 @@ const it: WorkflowTriggersCopy = {
         turnOn: 'Attiva',
         deleteTrigger: 'Elimina trigger',
         repeat: 'Ripeti',
+        everyHour: 'Ogni ora',
         everyDay: 'Ogni giorno',
         weekdays: 'Giorni feriali',
         weekly: 'Ogni settimana',

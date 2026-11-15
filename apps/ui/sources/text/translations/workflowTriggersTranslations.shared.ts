@@ -267,6 +267,7 @@ export const en = {
         turnOn: 'Turn on',
         deleteTrigger: 'Delete trigger',
         repeat: 'Repeat',
+        everyHour: 'Every hour',
         everyDay: 'Every day',
         weekdays: 'Weekdays',
         weekly: 'Weekly',

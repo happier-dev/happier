@@ -335,6 +335,22 @@ describe('Run a workflow trigger inputs', () => {
         expect(screen.findByTestId('when-choice-configure-event')).not.toBeNull();
     });
 
+    it('edits an hourly schedule as Every hour at a minute, never as its cron, and writes the minute back', async () => {
+        const onSubmit = vi.fn<ExistingTriggerSubmit>(async () => {});
+        const screen = await renderScreen(<TriggerPopover testID="hourly" anchorRef={React.createRef()}
+            onRequestClose={vi.fn()} whenKinds={['schedule', 'pluginEvent']} sessionId={null}
+            initial={{ when: { kind: 'schedule', expression: '54 * * * *', timezone: null,
+                schedule: { repeat: 'hourly', hour: 9, minute: 54, day: 1 } }, enabled: true,
+                then: { kind: 'notifyMe', title: '', message: 'Hourly check', channels: [] } }}
+            workflowOptions={[]} onSubmit={onSubmit} />);
+        expect(screen.findAllByType(FieldSelect).find(row => row.props.testID === 'hourly-repeat')?.props.selectedId).toBe('hourly');
+        expect(screen.findByTestId('hourly-expression')).toBeNull();
+        await act(async () => screen.findByProps({ accessibilityLabel: 'workflows.triggers.popover.at', value: ':54' }).props.onChangeText(':15'));
+        await act(async () => screen.findByProps({ accessibilityLabel: 'workflows.triggers.popover.at', value: ':15' }).props.onBlur());
+        await screen.pressByTestIdAsync('hourly-submit');
+        expect(onSubmit.mock.calls[0]?.[1].trigger).toMatchObject({ schedule: { kind: 'cron', scheduleExpr: '15 * * * *' } });
+    });
+
     it('stops promising the saved occurrence when the schedule draft changes', async () => {
         const screen = await renderScreen(<TriggerPopover testID="schedule-preview" anchorRef={React.createRef()}
             onRequestClose={vi.fn()} whenKinds={['schedule', 'pluginEvent']} sessionId={null}

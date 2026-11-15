@@ -3,7 +3,7 @@ import { t } from '@/text';
 import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { readDeviceTimeZone, type TriggerWhenValue } from './sessionTriggerForm';
-import { buildSimpleScheduleCron, formatClockTimeInput, parseClockTime, SIMPLE_SCHEDULE_REPEATS } from './triggerSchedule';
+import { buildSimpleScheduleCron, formatScheduleTimeInput, parseScheduleTime, SIMPLE_SCHEDULE_REPEATS } from './triggerSchedule';
 
 /** The controlled schedule draft is shared by its visible fields and mounted commands. */
 export function useTriggerScheduleCommands(props: Readonly<{
@@ -27,8 +27,9 @@ export function useTriggerScheduleCommands(props: Readonly<{
         return true;
     };
     const changeTime = (value: string) => {
-        const time = parseClockTime(value);
-        if (when.schedule === null || time === null) return false;
+        if (when.schedule === null) return false;
+        const time = parseScheduleTime(when.schedule, value);
+        if (time === null) return false;
         const schedule = { ...when.schedule, ...time };
         props.onChange({ ...when, schedule, expression: buildSimpleScheduleCron(schedule) });
         return true;
@@ -64,7 +65,8 @@ export function useTriggerScheduleCommands(props: Readonly<{
                 invoke: (input?: PluginUiJsonValueV1) => { const value = readValue(input); return value !== null && changeRelative(value); } },
         ]),
         ...(when.schedule !== null ? [{ key: 'at', title: t('workflows.triggers.popover.at'),
-            description: JSON.stringify({ control: `${scope}.schedule.at`, value: formatClockTimeInput(when.schedule), input: { value: 'HH:MM' } }),
+            description: JSON.stringify({ control: `${scope}.schedule.at`, value: formatScheduleTimeInput(when.schedule),
+                input: { value: when.schedule.repeat === 'hourly' ? ':MM' : 'HH:MM' } }),
             invoke: (input?: PluginUiJsonValueV1) => { const value = readValue(input); return value !== null && changeTime(value); } }] : []),
         ...(when.once === undefined && when.schedule === null && when.everyMs === undefined ? [{ key: 'expression', title: t('workflows.triggers.popover.expression'),
             description: JSON.stringify({ control: `${scope}.schedule.expression`, value: when.expression, input: { value: 'cron expression' } }),
@@ -81,8 +83,8 @@ export function useTriggerScheduleCommands(props: Readonly<{
         commitTime: (value: string) => {
             if (when.schedule === null) return;
             // The field retains its synchronous invalid-draft feedback; the Action owns the edit.
-            if (scope === undefined) { if (!changeTime(value)) return formatClockTimeInput(when.schedule); }
-            else { void commands.invoke('at', { value }); if (parseClockTime(value) === null) return formatClockTimeInput(when.schedule); }
+            if (scope === undefined) { if (!changeTime(value)) return formatScheduleTimeInput(when.schedule); }
+            else { void commands.invoke('at', { value }); if (parseScheduleTime(when.schedule, value) === null) return formatScheduleTimeInput(when.schedule); }
         },
         commitExpression: (value: string) => { if (scope === undefined) changeExpression(value); else void commands.invoke('expression', { value }); },
     };

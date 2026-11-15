@@ -317,6 +317,15 @@ describe('session trigger form', () => {
         });
     });
 
+    it('reads an hourly cron as the simple Every hour schedule, and writes it back as the same cron', () => {
+        const hourly = { kind: 'schedule', schedule: { kind: 'cron', scheduleExpr: '54 * * * *', everyMs: null, timezone: null } } as unknown as Parameters<typeof readTriggerWhen>[0];
+        const when = readTriggerWhen(hourly);
+        expect(when).toMatchObject({ kind: 'schedule', schedule: { repeat: 'hourly', minute: 54 }, expression: '54 * * * *' });
+        expect(buildTriggerDefinition({ when: when!, enabled: true, sessionId: null })).toMatchObject({
+            kind: 'schedule', schedule: { kind: 'cron', scheduleExpr: '54 * * * *' },
+        });
+    });
+
     it('keeps an interval schedule ("Every hour") editable: it reads back and is written back as the same interval', () => {
         const hourly = { kind: 'schedule', schedule: { kind: 'interval', scheduleExpr: null, everyMs: 3_600_000, timezone: 'Europe/Zurich' } } as unknown as Parameters<typeof readTriggerWhen>[0];
         const when = readTriggerWhen(hourly);
