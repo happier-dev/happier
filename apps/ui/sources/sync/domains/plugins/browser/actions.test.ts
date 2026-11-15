@@ -343,6 +343,7 @@ describe('plugin browser projection normalization', () => {
                 isCurrent: expect.any(Function),
                 expectedContributorOccurrenceId: 'occurrence-preview',
                 qualifiedActionId: 'acme.preview/open-preview',
+                requestId: expect.any(String),
                 input: {
                     browserSessionId: 'browser-session-1',
                     viewId: 'view-1',

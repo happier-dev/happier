@@ -60,6 +60,11 @@ describe('launchPluginSurfaceAction', () => {
         await expect(launchPluginSurfaceAction({
             action: identity,
             input: { title: 'Ready' },
+            actionAccountLifetime: {
+                scope: { serverId: 'action-home', accountId: 'action-account' },
+                isCurrent: () => true,
+                onRetire: () => ({ dispose() {} }),
+            },
             resolveContributedAction: resolveExact(projected),
             contributedAction: {
                 machineId: 'machine-1',
@@ -71,6 +76,8 @@ describe('launchPluginSurfaceAction', () => {
         expect(execute).toHaveBeenCalledTimes(1);
         expect(execute.mock.calls[0]?.[1]).toMatchObject({ requestId: 'plugin-request-1' });
         expect(actionOperationPresentationCoordinator.register).toHaveBeenCalledWith(expect.objectContaining({
+            serverId: 'action-home',
+            accountId: 'action-account',
             requestId: 'plugin-request-1',
             onStart: 'activity',
             origin: operationOrigin,
@@ -139,7 +146,7 @@ describe('launchPluginSurfaceAction', () => {
         expect(actionOperationPresentationCoordinator.register).not.toHaveBeenCalled();
     });
 
-    it('sends no operation request id for an admitted Action that declares no operation', async () => {
+    it('retains request correlation without registering progress for an Action that declares no operation', async () => {
         const { operation: _operation, ...withoutOperation } = action();
         const execute = vi.fn<PluginSurfaceContributedActionTransport>(async () => ({
             supported: true as const,
@@ -156,7 +163,7 @@ describe('launchPluginSurfaceAction', () => {
         });
 
         expect(execute).toHaveBeenCalledTimes(1);
-        expect(execute.mock.calls[0]?.[1]).not.toHaveProperty('requestId');
+        expect(execute.mock.calls[0]?.[1]).toMatchObject({ requestId: 'plugin-request-1' });
         expect(actionOperationPresentationCoordinator.register).not.toHaveBeenCalled();
     });
 });

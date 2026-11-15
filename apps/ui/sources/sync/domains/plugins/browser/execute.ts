@@ -111,6 +111,7 @@ export async function executePluginBrowserAction(params: Readonly<{
         && (params.isCurrent?.() ?? true);
 
     const launched = await launchPluginSurfaceAction({
+        ...(params.accountLifetime ? { actionAccountLifetime: params.accountLifetime } : {}),
         callerPluginId: params.action.pluginId,
         action: params.action.actionIdentity,
         input: input.data as PluginUiJsonValueV1,

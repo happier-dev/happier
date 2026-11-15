@@ -205,6 +205,7 @@ export async function dispatchPluginResolvedSemanticCommand(
     }
     const launched = await launchPluginSurfaceAction({
         actionInputAnchor: input.actionInputAnchor,
+        ...(input.accountLifetime ? { actionAccountLifetime: input.accountLifetime } : {}),
         callerPluginId: input.callerPluginId,
         // Structured, never the qualified string: a bare string would be offered
         // to the dispatcher's host ActionSpec branch first, so a plugin whose

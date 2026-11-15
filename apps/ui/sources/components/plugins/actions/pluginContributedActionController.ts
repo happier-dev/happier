@@ -1188,6 +1188,9 @@ export function createPluginContributedActionController(params: Readonly<{
         try {
             const dispatchInput: DispatchPluginSurfaceActionInput = {
                 actionInputAnchor: anchor,
+                ...(resolved.snapshot.host.accountLifetime
+                    ? { actionAccountLifetime: resolved.snapshot.host.accountLifetime }
+                    : {}),
                 // Catalog, Composer, and transcript host presentation never
                 // fabricate a mounted plugin caller. The canonical dispatcher
                 // receives only the current host intent carrier, if required.

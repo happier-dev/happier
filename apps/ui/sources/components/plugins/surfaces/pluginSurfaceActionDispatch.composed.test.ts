@@ -2489,14 +2489,21 @@ describe('Account Action placement through the executable dispatcher', () => {
         { placement: 'declaration', explicitTarget: false, refuses: false },
         { placement: 'explicit target', explicitTarget: true, refuses: false },
         { placement: 'typed refusal', explicitTarget: false, refuses: true },
-    ])('reads a Machine-hosted Account Action through its public owner without a browser executable ($placement)', async ({ explicitTarget, refuses }) => {
+        { placement: 'global catalog form', explicitTarget: false, refuses: false },
+    ])('submits a global catalog Account Action form or direct Machine-hosted request through its public owner ($placement)', async ({ placement, explicitTarget, refuses }) => {
         const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
         const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
         const lifetime = clientAccountLifetime();
         const identity = { pluginId: 'acme.placement', localId: 'read' };
         const action = { ...createClientTargetAction({ identity, accountPlacement: true }),
+            placementBindings: ['commandPalette'] as const,
+            inputHints: { fields: [{ path: 'subject', title: 'Subject', widget: 'text' as const, required: true }] },
             hostOrigin: { ...CLIENT_ACTION_HOST_ORIGIN, executionOrigin: clientActionExecutionOrigin(identity.pluginId) } };
         const projection = { ...EMPTY_PLUGIN_UI_PROJECTION, generation: 1,
+            installedPackagesById: { [identity.pluginId]: PluginProjectionInstalledPackageV2Schema.parse({
+                id: identity.pluginId, displayName: 'Account placement', version: '1.2.3', enabled: true,
+                source: { kind: 'localPath', locator: identity.pluginId },
+            }) },
             actionsById: { 'acme.placement/read': action } };
         const release = publishCommittedAppShellPluginUiProjection(() => projection);
         const payload = { choices: [{ id: 'investigate', startable: true }], linkedSessionId: 'retained-finding' };
@@ -2521,7 +2528,35 @@ describe('Account Action placement through the executable dispatcher', () => {
             } },
         });
         try {
-            const outcome = await port.invokeAction!({ action: identity, input: { subject: 'receipt' }, signal: controller.signal });
+            const outcome = placement === 'global catalog form' ? await (async () => {
+                const { createPluginContributedActionController } = await import('../actions/pluginContributedActionController');
+                const { createHydratedPlainMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+                const previous = getStorage().getState();
+                const machine = createHydratedPlainMachineFixture({ id: boundary.machine.id, accountId: lifetime.scope.accountId,
+                    machine: { access: boundary.machine.access } });
+                getStorage().setState({ machines: { [machine.id]: machine },
+                    machineListByServerId: { [lifetime.scope.serverId]: [machine] },
+                    machineListStatusByServerId: { [lifetime.scope.serverId]: 'idle' } });
+                onTestFinished(() => getStorage().setState({ machines: previous.machines,
+                    machineListByServerId: previous.machineListByServerId,
+                    machineListStatusByServerId: previous.machineListStatusByServerId }));
+                const catalog = createPluginContributedActionController({ resolveCurrent: () => ({
+                    pluginProjectionById: buildV2PluginProjectionById(projection), pluginUiProjection: projection,
+                    resolveContributedAction: resolveExactClientAction(action),
+                    host: { machineId: boundary.machine.id, serverId: lifetime.scope.serverId, accountLifetime: lifetime },
+                }) });
+                const descriptor = catalog.list({ placement: 'commandPalette', scope: 'global' })[0];
+                expect(descriptor).toBeDefined();
+                if (!descriptor) throw new Error('Missing catalog Account Action');
+                const opened = await catalog.open(descriptor);
+                expect(opened.kind).toBe('form');
+                if (opened.kind !== 'form') throw new Error('Missing catalog Account form');
+                opened.form.replaceInput({ subject: 'receipt' });
+                const submitted = await opened.form.submit();
+                expect(submitted.kind).toBe('settled');
+                if (submitted.kind !== 'settled') throw new Error('Account form did not settle');
+                return submitted.outcome;
+            })() : await port.invokeAction!({ action: identity, input: { subject: 'receipt' }, signal: controller.signal });
             if (refuses) expect(outcome).toMatchObject({ ok: false, errorCode: 'admission_unavailable', failureCause });
             else expect(outcome).toEqual({ ok: true, result: payload });
             expect(received).toHaveLength(1);
@@ -4295,6 +4330,39 @@ describe('Account Action placement through the executable dispatcher', () => {
             expect(effects).toBe(0);
             expect(await dispatch('session-account')).toEqual({ ok: true, result: null });
             expect(effects).toBe(1);
+        } finally { await activation.composition.unload(); accountLifetime.retire(); }
+    });
+
+    it('submits a global catalog Account Action form from a portable registration', async () => {
+        const accountLifetime = clientAccountLifetime();
+        const localId = 'catalog-account-echo';
+        const activation = createClientActionActivation({ accountPlacement: true, accountLifetime,
+            localId, inputSchema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'], additionalProperties: false },
+            inputHints: { fields: [{ path: 'name', title: 'Name', widget: 'text', required: true }] },
+            accountActionDeclaration: { id: localId, title: 'Account echo', scopes: ['global'], surfaces: ['ui'],
+                placementBindings: ['commandPalette'], dangerLevel: 'safe', execution: { target: 'account', invokingUi: true,
+                    account: { artifactId: CLIENT_ACTION_TARGET.artifactId, exportName: CLIENT_ACTION_TARGET.exportName } } },
+            accountHandler: async value => ({ echoed: value }),
+        });
+        try {
+            await activation.composition.reconcile([activation.activation]);
+            const { createPluginContributedActionController } = await import('../actions/pluginContributedActionController');
+            const controller = createPluginContributedActionController({ resolveCurrent: () => ({
+                pluginProjectionById: buildV2PluginProjectionById(activation.projection),
+                pluginUiProjection: activation.projection,
+                resolveContributedAction: resolveExactClientAction(activation.action),
+                host: { serverId: accountLifetime.scope.serverId, accountLifetime },
+            }) });
+            const action = controller.list({ placement: 'commandPalette', scope: 'global' })[0];
+            expect(action, 'the global palette must expose the admitted Account Action').toBeDefined();
+            if (!action) throw new Error('Missing global Account Action');
+            const opened = await controller.open(action);
+            expect(opened.kind).toBe('form');
+            if (opened.kind !== 'form') throw new Error('Missing Account Action form');
+            opened.form.replaceInput({ name: 'from the global palette' });
+            expect(await opened.form.submit()).toMatchObject({ kind: 'settled', outcome: {
+                ok: true, result: { echoed: { name: 'from the global palette' } },
+            } });
         } finally { await activation.composition.unload(); accountLifetime.retire(); }
     });
 

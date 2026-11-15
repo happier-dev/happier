@@ -30,7 +30,7 @@ export async function launchPluginSurfaceAction(
 ): Promise<PluginSurfaceActionLaunchOutcome> {
     const { operationOrigin, ...dispatchInput } = input;
     const requestId = dispatchInput.actionRequestId ?? randomUUID();
-    const contributedAccountLifetime = dispatchInput.contributedAction?.accountLifetime;
+    const contributedAccountLifetime = dispatchInput.actionAccountLifetime ?? dispatchInput.contributedAction?.accountLifetime;
     // Exact contributed surfaces carry their admitted Account authority. Only
     // unscoped legacy launches borrow the incumbent focused profile.
     const operationAccountScope = contributedAccountLifetime === undefined
