@@ -22,6 +22,7 @@ import {
   deploymentWorkStatus,
 } from '@/components/projects/deployments/deploymentPresentation';
 import { useDeploymentInventory } from '@/components/projects/deployments/useDeploymentProject';
+import { useDeploymentActorPresentations } from '@/components/projects/deployments/useDeploymentActorPresentations';
 import { MainScreenHeader } from '@/components/navigation/shell/MainScreenHeader';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
@@ -34,13 +35,10 @@ import { useLayoutPresentationActive } from '@/components/ui/presentation/Plugin
 import { SelectionListFilterChips } from '@/components/ui/selectionList/SelectionListFilterChips';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { WorkStatusGlyph } from '@/components/work/status/WorkStatusGlyph';
-import type { TranscriptAccountActor } from '@happier-dev/session-core/messages';
-import {
-  resolveAccountActorPresentation,
-  resolveUnknownAccountActorName,
-} from '@/sync/domains/account/accountActorPresentation';
+import { resolveAccountActorPresentation } from '@/sync/domains/account/accountActorPresentation';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { buildSessionListDateGroups } from '@/sync/domains/session/listing/sessionListDateGroups';
 import {
@@ -48,16 +46,13 @@ import {
   useMachineListForServerSelection,
 } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import {
-  useServerScopedMachineLabel,
-  useSessionDisplayNameSource,
-} from '@/sync/store/hooks';
+import { useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { getPreferredLanguage, t } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { useOptionalScreenIsFocused } from '@/utils/navigation/useOptionalScreenIsFocused';
 import { getSettledMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
-import { getSessionName } from '@/utils/sessions/sessionUtils';
 
+import { activityActorView, activityHeadingWithoutActor, activityItemActor, type ActivityActorView } from './machineFleetActivityRows';
 import { FLEET_ACTIVITY_WHEN, fleetActivityWhenRange, type FleetActivityWhen } from './fleetActivityFilters';
 import { useFleetActivityPage } from './useFleetActivityPage';
 
@@ -70,6 +65,7 @@ const ANYONE = '__anyone__';
 const EVERYTHING = '__everything__';
 const ANY_TIME = Object.freeze({ choice: 'any' as FleetActivityWhen, range: Object.freeze({}) });
 const NO_SCOPE = Object.freeze({ serverId: '', accountId: '' });
+const UNKNOWN_ACTOR: ActivityActorView = Object.freeze({ kind: null, name: null, avatar: null });
 
 function whenLabel(choice: FleetActivityWhen): string {
   switch (choice) {
@@ -178,6 +174,11 @@ export function MachineFleetActivityView() {
     () => [
       ...new Set([
         ...(actorAccountId ? [actorAccountId] : []),
+        // Person actors' avatars come from the same profile read.
+        ...state.items.flatMap((item) => {
+          const actor = activityItemActor(item);
+          return actor?.actorKind === 'person' ? [actor.accountId] : [];
+        }),
         ...state.items.flatMap((item) =>
           item.kind === 'receipt'
             ? [item.receipt.requestedByAccountId]
@@ -206,6 +207,14 @@ export function MachineFleetActivityView() {
       }).sort((a, b) => Number(b.self) - Number(a.self)),
     [accountIds, lifetime, profiles.accounts],
   );
+  // Who did each row is its captured actor through the one actor display owner (owner ruling 11-15 05:14Z); the
+  // requester only feeds the Who filter above. Unknown history stays unknown.
+  const itemActors = React.useMemo(() => state.items.map(activityItemActor), [state.items]);
+  const actorPresentations = useDeploymentActorPresentations({ actors: itemActors, scope: lifetime?.scope ?? NO_SCOPE,
+    accountLifetime: lifetime, active: presented && lifetime !== null });
+  const actors = React.useMemo(() => new Map(state.items.map((item, index) => [item.id,
+    activityActorView(itemActors[index], actorPresentations[index], lifetime, profiles.accounts)] as const)),
+  [actorPresentations, itemActors, lifetime, profiles.accounts, state.items]);
   const openReceipt = React.useCallback(
     (environmentId: string, projectSourceId: string, deploymentId: string) =>
       router.push(
@@ -335,7 +344,7 @@ export function MachineFleetActivityView() {
               lifetime={lifetime}
               titles={titles}
               onOpenReceipt={openReceipt}
-              accounts={profiles.accounts}
+              actors={actors}
             />
           ) : null}
           {state.coverage === 'partial' ? (
@@ -372,7 +381,7 @@ function ActivityDays(props: Readonly<{
   lifetime: ServerAccountScopeLifetime;
   titles: ReadonlyMap<string, string>;
   onOpenReceipt: RowProps['onOpenReceipt'];
-  accounts: RowProps['accounts'];
+  actors: RowProps['actors'];
 }>) {
   const scope = props.lifetime.scope;
   return (
@@ -384,20 +393,22 @@ function ActivityDays(props: Readonly<{
             testID={`machines.activity.day.${day.dateKey}`}
             style={styles.day}
           >
-            <Text variant="meta" style={styles.dayTitle}>
-              {day.title}
-            </Text>
             <Timeline
               inline
               timeAlign="end"
               accessibilityLabel={day.title}
+              header={
+                <Text variant="meta" style={styles.dayTitle}>
+                  {day.title}
+                </Text>
+              }
               items={day.items}
               keyForItem={(item) => item.id}
               renderItem={(item) =>
                 activityRowContent({
                   item,
                   scope,
-                  accounts: props.accounts,
+                  actors: props.actors,
                   environmentTitle:
                     item.kind === 'receipt'
                       ? (props.titles.get(item.environment.id) ?? null)
@@ -416,7 +427,8 @@ function ActivityDays(props: Readonly<{
 type RowProps = Readonly<{
   item: DeploymentActivityItemV1;
   scope: ServerAccountScope;
-  accounts: ReadonlyMap<string, TranscriptAccountActor>;
+  /** Each row's actor, resolved once for the page (keyed by item id). */
+  actors: ReadonlyMap<string, ActivityActorView>;
   environmentTitle: string | null;
   onOpenReceipt: (
     environmentId: string,
@@ -462,36 +474,18 @@ function activityRowContent(props: RowProps): TimelineItemContent {
   };
 }
 
-function useActivityActor(props: RowProps) {
-  const { item, scope } = props;
-  const sessionId = item.kind === 'operation' ? (item.operation.scope.sessionId ?? null) : null;
-  const session = useSessionDisplayNameSource(sessionId ?? '', scope.serverId);
-  if (sessionId) {
-    return {
-      kind: 'agent' as const,
-      name: session ? getSessionName(session, scope.serverId) : t(`${s}.anAgent`),
-      avatar: null,
-    };
-  }
-  const accountId = item.kind === 'receipt' ? item.receipt.requestedByAccountId : item.operation.scope.accountId;
-  const actor = props.accounts.get(accountId);
-  if (actor) {
-    const presentation = resolveAccountActorPresentation(actor, scope);
-    return { kind: 'person' as const, name: presentation.name, avatar: presentation.avatar };
-  }
-  return {
-    kind: 'person' as const,
-    name: resolveUnknownAccountActorName('sentence'),
-    avatar: { id: accountId, imageUrl: null },
-  };
+function useActivityActor(props: RowProps): ActivityActorView {
+  return props.actors.get(props.item.id) ?? UNKNOWN_ACTOR;
 }
 
 function ActivityMark(props: RowProps) {
   const { item } = props;
   const actor = useActivityActor(props);
+  // Without a known actor the row's mark is its outcome, like a deploy at work or stopped.
+  const unknown = actor.kind === null;
   if (item.kind === 'receipt') {
     const outcome = receiptOutcome(item.receipt.state);
-    if (outcome !== 'done')
+    if (outcome !== 'done' || unknown)
       return (
         <WorkStatusGlyph
           status={deploymentWorkStatus(item.receipt.state)}
@@ -500,7 +494,7 @@ function ActivityMark(props: RowProps) {
       );
   } else {
     const status = resolveActionOperationStatus(item.operation, 'available');
-    if (item.operation.state !== 'succeeded')
+    if (item.operation.state !== 'succeeded' || unknown)
       return (
         <WorkStatusGlyph
           status={resolveWorkStatusTone({
@@ -517,12 +511,13 @@ function ActivityMark(props: RowProps) {
       );
   }
   if (actor.kind === 'agent') return <Icon name="robot" size={14} />;
+  if (actor.kind === 'workflow') return <Icon name="tree-structure" size={14} />;
   return actor.avatar ? (
     <Avatar
       id={actor.avatar.id}
       imageUrl={actor.avatar.imageUrl ?? null}
       size={MARK_PX}
-      monogram={actor.name}
+      monogram={actor.name ?? undefined}
     />
   ) : (
     <Icon name="person" size={14} />
@@ -550,17 +545,24 @@ function ActivitySentence(props: RowProps) {
         }
         accessibilityRole="link"
       >
-        <Text variant="reading" emphasis="medium">
-          {actor.name}
-        </Text>
-        <Text variant="reading" style={styles.verb}>
-          {` ${t(`${s}.receiptVerb`, { operation: receipt.operation, outcome: receiptOutcome(receipt.state) })} `}
-        </Text>
-        {revision ? <Text variant="reading">{`${revision} `}</Text> : null}
-        <Text variant="reading" style={styles.verb}>{`${t(receipt.operation === 'teardown' ? `${s}.from` : `${s}.to`)} `}</Text>
-        <Text variant="reading">
-          {props.environmentTitle ?? receipt.title ?? environment.id}
-        </Text>
+        {actor.name === null ? (
+          activityHeadingWithoutActor({ kind: 'receipt', receipt, revision,
+            environmentTitle: props.environmentTitle ?? receipt.title ?? environment.id })
+        ) : (
+          <>
+            <Text variant="reading" emphasis="medium">
+              {actor.name}
+            </Text>
+            <Text variant="reading" style={styles.verb}>
+              {` ${t(`${s}.receiptVerb`, { operation: receipt.operation, outcome: receiptOutcome(receipt.state) })} `}
+            </Text>
+            {revision ? <Text variant="reading">{`${revision} `}</Text> : null}
+            <Text variant="reading" style={styles.verb}>{`${t(receipt.operation === 'teardown' ? `${s}.from` : `${s}.to`)} `}</Text>
+            <Text variant="reading">
+              {props.environmentTitle ?? receipt.title ?? environment.id}
+            </Text>
+          </>
+        )}
       </Text>
     );
   }
@@ -577,11 +579,17 @@ function ActivitySentence(props: RowProps) {
       }
       accessibilityRole="link"
     >
-      <Text variant="reading" emphasis="medium">
-        {actor.name}
-      </Text>
-      <Text variant="reading" style={styles.verb}>{` ${t(`${s}.ran`)} `}</Text>
-      <Text variant="reading">{operation.title}</Text>
+      {actor.name === null ? (
+        activityHeadingWithoutActor({ kind: 'operation', title: operation.title })
+      ) : (
+        <>
+          <Text variant="reading" emphasis="medium">
+            {actor.name}
+          </Text>
+          <Text variant="reading" style={styles.verb}>{` ${t(`${s}.ran`)} `}</Text>
+          <Text variant="reading">{operation.title}</Text>
+        </>
+      )}
     </Text>
   );
 }
@@ -622,15 +630,11 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.space.s16,
   },
   day: { gap: theme.space.s4 },
-  dayTitle: {
-    color: theme.colors.text.secondary,
-    // Day titles stand on the sentences' column, like the rows they group.
-    paddingLeft: 24 + theme.space.s12,
-  },
+  dayTitle: { color: theme.colors.text.secondary },
   verb: { color: theme.colors.text.secondary },
   secondary: { color: theme.colors.text.secondary },
   time: {
+    ...Typography.tabular(),
     color: theme.colors.text.secondary,
-    fontVariant: ['tabular-nums'],
   },
 }));

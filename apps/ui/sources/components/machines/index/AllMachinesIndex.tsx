@@ -5,7 +5,7 @@ import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServe
 import { storage } from '@/sync/domains/state/storageStore';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Collection, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
+import { Collection, Status, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
 import { useHappierCollectionLayout } from '@happier-dev/plugin-ui/presentation';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -34,7 +34,7 @@ import { MACHINES_INDEX_SETTINGS, useMachinesIndexView, type MachinesIndexView }
 import { useMachinesSettingsViewModel } from '@/components/settings/machines/machinesSettingsViewModel';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
-import { Icon } from '@/components/ui/icons/Icon';
+import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { MainScreenHeader, type MainScreenSearch } from '@/components/navigation/shell/MainScreenHeader';
 import type { PageCreateAction } from '@/components/navigation/mobile/chrome/pageCreateAction';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -43,7 +43,6 @@ import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
-import { StatusDot } from '@/components/ui/status/StatusDot';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -417,16 +416,20 @@ const AllMachinesHeader = React.memo(function AllMachinesHeader(props: Readonly<
     const working = useMachineWorkingTotal();
     const freshness = useMachineSummaryFreshnessFacts(props.freshnessKeys, 'machines.index.freshness');
     const tabs = React.useMemo(() => [
-        { id: 'list' as const, label: t('allMachines.viewList'), icon: <Icon name="list" size={16} color={theme.colors.text.secondary} /> },
-        { id: 'grid' as const, label: t('allMachines.viewGrid'), icon: <Icon name="squares-four" size={16} color={theme.colors.text.secondary} /> },
+        { id: 'list' as const, label: t('allMachines.viewList'), icon: <Icon name="list" size={ICON_SIZE.sm} color={theme.colors.text.secondary} /> },
+        { id: 'grid' as const, label: t('allMachines.viewGrid'), icon: <Icon name="squares-four" size={ICON_SIZE.sm} color={theme.colors.text.secondary} /> },
     ], [language, theme.colors.text.secondary]);
     // An empty fleet says nothing about counts (its add section below says what to do) and has nothing to view two ways.
     const emptyFleet = props.machineCount === 0;
-    // The shared count line reads the fleet's reported counts; freshness ("As of …") stays a header fact.
+    // The facts line: which Homes, the fleet's reported counts, then how current they are. A healthy "Live" ends that
+    // line (MPG-11) rather than standing alone; stale or slow freshness keeps its Retry as a header fact.
+    const liveWord = freshness.length === 1 && !freshness[0]!.onPress ? freshness[0]!.text : null;
     const count = React.useMemo(() => emptyFleet ? undefined : [
+        props.scopeLabel || null,
         props.machineCount === null ? null : t('allMachines.machinesCount', { count: props.machineCount }),
         t('allMachines.sessionsWorking', { count: working }),
-    ], [emptyFleet, language, props.machineCount, working]);
+        liveWord,
+    ], [emptyFleet, language, liveWord, props.machineCount, props.scopeLabel, working]);
     const viewSwitch = emptyFleet ? null : (
         <SettingAnchor setting={MACHINES_INDEX_SETTINGS.settings.indexView}>
             <SegmentedTabBar<MachinesIndexView>
@@ -446,9 +449,10 @@ const AllMachinesHeader = React.memo(function AllMachinesHeader(props: Readonly<
             alwaysShowTitle
             title={t('settings.machines')}
             // The page's generic purpose only stands while the fleet has nothing to say (owner 11-05).
-            description={[props.sentence === null ? props.description ?? t('settingsMachines.pageDescription')
-                : [props.sentence, props.description].filter(Boolean).join('. '), props.scopeLabel].filter(Boolean).join(' · ')}
-            meta={freshness}
+            // One description sentence; the Homes it covers lead the facts line below.
+            description={props.sentence === null ? props.description ?? t('settingsMachines.pageDescription')
+                : [props.sentence, props.description].filter(Boolean).join('. ')}
+            meta={liveWord === null ? freshness : undefined}
             {...(count === undefined ? {} : { count })}
             search={props.search}
             actions={props.phone ? undefined : viewSwitch}
@@ -594,7 +598,7 @@ function describeTag(item: MachineIndexItem): string | null {
 
 const MachineIndexMark = React.memo(function MachineIndexMark(props: Readonly<{ item: MachineIndexItem }>) {
     const { theme } = useUnistyles();
-    return <Icon name={resolveMachineKindGlyph({ isThisComputer: props.item.thisComputer, platform: props.item.platform })} size={20} color={theme.colors.text.secondary} />;
+    return <Icon name={resolveMachineKindGlyph({ isThisComputer: props.item.thisComputer, platform: props.item.platform })} size={ICON_SIZE.md} color={theme.colors.text.secondary} />;
 });
 
 /**
@@ -633,22 +637,17 @@ const MachineIndexUpdateLine = React.memo(function MachineIndexUpdateLine(props:
     const word = live ? readMachineUpdateWord(readMachineUpdateFacts(setup?.updates ?? null)) : null;
     if (!word) return null;
     return (
-        <Text numberOfLines={1} style={stylesheet.attention} testID={`machines.index.updates.${item.key}`}>
-            {word.kind === 'security' ? t('machineFleetUpdates.securityUpdates', { count: word.count }) : t('machineFleetUpdates.restartNeeded')}
-        </Text>
+        // The same warning status the Updates table draws for this fact (one fact, one look).
+        <Status tone="warning" presentation="inline" testID={`machines.index.updates.${item.key}`}
+            label={word.kind === 'security' ? t('machineFleetUpdates.securityUpdates', { count: word.count }) : t('machineFleetUpdates.restartNeeded')} />
     );
 });
 
 const MachinePresenceCell = React.memo(function MachinePresenceCell(props: Readonly<{ item: MachineIndexItem }>) {
-    const { theme } = useUnistyles();
     const { item } = props;
     return (
-        <View style={stylesheet.presence}>
-            {item.kind === 'machine' && item.status !== 'unknown' ? (
-                <StatusDot color={item.online ? theme.colors.status.connected : theme.colors.status.disconnected} />
-            ) : null}
-            <Text numberOfLines={1} style={stylesheet.quiet}>{item.reason ?? item.presence}</Text>
-        </View>
+        <Status tone={item.online ? 'success' : 'muted'} presentation="inline" label={item.reason ?? item.presence}
+            indicator={item.kind === 'machine' && item.status !== 'unknown'} />
     );
 });
 
@@ -718,10 +717,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     workCell: {
         minWidth: 0,
     },
-    attention: {
-        ...Typography.variant('meta'),
-        color: theme.colors.state.warning.foreground,
-    },
     failing: {
         color: theme.colors.state.danger.foreground,
     },
@@ -729,11 +724,5 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.variant('meta'),
         color: theme.colors.text.secondary,
         paddingHorizontal: theme.space.s16,
-    },
-    presence: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s8,
-        minWidth: 0,
     },
 }));

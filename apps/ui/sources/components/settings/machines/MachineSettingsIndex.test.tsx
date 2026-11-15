@@ -544,8 +544,11 @@ describe('All machines (the Settings door index)', () => {
       const stage = tree.findAll(node => node.props?.testID === 'machines.index.collection:stage' && typeof node.props?.onLayout === 'function')[0]!;
       stage.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 1440, height: 900 } } });
     });
-    const updateLine = (id: string) => tree.findAll(node => typeof node.type === 'string'
-      && node.props?.testID === `machines.index.updates.machine:srv_a:${id}`)[0]?.props.children;
+    const textOf = (node: { children: unknown[] } | undefined): string => !node ? '' : node.children
+      .map(child => typeof child === 'string' ? child : textOf(child as { children: unknown[] })).join('');
+    // The status's words, wherever the shared Status draws them under its test id.
+    const updateLine = (id: string) => textOf(tree.findAll(node =>
+      node.props?.testID === `machines.index.updates.machine:srv_a:${id}`)[0]) || undefined;
     const { t } = await import('@/text');
     expect(updateLine('hetzner')).toBe(t('machineFleetUpdates.securityUpdates', { count: 3 }));
     expect(updateLine('vps')).toBe(t('machineFleetUpdates.restartNeeded'));

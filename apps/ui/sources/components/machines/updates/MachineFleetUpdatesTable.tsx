@@ -1,16 +1,15 @@
 import * as React from 'react';
-import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
   Collection,
+  Status,
   useHappierCollection,
   type CollectionAnatomy,
   type CollectionField,
 } from '@happier-dev/plugin-ui';
 
 import { resolveMachineKindGlyph } from '@/components/machines/machineKindGlyph';
-import { Icon } from '@/components/ui/icons/Icon';
-import { StatusDot } from '@/components/ui/status/StatusDot';
+import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -122,7 +121,7 @@ export function MachineFleetUpdatesTable(
             isThisComputer: false,
             platform: row.platform,
           })}
-          size={20}
+          size={ICON_SIZE.md}
           color={theme.colors.text.secondary}
         />
       ),
@@ -164,19 +163,13 @@ export function MachineFleetUpdatesTable(
 function CountCell(
   props: Readonly<{ value: number | null; attention?: boolean }>,
 ) {
-  const { theme } = useUnistyles();
   if (props.value === null) return <Text style={styles.quiet}>—</Text>;
-  const needsYou = props.attention === true && props.value > 0;
-  return (
-    <View style={styles.cell}>
-      {needsYou ? <StatusDot color={theme.colors.state.warning.foreground} /> : null}
-      <Text
-        numberOfLines={1}
-        style={needsYou ? styles.attention : styles.count}
-      >
-        {String(props.value)}
-      </Text>
-    </View>
+  return props.attention === true && props.value > 0 ? (
+    <Status tone="warning" label={String(props.value)} presentation="inline" />
+  ) : (
+    <Text numberOfLines={1} style={styles.count}>
+      {String(props.value)}
+    </Text>
   );
 }
 
@@ -196,40 +189,21 @@ function CheckedCell(props: Readonly<{ row: FleetUpdatesRow }>) {
 }
 
 function RestartCell(props: Readonly<{ row: FleetUpdatesRow }>) {
-  const { theme } = useUnistyles();
   if (!known(props.row)) return <Text style={styles.quiet}>—</Text>;
-  if (!props.row.restartNeeded)
-    return (
-      <Text numberOfLines={1} style={styles.quiet}>
-        {t(`${s}.restartNotNeeded`)}
-      </Text>
-    );
-  return (
-    <View style={styles.cell}>
-      <StatusDot color={theme.colors.state.warning.foreground} />
-      <Text numberOfLines={1} style={styles.attention}>
-        {t(`${s}.restartNeeded`)}
-      </Text>
-    </View>
+  return props.row.restartNeeded ? (
+    <Status tone="warning" label={t(`${s}.restartNeeded`)} presentation="inline" />
+  ) : (
+    <Text numberOfLines={1} style={styles.quiet}>
+      {t(`${s}.restartNotNeeded`)}
+    </Text>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
-  cell: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.space.s8,
-    minWidth: 0,
-  },
   count: {
     ...Typography.variant('meta'),
     ...Typography.tabular(),
     color: theme.colors.text.primary,
-  },
-  attention: {
-    ...Typography.variant('meta'),
-    ...Typography.tabular(),
-    color: theme.colors.state.warning.foreground,
   },
   quiet: {
     ...Typography.variant('meta'),

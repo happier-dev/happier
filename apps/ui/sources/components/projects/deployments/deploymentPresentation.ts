@@ -10,7 +10,9 @@ import type {
 import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
 import { resolveWorkStatusTone, type WorkStatusPresentation } from '@/components/work/status/resolveWorkStatusTone';
+import type { ActionActorV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { t } from '@/text';
+import type { DeploymentActorPresentation } from './useDeploymentActorPresentations';
 import { readDeploymentRefusal } from './deploymentActionOutcome';
 import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { deploymentRevisionLabelV1 as deploymentRevisionLabel } from '@happier-dev/deployments';
@@ -401,4 +403,32 @@ export function deploymentEnvironmentAttention(facts: DeploymentEnvironmentAtten
 export function deploymentAttentionLeaves(shown: Pick<DeploymentEnvironmentAttention, 'kind'> | null, kind: DeploymentEnvironmentAttentionKind): boolean {
   return shown === null
     || DEPLOYMENT_ENVIRONMENT_ATTENTION_ORDER.indexOf(shown.kind) > DEPLOYMENT_ENVIRONMENT_ATTENTION_ORDER.indexOf(kind);
+}
+
+/**
+ * Who a deploy or Action's sentence leads with (lab envOv/fAct): "You", a person's name, "Claude (Ana’s session)",
+ * or a workflow's name. Kind and names come from the captured actor through `useDeploymentActorPresentations`;
+ * `requestedByAccountId` is an audit/filter fact and never stands in for it (owner ruling 11-15 05:14Z).
+ * Null when the historical record captured no actor, or a person's name is still reading.
+ */
+export function deploymentActorLabel(
+  presentation: DeploymentActorPresentation,
+  actor: ActionActorV1 | null | undefined,
+  viewerAccountId: string | null,
+): string | null {
+  if (!actor || presentation.actorKind === null) return null;
+  if (actor.actorKind === 'person') {
+    return actor.accountId === viewerAccountId ? t('projects.deployments.overviewStatus.activityYou') : presentation.displayName;
+  }
+  if (actor.actorKind === 'workflow') return presentation.displayName ?? t('projects.deployments.overviewStatus.actorAWorkflow');
+  const agent = presentation.displayName ?? t('projects.deployments.overviewStatus.actorAnAgent');
+  if (!presentation.onBehalfOf) return agent;
+  return presentation.onBehalfOf.accountId === viewerAccountId
+    ? t('projects.deployments.overviewStatus.actorAgentForYou', { agent })
+    : t('projects.deployments.overviewStatus.actorAgentFor', { agent, person: presentation.onBehalfOf.displayName });
+}
+
+/** The viewer acted in person (not an agent or workflow acting for them): the "by you" facts read this, never the requester. */
+export function deploymentActorIsViewer(actor: ActionActorV1 | null | undefined, viewerAccountId: string | null): boolean {
+  return actor?.actorKind === 'person' && actor.accountId === viewerAccountId;
 }
