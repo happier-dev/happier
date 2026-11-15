@@ -8856,7 +8856,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
         actionMenu: {
           openA11y: "Abrir ações da sessão",
 
-          backgroundFollow: "Sincronização em segundo plano", groups: { session: "Esta sessão", behavior: "Comportamento", work: "Trabalho", finish: "Encerrar" }, },
+          backgroundFollow: "Sincronização em segundo plano", handoffUnavailable: { disabled: 'A transferência está desativada nas Definições', noSource: 'Esta sessão não tem uma máquina de origem', noRoute: 'Agora não há rota para outra máquina', peerUnavailable: 'A máquina dela não está aceitando transferências agora' }, compactUnsupported: ({ agent }: { agent: string }) => `${agent} ainda não consegue compactar uma sessão`, compactChecking: ({ agent }: { agent: string }) => `Verificando se ${agent} pode compactar`,  groups: { session: "Esta sessão", behavior: "Comportamento", work: "Trabalho", finish: "Encerrar" }, },
       detailsPanel: {
         emptyHint: "Abra um arquivo ou diff no painel direito.",
         unsupportedTab: "Aba de detalhes não suportada.",
@@ -10253,7 +10253,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
         lastReported: ({ model }: { model: string }) => `Último informado: ${model}`,
         applyTimingNextMessage: "Aplica-se a partir da próxima mensagem",
         applyTimingNewSession: "Aplica-se ao iniciar uma nova sessão",
-        selectedForResume: "O modelo selecionado será usado quando esta sessão for retomada.",
+        selectedForResume: "Aplica-se quando esta sessão for retomada",
         configureInCli: "Configurar modelos nas configurações do CLI",
         viaSource: ({ source }: { source: string }) => `· via ${source}`,
         moreSources: 'Mais fontes',

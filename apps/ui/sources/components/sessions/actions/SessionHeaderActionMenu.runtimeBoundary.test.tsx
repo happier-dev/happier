@@ -195,8 +195,10 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         const item = screen.findByType(DropdownMenu).props.items.find((row: { id: string }) => row.id === 'session.compact');
         expect(item).toBeTruthy();
         expect(item.disabled === true).toBe(disabled);
+        expect(item.icon).toBeTruthy();
         if (disabled) {
-            expect(item.subtitle).toBeTruthy();
+            // The reason names the Agent ("Muse can't compact a session yet"), never a bare "Unavailable".
+            expect(item.subtitle).toMatch(/^(External\/agent can’t compact a session yet|Checking whether External\/agent can compact)$/);
             expect(item.accessibilityLabel).toContain(item.subtitle);
         }
     });

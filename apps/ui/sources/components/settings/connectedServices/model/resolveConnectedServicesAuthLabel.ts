@@ -87,6 +87,11 @@ function resolveProfileLabel(option: ConnectedServicesProfileOption): string {
     return option.profileId;
 }
 
+/** "Muse · Work", but a label that only repeats its service title ("Muse") names it once. */
+function joinServiceTitle(serviceTitle: string, label: string): string {
+    return label.toLocaleLowerCase() === serviceTitle.trim().toLocaleLowerCase() ? serviceTitle : `${serviceTitle} · ${label}`;
+}
+
 function appendWarning(
     warnings: ConnectedServicesAuthWarningCode[],
     code: ConnectedServicesAuthWarningCode,
@@ -268,7 +273,7 @@ function resolveConnectedBindingLabel(
     if ((requested ? state.requestedSelection : state.effectiveSelection) === 'profile' && state.profileId) {
         const profile = (params.profileOptionsByServiceId[serviceId] ?? [])
             .find((option) => isConnectedServiceProfileOptionSelectable(option) && option.profileId === state.profileId);
-        return profile ? `${params.resolveServiceTitle(serviceId)} · ${resolveProfileLabel(profile)}`
+        return profile ? joinServiceTitle(params.resolveServiceTitle(serviceId), resolveProfileLabel(profile))
             : requested ? `${params.resolveServiceTitle(serviceId)} · ${state.profileId}` : null;
     }
 

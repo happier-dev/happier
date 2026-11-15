@@ -28,6 +28,7 @@ export const SESSION_HEADER_MENU_SPEC_PRESENTATION: Readonly<Record<string, Read
     'subagents.delegate.start': { group: 'work', icon: 'arrow-elbow-down-right' },
     'session.fork': { group: 'work', icon: 'git-branch' },
     'session.handoff': { group: 'work', icon: 'laptop' },
+    'session.compact': { group: 'work', icon: 'arrows-in' },
 };
 
 /** Rows the session view adds that start work; its other rows open something (a pane, a terminal). */

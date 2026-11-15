@@ -1153,8 +1153,10 @@ describe('useInSessionAgentPickerControls', () => {
         expect(machineRpcWithServerScope).not.toHaveBeenCalled();
         expect(optionsOf(hook.getCurrent()).map(option => option.id))
             .toEqual(['engine:claude', 'backend:codex', 'backend:gemini']);
+        // One reason shared by every candidate is said once, as their group's heading, not on each row.
         for (const option of optionsOf(hook.getCurrent()).slice(1)) {
-            expect(option).toMatchObject({ disabled: true, subtitle: t('session.machineOfflineNoticeTitle') });
+            expect(option).toMatchObject({ disabled: true, sectionLabel: t('session.machineOfflineNoticeTitle') });
+            expect(option.subtitle).toBeUndefined();
         }
     });
 

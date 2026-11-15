@@ -33,6 +33,7 @@ import { storage, useProfile, useSetting, useSessionOrganizationProjection } fro
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { readAgentSessionCompactionAvailability, readCurrentProjectedAgentCapabilities } from '@/agents/backendCatalog/currentAgentCapabilities';
+import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -161,13 +162,16 @@ function resolveSessionHandoffMenuSubtitle(handoffAvailability: ReturnType<typeo
     return undefined;
   }
 
+  // Each row says why, never the bare word "Unavailable".
   switch (handoffAvailability.reason) {
     case 'handoff_feature_disabled':
-      return t('common.disabled');
+      return t('session.actionMenu.handoffUnavailable.disabled');
     case 'session_ineligible':
+      return t('session.actionMenu.handoffUnavailable.noSource');
     case 'transport_unavailable':
+      return t('session.actionMenu.handoffUnavailable.noRoute');
     case 'runtime_direct_peer_unavailable':
-      return t('common.unavailable');
+      return t('session.actionMenu.handoffUnavailable.peerUnavailable');
   }
 }
 
@@ -616,6 +620,9 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
   ), [daemonMergedProjection.inputs?.pluginProjectionV2, daemonMergedProjection.phase, declaredAgentId]);
   const publishedRuntimeCapabilities = ownerMetadata?.agentRuntimeCapabilitiesV1;
   const runtimeDescriptor = ownerMetadata?.runtimeDescriptorV1;
+  const compactAgentTitle = React.useMemo(() => (declaredAgentId
+    ? resolveAgentCatalogProjection(declaredAgentId, { enabledAgentIds: [] }).title
+    : t('status.unknown')), [declaredAgentId]);
   const compactAvailability = React.useMemo(() => readAgentSessionCompactionAvailability({
     agentId: declaredAgentId,
     metadata: { agentRuntimeCapabilitiesV1: publishedRuntimeCapabilities, runtimeDescriptorV1: runtimeDescriptor },
@@ -673,8 +680,10 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
         currentAgentCapabilities,
       }) === true)
       .map((spec) => {
+        // Named after the Agent (D24: "Muse can't compact a session yet"); the capability owner decides.
         const compactDisabledReason = spec.id === 'session.compact' && compactAvailability.status !== 'supported'
-          ? compactAvailability.status === 'unsupported' ? t('settingsAgents.notSupported') : t('common.unavailable')
+          ? t(compactAvailability.status === 'unsupported' ? 'session.actionMenu.compactUnsupported' : 'session.actionMenu.compactChecking',
+            { agent: compactAgentTitle })
           : undefined;
         return {
           id: spec.id,
@@ -849,6 +858,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     agentSwitchingEnabled,
     currentAgentCapabilities,
     compactAvailability,
+    compactAgentTitle,
     session,
     giveBotCopy,
     giveBotCopyPending,

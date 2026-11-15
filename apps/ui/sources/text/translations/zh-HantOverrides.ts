@@ -6662,7 +6662,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         follow: sessionFollowTranslations['zh-Hant'],
         homeFreshness: sessionHomeFreshnessTranslations['zh-Hant'],
         embedded: sessionEmbeddedTranslations['zh-Hant'],
-        actionMenu: { openA11y: '開啟工作階段操作', backgroundFollow: '背景同步', groups: { session: "此工作階段", behavior: "行為", work: "工作", finish: "收尾" }, },
+        actionMenu: { openA11y: '開啟工作階段操作', backgroundFollow: '背景同步', handoffUnavailable: { disabled: '交接已在設定中關閉', noSource: '此工作階段沒有可移出的機器', noRoute: '目前沒有通往其他機器的路徑', peerUnavailable: '它的機器目前不接受交接' }, compactUnsupported: ({ agent }: { agent: string }) => `${agent} 暫時無法壓縮工作階段`, compactChecking: ({ agent }: { agent: string }) => `正在檢查 ${agent} 能否壓縮`,  groups: { session: "此工作階段", behavior: "行為", work: "工作", finish: "收尾" }, },
         providerBinding: providerSessionTranslations.zhHant,
           transcriptNavigation: {
               title: '導覽',
@@ -8156,7 +8156,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
               lastReported: ({ model }: { model: string }) => `上次回報：${model}`,
               applyTimingNextMessage: '從你的下一則訊息起生效',
               applyTimingNewSession: '在你開始新的工作階段時生效',
-              selectedForResume: '恢復此工作階段時將使用所選模型。',
+              selectedForResume: '在此工作階段恢復時生效',
               configureInCli: '在 CLI 設定中配置模型',
               viaSource: ({ source }: { source: string }) => `· 透過 ${source}`,
               moreSources: '更多來源',

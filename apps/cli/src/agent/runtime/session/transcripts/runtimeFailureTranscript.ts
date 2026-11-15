@@ -25,7 +25,8 @@ function runtimeIssueFromFailureEvent(event: RuntimeFailureEvent, provider: ACPP
 }
 
 function formatRuntimeIssueTranscriptMessage(issue: SessionRuntimeIssueV1, providerName: string, kind: RuntimeFailureEvent['kind']): string {
-  const providerLabel = issue.agentId?.trim() || providerName.trim() || 'Agent';
+  // The Agent's display name ("Muse"), never its id ("muse"); the id only stands in when no name exists.
+  const providerLabel = providerName.trim() || issue.agentId?.trim() || 'Agent';
   const detail = issue.sanitizedPreview?.trim() || issue.code.trim() || issue.source;
   if (issue.source === 'permission_blocked' || issue.source === 'team_credential'
     || readSessionRuntimeIssueNativeAuthAgentId(issue)) return detail;

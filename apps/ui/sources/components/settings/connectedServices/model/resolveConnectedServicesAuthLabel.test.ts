@@ -78,6 +78,17 @@ describe('resolveConnectedServicesAuthLabel', () => {
         });
     });
 
+    it('names a profile once when its label only repeats the service title', () => {
+        expect(resolveConnectedServicesAuthLabel({
+            supportedServiceIds: ['muse'],
+            bindingsByServiceId: { muse: { source: 'connected', selection: 'profile', profileId: 'p1' } },
+            profileOptionsByServiceId: { muse: [{ profileId: 'p1', status: 'connected', label: 'Muse' }] },
+            resolveServiceTitle: () => 'Muse',
+            nativeLabel: 'Native',
+            formatConnectedCountLabel: (count) => `${count} connected`,
+        }).label).toBe('Muse');
+    });
+
     it('uses an aggregate label when multiple services are connected', () => {
         expect(resolveConnectedServicesAuthLabel({
             supportedServiceIds: ['anthropic', 'openai'],

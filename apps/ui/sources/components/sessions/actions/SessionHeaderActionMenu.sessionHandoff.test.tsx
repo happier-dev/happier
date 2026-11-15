@@ -1945,7 +1945,8 @@ describe('SessionHeaderActionMenu handoff', () => {
         expect.objectContaining({
           id: 'session.handoff',
           disabled: true,
-          subtitle: 'common.unavailable',
+          // The reason itself, never the bare word "Unavailable".
+          subtitle: expect.stringMatching(/^session\.actionMenu\.handoffUnavailable\./),
         }),
       ]),
     );
@@ -1991,7 +1992,8 @@ describe('SessionHeaderActionMenu handoff', () => {
         expect.objectContaining({
           id: 'session.handoff',
           disabled: true,
-          subtitle: 'common.unavailable',
+          // The reason itself, never the bare word "Unavailable".
+          subtitle: expect.stringMatching(/^session\.actionMenu\.handoffUnavailable\./),
         }),
       ]),
     );
@@ -2037,7 +2039,8 @@ describe('SessionHeaderActionMenu handoff', () => {
         expect.objectContaining({
           id: 'session.handoff',
           disabled: true,
-          subtitle: 'common.unavailable',
+          // The reason itself, never the bare word "Unavailable".
+          subtitle: expect.stringMatching(/^session\.actionMenu\.handoffUnavailable\./),
         }),
       ]),
     );
@@ -2116,7 +2119,8 @@ describe('SessionHeaderActionMenu handoff', () => {
         expect.objectContaining({
           id: 'session.handoff',
           disabled: true,
-          subtitle: 'common.unavailable',
+          // The reason itself, never the bare word "Unavailable".
+          subtitle: expect.stringMatching(/^session\.actionMenu\.handoffUnavailable\./),
         }),
       ]),
     );

@@ -5306,6 +5306,7 @@ export function useSessionComposerController({
                     ? t(queuedAreNextTurnUpdates ? 'session.pendingMessages.updatesWaiting' : 'session.pendingMessages.indicator', { count: mainPendingCount }) : null,
             },
             usageLimitRecoveryCardShown: visibleUsageLimitRecoveryPresentation !== null,
+            permissionPromptShown: pendingPermissionRequests.length > 0,
             // The same owner SessionView renders its "Couldn't start" notice from.
             startFailureNoticeShown: resolveSessionStartFailureNotice({ issue: session.lastRuntimeIssue, sessionActive: session.active === true }) !== null,
             launchOutcomeShown,
@@ -5314,6 +5315,7 @@ export function useSessionComposerController({
             session.active,
             session.lastRuntimeIssue,
             visibleUsageLimitRecoveryPresentation,
+            pendingPermissionRequests.length,
             providerBindingLine,
             pendingQueueLine,
             mainPendingCount,

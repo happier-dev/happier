@@ -228,7 +228,10 @@ export function buildSessionModelPickerSections(input: Readonly<{
                 unavailableReason: presentation.primaryStatus?.label ?? t('agentInput.model.unavailable'),
             }];
         }
+        // The Agent's own description can be a disclosure ("Your content … may be used for product
+        // improvement"), so it is read in full rather than cut mid-sentence.
         return [{ value, label: model.label, searchText: model.value, description: model.description, source: nativeSource,
+            ...(model.description ? { descriptionLines: 0 } : {}),
             availability: 'available', unavailableReason: null }];
     });
 

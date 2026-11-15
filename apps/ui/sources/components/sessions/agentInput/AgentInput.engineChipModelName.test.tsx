@@ -45,6 +45,15 @@ describe('AgentInput engine chip model name', () => {
         })).toBe('GPT-6-Luna');
     });
 
+    it('names the selected model\'s effort after the model', async () => {
+        const effort = { id: 'reasoning_effort', name: 'Reasoning effort', type: 'select', currentValue: 'high',
+            options: [{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }] };
+        expect(await chipName({
+            modelOptionsOverride: [{ value: 'gpt-6-luna', label: 'GPT-6-Luna', description: '', modelOptions: [effort] }],
+            onAcpConfigOptionChange: () => undefined,
+        })).toBe('GPT-6-Luna · High');
+    });
+
     it('uses a retained row before the current catalog has answered', async () => {
         expect(await chipName({
             modelOptionsOverrideProbe: { phase: 'loading', namesPending: true, retainedModelName: () => 'GPT-6-Luna' },

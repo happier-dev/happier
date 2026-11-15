@@ -5,7 +5,8 @@ import { useHappierHitArea } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { Metadata } from '@happier-dev/session-core/state';
-import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
+import { getSessionWorkContext, type PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
+import { useSessionSelector } from '@/sync/store/hooks';
 
 import { ApprovalPromptChrome } from '@/components/tools/shell/approvals/ApprovalPromptChrome';
 import { PermissionFooter } from '@/components/tools/shell/permissions/PermissionFooter';
@@ -110,6 +111,11 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
             : previewDetailLevel;
     const isPreviewVisible = inlineDetailLevel !== 'title' && inlineDetailLevel !== 'compact';
 
+    // Who is asking and where ("Codex · nl2"), from the Work byline owner, so the card names its subject
+    // on every width even when the command preview is hidden (lab mb B: "{Agent} wants to … on {machine}").
+    const contextServerId = props.serverId ?? transcriptSource.serverId ?? null;
+    const workContext = useSessionSelector(props.sessionId ?? '', contextServerId,
+        session => session ? getSessionWorkContext(session, contextServerId) : null);
     const origin = props.request.nativeChoices?.origin;
     const fromSubagent = origin !== undefined && (origin.subagentLabel !== undefined || origin.subagentId !== undefined || origin.sessionId !== props.sessionId);
     const effectiveSubtitle = React.useMemo(() => {
@@ -125,9 +131,9 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
             return isShellTool || isQuestionTool ? null : base;
         })();
         // A subagent's request names the subagent first (lab mb B `mbAppr:child`).
-        if (!fromSubagent) return subtitle;
+        if (!fromSubagent) return [workContext, subtitle].filter(Boolean).join(' · ') || null;
         return t('capabilities.session.toolAsk.fromSubagent', { subtitle: subtitle ?? '', subagent: origin?.subagentLabel }).replace(/\s*·\s*$/, '');
-    }, [fromSubagent, origin?.subagentLabel, mcp?.serverTitle, headerText.normalizedToolName, headerText.subtitle, isPreviewVisible]);
+    }, [fromSubagent, origin?.subagentLabel, mcp?.serverTitle, headerText.normalizedToolName, headerText.subtitle, isPreviewVisible, workContext]);
     // The viewer's availability is the caller-specific projection on the pending request, never re-decided here.
     const nativeChoiceAvailability = props.request.nativeChoiceAvailability;
     const permissionOwnerLabel = props.request.permissionOwnerLabel;

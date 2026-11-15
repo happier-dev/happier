@@ -188,6 +188,73 @@ describe('projectRuntimeTranscriptEvent', () => {
     expect(JSON.stringify(stored)).toContain('Add a Saved Secret to the Provider connection.');
   });
 
+  it('names a failed turn with the Agent\'s display name, not its id', async () => {
+    const { createRuntimeFailureTranscriptProjector } = await import('./runtimeFailureTranscript');
+    const bodies: unknown[] = [];
+    const project = createRuntimeFailureTranscriptProjector({ provider: 'codex', providerName: 'Codex CLI', session: {
+      sessionId: 'named-failure', enqueueAgentMessageCommitted: async (_provider, body) => {
+        bodies.push(body);
+        return { persisted: true, delivered: true, committedSequence: bodies.length };
+      },
+    } });
+    await project({ sessionId: 'named-failure', kind: 'input-rejected', inputIds: ['input-1'], emittedAtMs: 1,
+      diagnostic: { message: 'Prompt context could not be prepared.' } } as Parameters<typeof project>[0]);
+    expect(bodies).toContainEqual(expect.objectContaining({
+      message: expect.stringMatching(/^Codex CLI input rejected: /) }));
+  });
+
+  it('retains attached Codex mixed user content through the native runtime and canonical writer', async () => {
+    const { createRuntimeTranscriptProjector } = await import('./projectRuntimeTranscriptEvent');
+    const content = [{ type: 'text', text: 'Inspect audio', text_elements: [] }, { type: 'audio', fileId: 'audio-file' }];
+    const writes: unknown[] = [];
+    const warnings: unknown[] = [];
+    const session: RuntimeTranscriptProjectionSession = { sessionId: 'native-content',
+      enqueueUserTextMessageCommitted: async (text, options) => {
+        writes.push({ text, options }); return { persisted: true, delivered: true };
+      } };
+    const handlers = new Map<string, (params: unknown) => void | Promise<void>>();
+    // Only the external Codex JSON-RPC process and transcript persistence are substituted.
+    const client: DisposableCodexAppServerClient = {
+      launchFeatures: { realtimeConversationAdvertised: false }, onNativeEvent: () => () => undefined,
+      request: async method => {
+        if (method === 'thread/start') return { thread: { id: 'native-thread' } };
+        if (method === 'turn/start') return { turnId: 'native-turn' };
+        if (method === 'account/read') return { account: null };
+        if (method === 'account/rateLimits/read') return { rateLimits: null };
+        throw new Error(`Unexpected native request: ${method}`);
+      },
+      notify: async () => undefined, registerRequestHandler: () => () => undefined,
+      registerNotificationHandler: (method, handler) => { handlers.set(method, handler); return () => handlers.delete(method); },
+      onExit: () => () => undefined, dispose: async () => undefined,
+    };
+    const runtime = createCodexAppServerRuntime({ happierSessionId: session.sessionId, directory: '/tmp',
+      host: { baseProcessEnv: {}, logger: { debug() {}, warn(message, data) { warnings.push({ message, data }); } }, createClient: async () => client } });
+    const native = createCodexNativeAppServerSessionRuntime(runtime, session.sessionId);
+    const project = createRuntimeTranscriptProjector();
+    let projection = Promise.resolve();
+    native.watch(event => { projection = projection.then(async () => {
+      await project({ session, provider: 'codex', event: AgentSessionRuntimeEventV1Schema.parse(event) });
+    }); });
+    try {
+      expect(await native.send({ inputIds: ['input'], input: { text: 'hello' }, delivery: { kind: 'newTurn', turnId: 'host-turn' } })).toMatchObject({ status: 'admitted' });
+      const started = handlers.get('item/started');
+      if (!started) throw new Error('Missing native item handler');
+      await started({ threadId: 'native-thread', turnId: 'native-turn', item: { id: 'native-user', type: 'userMessage', content } });
+      await projection;
+      expect(writes).toEqual([expect.objectContaining({ text: expect.stringContaining('Inspect audio'),
+        options: expect.objectContaining({ meta: expect.objectContaining({ nativeContent: content }) }) })]);
+      await started({ threadId: 'native-thread', turnId: 'native-turn', item: { id: 'unknown-user', type: 'userMessage',
+        content: [{ type: 'text', text: 'private prompt' }, { type: 'futureInput', privateBody: 'private bytes' }] } });
+      await projection;
+      expect(writes).toHaveLength(2);
+      expect(writes[1]).toMatchObject({ text: expect.stringContaining('unsupported content') });
+      expect(JSON.stringify(writes[1])).not.toContain('private');
+      expect(JSON.stringify(warnings)).toContain('codex_native_user_content_unsupported');
+      expect(JSON.stringify(warnings)).not.toContain('private');
+
+    } finally { await native.dispose(); }
+  });
+
   it('stores one visible native sign-in issue per real Codex 401 without republishing an observed failure', async () => {
     const { createRuntimeFailureTranscriptProjector } = await import('./runtimeFailureTranscript');
     const { createRuntimeTranscriptProjector } = await import('./projectRuntimeTranscriptEvent');

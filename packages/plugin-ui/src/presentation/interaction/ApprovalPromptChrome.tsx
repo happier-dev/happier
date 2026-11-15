@@ -159,7 +159,8 @@ export function HappierApprovalPromptChrome(props: HappierApprovalPromptChromePr
           {props.children}
         </ScrollView>
       ) : <View style={bodyStyle} onLayout={bounded ? (event) => setFactsContent(event.nativeEvent.layout.height) : undefined}>{props.children}</View>}
-      {props.footer ? <View style={{ flexShrink: 0, paddingLeft: textColumnStart, paddingRight: inset, paddingBottom: compact ? step : inset,
+      {/* The decisions span the card from its edge (lab mb B): a phone's stacked choices are full width. */}
+      {props.footer ? <View style={{ flexShrink: 0, paddingLeft: inset, paddingRight: inset, paddingBottom: compact ? step : inset,
         ...(factsClipped ? { borderTopWidth: 1, borderTopColor: props.colors.border, paddingTop: step } : null) }}>
         <View onLayout={bounded ? (event) => setDecisionContent(event.nativeEvent.layout.height) : undefined}>{props.footer}</View>
       </View> : null}

@@ -8435,7 +8435,7 @@ export const zhHans: TranslationStructure = {
       actionMenu: {
         openA11y: "打开会话操作",
 
-        backgroundFollow: "后台同步", groups: { session: "此会话", behavior: "行为", work: "工作", finish: "收尾" }, },
+        backgroundFollow: "后台同步", handoffUnavailable: { disabled: '交接已在设置中关闭', noSource: '此会话没有可迁出的机器', noRoute: '目前没有通往其他机器的路径', peerUnavailable: '它的机器目前不接受交接' }, compactUnsupported: ({ agent }: { agent: string }) => `${agent} 暂时无法压缩会话`, compactChecking: ({ agent }: { agent: string }) => `正在检查 ${agent} 能否压缩`,  groups: { session: "此会话", behavior: "行为", work: "工作", finish: "收尾" }, },
     detailsPanel: {
       emptyHint: "从右侧面板打开文件或差异。",
       unsupportedTab: "不支持的详情标签页。",
@@ -9791,7 +9791,7 @@ export const zhHans: TranslationStructure = {
       lastReported: ({ model }: { model: string }) => `上次报告：${model}`,
       applyTimingNextMessage: "从你的下一条消息起生效",
       applyTimingNewSession: "在你开始新会话时生效",
-      selectedForResume: "恢复此会话时将使用所选模型。",
+      selectedForResume: "在此会话恢复时生效",
       configureInCli: "在 CLI 设置中配置模型",
       viaSource: ({ source }: { source: string }) => `· 通过 ${source}`,
       moreSources: '更多来源',

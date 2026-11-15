@@ -433,6 +433,14 @@ describe('resolveSessionViewConnectionStatus', () => {
             .toBe('Usage limit reached');
     });
 
+    it('leaves a permission request to its approval card while that card is shown', () => {
+        const asking = { ...baseInput, sessionStatusState: 'permission_required', sessionStatusText: 'Permission required' } as const;
+        expect(resolveSessionViewConnectionStatus({ ...asking, permissionPromptShown: true })).toBeNull();
+        expect(resolveSessionViewConnectionStatus({ ...asking, permissionPromptShown: true,
+            pendingQueue: { line: null, countText: '1 queued' } })?.text).toBe('1 queued');
+        expect(resolveSessionViewConnectionStatus({ ...asking, permissionPromptShown: false })?.text).toBe('Permission required');
+    });
+
     it('offers no second Resume on the status line while the usage-limit card shows', () => {
         const online = { ...baseInput, sessionStatusState: 'ready' as const, sessionStatusText: 'Online', inactiveResumeAvailable: true };
         expect(resolveSessionViewConnectionStatus(online)?.inactiveAction).toBe('resume');

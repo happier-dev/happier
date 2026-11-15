@@ -10299,6 +10299,15 @@ const enSession = {
     openA11y: 'Open session actions',
 
     backgroundFollow: 'Background sync',
+    /** Why "Hand off session" can't be used right now, on its menu row. */
+    handoffUnavailable: {
+      disabled: 'Handoff is turned off in Settings',
+      noSource: 'This session has no machine to move from',
+      noRoute: 'No route to another machine right now',
+      peerUnavailable: 'Its machine isn’t accepting handoffs right now',
+    },
+    compactUnsupported: ({ agent }: { agent: string }) => `${agent} can’t compact a session yet`,
+    compactChecking: ({ agent }: { agent: string }) => `Checking whether ${agent} can compact`,
     /** Group labels of a session's ⋯ menu; the first group (what opens) has none. */
     groups: {
       session: "This session",
@@ -11847,8 +11856,7 @@ const enAgentInput = {
     lastReported: ({ model }: { model: string }) => `Last reported: ${model}`,
     applyTimingNextMessage: 'Applies from your next message',
     applyTimingNewSession: 'Applies when you start a new session',
-    selectedForResume:
-      'The selected model will be used when this session resumes.',
+    selectedForResume: 'Applies when this session resumes',
     configureInCli: 'Configure models in CLI settings',
     viaSource: ({ source }: { source: string }) => `· via ${source}`,
     moreSources: 'More sources',

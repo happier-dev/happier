@@ -9206,7 +9206,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
         actionMenu: {
           openA11y: "Открыть действия сессии",
 
-          backgroundFollow: "Фоновая синхронизация", groups: { session: "Эта сессия", behavior: "Поведение", work: "Работа", finish: "Завершение" }, },
+          backgroundFollow: "Фоновая синхронизация", handoffUnavailable: { disabled: 'Передача отключена в настройках', noSource: 'У этой сессии нет исходной машины', noRoute: 'Сейчас нет пути к другой машине', peerUnavailable: 'Её машина сейчас не принимает передачи' }, compactUnsupported: ({ agent }: { agent: string }) => `${agent} пока не умеет сжимать сессию`, compactChecking: ({ agent }: { agent: string }) => `Проверяем, может ли ${agent} сжимать`,  groups: { session: "Эта сессия", behavior: "Поведение", work: "Работа", finish: "Завершение" }, },
       detailsPanel: {
         emptyHint: "Откройте файл или diff на правой панели.",
         unsupportedTab: "Эта вкладка деталей не поддерживается.",
@@ -9990,7 +9990,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
         lastReported: ({ model }: { model: string }) => `Последняя сообщённая: ${model}`,
         applyTimingNextMessage: "Применится со следующего сообщения",
         applyTimingNewSession: "Применится при запуске новой сессии",
-        selectedForResume: "Выбранная модель будет использоваться после возобновления этой сессии.",
+        selectedForResume: "Применится при возобновлении этой сессии",
         configureInCli: "Настройте модели в настройках CLI",
         viaSource: ({ source }: { source: string }) => `· через ${source}`,
         moreSources: 'Другие источники',

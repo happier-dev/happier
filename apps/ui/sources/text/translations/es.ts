@@ -8750,7 +8750,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
           actionMenu: {
             openA11y: "Abrir acciones de la sesión",
 
-            backgroundFollow: "Sincronización en segundo plano", groups: { session: "Esta sesión", behavior: "Cómo se comporta", work: "Trabajo", finish: "Cerrar" }, },
+            backgroundFollow: "Sincronización en segundo plano", handoffUnavailable: { disabled: 'La transferencia está desactivada en Ajustes', noSource: 'Esta sesión no tiene una máquina de origen', noRoute: 'Ahora no hay ruta hacia otra máquina', peerUnavailable: 'Su máquina no acepta transferencias ahora' }, compactUnsupported: ({ agent }: { agent: string }) => `${agent} aún no puede compactar una sesión`, compactChecking: ({ agent }: { agent: string }) => `Comprobando si ${agent} puede compactar`,  groups: { session: "Esta sesión", behavior: "Cómo se comporta", work: "Trabajo", finish: "Cerrar" }, },
         detailsPanel: {
             emptyHint: "Abre un archivo o un diff desde el panel derecho.",
             unsupportedTab: "Pestaña de detalles no compatible.",
@@ -10140,7 +10140,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
         lastReported: ({ model }: { model: string }) => `Último informado: ${model}`,
         applyTimingNextMessage: "Se aplica a partir de tu próximo mensaje",
         applyTimingNewSession: "Se aplica al iniciar una sesión nueva",
-        selectedForResume: "El modelo seleccionado se usará cuando se reanude esta sesión.",
+        selectedForResume: "Se aplica al reanudar esta sesión",
         configureInCli: "Configurar modelos en la configuración del CLI",
         viaSource: ({ source }: { source: string }) => `· vía ${source}`,
         moreSources: 'Más fuentes',

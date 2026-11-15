@@ -1432,7 +1432,9 @@ describe('AgentInput (modelOptionsOverride)', () => {
         expect(currentOption?.icon).toBeUndefined();
         expect(currentOption?.accessibilityLabel).toContain('agentInput.model.lastUsed');
         expect(lastOptionPickerOverlayProps?.summary).toContain('agentInput.model.lastUsed');
-        expect(lastOptionPickerOverlayProps?.notes).toEqual(['agentInput.model.selectedForResume']);
+        // One freshness line: when the change applies sits beside what last ran, never again as a note.
+        expect(lastOptionPickerOverlayProps?.summary).toContain('agentInput.model.selectedForResume');
+        expect(lastOptionPickerOverlayProps?.notes ?? []).not.toContain('agentInput.model.selectedForResume');
     });
 
     it('keeps the check/background on selected while the running icon stays on applied', async () => {

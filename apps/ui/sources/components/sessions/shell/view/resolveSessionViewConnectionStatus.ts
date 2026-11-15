@@ -88,6 +88,8 @@ export function resolveSessionViewConnectionStatus(input: Readonly<{
     pendingQueue?: Readonly<{ line: SessionViewPendingQueueLine | null; countText: string | null }> | null;
     /** The usage-limit recovery card is on screen and already states the limit and its recovery. */
     usageLimitRecoveryCardShown?: boolean;
+    /** The composer shows the pending approval card, which already says that permission is needed. */
+    permissionPromptShown?: boolean;
     /** The Session's "Couldn't start" notice is on screen with its cause and its Retry. */
     startFailureNoticeShown?: boolean;
     /** A new Session's first message states its launch outcome (starting, failed or unresolved). */
@@ -159,8 +161,11 @@ export function resolveSessionViewConnectionStatus(input: Readonly<{
             ...(binding.action ? { providerBindingAction: binding.action } : {}),
         };
     }
-    // The recovery card above the composer is the one place the usage limit is said while it shows.
-    if (input.sessionStatusState === 'usage_limited' && input.usageLimitRecoveryCardShown === true && !restartActive && !input.sessionStatusResuming) {
+    // The recovery card above the composer is the one place the usage limit is said while it shows,
+    // and the approval card the one place a permission request is.
+    if (((input.sessionStatusState === 'usage_limited' && input.usageLimitRecoveryCardShown === true)
+        || (input.sessionStatusState === 'permission_required' && input.permissionPromptShown === true))
+        && !restartActive && !input.sessionStatusResuming) {
         return queueCountText
             ? { text: queueCountText, color: input.sessionStatusColor, dotColor: input.sessionStatusDotColor, isPulsing: false }
             : null;

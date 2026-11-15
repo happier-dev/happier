@@ -78,7 +78,8 @@ describe('Muse native model catalog', () => {
       ]);
       expect(first.models?.[0].modelOptions?.[0]).toMatchObject({
         id: 'reasoning_effort', currentValue: 'max',
-        options: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].map(value => ({ value, name: value })),
+        options: [['minimal', 'Minimal'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'XHigh'],
+          ['max', 'Max']].map(([value, name]) => ({ value, name })),
       });
       expect(first.models?.[2].modelOptions?.[0].options?.map(option => option.value)).toEqual([
         'minimal', 'low', 'medium', 'high', 'xhigh',

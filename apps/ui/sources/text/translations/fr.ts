@@ -8590,7 +8590,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
           actionMenu: {
             openA11y: "Ouvrir les actions de session",
 
-            backgroundFollow: "Synchronisation en arrière-plan", groups: { session: "Cette session", behavior: "Comportement", work: "Travail", finish: "Clore" }, },
+            backgroundFollow: "Synchronisation en arrière-plan", handoffUnavailable: { disabled: 'Le transfert est désactivé dans les réglages', noSource: 'Cette session n’a pas de machine d’origine', noRoute: 'Aucune route vers une autre machine pour le moment', peerUnavailable: 'Sa machine n’accepte pas de transfert pour le moment' }, compactUnsupported: ({ agent }: { agent: string }) => `${agent} ne peut pas encore compacter une session`, compactChecking: ({ agent }: { agent: string }) => `Vérification de la compaction par ${agent}`,  groups: { session: "Cette session", behavior: "Comportement", work: "Travail", finish: "Clore" }, },
         detailsPanel: {
             emptyHint: "Ouvre un fichier ou un diff depuis le panneau de droite.",
             unsupportedTab: "Onglet de détails non pris en charge.",
@@ -9973,7 +9973,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
         lastReported: ({ model }: { model: string }) => `Dernier signalé : ${model}`,
         applyTimingNextMessage: "S’applique à partir de ton prochain message",
         applyTimingNewSession: "S’applique au démarrage d’une nouvelle session",
-        selectedForResume: "Le modèle sélectionné sera utilisé à la reprise de cette session.",
+        selectedForResume: "S’applique à la reprise de cette session",
         configureInCli: "Configure les modèles dans les réglages du CLI",
         viaSource: ({ source }: { source: string }) => `· via ${source}`,
         moreSources: 'Autres sources',

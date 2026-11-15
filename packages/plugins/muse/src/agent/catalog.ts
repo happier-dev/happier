@@ -1,4 +1,5 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { formatReasoningEffortTierLabel } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import type { AgentPreflightSessionControlsContributionV1, AgentSessionModel, AgentSessionModelsSnapshot, AgentSessionModelsSource } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { PluginJsonRpcClient } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 
@@ -80,7 +81,7 @@ function parseCatalog(value: unknown): Readonly<{
       ...(contextLimit === undefined ? {} : { contextWindowTokens: contextLimit }),
       ...(variants.length === 0 ? {} : { modelOptions: [{ id: 'reasoning_effort', name: 'Reasoning effort',
         type: 'select', currentValue: defaultEffort,
-        options: variants.map(value => ({ value, name: value,
+        options: variants.map(value => ({ value, name: formatReasoningEffortTierLabel(value),
           ...(descriptions.has(value) ? { description: descriptions.get(value) } : {}) })),
       }] }),
     };

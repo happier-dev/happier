@@ -3,6 +3,7 @@ import type { AgentSessionModeDescriptor } from '@happier-dev/agents';
 
 import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 import type { ComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
+import { PROVIDER_REASONING_EFFORT_OPTION_ID } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
 import {
@@ -124,6 +125,8 @@ export type SessionAuthoringControls = Readonly<{
     shouldShowModelOptionDescriptions: boolean;
     selectedModelForControls: ModelOption | null;
     selectedModelOptionControls: readonly AcpConfigOptionControl[] | null;
+    /** The selected model's effort step, named ("High"), so the composer chip reads "model · effort" (D23). */
+    selectedEffortLabel: string | null;
     acpConfigOptionControls: readonly AcpConfigOptionControl[] | null;
     sessionModeChipControl: SessionAuthoringSessionModeChipControl | null;
     sessionModePickerOptions: ReadonlyArray<AgentInputChipPickerOption>;
@@ -221,18 +224,16 @@ export function useSessionAuthoringControls(
     // One line under the section label: what is running, and when a change to it
     // takes effect. Anything a provider adds beyond that stays a note, so the
     // ordinary case is a label, a line and the models — never a paragraph.
+    // A stopped session applies the change when it resumes; that is said here, once, never again as a note.
     const modelApplyTiming = React.useMemo(() => (
         effectiveModelPolicy.applyScope === 'spawn_only'
             ? t('agentInput.model.applyTimingNewSession')
-            : t('agentInput.model.applyTimingNextMessage')
-    ), [effectiveModelPolicy.applyScope]);
+            : input.sessionActive === false
+                ? t('agentInput.model.selectedForResume')
+                : t('agentInput.model.applyTimingNextMessage')
+    ), [effectiveModelPolicy.applyScope, input.sessionActive]);
 
-    const modelNotes = React.useMemo(() => {
-        if (input.sessionActive === false) {
-            return [t('agentInput.model.selectedForResume')];
-        }
-        return effectiveModelPolicy.notes;
-    }, [effectiveModelPolicy.notes, input.sessionActive]);
+    const modelNotes = effectiveModelPolicy.notes;
 
     const canEnterCustomModel = React.useMemo(() => {
         return supportsFreeformModelSelectionForSession(agentId, composerOptionsInput);
@@ -403,6 +404,14 @@ export function useSessionAuthoringControls(
         composerOptionsInput,
     ]);
 
+    const selectedEffortLabel = React.useMemo(() => {
+        const control = [...(selectedModelOptionControls ?? []), ...(acpConfigOptionControls ?? [])]
+            .find(candidate => candidate.option.id === PROVIDER_REASONING_EFFORT_OPTION_ID);
+        if (!control || control.disabled === true) return null;
+        const choices = control.option.groups?.flatMap(group => group.options) ?? control.option.options ?? [];
+        return choices.find(choice => choice.value === control.effectiveValue)?.name ?? null;
+    }, [acpConfigOptionControls, selectedModelOptionControls]);
+
     return {
         modelOptions,
         permissionModeOptions,
@@ -419,6 +428,7 @@ export function useSessionAuthoringControls(
         shouldShowModelOptionDescriptions,
         selectedModelForControls,
         selectedModelOptionControls,
+        selectedEffortLabel,
         acpConfigOptionControls,
         sessionModeChipControl,
         sessionModePickerOptions,

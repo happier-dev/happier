@@ -9057,7 +9057,7 @@ localTailscale: {
         actionMenu: {
           openA11y: "セッションの操作を開く",
 
-          backgroundFollow: "バックグラウンド同期", groups: { session: "このセッション", behavior: "動作", work: "作業", finish: "終了" }, },
+          backgroundFollow: "バックグラウンド同期", handoffUnavailable: { disabled: '引き継ぎは設定でオフになっています', noSource: 'このセッションには移動元のマシンがありません', noRoute: '現在、別のマシンへの経路がありません', peerUnavailable: 'このマシンは現在引き継ぎを受け付けていません' }, compactUnsupported: ({ agent }: { agent: string }) => `${agent} はまだセッションを圧縮できません`, compactChecking: ({ agent }: { agent: string }) => `${agent} が圧縮できるか確認中`,  groups: { session: "このセッション", behavior: "動作", work: "作業", finish: "終了" }, },
       detailsPanel: {
         emptyHint: "右側パネルからファイルまたは差分を開いてください。",
         unsupportedTab: "未対応の詳細タブです。",
@@ -10441,7 +10441,7 @@ localTailscale: {
       lastReported: ({ model }: { model: string }) => `最終報告: ${model}`,
       applyTimingNextMessage: "次のメッセージから適用されます",
       applyTimingNewSession: "新しいセッションを開始したときに適用されます",
-      selectedForResume: "このセッションを再開すると、選択したモデルが使用されます。",
+      selectedForResume: "このセッションを再開したときに適用されます",
       configureInCli: "CLIの設定でモデルを構成",
       viaSource: ({ source }: { source: string }) => `· ${source} 経由`,
       moreSources: 'その他のソース',

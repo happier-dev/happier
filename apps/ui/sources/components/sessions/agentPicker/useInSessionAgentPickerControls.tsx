@@ -909,6 +909,13 @@ export function useInSessionAgentPickerControls(
         const eligibilityByTargetKey = new Map(
             targetRows.map(({ entry, eligibility }) => [entry.backendTargetKey, eligibility] as const),
         );
+        // A reason several rows share ("Machine is offline") is said once, as their group's heading.
+        const unavailableTextCounts = new Map<string, number>();
+        for (const { entry, eligibility } of targetRows) {
+            if (eligibility.status !== 'unavailable' && eligibility.status !== 'indeterminate') continue;
+            const text = resolveTargetRowUnavailableText(eligibility, entry.title);
+            if (text) unavailableTextCounts.set(text, (unavailableTextCounts.get(text) ?? 0) + 1);
+        }
         return buildSessionAgentPickerOptions({
             entries: targetEntries,
             identityScope: {
@@ -937,8 +944,17 @@ export function useInSessionAgentPickerControls(
                 // Disabled rows cannot open their detail pane. Keep the owner's
                 // reason on the row itself, including an inconclusive read.
                 if (eligibility.status === 'unavailable' || eligibility.status === 'indeterminate') {
+                    const text = resolveTargetRowUnavailableText(eligibility, entry.title);
+                    if (text && (unavailableTextCounts.get(text) ?? 0) > 1) {
+                        return {
+                            accessibilityLabel: `${entry.title}, ${text}`,
+                            section: { id: `unavailable:${text}`, label: text, rank: 1 },
+                            disabled: true,
+                            muted: true,
+                        };
+                    }
                     return {
-                        subtitle: resolveTargetRowUnavailableText(eligibility, entry.title) ?? undefined,
+                        subtitle: text ?? undefined,
                         disabled: true,
                         muted: true,
                     };
@@ -959,7 +975,7 @@ export function useInSessionAgentPickerControls(
                 if (presentation.disabled) {
                     return {
                         detailTitle: entry.title,
-                        detailDescription: presentation.subtitle,
+                        detailDescription: presentation.subtitle ?? presentation.section?.label,
                     };
                 }
                 // Choosing this Agent, or one of its models, IS the choice. There is

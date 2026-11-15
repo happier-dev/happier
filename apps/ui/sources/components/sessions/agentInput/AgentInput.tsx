@@ -1613,6 +1613,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         shouldShowModelOptionDescriptions,
         selectedModelForControls,
         selectedModelOptionControls,
+        selectedEffortLabel,
         acpConfigOptionControls,
         sessionModeChipControl,
         sessionModePickerOptions,
@@ -3214,7 +3215,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             // An id is not a name: until the projection answers, the chip stays on the Agent.
             return !picker.providerProjectionAuthoritative && !picker.providerProjectionFailed && name === picker.selected.modelId
                 ? resolvedAgentLabel
-                : name;
+                : withEffort(name);
         }
         // Selection IS the selection. An armed target with a model chosen names
         // that model; an armed target still on the Agent's own defaults names the
@@ -3222,8 +3223,12 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         if (armedComposerTarget) {
             return armedComposerTarget.modelLabel ?? armedComposerTarget.label;
         }
-        return hasAgentPickerOptions ? selectedModelLabel ?? resolvedAgentLabel : resolvedAgentLabel;
-    }, [props.engineLabel, props.modelPickerPresentation, armedComposerTarget, engineChipMarkAgentId, hasAgentPickerOptions, resolvedAgentLabel, selectedModelLabel]);
+        return hasAgentPickerOptions && selectedModelLabel ? withEffort(selectedModelLabel) : resolvedAgentLabel;
+        // A named model carries its effort step ("Muse 1 · high", D23); the Agent's own name never does.
+        function withEffort(modelName: string): string {
+            return selectedEffortLabel ? `${modelName} · ${selectedEffortLabel}` : modelName;
+        }
+    }, [props.engineLabel, props.modelPickerPresentation, armedComposerTarget, engineChipMarkAgentId, hasAgentPickerOptions, resolvedAgentLabel, selectedModelLabel, selectedEffortLabel]);
     /**
      * The mark on the engine chip: the armed Agent while one is armed, otherwise
      * the Agent running this Session.

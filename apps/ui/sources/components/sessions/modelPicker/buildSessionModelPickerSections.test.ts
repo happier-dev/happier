@@ -79,6 +79,16 @@ describe('buildSessionModelPickerSections', () => {
         expect(options.filter(option => sessionModelSelectionKey(option.value) === sessionModelSelectionKey(selected)))
             .toMatchObject([{ label: 'Provider observed-model' }]);
     });
+    it('reads an Agent model\'s own description (a consent disclosure) in full', () => {
+        const sections = buildSessionModelPickerSections({ declarationContext: { kind: 'account' },
+            agentTargetKey: 'agent:happier.agent.muse/muse', providerGroups: [], hiddenNativeModelKeys: new Set(),
+            providerProjectionAuthoritative: true,
+            nativeModels: [{ value: 'meta/spark-contributor', label: 'Spark contributor',
+                description: 'Your content, including inter-session messages, may be used for product improvement.' }],
+        });
+        expect(sections.flatMap(section => section.options)).toMatchObject([{ label: 'Spark contributor', descriptionLines: 0 }]);
+    });
+
     it('keeps a selected native default in the available Agent catalog', () => {
         const selected = { agentTargetKey: 'agent:happier.agent.grok/grok', providerConnectionId: null, modelId: 'default' };
         const nativeModels = [{ value: 'default', label: 'Agent default' }, { value: 'grok-4.7', label: 'Grok 4.7' }];
