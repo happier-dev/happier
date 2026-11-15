@@ -1,6 +1,7 @@
 import { createSessionFollowActionDeps } from '@/api/sessionFollowActionDeps';
 import { createSessionReadStateActionDeps } from '@/api/sessionReadStateActionDeps';
 import { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
+import { awaitCliActionResult } from './awaitCliActionResult';
 import {
   DEFAULT_SESSION_TRANSCRIPT_FOLLOW_LEASE_IDLE_TTL_MS,
   createSessionTranscriptFollowLeaseRegistry,
@@ -574,9 +575,13 @@ export function createCliActionExecutor(
         // The same admitted invocation settles once when its caller runs it.
         let result: Promise<ActionExecuteResult> | undefined;
         return { kind: 'ready' as const, invocation: { run: () =>
-          result ??= pluginExecutor.execute(actionId, input, resolvedContext) } };
+          result ??= awaitCliActionResult(() => pluginExecutor.execute(actionId, input, resolvedContext), context?.signal) } };
       }
-      return await base.prepare(actionId, input, resolvedContext);
+      const prepared = await base.prepare(actionId, input, resolvedContext);
+      if (prepared.kind !== 'ready') return prepared;
+      return { ...prepared, invocation: { ...prepared.invocation,
+        run: () => awaitCliActionResult(() => prepared.invocation.run(), context?.signal),
+      } };
     },
     execute: async (actionId, input, context) => {
       const denied = filesystemRequesterAuthorityFailure(actionId, context)
@@ -584,7 +589,7 @@ export function createCliActionExecutor(
       if (denied) return denied;
       const resolvedContext = await measureActionStartPhaseV1(context, 'cli_context', () => resolveContext(context));
       if (!resolvedContext) return actionStartTargetUnavailableV1(context, 'cli_context', 'requester_projection_unavailable');
-      return await pluginExecutor.execute(actionId, input, resolvedContext);
+      return await awaitCliActionResult(() => pluginExecutor.execute(actionId, input, resolvedContext), context?.signal);
     },
     continueConfidentialApprovalRequest: async (input, context) => {
       const resolvedContext = await measureActionStartPhaseV1(context, 'cli_context', () => resolveContext(context));

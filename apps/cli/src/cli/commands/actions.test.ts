@@ -57,12 +57,17 @@ it('preserves invitation token guidance at actions invoke dispatch', async () =>
 });
 
 describe('public Action failure evidence', () => {
-  it('returns cancelled with a Request ID and closes the held provider request', async () => {
+  it.each([
+    { cooperation: 'cooperative', prepared: false },
+    { cooperation: 'noncooperative', prepared: false },
+    { cooperation: 'noncooperative', prepared: true },
+  ] as const)('returns control with a Request ID when a $cooperation Action is cancelled (prepared=$prepared)', async ({ cooperation, prepared }) => {
     const closed = Promise.withResolvers<void>();
     let requestOpened = false;
+    let providerClosed = false;
     const provider = createServer((_request, response) => {
       requestOpened = true;
-      response.once('close', () => closed.resolve());
+      response.once('close', () => { providerClosed = true; closed.resolve(); });
       response.flushHeaders();
       response.write('held');
     });
@@ -79,13 +84,13 @@ describe('public Action failure evidence', () => {
     });
     const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ controller: pluginReloadController, plugins: [{
       manifest: createPluginManifestV2Fixture({ id: 'acme.cancel-read', contributes: { actions: [{
-        id: 'read', title: 'Read held provider', readOnly: true, dangerLevel: 'safe',
+        id: 'read', title: 'Read held provider', ...(cooperation === 'cooperative' ? { readOnly: true } : {}), dangerLevel: 'safe',
         scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' },
         inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       }] } }),
       files: { 'daemon.mjs': `export function activate(api) {
         api.actions.register('read', async (_input, context) => {
-          const response = await fetch('http://127.0.0.1:${address.port}', { signal: context.signal });
+          const response = await fetch('http://127.0.0.1:${address.port}', ${cooperation === 'cooperative' ? '{ signal: context.signal }' : '{}'});
           return await response.text();
         });
       }` },
@@ -101,7 +106,10 @@ describe('public Action failure evidence', () => {
       action: { pluginId: 'acme.cancel-read', localId: 'read' }, input: {},
     }), '--json'], {
       readCredentialsFn: async () => credentials('stored_session'),
-      createExecutorFn: () => ({ execute: executor.execute,
+      createExecutorFn: () => ({ execute: prepared ? async (actionId, input, context) => {
+        const invocation = await executor.prepare(actionId, input, context);
+        return invocation.kind === 'ready' ? await invocation.invocation.run() : invocation.result;
+      } : executor.execute,
         resolveSessionTarget: async () => { throw new Error('Unexpected Session lookup'); } }),
     }, caller.signal).then(() => { settled = true; });
     try {
@@ -109,9 +117,10 @@ describe('public Action failure evidence', () => {
       caller.abort(new Error('Command interrupted by SIGINT'));
       await vi.waitFor(() => expect(settled).toBe(true));
       expect(JSON.parse(output)).toMatchObject({ ok: false, error: {
-        code: 'plugin_action_aborted', requestId: expect.any(String),
+        code: 'cancelled', requestId: expect.any(String), details: { outcome: 'unknown' },
       } });
-      await closed.promise;
+      if (cooperation === 'cooperative') await closed.promise;
+      else expect(providerClosed).toBe(false);
     } finally {
       provider.closeAllConnections();
       await pending;

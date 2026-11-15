@@ -2157,6 +2157,12 @@ without a provider or role opt-in. Cancellation before handler entry still
 prevents dispatch. Read-only Actions and Resource observations retain their
 abort-wins lifecycle.
 
+The CLI executor separately owns the caller's wait, including prepared Action
+invocations. Its local cancellation returns `cancelled` with
+`details.outcome: 'unknown'` even when a trusted plugin ignores its signal. The
+Action may still be running; its owner retains eventual effect settlement.
+This does not terminate plugin code or promise that an outward effect stopped.
+
 `options.observeAction(ref, input, invalidate, { signal })` installs dependencies
 without running the read handler. The target registers `observeRead` beside
 `run` in `definePlugin`, or through
