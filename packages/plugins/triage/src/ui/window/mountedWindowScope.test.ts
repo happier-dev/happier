@@ -16,6 +16,7 @@ import { createTriageListWindowStore, type TriageListWindowStoreV1 } from '../..
 import {
   acquireTriageListWindow,
   loadMoreTriageListWindow,
+  projectTriageListWindow,
   readTriageListWindowSnapshot,
   readTriageMountedWindowReadState,
   setTriageListWindowReadiness,
@@ -694,6 +695,9 @@ it.each(['viewer', 'owner'])('reconciles qualified %s Task pushes beyond page on
     push('task-a');
     await vi.waitFor(() => expect(rows()[0]?.content?.outcome.snapshot.state).toMatchObject({ completionReason: 'completed' }));
     expect(exactReads).toEqual(['task-a']);
+    expect(projectTriageListWindow(TRIAGE_LIST_DEFAULT_LENS_V1, otherHost, scope)?.rows[0]?.content?.outcome.snapshot.state)
+      .toMatchObject({ completionReason: 'completed' });
+    expect(projectTriageListWindow({ ...TRIAGE_LIST_DEFAULT_LENS_V1, query: 'No match' }, otherHost, scope)?.rows).toEqual([]);
     expect(pageReads).toBe(before);
     expect(readTriageListWindowSnapshot(otherHost, scope)).toBe(readTriageListWindowSnapshot(host, scope));
     push('task-b'); // not in the retained page; exact admission discovers a new matching row
@@ -703,6 +707,8 @@ it.each(['viewer', 'owner'])('reconciles qualified %s Task pushes beyond page on
     push('task-a');
     await vi.waitFor(() => expect(rows().map(row => row.entryRef.entryId)).toEqual(['task-b']));
     expect(exactReads).toEqual(['task-a', 'task-b', 'task-a']);
+    expect(projectTriageListWindow(TRIAGE_LIST_DEFAULT_LENS_V1, otherHost, scope)?.rows.map(row => row.entryRef.entryId))
+      .toEqual(['task-b']);
     expect(pageReads).toBe(before);
   } finally { first.release(); second.release(); }
 });
