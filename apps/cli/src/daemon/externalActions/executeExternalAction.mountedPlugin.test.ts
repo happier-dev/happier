@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { readAuthoritativePluginSlotOccurrence } from '@/plugins/runtime/reload/runtimeLease';
 import { createHash } from 'node:crypto';
 import { createActionExecutor, computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions';
@@ -17,7 +18,6 @@ import type { DaemonPluginMountedInvocationV1 } from '@happier-dev/protocol/plug
 import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createAutomationConversationActionExecutor } from '@/plugins/runtime/automations/automationConversationActionExecutor';
 import { createDaemonApprovalExecutionOriginCurrentness } from './daemonExternalActionTargetResolver';
-import { readAuthoritativePluginSlotOccurrence } from '@/plugins/runtime/reload/runtimeLease';
 import { registerExternalActionRpcHandler } from '@/rpc/handlers/externalAction';
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, parseExternalActionDaemonDispatchResultV1 } from '@happier-dev/protocol';
 import { ACTION_API_SERVER_ORIGIN } from '@happier-dev/protocol/rpc';
@@ -234,7 +234,7 @@ describe('external Action mounted plugin admission', () => {
       ok: false, errorCode: 'plugin_mounted_caller_unavailable' } } });
     expect(axios.post).not.toHaveBeenCalled();
   });
-  it('creates a signed Inspector reload approval and rechecks durable source custody without retaining an occurrence', async () => {
+  it('creates a signed Inspector reload approval refused once its plugin is no longer installed, without retaining an occurrence', async () => {
     const { fixture, invocation } = await bundledMountedFixture('happier.inspector', 'inspector-app');
     const { materializationRef: _materialization, ...sourceOnlyBinding } = invocation.mountedBinding;
     const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(42));
@@ -283,12 +283,12 @@ describe('external Action mounted plugin admission', () => {
       resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'srv_home-1', machineId: 'machine-1' }),
       resolveTarget: async () => target, isAccountCurrent: async () => true, listAccountApiTokens: async () => ({ tokens: [] }),
       externalActionMachinePublicKey: key.publicKey, verifyExternalExecutionAuthorization: async () => true,
-      resolveCurrentPluginSourceCustody: async (pluginId) => readAuthoritativePluginSlotOccurrence(pluginId,
-        { controller: fixture.controller })?.sourceCustody ?? null,
+      isPluginInstalled: (pluginId) => readAuthoritativePluginSlotOccurrence(pluginId, { controller: fixture.controller }) !== null,
     });
     expect(await isCurrent({ origin: request.executionOriginV1, request })).toBe(true);
     await fixture.lease.release();
     await fixture.controller.shutdown();
+    // No generation compare (plugins trusted); a plugin no longer installed is the person's revocation.
     expect(await isCurrent({ origin: request.executionOriginV1, request })).toBe(false);
   });
   it('refuses an unverifiable plugin claim before a host-only Action executes', async () => {

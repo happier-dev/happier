@@ -1,4 +1,5 @@
 import axios, { AxiosHeaders, type AxiosResponse } from 'axios';
+import { readAuthoritativePluginSlotOccurrence } from '@/plugins/runtime/reload/runtimeLease';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
@@ -32,7 +33,6 @@ import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecyc
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
-import { readAuthoritativePluginSlotOccurrence } from '@/plugins/runtime/reload/runtimeLease';
 import { configuration } from '@/configuration';
 import { fetchAccountProfile } from '@/api/accountProfile';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
@@ -225,7 +225,7 @@ describe('trigger-started Event admission approval', () => {
         }, { isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentness({ accountId: 'account-admission', machineId,
             serverId: configuration.activeServerId,
             resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: homeId, machineId }),
-            resolveCurrentPluginSourceCustody: async id => readAuthoritativePluginSlotOccurrence(id, { controller: fixture.controller })?.sourceCustody ?? null,
+            isPluginInstalled: id => readAuthoritativePluginSlotOccurrence(id, { controller: fixture.controller }) !== null,
             resolveTarget: createDaemonExternalActionTargetResolver({ credentials, serverApiUrl: configuration.apiServerUrl }),
             isAccountCurrent: async () => (await fetchAccountProfile({ token: credentials.token, projection: 'self' })).id === 'account-admission',
             listAccountApiTokens: async () => { throw new Error('Stored Account source must not enumerate API tokens'); },

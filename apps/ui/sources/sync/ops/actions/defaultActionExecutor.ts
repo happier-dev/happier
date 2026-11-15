@@ -74,7 +74,6 @@ import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol
 import { agentRoutingIdAddressesContributionIdentityV1 } from '@happier-dev/protocol/plugins/contributionIdentity';
 import { approvalArtifactBodyMatchesHeaderV1, buildApprovalRequestArtifactHeaderV1, listApprovalArtifactsV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { StoredApprovalRequestSchema, readApprovalRequesterDecisionV1, resolveApprovalExecutor, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { verifyExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { readOriginalAccountActionMachine } from '@/sync/api/externalActionAccountTransport';
 import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
@@ -178,7 +177,7 @@ import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabl
 import { getActionRequiredServerFeatureId } from '@happier-dev/protocol/actions/actionRequiredServerFeature';
 import { projectSessionFollowSourceKeyPreparationAfterSetV1, type SessionFollowSourceKeyPreparationResultV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceKeyPreparationV1';
 import type { SessionFollowActionInputV1, SessionFollowActionOutputV1 } from '@happier-dev/protocol/sessions/follow/actions';
-import { machineContributionRegistryProjectionDescribe, machinePluginUiTargetedContributionsRead } from '@/sync/ops/machineContributionRegistryProjection';
+import { machineContributionRegistryProjectionDescribe } from '@/sync/ops/machineContributionRegistryProjection';
 import { machineWorkspaceFileSearch } from '@/sync/ops/machineWorkspaceFileSearch';
 import { machineLanguageIntelligenceQuery, machineLanguageIntelligenceRestart } from '@/sync/ops/machineLanguageIntelligence';
 import { DaemonWorkspaceFileReplacePreviewResponseSchema } from '@happier-dev/protocol/machines/workspaceFiles';
@@ -2048,18 +2047,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         reportStale,
       })) return false;
       const executor = resolveApprovalExecutor(request);
-      if (executor.kind === 'live_invocation' && origin.caller.kind === 'plugin' && origin.machineId) {
-        // Reuse the exact daemon's current source producer. A retained app
-        // invocation keeps its operands locally; its plugin never becomes host.
-        const current = await machinePluginUiTargetedContributionsRead(origin.machineId, {
-          serverId: accountContext.serverId, pluginId: origin.caller.pluginId,
-          accountLifetime: accountContext.accountLifetime, ...(signal ? { signal } : {}),
-        });
-        accountContext.assertCurrent();
-        if (signal?.aborted || !current.supported) return stale('currentness_read_failed');
-        return pluginSourceCustodyV1Equal(origin.caller.sourceCustody, current.targetedContributions.target.sourceCustody)
-          || stale('plugin_source_changed');
-      }
+      // Plugins are trusted code (ruling 2026-10-29): the person approved this exact Action and
+      // input, and a genuine plugin update keeps that approval (ruling 2026-11-02), so the plugin's
+      // current source is not re-read here.
       // Exact-daemon families verify their signed input at that daemon. For an
       // app-owned Account proposal, verify against the fresh Home installation
       // identity before the Artifact claim and again immediately before effect.

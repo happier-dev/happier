@@ -1,4 +1,5 @@
 import { setImmediate } from 'node:timers/promises';
+import { readAuthoritativePluginSlotOccurrence } from '@/plugins/runtime/reload/runtimeLease';
 import axios, { AxiosHeaders, type AxiosResponse } from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { definePlugin, type PluginServices } from '@happier-dev/plugin-sdk';
@@ -32,7 +33,6 @@ import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
-import { readAuthoritativePluginSlotOccurrence } from '@/plugins/runtime/reload/runtimeLease';
 import { fetchAccountProfile } from '@/api/accountProfile';
 import { configuration } from '@/configuration';
 import { createGithubAutomationEventCheckpointedPullObserver } from '../../../../../packages/plugins/scm-github/src/observations/githubAutomationEventObserver';
@@ -169,7 +169,7 @@ describe('admitted Automation Event background caller composition', () => {
             isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentness({ accountId: 'account-observer', machineId,
                 serverId: configuration.activeServerId,
                 resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: homeId, machineId: currentMachineId }),
-                resolveCurrentPluginSourceCustody: async pluginId => readAuthoritativePluginSlotOccurrence(pluginId, { controller: fixture.controller })?.sourceCustody ?? null,
+                isPluginInstalled: pluginId => readAuthoritativePluginSlotOccurrence(pluginId, { controller: fixture.controller }) !== null,
                 resolveTarget: createDaemonExternalActionTargetResolver({ credentials, serverApiUrl: configuration.apiServerUrl }),
                 isAccountCurrent: async () => (await fetchAccountProfile({ token: credentials.token })).id === 'account-observer',
                 listAccountApiTokens: async () => { throw new Error('A stored Account source must not enumerate API tokens'); },

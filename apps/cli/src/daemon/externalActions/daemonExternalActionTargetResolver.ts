@@ -16,7 +16,6 @@ import { resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents'
 import type {
   AccountApiTokensListActionOutputV1,
   ApprovalExecutionOriginV1,
-  PluginSourceCustodyV1,
   SessionAgentSpawnPolicyV1,
 } from '@happier-dev/protocol';
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
@@ -24,7 +23,6 @@ import { assertNonEscalatingPermissionMode, resolveEffectivePermissionMode } fro
 import { getActionSpec, resolveActionExecutionPlacementForInput, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { verifyExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { ApprovalExecutionOriginV1Schema, isHistoricalPublishApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ApprovalStaleReason } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
@@ -57,10 +55,6 @@ export type DaemonApprovalExecutionOriginCurrentness = (args: Readonly<{
   signal?: AbortSignal;
   reportStale?: (reason: DaemonApprovalExecutionOriginStaleReason) => void;
 }>) => Promise<boolean>;
-
-async function readCurrentPluginSourceCustody(pluginId: string): Promise<PluginSourceCustodyV1 | null> {
-  return readAuthoritativePluginSlotOccurrence(pluginId)?.sourceCustody ?? null;
-}
 
 function doesCurrentPermissionModeAdmitApprovedMode(origin: ApprovalExecutionOriginV1, currentMode: string | null): boolean {
   if (origin.causalPermissionAuthority && !origin.callerPermissionMode) return false;
@@ -117,7 +111,8 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
     retainedDiscussionSource?: SessionInputSourceSessionV1;
     signal?: AbortSignal;
   }>) => Promise<boolean>;
-  resolveCurrentPluginSourceCustody?: (pluginId: string) => Promise<PluginSourceCustodyV1 | null>;
+  /** Whether the plugin is still installed here (runtime slot); defaults to the authoritative slot. */
+  isPluginInstalled?: (pluginId: string) => boolean | Promise<boolean>;
   isAutomationRunCurrent?: (caller: Extract<
     ApprovalExecutionOriginV1['caller'],
     Readonly<{ kind: 'automationRun' }>
@@ -164,6 +159,13 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
       if (origin.serverIdentityId !== undefined
           ? currentMachineOrigin.serverIdentityId !== origin.serverIdentityId
           : origin.serverId !== input.serverId) return stale('home_changed');
+      // The one plugin decider. Plugins are trusted code: a genuine update keeps the person's
+      // approval of this exact Action and input (ruling 2026-11-02), so neither generation nor
+      // source is compared. Uninstalling is the person's revocation, refused at the next execution.
+      if (origin.caller.kind === 'plugin'
+        && !await (input.isPluginInstalled ?? (pluginId => readAuthoritativePluginSlotOccurrence(pluginId) !== null))(origin.caller.pluginId)) {
+        return stale('plugin_source_changed');
+      }
       const externalAuthorization = origin.externalActionExecutionAuthorization;
       const retainedDiscussionSource = readRetainedDiscussionPublicationSource(origin, request);
       // Requester identity in editable Artifact content is not an immutable
@@ -236,14 +238,8 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
           && binding.managedContinuation !== undefined
           && binding.sessionActionSource !== undefined
           && binding.sessionActionSource.machineId !== input.machineId;
-        if (origin.caller.kind === 'plugin') {
-          const sourceCustody = await (
-            input.resolveCurrentPluginSourceCustody
-            ?? readCurrentPluginSourceCustody
-          )(origin.caller.pluginId);
-          return sourceCustody !== null
-            && pluginSourceCustodyV1Equal(origin.caller.sourceCustody, sourceCustody) || stale('plugin_source_changed');
-        }
+        // The signature above binds the approved Action and input; plugin presence was decided above.
+        if (origin.caller.kind === 'plugin') return true;
         // Home admitted the exact original turn. Accepted Session work still
         // passes the ordinary current Session/permission/Account checks below;
         // naturally ending the old turn is not itself a revocation.
@@ -312,17 +308,6 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
           ...(signal ? { signal } : {}),
         });
         if (!currentTarget) return stale('target_unavailable');
-      }
-
-      if (origin.caller.kind === 'plugin') {
-        const sourceCustody = await (
-          input.resolveCurrentPluginSourceCustody
-          ?? readCurrentPluginSourceCustody
-        )(origin.caller.pluginId);
-        if (!sourceCustody) return stale('plugin_source_changed');
-        if (!pluginSourceCustodyV1Equal(origin.caller.sourceCustody, sourceCustody)) {
-          return stale('plugin_source_changed');
-        }
       }
 
       if (origin.caller.kind === 'automationRun') {

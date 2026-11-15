@@ -469,7 +469,7 @@ describe('daemon approval execution-origin currentness', () => {
     expect(verifyExternalExecutionAuthorization).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps nested contributed PAT approval replay bound to the admitted plugin generation', async () => {
+  it('keeps nested contributed PAT approval replay bound to its signed effect across a plugin update', async () => {
     const keyPair = tweetnacl.sign.keyPair();
     const actionArgs = { v: 1, teamId: 'team-1', membershipId: 'membership-1' };
     const target = { kind: 'machine' as const, machineId: 'machine-1' };
@@ -539,11 +539,8 @@ describe('daemon approval execution-origin currentness', () => {
       summary: 'approval',
       decision: { kind: 'approve', decidedAtMs: 2 },
     };
-    const resolveCurrentPluginSourceCustody = vi.fn(async () => ({
-      kind: 'development' as const,
-      registeredRootId: 'external-root',
-    }));
     const verifyExternalExecutionAuthorization = vi.fn(async () => true);
+    let installed = true;
     const isCurrent = createDaemonApprovalExecutionOriginCurrentness({
       accountId: 'account-1',
       machineId: 'machine-1',
@@ -569,19 +566,24 @@ describe('daemon approval execution-origin currentness', () => {
       }] }),
       externalActionMachinePublicKey: keyPair.publicKey,
       verifyExternalExecutionAuthorization,
-      resolveCurrentPluginSourceCustody,
+      isPluginInstalled: () => installed,
     });
 
     await expect(isCurrent({ origin: externalPluginOrigin, request })).resolves.toBe(true);
     expect(verifyExternalExecutionAuthorization).toHaveBeenCalledOnce();
-    expect(resolveCurrentPluginSourceCustody).toHaveBeenCalledWith('acme.external');
 
-    resolveCurrentPluginSourceCustody.mockResolvedValueOnce({
-      kind: 'development',
-      registeredRootId: 'replacement-root',
-    });
-    await expect(isCurrent({ origin: externalPluginOrigin, request })).resolves.toBe(false);
+    // A genuine plugin update keeps the person's approval of this exact Action and input
+    // (ruling 2026-11-02): the origin names generation 'external-root'; whatever generation
+    // is installed now (none here), the signed effect still executes.
+    await expect(isCurrent({ origin: externalPluginOrigin, request })).resolves.toBe(true);
     expect(verifyExternalExecutionAuthorization).toHaveBeenCalledTimes(2);
+    // Uninstalling the plugin is the person's revocation: the next execution is refused, typed.
+    installed = false;
+    const staleReasons: string[] = [];
+    await expect(isCurrent({ origin: externalPluginOrigin, request, reportStale: reason => { staleReasons.push(reason); } }))
+      .resolves.toBe(false);
+    expect(staleReasons).toEqual(['plugin_source_changed']);
+    installed = true;
 
     await expect(isCurrent({
       origin: {
@@ -698,11 +700,8 @@ describe('daemon approval execution-origin currentness', () => {
     await expect(isCurrent({ origin: hostMachineOrigin })).resolves.toBe(false);
   });
 
-  it('requires a plugin caller to retain its admitted source custody', async () => {
-    const resolveCurrentPluginSourceCustody = vi.fn(async () => ({
-      kind: 'development' as const,
-      registeredRootId: 'notes-root',
-    }) as { kind: 'development'; registeredRootId: string } | null);
+  it('keeps a plugin caller\'s approval across a genuine plugin update and refuses it after uninstall', async () => {
+    let installed = true;
     const isCurrent = createDaemonApprovalExecutionOriginCurrentness({
       accountId: 'account-1',
       machineId: 'machine-1',
@@ -713,7 +712,7 @@ describe('daemon approval execution-origin currentness', () => {
       resolveTarget: async () => ({ kind: 'machine', machineId: 'machine-1' }),
       isAccountCurrent: async () => true,
       listAccountApiTokens: async () => ({ tokens: [] }),
-      resolveCurrentPluginSourceCustody,
+      isPluginInstalled: () => installed,
     });
     const pluginOrigin: ApprovalExecutionOriginV1 = {
       v: 1,
@@ -733,14 +732,15 @@ describe('daemon approval execution-origin currentness', () => {
       requestId: 'request-plugin-1',
     };
 
+    // Approved under generation 'notes-root'; executed while another generation (or none) is
+    // installed (ruling 2026-11-02). Account, Machine and target currentness still decide.
     await expect(isCurrent({ origin: pluginOrigin })).resolves.toBe(true);
-    resolveCurrentPluginSourceCustody.mockResolvedValueOnce(null);
-    await expect(isCurrent({ origin: pluginOrigin })).resolves.toBe(false);
-    resolveCurrentPluginSourceCustody.mockResolvedValueOnce({
-      kind: 'development',
-      registeredRootId: 'replacement-root',
-    });
-    await expect(isCurrent({ origin: pluginOrigin })).resolves.toBe(false);
+    await expect(isCurrent({ origin: { ...pluginOrigin, machineId: 'machine-2' } })).resolves.toBe(false);
+    // Uninstall is the person's revocation (orchestrator ruling 2026-11-14): refused, typed.
+    installed = false;
+    const staleReasons: string[] = [];
+    await expect(isCurrent({ origin: pluginOrigin, reportStale: reason => { staleReasons.push(reason); } })).resolves.toBe(false);
+    expect(staleReasons).toEqual(['plugin_source_changed']);
   });
 
   it('rejects an Automation approval after its canonical worker occurrence is no longer current', async () => {
