@@ -134,28 +134,37 @@ export function AnchoredPhonePushHost(props: Readonly<{
     children: React.ReactNode;
 }>) {
     const [stack] = React.useState(createPhoneSheetPushStack);
-    const chrome = React.useSyncExternalStore(stack.subscribe, stack.getChrome, stack.getChrome);
     React.useSyncExternalStore(stack.subscribe, stack.getVersion, stack.getVersion);
     const entries = stack.getEntries();
     const top = entries[entries.length - 1];
-    const pushedView = React.useMemo(
-        () => chrome ? { title: chrome.title, back: stack.back } : null,
-        [chrome, stack],
-    );
     return (
         <PhoneSheetPushContext.Provider value={stack}>
             <View testID={ANCHORED_PHONE_PUSH_ROOT_TEST_ID} style={top ? PUSHED_UNDER : undefined}>{props.children}</View>
-            {top && pushedView ? (
-                <PhonePushedViewContext.Provider value={pushedView}>
-                    <View key={top.key} testID="popover-push.view">
-                        {/* Its Back row names the view, as a sheet's band does, so the content drops its own title. */}
-                        {top.render({ ...props.renderProps, presentation: 'sheet', pushesSubmenus: true, requestClose: top.close })}
-                    </View>
-                </PhonePushedViewContext.Provider>
-            ) : null}
+            {/* Every pushed view stays mounted, as in a sheet: a view pushed from inside another lives in it, so
+                hiding the one under it must not unmount the push. Only the top one shows. */}
+            {entries.map(entry => <AnchoredPushedView key={entry.key} entry={entry} shown={entry === top}
+                renderProps={props.renderProps} />)}
         </PhoneSheetPushContext.Provider>
     );
 }
+
+/**
+ * One pushed view of an anchored phone popover: named beside its own Back, hidden while another is over it.
+ * Memoized on its entry: a view pushed from inside it re-publishes the stack on every render, and the view
+ * under it must not re-render (and re-push) for that, only when its own entry or visibility changes.
+ */
+const AnchoredPushedView = React.memo(function AnchoredPushedView(props: Readonly<{ entry: PhoneSheetPushEntry; shown: boolean; renderProps: PopoverRenderProps }>) {
+    const { entry } = props;
+    const pushedView = React.useMemo(() => ({ title: entry.title, back: entry.close }), [entry.title, entry.close]);
+    return (
+        <PhonePushedViewContext.Provider value={pushedView}>
+            <View testID="popover-push.view" style={props.shown ? undefined : PUSHED_UNDER}>
+                {/* Its Back row names the view, as a sheet's band does, so the content drops its own title. */}
+                {entry.render({ ...props.renderProps, presentation: 'sheet', pushesSubmenus: true, requestClose: entry.close })}
+            </View>
+        </PhonePushedViewContext.Provider>
+    );
+});
 
 /**
  * A popover opened inside a phone sheet or phone popover that pushes (`phonePresentation` set): it pushes

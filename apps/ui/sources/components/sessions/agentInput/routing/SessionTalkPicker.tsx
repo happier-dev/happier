@@ -8,6 +8,8 @@ import type { SessionListFilterV1 } from '@happier-dev/protocol/sessions/listFil
 
 import { projectSessionFollowerCensus } from '@/components/sessions/collaboration/SessionPeopleFollowSections';
 import { useSessionFollowers } from '@/components/sessions/follow/useSessionFollowers';
+import { PhoneSheetPushContext, usePhoneSheetPush, type PhoneSheetPushStack } from '@/components/ui/popover/phoneSheetPush';
+import { AgentInputPopoverSurface } from '@/components/sessions/agentInput/components/AgentInputPopoverSurface';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
 import { Item } from '@/components/ui/lists/Item';
@@ -121,6 +123,8 @@ export type SessionTalkPickerProps = Readonly<{
   requestClose: () => void;
   /** The popover's height budget for the picker; a step never asks for more. */
   maxHeight?: number;
+  /** `sheet`: inside a phone sheet that pushes; To's steps push as their own views there. */
+  presentation?: 'popover' | 'sheet';
 }>;
 
 /**
@@ -199,7 +203,6 @@ export function SessionTalkPicker(props: SessionTalkPickerProps) {
   const listFrame = bodyMinHeight > 0 ? bodyMinHeight + footerHeight + theme.space.s8 : undefined;
   const budget = props.maxHeight !== undefined ? props.maxHeight - verbHeight - 2 * theme.space.s8 : undefined;
   const matchingFrame = listFrame !== undefined && budget !== undefined ? Math.min(listFrame, budget) : listFrame ?? budget;
-  const inlineStep = step === 'matching' || step === 'model';
 
   const chooseTarget = (target: SessionTalkTarget) => {
     props.participants?.onRecipientChange(null);
@@ -249,8 +252,51 @@ export function SessionTalkPicker(props: SessionTalkPickerProps) {
       color={theme.colors.text.primary}
     />
   );
+  // A step To pushes: inline under the verb on a popover; on a phone sheet its own pushed view, whose header
+  // Back returns here (one Back, and the sheet sizes it, not the list's frame).
+  const pushStack = React.useContext(PhoneSheetPushContext);
+  const pushSteps = props.presentation === 'sheet' && pushStack !== null;
+  const stepBack = pushSteps ? undefined : () => setStep('targets');
+  const stepFrame = pushSteps ? undefined : matchingFrame;
+  const stepContent = verb === 'post_update' ? null : step === 'model' && modelTarget ? (
+        <SessionTalkModelStep
+          target={modelTarget}
+          seed={modelLaunch ? { existingDraft: modelLaunch } : { ...(sourceDirectory ? { directory: sourceDirectory } : {}) }}
+          frameHeight={stepFrame}
+          onBack={stepBack}
+          onUse={launch => {
+            props.participants?.onRecipientChange(null);
+            props.onIntentChange({ kind: 'ask_new_session', launch });
+            props.requestClose();
+          }}
+        />
+      ) : step === 'matching' && props.serverId && draftFilter ? (
+        <SessionTalkMatchingStep
+          serverId={props.serverId}
+          filter={draftFilter}
+          onFilterChange={setDraftFilter}
+          summary={matchingSummary}
+          canUse={targets.matching.coverage === 'complete' && targets.matching.addresses.length > 0}
+          onUse={() => chooseTarget({ selector: 'matching', filter: draftFilter })}
+          onBack={stepBack}
+          frameHeight={stepFrame}
+        />
+      ) : step === 'discussion' && props.serverId ? (
+        <SessionTalkDiscussionChoices
+          sessionId={props.sessionId}
+          serverId={props.serverId}
+          selectedId={discussionId}
+          onChoose={chooseDiscussion}
+          onBack={stepBack}
+        />
+      ) : null;
+  const inlineStep = !pushSteps && (step === 'matching' || step === 'model');
+  const stepTitle = step === 'model' ? t('session.participants.talk.modelChoose')
+    : step === 'matching' ? t('session.participants.talk.matchingChoose') : selectorTitle('discussion');
   return (
     <View style={styles.root} testID="session-talk-picker">
+      {pushSteps && pushStack ? <SessionTalkPushedStep stack={pushStack} title={stepTitle} content={stepContent}
+        onBack={() => setStep('targets')} /> : null}
       <View style={styles.verb} onLayout={onVerbLayout}>
         <SegmentedTabBar<SessionTalkVerb>
           tabs={verbTabs}
@@ -280,38 +326,7 @@ export function SessionTalkPicker(props: SessionTalkPickerProps) {
           sessionId={props.sessionId}
           serverId={props.serverId}
         />
-      ) : step === 'model' && modelTarget ? (
-        <SessionTalkModelStep
-          target={modelTarget}
-          seed={modelLaunch ? { existingDraft: modelLaunch } : { ...(sourceDirectory ? { directory: sourceDirectory } : {}) }}
-          frameHeight={matchingFrame}
-          onBack={() => setStep('targets')}
-          onUse={launch => {
-            props.participants?.onRecipientChange(null);
-            props.onIntentChange({ kind: 'ask_new_session', launch });
-            props.requestClose();
-          }}
-        />
-      ) : step === 'matching' && props.serverId && draftFilter ? (
-        <SessionTalkMatchingStep
-          serverId={props.serverId}
-          filter={draftFilter}
-          onFilterChange={setDraftFilter}
-          summary={matchingSummary}
-          canUse={targets.matching.coverage === 'complete' && targets.matching.addresses.length > 0}
-          onUse={() => chooseTarget({ selector: 'matching', filter: draftFilter })}
-          onBack={() => setStep('targets')}
-          frameHeight={matchingFrame}
-        />
-      ) : step === 'discussion' && props.serverId ? (
-        <SessionTalkDiscussionChoices
-          sessionId={props.sessionId}
-          serverId={props.serverId}
-          selectedId={discussionId}
-          onChoose={chooseDiscussion}
-          onBack={() => setStep('targets')}
-        />
-      ) : (
+      ) : stepContent !== null && !pushSteps ? stepContent : (
         <View>
           <CollectionListGroupLabel
             title={t('session.participants.to')}
@@ -676,3 +691,25 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.text.secondary,
   },
 }));
+
+/** A phone sheet's pushed To step: the sheet draws its title and Back; closing it returns to the targets. */
+function SessionTalkPushedStep(props: Readonly<{
+  stack: PhoneSheetPushStack;
+  title: string;
+  content: React.ReactNode | null;
+  onBack: () => void;
+}>) {
+  usePhoneSheetPush({
+    stack: props.stack,
+    open: props.content !== null,
+    title: props.title,
+    onRequestClose: props.onBack,
+    // The same surface To itself draws, so the pushed step has its material and the sheet's Back row.
+    // The same surface To itself draws: its material, the sheet's Back row, and a scroll if the step ever outgrows
+    // the sheet. The step keeps its natural height here (no list frame to match), so its action stays in sight.
+    render: ({ maxHeight }) => <AgentInputPopoverSurface testID="session-talk-pushed-step" maxHeight={maxHeight}>
+      {props.content}</AgentInputPopoverSurface>,
+  });
+  return null;
+}
+

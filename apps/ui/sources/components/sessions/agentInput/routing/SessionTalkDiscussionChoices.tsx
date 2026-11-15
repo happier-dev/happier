@@ -24,11 +24,12 @@ export function SessionTalkDiscussionChoices(
     serverId: string;
     selectedId: string | null;
     onChoose: (discussionId: string) => void;
-    onBack: () => void;
+    /** Absent when a phone sheet pushed the step: its header's Back returns to To. */
+    onBack?: () => void;
   }>,
 ) {
   const { binding } = useServerCredentialAccountScopeBinding(props.serverId);
-  const back = <SessionTalkStepBack testID="session-talk-discussion-back" onBack={props.onBack} />;
+  const back = props.onBack ? <SessionTalkStepBack testID="session-talk-discussion-back" onBack={props.onBack} /> : null;
   return (
     <>
       {back}

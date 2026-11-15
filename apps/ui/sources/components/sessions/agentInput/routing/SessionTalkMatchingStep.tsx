@@ -37,7 +37,8 @@ export function SessionTalkMatchingStep(
     summary: string;
     canUse: boolean;
     onUse: () => void;
-    onBack: () => void;
+    /** Absent when a phone sheet pushed the step: its header's Back returns to To. */
+    onBack?: () => void;
     /** The picker's frame; the editor scrolls inside it so the picker keeps its size. */
     frameHeight?: number;
   }>,
@@ -51,7 +52,7 @@ export function SessionTalkMatchingStep(
   return (
     <View testID="session-talk-matching">
       <View onLayout={onBackLayout}>
-        <SessionTalkStepBack testID="session-talk-matching-back" onBack={props.onBack} />
+        {props.onBack ? <SessionTalkStepBack testID="session-talk-matching-back" onBack={props.onBack} /> : null}
       </View>
       <SessionListStoredFilterEditor
         serverId={serverId}

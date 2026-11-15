@@ -338,6 +338,15 @@ describe('SessionAuthoringControls', () => {
     expect(screen.findByTestId('session-authoring-control-agentTarget')?.props.accessibilityLabel).toBeTruthy();
     await screen.unmount();
   });
+  it('leads the engine chip with the Session list agent mark, read on the picker Machine', async () => {
+    // One Session-agent-mark owner: Agents whose artwork only a Machine contributes (Muse) keep their mark here too.
+    const { SessionAgentCatalogIdentityIcon } = await import('@/components/sessions/presentation/SessionAgentCatalogIdentityIcon');
+    const { screen } = await renderControls({ presentation: 'chips', fields: ['agentTarget', 'modelSelection'],
+      onChangeFields: () => {}, values: baseValues(),
+      facts: { agentTargets: [directCapableClaude()], agentPickerContext: { machineId: 'machine-a', serverId: null, directory: '/p' } } });
+    expect(screen.findByType(SessionAgentCatalogIdentityIcon)?.props).toMatchObject({ agentId: 'claude', machineId: 'machine-a' });
+    await screen.unmount();
+  });
   it('leaves an unset Profile out of the fields form and retains an authored Profile', async () => {
     const facts = { profilesEnabled: true, profiles: [{ id: 'available-profile', label: 'Release' }] };
     const { screen } = await renderControls({ presentation: 'fields', fields: ['profileId'], values: baseValues(), facts });

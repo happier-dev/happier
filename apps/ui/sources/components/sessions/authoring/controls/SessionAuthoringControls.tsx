@@ -8,8 +8,8 @@ import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, HAPPIER_PAGE_METRICS, HappierPressa
 import type { WorkflowEngineSelectionV1, WorkflowSessionAuthoringSelection, WorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import type { WorkflowRoleV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
 
-import { DEFAULT_AGENT_ID, hasAgentIconMark } from '@/agents/catalog/catalog';
-import { AgentIcon } from '@/agents/registry/AgentIcon';
+import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
+import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
 import type { AgentInputExtraActionChipRenderContext } from '@/components/sessions/agentInput/agentInputContracts';
 import { AgentInputChipPickerPopover } from '@/components/sessions/agentInput/components/AgentInputChipPickerPopover';
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
@@ -257,9 +257,13 @@ function SessionAuthoringOptionChip(props: Readonly<{
                             field: resolveFieldBoxColors(theme, state.focused ? 'focused' : 'idle'),
                         })
                         : (
-                            <Text numberOfLines={1} style={styles.chipText}>
-                                {currentLabel}
-                            </Text>
+                            <>
+                                {/* The value's identity mark leads the chip, as in every other presentation (lab dpRev `add`). */}
+                                {props.leading ?? null}
+                                <Text numberOfLines={1} style={styles.chipText}>
+                                    {currentLabel}
+                                </Text>
+                            </>
                         )}
                 </HappierPressable>
             </View>
@@ -620,7 +624,6 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
     const testIDPrefix = props.testIDPrefix ?? 'session-authoring-control';
     const facts = props.facts ?? EMPTY_FACTS;
     const overlayAnchorRef = React.useRef<React.ComponentRef<typeof View> | null>(null);
-    const { theme } = useUnistyles();
 
     const { agentId, controls } = useResolvedSessionAuthoringControls(props.values, facts, props.metadata);
     const engineSummary = useSessionAuthoringEngineSummary(props);
@@ -680,7 +683,9 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
                         options={[]} pickerOptions={enginePicker.options}
                         selectedOptionId={leadingSelection?.option.id ?? enginePicker.selectedOptionId ?? ''}
                         valueLabel={leadingSelection?.valueLabel ?? engineSummary}
-                        {...(leadingSelection === null && agentId !== null && hasAgentIconMark(agentId, theme) ? { leading: <AgentIcon agentId={agentId} size={14} /> } : {})}
+                        // The Session list's own agent mark, read on the picker's Machine (it knows Machine-contributed Agents).
+                        {...(leadingSelection === null && agentId !== null ? { leading: <SessionAgentCatalogIdentityIcon agentId={agentId}
+                            machineId={facts.agentPickerContext?.machineId ?? null} serverId={facts.agentPickerContext?.serverId ?? null} size={14} /> } : {})}
                         disabled={props.disabled} presentation={presentation} fieldSpan="row"
                         changed={isChanged('agentTarget') || isChanged('modelSelection')}
                         onSelect={enginePicker.onSelect} testID={`${testIDPrefix}-${engineField}`}

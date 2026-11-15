@@ -31,6 +31,12 @@ function TemplateMark(): React.ReactElement {
     return <Icon name="file-text" size={ICON_SIZE.lg} color={theme.colors.text.secondary} />;
 }
 
+/** Collaboration's own mark, as the Session header menu draws its entry, so this row joins the sheet's leading column. */
+function CollaborationMark(): React.ReactElement {
+    const { theme } = useUnistyles();
+    return <Icon name="users" size={ICON_SIZE.lg} color={theme.colors.text.secondary} />;
+}
+
 function SessionChoiceCaret(props: Readonly<{ open?: boolean }>): React.ReactElement {
     const { theme } = useUnistyles();
     return <Icon name={props.open ? 'caret-up' : 'caret-down'} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />;
@@ -315,6 +321,7 @@ export function createSessionShareSheetAdapter(input: Readonly<{
                 id: 'open-collaboration',
                 testID: `${idPrefix}session-access-open-collaboration`,
                 label: t('session.access.openCollaboration'),
+                icon: () => <CollaborationMark />,
                 // The destination reloads the roster itself; what it cannot rebuild is what was typed.
                 onSelect: () => openFullSurface({ query: input.readQuery() }),
             }] });

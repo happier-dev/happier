@@ -408,7 +408,9 @@ function SheetFrame(
         <DetailsTabHeader
           testID="second-opinion.header"
           title={sheetTitle(props.intent)}
-          meta={props.subtitle ? [{ key: 'source', text: props.subtitle }] : undefined}
+          // The source is a sentence ("On an answer in …"), so it reads as the header's body, left-aligned beneath
+          // the title; the facts line is for short facts and right-aligns on a phone's large header.
+          body={props.subtitle ?? undefined}
         />
       ) : <View style={styles.header}>
         <View style={styles.headerText}>

@@ -486,6 +486,37 @@ describe('Popover phone presentation', () => {
         expect(screen.findByTestId('picker-choice')).toBeNull();
     });
 
+    it('pushes a picker opened inside a pushed view over it, and its Back returns to that view', async () => {
+        function Menu() {
+            const [picker, setPicker] = React.useState(false);
+            const [deep, setDeep] = React.useState(false);
+            return <Popover open phonePresentation="panel" accessibilityLabel="Add" onRequestClose={() => {}}>
+                {() => <FloatingOverlay>
+                    <RoundButton testID="menu-row" title="Send to" onPress={() => setPicker(true)} />
+                    {picker ? <Popover open phonePresentation="panel" accessibilityLabel="Send to" onRequestClose={() => setPicker(false)}>
+                        {() => <FloatingOverlay>
+                            <RoundButton testID="picker-row" title="A model" onPress={() => setDeep(true)} />
+                            {deep ? <Popover open phonePresentation="panel" accessibilityLabel="A model" onRequestClose={() => setDeep(false)}>
+                                {() => <FloatingOverlay><RoundButton testID="deep-choice" title="Use" onPress={() => {}} /></FloatingOverlay>}
+                            </Popover> : null}
+                        </FloatingOverlay>}
+                    </Popover> : null}
+                </FloatingOverlay>}
+            </Popover>;
+        }
+        const screen = await renderScreen(<Menu />);
+        await screen.pressByTestIdAsync('menu-row');
+        await screen.pressByTestIdAsync('picker-row');
+
+        // The deeper picker shows, named beside one Back; the view it came from stays mounted under it.
+        expect(screen.findByTestId('deep-choice')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('A model');
+        const backs = screen.findAllByProps({ testID: 'popover-push.back' });
+        await act(async () => { backs[backs.length - 1]!.props.onPress?.(); });
+        expect(screen.findByTestId('deep-choice')).toBeNull();
+        expect(screen.findByTestId('picker-row')).not.toBeNull();
+    });
+
     // Native QA (PHONE-POPOVERS-1109, iOS 26.4): a root popover's glass stayed clear while a view pushed into it
     // later was frosted. UIKit renders no visual effect created under an ancestor with alpha < 1, and the
     // popover was hidden by opacity while it measured, then faded in.

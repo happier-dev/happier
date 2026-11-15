@@ -18,12 +18,13 @@ export function SessionTalkModelStep(props: Readonly<{
     seed: SessionServerStartDraftSeed;
     target: SessionServerStartDraftTarget;
     frameHeight?: number;
-    onBack: () => void;
+    /** Absent when a phone sheet pushed the step: its header's Back returns to To. */
+    onBack?: () => void;
     onUse: (launch: SessionServerStartSpawnDraftV1) => void;
 }>) {
     const model = useSessionServerStartDraftRecipe(props);
     return <View testID="session-talk-model" style={[styles.root, props.frameHeight ? { height: props.frameHeight } : undefined]}>
-        <SessionTalkStepBack testID="session-talk-model-back" onBack={props.onBack} />
+        {props.onBack ? <SessionTalkStepBack testID="session-talk-model-back" onBack={props.onBack} /> : null}
         <View style={styles.body}>
             <SessionServerStartDraftComposerBody seed={props.seed} model={model} />
         </View>

@@ -225,9 +225,10 @@ function createSessionTalkChip(params: Readonly<{
             maxWidthCap: 400,
             maxHeightCap: 560,
             header: { title: t('session.participants.talk.title'), placement: 'label' },
-            renderContent: ({ requestClose, maxHeight }) => (
+            renderContent: ({ requestClose, maxHeight, presentation }) => (
                 <SessionTalkPicker
                     maxHeight={maxHeight}
+                    presentation={presentation}
                     sessionId={params.sessionTalk.sessionId}
                     serverId={params.sessionTalk.serverId}
                     intent={params.sessionTalk.intent}
