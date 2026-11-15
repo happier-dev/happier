@@ -534,6 +534,7 @@ function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
                             <ActionOperationRows
                                 operations={operations}
                                 presentation="inbox"
+                                narrow={!wide}
                                 onOpenOperation={openOperation}
                                 onDismissOperation={resolveOperation}
                             />

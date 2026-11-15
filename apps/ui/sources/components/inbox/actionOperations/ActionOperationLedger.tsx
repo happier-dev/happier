@@ -68,6 +68,8 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
     onCancelOperation?: (operation: ActionOperationProjection, context?: ActionOperationStopContext) => Promise<ActionOperationStopResponse | void> | void;
     onDismissOperation?: (operation: ActionOperationProjection) => void;
     showDivider?: boolean;
+    /** The Inbox's narrow row (phone, rail popover): no state column; InboxWorkRow owns what that means. */
+    narrow?: boolean;
 }>) {
     const { theme } = useUnistyles();
     const isRecordingVisible = useSessionRecordingVisibility();
@@ -151,7 +153,7 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
         setupReview: snapshot.setupReview, reviewRequired: isActionOperationReviewHeld(snapshot), word: props.operation.followUpAttention ?? statusLabel } });
 
     if (inboxPresentation) return <InboxWorkRow
-        testID={`inbox.action-operation.${snapshot.operationId}`} title={snapshot.title}
+        testID={`inbox.action-operation.${snapshot.operationId}`} title={snapshot.title} narrow={props.narrow}
         facts={[sourceTitle, determinateProgress, sourceContext.contextLine]}
         phase={workStatus.bucket === 'working' ? 'live' : workStatus.bucket === 'needs_you' ? 'attention' : 'finished'}
         status={workStatus}
@@ -220,6 +222,7 @@ export const ActionOperationRows = React.memo(function ActionOperationRows(props
     onDismissOperation?: (operation: ActionOperationProjection) => void;
     /** Supplied by ItemGroup when this row collection sits among sibling rows. */
     showDivider?: boolean;
+    narrow?: boolean;
 }>) {
     useServerProfilesGeneration();
     const sessionAddresses = React.useMemo(() => props.operations.flatMap((operation) => {
@@ -254,6 +257,7 @@ export const ActionOperationRows = React.memo(function ActionOperationRows(props
                     onCancelOperation={props.onCancelOperation}
                     onDismissOperation={props.onDismissOperation}
                     showDivider={isLast ? props.showDivider : true}
+                    narrow={props.narrow}
                 />
             </ItemGroupRowPositionProvider>
         );

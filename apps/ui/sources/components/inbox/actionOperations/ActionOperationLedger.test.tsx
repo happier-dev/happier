@@ -171,6 +171,24 @@ describe('ActionOperationLedgerView', () => {
         expect(onDismissOperation).toHaveBeenCalledWith(operation);
         expect(onOpenOperation).not.toHaveBeenCalled();
     });
+    it('drops the state column on a narrow Inbox row, as every other Inbox row does (phone row rule)', async () => {
+        // QA-SHELL-1114 F11: at 320 "Failed" sat beside the title and cut it to "Instantiate deplo…". On a phone the
+        // row's mark says it failed and its title keeps the line; the Inbox owner's narrow mode decides that once.
+        const operation = {
+            serverId: 'server-1',
+            snapshot: { version: 1 as const, operationId: 'operation-inbox-narrow', revision: 2, actionId: 'session.spawn_new',
+                state: 'failed' as const, scope: { accountId: 'account-1', machineId: 'machine-1' }, title: 'Create session',
+                createdAt: 100, settledAt: 120, cancellation: 'unsupported' as const, error: { errorCode: 'failed', error: 'Failed' } },
+            observation: 'available' as const,
+            isUnavailableProjection: false,
+        };
+        const screen = await renderScreen(<ActionOperationRows operations={[operation]} presentation="inbox" narrow
+            onOpenOperation={() => {}} onDismissOperation={() => {}} />);
+        const summary = screen.findAll((node) => node.props.testID === 'inbox.action-operation.operation-inbox-narrow.summary'
+            && 'trailingState' in node.props)[0];
+        expect(summary).toBeDefined();
+        expect(summary!.props.trailingState).toBeNull();
+    });
 
     it('offers a restrained bulk clear only for successful recent rows', async () => {
         const onClearRecent = vi.fn();
