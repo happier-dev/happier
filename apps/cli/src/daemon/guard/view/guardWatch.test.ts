@@ -308,7 +308,28 @@ describe('Guard requester view and parked watch', () => {
     expect(own.idleTerminals?.[0]).not.toHaveProperty('attribution');
   });
 
-  it('refreshes parked previews at the minute cadence and releases observations on cancellation', async () => {
+  it('keeps identical observations parked and wakes on a changed displayed policy', async () => {
+    const h = await setup();
+    const first = await h.view.watch({ machineId: 'machine' }, requester);
+    if (!first.changed) throw new Error('Expected initial view');
+    const controller = new AbortController();
+    let publications = 0;
+    const pending = h.view.watch({ machineId: 'machine', since: first.since }, requester, controller.signal)
+      .then(answer => { if (answer.changed) publications++; return answer; });
+    await h.parked();
+    for (let index = 0; index < 5; index++) {
+      await vi.advanceTimersByTimeAsync(15_000);
+      await h.sampler.start();
+    }
+    expect(publications).toBe(0);
+    await h.enableMemory();
+    const changed = await pending;
+    expect(publications).toBe(1);
+    expect(changed).toMatchObject({ changed: true, view: { policy: { memoryGuard: { enabled: true } } } });
+    controller.abort();
+  });
+
+  it('refreshes parked previews at the summary cadence and releases observations on cancellation', async () => {
     const h = await setup('bob', 'settled', false, false, false, 15_000);
     const first = await h.view.watch({ machineId: 'machine' }, requester);
     expect(first.changed).toBe(true);
@@ -322,8 +343,8 @@ describe('Guard requester view and parked watch', () => {
     expect(h.listeners()).toBe(1);
     h.setGuardName('systemd-oomd');
     h.setMemory(2);
-    await vi.advanceTimersByTimeAsync(60_000); await h.sampler.start();
-    expect(h.sampler.latest()?.intervalMs).toBe(60_000);
+    await vi.advanceTimersByTimeAsync(15_000); await h.sampler.start();
+    expect(h.sampler.latest()?.intervalMs).toBe(15_000);
     const changed = await pending;
     expect(changed.changed).toBe(true);
     if (!changed.changed) throw new Error('Expected changed preview');
@@ -338,7 +359,7 @@ describe('Guard requester view and parked watch', () => {
     const reads = h.nativeReads();
     await vi.advanceTimersByTimeAsync(15_000);
     expect(h.nativeReads()).toBe(reads);
-    expect(h.sampler.latest()?.intervalMs).toBe(60_000);
+    // The last visible read keeps its summary stamp; reads after the watch left are minute-cadence.
     await vi.advanceTimersByTimeAsync(30_000); await h.sampler.start();
     expect(h.sampler.latest()?.intervalMs).toBe(60_000);
   });

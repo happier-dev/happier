@@ -8,6 +8,8 @@ import type { CapabilitiesDetectRequest, CapabilitiesDetectResponse, CapabilityD
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
+import { compareCodeUnits } from '@/utils/strings/compareCodeUnits';
 
 export type MachineCapabilitiesSnapshot = {
     response: CapabilitiesDetectResponse;
@@ -155,9 +157,11 @@ function setEntry(cacheKey: string, entry: CacheEntry) {
     if (entry.state.status !== 'error') {
         observedErrorRetryByCacheKey.get(cacheKey)?.suspend();
     }
-    cache.set(cacheKey, entry);
-    notify(cacheKey);
-    recordLatestAnswers(cacheKey, entry.state);
+    const previous = cache.get(cacheKey);
+    const state = retainDeep(previous?.state, entry.state);
+    cache.set(cacheKey, { ...entry, state });
+    if (state !== previous?.state) notify(cacheKey);
+    recordLatestAnswers(cacheKey, state);
 }
 
 /** The newest answer in the requested Account namespace, whatever salt it was asked under. */
@@ -341,7 +345,7 @@ function detectRequestKey(request: CapabilitiesDetectRequest): string {
             params: isPlainObject((r as any)?.params) ? (r as any).params : null,
         }))
         .filter((r) => r.id.trim().length > 0)
-        .sort((a, b) => a.id.localeCompare(b.id) || stableJsonStringify(a.params).localeCompare(stableJsonStringify(b.params)));
+        .sort((a, b) => compareCodeUnits(a.id, b.id) || compareCodeUnits(stableJsonStringify(a.params), stableJsonStringify(b.params)));
 
     const overridesRaw = isPlainObject(request.overrides) ? (request.overrides as Record<string, any>) : {};
     const normalizedOverrides = Object.keys(overridesRaw)
@@ -614,7 +618,9 @@ async function fetchAndMerge(params: MachineCapabilitiesFetchParams): Promise<vo
                         : undefined;
 
         setEntry(cacheKey, {
-            state: { status: 'loading', ...(prevSnapshot ? { snapshot: prevSnapshot } : {}) },
+            // Revalidation retains settled readiness; only a first acquisition is loading.
+            state: existing?.state.status === 'loaded' ? existing.state
+                : { status: 'loading', ...(prevSnapshot ? { snapshot: prevSnapshot } : {}) },
             updatedAt: Date.now(),
             inputKey: existing?.inputKey,
             inFlightToken: token,

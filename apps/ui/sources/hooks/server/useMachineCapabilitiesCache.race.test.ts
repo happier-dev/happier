@@ -29,6 +29,29 @@ function lifetime(accountId: string) {
 afterEach(() => { boundary.rpc.mockReset(); vi.useRealTimers(); });
 
 describe('machine capabilities cache races at the RPC boundary', () => {
+    it('publishes no equal settled answers and only the changed machine on refresh', async () => {
+        const target = { machineId: 'equal-refresh', serverId: 'equal-refresh-home', request };
+        boundary.rpc.mockResolvedValue(response('one'));
+        await prefetchMachineCapabilities(target);
+        const changes = vi.fn();
+        const other = vi.fn();
+        const release = subscribeMachineCapabilitiesCacheState(target.machineId, target.serverId, undefined, changes);
+        const releaseOther = subscribeMachineCapabilitiesCacheState('other', target.serverId, undefined, other);
+        const held = getMachineCapabilitiesCacheState(target.machineId, target.serverId);
+        try {
+            for (let index = 0; index < 5; index++) await prefetchMachineCapabilities(target);
+            expect(changes).toHaveBeenCalledTimes(0);
+            expect(getMachineCapabilitiesCacheState(target.machineId, target.serverId)).toBe(held);
+            boundary.rpc.mockResolvedValue(response('two'));
+            await prefetchMachineCapabilities(target);
+            expect(changes).toHaveBeenCalledTimes(1);
+            expect(getMachineCapabilitiesCacheState(target.machineId, target.serverId)).toMatchObject({
+                status: 'loaded', snapshot: { response: { results: { 'cli.codex': { data: { version: 'two' } } } } },
+            });
+            expect(other).not.toHaveBeenCalled();
+        } finally { release(); releaseOther(); }
+    });
+
     it('keeps failed finite capability reads finite with passive presenters, and recovers on real demand', async () => {
         vi.useFakeTimers();
         boundary.rpc.mockRejectedValue(new Error('Transient transport failure'));

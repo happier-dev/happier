@@ -9,6 +9,32 @@ async function settle() { for (let i = 0; i < 20; i++) await Promise.resolve(); 
 const idleActivityWatch: MachineGuardClients['activityWatchClient'] = async () => new Promise(() => {});
 
 describe('Guard last-good freshness', () => {
+    it('publishes a changed Guard view only to its own Machine', async () => {
+        const watches = new Map<string, ReturnType<typeof createDeferred<MachineGuardResult<MachineGuardWatchResultV1>>>>();
+        const store = createMachineGuardStore({
+            viewClient: async () => ({ ok: true, value: createMachineGuardViewFixture() }),
+            watchClient: input => {
+                const reply = createDeferred<MachineGuardResult<MachineGuardWatchResultV1>>();
+                watches.set(input.machineId, reply); return reply.promise;
+            },
+            activityClient: async () => ({ ok: false, reason: 'request_failed' }), activityWatchClient: idleActivityWatch,
+        });
+        // Match the 24 Guard roots in PERF-LIVE-2, observing their actual keyed store.
+        const keys = Array.from({ length: 24 }, (_, index) => ({ machineId: `machine-${index}`, serverId: 'home', expectedAccountId: 'owner' }));
+        const releases = keys.map(key => store.demandView(key));
+        await settle();
+        const publications = keys.map(() => vi.fn());
+        releases.push(...keys.map((key, index) => store.observeView(key, publications[index]!)));
+        try {
+            const view = structuredClone(store.getView(keys[0]!).view!);
+            view.policy.memoryGuard.enabled = !view.policy.memoryGuard.enabled;
+            watches.get(keys[0]!.machineId)!.resolve({ ok: true, value: { changed: true, since: 2, view } });
+            await settle();
+            expect(publications.map(listener => listener.mock.calls.length)).toEqual([1, ...Array(23).fill(0)]);
+            expect(store.getView(keys[0]!).view?.policy.memoryGuard.enabled).toBe(view.policy.memoryGuard.enabled);
+        } finally { releases.forEach(release => release()); store.reset(); }
+    });
+
     it('retains typed read failures for Guard and Activity and clears them on recovery', async () => {
         const failure = { ok: false as const, reason: 'request_failed' as const, errorCode: 'permission_denied' };
         let recovered = false;

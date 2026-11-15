@@ -37,7 +37,7 @@ it('offers only the return notification without a last report and fills the glob
         expect(screen.findByTestId(testId)?.props.disabled).not.toBe(true);
         await screen.pressByTestIdAsync(testId);
         await vi.waitFor(() => expect(routePush).toHaveBeenCalled());
-        expect(routePush.mock.lastCall?.[0]).toEqual({ pathname: '/new', params: { draftId: expect.any(String) } });
+        expect(routePush.mock.lastCall?.[0]).toEqual({ pathname: '/new', params: { draftId: expect.any(String), draftServerId: scope.serverId, draftAccountId: scope.accountId } });
         const route = routePush.mock.lastCall![0] as { params: { draftId: string } };
         const draft = readNewSessionDraftFromRepository({ scope, draftId: route.params.draftId });
         expect(draft?.input).toBe(suggestion.fill.text);
@@ -203,7 +203,7 @@ it('keeps the presented Ask launch model quiet across unrelated resource publica
     at += 2_000;
     await act(async () => { await machineResourceStore.read(key); });
     expect(list().props.suggestions.some((entry: { kind: string }) => entry.kind === 'memory')).toBe(true);
-    expect(model.mock.calls.length).toBeGreaterThan(0);
+    expect(model.mock.calls.length).toBe(0);
     expect(screen.root.findByType(NewSessionEmbeddedHostProvider).props.host).toBe(host);
     // A displayed amount refreshes when its formatted value changes, but not for byte-only changes.
     model.mockClear();
@@ -212,7 +212,7 @@ it('keeps the presented Ask launch model quiet across unrelated resource publica
     await act(async () => { await machineStorageStore.read(storageKey); });
     expect(list().props.suggestions.find((entry: { kind: string }) => entry.kind === 'storage').reason)
         .toBe(t('machineResources.askSuggestions.reasons.storage', { amount: '5 GB' }));
-    expect(model.mock.calls.length).toBeGreaterThan(0);
+    expect(model.mock.calls.length).toBe(0);
     // Memory, disk and Guard fill the three slots: even a differently formatted Storage total is irrelevant.
     diskAvailableBytes = 9_000_000_000;
     at += 2_000;
@@ -234,7 +234,7 @@ it('keeps the presented Ask launch model quiet across unrelated resource publica
     await act(async () => { await machineResourceStore.read(key); });
     expect(list().props.suggestions.find((entry: { kind: string }) => entry.kind === 'disk').reason)
         .toBe(t('machineResources.askSuggestions.reasons.disk', { amount: '8 GB' }));
-    expect(model.mock.calls.length).toBeGreaterThan(0);
+    expect(model.mock.calls.length).toBe(0);
     expect(screen.root.findByType(NewSessionEmbeddedHostProvider).props.host).toBe(host);
     await screen.unmount();
 });

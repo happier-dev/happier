@@ -46,7 +46,6 @@ export const MachineResourcesAskBlock = React.memo(
       subject?: MachineResourceSuggestionSubject;
     }>,
   ) {
-    const language = usePreferredLanguage();
     const presence = useMachinePresenceSummary(props.serverId, props.machineId);
     const online = presence.reachability === 'reachable';
     // Ask starts at the home intent of whoever the session runs as, never the daemon's absolute home:
@@ -56,6 +55,117 @@ export const MachineResourcesAskBlock = React.memo(
       return machine ? resolveDefaultDirectoryForMachine({ machineId: props.machineId, machines: [machine], recentPaths: [] }) || undefined
         : undefined;
     }, [props.machineId, props.serverId]));
+    const fillGlobalComposer = React.useCallback(async (suggestion: HomeComposerSuggestionFill) => {
+      const lifetime = captureActiveServerAccountScopeLifetime();
+      const scope = selectActiveServerAccountScopeForServer(lifetime?.scope ?? null, props.serverId);
+      // A Machine on a Home other than the active Account's has no Account to open New Session in.
+      if (!lifetime || !scope) {
+        Modal.alert(t('common.error'), t('errors.operationFailed'));
+        return;
+      }
+      // The authoring owner shows a refusal or a waiting approval.
+      await openSessionAuthoringAction({ seed: { prompt: suggestion.prompt } }, lifetime);
+    }, [props.serverId]);
+
+    return (
+      <ItemGroup
+        surface="none"
+        title={t('machineResources.ask.title')}
+        // Offline, the machine page has already said so once (its Overview banner): the block just offers the prompts,
+        // which open a new session wherever the person chooses.
+        {...(online ? { description: t('machineResources.ask.description') } : {})}
+      >
+        <View testID="machine-resources-ask" style={styles.stack}>
+          {online ? (
+            <AskComposer
+              key={`${props.serverId}:${props.machineId}`}
+              serverId={props.serverId}
+              machineId={props.machineId}
+              machineName={props.machineName}
+              directory={directory}
+              subject={props.subject}
+            />
+          ) : (
+            <AskSuggestions {...props} online={online} directory={directory} onFill={fillGlobalComposer} />
+          )}
+        </View>
+      </ItemGroup>
+    );
+  },
+);
+
+/** The composer is bound to this machine: the draft's placement starts here, and prompts fill it. */
+const AskComposer = React.memo(function AskComposer(
+  props: Readonly<{
+    serverId: string;
+    machineId: string;
+    machineName: string;
+    directory: string | undefined;
+    subject?: MachineResourceSuggestionSubject;
+  }>,
+) {
+  const initialParams = React.useMemo(() => ({
+    spawnServerId: props.serverId,
+    machineId: props.machineId,
+    ...(props.directory ? { directory: props.directory } : {}),
+  }), [props.directory, props.machineId, props.serverId]);
+  const { host, markDemanded } = useNewSessionEmbeddedHostState(initialParams);
+  const setHostParams = host.setParams;
+  const draftId =
+    typeof host.params.draftId === 'string'
+      ? host.params.draftId
+      : `machine-ask:${props.machineId}`;
+  const demand = markDemanded;
+  const fill = React.useCallback(
+    (suggestion: HomeComposerSuggestionFill) => {
+      markDemanded();
+      setHostParams({
+        prompt: suggestion.prompt,
+        spawnServerId: suggestion.placement?.serverId ?? props.serverId,
+        machineId: suggestion.placement?.machineId ?? props.machineId,
+        ...(suggestion.placement?.directory
+          ? { directory: suggestion.placement.directory }
+          : {}),
+      });
+    },
+    [markDemanded, props.machineId, props.serverId, setHostParams],
+  );
+  return (
+    <>
+      <View
+        testID="machine-resources-ask.composer"
+        onFocus={demand}
+        onPointerEnter={demand}
+        onTouchStart={demand}
+      >
+        <NewSessionEmbeddedHostProvider host={host}>
+          <ComposerBannerCollapseProvider key={draftId}>
+            <NewSessionScreen
+              presentation="embedded"
+              // The lab's minimal ask box: where it runs and which model answers; the page is the context.
+              composerControlPreset="compact"
+              inputPlaceholder={t('machineResources.ask.placeholder', { machine: props.machineName })}
+            />
+          </ComposerBannerCollapseProvider>
+        </NewSessionEmbeddedHostProvider>
+      </View>
+      <AskSuggestions {...props} online={true} onFill={fill} />
+    </>
+  );
+});
+
+/** Only the prompt tiles consume resource reports; launch commands consume placement. */
+function AskSuggestions(props: Readonly<{
+  serverId: string;
+  machineId: string;
+  machineName: string;
+  directory: string | undefined;
+  subject?: MachineResourceSuggestionSubject;
+  online: boolean;
+  onFill: (suggestion: HomeComposerSuggestionFill) => void;
+}>) {
+    const language = usePreferredLanguage();
+    const { online, directory } = props;
     const summary = useMachineResourceSummary({
       serverId: props.serverId,
       machineId: props.machineId,
@@ -134,110 +244,8 @@ export const MachineResourcesAskBlock = React.memo(
     React.useEffect(() => {
       previousSuggestions.current = suggestions;
     }, [suggestions]);
-    const fillGlobalComposer = React.useCallback(async (suggestion: HomeComposerSuggestionFill) => {
-      const lifetime = captureActiveServerAccountScopeLifetime();
-      const scope = selectActiveServerAccountScopeForServer(lifetime?.scope ?? null, props.serverId);
-      // A Machine on a Home other than the active Account's has no Account to open New Session in.
-      if (!lifetime || !scope) {
-        Modal.alert(t('common.error'), t('errors.operationFailed'));
-        return;
-      }
-      // The authoring owner shows a refusal or a waiting approval.
-      await openSessionAuthoringAction({ seed: { prompt: suggestion.prompt } }, lifetime);
-    }, [props.serverId]);
-
-    return (
-      <ItemGroup
-        surface="none"
-        title={t('machineResources.ask.title')}
-        // Offline, the machine page has already said so once (its Overview banner): the block just offers the prompts,
-        // which open a new session wherever the person chooses.
-        {...(online ? { description: t('machineResources.ask.description') } : {})}
-      >
-        <View testID="machine-resources-ask" style={styles.stack}>
-          {online ? (
-            <AskComposer
-              key={`${props.serverId}:${props.machineId}`}
-              serverId={props.serverId}
-              machineId={props.machineId}
-              machineName={props.machineName}
-              directory={directory}
-              suggestions={suggestions}
-            />
-          ) : (
-            <HubComposerSuggestionList
-              suggestions={suggestions}
-              onFill={fillGlobalComposer}
-            />
-          )}
-        </View>
-      </ItemGroup>
-    );
-  },
-);
-
-/** The composer is bound to this machine: the draft's placement starts here, and prompts fill it. */
-const AskComposer = React.memo(function AskComposer(
-  props: Readonly<{
-    serverId: string;
-    machineId: string;
-    machineName: string;
-    directory: string | undefined;
-    suggestions: ReturnType<typeof deriveMachineResourceSuggestions>;
-  }>,
-) {
-  const initialParams = React.useMemo(() => ({
-    spawnServerId: props.serverId,
-    machineId: props.machineId,
-    ...(props.directory ? { directory: props.directory } : {}),
-  }), [props.directory, props.machineId, props.serverId]);
-  const { host, markDemanded } = useNewSessionEmbeddedHostState(initialParams);
-  const setHostParams = host.setParams;
-  const draftId =
-    typeof host.params.draftId === 'string'
-      ? host.params.draftId
-      : `machine-ask:${props.machineId}`;
-  const demand = markDemanded;
-  const fill = React.useCallback(
-    (suggestion: HomeComposerSuggestionFill) => {
-      markDemanded();
-      setHostParams({
-        prompt: suggestion.prompt,
-        spawnServerId: suggestion.placement?.serverId ?? props.serverId,
-        machineId: suggestion.placement?.machineId ?? props.machineId,
-        ...(suggestion.placement?.directory
-          ? { directory: suggestion.placement.directory }
-          : {}),
-      });
-    },
-    [markDemanded, props.machineId, props.serverId, setHostParams],
-  );
-  return (
-    <>
-      <View
-        testID="machine-resources-ask.composer"
-        onFocus={demand}
-        onPointerEnter={demand}
-        onTouchStart={demand}
-      >
-        <NewSessionEmbeddedHostProvider host={host}>
-          <ComposerBannerCollapseProvider key={draftId}>
-            <NewSessionScreen
-              presentation="embedded"
-              // The lab's minimal ask box: where it runs and which model answers; the page is the context.
-              composerControlPreset="compact"
-              inputPlaceholder={t('machineResources.ask.placeholder', { machine: props.machineName })}
-            />
-          </ComposerBannerCollapseProvider>
-        </NewSessionEmbeddedHostProvider>
-      </View>
-      <HubComposerSuggestionList
-        suggestions={props.suggestions}
-        onFill={fill}
-      />
-    </>
-  );
-});
+    return <HubComposerSuggestionList suggestions={suggestions} onFill={props.onFill} />;
+}
 
 const styles = StyleSheet.create(() => ({
   // A sheetless section (anatomy): the composer is its own card and the prompts their own tiles.
