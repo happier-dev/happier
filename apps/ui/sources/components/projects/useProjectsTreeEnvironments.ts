@@ -3,7 +3,7 @@ import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-
 
 import { useCurrentRouteParamsSelector } from '@/components/appShell/workspace/currentRouteLocation';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
+import { retainDeep, retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
 
 import { isSameDeploymentName, useDeploymentEnvironmentRowParts } from './deployments/DeploymentEnvironmentCollection';
@@ -36,7 +36,7 @@ export function useProjectsTreeEnvironments(
   const items = read.snapshot.value?.items ?? NO_ITEMS;
   const parts = useDeploymentEnvironmentRowParts(items, 'projects-tree.environment', lifetime, 'rail');
   const serverId = lifetime?.scope.serverId ?? null;
-  const previous = React.useRef<Readonly<{ input: readonly ProjectsTreeProject[]; output: readonly ProjectsTreeProject[] }> | null>(null);
+  const previous = React.useRef<readonly ProjectsTreeProject[] | null>(null);
   return React.useMemo(() => {
     const projectBySource = new Map<string, ProjectsTreeProject>();
     for (const project of projects) {
@@ -73,14 +73,11 @@ export function useProjectsTreeEnvironments(
       if (list) list.push(environment);
       else bySource.set(part.projectSourceId, [environment]);
     }
-    const before = new Map(previous.current?.output.map((project) => [project.key, project] as const));
-    const inputBefore = new Map(previous.current?.input.map((project) => [project.key, project] as const));
+    const before = new Map(previous.current?.map((project) => [project.key, project] as const));
     const withEnvironments = (project: ProjectsTreeProject, incoming: readonly ProjectsTreeEnvironment[]): ProjectsTreeProject => {
       const prior = before.get(project.key);
       const environments = retainKeyedRows(prior?.environments, incoming, (environment) => environment.environmentId);
-      return prior && prior.environments === environments && (inputBefore.get(project.key) === project
-        || (prior.name === project.name && prior.deploymentSource?.projectSourceId === project.deploymentSource?.projectSourceId))
-        ? prior : { ...project, environments };
+      return retainDeep(prior, { ...project, environments });
     };
     const joined = projects.map((project) => {
       const incoming = project.source ? bySource.get(project.source.source.id) : undefined;
@@ -92,7 +89,7 @@ export function useProjectsTreeEnvironments(
       deploymentSource: { serverId: group.rows[0]!.environment.serverId, projectSourceId: group.key },
     }, group.rows.map((row) => row.environment)));
     const output = deployOnlyProjects.length === 0 ? joined : [...joined, ...deployOnlyProjects];
-    previous.current = { input: projects, output };
+    previous.current = output;
     return output;
   }, [items, parts, projects, serverId]);
 }
