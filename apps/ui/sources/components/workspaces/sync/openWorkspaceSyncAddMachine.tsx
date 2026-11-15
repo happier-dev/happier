@@ -37,7 +37,7 @@ import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolve
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useProjectAccountWorkspaceRef } from '@/sync/domains/workspaces/projectAccountRows';
-import { createWorkspaceSyncRelationship, approveWorkspaceSyncRelationshipCreate, resolveWorkspaceSyncDestinationPlacement } from '@/sync/ops/workspaceSyncRelationshipCreate';
+import { createWorkspaceSyncRelationship, approveWorkspaceSyncRelationshipCreate, resolveWorkspaceSyncDestinationPlacement, workspaceSyncActionError } from '@/sync/ops/workspaceSyncRelationshipCreate';
 import { useWorkspaceSyncTargetFolderState } from './useWorkspaceSyncTargetFolderState';
 import { useWorkspaceSyncRequesterAvailability } from '@/hooks/machine/useWorkspaceSyncRequesterAvailability';
 import { sync } from '@/sync/sync';
@@ -304,7 +304,7 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
                 if (!opened.ok) {
                     // A declined approval ran nothing: the person answered, nothing failed.
                     if (isActionApprovalDeclinedErrorCode(opened.errorCode)) { setPhase('idle'); return; }
-                    throw new Error(t('common.saveError'));
+                    throw workspaceSyncActionError(opened.errorCode, opened.error, opened);
                 }
                 const accepted = OpenProjectResultV1Schema.parse(opened.result);
                 if (accepted.kind === 'refused') throw new Error(projectOpenRefusalPresentation(accepted.code, null).title);
@@ -314,7 +314,7 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
                 sourceWorkspaceRefId = accepted.workspace.workspaceId;
                 setMaterializedSourceRefId(sourceWorkspaceRefId);
             } catch (caught) {
-                setError(caught instanceof Error ? caught.message : t('errors.operationFailed'));
+                setError(presentWorkspaceSyncFailure(caught) ?? (caught instanceof Error ? caught.message : t('errors.operationFailed')));
                 setPhase('idle');
                 return;
             }

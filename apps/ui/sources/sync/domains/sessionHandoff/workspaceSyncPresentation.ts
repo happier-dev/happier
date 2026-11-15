@@ -1,4 +1,6 @@
 import { t } from '@/text';
+import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import type { WorkspaceSyncSetAttention } from './workspaceSyncRelationshipModel';
 import type { WorkspaceSyncStatusSnapshot } from './workspaceSyncStatusStore';
@@ -69,7 +71,14 @@ export function presentWorkspaceSyncFailure(error: unknown): string | null {
     const code = readWorkspaceSyncErrorCode(error);
     if (!code) return null;
     const key = resolveWorkspaceSyncErrorTranslationKey(code);
-    return key ? `${t(key)} (${code})` : code;
+    const record = error as Readonly<Record<string, unknown>>;
+    // The shared presenter selects safe details and typed causes; transport prose stays private.
+    const presented = presentActionExecutionFailure({ ok: false, errorCode: code,
+        details: record.details,
+        failureCause: record.failureCause === undefined ? undefined : readActionFailureCauseV1(record.failureCause),
+    });
+    const message = key ? `${t(key)} (${code})` : `${presented.reason} (${code})`;
+    return [message, ...presented.technicalDetails.filter(detail => detail.key !== 'code').map(detail => detail.value)].join(' · ');
 }
 
 export function resolveWorkspaceSyncModeTranslationKey(value: unknown): WorkspaceSyncModeTranslationKey | null {

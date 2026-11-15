@@ -4,6 +4,13 @@ import { readActionFailureEnvelope, readMachineActionRpcResult } from './actionF
 import { normalizeActionExecutorThrownError } from './resultProjection.js';
 
 describe('Machine RPC refusal admission before Action output validation', () => {
+  it('retains the request reference when classifying an Action refusal', () => {
+    expect(readActionFailureEnvelope({ ok: false, errorCode: 'credential_scope_denied',
+      error: 'Request refused', requestId: 'sync-refusal-403' })).toMatchObject({
+      ok: false, errorCode: 'credential_scope_denied', requestId: 'sync-refusal-403',
+    });
+  });
+
   it.each([
     [{ error: 'Whole-disk scan disabled', errorCode: 'storage_whole_disk_disabled' }, 'storage_whole_disk_disabled'],
     [{ error: 'Method not found', errorCode: 'RPC_METHOD_NOT_FOUND' }, 'RPC_METHOD_NOT_FOUND'],

@@ -4,12 +4,11 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HandoffTargetReplacementPreflightV1Schema, WorkspaceSyncRelationshipCreateRpcRequestV1Schema,
     WorkspaceSyncRelationshipCreateResultV1Schema, computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
-import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeSchema, ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema, ExternalActionHttpErrorSchema } from '@happier-dev/protocol/actions/externalActionApi';
 
 import { createMachineFixture, invokeTestInstanceHandler, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
-import { applyProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { applyProjectAccountRowsFixture, createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { createWorkspaceSyncHarness, type WorkspaceSyncRpcRequest } from '@/dev/testkit/harness/workspaceSyncHarness';
 import { projectWorkspaceSyncRelationshipSummaries, projectWorkspaceSyncRelationships } from '@/sync/domains/sessionHandoff/workspaceSyncRelationshipModel';
 
@@ -78,15 +77,108 @@ function committedLink() {
     });
 }
 
-function storedApproval() {
-    const artifacts = workspace.home.artifacts(workspace.serverId);
-    const artifact = artifacts.list().find(row => artifacts.readPlainBody(row.id)?.includes('"actionId":"workspace.sync.relationship.create"'));
-    if (!artifact) throw new Error('Expected the Home to persist a relationship approval');
-    return StoredApprovalRequestSchema.parse(JSON.parse(artifacts.readPlainBody(artifact.id)!));
+/**
+ * The destination review the source Machine carried back and this UI presented. The receiving
+ * daemon refuses the person's own press with that review instead of creating a self-approval
+ * Artifact (docs/actions.md, `confirmOwnUiRefusal`), so no approval is ever persisted for it.
+ */
+function reviewedLink() {
+    const reviews = shownModal.mock.calls.map(([config]) => config)
+        .filter(config => config?.chrome?.testID === 'actions.confirmation-review.modal');
+    expect(reviews).toHaveLength(1);
+    expect(workspace.home.artifacts(workspace.serverId).list()).toEqual([]);
+    const props = reviews[0]!.props as { actionId: string; actionArgs: unknown;
+        preview: { handoffTargetReplacementApproval?: { consequences: readonly string[] } } };
+    expect(props.actionId).toBe('workspace.sync.relationship.create');
+    return props;
 }
+
+/**
+ * Relationship writes and the destination folder probe are Home-dispatched to their Machine
+ * (defaultActionExecutor `executeMachineOwnedAction`, filesystemActionDeps). The source
+ * Machine's receiving Protocol executor owns destination admission: it runs the target
+ * preflight and carries a required review back to the person's own press before the create
+ * RPC. Home HTTP and Machine RPC stay the boundaries; UI sealing, Account admission and
+ * Protocol review run for real on both sides.
+ */
+async function installSourceMachineActionReceiver() {
+    const [{ createActionExecutor }, { createActionExecutorBoundaryFixture }, { readActionFailureEnvelope },
+        { createExternalActionAccountHttpBoundary }, { captureLazyActionAccountContext },
+        { preflightWorkspaceDestinationReplacement }, { createWorkspaceSyncRelationshipOnController }] = await Promise.all([
+        import('@happier-dev/protocol/actions/actionExecutor'), import('@/dev/testkit/fixtures/actionExecutorBoundary'),
+        import('@happier-dev/protocol/actions/executor/actionFailureEnvelope'),
+        import('@/dev/testkit/harness/externalActionAccountHttpBoundary'), import('@/sync/ops/actions/actionAccountContext'),
+        import('@/sync/ops/sessionHandoffs'), import('@/sync/ops/workspaceSyncRelationshipCreateRpc'),
+    ]);
+    const account = await captureLazyActionAccountContext(workspace.serverId);
+    const serverIdentityId = account.serverIdentityId;
+    if (!serverIdentityId) throw new Error('Expected the source Home identity');
+    const receiver = createActionExecutor(createActionExecutorBoundaryFixture({
+        // The receiving Account allows linking; only a destination consequence requires review.
+        isActionApprovalRequired: () => false,
+        sessionHandoffTargetReplacementApprovalPreflight: ({ targetMachineId, targetPath, workspaceAction, activatesExactMirror,
+            destinationIntent, replaceRelationshipId, serverId, operationId, signal }) => preflightWorkspaceDestinationReplacement({
+            targetMachineId, targetPath: targetPath ?? '', serverId: serverId ?? '', operationId,
+            workspaceAction: workspaceAction ?? { kind: 'none' },
+            ...(activatesExactMirror === undefined ? {} : { activatesExactMirror }),
+            ...(destinationIntent ? { destinationIntent } : {}),
+            ...(replaceRelationshipId ? { replaceRelationshipId } : {}),
+            ...(signal ? { signal } : {}),
+        }),
+        workspaceSyncRelationshipCreate: ({ input, operationId, serverId, targetReplacementApproval, targetReplacementApprovalReceiptId, signal }) =>
+            createWorkspaceSyncRelationshipOnController({ input, operationId, serverId: serverId ?? null,
+                ...(targetReplacementApproval && targetReplacementApprovalReceiptId
+                    ? { targetReplacementApproval, targetReplacementApprovalReceiptId } : {}),
+                ...(signal ? { signal } : {}) }),
+    }));
+    const settle = (execution: Awaited<ReturnType<typeof receiver.execute>>) => execution.ok ? execution.result : execution;
+    const base = { serverUrl: account.endpointUrl, serverIdentityId, accountId: account.accountId, tokenEpoch: 0 };
+    // One installed identity per Machine (every boundary derives it from the same key seed);
+    // each Action path routes to the boundary its sealed envelope targets.
+    const answerMachineAction = async (actionId: string, machineIds: readonly string[],
+        create: (machineId: string) => ReturnType<typeof createExternalActionAccountHttpBoundary>) => {
+        const boundaries = new Map<string, Awaited<ReturnType<typeof create>>>();
+        for (const machineId of machineIds) {
+            const boundary = await create(machineId);
+            boundaries.set(machineId, boundary);
+            workspace.home.answer(workspace.serverId, `GET /v1/machines/${machineId}`, { body: { machine: boundary.machine } });
+        }
+        for (const path of [`/v1/actions/${actionId}/execution-authorization`, `/v1/actions/${actionId}`]) {
+            workspace.home.answer(workspace.serverId, `POST ${path}`, { select: async (body, request) => {
+                const authorized = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(body);
+                const target = ExternalActionRequestEnvelopeSchema.parse(authorized.success ? authorized.data.envelope : body).target;
+                const boundary = target?.kind === 'machine' ? boundaries.get(target.machineId) : undefined;
+                const response = await boundary?.handle(new URL(request.url), request.init);
+                if (!response) throw new Error(`Unexpected Machine Action ${path} for ${JSON.stringify(target)}`);
+                return { status: response.status, body: await response.json() };
+            } });
+        }
+    };
+    for (const actionId of ['workspace.sync.relationship.create', 'workspace.sync.relationship.replace'] as const) {
+        await answerMachineAction(actionId, ['machine-a'], machineId => createExternalActionAccountHttpBoundary({ ...base, machineId, actionId,
+            failure: readActionFailureEnvelope,
+            execute: async (input, { target, invocation, authorization, requestId, signal }) => settle(await receiver.execute(actionId, input, {
+                surface: invocation.surface, authority: invocation.authority, serverId: workspace.serverId, serverIdentityId,
+                runtimeAccountId: account.accountId, actionCaller: invocation.caller, externalActionTarget: target,
+                externalActionExecutionAuthorization: authorization,
+                ...(invocation.presentUserConfirmation ? { presentUserConfirmation: invocation.presentUserConfirmation } : {}),
+                ...(requestId ? { actionRequestId: requestId } : {}), ...(signal ? { signal } : {}) })) }));
+    }
+    // The destination folder probe is the destination daemon's own listing; its reply is the Action output.
+    await answerMachineAction('daemon.filesystem.browseDirectory', ['machine-a', 'machine-b'], machineId => createExternalActionAccountHttpBoundary({
+        ...base, machineId, actionId: 'daemon.filesystem.browseDirectory',
+        execute: (input, { target, signal }) => daemonRpc({ machineId: target.machineId, method: RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY,
+            payload: input, signal: signal ?? new AbortController().signal }) }));
+    return account;
+}
+
+let sourceReceiverAccount: Awaited<ReturnType<typeof installSourceMachineActionReceiver>> | null = null;
 
 beforeEach(async () => {
     await workspace.reset();
+    const { adoptHomeProfile } = await import('@/sync/domains/server/serverProfiles');
+    await adoptHomeProfile({ descriptor: { serverUrl: 'https://workspace-sync.test',
+        homeServerIdentityId: 'srv_workspace_sync' }, source: 'manual' });
     shownModal.mockClear();
     confirmModal.mockReset().mockResolvedValue(false);
     daemonRpc.mockReset();
@@ -103,6 +195,9 @@ beforeEach(async () => {
     storage.getState().applyMachines(machines, true, { sourceServerId: workspace.serverId, sourceAccountId: workspace.accountId });
     storage.getState().markMachineListSettled(workspace.serverId);
     applyProjectAccountRowsFixture(storage, { workspaceRefs: [{ ...source(), createdAtMs: 1 }], relationships: [] });
+    workspace.home.answer(workspace.serverId, 'POST /v1/account/project-rows/list', { body:
+        createPlainProjectAccountRowListFixture({ workspaceRefs: [{ ...source(), createdAtMs: 1 }] }) });
+    sourceReceiverAccount = await installSourceMachineActionReceiver();
     daemonRpc.mockImplementation(request => {
         if (request.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT) {
             return holdPreflight ? pendingPreflight.promise : requireApproval ? targetApproval(request) : { type: 'not_required' };
@@ -126,6 +221,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
     standardCleanup();
+    sourceReceiverAccount?.dispose();
+    sourceReceiverAccount = null;
     await workspace.dispose();
 });
 
@@ -312,7 +409,7 @@ describe('Project Add machine modal', () => {
         await vi.waitFor(() => expect(modal.submit().props.disabled).toBe(false));
         await act(async () => { modal.submit().props.onPress(); });
         await vi.waitFor(() => expect(confirmModal).toHaveBeenCalledOnce());
-        expect(storedApproval().actionArgs).toMatchObject({ sourceWorkspaceRefId: source().id, targetMachineId: 'machine-b',
+        expect(reviewedLink().actionArgs).toMatchObject({ sourceWorkspaceRefId: source().id, targetMachineId: 'machine-b',
             targetPath: '/chosen-worker', purpose: 'worker_clean_copy', mode: 'keep_synced', destinationIntent: 'materialize_from_source_workspace' });
         expect(callsFor(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE)).toEqual([]);
     });
@@ -357,10 +454,11 @@ describe('Project Add machine modal', () => {
             }
         } });
         await vi.waitFor(() => expect(confirmModal).toHaveBeenCalledOnce());
-        expect(storedApproval().actionArgs).toMatchObject({ mode: 'mirror_exactly', destinationIntent: 'materialize_from_source_workspace',
+        expect(reviewedLink().actionArgs).toMatchObject({ mode: 'mirror_exactly', destinationIntent: 'materialize_from_source_workspace',
             contentPolicy: { selection: 'all_files', extraIncludePatterns: ['dist/**', '.env.local'] } });
-        expect(confirmModal).toHaveBeenCalledWith('sessionHandoff.targetApproval.title',
-            expect.stringContaining('sessionHandoff.targetApproval.exactMirror'), expect.anything());
+        // The exact-mirror deletion consequence travels in the reviewed preview the consequences card presents.
+        expect(reviewedLink().preview.handoffTargetReplacementApproval?.consequences)
+            .toEqual(['replace_nonempty_workspace_target', 'delete_target_only_files_during_exact_mirror']);
     });
 
     describe('Use existing folder for a Git source', () => {
@@ -381,7 +479,7 @@ describe('Project Add machine modal', () => {
             await vi.waitFor(() => expect(modal.submit().props.disabled).toBe(false));
             await act(async () => { modal.submit().props.onPress(); });
             await vi.waitFor(() => expect(confirmModal).toHaveBeenCalledOnce());
-            expect(storedApproval().actionArgs).toMatchObject({ targetPath: '/target', destinationIntent: 'materialize_from_source_workspace' });
+            expect(reviewedLink().actionArgs).toMatchObject({ targetPath: '/target', destinationIntent: 'materialize_from_source_workspace' });
         });
 
         it('keeps Use existing folder for a non-empty folder', async () => {
@@ -421,7 +519,73 @@ describe('Project Add machine modal', () => {
         expect(statusLine(modal.screen)?.props).toMatchObject({ kind: 'error', accessibilitySemantics: 'alert' });
     });
 
-    it('keeps a declined destination approval pending without running the link or reporting failure', async () => {
+    it('retains a recorded approval execution failure through the actual Sync adapter', async () => {
+        const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
+        const { buildApprovalRequestArtifactHeaderV1 } = await import('@happier-dev/protocol/approvals/approvalArtifactHeaderV1');
+        const { createPlainArtifactHttpFixture } = await import('@/dev/testkit/harness/artifactStoreBoundary');
+        const { approveWorkspaceSyncRelationshipCreate } = await import('@/sync/ops/workspaceSyncRelationshipCreate');
+        const { presentWorkspaceSyncFailure } = await import('@/sync/domains/sessionHandoff/workspaceSyncPresentation');
+        const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'failed', createdAtMs: 1, updatedAtMs: 3,
+            createdBy: { surface: 'agent' }, requestedSurface: 'agent', actionId: 'workspace.sync.relationship.create',
+            actionArgs: { sourceWorkspaceRefId: 'source-ref', targetMachineId: 'machine-b', targetPath: '/target' },
+            summary: 'Link Workspace', executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent',
+                caller: { kind: 'host' }, serverId: workspace.serverId, serverIdentityId: 'srv_workspace_sync',
+                accountId: workspace.accountId, actionId: 'workspace.sync.relationship.create', requestId: 'recorded-sync' },
+            decision: { kind: 'approve', decidedAtMs: 2 },
+            execution: { executedAtMs: 3, ok: false, errorCode: 'credential_scope_denied', error: 'private /secret/workspace',
+                details: { reason: 'target_not_authorized', privatePath: '/secret/workspace' },
+                failureCause: { phase: 'target.preflight', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: null } } });
+        workspace.home.artifacts(workspace.serverId).replaceStoredRow(createPlainArtifactHttpFixture({
+            id: 'failed-sync', isDecrypted: true, header: buildApprovalRequestArtifactHeaderV1(request),
+            body: JSON.stringify(request), headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 3,
+        }, workspace.accountId));
+        let failure: unknown;
+        try { await approveWorkspaceSyncRelationshipCreate({ artifactId: 'failed-sync', serverId: workspace.serverId }); }
+        catch (caught) { failure = caught; }
+        expect(failure).toMatchObject({ code: 'credential_scope_denied' });
+        const message = presentWorkspaceSyncFailure(failure);
+        expect(message).toContain('machine_manage_required');
+        // Recorded approval reads intentionally omit opaque, non-contract details.
+        expect(failure).toMatchObject({ failureCause: request.execution?.failureCause });
+        expect(message).not.toContain('/secret/workspace');
+    });
+
+    it.each(['source attach', 'destination open'])('retains an HTTP Action refusal through %s to the modal', async path => {
+        const presentation = await import('@/sync/domains/sessionHandoff/workspaceSyncPresentation');
+        const presentFailure = vi.spyOn(presentation, 'presentWorkspaceSyncFailure');
+        let requestId = '';
+        workspace.home.answer(workspace.serverId, 'POST /v1/actions/projects.open', { select: body => {
+            const request = ExternalActionRequestEnvelopeV1Schema.parse(body);
+            requestId = request.requestId;
+            return { status: 403, body: ExternalActionHttpErrorSchema.parse({ error: 'credential_scope_denied',
+                requestId, details: { reason: 'target_not_authorized', privatePath: '/secret/workspace' },
+                failureCause: { phase: 'target.preflight', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: null } }) };
+        } });
+        if (path === 'destination open') await act(async () => {
+            const machines = Object.values(storage.getState().machines).map(machine => machine.id === 'machine-b'
+                ? { ...machine, isShared: true, access: { custodian: { accountId: 'guest-owner', displayName: 'Guest owner' },
+                    role: 'use' as const, resourceMode: 'plain' as const, accessState: 'ready' as const } } : machine);
+            storage.getState().applyMachines(machines, true, { sourceServerId: workspace.serverId, sourceAccountId: workspace.accountId });
+        });
+        const { id: _linked, ...unlinked } = source();
+        owner.openWorkspaceSyncAddMachine(path === 'source attach' ? unlinked : source(), vi.fn());
+        const modal = await renderOpenedModal();
+        await chooseTarget(modal.screen);
+        await vi.waitFor(() => expect(modal.submit().props.disabled).toBe(false));
+        await act(async () => { modal.submit().props.onPress(); });
+        await vi.waitFor(() => expect(workspace.home.requestsFor('/v1/actions/projects.open')).toHaveLength(1));
+        await vi.waitFor(() => expect(modal.screen.getTextContent()).toContain('machine_manage_required'));
+        expect(ExternalActionRequestEnvelopeV1Schema.parse(workspace.home.requestsFor('/v1/actions/projects.open')[0]!.input).input).toMatchObject({ materialization: { kind: path === 'source attach' ? 'attach' : 'sync' } });
+        expect(requestId).not.toBe('');
+        expect(presentFailure.mock.calls.some(([failure]) =>
+            typeof failure === 'object' && failure !== null && 'requestId' in failure && failure.requestId === requestId)).toBe(true);
+        expect(modal.screen.getTextContent()).not.toContain(requestId);
+        expect(modal.screen.getTextContent()).toContain('target_not_authorized');
+        expect(modal.screen.getTextContent()).not.toContain('/secret/workspace');
+        expect(callsFor(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE)).toEqual([]);
+    });
+
+    it('settles a declined destination review without running the link or reporting failure', async () => {
         requireApproval = true;
         owner.openWorkspaceSyncAddMachine(source(), vi.fn());
         const modal = await renderOpenedModal();
@@ -430,8 +594,9 @@ describe('Project Add machine modal', () => {
         await act(async () => { modal.submit().props.onPress(); });
         await vi.waitFor(() => expect(confirmModal).toHaveBeenCalledOnce());
         await vi.waitFor(() => expect(modal.submit().props.disabled).toBe(false));
-        expect(statusLine(modal.screen)?.props).toMatchObject({ kind: 'warning', accessibilitySemantics: 'status' });
-        expect(storedApproval().actionArgs).toMatchObject({ sourceWorkspaceRefId: source().id, targetPath: '/target' });
+        // A declined review ran nothing and nothing failed: no pending Artifact, no status to report.
+        expect(statusLine(modal.screen)).toBeUndefined();
+        expect(reviewedLink().actionArgs).toMatchObject({ sourceWorkspaceRefId: source().id, targetPath: '/target' });
         expect(modal.screen.getTextContent()).not.toContain('approval_canceled');
         expect(callsFor(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE)).toEqual([]);
     });
@@ -518,7 +683,7 @@ describe('Project Add machine modal', () => {
             await vi.waitFor(() => expect(modal.submit().props.disabled).toBe(false));
             await act(async () => { modal.submit().props.onPress(); });
             await vi.waitFor(() => expect(confirmModal).toHaveBeenCalledOnce());
-            expect(storedApproval().actionArgs).toMatchObject({ sourceWorkspaceRefId: source().id, targetMachineId: 'machine-a', targetPath: '/source-copy' });
+            expect(reviewedLink().actionArgs).toMatchObject({ sourceWorkspaceRefId: source().id, targetMachineId: 'machine-a', targetPath: '/source-copy' });
         });
     });
 
@@ -552,9 +717,9 @@ describe('Project Add machine modal', () => {
             expect(callsFor(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE)).toEqual([]);
         });
 
-        it('keeps the generic message for an Action failure without a Project Open refusal', async () => {
+        it('retains the Action failure code without a Project Open refusal', async () => {
             const modal = await attachSource(new Error('server_unreachable'));
-            await vi.waitFor(() => expect(modal.screen.getTextContent()).toContain('common.saveError'));
+            await vi.waitFor(() => expect(modal.screen.getTextContent()).toContain('server_unavailable'));
             expect(workspace.home.requestsFor('/v1/actions/projects.open')).toHaveLength(1);
         });
     });
