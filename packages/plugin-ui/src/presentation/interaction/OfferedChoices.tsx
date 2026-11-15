@@ -223,7 +223,10 @@ export const OfferedChoices = React.memo(
       const disabled =
         props.disabled || !choice.available;
       const busy = props.busyChoiceId === choice.id;
-      const description = choice.description;
+      // A second line only when it adds something: a description that restates the label is noise.
+      const description = choice.description?.trim() && choice.description.trim() !== choice.label.trim()
+        ? choice.description
+        : null;
       const hairline =
         arranged.refusalsTrail &&
         refusal &&

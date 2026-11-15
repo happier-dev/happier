@@ -17,6 +17,23 @@ it('opens the default feedback field with only the explicit presentation theme',
   } finally { mount.unmount(); }
 });
 
+it('gives a listed choice a second line only when it says something its label does not', () => {
+  const mount = mountThroughReactNativeWeb(<OfferedChoices theme={createSurfaceContextFixture().theme}
+    choices={[
+      { id: 'remember', label: 'Always allow in this workspace: touch …', description: 'Always allow in this workspace: touch …', refusal: false, available: true },
+      { id: 'once', label: 'Allow once', description: 'Runs it this time only', refusal: false, available: true },
+      { id: 'reject', label: 'Reject', description: ' Reject ', refusal: true, available: true },
+    ]}
+    primaryId="once" disabled={false} busyChoiceId={null} unavailableReason="Ask the owner"
+    feedbackPlaceholder="What should change?" cancelLabel="Cancel" onChoose={() => {}} testID="described" />);
+  try {
+    const text = (id: string) => mount.container.querySelector(`[data-testid="described.choice.${id}"]`)?.textContent;
+    expect(text('remember')).toBe('Always allow in this workspace: touch …');
+    expect(text('once')).toBe('Allow onceRuns it this time only');
+    expect(text('reject')).toBe('Reject');
+  } finally { mount.unmount(); }
+});
+
 it('lets a public author preserve agent order, withheld scope explanations and optional feedback', () => {
   const onChoose = vi.fn();
   const mount = mountThroughReactNativeWeb(<HappierUiEnvironmentProvider environment={projectHappierUiEnvironment(createSurfaceContextFixture())}><OfferedChoicesSurface onChoose={onChoose} /></HappierUiEnvironmentProvider>);
