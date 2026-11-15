@@ -250,6 +250,12 @@ test('revision capture takes committed bytes plus only the declared overlay, nev
   await writeFile(join(repoDir, overlayPath), overlayText);
   await mkdir(join(repoDir, 'packages/protocol/src/generated'));
   await writeFile(join(repoDir, 'packages/protocol/src/generated/out.ts'), 'export const generated = true;');
+  // Another lane's new, untracked workspace package, already wired into the checkout's CLI manifest.
+  await mkdir(join(repoDir, 'packages/other-lane-pkg/src'), { recursive: true });
+  await writeFile(join(repoDir, 'packages/other-lane-pkg/package.json'), JSON.stringify({ name: '@happier-dev/other-lane-pkg', type: 'module' }));
+  await writeFile(join(repoDir, 'packages/other-lane-pkg/src/index.ts'), 'export const other = true;');
+  await writeFile(join(repoDir, 'apps/cli/package.json'), JSON.stringify({ name: '@happier-dev/cli', type: 'module',
+    dependencies: { '@happier-dev/protocol': 'workspace:*', '@happier-dev/other-lane-pkg': 'workspace:*' } }));
   const revision = await resolveSourceRevision({ repoDir, overlay: [overlayPath], outputDir: fixture.path('revisions') });
   // These paths were clean when described, then changed before either host captured.
   await writeFile(join(repoDir, 'packages/protocol/src/late-edit.ts'), 'export const late = "other-lane";');
@@ -276,6 +282,8 @@ test('revision capture takes committed bytes plus only the declared overlay, nev
     outputDir: fixture.path('direct'), revision });
   assert.equal(await readFile(join(direct.repoDir, 'packages/protocol/src/late-edit.ts'), 'utf8'),
     committed['packages/protocol/src/late-edit.ts']);
+  assert.equal(await stat(join(direct.repoDir, 'packages/other-lane-pkg/package.json')).catch(() => null), null,
+    'a workspace the revision does not contain is not part of its capture');
   // Declared overlays remain exact inputs, rather than silently falling back to Git.
   await writeFile(join(repoDir, overlayPath), 'export const version = "changed-overlay";');
   await assert.rejects(captureSourceRuntimeSharedInputs({ repoDir,

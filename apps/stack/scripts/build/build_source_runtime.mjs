@@ -114,7 +114,11 @@ export async function captureSourceWebBuildInputs({ repoDir, outputDir, componen
   if (descriptor) capture.files = await applySourceRevision({ captureDir: outputDir, sourceDir: repoDir, files: capture.files,
     ownerDirs: workspaceDirs, descriptor });
   const revisionIdentity = sharedManifest?.revision ?? (descriptor ? sourceRevisionIdentity(descriptor) : undefined);
-  await mountCapturedWorkspaceDependencies({ sourceDir: repoDir, captureDir: outputDir, workspaceDirs });
+  // The checkout's workspace list can name another lane's untracked package,
+  // which the revision drops; mount only the workspaces the capture holds.
+  const captured = descriptor ? new Set(capture.files) : null;
+  await mountCapturedWorkspaceDependencies({ sourceDir: repoDir, captureDir: outputDir,
+    workspaceDirs: captured ? workspaceDirs.filter(dir => captured.has(`${dir.replaceAll('\\', '/')}/package.json`)) : workspaceDirs });
   if (component === 'expo') {
     const uiManifest = JSON.parse(await readFile(join(outputDir, 'apps/ui/package.json'), 'utf8'));
     const workspaces = await readWorkspacePackages(outputDir);
