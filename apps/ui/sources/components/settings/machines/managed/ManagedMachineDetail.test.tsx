@@ -3230,7 +3230,7 @@ describe('managed Machine detail', () => {
             expect(operationRpcBoundary.requests).toHaveLength(0);
         } finally { await screen.unmount(); }
     });
-    it.each(['retained', 'arriving'] as const)('discovers the exact creator installation question and answers without controller inventory or a Machine grant (%s)', async mode => {
+    it.each(['retained', 'arriving', 'opaque-retained'] as const)('discovers the exact creator installation question and answers without controller inventory or a Machine grant (%s)', async mode => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://creator-installation.test', scope: 'tab' });
         const homeId = 'srv_creator_installation';
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
@@ -3246,6 +3246,19 @@ describe('managed Machine detail', () => {
             controller, controllerAccess: { installationPublicKey: encodeBase64(installation.publicKey, 'base64url'), custodian: { accountId: 'company' } },
             allocation: 'bound', creationState: 'active', resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: {} },
             desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+        const { ManagedMachineReadV1Schema } = await import('@happier-dev/protocol/machines/managed/actionsV1');
+        const { sealManagedMachinePresetContentV1, replaceManagedMachinePresetLaunchNameV1 } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetContentV1');
+        const authored = sealManagedMachinePresetContentV1({ presetId: 'requester-preset', mode: 'plain',
+            content: { v: 1, name: machine.launch!.name, launch: machine.launch } });
+        const sealed = replaceManagedMachinePresetLaunchNameV1({ presetId: 'requester-preset', mode: 'plain',
+            content: authored.content, launchName: machine.launch!.name,
+            nativeResult: { kind: 'bound', resource: machine.resource! } });
+        if (!sealed) throw new Error('Expected admitted requester snapshot');
+        const { launch: _launch, resource: _resource, ...structural } = machine;
+        const read = mode === 'opaque-retained' ? ManagedMachineReadV1Schema.parse({
+            machine: { ...structural, preset: { id: 'requester-preset', revision: 1, contentEncryptionMode: 'plain' } },
+            presetContent: { content: sealed, recipientEnvelope: null },
+        }) : machine;
         const prompt = { kind: 'auth.approveRemoteProvisioning' as const, message: 'Review requester enrollment' };
         const operation: ActionOperationSnapshotV1 = { version: 1, operationId: 'requester-installation', revision: 1,
             actionId: 'machines.managed.acquire', state: 'running', scope: { accountId: 'requester', machineId: controller.machineId },
@@ -3253,22 +3266,26 @@ describe('managed Machine detail', () => {
             domainRef: { kind: 'managedMachine', id: machine.id, resource: machine.resource, controller,
                 bootstrapTask: { id: 'requester-task', taskKind: 'remote.ssh.bootstrapMachine.v1', prompt } } };
         const observed: unknown[] = [];
-        const answers: unknown[] = [];
         const http: string[] = [];
         const awaitedQuestion = createDeferred<void>();
         let answered = false;
         let waitingSignal: AbortSignal | undefined;
-        const socketBoundary = installDisconnectedServerSocketBoundary(socket => {
-            socket.connect = vi.fn(() => { socket.connected = true; for (const listener of socket.listeners('connect')) listener(); return socket; });
-            socket.emitWithAck = vi.fn(async (_event, payload) => { answers.push(payload); answered = true; return { ok: true, result: { ok: true, result: {} } }; });
-        }, { serverUrl: target.serverUrl, token });
+        const { createHomeGovernanceHarness } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+        const { installManagedInstallationResponseBoundary } = await import('@/dev/testkit/harness/managedInstallationResponseBoundary');
+        const homes = createHomeGovernanceHarness();
+        await homes.addHome({ name: 'Requester Home', serverUrl: target.serverUrl, serverIdentityId: homeId,
+            accountId: 'requester', currentAccount: true, credentials: { token } });
+        const installationBoundary = installManagedInstallationResponseBoundary({ homes, serverId, serverUrl: target.serverUrl,
+            homeId, token, enrollmentAccountId: 'requester', readMachine: () => read, onAnswer: () => { answered = true; } });
+        const answers = installationBoundary.answers;
         setRuntimeFetch(async (input, init) => {
             const path = new URL(String(input)).pathname;
             http.push(path);
             if (path === '/health' || path === '/v1/auth/ping') return Response.json({});
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
-            if (path === '/v1/machines/managed/actions/get') return Response.json(machine);
+            if (path.startsWith('/v1/auth/') || path.startsWith('/v1/features')) return homes.request(input, init);
+            if (path === '/v1/machines/managed/actions/get') return Response.json(read);
             if (path.endsWith('/execution-authorization')) {
                 const { envelope } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(String(init?.body)));
                 const actionId = path.slice('/v1/actions/'.length, -'/execution-authorization'.length);
@@ -3295,8 +3312,8 @@ describe('managed Machine detail', () => {
                     : mode === 'arriving' ? { ...operation, domainRef: { kind: 'managedMachine', id: machine.id,
                         resource: machine.resource, controller, bootstrapTask: { id: 'requester-task', taskKind: 'remote.ssh.bootstrapMachine.v1' } } } : operation;
                 return Response.json({ v: 1, requestId: envelope.requestId, actionId, execution: { ok: true,
-                    result: actionId === 'machines.managed.get' ? machine : actionId === 'action.operations.list' ? { items: [listed], nextCursor: null }
-                        : actionId === 'action.operations.get' ? { kind: 'found', operation } : { machines: [machine] } } });
+                    result: actionId === 'machines.managed.get' ? read : actionId === 'action.operations.list' ? { items: [listed], nextCursor: null }
+                        : actionId === 'action.operations.get' ? { kind: 'found', operation } : { machines: [read] } } });
             }
             return Response.json({ error: 'not_found' }, { status: 404 });
         });
@@ -3311,6 +3328,8 @@ describe('managed Machine detail', () => {
         };
         const screen = await renderScreen(page(true));
         try {
+            // The opaque Home carrier must open before installation matching is evaluated.
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain(machine.launch!.name));
             if (mode === 'arriving') {
                 await vi.waitFor(() => expect(observed).toContainEqual(expect.objectContaining({ managed: { homeId, managedId: machine.id },
                     operationId: operation.operationId, waitForTerminal: true, includeManagedPrompt: true })));
@@ -3325,23 +3344,15 @@ describe('managed Machine detail', () => {
                 await vi.waitFor(() => expect(waitingSignal).not.toBe(firstWait));
                 awaitedQuestion.resolve();
             }
-            await waitForHomeGovernance(async () => {
-                await flushHookEffects();
-                expect(screen.findByTestId('managed-machine.installation-prompt-decline'),
-                    JSON.stringify({ observed, http, operations: [...actionOperationStore.getSnapshot().operationsByKey.values()],
-                        rpc: operationRpcBoundary.requests, text: screen.getTextContent() })).not.toBeNull();
-            });
-            expect(observed).toContainEqual(expect.objectContaining({ managed: { homeId, managedId: machine.id } }));
-            await screen.pressByTestId('managed-machine.installation-prompt-decline');
-            await vi.waitFor(() => expect(answers, JSON.stringify({ http, text: screen.getTextContent(),
-                errors: screen.tree.findAll(node => node.props.testID === 'managed-machine.control-error').map(node => node.props.diagnosticCode) }))
-                .toContainEqual(expect.objectContaining({ params: expect.objectContaining({
-                params: expect.objectContaining({ managedId: machine.id, operationId: operation.operationId, taskId: 'requester-task', answer: { approved: false } }) }) })));
-            await vi.waitFor(() => expect(screen.findByTestId('managed-machine.installation-prompt-decline')).toBeNull());
+            await vi.waitFor(() => expect(answers).toHaveLength(1));
+            expect(answers).toContainEqual(expect.objectContaining({ managedId: machine.id, operationId: operation.operationId,
+                taskId: 'requester-task', answer: { approved: true } }));
+            expect(screen.findByTestId('managed-machine.installation-prompt-approve')).toBeNull();
+            expect(screen.findByTestId('managed-machine.installation-prompt-decline')).toBeNull();
             expect(operationRpcBoundary.requests).toHaveLength(0);
-        } finally { await screen.unmount(); socketBoundary.dispose(); }
+        } finally { await screen.unmount(); installationBoundary.dispose(); }
     });
-    it.each(['ssh.trustHost', 'ssh.replaceHostKey', 'auth.approveRemoteProvisioning', 'daemon.replaceRemoteBackgroundServices'] as const)(
+    it.each(['ssh.trustHost', 'ssh.replaceHostKey', 'daemon.replaceRemoteBackgroundServices'] as const)(
         'renders the managed %s question and delivers both decisions through the real respond Action', async kind => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-trust.test', scope: 'tab' });
         const homeId = 'srv_managed_trust';
@@ -3542,13 +3553,13 @@ describe('managed Machine detail', () => {
             expect(actionPaths.filter(path => /grant|controller/.test(path))).toEqual([]);
         } finally { await screen.unmount(); }
     });
-    it('asks the installer task\'s pending sign-in consent on the waiting row and answers only through the user', async () => {
+    it('asks the installer task\'s pending service replacement on the waiting row and answers only through the user', async () => {
         const machine: ManagedMachineV1 = { id: 'consent-managed', homeId: 'consent-home', custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Design sandbox', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
             resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: { resourceId: 'existing' } },
             desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
-        const consent = { kind: 'auth.approveRemoteProvisioning' as const, message: 'Sign this managed machine into your Account for Account-wide automation?' };
+        const consent = { kind: 'daemon.replaceRemoteBackgroundServices' as const, message: 'Replace existing background services?' };
         const domainRef = { kind: 'managedMachine' as const, id: machine.id, resource: machine.resource, controller: machine.controller,
             bootstrapTask: { id: 'bootstrap', taskKind: 'remote.ssh.bootstrapMachine.v1' as const } };
         const snapshot: ActionOperationSnapshotV1 = {
@@ -3565,8 +3576,6 @@ describe('managed Machine detail', () => {
         const asking = { ...operation, snapshot: { ...snapshot, revision: 2, domainRef: { ...domainRef,
             bootstrapTask: { ...domainRef.bootstrapTask, prompt: consent } } } };
         await act(async () => screen.tree.update(<AccountNoticeInvestigationBoundary><ManagedCreationProgress {...{ machine, operation: asking, answerPrompt }} /></AccountNoticeInvestigationBoundary>));
-        expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.installation'
-            && node.props.subtitle === consent.message).length).toBeGreaterThan(0);
         expect(answers).toEqual([]);
         const press = async (testID: string) => {
             const button = screen.tree.findAll(node => node.props?.testID === testID && typeof node.props.onPress === 'function')[0];

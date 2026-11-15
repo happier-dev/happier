@@ -1,4 +1,5 @@
-import { buildManagedMachineAcquireInput } from './managedMachineCreation';
+import { readServerAccountScopeOwnerLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { buildManagedMachineAcquireInput, runManagedMachineCreation } from './managedMachineCreation';
 import * as React from 'react';
 import { readMachineProvisionerHostAvailability } from '@happier-dev/cli-common/machines/managed/provisioners';
 import { showManagedGetTheAppModal } from './ManagedGetTheAppModal';
@@ -13,7 +14,7 @@ import { machinePresetEditContinuationDraft, type MachinePresetEditContinuation,
 import { createManagedCredentialSelectionV1, readManagedCredentialSelectionValueV1, type ManagedControllerV1, type ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import type { ExternalActionManagedAdmissionReceiptV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import type { ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { ManagedAcquireInputV1, ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { isMachineProvisionerCredentialPurposeRequiredV1, readMachineProvisionerCredentialPurposeSelectorPathsV1, readMachineProvisionerPrerequisitesV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
@@ -95,7 +96,7 @@ import { ManagedImagePreview, useManagedImagePreviews } from './useManagedImageP
 import { refreshManagedProvisionerAvailability } from './managedProvisionerAvailability';
 import { ManagedSizeTable, ManagedImageTiles, ManagedLocationGroup, ManagedNetworkGroup } from './ManagedChoiceSections';
 import { managedConfiguratorChoiceOwnsField, managedConfiguratorDimensionChoices, managedConfiguratorDimensionSelection, managedConfiguratorEnrollmentDefault, selectManagedConfiguratorDimension } from './managedConfiguratorModel';
-import { createManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
+import { createManagedMachineSelectionDraft, type ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import type { ManagedMachineUse } from '@/components/sessions/new/components/machineSelection/managedMachineSelection';
 import type { ManagedPrerequisiteV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
@@ -769,7 +770,26 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         if (props.onCreated) props.onCreated({ serverId: activeBinding.serverId, managedId });
         else router.replace(`/settings/machines/managed/${encodeURIComponent(managedId)}?serverId=${encodeURIComponent(activeBinding.serverId)}` as never);
     };
-    const created = (value: ManagedMachineActionOutputV1<'machines.managed.acquire'>) => completeCreation(value.managedId);
+    const continueCreation = async (selected: ManagedMachineSelectionDraft,
+        value: ManagedMachineActionOutputV1<'machines.managed.acquire'>, abort: AbortController) => {
+        if (!activeBinding?.isCurrent() || abort.signal.aborted) return;
+        if (value.operation) {
+            // The admitted continuation belongs to the Account, beyond this page's visibility or lifetime.
+            const lifetime = readServerAccountScopeOwnerLifetime(activeBinding);
+            if (mutationAbort.current === abort) mutationAbort.current = null;
+            const retirement = lifetime.onRetire(() => abort.abort());
+            try {
+                await runManagedMachineCreation({ draft: selected,
+                    acquisition: { requestId: randomUUID(), selection: selected.selection, managedId: value.managedId, operation: value.operation },
+                    scope: { serverId: activeBinding.serverId, accountId: activeBinding.accountId },
+                    signal: abort.signal, isCurrent: () => lifetime.isCurrent(), onApprovalPending,
+                    onAcquisitionChange: () => {}, onProgress: progress => {
+                        if (progress.kind === 'failed' && activeBinding.isCurrent()) failed(progress.code, 'create', progress.diagnosticDetail);
+                    } });
+            } finally { retirement.dispose(); }
+        }
+        if (!abort.signal.aborted) completeCreation(value.managedId);
+    };
     // A correlated waiting admission opens its managed row; it is not a completed native Action.
     const admitted = (receipt: ExternalActionManagedAdmissionReceiptV1) => completeCreation(receipt.managedId);
     const reviewedAcquireInput = async () => {
@@ -788,10 +808,9 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         }
         return managedConfiguratorAcquireInput(acquireDraft, catalog.homeId);
     };
-    const commitUse = async () => {
-        const input = await reviewedAcquireInput();
-        if (!input || !facts || !activeBinding?.isCurrent()) return;
-        const selected = createManagedMachineSelectionDraft({ selection: input.selection,
+    const reviewedSelection = (input: ManagedAcquireInputV1) => {
+        if (!facts) return null;
+        return createManagedMachineSelectionDraft({ selection: input.selection,
             receipt: 'reviewedFacts' in input && input.reviewedFacts ? input.reviewedFacts : facts,
             enrollmentIdentity: effectiveDraft?.enrollmentIdentity,
             ...(input.selection.kind === 'preset' && creationPreset ? {
@@ -799,6 +818,11 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                 presetOrigin: { id: creationPreset.id, homeId: creationPreset.homeId, revision: creationPreset.revision,
                     controller: creationPreset.controller, controllerPoolId: creationPreset.controllerPoolId,
                     retention: creationPreset.retention, wakeOnAcceptedMessage: creationPreset.wakeOnAcceptedMessage } } : {}) });
+    };
+    const commitUse = async () => {
+        const input = await reviewedAcquireInput();
+        const selected = input && reviewedSelection(input);
+        if (!selected || !activeBinding?.isCurrent()) return;
         if (props.createOnUse) props.onUse?.(selected, { create: true });
         else if (props.startsSession) props.onUse?.(selected, { send: true });
         else props.onUse?.(selected);
@@ -808,12 +832,15 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         if (!input || !activeBinding?.isCurrent() || !catalog.client) return;
         setBusy(true); setError(null);
         const abort = new AbortController(); mutationAbort.current = abort;
+        const selected = reviewedSelection(input);
+        if (!selected) return;
+        const created = (value: ManagedMachineActionOutputV1<'machines.managed.acquire'>) => continueCreation(selected, value, abort);
         try {
         const result = await catalog.client.execute('machines.managed.acquire', input, { signal: abort.signal,
             ...(input.selection.kind === 'preset' && creationPreset ? { managedPresetOrigin: creationPreset } : {}),
             onApprovalPending, onApprovalSucceeded: created, onApprovalAdmitted: admitted,
             onApprovalFailed: (code, failure) => failed(code, 'create', describeManagedActionFailureDiagnostic(code, failure?.details, failure?.requestId, failure?.failureCause), failure?.failureCause) });
-        if (!abort.signal.aborted) { if (result.kind === 'succeeded') created(result.value); else if (result.kind === 'admitted') admitted(result.receipt); else if (result.kind === 'failed')
+        if (!abort.signal.aborted) { if (result.kind === 'succeeded') await created(result.value); else if (result.kind === 'admitted') admitted(result.receipt); else if (result.kind === 'failed')
             failed(result.code, 'create', describeManagedActionFailureDiagnostic(result.code, result.details, result.requestId, result.failureCause), result.failureCause); }
         } catch { if (!abort.signal.aborted) failed('unavailable', 'create'); }
     };
@@ -953,12 +980,13 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                     else if (props.startsSession) props.onUse(selected, { send: true });
                     else props.onUse(selected);
                 } else {
+                    const created = (value: ManagedMachineActionOutputV1<'machines.managed.acquire'>) => continueCreation(selected, value, abort);
                     const input = buildManagedMachineAcquireInput(selected);
                     if (!input) return;
                     const result = await catalog.client?.execute('machines.managed.acquire', input, { signal: abort.signal,
                         onApprovalPending, managedPresetOrigin: selected.presetOrigin, onApprovalSucceeded: created, onApprovalAdmitted: admitted,
                         onApprovalFailed: (code, failure) => failed(code, 'create', describeManagedActionFailureDiagnostic(code, failure?.details, failure?.requestId, failure?.failureCause), failure?.failureCause) });
-                    if (result?.kind === 'succeeded') created(result.value);
+                    if (result?.kind === 'succeeded') await created(result.value);
                     else if (result?.kind === 'admitted') admitted(result.receipt);
                     else if (result?.kind === 'failed') failed(result.code, 'create', describeManagedActionFailureDiagnostic(result.code, result.details, result.requestId, result.failureCause), result.failureCause);
                 }

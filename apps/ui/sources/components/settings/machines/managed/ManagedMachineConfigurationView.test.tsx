@@ -1774,6 +1774,89 @@ describe('mounted managed configurator', () => {
       expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(1);
     } finally { await screen.unmount(); }
   });
+  it.each(['mounted', 'unmounted'] as const)('answers admitted requester pairing from configurator Create without mounting the detail page (%s)', async visibility => {
+    const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+    const token = createAccountTokenForTests('owner', { currentAccount: true });
+    const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://configurator-pairing.example.test',
+      serverIdentityId: 'srv_add_server', accountId: 'owner', currentAccount: true, teamsEnabled: true, credentials: { token } });
+    const { teamSummaryFixture, teamCapabilitiesFixture } = await import('@/dev/testkit/fixtures/teamFixtures');
+    harness.answer(serverId, '/v1/teams/get', { body: teamSummaryFixture({ id: 'team-1', viewerRole: 'member', capabilities: teamCapabilitiesFixture({}) }) });
+    const key = encodeBase64(tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9)).publicKey, 'base64url');
+    const saved = createDelegatedManagedPresetFixture({ descriptor: provisioner.descriptor, installationPublicKey: key,
+      custodianAccountId: 'company', preset: { id: 'pairing-preset', homeId: 'srv_add_server', revision: 0,
+        name: 'Shared machine', owner: { kind: 'team', teamId: 'team-1' }, controller: defaultController,
+        launch: { provider: provisioner.contribution, schemaVersion: 1, name: 'Shared machine', choices: { cpu: 2 } }, teamAcquireDelegated: true } });
+    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: saved } });
+    harness.answer(serverId, '/v1/machines/presets/resolve-acquire', { body: { kind: 'resolved', controller: defaultController,
+      controllerAccess: saved.opened.controllerAccess } });
+    let answered = false;
+    const promptArrival = createDeferred<void>();
+    if (visibility === 'mounted') promptArrival.resolve();
+    const { ManagedMachineV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
+    const { ActionOperationSnapshotV1Schema } = await import('@happier-dev/protocol/actions/operations/v1');
+    const machine = ManagedMachineV1Schema.parse({ id: 'pairing-resource', homeId: 'srv_add_server',
+      custodianAccountId: 'company', enrollmentAccountId: 'owner', controller: defaultController,
+      controllerAccess: { installationPublicKey: key, custodian: { accountId: 'company' } },
+      launch: { provider: provisioner.contribution, schemaVersion: 1, name: 'Pairing', choices: {} },
+      allocation: 'bound', creationState: 'active', resource: { contributionRef: provisioner.contribution, schemaVersion: 1, value: {} },
+      desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+    const { installManagedInstallationResponseBoundary } = await import('@/dev/testkit/harness/managedInstallationResponseBoundary');
+    const installationBoundary = installManagedInstallationResponseBoundary({ homes: harness, serverId,
+      serverUrl: 'https://configurator-pairing.example.test', homeId: 'srv_add_server', token, enrollmentAccountId: 'owner',
+      readMachine: () => machine, onAnswer: () => { answered = true; } });
+    const answers = installationBoundary.answers;
+    const operation = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'pairing-operation', revision: 1,
+      actionId: 'machines.managed.acquire', state: 'running', scope: { accountId: 'owner', machineId: 'host' },
+      title: 'Create pairing', createdAt: 1, startedAt: 2, cancellation: 'supported',
+      domainRef: { kind: 'managedMachine', id: machine.id, resource: machine.resource, controller: defaultController,
+        bootstrapTask: { id: 'pairing-task', taskKind: 'remote.ssh.bootstrapMachine.v1',
+          prompt: { kind: 'auth.approveRemoteProvisioning', message: 'Sign into requester Account' } } } });
+    for (const actionId of ['machines.managed.acquire', 'machines.managed.get', 'action.operations.get', 'machines.managed.bootstrap.respond']) {
+      harness.answer(serverId, `/v1/actions/${actionId}`, { select: async value => {
+        if (actionId === 'action.operations.get' && !answered) await promptArrival.promise;
+        const envelope = ExternalActionRequestEnvelopeV1Schema.parse(value && typeof value === 'object' && 'envelope' in value ? value.envelope : value);
+        if (actionId === 'machines.managed.bootstrap.respond') answered = true;
+        const result = actionId === 'machines.managed.acquire' ? { managedId: machine.id, operation: { operationId: operation.operationId } }
+          : actionId === 'machines.managed.get' ? machine
+          : actionId === 'action.operations.get' ? { kind: 'found', operation: answered
+            ? { ...operation, revision: 2, state: 'succeeded', settledAt: 3, domainRef: { ...operation.domainRef, bootstrapTask: undefined } } : operation }
+          : {};
+        return { body: { v: 1, actionId, requestId: envelope.requestId, execution: { ok: true, result } } };
+      } });
+    }
+    const { ExternalActionExecutionAuthorizationV1Schema, projectExternalActionManagedAdmissionV1 } = await import('@happier-dev/protocol/actions/externalActionApi');
+    const { computeExternalActionRequestEnvelopeDigestV1 } = await import('@happier-dev/protocol/actions/externalActionExecutionAuthorization');
+    for (const actionId of ['machines.managed.acquire', 'action.operations.get', 'machines.managed.bootstrap.respond']) {
+      harness.answer(serverId, `/v1/actions/${actionId}/execution-authorization`, { select: value => {
+        const { envelope } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(value);
+        const managedAdmission = actionId === 'machines.managed.acquire' ? undefined
+          : envelope.v === 1 ? projectExternalActionManagedAdmissionV1(actionId, envelope.input) : envelope.managedAdmission;
+        return { body: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'pairing-authorization', binding: {
+          serverIdentityId: 'srv_add_server', accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 0 },
+          machineId: 'host', installationId: 'installation', custodianAccountId: 'company', accountEncryptionMode: 'plain',
+          actionId, requestId: envelope.requestId, target: envelope.target,
+          requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), ...(managedAdmission ? { managedAdmission } : {}),
+          ...(actionId === 'machines.managed.acquire' ? { managedAcquireDelegation: true } : {}) } }) };
+      } });
+    }
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
+      provisioner={buildQualifiedPluginContributionKey(provisioner.contribution)} presetId={saved.id} />);
+    let unmounted = false;
+    try {
+      await waitForHomeGovernance(() => expect(createDisabled(screen)).toBe(false));
+      await screen.pressByTestIdAsync('managed-config.create');
+      await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/actions/machines.managed.acquire'), JSON.stringify({ paths: harness.requests.map(request => request.path), errors: screen.tree.findAll(node => node.props.testID === 'managed-config.error').map(node => ({ code: node.props.diagnosticCode, detail: node.props.diagnosticDetail })) })).toHaveLength(1));
+      if (visibility === 'unmounted') {
+        await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/actions/action.operations.get')).toHaveLength(1));
+        await screen.unmount(); unmounted = true;
+        promptArrival.resolve();
+      }
+      await waitForHomeGovernance(() => expect(answers).toHaveLength(1));
+      expect(answers).toContainEqual(expect.objectContaining({ managedId: machine.id, operationId: operation.operationId,
+        taskId: 'pairing-task', answer: { approved: true } }));
+    } finally { promptArrival.resolve(); if (!unmounted) await screen.unmount(); installationBoundary.dispose(); }
+  });
   it('names the unfinished choice instead of saying it is no longer available', async () => {
     const screen = await mountAddRoute('unfinished-choice', 'personal', 'linux', undefined, false);
     const { ManagedMachineConfigurator } = await import('./ManagedMachineConfigurator');

@@ -1,3 +1,4 @@
+import { approveManagedMachineEnrollment } from './managedMachineCreation';
 import * as React from 'react';
 import { View, type GestureResponderEvent } from 'react-native';
 import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
@@ -335,17 +336,29 @@ function ManagedMachineFullSections(props: FullSectionProps) {
                 const observed = actionOperationSelectors.selectForManagedMachine(actionOperationStore.getSnapshot(), {
                     ...scope, homeId: machine.homeId, managedId: machine.id, enrolledMachineId: machine.enrolledMachineId, managedMachine: machine });
                 const installation = currentManagedCreationOperation(machine, observed);
-                if (!installation || installation.snapshot.state !== 'running' || readManagedInstallationPrompt(installation)) return;
-                // The canonical runner waits on its store subscription, not a client timer or a second operation owner.
-                await refreshActionOperationSnapshot({ operation: installation, shouldContinue,
-                    readSnapshot: async operationId => {
-                        const result = await props.executeAction('action.operations.get', {
-                            serverId: props.serverId, machineId: controllerPair.machineId, managed, operationId,
-                            waitForTerminal: true, includeManagedPrompt: true,
-                        }, context);
-                        if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
-                        return ActionOperationGetV1ResponseSchema.parse(result.result);
-                    } });
+                if (!installation || installation.snapshot.state !== 'running') return;
+                if (!readManagedInstallationPrompt(installation)) {
+                    // The canonical runner waits on its store subscription, not a client timer or a second operation owner.
+                    await refreshActionOperationSnapshot({ operation: installation, shouldContinue,
+                        readSnapshot: async operationId => {
+                            const result = await props.executeAction('action.operations.get', {
+                                serverId: props.serverId, machineId: controllerPair.machineId, managed, operationId,
+                                waitForTerminal: true, includeManagedPrompt: true,
+                            }, context);
+                            if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+                            return ActionOperationGetV1ResponseSchema.parse(result.result);
+                        } });
+                }
+                if (!shouldContinue()) return;
+                const latest = actionOperationSelectors.selectForManagedMachine(actionOperationStore.getSnapshot(), {
+                    ...scope, homeId: machine.homeId, managedId: machine.id, enrolledMachineId: machine.enrolledMachineId, managedMachine: machine });
+                const question = readManagedInstallationPrompt(currentManagedCreationOperation(machine, latest));
+                if (question?.kind === 'auth.approveRemoteProvisioning' && latest) {
+                    const { taskId, ...prompt } = question;
+                    await approveManagedMachineEnrollment({ prompt,
+                        correlation: { ...managed, serverId: props.serverId, operationId: latest.snapshot.operationId, taskId },
+                        respond: answer => run('machines.managed.bootstrap.respond', answer) });
+                }
             })().catch(() => { if (shouldContinue()) publishActionOperationObservation({ ...scope, observation: 'unavailable' }); });
         }
         const machineIds = [...new Set([...(currentControllerAvailable && !creatorScoped && controllerPair ? [controllerPair.machineId] : []),
@@ -734,7 +747,7 @@ function ManagedMachineFullSections(props: FullSectionProps) {
     const installationOperation = currentManagedCreationOperation(machine, operation);
     const installationPrompt = readManagedInstallationPrompt(installationOperation);
     const answerPrompt = canRecoverCreation && (currentControllerAvailable || creatorScoped) && installationPrompt
-        && installationOperation ? (approved: boolean) => {
+        && installationPrompt.kind !== 'auth.approveRemoteProvisioning' && installationOperation ? (approved: boolean) => {
         const { taskId, ...prompt } = installationPrompt;
         const correlation = { ...target, serverId: props.serverId, operationId: installationOperation.snapshot.operationId, taskId };
         if (prompt.kind === 'administrator.establish') {

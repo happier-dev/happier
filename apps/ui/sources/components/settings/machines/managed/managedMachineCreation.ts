@@ -11,7 +11,7 @@ import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionE
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedAcquireAgentStartV1 } from '@happier-dev/protocol/machines/managed/agentStartV1';
 import type { SessionAgentUpdateNoticeV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
-import { ActionOperationGetV1ResponseSchema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { ActionOperationGetV1ResponseSchema, type ActionOperationSnapshotV1, type ManagedMachineBootstrapPromptV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import {
@@ -80,6 +80,16 @@ export function buildManagedMachineAcquireInput(
                 presetContentOverride: draft.presetContentOverride } : null;
     const parsed = candidate && ManagedAcquireInputV1Schema.safeParse(candidate);
     return parsed?.success ? parsed.data : null;
+}
+
+/** Admitted Create already includes signing the guest into the requester's Account. */
+export function approveManagedMachineEnrollment<T>(input: Readonly<{
+    prompt: Extract<ManagedMachineBootstrapPromptV1, { kind: 'auth.approveRemoteProvisioning' }>;
+    correlation: Readonly<{ homeId: string; managedId: string; serverId: string; operationId: string; taskId: string }>;
+    respond: (input: Readonly<{ homeId: string; managedId: string; serverId: string; operationId: string; taskId: string;
+        purpose: 'approve'; prompt: Extract<ManagedMachineBootstrapPromptV1, { kind: 'auth.approveRemoteProvisioning' }>; approved: true }>) => Promise<T>;
+}>): Promise<T> {
+    return input.respond({ ...input.correlation, purpose: 'approve', prompt: input.prompt, approved: true });
 }
 
 /** Explicit Run/Send joins managed creation, then reads the actual enrolled target. */
@@ -286,17 +296,15 @@ export async function runManagedMachineCreation(input: Readonly<{
                             expectedIntentRevision }),
                     })
                     : prompt.kind === 'auth.approveRemoteProvisioning'
-                    // The response owner consumes one private pairing delivery with
-                    // this admitted answer; it never asks for another decision.
-                    ? await executeApproved('machines.managed.bootstrap.respond', {
-                        ...correlation, purpose: 'approve', prompt, approved: true })
+                    ? await approveManagedMachineEnrollment({ prompt, correlation,
+                        respond: answer => executeApproved('machines.managed.bootstrap.respond', answer) })
                     : await answerManagedCreationPrompt({ prompt, isCurrent: current,
                         respond: approved => executeApproved('machines.managed.bootstrap.respond', {
                             ...correlation, purpose: 'approve', prompt, approved }),
                     });
                 if (!current()) return fail('continuation_retired');
                 if (answered.kind === 'failed') return fail(answered.code, undefined, undefined, answered.failure);
-                // Only a delivered human answer advances the existing event-backed wait.
+                // Only a delivered answer advances the existing event-backed wait.
                 continue;
             }
             if (found.operation.state === 'accepted' || found.operation.state === 'running') {
