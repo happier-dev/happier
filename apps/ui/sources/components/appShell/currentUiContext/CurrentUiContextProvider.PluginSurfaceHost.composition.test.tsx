@@ -458,7 +458,7 @@ async function createMountedClientActionFixture(handler: PluginClientActionHandl
     const { normalizePluginManifestV2 }: Readonly<{ normalizePluginManifestV2(input: unknown): Readonly<{ version: string }> }> =
         await import(new URL('../../../../../cli/src/plugins/manifest/normalize.ts', import.meta.url).href);
     const { projectLoadedPluginContributes }: Readonly<{ projectLoadedPluginContributes(input: unknown): Readonly<Record<string, unknown>> }> =
-        await import(new URL('../../../../../cli/src/plugins/projection/registry/resolvePluginContributions.ts', import.meta.url).href);
+        await import(new URL('../../../../../cli/src/plugins/projection/registry/fullProjection.ts', import.meta.url).href);
     const { createResolvedContributionRegistry }: Readonly<{ createResolvedContributionRegistry(input: unknown): unknown }> =
         await import(new URL('../../../../../cli/src/plugins/projection/registry/createResolvedContributionRegistry.ts', import.meta.url).href);
     const { buildPluginProjectionV2 }: Readonly<{ buildPluginProjectionV2(input: unknown): unknown }> =

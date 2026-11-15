@@ -1428,10 +1428,36 @@ describe('runHostSessionRuntime', () => {
       operations: hooklessRuntime,
       nativeRuntime: hooklessRuntime,
     } as never));
-
-    await expect(
-      runHostSessionRuntime(harness.opts, harness.config, harness.deps),
-    ).rejects.toThrow(/provider delivery outcome/i);
+    // A refused native open keeps serving Pending originals until its own Stop
+    // (3d093b096a8). The refusal must settle them before any provider effect.
+    let stop: (() => Promise<void>) | undefined;
+    harness.config.onRuntimeStopReady = value => { stop = value; };
+    const pending = new Set<string>();
+    harness.session.hasPendingProviderInput = (localId?: string) => localId === undefined ? pending.size > 0 : pending.has(localId);
+    const rejected: unknown[] = [];
+    harness.session.observeProviderInputSettlement = async (outcome: import('@/agent/runtime/session/input/providerInputOutcome').SessionProviderInputOutcome) => {
+      rejected.push(outcome);
+      if (outcome.kind === 'rejected_before_effect' && !outcome.retryable) pending.delete(outcome.localId);
+      return false;
+    };
+    const running = runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+    let finished = false;
+    const result = running.then(() => { finished = true; return null; }, error => { finished = true; return error; });
+    try {
+      pending.add('hookless-original');
+      harness.queue.pushIsolate({ text: 'Must not execute', localId: 'hookless-original' }, { permissionMode: 'default' });
+      // A runtime without the outcome port is an unclassified open failure:
+      // the original is refused before any effect and stays Pending for retry.
+      await vi.waitFor(() => expect(rejected).toContainEqual(expect.objectContaining({
+        localId: 'hookless-original', kind: 'rejected_before_effect', retryable: true,
+        reason: 'provider_unavailable_before_acceptance', diagnostic: { code: 'agent_session_error', severity: 'error' },
+      })));
+      expect(pending.has('hookless-original')).toBe(true);
+    } finally {
+      if (!finished) await stop?.();
+    }
+    // Stop retires the refused receiver and surfaces the original refusal.
+    expect(await result).toMatchObject({ message: expect.stringMatching(/provider delivery outcome/i) });
     expect(runSessionLoopLifecycleFn).not.toHaveBeenCalled();
     expect(hooklessRuntime.sendTurnPrompt).not.toHaveBeenCalled();
     expect(hooklessRuntime.steerInFlightTurn).not.toHaveBeenCalled();

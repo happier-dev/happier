@@ -276,6 +276,9 @@ it.each(['registered', 'untracked index parent'] as const)('does not recreate an
             accountSnapshot: { source: 'network', settings: accountSettingsParse({}), settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
                 promptLibraryCatalog: { status: 'ready', rows: [{ revision: 1, record: { key: 'skill-rules', value: { v: 1, rules: [
                     { id: 'everywhere', skillId: 'library', target: { t: 'allMachines' }, enabled: true, createdAt: 1, updatedAt: 1 },
+                    // This lifecycle scenario isolates the Account skill; the built-in
+                    // happier skill's default delivery has dedicated coverage.
+                    { id: 'core-off', skillId: 'happier:happier', target: { t: 'allMachines' }, enabled: false, createdAt: 1, updatedAt: 1 },
                 ] } } }], tombstones: [], diagnostics: [] } },
         };
         const parentIndex = await resolveRunnerSkills({ ...input, ownerKey: 'late-parent', contributes: { catalogEntriesById: {} } }, { artifacts });

@@ -2276,7 +2276,7 @@ test('finite workspace publishers retain placement class without an outer payloa
     assert.equal(policy.selfPublisher ?? '0', expected, `${cwd}/${entry}`);
     assert.equal(policy.heavyClass, heavyClass);
     if (heavyClass === 'package-dist') {
-      assert.equal(commandPolicy.resolveHeavyweightMemoryFloorKiB(policy.heavyClass), 6 * 1024 * 1024);
+      assert.equal(commandPolicy.resolveHeavyweightMemoryFloorKiB(policy.heavyClass), 5.5 * 1024 * 1024);
     }
     const native = spawnSync('/bin/sh', ['-c', '. "$1"; repo_root=$2; invoked_cwd=$2/$3; shift 3; resolve_native_command_policy "$@"; printf "%s,%s,%s" "$policy_selfPublisher" "$policy_heavyClass" "$(heavyweight_memory_floor_kib "$policy_heavyClass")"', 'policy', artifact, root, cwd, ...args], { encoding: 'utf8', env });
     assert.equal(native.status, 0, native.stderr);
@@ -2294,7 +2294,7 @@ test('measured single-project package checks reuse dist admission without narrow
     const args = ['node', '../../scripts/workspaces/runTypeScriptCli.mjs', '--noEmit', '-p', 'tsconfig.json'];
     const policy = await commandPolicy.resolvePackageCommandPolicy(args, {repoRoot: root, cwd});
     assert.equal(policy.heavyClass, 'package-dist', name);
-    assert.equal(commandPolicy.resolveHeavyweightMemoryFloorKiB(policy.heavyClass), 6 * 1024 * 1024);
+    assert.equal(commandPolicy.resolveHeavyweightMemoryFloorKiB(policy.heavyClass), 5.5 * 1024 * 1024);
     const alias = await commandPolicy.resolvePackageCommandPolicy(['pnpm', 'run', 'typecheck'], {repoRoot: root, cwd});
     assert.equal(alias.heavyClass, 'package-dist', `${name} public alias`);
     assert.equal(resolveRemoteCommandPolicy([...args.slice(0, -1), 'tsconfig.tests.json'], {repoRoot: root, cwd}).heavyClass,
@@ -2313,7 +2313,7 @@ test('measured single-project package checks reuse dist admission without narrow
     const native = spawnSync('/bin/sh', ['-c', '. "$1"; repo_root=$2; invoked_cwd=$3; shift 3; resolve_native_command_policy "$@"; printf "%s,%s" "$policy_heavyClass" "$(heavyweight_memory_floor_kib "$policy_heavyClass")"',
       'policy', artifact, root, cwd, ...args], {encoding: 'utf8'});
     assert.equal(native.status, 0, native.stderr);
-    assert.equal(native.stdout, `package-dist,${6 * 1024 * 1024}`);
+    assert.equal(native.stdout, `package-dist,${5.5 * 1024 * 1024}`);
   }
   for (const name of ['protocol', 'sdk']) {
     const cwd = join(root, 'packages', name);
