@@ -63,7 +63,9 @@ export const BoardSettingsButton = React.memo(function BoardSettingsButton(props
                 iconName="dots-three"
                 variant="plain"
                 accessibilityLabel={t('boards.header.settings')}
-                tooltip={props.open ? undefined : t('boards.header.settings')}
+                tooltip={t('boards.header.settings')}
+                // Quieted, never removed: removing the tooltip changes the button's tree and remounts it (focus lost).
+                tooltipHidden={props.open}
                 onPress={() => onOpenChange(!props.open)}
             />
             {props.open ? (

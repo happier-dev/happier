@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Platform, View, type LayoutChangeEvent } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
+import { useHappierMaterialColorResolver, useHappierTabSelection } from '@happier-dev/plugin-ui/presentation';
 
 import { resolveAppRailBand, useActivateAppDestination, type AppRailBand } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
@@ -102,8 +102,24 @@ export const AppRail = React.memo(function AppRail() {
     const entries = React.useMemo(() => buildAppRailEntries(catalog, { includeHidden: true, botHomes }), [botHomes, catalog]);
     const { preferences } = useNavigationSurfacePlacement('appRail');
     const updatesVisible = describeUpdatesEntry(useSharedUpdatesSummary()) !== null;
-    const activeId = location.railEntryId;
-    const open = useActivateAppDestination();
+    const activate = useActivateAppDestination();
+    // A destination press shows its icon as the open one before the destination is built (`useHappierTabSelection`).
+    // Overlays, popovers and the Bots roster open no destination, so they activate at once and never show selected.
+    const pressed = React.useRef<AppRailEntry | null>(null);
+    const navigateTo = React.useCallback((id: string) => {
+        const entry = pressed.current;
+        if (entry?.id === id) activate(entry);
+    }, [activate]);
+    const [shownId, selectDestination] = useHappierTabSelection(location.railEntryId ?? '', navigateTo);
+    const activeId = shownId || null;
+    const open = React.useCallback((entry: AppRailEntry) => {
+        if (entry.activation !== 'navigate') {
+            activate(entry);
+            return;
+        }
+        pressed.current = entry;
+        selectDestination(entry.id);
+    }, [activate, selectDestination]);
 
     const items = React.useMemo(() => buildAppRailPlacementItems(entries, updatesVisible), [entries, updatesVisible]);
     const customize = React.useCallback(() => {
@@ -257,7 +273,10 @@ const AppRailItem = React.memo(function AppRailItem(props: Readonly<{
             interactiveTargetEdgesPx={APP_RAIL_ITEM_EDGES_PX}
             accessibilityLabel={entry.title}
             // Where resting on the icon peeks its column, the column says what it is.
-            tooltip={peeks ? undefined : tooltip}
+            // Quieted while it peeks, never removed: removing it changes the button's tree, so the button remounted
+            // (and dropped focus) each time the open destination moved.
+            tooltip={tooltip}
+            tooltipHidden={peeks}
             tooltipPlacement="right"
             selected={props.active}
             disabled={unavailable}

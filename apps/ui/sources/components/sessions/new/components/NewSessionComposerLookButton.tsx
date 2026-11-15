@@ -21,7 +21,7 @@ export const NewSessionComposerLookButton = React.memo(function NewSessionCompos
         <View ref={anchorRef} collapsable={false}>
             <IconButton testID={props.testID} variant="plain" iconName="palette" tooltipPlacement="top"
                 size={AGENT_INPUT_QUIET_ICON_SIZE_PX} interactiveTargetEdgesPx={edges}
-                accessibilityLabel={label} tooltip={open ? undefined : label} selected={open} expanded={open}
+                accessibilityLabel={label} tooltip={label} selected={open} expanded={open}
                 onPress={() => setOpen(!open)} />
             <LookPopover target={props.target} open={open} anchorRef={anchorRef} onRequestClose={close} />
         </View>

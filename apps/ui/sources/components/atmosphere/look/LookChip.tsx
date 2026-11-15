@@ -136,7 +136,7 @@ export const LookChip = React.memo(function LookChip(
           // A quiet glyph in the 28 px chip (lab: 15 px in secondary ink; the kit's small size); it darkens while open.
           icon={<Icon name="palette" size={ICON_SIZE.sm} color={open ? theme.colors.text.primary : theme.colors.text.secondary} />}
           accessibilityLabel={label}
-          tooltip={open ? undefined : label}
+          tooltip={label}
           selected={open}
           expanded={open}
           // The top-right slot keeps 6 px between the caption chip and this one, and 9 px above the composer's

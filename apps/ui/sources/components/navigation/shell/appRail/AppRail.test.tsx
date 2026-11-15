@@ -19,6 +19,7 @@ import { t } from '@/text';
 import { resolveCompactAppDestinations } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import type { PluginPage } from '@/components/plugins/pages/pluginPages';
 import { AppRailSurface } from './AppRail';
+import { AppShellPeekProvider } from './AppShellPeek';
 import { AppRailAccount } from './AppRailAccount';
 import { buildAppRailEntries, buildAppRailPlacementItems } from './appRailModel';
 
@@ -253,5 +254,30 @@ describe('AppRail measured room', () => {
         expect(screen.findByTestId('app-rail-usage-popover')).toBeNull();
         await act(async () => screen.findByTestId('app-rail-more:app-rail-usage:scroll-frame')?.props.onKeyDown({ nativeEvent: { key: 'Enter' } }));
         expect(screen.findByTestId('app-rail-usage-popover')).not.toBeNull();
+    });
+});
+
+describe('AppRail open destination moves (P03-TAB-SWITCH)', () => {
+    it('keeps both destination buttons mounted when the open destination moves, so focus and the press survive', async () => {
+        let move: (id: string) => void = () => {};
+        function Rail() {
+            const [active, setActive] = React.useState('workflows');
+            move = setActive;
+            // The peek owner follows the open destination, as the shell's does: the open icon stops peeking.
+            return <AppShellPeekProvider enabled currentId={active} columnShown>
+                <AppRailSurface entries={entries()} activeId={active} onOpen={() => {}} renderFooter={item => <View testID={item.id} />} />
+            </AppShellPeekProvider>;
+        }
+        const screen = await renderScreen(<InjectedAuthProvider credentials={null}><InboxSummaryProvider><Rail /></InboxSummaryProvider></InjectedAuthProvider>);
+        try {
+            const before = { projects: screen.findHostByTestId('app-rail:projects'), workflows: screen.findHostByTestId('app-rail:workflows') };
+            expect(before.projects?.props['aria-pressed']).toBe(false);
+            await act(async () => { move('projects'); });
+            const after = { projects: screen.findHostByTestId('app-rail:projects'), workflows: screen.findHostByTestId('app-rail:workflows') };
+            expect({ pressed: after.projects?.props['aria-pressed'],
+                sameProjects: after.projects?.instance === before.projects?.instance,
+                sameWorkflows: after.workflows?.instance === before.workflows?.instance })
+                .toEqual({ pressed: true, sameProjects: true, sameWorkflows: true });
+        } finally { await screen.unmount(); }
     });
 });
