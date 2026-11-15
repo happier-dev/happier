@@ -239,7 +239,7 @@ export function useMachineUpdatesReview(
   const operation = useActionOperation({
     serverId: review.kind === 'installing' ? input.serverId : null,
     operationId: review.kind === 'installing' ? review.operationId : '',
-  });
+  }, { machineId: input.machineId, actionId: 'machines.setup.updates.apply', lifetime });
   const operationState = operation?.snapshot.state ?? null;
   const { onSettled } = input;
   React.useEffect(() => {

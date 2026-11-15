@@ -1,8 +1,9 @@
 import * as React from 'react';
 
 import { actionOperationSelectors, createActionOperationSelectors, selectTerminalActionOperationState, type DeploymentTargetLinkOperationQuery, type TerminalActionOperationQuery } from './actionOperationSelectors';
-import { actionOperationStore } from './actionOperationStore';
+import { actionOperationStore, isActionOperationTerminal } from './actionOperationStore';
 import type { ActionOperationAddress, ActionOperationSessionAddress, ActionOperationProjectScriptQuery, ActionOperationProjectWorkspaceQuery, ActionOperationManagedMachineQuery, ActionOperationProjectServicesQuery } from './qualifiedActionOperation';
+import type { ServerAccountScopeLifetime } from '../scope/serverAccountScope';
 
 function useActionOperationSelector<T>(selector: () => T): T {
     return React.useSyncExternalStore(
@@ -37,10 +38,43 @@ export function useInboxActionOperations() {
     return useActionOperationSelector(readInboxActionOperations);
 }
 
-export function useActionOperation(address: ActionOperationAddress) {
-    return useActionOperationSelector(() => (
+export type AcceptedActionOperationRead = Readonly<{
+    machineId: string;
+    actionId: string;
+    lifetime: ServerAccountScopeLifetime | null;
+}>;
+
+export function useActionOperation(address: ActionOperationAddress, acceptedRead?: AcceptedActionOperationRead) {
+    const operation = useActionOperationSelector(() => (
         actionOperationSelectors.selectById(actionOperationStore.getSnapshot(), address)
     ));
+    const { serverId, operationId } = address;
+    const machineId = acceptedRead?.machineId;
+    const actionId = acceptedRead?.actionId;
+    const lifetime = acceptedRead?.lifetime;
+    const terminalComplete = operation?.snapshotComplete === true && isActionOperationTerminal(operation.snapshot.state);
+    React.useEffect(() => {
+        if (!serverId || !operationId || !machineId || !actionId || !lifetime || terminalComplete || !lifetime.isCurrent()) return;
+        const controller = new AbortController();
+        const retirement = lifetime.onRetire(() => controller.abort());
+        const current = () => !controller.signal.aborted && lifetime.isCurrent();
+        const unavailable = () => {
+            if (current()) actionOperationStore.setMachineObservation({ serverId, machineId }, 'unavailable');
+        };
+        // A shared requester has no custodian Account push. The existing observer
+        // joins its finite runner and retains demand through transport recovery.
+        void (async () => {
+            try {
+                const { observeActionOperation } = await import('./observeActionOperationByRequestId');
+                if (!current()) return;
+                await observeActionOperation({ serverId, machineId, accountId: lifetime.scope.accountId,
+                    operationId, actionId, signal: controller.signal, onUnavailable: unavailable });
+            } catch { unavailable(); }
+            finally { retirement.dispose(); }
+        })();
+        return () => { controller.abort(); retirement.dispose(); };
+    }, [serverId, operationId, machineId, actionId, lifetime, terminalComplete]);
+    return operation;
 }
 
 export function useActionOperationByRequestId(

@@ -107,4 +107,39 @@ describe('openActionOperationDetail', () => {
 
         expect(entries).toEqual([]);
     });
+
+    it('opens the native terminal result from cold Activity without a prior operation projection', async () => {
+        const { readDeploymentActivityPage } = await import('@/components/projects/deployments/deploymentActivityRead');
+        const { openActionOperationDetail } = await import('./openActionOperationDetail');
+        const { ActionOperationSnapshotV1Schema, ACTION_OPERATION_RPC_METHODS_V2,
+            projectActionOperationListSnapshotV1 } = await import('@happier-dev/protocol/actions/operations/v1');
+        const serverId = await homes.addHome({ name: 'Cold Activity', serverUrl: 'https://cold-activity.test', accountId: 'requester' });
+        homes.answer(serverId, '/v1/deployments/environments', { body: { ok: true, items: [], nextCursor: null } });
+        const full = ActionOperationSnapshotV1Schema.parse({
+            version: 1, operationId: 'native-updates', revision: 7, actionId: 'machines.setup.updates.apply', state: 'succeeded',
+            scope: { accountId: 'requester', machineId: 'shared-machine' }, title: 'Install machine updates',
+            createdAt: 1, startedAt: 2, settledAt: 3, cancellation: 'supported', result: { operationId: 'native-updates' },
+            domainRef: { kind: 'machineSetup', serverId, machineId: 'shared-machine', steps: [{
+                planIndex: 0, stepId: 'os-updates', label: { key: 'os-updates', fallback: 'Native package recovery' }, state: 'succeeded',
+            }] },
+        });
+        operationRpc.mockImplementation(async (...args) => {
+            const request = args[0] as Readonly<{ method: string }>;
+            return request.method === ACTION_OPERATION_RPC_METHODS_V2.list
+                ? { items: [projectActionOperationListSnapshotV1(full)], nextCursor: null }
+                : { kind: 'found', operation: full };
+        });
+        const screen = await renderScreen(React.createElement(ModalProvider, null, React.createElement(ObserveModals)));
+        const lifetime = { scope: { serverId, accountId: 'requester' }, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        await act(async () => {
+            const page = await readDeploymentActivityPage(lifetime, { limit: 10 }, ['shared-machine'],
+                { signal: new AbortController().signal });
+            expect(page.items).toMatchObject([{ kind: 'operation', operation: { operationId: full.operationId } }]);
+            openActionOperationDetail({ serverId, operationId: full.operationId });
+            await vi.dynamicImportSettled();
+        });
+        expect(screen.getTextContent()).toContain('Native package recovery');
+        expect(actionOperationStore.getSnapshot().operationsByKey.get(JSON.stringify([serverId, full.operationId])))
+            .toMatchObject({ snapshotComplete: true, snapshot: { state: 'succeeded', result: full.result } });
+    });
 });

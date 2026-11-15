@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createDeferred, flushHookEffects } from '@/dev/testkit';
+import { act, createDeferred, flushHookEffects, renderHook } from '@/dev/testkit';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { useActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
+import { createSocketIoBoundaryStub } from '@/dev/testkit/mocks/socketIo';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { apiSocket } from '@/sync/api/session/apiSocket';
 
 import {
     ACTION_OPERATION_RPC_METHODS_V1,
@@ -14,6 +19,12 @@ import { ActionOperationGetV2RequestSchema } from '@happier-dev/protocol/actions
 // live connection graph would add unrelated runtime ownership to this slice.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: vi.fn(),
+}));
+const network = vi.hoisted(() => ({ connect: vi.fn() }));
+// Socket.IO is the genuine connection boundary; the reconnect owner remains real.
+vi.mock('socket.io-client', async importOriginal => ({
+    ...await importOriginal<typeof import('socket.io-client')>(),
+    io: (...args: unknown[]) => network.connect(...args),
 }));
 
 import {
@@ -51,6 +62,41 @@ describe('action operation transport', () => {
     afterEach(() => {
         actionOperationStore.reset();
         vi.mocked(machineRpcWithServerScope).mockReset();
+    });
+
+    it('rejoins an accepted shared requester operation on Home reconnect without a custodian push', async () => {
+        const boundary = createSocketIoBoundaryStub({ autoConnect: false });
+        network.connect.mockReturnValue(boundary.socket);
+        apiSocket.initialize({ endpoint: 'https://accepted-recovery.example.test', serverId: 'home-1',
+            token: createAccountTokenForTests('account-1'),
+            request: async () => Response.json({ cursor: 0, changesFloor: 0 }),
+        }, null);
+        await vi.waitFor(() => expect(boundary.socket.connect).toHaveBeenCalled());
+        boundary.trigger('connect');
+        const terminal: ActionOperationSnapshotV1 = { ...accepted, actionId: 'machines.setup.updates.apply',
+            state: 'succeeded', revision: 7, startedAt: 1_500, settledAt: 2_000, result: { operationId: accepted.operationId } };
+        vi.mocked(machineRpcWithServerScope)
+            .mockResolvedValueOnce({ error: 'Transport unavailable', errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE })
+            .mockResolvedValueOnce({ kind: 'found', operation: terminal });
+        const lifetime: ServerAccountScopeLifetime = { scope: { serverId: 'home-1', accountId: 'account-1' },
+            isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        const hook = await renderHook(() => useActionOperation({ serverId: 'home-1', operationId: accepted.operationId },
+            { machineId: 'machine-1', actionId: terminal.actionId, lifetime }));
+        try {
+            await vi.waitFor(() => expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1));
+            expect(hook.getCurrent()).toBeNull();
+            await act(async () => {
+                boundary.trigger('disconnect', 'transport close');
+                boundary.trigger('connect');
+            });
+            await vi.waitFor(() => expect(machineRpcWithServerScope).toHaveBeenCalledTimes(2));
+            await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ snapshotComplete: true, snapshot: terminal }));
+            expect(machineRpcWithServerScope).toHaveBeenCalledTimes(2);
+            expect(vi.mocked(machineRpcWithServerScope).mock.calls[1]?.[0]).toMatchObject({
+                accountId: 'account-1', serverId: 'home-1', machineId: 'machine-1',
+                payload: { operationId: accepted.operationId, waitForTerminal: true },
+            });
+        } finally { await hook.unmount(); apiSocket.disconnect(); network.connect.mockReset(); }
     });
 
     it('reports the owner read refusal code while settling its request observer', async () => {

@@ -4,6 +4,7 @@ import { DeploymentEnvironmentCollectionV1Schema,
 import type { DeploymentActivityQueryV1 } from '@happier-dev/protocol/deployments/deploymentActivityPageV1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { listActionOperations } from '@/sync/ops/actionOperations';
+import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { createDeploymentReadTransport } from './deploymentReadTransport';
 
 /** One finite history read for Services, Project and Machine; presentation owns its existing push demand.
@@ -41,6 +42,10 @@ export async function readDeploymentActivityPage(lifetime: ServerAccountScopeLif
         } });
         controller.signal.throwIfAborted();
         if (!lifetime.isCurrent()) throw Object.assign(new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' });
+        // Activity and Details consume the same projection, including a cold history read
+        // whose requester operation never arrived through the custodian's push stream.
+        actionOperationStore.mergeSnapshots({ serverId: lifetime.scope.serverId,
+            snapshots: page.items.flatMap(item => item.kind === 'operation' ? [item.operation] : []) });
         return page;
     } finally {
         retirement.dispose();

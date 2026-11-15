@@ -1,19 +1,91 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { createDeferred, renderHook, renderScreen } from '@/dev/testkit';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { actionOperationStore } from './actionOperationStore';
 import { readAllActionOperations, useActionOperation, useActionOperationsHaveAttention, useManagedMachineActionOperation, useTerminalActionOperationState, useDeploymentTargetLinkOperations } from './useActionOperations';
+// Collect the real lazy reader graph before tests hold a finite owner answer pending.
+import './observeActionOperationByRequestId';
+
+// Only the Machine RPC boundary is substituted; the reader, lifecycle and store remain real.
+const operationRpc = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<unknown>>());
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: operationRpc }));
 
 describe('useActionOperations', () => {
     let tree: renderer.ReactTestRenderer | null = null;
+    beforeEach(() => operationRpc.mockReset());
 
     afterEach(() => {
         if (tree) act(() => tree?.unmount());
         tree = null;
         actionOperationStore.reset();
         vi.restoreAllMocks();
+    });
+
+    it.each(['owner', 'manage-grantee'])('settles an accepted %s operation through its finite owner without a push', async accountId => {
+        const terminal = createDeferred<unknown>();
+        operationRpc.mockReturnValue(terminal.promise);
+        const lifetime: ServerAccountScopeLifetime = { scope: { serverId: 'home', accountId },
+            isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        const snapshot: ActionOperationSnapshotV1 = { version: 1, operationId: 'accepted', revision: 7,
+            actionId: 'machines.setup.updates.apply', state: 'succeeded', scope: { accountId, machineId: 'machine' },
+            title: 'Install machine updates', createdAt: 1, startedAt: 2, settledAt: 3,
+            cancellation: 'supported', result: { operationId: 'accepted' } };
+        const hook = await renderHook(() => useActionOperation({ serverId: 'home', operationId: 'accepted' },
+            { machineId: 'machine', actionId: snapshot.actionId, lifetime }));
+        tree = hook.tree;
+        await vi.waitFor(() => expect(operationRpc).toHaveBeenCalledTimes(1));
+        expect(operationRpc.mock.calls[0]?.[0]).toMatchObject({ accountId, serverId: 'home', machineId: 'machine',
+            payload: { operationId: 'accepted', waitForTerminal: true } });
+        await act(async () => { terminal.resolve({ kind: 'found', operation: snapshot }); });
+        expect(hook.getCurrent()).toMatchObject({ snapshotComplete: true, snapshot });
+        expect(operationRpc).toHaveBeenCalledTimes(1);
+    });
+
+    it('retires an accepted owner read with its Account and ignores the late result', async () => {
+        const terminal = createDeferred<unknown>();
+        operationRpc.mockReturnValue(terminal.promise);
+        const retire = new Set<() => void>();
+        let current = true;
+        const lifetime: ServerAccountScopeLifetime = { scope: { serverId: 'home', accountId: 'requester' },
+            isCurrent: () => current, onRetire: callback => { retire.add(callback); return { dispose: () => { retire.delete(callback); } }; } };
+        const hook = await renderHook(() => useActionOperation({ serverId: 'home', operationId: 'accepted' },
+            { machineId: 'machine', actionId: 'machines.reboot', lifetime }));
+        tree = hook.tree;
+        await vi.waitFor(() => expect(operationRpc).toHaveBeenCalledTimes(1));
+        const request = operationRpc.mock.calls[0]?.[0] as Readonly<{ signal: AbortSignal }>;
+        await act(async () => {
+            current = false;
+            for (const callback of retire) callback();
+            terminal.resolve({ kind: 'found', operation: { version: 1, operationId: 'accepted', revision: 7,
+                actionId: 'machines.reboot', state: 'succeeded', scope: { accountId: 'requester', machineId: 'machine' },
+                title: 'Restart', createdAt: 1, startedAt: 2, settledAt: 3, cancellation: 'unsupported' } });
+        });
+        expect(request.signal.aborted).toBe(true);
+        expect(hook.getCurrent()).toBeNull();
+        expect(retire.size).toBe(0);
+        expect(actionOperationStore.getSnapshot().operationsByKey.size).toBe(0);
+    });
+
+    it.each(['missing', 'forbidden', 'other-account'])('does not invent a terminal result for an accepted operation when its read is %s', async outcome => {
+        operationRpc.mockImplementation(async () => {
+            if (outcome === 'forbidden') return { error: 'Forbidden', errorCode: 'FORBIDDEN' };
+            if (outcome === 'missing') return { kind: 'not_found' };
+            return { kind: 'found', operation: { version: 1, operationId: 'accepted', revision: 7,
+                actionId: 'machines.reboot', state: 'succeeded', scope: { accountId: 'other', machineId: 'machine' },
+                title: 'Restart', createdAt: 1, startedAt: 2, settledAt: 3, cancellation: 'unsupported' } };
+        });
+        const lifetime: ServerAccountScopeLifetime = { scope: { serverId: 'home', accountId: 'requester' },
+            isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        const hook = await renderHook(() => useActionOperation({ serverId: 'home', operationId: 'accepted' },
+            { machineId: 'machine', actionId: 'machines.reboot', lifetime }));
+        tree = hook.tree;
+        await vi.waitFor(() => expect(operationRpc).toHaveBeenCalledTimes(1));
+        expect(hook.getCurrent()).toBeNull();
+        expect(actionOperationStore.getSnapshot().operationsByKey.size).toBe(0);
     });
 
     it('binds terminal outcome to its target Home, Account and actual worker without rerendering on unrelated operations', async () => {

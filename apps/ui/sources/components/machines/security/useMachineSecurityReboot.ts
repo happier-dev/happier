@@ -120,7 +120,7 @@ export function useMachineSecurityReboot(
   const operation = useActionOperation({
     serverId: reboot.kind === 'restarting' ? input.serverId : null,
     operationId: reboot.kind === 'restarting' ? reboot.operationId : '',
-  });
+  }, { machineId: input.machineId, actionId: 'machines.reboot', lifetime });
   const operationState = operation?.snapshot.state ?? null;
   React.useEffect(() => {
     if (

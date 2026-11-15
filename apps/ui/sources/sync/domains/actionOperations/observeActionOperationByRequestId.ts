@@ -4,21 +4,31 @@ import { getActionOperation, listActionOperations } from '@/sync/ops/actionOpera
 import { isMachineRequestReachabilityFailure } from '@/sync/domains/machines/reachability/machineReachability';
 import { isMachineStoppedAnsweringError } from '@/sync/runtime/orchestration/serverScopedRpc/machineRpcTimeoutError';
 import { subscribeMachineRpcRecovery } from '@/sync/runtime/orchestration/serverScopedRpc/subscribeMachineRpcRecovery';
-import { subscribeActionOperationByRequestId } from './subscribeActionOperationByRequestId';
+import { subscribeActionOperation } from './subscribeActionOperationByRequestId';
 import { actionOperationStore, isActionOperationTerminal } from './actionOperationStore';
 
-/** Follow an issued request through publication/reconnect, then join its existing finite runner. */
-export function observeActionOperationByRequestId(input: Readonly<{
+type OperationObservation = Readonly<{
     serverId: string;
     accountId: string;
     machineId: string;
-    requestIdentity: NonNullable<ActionOperationListV2Request['requestIdentity']>;
     signal?: AbortSignal;
     /** Present owner progress while this same observer joins the terminal result. */
     onUpdate?: (operation: ActionOperationSnapshotV1) => void;
     /** A typed owner read refusal, distinct from a recoverable connection loss. */
     onUnavailable?: (errorCode: string) => void;
-}>): Promise<ActionOperationSnapshotV1 | null> {
+}>;
+
+type RequestIdentity = NonNullable<ActionOperationListV2Request['requestIdentity']>;
+
+export function observeActionOperationByRequestId(input: OperationObservation & Readonly<{ requestIdentity: RequestIdentity }>): Promise<ActionOperationSnapshotV1 | null> {
+    return observeActionOperation(input);
+}
+
+/** Follow an issued request or accepted operation through reconnect, then join its existing finite runner. */
+export function observeActionOperation(input: OperationObservation & (
+    Readonly<{ requestIdentity: RequestIdentity; operationId?: never; actionId?: never }>
+    | Readonly<{ operationId: string; actionId: string; requestIdentity?: never }>
+)): Promise<ActionOperationSnapshotV1 | null> {
     return new Promise(resolve => {
         let finished = false;
         let reading = false;
@@ -27,8 +37,10 @@ export function observeActionOperationByRequestId(input: Readonly<{
         let retainedComplete = false;
         const readController = new AbortController();
         const releases: Array<() => void> = [];
-        const matches = (operation: ActionOperationSnapshotV1) => operation.actionId === input.requestIdentity.actionId
-            && operation.requestId === input.requestIdentity.requestId && operation.scope.accountId === input.accountId
+        const matches = (operation: ActionOperationSnapshotV1) => (input.requestIdentity
+            ? operation.actionId === input.requestIdentity.actionId && operation.requestId === input.requestIdentity.requestId
+            : operation.operationId === input.operationId && operation.actionId === input.actionId)
+            && operation.scope.accountId === input.accountId
             && operation.scope.machineId === input.machineId;
         const finish = (operation: ActionOperationSnapshotV1 | null) => {
             if (finished) return;
@@ -52,7 +64,7 @@ export function observeActionOperationByRequestId(input: Readonly<{
             if (reading) { changedWhileReading = true; return; }
             reading = true;
             try {
-                if (!retained) {
+                if (!retained && input.requestIdentity) {
                     const page = await listActionOperations({ ...input, signal: readController.signal,
                         request: { requestIdentity: input.requestIdentity } });
                     if (finished) return;
@@ -63,16 +75,17 @@ export function observeActionOperationByRequestId(input: Readonly<{
                     if (!retained && page.items.length > 0) { finish(null); return; }
                 }
                 const selected = retained;
-                if (!selected) return; // Publication or reconnect wakes this same observer; absence is not failure.
+                const operationId = selected?.operationId ?? input.operationId;
+                if (!operationId) return; // Publication or reconnect wakes this same observer; absence is not failure.
                 const read = await getActionOperation({ ...input, signal: readController.signal,
-                    operationId: selected.operationId, waitForTerminal: true });
+                    operationId, waitForTerminal: true });
                 if (finished) return;
                 if (read.kind === 'not_found') {
-                    if (retained?.revision === selected.revision) { retained = null; retainedComplete = false; }
+                    if (retained?.revision === selected?.revision) { retained = null; retainedComplete = false; }
                     return;
                 }
-                if (!matches(read.operation) || read.operation.operationId !== selected.operationId) { finish(null); return; }
-                if (read.operation.revision < (retained?.revision ?? selected.revision)) return;
+                if (!matches(read.operation) || read.operation.operationId !== operationId) { finish(null); return; }
+                if (read.operation.revision < (retained?.revision ?? 0)) return;
                 input.onUpdate?.(read.operation);
                 finish(read.operation);
             } catch (error) {
@@ -94,7 +107,8 @@ export function observeActionOperationByRequestId(input: Readonly<{
         input.signal?.addEventListener('abort', abort, { once: true });
         releases.push(() => input.signal?.removeEventListener('abort', abort));
         if (input.signal?.aborted) { finish(null); return; }
-        const releaseObservation = subscribeActionOperationByRequestId({ ...input, requestId: input.requestIdentity.requestId,
+        const releaseObservation = subscribeActionOperation({ serverId: input.serverId, accountId: input.accountId,
+            ...(input.requestIdentity ? { requestId: input.requestIdentity.requestId } : { operationId: input.operationId }),
             onUpdate: (operation, complete) => {
                 if (!matches(operation)) return;
                 retained = operation;

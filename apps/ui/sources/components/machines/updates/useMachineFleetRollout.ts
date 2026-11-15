@@ -58,7 +58,7 @@ export type FleetRollout =
       approval: ActionApprovalContinuation | null;
       later: boolean;
     }>
-  | Readonly<{ kind: 'rolling'; operationId: string; count: number }>
+  | Readonly<{ kind: 'rolling'; operationId: string; machineId: string; count: number }>
   | Readonly<{
       kind: 'settled';
       operationId: string;
@@ -254,6 +254,7 @@ export function useMachineFleetRollout(
           ? {
               kind: 'rolling',
               operationId: parsed.data.operationId,
+              machineId: rollout.machineId,
               count: targets.length,
             }
           : {
@@ -270,7 +271,7 @@ export function useMachineFleetRollout(
   const operation = useActionOperation({
     serverId: state.kind === 'rolling' ? input.serverId : null,
     operationId: state.kind === 'rolling' ? state.operationId : '',
-  });
+  }, { machineId: state.kind === 'rolling' ? state.machineId : '', actionId: 'machines.setup.updates.rollout', lifetime });
   const operationState = operation?.snapshot.state ?? null;
   const { onSettled } = input;
   React.useEffect(() => {

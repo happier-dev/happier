@@ -123,7 +123,11 @@ export function useMachineSetup(
     prepared: Prepared | null;
   }> | null>(null);
   const [pending, setPending] = React.useState<'review' | 'apply' | null>(null);
-  const [operationId, setOperationId] = React.useState<string | null>(null);
+  const [accepted, setAccepted] = React.useState<Readonly<{
+    operationId: string;
+    actionId: 'machines.setup.apply' | 'machines.setup.remove';
+  }> | null>(null);
+  const operationId = accepted?.operationId ?? null;
   const plan = current?.key === scopeKey ? current.plan : null;
   const sourcePresentations = current?.key === scopeKey
     ? current.sourcePresentations
@@ -226,7 +230,7 @@ export function useMachineSetup(
         return;
       }
       setReview(null);
-      setOperationId(output.data.operationId);
+      setAccepted({ operationId: output.data.operationId, actionId });
     },
     [],
   );
@@ -389,7 +393,7 @@ export function useMachineSetup(
   const operation = useActionOperation({
     serverId,
     operationId: operationId ?? '',
-  });
+  }, { machineId, actionId: accepted?.actionId ?? '', lifetime: binding });
   const settled =
     operationId !== null &&
     operation !== null &&
@@ -413,7 +417,7 @@ export function useMachineSetup(
     prepare,
     apply,
     cancelReview,
-    dismissOperation: () => setOperationId(null),
+    dismissOperation: () => setAccepted(null),
   };
 }
 export type MachineSetupState = ReturnType<typeof useMachineSetup>;
