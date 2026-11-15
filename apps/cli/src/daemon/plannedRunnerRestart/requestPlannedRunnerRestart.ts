@@ -8,6 +8,7 @@ import {
 
 import { isSamePlannedRunnerRestartIntent, isRestartCancelledBeforeSignal, type RestartCompletionWaiter, type RestartCompletionWaiters } from './completionWaiters';
 import type { RestartSessionRunnerCompletion } from './restartSessionRunnerOnCurrentRuntime';
+import { resolveSessionRunnerActivityDisabledReason } from '../sessionRunnerRuntime/resolveActivityDisabledReason';
 
 import type {
   PlannedRunnerRestartIntent,
@@ -157,7 +158,11 @@ export async function requestPlannedRunnerRestart(input: Readonly<{
             }
             const activityGateResult = await input.canSignal?.();
             if (!ownsReservation) return false;
-            const exactActivityDisabledReason = normalizeActivityDisabledReason(activityGateResult);
+            // Version refresh never interrupts exact foreground custody. Account switches retain
+            // their separate forced-boundary policy, which may intentionally interrupt a turn.
+            const exactActivityDisabledReason = (input.reason === 'version_runtime_refresh'
+              ? resolveSessionRunnerActivityDisabledReason(input.sessionId, {}, input.tracked)
+              : null) ?? normalizeActivityDisabledReason(activityGateResult);
             if (exactActivityDisabledReason || activityGateResult === false) {
               notSignaledReason = 'activity_in_progress';
               activityDisabledReason = exactActivityDisabledReason ?? undefined;
