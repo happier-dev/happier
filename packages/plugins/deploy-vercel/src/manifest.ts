@@ -14,7 +14,9 @@ export const plugin = definePlugin({
     scope: { serviceRefs: [{ pluginId: 'happier.machine.vercel', localId: 'vercel-account' }], operations: ['use'], materializationKinds: ['httpHeaders', 'environment'] },
   }], optional: [] },
   actions: { ...accountActions, 'deploy-upload-v1': uploadAction },
-  resources: targetOptionsResources,
+  // Vercel's mark beside its name: the same packaged triangle as the Vercel AI Gateway plugin, inked like text.
+  brand: { iconResourceId: 'brand-icon', monochrome: true },
+  resources: { 'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' }, ...targetOptionsResources },
   inputTypes: targetInputTypes,
   deploymentTargets: { runtime: { role: 'runtime', title: 'Vercel', targetKind: 'vercel', icon: 'server-outline',
     targetSchema: { type: 'object', properties: {}, additionalProperties: false }, linkSchema: projectPrepareResultSchema,

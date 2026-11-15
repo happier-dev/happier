@@ -69,6 +69,10 @@ it.each(['satisfied', 'drifted'] as const)('uses the reviewed Docker %s fact aft
         expect(screen.findByTestId('project-deployments.draft.hostUnchecked')).not.toBeNull();
         expect(screen.findAllByType(SoftwareInputFields)).toHaveLength(1);
       });
+      // One message for an unready Machine (lab d1d notready): its callout carries the one Review action.
+      const callout = screen.findByTestId('project-deployments.draft.hostUnchecked')!;
+      expect(callout.findAll((node: { props: Record<string, unknown> }) =>
+        node.props.testID === 'project-deployments.draft.hostSetup.prepare').length).toBeGreaterThan(0);
       await act(async () => screen.findAllByType(SoftwareInputFields)[0]!.props.onPatch({ daemonConfig: {} }));
       await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.draft.hostSetup.prepare')?.props.disabled).toBe(false));
       await screen.pressByTestIdAsync('project-deployments.draft.hostSetup.prepare');

@@ -35,7 +35,6 @@ import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SegmentedChoiceItem, type SegmentedChoiceOption } from '@/components/ui/lists/SegmentedChoiceItem';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -510,11 +509,22 @@ export const DeploymentEnvironmentDraft = React.memo(
               initialTargetKey={platformTarget.key} onPrepared={setPlatformProvider}
               onApproval={onApprovalRequested} onClose={props.onDiscard} />
           ) : null}
+          {/* An unready Machine says so once, with its one next step (lab d1d notready): review its setup. The recipe's
+              inputs follow the callout; the reviewed plan then replaces it with Set up and the plan itself. */}
+          {!onPlatform && chosen && host.setup && !host.prepared ? (
+            <AttentionBanner
+              testID={host.readiness === 'needsSetup' ? 'project-deployments.draft.hostNeedsSetup' : 'project-deployments.draft.hostUnchecked'}
+              tone="warning"
+              title={t(host.readiness === 'needsSetup' ? 'projects.deployments.platformLink.hostNeedsSetup'
+                : 'projects.deployments.platformLink.hostUnchecked', { machine: machineName(chosen.id) })}
+              description={t('projects.deployments.platformLink.hostSetupBody')}
+              action={{ label: t('projects.deployments.platformLink.hostReviewAction', { machine: machineName(chosen.id) }),
+                onPress: () => { void host.review(); }, loading: host.reviewing,
+                disabled: !host.canReview || hostApply.pending, display: 'default', testID: 'project-deployments.draft.hostSetup.prepare' }}
+            />
+          ) : null}
           {!onPlatform && host.setup ? <MachineSetupRecipeInputs setup={host.setup} projection={host.inputProjection}
-            scope={props.lifetime?.scope} onChange={host.setSetup} testID="project-deployments.draft.hostSetup.inputs"
-            action={<SectionActionButton testID="project-deployments.draft.hostSetup.prepare" icon="eye"
-              title={t('capabilities.store.appPage.review')} disabled={!host.canReview || hostApply.pending}
-              loading={host.reviewing} onPress={() => { void host.review(); }} />} /> : null}
+            scope={props.lifetime?.scope} onChange={host.setSetup} testID="project-deployments.draft.hostSetup.inputs" /> : null}
           {!onPlatform && chosen && host.prepared?.ok && host.readiness !== 'ready' ? <>
             <AttentionBanner
               testID="project-deployments.draft.hostSetup"
@@ -532,7 +542,7 @@ export const DeploymentEnvironmentDraft = React.memo(
           </> : !onPlatform && host.prepared?.ok === false ? (
             <AttentionBanner testID="project-deployments.draft.hostSetup.failed" tone="warning" title={t('machinePresets.setup.title')}
               description={describeMachineSetupPlanFailure(host.prepared, machineName)} />
-          ) : !onPlatform && chosen && host.readiness === 'unknown' ? (
+          ) : !onPlatform && chosen && host.readiness === 'unknown' && !host.setup ? (
             <ItemGroup>
               <Item testID="project-deployments.draft.hostUnchecked" mode="info"
                 title={t('projects.deployments.platformLink.hostUnchecked', { machine: machineName(chosen.id) })} />

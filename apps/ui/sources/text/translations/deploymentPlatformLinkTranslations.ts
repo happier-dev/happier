@@ -81,6 +81,7 @@ type DeploymentPlatformLinkCopy = Readonly<{
   hostNeedsSetup: (params: { machine: string }) => string;
   hostSetupBody: string;
   hostSetupAction: (params: { machine: string }) => string;
+  hostReviewAction: (params: { machine: string }) => string;
   hostUnchecked: (params: { machine: string }) => string;
 }>;
 
@@ -162,6 +163,7 @@ export const deploymentPlatformLinkTranslations = {
     hostNeedsSetup: ({ machine }) => `${machine} isn’t set up to host deploys yet`,
     hostSetupBody: "You review every change before anything runs. Saving this environment can wait until then.",
     hostSetupAction: ({ machine }) => `Set up ${machine}`,
+    hostReviewAction: ({ machine }) => `Review setup for ${machine}`,
     hostUnchecked: ({ machine }) => `Couldn’t check whether ${machine} can host deploys`,
   },
   ca: {
@@ -243,6 +245,7 @@ export const deploymentPlatformLinkTranslations = {
     hostNeedsSetup: ({ machine }) => `${machine} encara no està preparada per allotjar desplegaments`,
     hostSetupBody: "Revises cada canvi abans que s’executi res. Desar aquest entorn pot esperar fins aleshores.",
     hostSetupAction: ({ machine }) => `Prepara ${machine}`,
+    hostReviewAction: ({ machine }) => `Revisa la preparació de ${machine}`,
     hostUnchecked: ({ machine }) => `No s’ha pogut comprovar si ${machine} pot allotjar desplegaments`,
   },
   de: {
@@ -323,6 +326,7 @@ export const deploymentPlatformLinkTranslations = {
     hostNeedsSetup: ({ machine }) => `${machine} ist noch nicht für Deployments eingerichtet`,
     hostSetupBody: "Du prüfst jede Änderung, bevor etwas läuft. Das Speichern dieser Umgebung kann so lange warten.",
     hostSetupAction: ({ machine }) => `${machine} einrichten`,
+    hostReviewAction: ({ machine }) => `Einrichtung von ${machine} prüfen`,
     hostUnchecked: ({ machine }) => `Konnte nicht prüfen, ob ${machine} Deployments hosten kann`,
   },
   es: {
@@ -404,6 +408,7 @@ export const deploymentPlatformLinkTranslations = {
     hostNeedsSetup: ({ machine }) => `${machine} aún no está preparada para alojar despliegues`,
     hostSetupBody: "Revisas cada cambio antes de que se ejecute nada. Guardar este entorno puede esperar hasta entonces.",
     hostSetupAction: ({ machine }) => `Preparar ${machine}`,
+    hostReviewAction: ({ machine }) => `Revisar la preparación de ${machine}`,
     hostUnchecked: ({ machine }) => `No se pudo comprobar si ${machine} puede alojar despliegues`,
   },
   fr: {
@@ -485,6 +490,7 @@ export const deploymentPlatformLinkTranslations = {
     hostNeedsSetup: ({ machine }) => `${machine} n’est pas encore prête à héberger des déploiements`,
     hostSetupBody: "Vous examinez chaque changement avant toute exécution. L’enregistrement de cet environnement peut attendre.",
     hostSetupAction: ({ machine }) => `Préparer ${machine}`,
+    hostReviewAction: ({ machine }) => `Vérifier la préparation de ${machine}`,
     hostUnchecked: ({ machine }) => `Impossible de vérifier si ${machine} peut héberger des déploiements`,
   },
   it: {
@@ -566,6 +572,7 @@ export const deploymentPlatformLinkTranslations = {
     hostNeedsSetup: ({ machine }) => `${machine} non è ancora pronta per ospitare deployment`,
     hostSetupBody: "Rivedi ogni modifica prima che venga eseguito qualcosa. Il salvataggio di questo ambiente può attendere.",
     hostSetupAction: ({ machine }) => `Prepara ${machine}`,
+    hostReviewAction: ({ machine }) => `Rivedi la preparazione di ${machine}`,
     hostUnchecked: ({ machine }) => `Impossibile verificare se ${machine} può ospitare deployment`,
   },
   ja: {
@@ -646,6 +653,7 @@ export const deploymentPlatformLinkTranslations = {
     hostNeedsSetup: ({ machine }) => `${machine} はまだデプロイを受け入れる準備ができていません`,
     hostSetupBody: "実行前にすべての変更を確認できます。この環境の保存はそれまで待てます。",
     hostSetupAction: ({ machine }) => `${machine} をセットアップ`,
+    hostReviewAction: ({ machine }) => `${machine} のセットアップを確認`,
     hostUnchecked: ({ machine }) => `${machine} がデプロイを受け入れられるか確認できませんでした`,
   },
   pl: {
@@ -725,6 +733,7 @@ export const deploymentPlatformLinkTranslations = {
     hostNeedsSetup: ({ machine }) => `${machine} nie jest jeszcze gotowa do hostowania wdrożeń`,
     hostSetupBody: "Przeglądasz każdą zmianę, zanim cokolwiek się uruchomi. Zapisanie tego środowiska może poczekać.",
     hostSetupAction: ({ machine }) => `Skonfiguruj ${machine}`,
+    hostReviewAction: ({ machine }) => `Przejrzyj konfigurację ${machine}`,
     hostUnchecked: ({ machine }) => `Nie udało się sprawdzić, czy ${machine} może hostować wdrożenia`,
   },
   pt: {
@@ -805,6 +814,7 @@ export const deploymentPlatformLinkTranslations = {
     hostNeedsSetup: ({ machine }) => `${machine} ainda não está pronta para hospedar implantações`,
     hostSetupBody: "Você revisa cada mudança antes de qualquer execução. Salvar este ambiente pode esperar até lá.",
     hostSetupAction: ({ machine }) => `Preparar ${machine}`,
+    hostReviewAction: ({ machine }) => `Rever a preparação de ${machine}`,
     hostUnchecked: ({ machine }) => `Não foi possível verificar se ${machine} pode hospedar implantações`,
   },
   ru: {
@@ -885,6 +895,7 @@ export const deploymentPlatformLinkTranslations = {
     hostNeedsSetup: ({ machine }) => `${machine} ещё не готова принимать развёртывания`,
     hostSetupBody: "Вы проверяете каждое изменение до запуска. Сохранение этого окружения может подождать.",
     hostSetupAction: ({ machine }) => `Настроить ${machine}`,
+    hostReviewAction: ({ machine }) => `Проверить настройку ${machine}`,
     hostUnchecked: ({ machine }) => `Не удалось проверить, может ли ${machine} принимать развёртывания`,
   },
   'zh-Hans': {
@@ -964,6 +975,7 @@ export const deploymentPlatformLinkTranslations = {
     hostNeedsSetup: ({ machine }) => `${machine} 尚未设置为可托管部署`,
     hostSetupBody: "在任何操作运行前，你都会审核每项更改。保存此环境可以等到那时再进行。",
     hostSetupAction: ({ machine }) => `设置 ${machine}`,
+    hostReviewAction: ({ machine }) => `查看 ${machine} 的设置`,
     hostUnchecked: ({ machine }) => `无法检查 ${machine} 是否可以托管部署`,
   },
   'zh-Hant': {
@@ -1043,6 +1055,7 @@ export const deploymentPlatformLinkTranslations = {
     hostNeedsSetup: ({ machine }) => `${machine} 尚未設定為可託管部署`,
     hostSetupBody: "在任何操作執行前，你都會審核每項變更。儲存此環境可以等到那時再進行。",
     hostSetupAction: ({ machine }) => `設定 ${machine}`,
+    hostReviewAction: ({ machine }) => `檢視 ${machine} 的設定`,
     hostUnchecked: ({ machine }) => `無法檢查 ${machine} 是否可以託管部署`,
   },
 } satisfies Record<SupportedLanguage, DeploymentPlatformLinkCopy>;

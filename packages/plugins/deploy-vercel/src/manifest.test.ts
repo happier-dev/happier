@@ -17,4 +17,10 @@ describe('Vercel deployment account consumption', () => {
       expect(kit.registration('connectedAccountDescriptors', 'vercel')).toBeUndefined();
     } finally { await kit.dispose(); }
   });
+
+  it('carries Vercel\'s mark as a packaged brand asset, inked like text', () => {
+    expect(entry.manifest.brand).toEqual({ iconResourceId: 'brand-icon', monochrome: true });
+    expect(entry.manifest.contributes?.resources?.find(resource => resource.id === 'brand-icon'))
+      .toEqual({ id: 'brand-icon', kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' });
+  });
 });
