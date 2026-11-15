@@ -1022,6 +1022,13 @@ matches the runtime TargetLink's `activeDeploymentId`; otherwise it is null.
 The version-title projection stays with the latest-attempt header; the separate
 serving receipt below supplies the address without changing that title contract.
 
+The already batched latest-attempt body also supplies
+`currentDeployment.commitSubject` and `currentDeployment.source` through the shared
+receipt source-facts projection. They are omitted when its private content cannot
+be opened; a captured body without a subject reports null. No per-row source or
+receipt lookup is added. The existing `requestedByAccountId` identifies the Account
+principal; it does not identify a Git author or distinguish a person from an agent.
+
 Ordinary inventory pages also carry `servingDeployments` and `liveAddressDomains`
 from the selected runtime link and current, nondeleted Domains. Their private
 Artifacts join the same mode-aware batch as Environment content and latest-attempt

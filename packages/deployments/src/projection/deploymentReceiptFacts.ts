@@ -91,8 +91,8 @@ export type DeploymentReceiptFactsV1 = Readonly<{
 export function projectDeploymentReceiptHistoryEntryV1({ content, deployment }: DeploymentReceiptDetailV1):
     Readonly<{ source: DeploymentReceiptFactsV1['source']; historyTitle: string | null; failure: DeploymentReceiptFailureV1 | null;
         machineIds: readonly string[]; steps: readonly (DeploymentStepV1 & Readonly<{ machineId?: string }>)[] }> {
-    const source = content.sourceIntent ? projectDeploymentReviewRevisionV1(content.sourceIntent, content.commitSubject) : null;
-    const historyTitle = [source ? deploymentRevisionLabelV1(source) : null, content.commitSubject]
+    const { source, commitSubject } = projectDeploymentReceiptSourceFactsV1(content);
+    const historyTitle = [source ? deploymentRevisionLabelV1(source) : null, commitSubject]
         .filter(Boolean).join(' · ') || null;
     const execution = deployment.acceptedExecution;
     const machineIds = [...new Set([...content.machines,
@@ -101,6 +101,13 @@ export function projectDeploymentReceiptHistoryEntryV1({ content, deployment }: 
     return { source, historyTitle, failure: content.failure ?? null, machineIds,
         steps: [...content.steps, ...content.machineResults.flatMap(member =>
             member.steps.map(step => ({ ...step, machineId: member.machineId })))] };
+}
+
+/** Private source presentation from the opened receipt, without execution step/log trees. */
+export function projectDeploymentReceiptSourceFactsV1(content: DeploymentReceiptDetailV1['content']):
+    Pick<DeploymentReceiptFactsV1, 'commitSubject' | 'source'> {
+    return { commitSubject: content.commitSubject ?? null,
+        source: content.sourceIntent ? projectDeploymentReviewRevisionV1(content.sourceIntent, content.commitSubject) : null };
 }
 
 /** Observed address facts without preparing unconsumed execution step/log trees. */
@@ -138,14 +145,12 @@ export function projectDeploymentReceiptFactsV1(receipt: DeploymentReceiptDetail
     }
     const forStep = (step: DeploymentStepV1, machineId?: string) => byStep.get(JSON.stringify([step.streamRef ?? step.id, machineId])) ?? [];
     const rollout = content.ownServer?.approvedInputBasis.ownServer?.rollout;
-    const source = content.sourceIntent ? projectDeploymentReviewRevisionV1(content.sourceIntent, content.commitSubject) : null;
     return {
         ...(retainedHistory ? selectDeploymentReceiptRetainedHistoryV1(retainedHistory)
             : { previousVersion: undefined, retainedPreviousCount: null, retainedRollbackTarget: null }),
         failure: content.failure ?? null,
         restoration: projectRestoration(content),
-        commitSubject: content.commitSubject ?? null,
-        source, rollbackTarget: content.ownServer?.rollbackTarget,
+        ...projectDeploymentReceiptSourceFactsV1(content), rollbackTarget: content.ownServer?.rollbackTarget,
         logs, stageLogs, steps: [
             ...content.steps.map(step => ({ ...step, logs, stageLogs: forStep(step) })),
             ...content.machineResults.flatMap(member => {

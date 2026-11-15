@@ -10,6 +10,7 @@ export * from './projection/deploymentActivityPage.js';
 export * from './projection/deploymentDomainFacts.js';
 export type { DeploymentActivityV1, DeploymentChipV1 } from './projection/deploymentSurfaceFacts.js';
 export { projectDeploymentReceiptFactsV1, projectDeploymentReceiptHistoryEntryV1, projectDeploymentReceiptUrlFactsV1,
+    projectDeploymentReceiptSourceFactsV1,
     selectDeploymentReceiptRetainedHistoryV1, selectDeploymentRetainedPreviousV1,
     deploymentRevisionLabelV1 } from './projection/deploymentReceiptFacts.js';
 export type { DeploymentReceiptFactsV1, DeploymentReceiptLogFactV1, DeploymentReceiptStepLogFactV1 } from './projection/deploymentReceiptFacts.js';

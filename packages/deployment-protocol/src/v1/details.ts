@@ -32,6 +32,9 @@ export const DeploymentEnvironmentCollectionV1Schema = z.strictObject({
         runtimeTargetLink: z.optional(z.nullable(DeploymentTargetLinkHeaderV1Schema)),
         currentDeployment: z.optional(z.nullable(z.extend(DeploymentReceiptHeaderV1Schema, {
             title: z.optional(z.string()),
+            /** Latest-attempt source facts; omission means unreadable, null means not captured. */
+            commitSubject: z.optional(z.nullable(z.string())),
+            source: z.optional(z.nullable(DeploymentReviewRevisionV1Schema)),
             steps: z.optional(z.nullable(z.array(DeploymentStepV1Schema))),
         }))) })),
     nextCursor: z.nullable(DeploymentIdentifierV1Schema),

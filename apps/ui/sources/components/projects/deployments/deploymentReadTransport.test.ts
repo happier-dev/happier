@@ -37,7 +37,7 @@ describe('deployment scoped read transport', () => {
     beforeEach(() => homes.reset());
     afterEach(() => standardCleanup());
 
-    it.each(['plain', 'e2ee'] as const)('projects %s live addresses from the serving receipt and current Domains in one batch', async mode => {
+    it.each(['plain', 'e2ee'] as const)('projects %s live addresses from the serving receipt and current Domains in one batch, including latest commit facts', async mode => {
         const token = `e30.${Buffer.from(JSON.stringify({ sub: 'account-owner' })).toString('base64url')}.signature`;
         const secret = new Uint8Array(32).fill(11);
         const serverId = await homes.addHome({ name: 'Live address', serverUrl: 'https://live-address.test',
@@ -52,7 +52,11 @@ describe('deployment scoped read transport', () => {
         const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }) });
         const active = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({
             id: 'serving-old', contentArtifactId: 'serving-artifact', state: 'succeeded' }) });
-        const latest = createDeploymentReceiptHeaderV1({ id: 'latest-failed', contentArtifactId: 'failed-artifact', state: 'failed' });
+        active.content.commitSubject = 'Older serving commit';
+        const latest = createDeploymentReceiptHeaderV1({ id: 'latest-failed', contentArtifactId: 'failed-artifact',
+            state: 'failed', requestedByAccountId: 'latest-requester' });
+        const withoutSubject = { ...latest, contentArtifactId: 'without-commit-subject' };
+        const unreadable = { ...latest, contentArtifactId: 'unreadable-latest-body' };
         const runtime = createDeploymentTargetLinkHeaderV1({ activeDeploymentId: active.deployment.id });
         const domain = DeploymentDomainHeaderV1Schema.parse({ v: 1, id: 'current-domain', environmentId: detail.environment.id,
             targetLinkId: runtime.id, revision: 1, state: 'active', contentArtifactId: 'current-domain-artifact',
@@ -60,7 +64,8 @@ describe('deployment scoped read transport', () => {
         const platform = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({
             id: 'platform-serving', contentArtifactId: 'platform-artifact', state: 'succeeded' }),
             content: DeploymentPlatformContentV1Schema.parse({ sourceIntent: { kind: 'repository', projectSourceId: 'source-app',
-                sourceRevision: 1, sha: 'a'.repeat(40) }, sourceMethod: 'gitIntegration', machines: [], images: [], machineResults: [], steps: [],
+                sourceRevision: 1, sha: 'b'.repeat(40) }, commitSubject: 'Repair worker startup',
+                sourceMethod: 'gitIntegration', machines: [], images: [], machineResults: [], steps: [],
                 platform: { credentialPrincipal: { kind: 'account', accountId: 'account-owner', purpose: {
                     consumer: { pluginId: 'happier.deployment-vercel', localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' },
                     target: { kind: 'account', account: { service: { pluginId: 'happier.machine-vercel', localId: 'vercel' }, accountId: 'connected' } } },
@@ -74,6 +79,8 @@ describe('deployment scoped read transport', () => {
                 [detail.environment.contentArtifactId, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, 'App', detail.content],
                 [active.deployment.contentArtifactId, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, 'Serving revision', active.content],
                 [latest.contentArtifactId, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, 'Failed revision', platform.content],
+                [withoutSubject.contentArtifactId, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, 'Uncaptured commit', { ...platform.content, commitSubject: undefined }],
+                [unreadable.contentArtifactId, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, 'Readable receipt header', {}],
                 [platform.deployment.contentArtifactId, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, 'Platform revision', platform.content],
                 [domain.contentArtifactId, 'deployment-domain.v1', 'Current Domain', { hostname: 'app.example.test',
                     target: { service: 'app', containerPort: 3000 } }],
@@ -96,7 +103,10 @@ describe('deployment scoped read transport', () => {
         };
         respond();
         const before = homes.requests.length;
-        expect(await readItem()).toMatchObject({ liveAddress: 'https://app.example.test/', currentDeployment: { id: latest.id } });
+        expect(await readItem()).toMatchObject({ liveAddress: 'https://app.example.test/', currentDeployment: {
+            id: latest.id, commitSubject: 'Repair worker startup', requestedByAccountId: 'latest-requester',
+            source: { kind: 'repository', sha: 'b'.repeat(40), subject: 'Repair worker startup' },
+        } });
         const reads = homes.requests.slice(before);
         expect(reads.filter(request => request.path === '/v1/artifacts/read').map(request => request.input)).toEqual([
             { artifactIds: [detail.environment.contentArtifactId, latest.contentArtifactId, active.deployment.contentArtifactId, domain.contentArtifactId] },
@@ -107,11 +117,23 @@ describe('deployment scoped read transport', () => {
         try {
             await collection.refresh();
             expect(collection.getSnapshot().value?.items[0]).toHaveProperty('liveAddress', 'https://app.example.test/');
+            expect(collection.getSnapshot().value?.items[0]?.currentDeployment).toMatchObject({
+                commitSubject: 'Repair worker startup', requestedByAccountId: 'latest-requester',
+                source: { kind: 'repository', sha: 'b'.repeat(40), subject: 'Repair worker startup' },
+            });
             respond({ liveAddressDomains: [] });
             controller.invalidate({ environmentId: detail.environment.id });
             await collection.refresh();
             expect(collection.getSnapshot().value?.items[0]).toHaveProperty('liveAddress', null);
         } finally { collection.release(); controller.retire(); }
+        respond({ currentDeployments: [withoutSubject] });
+        expect((await readItem()).currentDeployment).toMatchObject({ commitSubject: null,
+            requestedByAccountId: 'latest-requester', source: { kind: 'repository', sha: 'b'.repeat(40) } });
+        respond({ currentDeployments: [unreadable] });
+        const unavailable = (await readItem()).currentDeployment;
+        expect(unavailable).toMatchObject({ title: 'Readable receipt header', requestedByAccountId: 'latest-requester' });
+        expect(unavailable).not.toHaveProperty('commitSubject');
+        expect(unavailable).not.toHaveProperty('source');
         respond({ servingDeployments: [{ ...active.deployment, contentArtifactId: 'missing-serving-content' }] });
         expect(await readItem()).not.toHaveProperty('liveAddress');
         respond({ liveAddressDomains: [{ ...domain, contentArtifactId: 'missing-domain-content' }] });

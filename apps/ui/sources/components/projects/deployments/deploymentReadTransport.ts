@@ -20,7 +20,8 @@ import { captureLazyActionAccountContext, type LazyActionAccountContext } from '
 import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { HappyError } from '@/utils/errors/errors';
 import { domainHealthObserver, environmentHealthObserver } from './observeEnvironmentHealth';
-import { projectDeploymentReceiptHistoryEntryV1, projectDeploymentReceiptUrlFactsV1, readDeploymentDatabaseSizesV1, selectDeploymentRuntimeTargetLinkV1 } from '@happier-dev/deployments';
+import { projectDeploymentReceiptHistoryEntryV1, projectDeploymentReceiptUrlFactsV1, projectDeploymentReceiptSourceFactsV1,
+    readDeploymentDatabaseSizesV1, selectDeploymentRuntimeTargetLinkV1 } from '@happier-dev/deployments';
 import { deploymentLiveAddressDemand, resolveDeploymentLiveAddress } from './deploymentLiveAddressFacts';
 
 function failure(code: string, retryable = false): Extract<DeploymentReadResultV1<never>, { ok: false }> {
@@ -248,8 +249,12 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                     const receiptHeader = contents[page.items.length + current.index];
                     const artifact = receiptHeader?.status === 'fulfilled' ? receiptHeader.value : null;
                     const projection = readDeploymentReceiptArtifactHeaderV1(current.receipt, artifact);
-                    if (projection.ok) currentDeployment = { ...current.receipt, title: projection.title, steps: projection.steps };
-                    else coverage = 'partial';
+                    if (projection.ok) {
+                        const opened = readDeploymentReceiptArtifactV1(current.receipt, artifact);
+                        currentDeployment = { ...current.receipt, title: projection.title, steps: projection.steps,
+                            ...(opened.ok ? projectDeploymentReceiptSourceFactsV1(opened.content) : {}) };
+                        if (!opened.ok) coverage = 'partial';
+                    } else coverage = 'partial';
                 }
                 const runtimeTargetLink = runtimeByEnvironment.get(environment.id) ?? null;
                 let liveAddress: string | null | undefined;
