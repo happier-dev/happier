@@ -109,7 +109,7 @@ describe('Workflow stored Account content', () => {
       expect(openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain', binding: acceptedBinding,
         envelope: { t: 'plain', v: { v: 2, binding: acceptedBinding,
           content: { ...acceptedSnapshot, approvedOperation: restricted } } } }))
-        .toEqual({ kind: 'contentInvalid' });
+        .toEqual({ kind: 'payloadInvalid' });
     }
   });
   it('retains declared result field order through workflow JSON interchange', () => {
@@ -190,7 +190,7 @@ describe('Workflow stored Account content', () => {
       .toEqual({ kind: 'bindingMismatch' });
     expect(openWorkflowCheckpointStoredEnvelopeV1({ mode: 'plain', binding: checkpointBinding,
       envelope: { ...envelope, v: { ...envelope.v, content: { ...envelope.v.content, rootRecordId: null } } } }))
-      .toEqual({ kind: 'contentInvalid' });
+      .toEqual({ kind: 'payloadInvalid' });
     const nonCanonicalCheckpoint = { ...checkpoint, frontier: { ...checkpoint.frontier, extra: true } };
     expect(() => sealWorkflowCheckpointStoredEnvelopeV1({ mode: 'plain', binding: checkpointBinding,
       checkpoint: nonCanonicalCheckpoint }))
@@ -212,7 +212,7 @@ describe('Workflow stored Account content', () => {
       nextSequence: '1', frontier: { nextBlockOrdinal: 0, paused: false } };
     expect(openWorkflowCheckpointStoredEnvelopeV1({ mode: 'plain', binding: checkpointBinding,
       envelope: { t: 'plain', v: { v: 1, binding: checkpointBinding, content: checkpoint } },
-    })).toEqual({ kind: 'contentInvalid' });
+    })).toEqual({ kind: 'payloadInvalid' });
     const envelope = sealWorkflowCheckpointStoredEnvelopeV1({ mode: 'plain', binding: checkpointBinding, checkpoint });
     expect(openWorkflowCheckpointStoredEnvelopeV1({ mode: 'plain', binding: checkpointBinding, envelope }))
       .toEqual({ kind: 'available', content: checkpoint });
@@ -409,7 +409,7 @@ describe('Workflow stored Account content', () => {
     const envelope = mode === 'plain' ? { t: 'plain', v: payload }
       : { t: 'encrypted', c: `wfr1:${encodeBase64(new Uint8Array([...nonce, ...ciphertext]))}` };
     expect(openWorkflowCheckpointStoredEnvelopeV1({ mode, binding: checkpointBinding, envelope, runDataKey }))
-      .toEqual({ kind: 'contentInvalid' });
+      .toEqual({ kind: 'payloadInvalid' });
   });
 
   it('fails a private accepted metadata open closed with the wrong E2EE material', () => {
@@ -500,7 +500,7 @@ describe('Workflow stored Account content', () => {
     })).toEqual({ kind: 'bindingMismatch' });
     expect(openWorkflowFinalResultStoredEnvelopeV1({
       mode: 'e2ee', runDataKey, envelope: encryptedProgress, binding: finalResultBinding,
-    })).toEqual({ kind: 'contentInvalid' });
+    })).toEqual({ kind: 'payloadInvalid' });
     expect(validateWorkflowStoredEnvelopeOuterForModeV1({
       mode: 'plain', envelope: encryptedProgress, binding: progressBinding,
     })).toEqual({ kind: 'modeMismatch' });

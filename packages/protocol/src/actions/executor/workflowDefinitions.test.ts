@@ -17,6 +17,18 @@ import { createWorkflowTriggerActions } from './workflowTriggerActions.js';
 import { workflowDefinitionAgentCaller } from '../../workflows/workflowDefinition.testkit.js';
 
 const definitionId = '11111111-1111-4111-8111-111111111111';
+it('classifies schema-invalid definition bodies as unreadable history in get and library reads', async () => {
+  const revision = { headerVersion: 1, bodyVersion: 1 };
+  const row = { artifactId: definitionId, header: { kind: 'workflow-definition.v1', definitionId, revision, metadata: { title: 'Earlier build' } },
+    body: JSON.stringify({ kind: 'workflow-definition.v1', definition: { version: 1, blocks: [{ kind: 'obsolete' }] } }),
+    headerVersion: 1, bodyVersion: 1, ownerAccountId: 'account-1', access: 'owner' as const, updatedAt: 1 };
+  const unused = async (): Promise<never> => { throw new Error('unexpected_write'); };
+  const actions = createWorkflowDefinitionActions({ artifactStore: { read: async () => ({ ...row, revision }),
+    list: async () => ({ items: [row] }), create: unused, update: unused, delete: unused },
+    encodeListCursor: row => row.artifactId, assertDefinitionWriteAllowed: unused, readWorkflowTriggerSummaries: readEmptyTriggerSummaries });
+  await expect(actions.get({ definitionId })).rejects.toMatchObject({ code: 'history_not_readable' });
+  await expect(actions.list({})).resolves.toMatchObject({ definitions: [{ contentStatus: 'unavailable', contentUnavailableReason: 'history_not_readable' }] });
+});
 const definition = WorkflowDefinitionV1Schema.parse({ version: 1,
   defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
   blocks: [{ kind: 'step', id: 'review', document: { text: 'Review', references: [], attachments: [] }, input: [], result: { kind: 'text' } }],
@@ -34,7 +46,7 @@ describe('shared workflow definition create', () => {
   it.each(['saved', 'plugin'] as const)('sizes each %s Workflow row once instead of reserializing growing page prefixes', async (kind) => {
     for (const count of [16, 64]) {
       const titles = Array.from({ length: count }, (_, index) => `FIN row measurement ${index} 🌱`);
-      const markers = new Set(titles.map(title => JSON.stringify(title)));
+      const markers = new Set(titles);
       const rows = titles.map((title, index) => {
         const id = `11111111-1111-4111-8111-${String(index).padStart(12, '0')}`;
         return { artifactId: id, headerVersion: 1, bodyVersion: 1, updatedAt: 1,
@@ -51,19 +63,14 @@ describe('shared workflow definition create', () => {
         list: async () => ({ items: rows }), read: unused, create: unused, update: unused, delete: unused,
       }, encodeListCursor: row => row.artifactId, assertDefinitionWriteAllowed: unused,
       readPluginWorkflows: () => plugins, readWorkflowTriggerSummaries: readEmptyTriggerSummaries });
-      // UTF-8 encoding is the platform boundary used by the real page sizer.
-      // Count title visits, rather than calls for constant framing or field names.
-      let encodedRows = 0;
-      const encode = TextEncoder.prototype.encode;
-      const counter = vi.spyOn(TextEncoder.prototype, 'encode').mockImplementation(function (this: TextEncoder, input) {
-        if (typeof input === 'string' && markers.has(input)) encodedRows += 1;
-        return encode.call(this, input);
-      });
+      // Observe native string serialization beneath the real page sizer,
+      // which measures UTF-8 without allocating TextEncoder buffers.
+      const counter = vi.spyOn(JSON, 'stringify');
       try {
         const page = await owner.list(kind === 'saved' ? {} : { cursor: `${WORKFLOW_DEFINITION_PLUGIN_CURSOR_PREFIX_V1}0` });
         const actual = kind === 'saved' ? page.definitions.map(row => row.metadata?.title) : page.pluginWorkflows?.map(row => row.title);
         expect(actual).toEqual(titles);
-        expect(encodedRows).toBe(count);
+        expect(counter.mock.calls.filter(([value]) => typeof value === 'string' && markers.has(value))).toHaveLength(count);
       } finally { counter.mockRestore(); }
     }
   });
@@ -666,6 +673,6 @@ describe('shared workflow definition create', () => {
       delete: async () => ({ ok: true }),
     };
     const actions = createWorkflowDefinitionActions({ artifactStore: store, encodeListCursor: () => 'cursor', assertDefinitionWriteAllowed: () => {} });
-    await expect(actions.get({ definitionId })).rejects.toMatchObject({ code: 'content_unavailable' });
+    await expect(actions.get({ definitionId })).rejects.toMatchObject({ code: kind === 'blob reference' ? 'content_unavailable' : 'history_not_readable' });
   });
 });

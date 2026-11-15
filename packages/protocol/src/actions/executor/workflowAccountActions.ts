@@ -8,6 +8,8 @@ import { getActionSpec } from '../actionSpecs.js';
 import { projectConfirmedActionHttpRefusal, readActionFailureEnvelope } from './actionFailureEnvelope.js';
 import { resolveWorkflowActionContext } from './callerContext.js';
 import { readActionFailureCauseV1, projectActionFailureCauseV1 } from '../actionExecutionResult.js';
+import { z } from '../../zodRuntimePolicy.js';
+import { actionInputValidationFailure } from './actionInputValidation.js';
 
 export type WorkflowActionFailureDiagnosticV1 = Readonly<{
   event: 'workflow_action_failure';
@@ -24,6 +26,9 @@ export function normalizeWorkflowActionThrownError(error: unknown, diagnostic?: 
   durationMs: number;
   emit: (diagnostic: WorkflowActionFailureDiagnosticV1) => void;
 }>, preEffect = false, phase = diagnostic?.operation ?? 'dispatch'): WorkflowActionFailureV1 {
+  if (phase === 'workflow.run.start' && error instanceof z.core.$ZodError) {
+    return { ...actionInputValidationFailure(error), errorCode: 'invalid_input', error: 'invalid_input' };
+  }
   const thrown = error !== null && typeof error === 'object' ? error : null;
   // The exact-Home Session reader uses errorCode, not code. Only its semantic
   // not_found/forbidden refusals prove an unavailable execution target;

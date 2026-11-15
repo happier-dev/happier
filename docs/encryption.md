@@ -2827,6 +2827,31 @@ unreleased 0.3 development; 0.2-created data remains readable in 0.3, while old
 binaries reading newly written version-1 data are not a supported coexistence
 or rollback direction.
 
+### Other stored-content bytes (0.3 development)
+
+The server's `storage/storedContent.ts` owns lossless physical encoding for
+SessionMessage and Session System Record envelopes, Session metadata and Agent
+state, Machine metadata and daemon state, Automation Run results and Workflow
+checkpoints, and Account settings snapshots. Canonical ciphertext is stored in
+nullable byte siblings; read owners reconstruct the original domain envelope or
+text before projecting it to clients. This does not decrypt content or add
+server-side compression. Plain content and noncanonical historical spellings
+retain their original representation.
+
+JSON envelopes with only the ordinary encrypted discriminator and ciphertext
+use JSON null alongside the bytes. Additional envelope fields, canonical text
+serialization, and the Workflow cipher prefix remain in the original column as
+a representation shell. Bare ciphertext text uses an empty text shell. Writers
+clear the byte sibling when replacing byte-backed content with plain or
+noncanonical text. The additive migrations do not rewrite historical rows.
+
+Provider Account Usage History stores complete records with nested sealed
+payloads, rather than root encrypted envelopes. Its payload remains unchanged;
+it does not use a table-specific variant of the storage codec. The 0.2 upgrade
+converter remains separately owned and consumes the same storage encoder for
+the domains it converts. Old server binaries reading new byte-backed rows are
+not a supported rollback direction.
+
 ## Live-stream frame and input transport (0.3 development)
 
 Live-stream socket payloads follow Account mode explicitly. Pixels are represented as
@@ -3693,6 +3718,9 @@ pre-cut Account-derived Workflow ciphertext and old private payloads. It does
 not reseal historical rows or fall back to an Account-derived content key.
 Missing run history and missing recipient material remain explicit unavailable
 results, never permission to reinterpret encrypted content as plain.
+Content that opens successfully but fails the current Workflow schema reports
+`history_not_readable` in Run and definition reads, including library rows.
+Missing or undecryptable key material remains `content_unavailable`.
 
 The server validates each outer
 stored-content envelope against the persisted Account mode and stores or projects

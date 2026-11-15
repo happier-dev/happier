@@ -139,6 +139,7 @@ const WORKFLOW_AVAILABILITY_REASON_KEYS = {
 } as const satisfies Readonly<Record<string, TranslationKeyNoParams>>;
 
 const WORKFLOW_CONTENT_REASON_KEYS = {
+    history_not_readable: 'workflows.readState.historyBody',
     invalid_header: 'workflows.contentReasons.invalidHeader',
     revision_mismatch: 'workflows.contentReasons.revisionMismatch',
     missing_body: 'workflows.contentReasons.missingBody',

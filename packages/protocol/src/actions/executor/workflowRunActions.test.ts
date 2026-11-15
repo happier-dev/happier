@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { z } from '../../zodRuntimePolicy.js';
+import { normalizeWorkflowActionTextBindingV1 } from '../../workflows/workflowActionTextV1.js';
 import { createSessionMembershipReadFixture } from '../../sessions/read/sessionReadBatchV1.testkit.js';
 import { randomBytes } from 'node:crypto';
 import { ed25519, x25519 } from '@noble/curves/ed25519';
@@ -45,6 +47,53 @@ import { WorkflowDefinitionCaptureResultV1Schema } from '../../workflows/workflo
 import { DiscussionOpenedMessageV1Schema } from '../../discussions/actions.js';
 
 const runId = '11111111-1111-4111-8111-111111111111';
+it('retains validation field paths when admission storage throws a schema error', async () => {
+  const validation = z.object({ actionContract: z.object({ inputSchema: z.string() }) }).safeParse({ actionContract: { inputSchema: 7 } });
+  if (validation.success) throw new Error('invalid_fixture');
+  const deps = ownerDeps({ execute: async (operation) => {
+    if (operation.operation === 'get') throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
+    throw validation.error;
+  } });
+  const owner = createWorkflowAccountRunActionOwner({ ...deps,
+    resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true } }),
+    prepareWorkspace: async () => ({ ok: true, workspaceTarget: { project: { machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' } } }),
+  });
+  const executor = createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true, runs: owner });
+  await expect(executor({ actionId: 'workflow.run.start', input: { runId, source: { kind: 'inline', definition } },
+    context: { surface: 'cli', authority: 'present_user', serverId: 'home', externalActionTarget: { kind: 'machine', machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } } },
+  })).resolves.toMatchObject({ ok: false, errorCode: 'invalid_input', details: { issues: [{ path: ['actionContract', 'inputSchema'] }] } });
+});
+it.each(['literal', 'text'] as const)('admits a real machines.command.run leaf through the current Action contract (%s)', async (bindingKind) => {
+  const deps = ownerDeps({ execute: async (op) => {
+    if (op.operation === 'get') throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
+    if (op.operation === 'admit') return { ...runSnapshot(), kind: 'created' };
+    throw new Error('unexpected_storage_operation');
+  } });
+  const owner = createWorkflowAccountRunActionOwner({ ...deps,
+    resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true,
+      readActionContract: async (id) => freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(ActionIdSchema.parse(id)))),
+    } }),
+    prepareWorkspace: async () => ({ ok: true, workspaceTarget: { project: { machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' } } }),
+  });
+  const input = WorkflowRunStartRequestV1Schema.parse({ runId, source: { kind: 'inline', definition: { version: 1,
+    blocks: [{ kind: 'action', id: 'command', actionId: 'machines.command.run', input: { command: bindingKind === 'literal'
+      ? { kind: 'literal', value: 'echo release' }
+      // The text owner produces literal command bindings when no values are inserted.
+      : normalizeWorkflowActionTextBindingV1({ kind: 'text', document: { text: 'echo release', references: [] }, input: [] }) } }],
+  } } });
+  await expect(owner.execute({ actionId: 'workflow.run.start', input, context: { surface: 'cli', authority: 'present_user',
+    callerPermissionMode: 'default', serverId: 'home', externalActionTarget: { kind: 'machine', machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } },
+  } })).resolves.toMatchObject({ admission: 'created' });
+});
+it('classifies a readable stored snapshot rejected by the current schema as unreadable history', async () => {
+  const snapshot = runSnapshot();
+  const envelope = JSON.parse(snapshot.acceptedEnvelope);
+  envelope.v.content.workDepth = 'obsolete-development-shape';
+  snapshot.acceptedEnvelope = JSON.stringify(envelope);
+  const owner = createWorkflowAccountRunActionOwner(ownerDeps({ execute: async () => snapshot }));
+  await expect(owner.execute({ actionId: 'workflow.run.get', input: { runId }, context: { surface: 'cli' } }))
+    .rejects.toMatchObject({ code: 'history_not_readable' });
+});
 const definition = validateWorkflowDefinition({
   version: 1,
   defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } } },
@@ -901,7 +950,7 @@ describe('shared Account workflow run owner', () => {
               permissionMode: { kind: 'literal' as const, value: 'read_only' },
             } }] },
           { kind: 'step' as const, id: 'synthesis', document: { text: 'Synthesize', references: [], attachments: [] },
-            execution: { engine: { role: 'planner' }, executionTarget: { kind: 'detached_run' as const },
+            execution: { roleId: 'planner', executionTarget: { kind: 'detached_run' as const },
               permissionMode: scenario.startsWith('mixed') ? 'yolo' : 'read-only' } },
         ] };
       const context: ActionExecutorContext = {
@@ -2964,7 +3013,7 @@ describe('shared Account workflow run owner', () => {
   });
   it('admits a portable workflow role through the same inline start producer', async () => {
     let committed: ReturnType<typeof runSnapshot> | undefined;
-    const portableDefinition = { version: 1 as const, inputs: [], defaults: { engine: { role: 'portable_builder' } },
+    const portableDefinition = { version: 1 as const, inputs: [], defaults: { roleId: 'portable_builder' },
       blocks: definition.blocks,
       roles: [{ roleId: 'portable_builder', name: 'Portable Builder', instructions: 'Build carefully',
         runsAs: { kind: 'session' as const }, engine: { agentTargetKey: 'happier.agent.test/test' } }],
@@ -3304,7 +3353,7 @@ describe('shared Account workflow run owner', () => {
   it.each(['inline', 'saved'] as const)('materializes run overrides before authority and freezes them across %s admission rejoin', async (sourceKind) => {
     const authored = {
       version: 1,
-      defaults: { engine: { role: 'writer' } },
+      defaults: { roleId: 'writer' },
       roles: [{ roleId: 'writer', name: 'Writer', instructions: 'Write carefully',
         engine: { agentTargetKey: 'happier.agent.test/test', modelId: 'pinned' },
         runsAs: { kind: 'session' }, workspaceWrites: 'allow', secondOpinion: 'off' }],
@@ -3371,8 +3420,8 @@ describe('shared Account workflow run owner', () => {
         roles: {}, callerPermissionCeiling: 'safe-yolo', ledSubtreeSessionIds: [], workDepthLimit: 4 }),
     });
     const result = owner.execute({ actionId: 'workflow.run.start', input: { runId, source: { kind: 'inline', definition: {
-      version: 1, defaults: { engine: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } },
-        modelSelection: { v: 1, updatedAt: 0, ref: { agentTargetKey: 'happier.agent.test/test', providerConnectionId: null, modelId: 'override' } } } }, blocks: ['work'],
+      version: 1, defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } },
+        modelSelection: { v: 1, updatedAt: 0, ref: { agentTargetKey: 'happier.agent.test/test', providerConnectionId: null, modelId: 'override' } } }, blocks: ['work'],
     } } }, context: { surface: scenario === 'availability' ? 'cli' : 'agent', authority: scenario === 'availability' ? 'present_user' : undefined,
       callerPermissionMode: 'safe-yolo', defaultSessionId: 'origin-1',
       sessionAgentSpawnPolicyV1: SessionAgentSpawnPolicyV1StrictSchema.parse({ allowModelOverride: scenario !== 'model_policy' }),

@@ -14,6 +14,7 @@ import {
   WorkflowStepExecutionSelectionSchema,
   WorkflowLiteralEngineSelectionV1Schema,
   WorkflowSelectionBindingV1Schema,
+  WorkflowStepSelectionV1Schema,
   WorkflowParticipantBindingV1Schema,
   WorkflowLeafExecutionTargetV1Schema as WorkflowRunExecutionTargetV1Schema,
 } from './workflowV1.js';
@@ -48,12 +49,25 @@ import { ExternalActionExecutionAuthorizationV1Schema, ReviewedActionChildHttpPr
 export { collectWorkflowLeavesV1, deriveWorkflowDestinationsV1, readWorkflowLeafTargetSessionIdsV1,
   resolveWorkflowDestinationsV1, WorkflowDestinationsV1Schema, type WorkflowDestinationsV1 } from './workflowDestinationsV1.js';
 
-/** One deliberate engine edit; replay retains every other accepted leaf fact. */
-export const WorkflowReplayAgentOverrideV1Schema = lazyZodSchema(() => z.strictObject({
-  sourceKey: z.union([z.literal('$root'), WorkflowDefinitionRefV1StringSchema]),
-  blockId: WorkflowBlockIdSchema,
-  engine: WorkflowLiteralEngineSelectionV1Schema,
-}));
+/**
+ * One deliberate engine edit in the step's own vocabulary: a Role, or an Agent with its model and
+ * effort. Replay retains every other accepted leaf fact.
+ */
+export const WorkflowReplayAgentOverrideV1Schema = lazyZodSchema(() => {
+  const { roleId, agentTarget, modelSelection, sessionConfigOptionOverrides } = WorkflowStepSelectionV1Schema.shape;
+  return z.strictObject({
+    sourceKey: z.union([z.literal('$root'), WorkflowDefinitionRefV1StringSchema]),
+    blockId: WorkflowBlockIdSchema,
+    roleId, agentTarget, modelSelection, sessionConfigOptionOverrides,
+  }).check(z.superRefine((override, context) => {
+    if ((override.roleId === undefined) === (override.agentTarget === undefined)) {
+      context.addIssue({ code: 'custom', path: ['roleId'], message: 'Choose a Role or an Agent' });
+    }
+    if (override.roleId !== undefined && (override.modelSelection !== undefined || override.sessionConfigOptionOverrides !== undefined)) {
+      context.addIssue({ code: 'custom', path: ['roleId'], message: 'A Role chooses its own model and effort' });
+    }
+  }));
+});
 export type WorkflowReplayAgentOverrideV1 = z.infer<typeof WorkflowReplayAgentOverrideV1Schema>;
 
 export const WorkflowRoleOverridesV1Schema = lazyZodSchema(() => z.array(RoleOverrideV1Schema).check(z.superRefine((overrides, context) => {
@@ -111,7 +125,7 @@ export type WorkflowDefinitionArtifactHeaderV1 = z.infer<typeof WorkflowDefiniti
 export const WorkflowDefinitionArtifactHeaderV1ReadSchema = createStoredReadSchema(WorkflowDefinitionArtifactHeaderV1Schema);
 
 export const WorkflowDefinitionContentUnavailableReasonV1Schema = lazyZodSchema(() => z.enum([
-  'invalid_header', 'revision_mismatch', 'missing_body', 'invalid_body', 'not_found',
+  'invalid_header', 'revision_mismatch', 'missing_body', 'invalid_body', 'not_found', 'history_not_readable',
 ]));
 export type WorkflowDefinitionContentUnavailableReasonV1 = z.infer<typeof WorkflowDefinitionContentUnavailableReasonV1Schema>;
 

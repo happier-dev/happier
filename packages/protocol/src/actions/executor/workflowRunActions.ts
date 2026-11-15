@@ -24,7 +24,7 @@ import { WorkflowActionOutputSchemasV1, WorkflowRunWaitSnapshotV1Schema, Workflo
 import { materializeWorkflowAcceptedSnapshotV1, readWorkflowAcceptedAgentStartLeavesV1, readWorkflowRunLeafStartRequestV1,
   hasUnresolvedWorkflowValueV1 } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
 import type { WorkflowAuthoredResultReference } from '../../workflows/workflowReferenceV1.js';
-import { openWorkflowAcceptedSnapshotListingStoredEnvelopeV1, openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowCheckpointStoredEnvelopeV1, openWorkflowFinalResultStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, openWorkflowRunDisplaySummaryStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowRunAcceptedEnvelopesV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '../../workflows/workflowStoredContentV1.js';
+import { workflowStoredContentReadErrorCodeV1, openWorkflowAcceptedSnapshotListingStoredEnvelopeV1, openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowCheckpointStoredEnvelopeV1, openWorkflowFinalResultStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, openWorkflowRunDisplaySummaryStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowRunAcceptedEnvelopesV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '../../workflows/workflowStoredContentV1.js';
 import { validateWorkflowDefinition, matchesWorkflowAcceptedDefinitionV1 } from '../../workflows/workflowValidationV1.js';
 import { parseWorkflowDocumentJsonIngressV1 } from '../../workflows/workflowDocumentV1.js';
 import { ActionIdSchema, type ActionId, type WorkflowActionIdV1 } from '../actionIds.js';
@@ -490,7 +490,12 @@ async function assertAcceptedAuthorizationCurrent(
  * a storage failure would claim a refusal the owner never confirmed.
  */
 function translateStorageError(error: unknown, options: Readonly<{ unconfirmedWrite?: WorkflowOperationErrorCodeV1 }> = {}): never {
-  if (error instanceof zodMiniCore0.core.$ZodError) throw workflowError('content_unavailable');
+  // Admission validation belongs to the Start failure owner; a malformed stored
+  // projection retains the existing storage-read classification.
+  if (error instanceof zodMiniCore0.core.$ZodError) {
+    if (options.unconfirmedWrite === 'workflow_outcome_unresolved') throw error;
+    throw workflowError('content_unavailable');
+  }
   const code = (error as { code?: unknown })?.code;
   if (code === 'ERR_CANCELED' || (error instanceof Error && error.name === 'AbortError')) throw error;
   const response = (error as { response?: { status?: unknown; data?: { error?: unknown } } })?.response;
@@ -862,7 +867,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1({
       ...openMode(enc), binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, envelope,
     });
-    if (opened.kind !== 'available') throw workflowError('content_unavailable');
+    if (opened.kind !== 'available') throw workflowError(workflowStoredContentReadErrorCodeV1(opened));
     return { accountId, enc, snapshot, accepted: opened.content };
   };
   const openAccepted: typeof readAccepted = async (...args) => {
@@ -933,7 +938,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
             memberOrdinal: index.memberOrdinal, attempt: index.attempt,
           },
         });
-        if (!opened || opened.kind !== 'available') throw workflowError('content_unavailable');
+        if (!opened) throw workflowError('content_unavailable');
+        if (opened.kind !== 'available') throw workflowError(workflowStoredContentReadErrorCodeV1(opened));
         const execution = WorkflowProgressEnvelopeV1Schema.parse(opened.content).execution;
         if (execution?.kind === 'session' && execution.sessionId === sessionId) {
           throw workflowError('workflow_wait_self_dependency', { runId: args.input.runId });
@@ -1513,7 +1519,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         if (isConfirmedActionWriteRefusal(error)) {
           await deps.workflowRequesterCustody?.retire(requesterScope, { signal: args.context.signal });
         }
-        translateStorageError(error);
+        translateStorageError(error, { unconfirmedWrite: 'workflow_outcome_unresolved' });
       }
       const run = WorkflowRunSummaryV1Schema.parse(result.run);
       return WorkflowActionOutputSchemasV1['workflow.run.start'].parse({ run: { ...run,
@@ -1540,7 +1546,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         memberOrdinal: index.memberOrdinal, attempt: index.attempt,
       },
     });
-    if (!opened || opened.kind !== 'available') throw workflowError('content_unavailable');
+    if (!opened) throw workflowError('content_unavailable');
+    if (opened.kind !== 'available') throw workflowError(workflowStoredContentReadErrorCodeV1(opened));
     return WorkflowProgressEnvelopeV1Schema.parse(opened.content);
   };
 
@@ -1946,7 +1953,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       binding: { v: 1, purpose: 'checkpoint', accountId: params.accountId, runId: params.runId },
       envelope,
     });
-    if (!opened || opened.kind !== 'available') throw workflowError('content_unavailable');
+    if (!opened) throw workflowError('content_unavailable');
+    if (opened.kind !== 'available') throw workflowError(workflowStoredContentReadErrorCodeV1(opened));
     return WorkflowCheckpointEnvelopeV1Schema.parse(opened.content);
   };
 
@@ -2731,14 +2739,14 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
               let stepNames: WorkflowRunDisplaySummaryV1['stepNames'];
               if (acceptedOpen) {
                 const listed = openWorkflowAcceptedSnapshotListingStoredEnvelopeV1(acceptedOpen);
-                if (listed.kind !== 'available') throw workflowError('content_unavailable');
+                if (listed.kind !== 'available') throw workflowError(workflowStoredContentReadErrorCodeV1(listed));
                 accepted = listed.content;
               } else {
                 const displayEnvelope = typeof rawDisplay === 'string' ? parseWorkflowStoredContentEnvelopeV1(rawDisplay) : null;
                 if (!displayEnvelope) throw workflowError('content_unavailable');
                 const summary = openWorkflowRunDisplaySummaryStoredEnvelopeV1({ ...openMode(resolved.encryption), envelope: displayEnvelope,
                   binding: { v: 1, purpose: 'display_summary', accountId: census.ownerAccountId, runId: run.id } });
-                if (summary.kind !== 'available') throw workflowError('content_unavailable');
+                if (summary.kind !== 'available') throw workflowError(workflowStoredContentReadErrorCodeV1(summary));
                 accepted = summary.content;
                 stepNames = summary.content.stepNames;
               }
@@ -2747,7 +2755,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
                 if (program) return program;
                 if (!acceptedOpen) throw workflowError('content_unavailable');
                 const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1(acceptedOpen);
-                if (opened.kind !== 'available') throw workflowError('content_unavailable');
+                if (opened.kind !== 'available') throw workflowError(workflowStoredContentReadErrorCodeV1(opened));
                 return program = opened.content;
               };
               origin = projectAcceptedOrigin(accepted.origin, run.origin) ?? run.origin;
@@ -2934,7 +2942,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       if (snapshot.checkpointEnvelope) {
         const envelope = parseWorkflowStoredContentEnvelopeV1(snapshot.checkpointEnvelope);
         const opened = envelope && openWorkflowCheckpointStoredEnvelopeV1({ ...openMode(enc), binding: { v: 1, purpose: 'checkpoint', accountId, runId: args.input.runId }, envelope });
-        if (!opened || opened.kind !== 'available') throw workflowError('content_unavailable');
+        if (!opened) throw workflowError('content_unavailable');
+        if (opened.kind !== 'available') throw workflowError(workflowStoredContentReadErrorCodeV1(opened));
         checkpoint = WorkflowCheckpointEnvelopeV1Schema.parse(opened.content);
       }
       let result: unknown;
@@ -2942,7 +2951,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       if (snapshot.resultEnvelope) {
         const envelope = parseWorkflowStoredContentEnvelopeV1(snapshot.resultEnvelope);
         const opened = envelope && openWorkflowFinalResultStoredEnvelopeV1({ ...openMode(enc), binding: { v: 1, purpose: 'final_result', accountId, runId: args.input.runId }, envelope });
-        if (!opened || opened.kind !== 'available') throw workflowError('content_unavailable');
+        if (!opened) throw workflowError('content_unavailable');
+        if (opened.kind !== 'available') throw workflowError(workflowStoredContentReadErrorCodeV1(opened));
         result = opened.content.result.value;
         finalOutputInvocationId = opened.content.producerInvocation.recordId;
       }
@@ -3098,7 +3108,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       await prepareRunRecipients(args.input.runId, resolved.encryption, census, args.context.signal);
       const envelope = parseWorkflowStoredContentEnvelopeV1(raw.resultEnvelope);
       const opened = envelope && openWorkflowFinalResultStoredEnvelopeV1({ ...openMode(resolved.encryption), binding: { v: 1, purpose: 'final_result', accountId: census.ownerAccountId, runId: args.input.runId }, envelope });
-      if (!opened || opened.kind !== 'available') throw workflowError('content_unavailable');
+      if (!opened) throw workflowError('content_unavailable');
+      if (opened.kind !== 'available') throw workflowError(workflowStoredContentReadErrorCodeV1(opened));
       return WorkflowActionOutputSchemasV1[args.actionId].parse({ ...base, result: opened.content.result.value });
     }
     if (args.actionId === 'workflow.run.invocations.list') {

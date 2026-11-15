@@ -38,6 +38,7 @@ import { deriveWorkflowDestinationsV1, resolveWorkflowDestinationsV1 } from '../
 import { resolveWorkflowDefinitionRefV1, resolveWorkflowPluginSourceV1 } from '../../workflows/workflowDefinitionResolverV1.js';
 import type { CoordinationMessageRefV1 } from '../../discussions/messageRefs.js';
 import { normalizeWorkflowActionThrownError } from './workflowAccountActions.js';
+import { workflowStoredContentReadErrorCodeV1 } from '../../workflows/workflowStoredContentV1.js';
 import { admitAgentStartV1 } from '../../account/settings/admitAgentStartV1.js';
 import { SessionAgentSpawnPolicyV1StrictSchema } from '../../account/settings/sessionAgentSpawnPolicyV1.js';
 import { materializeWorkflowDefinitionAuthorityV1, type MaterializeWorkflowAcceptedSnapshotV1Input } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
@@ -112,7 +113,9 @@ function headerMatchesArtifact(
 }
 
 function contentUnavailable(reason: WorkflowDefinitionContentUnavailableReasonV1) {
-  return Object.assign(new Error('workflow_definition_content_unavailable'), { code: 'content_unavailable', details: { reason } });
+  const code = workflowStoredContentReadErrorCodeV1({ kind: reason === 'history_not_readable' ? 'payloadInvalid' : 'contentInvalid' });
+  return Object.assign(new Error('workflow_definition_content_unavailable'), { code,
+    details: { reason: code === 'history_not_readable' ? code : reason } });
 }
 
 function openDefinitionBody(body: ArtifactBodyV1 | null | undefined): WorkflowDefinitionV1 {
@@ -121,9 +124,9 @@ function openDefinitionBody(body: ArtifactBodyV1 | null | undefined): WorkflowDe
   let candidate: unknown;
   try { candidate = JSON.parse(body); } catch { throw contentUnavailable('invalid_body'); }
   const parsedBody = WorkflowDefinitionArtifactBodyV1ReadSchema.safeParse(candidate);
-  if (!parsedBody.success) throw contentUnavailable('invalid_body');
+  if (!parsedBody.success) throw contentUnavailable('history_not_readable');
   const validation = validateWorkflowDefinition(parsedBody.data.definition);
-  if (!validation.valid || !validation.normalizedDefinition) throw contentUnavailable('invalid_body');
+  if (!validation.valid || !validation.normalizedDefinition) throw contentUnavailable('history_not_readable');
   return validation.normalizedDefinition;
 }
 
@@ -357,7 +360,8 @@ export function createWorkflowDefinitionActions(params: Readonly<{
               } catch (error) {
                 // Only this record's validated content failure is isolated. Transport,
                 // authorization, currentness and Account-mode errors stay at their owners.
-                if (!error || typeof error !== 'object' || Reflect.get(error, 'code') !== 'content_unavailable') throw error;
+                if (!error || typeof error !== 'object'
+                  || (Reflect.get(error, 'code') !== 'content_unavailable' && Reflect.get(error, 'code') !== 'history_not_readable')) throw error;
                 const detail = Reflect.get(error, 'details');
                 const cause = WorkflowDefinitionContentUnavailableReasonV1Schema.safeParse(detail && typeof detail === 'object' ? Reflect.get(detail, 'reason') : undefined);
                 reason = cause.success ? cause.data : 'invalid_body';

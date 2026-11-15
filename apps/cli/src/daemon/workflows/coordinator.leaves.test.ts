@@ -19,6 +19,7 @@ import { createGitWorkflowWorkspaceTestDependencies } from './workflowWorkspace.
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { formatInlineReferenceTokenV1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
 import { MENTION_KIND_V1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
+import { createWorkflowActionExecutor } from '@happier-dev/protocol/actions/executor/workflowAccountActions';
 
 const workspace = { machineId: 'machine', directory: '/repo', checkoutRootPath: '/repo' };
 const authorization = { principal: { kind: 'host' as const }, admittedPermissionCeiling: 'default' as const };
@@ -71,6 +72,47 @@ const goal: WorkflowActionLeafV1 = { kind: 'action', id: 'goal', actionId: 'sess
   input: { sessionId: { kind: 'origin_session_id' }, status: { kind: 'literal', value: 'complete' } } };
 
 describe('workflow Action leaves', () => {
+  it('retains a failed read-only Action as retryable failure rather than an unknown effect', async () => {
+    const leaf: WorkflowActionLeafV1 = { kind: 'action', id: 'machines', actionId: 'machines.list', input: {} };
+    const store = createInMemoryWorkflowCoordinatorStore();
+    // The Home transport fails after admission; a read has no unrecorded mutation to replay.
+    const executor = createTestActionExecutor({ machinesList: async () => { throw new Error('Disconnected'); } });
+    const coordinator = createWorkflowCoordinator({ store,
+      executeStep: async () => { throw new Error('Read-only Action has no Agent'); },
+      resolveWorkspace: async () => ({ ok: true, workspace }),
+      action: { executor, buildContext: async () => ({ surface: 'cli', authority: 'account_automation', bypassApprovals: true }),
+        observeRun: async () => { throw new Error('Read-only Action has no awaited execution'); } } });
+    expect(await coordinator.run({ runId: 'read-failure', definition: definition([leaf]), inputs: {}, executionTarget,
+      authorization, materializedLeaves: [frozen(leaf)] })).toMatchObject({ state: 'interrupted' });
+    expect(store.list().find(row => row.blockId === leaf.id)).toMatchObject({ lifecycle: 'failed',
+      failureCause: { errorClass: 'Error' } });
+  });
+
+  it('records the immediate validation result of a repeated body Action without replaying it', async () => {
+    const unusedStorage = async (): Promise<never> => { throw new Error('Validation does not access stored definitions or Runs'); };
+    const workflowAction = createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true,
+      definitions: { list: unusedStorage, get: unusedStorage, create: unusedStorage, update: unusedStorage,
+        edit: unusedStorage, delete: unusedStorage, importDocument: unusedStorage, exportDocument: unusedStorage },
+      runs: { execute: unusedStorage } });
+    const leaf: WorkflowActionLeafV1 = { kind: 'action', id: 'validate', actionId: 'workflow.validate',
+      input: { definition: { kind: 'literal', value: { version: 1, inputs: [], defaults: {}, blocks: [
+        { kind: 'action', id: 'machines', actionId: 'machines.list', input: {} },
+      ] } } } };
+    const store = createInMemoryWorkflowCoordinatorStore();
+    const executor = createTestActionExecutor({ workflowAction });
+    const coordinator = createWorkflowCoordinator({ store,
+      executeStep: async () => { throw new Error('Validation must not start an Agent'); },
+      resolveWorkspace: async () => ({ ok: true, workspace }),
+      action: { executor, buildContext: async () => ({ surface: 'cli', authority: 'account_automation', bypassApprovals: true }),
+        observeRun: async () => { throw new Error('Validation has no awaited execution'); } } });
+    const input = { runId: 'scalar-validation', definition: definition([{ kind: 'loop', id: 'body',
+      repetition: { kind: 'items', items: { kind: 'literal', value: ['first'] }, execution: 'sequential', failurePolicy: 'fail_stop' },
+      body: [leaf] }]), inputs: {}, executionTarget, authorization, materializedLeaves: [frozen(leaf)] };
+    expect(await coordinator.run(input)).toMatchObject({ state: 'succeeded' });
+    expect(store.list().find(row => row.blockId === leaf.id)).toMatchObject({ lifecycle: 'completed', result: { valid: true } });
+    expect(await coordinator.run(input)).toMatchObject({ state: 'succeeded' });
+  });
+
   it('retains a scalar Action lost acknowledgement as uncertain without replaying its effect', async () => {
     const leaf: WorkflowActionLeafV1 = { kind: 'action', id: 'setup', actionId: 'machines.setup.apply', input: {
       homeId: { kind: 'literal', value: 'home' }, machineId: { kind: 'literal', value: workspace.machineId },
@@ -98,7 +140,7 @@ describe('workflow Action leaves', () => {
     expect(effects).toBe(1);
   });
 
-  it.each(['native_effect_failed', 'action_failed'] as const)('preserves a scalar Action %s cause without changing its result payload', async errorCode => {
+  it.each(['native_effect_failed', 'action_failed'] as const)('preserves a scalar read Action %s cause and result payload as a retryable failure', async errorCode => {
     const leaf: WorkflowActionLeafV1 = { kind: 'action', id: 'setup', actionId: 'machines.setup.plan', input: {
       homeId: { kind: 'literal', value: 'home' }, machineId: { kind: 'literal', value: workspace.machineId },
     } };
@@ -117,11 +159,8 @@ describe('workflow Action leaves', () => {
         observeRun: async () => { throw new Error('Scalar Action has no awaited Run'); } } });
     const input = { runId: 'scalar-unknown', definition: definition([leaf]), inputs: {}, executionTarget,
       authorization, materializedLeaves: [frozen(leaf)] };
-    const lifecycle = errorCode === 'action_failed' ? 'outcome_uncertain' : 'failed';
-    expect(await coordinator.run(input)).toMatchObject({ state: lifecycle === 'failed' ? 'interrupted' : lifecycle,
-      reason: errorCode === 'action_failed' ? 'outcome_uncertain' : errorCode });
-    expect(store.list().find(row => row.blockId === leaf.id)).toMatchObject({ lifecycle, failureCause,
-      ...(errorCode === 'action_failed' ? {} : { result: details }) });
+    expect(await coordinator.run(input)).toMatchObject({ state: 'interrupted', reason: errorCode });
+    expect(store.list().find(row => row.blockId === leaf.id)).toMatchObject({ lifecycle: 'failed', failureCause, result: details });
     expect(effects).toBe(1);
   });
 
@@ -206,7 +245,7 @@ describe('workflow Action leaves', () => {
           project: { machineId: workspace.machineId, directory: workspace.directory } } }),
         observeRun: async () => { throw new Error('Immediate Action has no awaited Runs'); } } });
     const outcome = await observedCoordinator.run({ runId: 'effect-run', definition: definition([leaf]), inputs: {},
-      executionTarget, authorization, originSessionId: 'origin', materializedLeaves: [frozen(leaf)] });
+      executionTarget, authorization, originSessionId: 'origin' });
     expect(outcome.state).toBe('interrupted');
     const row = store.list().find((entry) => entry.blockId === leaf.id)!;
     expect(row).toMatchObject({ lifecycle: 'failed', reason: 'command_failed', result: output });

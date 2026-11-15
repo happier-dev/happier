@@ -95,9 +95,16 @@ export type WorkflowStoredContentEnvelopeV1 = z.infer<typeof WorkflowStoredConte
 
 export type WorkflowStoredContentOpenFailureV1 =
   | Readonly<{ kind: 'materialUnavailable' }>
+  | Readonly<{ kind: 'payloadInvalid' }>
   | Readonly<{ kind: 'contentInvalid' }>
   | Readonly<{ kind: 'modeMismatch' }>
   | Readonly<{ kind: 'bindingMismatch' }>;
+
+/** Content that opened but no longer satisfies its schema is development history,
+ * not missing device key material. All stored Workflow readers share this decision. */
+export function workflowStoredContentReadErrorCodeV1(failure: WorkflowStoredContentOpenFailureV1): 'history_not_readable' | 'content_unavailable' {
+  return failure.kind === 'payloadInvalid' ? 'history_not_readable' : 'content_unavailable';
+}
 export type WorkflowStoredContentOuterValidationV1 =
   | Readonly<{ kind: 'available'; envelope: WorkflowStoredContentEnvelopeV1 }>
   | Exclude<WorkflowStoredContentOpenFailureV1, Readonly<{ kind: 'materialUnavailable' }>>;
@@ -110,7 +117,7 @@ type WorkflowStoredEnvelopeSealModeV1 =
     }>;
 
 // Development direct cut: Account-derived ciphertext is intentionally not readable.
-const WORKFLOW_RUN_CIPHERTEXT_PREFIX = 'wfr1:';
+export const WORKFLOW_RUN_CIPHERTEXT_PREFIX = 'wfr1:';
 function readWorkflowRunCiphertext(ciphertext: string): Uint8Array | null {
   if (!ciphertext.startsWith(WORKFLOW_RUN_CIPHERTEXT_PREFIX)) return null;
   const encoded = ciphertext.slice(WORKFLOW_RUN_CIPHERTEXT_PREFIX.length);
@@ -207,7 +214,7 @@ function readWorkflowStoredEnvelopeOuterForModeV1(params: Readonly<{
       ? { kind: 'available', envelope: envelope.data, bytes, binding: binding.data } : { kind: 'contentInvalid' };
   }
   const payload = parsePayloadForBinding(binding.data, envelope.data.v, true, params.listing);
-  if (!payload) return { kind: 'contentInvalid' };
+  if (!payload) return { kind: 'payloadInvalid' };
   return sameBinding(payload.payload.binding, binding.data)
     ? { kind: 'available', envelope: envelope.data, bytes: null, payload }
     : { kind: 'bindingMismatch' };
@@ -255,7 +262,7 @@ function openWorkflowStoredEnvelopeV1(params: Readonly<{
     catch { return { kind: 'contentInvalid' }; }
   }
   const payload = parsePayloadForBinding(outer.binding, rawPayload, true, params.listing);
-  if (!payload) return { kind: 'contentInvalid' };
+  if (!payload) return { kind: 'payloadInvalid' };
   if (!sameBinding(payload.payload.binding, outer.binding)) return { kind: 'bindingMismatch' };
   return { kind: 'available', payload };
 }
