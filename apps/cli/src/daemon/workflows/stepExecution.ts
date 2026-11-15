@@ -1,6 +1,7 @@
 import type { StoredCredentials } from '@/persistence';
 import type { ActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { sanitizeSessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 export { readProjectSetupConsentHoldV1 as readWorkflowProjectSetupConsentHold } from '@happier-dev/protocol/actions/projectActionFamily';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 import {
@@ -48,8 +49,11 @@ export function classifyWorkflowSessionInputResult(
           return { kind: 'completed', result: '', ...reply };
         case 'terminal_no_result': return { kind: 'needs_attention', code: 'session_input_result_unavailable', ...reply };
         case 'cancelled': return { kind: 'cancelled', ...reply };
-        case 'failed': return { kind: workflowRuntimeFailureKind(outcome.runtimeIssueV1), code: 'session_input_failed', message: 'The requested session failed.',
-          ...(outcome.runtimeIssueV1 ? { runtimeIssueV1: outcome.runtimeIssueV1 } : {}), ...reply };
+        case 'failed': {
+          const runtimeIssueV1 = 'runtimeIssueV1' in outcome ? sanitizeSessionRuntimeIssueV1(outcome.runtimeIssueV1) : null;
+          return { kind: workflowRuntimeFailureKind(runtimeIssueV1 ?? undefined), code: 'session_input_failed', message: 'The requested session failed.',
+            ...(runtimeIssueV1 ? { runtimeIssueV1 } : {}), ...reply };
+        }
         case 'declined': return { kind: 'failed', code: 'session_input_declined', message: 'The requested session declined.', ...reply };
         case 'answer': return { kind: 'needs_attention', code: 'session_input_result_unavailable', ...reply };
       }

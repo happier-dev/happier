@@ -55,7 +55,8 @@ import { createProductionWorkflowSessionStepExecutor } from './sessionStepExecut
 describe('Workflow Session step execution', () => {
   it('CC1 carries a fulfilled quota failure into the Workflow reason', () => {
     const runtimeIssueV1 = { v: 1, scope: 'primary_session', status: 'failed', code: 'usage_limit', source: 'usage_limit', occurredAt: 1, failureCause: { phase: 'client_start', failureReason: 'usage_limit', retryable: false } } as const;
-    expect(classifyWorkflowSessionInputResult({ kind: 'fulfilled', outcome: { kind: 'failed', runtimeIssueV1 } })).toMatchObject({ kind: 'needs_attention', runtimeIssueV1 });
+    const outcome = { kind: 'failed' as const, runtimeIssueV1 };
+    expect(classifyWorkflowSessionInputResult({ kind: 'fulfilled', outcome })).toMatchObject({ kind: 'needs_attention', runtimeIssueV1 });
   });
   it.each([
     { outcome: { kind: 'pass' as const }, expected: { kind: 'completed', result: '' } },
@@ -202,7 +203,7 @@ describe('Workflow Session step execution', () => {
       invocation: { kind: 'happier.workflow-progress.v1', blockKind: 'step', invocationPath: { blockId: 'ready', scope: [] }, attempt: '0', logicalInvocationRecordId: 'logical' },
       input: { text: '', references: [], attachments: [], values: [] },
       execution: { conversation: { kind: 'existing_session', sessionId, machineId: 'machine-1' },
-        launchEnvironment: { values: { PREDECESSOR_RUN: 'literal value' }, unset: [] }, providerSessionResume: { kind: 'provider_session.v1', providerSessionId: 'incoming-native' },
+        environmentVariables: { PREDECESSOR_RUN: 'literal value' }, providerSessionResume: { kind: 'provider_session.v1', providerSessionId: 'incoming-native' },
         profileId: 'incoming-profile', acpSessionModeId: 'incoming-mode', transcriptStorage: 'persisted',
         terminal: { mode: 'plain' }, windowsRemoteSessionLaunchMode: 'windows_terminal', windowsTerminalWindowName: 'Incoming window',
         capabilitySelection: { mcp: { v: 1, managedServersEnabled: false, forceIncludeServerIds: [], forceExcludeServerIds: [] } },
@@ -248,7 +249,7 @@ describe('Workflow Session step execution', () => {
       invocation: { kind: 'happier.workflow-progress.v1', blockKind: 'step', invocationPath: { blockId: 'work', scope: [] }, attempt: '0', logicalInvocationRecordId: 'logical' },
       input: { text: 'Work', references: [], attachments: [], values: [] },
       execution: { conversation: { kind: 'existing_session', sessionId, machineId: 'machine-1' },
-        launchEnvironment: { values: { PREDECESSOR_RUN: 'literal value' }, unset: [] } },
+        environmentVariables: { PREDECESSOR_RUN: 'literal value' } },
       executionTarget: { kind: 'session' }, workspace: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' },
       authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' }, beforeInputAdmission: async () => {},
       signal: interruption.signal,
