@@ -1,3 +1,4 @@
+import type { PrivateLabelReadV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import { createMachineFixture, createSessionFixture, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { CONNECTED_SERVICES_BINDINGS_KEY } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 import { projectMachineAgent } from '@/agents/machineAgents/machineAgentModel';
@@ -1096,7 +1097,7 @@ describe('useNewSessionConnectedServices', () => {
         const { TeamCredentialResourceCatalogEntryV1Schema } = await import('@happier-dev/protocol/teams');
         const target = 'agent:happier.agent.codex/codex';
         const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
-            id: 'shared-model', teamId: 'engineering', displayName: 'Engineering models', sourceOwnerDisplayName: null, resourceRevision: 2,
+            id: 'shared-model', teamId: 'engineering', displayName: { content: { t: 'plain', v: 'Engineering models' }, recipientEnvelope: null, legacyPlaintext: true } satisfies PrivateLabelReadV1, sourceOwnerDisplayName: null, resourceRevision: 2,
             readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
             directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', sourcePresentation: null,
             providerModels: [{ selection: { kind: 'team_credential_provider_model', teamId: 'engineering', resourceId: 'shared-model',
@@ -2118,7 +2119,7 @@ describe('useNewSessionConnectedServices', () => {
         const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
         const selection = { source: 'team_resource' as const, resourceId: 'resource-muse', deliveryMode: 'brokered' as const };
         const resource = {
-            id: 'resource-muse', teamId: 'team-1', displayName: 'Muse Code', sourceOwnerDisplayName: null, resourceRevision: 1,
+            id: 'resource-muse', teamId: 'team-1', displayName: { content: { t: 'plain', v: 'Muse Code' }, recipientEnvelope: null, legacyPlaintext: true } satisfies PrivateLabelReadV1, sourceOwnerDisplayName: null, resourceRevision: 1,
             readiness: { kind: 'available' as const }, recoveryAction: null,
             mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered' as const,
             sessionUsePolicy: 'personal_allowed' as const, providerModels: [], connectedServiceSelections: [selection],
@@ -2129,7 +2130,7 @@ describe('useNewSessionConnectedServices', () => {
             defaultAuthConsumer: { pluginId: 'happier.agent.claude', localId: 'claude' }, connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
             agentOptionState: { [CONNECTED_SERVICES_BINDINGS_KEY]: { [CLAUDE_SERVICE_KEY]: selection } },
             settings: { connectedServicesDefaultProfileByServiceId: {} }, targetServerId: activeHomeId,
-            teamCredentialResources: [resource], teamNameById: { 'team-1': 'Engineering' },
+            teamCredentialResources: [resource], teamCredentialDisplayNames: { [resource.id]: 'Muse Code' }, teamNameById: { 'team-1': 'Engineering' },
             router: { push: vi.fn() }, setAgentOptionStateForCurrentAgent: vi.fn(),
         }));
         await waitForHomeGovernance(() => expect(requireCollapsedContentPopover(hook.getCurrent().connectedServicesAuthChip).label)
@@ -2150,7 +2151,7 @@ describe('useNewSessionConnectedServices', () => {
             },
         };
         const resource = {
-            id: 'resource-1', teamId: 'team-1', displayName: 'Shared Claude', sourceOwnerDisplayName: null, resourceRevision: 4,
+            id: 'resource-1', teamId: 'team-1', displayName: { content: { t: 'plain', v: 'Shared Claude' }, recipientEnvelope: null, legacyPlaintext: true } satisfies PrivateLabelReadV1, sourceOwnerDisplayName: null, resourceRevision: 4,
             readiness: { kind: 'available' as const }, recoveryAction: null,
             deliveryMode: 'direct' as const, mayBroker: false, mayReceiveDirect: true,
             directMaterialState: 'never_delivered' as const,
@@ -2206,7 +2207,7 @@ describe('useNewSessionConnectedServices', () => {
             },
         };
         const resource = {
-            id: 'resource-1', teamId: 'team-1', displayName: 'Shared Claude', sourceOwnerDisplayName: null, resourceRevision: 4,
+            id: 'resource-1', teamId: 'team-1', displayName: { content: { t: 'plain', v: 'Shared Claude' }, recipientEnvelope: null, legacyPlaintext: true } satisfies PrivateLabelReadV1, sourceOwnerDisplayName: null, resourceRevision: 4,
             readiness: { kind: 'available' as const }, recoveryAction: null,
             deliveryMode: 'direct' as const, mayBroker: false, mayReceiveDirect: true,
             directMaterialState: 'current' as const,

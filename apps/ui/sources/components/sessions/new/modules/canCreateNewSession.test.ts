@@ -1,3 +1,4 @@
+import type { Machine } from '@/sync/domains/state/storageTypes';
 import { describe, expect, it } from 'vitest';
 
 import { canCreateNewSession } from '@/components/sessions/new/modules/canCreateNewSession';
@@ -31,7 +32,7 @@ describe('canCreateNewSession', () => {
             managedInputRuntime: { ...selectedMachine.managedInputRuntime, newSessionWake: { kind: 'unavailable', reason: 'no_controller' } } } })).toBe(false);
         expect(canCreateNewSession({ ...input, selectedMachine: { ...selectedMachine,
             managedInputRuntime: { ...selectedMachine.managedInputRuntime, newSessionWake: undefined } } })).toBe(false);
-        const online = { ...selectedMachine, active: true, activeAt: Date.now(),
+        const online: Machine = { ...selectedMachine, active: true, activeAt: Date.now(),
             managedInputRuntime: { ...selectedMachine.managedInputRuntime, newSessionWake: { kind: 'unavailable' as const, reason: 'no_controller' } } };
         publishMachineActivityForTest([online]);
         expect(canCreateNewSession({ ...input, selectedMachine: online })).toBe(true);

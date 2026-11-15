@@ -1,3 +1,4 @@
+import type { PrivateLabelReadV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
 import { presentDirectDeliveryDisclosure } from '@/components/sessions/teamCredentials/directDeliveryDisclosure';
 import { describe, expect, it, vi } from 'vitest';
@@ -64,7 +65,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         const service = { pluginId: 'happier.agent.muse', localId: 'muse-account' };
         const key = `${service.pluginId}/${service.localId}`;
         const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
-            id: 'shared-muse', teamId: 'team-1', displayName: { content: { t: 'plain' as const, v: 'Shared Muse' }, recipientEnvelope: null, legacyPlaintext: true }, resourceRevision: 1,
+            id: 'shared-muse', teamId: 'team-1', displayName: { content: { t: 'plain' as const, v: 'Shared Muse' }, recipientEnvelope: null, legacyPlaintext: true } satisfies PrivateLabelReadV1, resourceRevision: 1,
             readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
             directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', providerModels: [],
             sourcePresentation: { kind: 'connected_service', service },
@@ -357,7 +358,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         ].map(({ id, displayName }) => ({
             id,
             teamId: 'team-1',
-            displayName: { content: { t: 'plain' as const, v: displayName }, recipientEnvelope: null, legacyPlaintext: true },
+            displayName: { content: { t: 'plain' as const, v: displayName }, recipientEnvelope: null, legacyPlaintext: true } satisfies PrivateLabelReadV1,
             sourceOwnerDisplayName: null, resourceRevision: 7,
             readiness: { kind: 'available' as const },
             recoveryAction: null,
@@ -445,7 +446,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
             setBindingForService,
             teamCredentialDisplayNames: { 'resource-1': 'Shared mail' },
             teamCredentialResources: [{
-                id: 'resource-1', teamId: 'team-1', displayName: { content: { t: 'plain' as const, v: 'Shared mail' }, recipientEnvelope: null, legacyPlaintext: true },
+                id: 'resource-1', teamId: 'team-1', displayName: { content: { t: 'plain' as const, v: 'Shared mail' }, recipientEnvelope: null, legacyPlaintext: true } satisfies PrivateLabelReadV1,
                 sourceOwnerDisplayName: null, resourceRevision: 7, readiness: { kind: 'available' }, recoveryAction: null,
                 mayBroker: false, mayReceiveDirect: true,
                 directMaterialState: 'current', directDeliveryRecorded: true, sessionUsePolicy: 'personal_allowed',
@@ -479,7 +480,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
             includeNativeAuthOption: false, setBindingForService: vi.fn(),
             teamCredentialDisplayNames: { 'resource-1': 'Shared mail' },
             teamCredentialResources: [{
-                id: 'resource-1', teamId: 'team-1', displayName: { content: { t: 'plain' as const, v: 'Shared mail' }, recipientEnvelope: null, legacyPlaintext: true }, sourceOwnerDisplayName: null, resourceRevision: 7,
+                id: 'resource-1', teamId: 'team-1', displayName: { content: { t: 'plain' as const, v: 'Shared mail' }, recipientEnvelope: null, legacyPlaintext: true } satisfies PrivateLabelReadV1, sourceOwnerDisplayName: null, resourceRevision: 7,
                 readiness: { kind: 'available' }, recoveryAction: null, mayBroker: false, mayReceiveDirect: true,
                 directMaterialState: 'current', directDeliveryRecorded: true, sessionUsePolicy: 'personal_allowed',
                 providerModels: [], sourcePresentation: { kind: 'connected_service', service: selection.disclosedMember.service },
@@ -509,7 +510,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
             },
         };
         const resource = {
-            id: 'resource-1', teamId: 'team-1', displayName: { content: { t: 'plain' as const, v: 'Shared mail' }, recipientEnvelope: null, legacyPlaintext: true }, sourceOwnerDisplayName: null, resourceRevision: 7,
+            id: 'resource-1', teamId: 'team-1', displayName: { content: { t: 'plain' as const, v: 'Shared mail' }, recipientEnvelope: null, legacyPlaintext: true } satisfies PrivateLabelReadV1, sourceOwnerDisplayName: null, resourceRevision: 7,
             readiness: { kind: 'source_unavailable' as const }, recoveryAction: 'source_owner_action' as const,
             deliveryMode: 'direct' as const, mayBroker: false, mayReceiveDirect: true,
             directMaterialState: 'stale' as const, sessionUsePolicy: 'personal_allowed' as const,
@@ -545,7 +546,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         const resource = {
             id: selection.resourceId,
             teamId: 'team-1',
-            displayName: { content: { t: 'plain' as const, v: 'Shared build account' }, recipientEnvelope: null, legacyPlaintext: true },
+            displayName: { content: { t: 'plain' as const, v: 'Shared build account' }, recipientEnvelope: null, legacyPlaintext: true } satisfies PrivateLabelReadV1,
             sourceOwnerDisplayName: null, resourceRevision: 8,
             readiness: { kind: 'available' as const },
             recoveryAction: null,
@@ -613,7 +614,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         const resource = {
             id: binding.resourceId,
             teamId: 'team-1',
-            displayName: { content: { t: 'plain' as const, v: 'Shared build account' }, recipientEnvelope: null, legacyPlaintext: true },
+            displayName: { content: { t: 'plain' as const, v: 'Shared build account' }, recipientEnvelope: null, legacyPlaintext: true } satisfies PrivateLabelReadV1,
             sourceOwnerDisplayName: null, resourceRevision: 8,
             readiness: { kind: 'source_unavailable' as const },
             recoveryAction: 'source_owner_action' as const,
@@ -926,7 +927,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
     it('folds signed-out accounts and unusable Team resources into one trailing Unavailable section', () => {
         const selection = { source: 'team_resource' as const, resourceId: 'resource-1', deliveryMode: 'brokered' as const };
         const resource = {
-            id: 'resource-1', teamId: 'team-1', displayName: { content: { t: 'plain' as const, v: 'Shared Codex' }, recipientEnvelope: null, legacyPlaintext: true }, sourceOwnerDisplayName: null, resourceRevision: 1,
+            id: 'resource-1', teamId: 'team-1', displayName: { content: { t: 'plain' as const, v: 'Shared Codex' }, recipientEnvelope: null, legacyPlaintext: true } satisfies PrivateLabelReadV1, sourceOwnerDisplayName: null, resourceRevision: 1,
             readiness: { kind: 'broker_unavailable' as const }, recoveryAction: 'source_owner_action' as const,
             deliveryMode: 'brokered' as const, mayBroker: true, mayReceiveDirect: false,
             directMaterialState: 'never_delivered' as const, sessionUsePolicy: 'personal_allowed' as const,

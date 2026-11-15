@@ -1,8 +1,7 @@
+import type { PrivateLabelReadV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import { describe, expect, it } from 'vitest';
 
-import { AGENTS_CORE } from '@happier-dev/agents';
 import { connectedServiceProfileKey } from '@happier-dev/protocol/connect/connectedServiceProfilePreferences';
-import { ConnectedServiceIdSchema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import {
     buildConnectedServiceAccountGroupOptionsByServiceId,
@@ -407,7 +406,7 @@ describe('connectedServicesNewSessionBindings', () => {
         });
     });
 
-    it('keeps OpenCode Claude subscription OAuth profiles connected when the manifest supports OAuth', () => {
+    it('keeps Claude subscription token and OAuth profiles connected in the legacy Account projection', () => {
         const result = buildConnectedServiceProfileOptionsByServiceId({
             accountProfileConnectedServicesV2: [{
                 serviceId: 'claude-subscription',
@@ -426,8 +425,7 @@ describe('connectedServicesNewSessionBindings', () => {
                     },
                 ],
             }],
-            supportedConnectedServiceIds: (AGENTS_CORE.opencode.connectedServices?.supportedServiceIds ?? [])
-                .map(serviceId => ConnectedServiceIdSchema.parse(serviceId)),
+            supportedConnectedServiceIds: ['claude-subscription'],
             labelsByKey: { [connectedServiceProfileKey({ serviceId: 'claude-subscription',
                 profileId: 'claude-pro-oauth' })]: 'Personal subscription' },
         });
@@ -477,7 +475,7 @@ describe('composeConnectedServiceTeamCredentialBindingIntents', () => {
         );
         expect(bindings).not.toBeNull();
         const resource = {
-            id: 'resource-acme', teamId: 'team-acme', displayName: 'Acme', sourceOwnerDisplayName: null, resourceRevision: 5,
+            id: 'resource-acme', teamId: 'team-acme', displayName: { content: { t: 'plain', v: 'Acme' }, recipientEnvelope: null, legacyPlaintext: true } satisfies PrivateLabelReadV1, sourceOwnerDisplayName: null, resourceRevision: 5,
             readiness: { kind: 'available' as const }, recoveryAction: null,
             mayBroker: false, mayReceiveDirect: true, directMaterialState: 'current' as const,
             sessionUsePolicy: 'personal_allowed' as const, providerModels: [],

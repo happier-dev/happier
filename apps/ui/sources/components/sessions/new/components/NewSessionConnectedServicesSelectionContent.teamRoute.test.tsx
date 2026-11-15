@@ -1,3 +1,4 @@
+import type { PrivateLabelReadV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -52,7 +53,7 @@ describe('NewSessionConnectedServicesSelectionContent on a Team route', () => {
                 nativeAgentTargetKey="agent:happier.agent.codex/codex"
                 appliedRoute={appliedRoute}
                 teamCredentialResources={[{
-                    id: 'resource-1', teamId: 'team-1', displayName: 'QA43 Leeroy brokered', sourceOwnerDisplayName: null, resourceRevision: 1,
+                    id: 'resource-1', teamId: 'team-1', displayName: { content: { t: 'plain', v: 'QA43 Leeroy brokered' }, recipientEnvelope: null, legacyPlaintext: true } satisfies PrivateLabelReadV1, sourceOwnerDisplayName: null, resourceRevision: 1,
                     readiness: { kind: 'available' }, recoveryAction: null,
                     mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered',
                     sessionUsePolicy: 'personal_allowed', providerModels: [],

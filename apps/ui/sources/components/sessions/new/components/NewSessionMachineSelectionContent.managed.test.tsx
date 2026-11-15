@@ -12,7 +12,7 @@ import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@hap
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
-import { createManagedControllerMachineFixture as createMachineFixture, createManagedCpuOptionsFixture, createDelegatedManagedPresetFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
+import { createManagedControllerMachineFixture as createMachineFixture, createManagedCpuOptionsFixture, createDelegatedManagedPresetFixture, createPlainManagedMachinePresetFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
 import { ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 
@@ -53,10 +53,8 @@ describe('ordinary managed machine picker demand', () => {
             owner: { kind: 'account', accountId: 'owner' }, controller: { machineId: 'host', installationId: 'installation' },
             launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Build guest', choices: {} } },
             descriptor, custodianAccountId: 'owner', installationPublicKey: encodeBase64(tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(3)).publicKey, 'base64url') });
-        if (exact.delegatedAcquire?.kind !== 'ready') throw new Error('Expected public review');
         const preset = ManagedMachinePresetV1Schema.parse({ ...exact, controller: undefined,
-            controllerPoolId: '6be84651-2df7-4125-aac4-0d093217b198', delegatedAcquire: { ...exact.delegatedAcquire,
-                controller: undefined, reviewedFacts: { ...exact.delegatedAcquire.reviewedFacts, controller: undefined } } });
+            controllerPoolId: '6be84651-2df7-4125-aac4-0d093217b198' });
         harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset] } });
         harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset } });
         const { storage } = await import('@/sync/domains/state/storage');
@@ -76,7 +74,8 @@ describe('ordinary managed machine picker demand', () => {
         expect(screen.getTextContent()).not.toContain(t('managedMachines.options.empty', { provider: 'Virtual machine' }));
         await act(async () => screen.pressByTestId('managed-config.use'));
         expect(onSelectManagedMachine.mock.calls[0]?.[0]).toMatchObject({ selection: { kind: 'preset', homeId: 'srv_compute', id: 'pooled', revision: 2 } });
-        expect(onSelectManagedMachine.mock.calls[0]?.[0].receipt.controller).toBeUndefined();
+        expect(onSelectManagedMachine.mock.calls[0]?.[0]).not.toHaveProperty('receipt');
+        expect(onSelectManagedMachine.mock.calls[0]?.[0].presetOrigin.controller).toBeUndefined();
         expect(harness.requests.filter(request => request.path.includes('machines.provisioners') || request.path.includes('pools/resolve')
             || request.path.includes('pools/list') || request.path.includes('machines.managed.acquire'))).toHaveLength(0);
         expect(nativeBoundary.rpc).not.toHaveBeenCalled();
@@ -84,9 +83,9 @@ describe('ordinary managed machine picker demand', () => {
     });
     it('mounts current-Home presets and one-off rows beside published artifacts without acquiring', async () => {
         const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://compute.example', serverIdentityId: 'srv_compute', accountId: 'owner', currentAccount: true });
-        const preset = { id: 'launch', homeId: 'srv_compute', revision: 2, name: 'Build guest',
+        const preset = createPlainManagedMachinePresetFixture({ id: 'launch', homeId: 'srv_compute', revision: 2, name: 'Build guest',
             owner: { kind: 'account', accountId: 'owner' }, controller: { machineId: 'host', installationId: 'installation' },
-            launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Build guest', choices: { cpu: 2 } } };
+            launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Build guest', choices: { cpu: 2 } } });
         harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset, { ...preset, id: 'archived', archivedAt: 1 }] } });
         harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset } });
         const { storage } = await import('@/sync/domains/state/storage');
@@ -94,8 +93,9 @@ describe('ordinary managed machine picker demand', () => {
         storage.getState().applyMachines([createMachineFixture({ id: 'host', installationId: 'installation' })], true,
             { sourceServerId: serverId, sourceAccountId: 'owner' });
         storage.getState().markMachineListSettled(serverId);
+        if (!preset.opened.launch) throw new Error('Expected the fixture preset launch to be opened');
         const provisioner: MachineProvisionersListResultV1['provisioners'][number] = {
-            contribution: preset.launch.provider, occurrenceId: 'occurrence', credentialPurposes: [], acquireExecutionTarget: 'daemon', descriptor: {
+            contribution: preset.opened.launch.provider, occurrenceId: 'occurrence', credentialPurposes: [], acquireExecutionTarget: 'daemon', descriptor: {
             id: 'vm', title: 'Virtual machine', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
             launchSchema: { type: 'object', properties: { cpu: { type: 'integer' } }, required: ['cpu'], additionalProperties: false },
             resourceSchema: { type: 'object', properties: {}, additionalProperties: false }, platforms: ['linux'], prerequisites: [],
@@ -179,9 +179,9 @@ describe('ordinary managed machine picker demand', () => {
 
     it('withdraws old Account launch names while replacement Account settings and launchs are pending', async () => {
         const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://compute.example', serverIdentityId: 'srv_compute', accountId: 'owner', currentAccount: true });
-        const preset = { id: 'private-launch', homeId: 'srv_compute', revision: 2, name: 'Old Account private guest',
+        const preset = createPlainManagedMachinePresetFixture({ id: 'private-launch', homeId: 'srv_compute', revision: 2, name: 'Old Account private guest',
             owner: { kind: 'account', accountId: 'owner' }, controller: { machineId: 'host', installationId: 'installation' },
-            launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: { cpu: 2 } } };
+            launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: { cpu: 2 } } });
         harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset] } });
         const { NewSessionMachineSelectionContent } = await import('./NewSessionMachineSelectionContent');
         const screen = await renderScreen(<NewSessionMachineSelectionContent groups={[]} selectedMachine={null}
@@ -197,7 +197,9 @@ describe('ordinary managed machine picker demand', () => {
         let releasePresets!: () => void;
         const pendingSettings = new Promise<void>(resolve => { releaseSettings = resolve; });
         const pendingPresets = new Promise<void>(resolve => { releasePresets = resolve; });
-        const replacement = { ...preset, id: 'replacement-launch', name: 'New Account guest', owner: { kind: 'account', accountId: 'replacement' } };
+        const replacement = createPlainManagedMachinePresetFixture({ id: 'replacement-launch', homeId: preset.homeId,
+            revision: preset.revision, name: 'New Account guest', owner: { kind: 'account', accountId: 'replacement' },
+            controller: preset.controller, launch: preset.opened.launch });
         harness.answer(serverId, '/v2/account/settings', { body: { content: null, version: 0 }, respondAfter: pendingSettings });
         harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [replacement] }, respondAfter: pendingPresets });
         try {

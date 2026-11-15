@@ -647,6 +647,7 @@ describe('NewSessionEngineOptionDetail', () => {
                 executionTarget: { kind: 'machine', target: { serverId: 'server-1', machineId: 'machine-1' } },
                 agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.opencode', localId: 'opencode' } },
                 acpSessionModeId: selectedMode || null,
+                connectedServices: null,
             }),
             permissionMode: 'default',
             configurationUpdatedAtMs: 1,

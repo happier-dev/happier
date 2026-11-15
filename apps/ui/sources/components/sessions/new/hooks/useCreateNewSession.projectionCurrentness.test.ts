@@ -1,3 +1,4 @@
+import type { PrivateLabelReadV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import 'fake-indexeddb/auto';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
@@ -412,7 +413,7 @@ describe('shared guest Send through the screen action caller', () => {
         const target = { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } as const;
         const targetKey = 'agent:happier.agent.codex/codex';
         const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
-            id: 'shared-model', teamId: 'engineering', displayName: 'Engineering models', resourceRevision: 2,
+            id: 'shared-model', teamId: 'engineering', displayName: { content: { t: 'plain', v: 'Engineering models' }, recipientEnvelope: null, legacyPlaintext: true } satisfies PrivateLabelReadV1, resourceRevision: 2,
             readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
             directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', sourcePresentation: null,
             providerModels: [{ selection: { kind: 'team_credential_provider_model', teamId: 'engineering', resourceId: 'shared-model',
@@ -484,7 +485,7 @@ describe('useCreateNewSession (projection currentness admission)', () => {
         const teamAddress = { serverId: runtime.serverId, teamId: 'team-launch' };
         const selection = { source: 'team_resource', resourceId: 'resource-launch', deliveryMode: 'brokered' } as const;
         const bindings = ConnectedServiceBindingsV2Schema.parse({ v: 2, bindingsByServiceId: { 'acme.review/auth': selection } });
-        const resource: TeamCredentialResourceCatalogEntryV1 = { id: selection.resourceId, teamId: teamAddress.teamId, displayName: 'Shared sign-in', sourceOwnerDisplayName: null, resourceRevision: 3,
+        const resource: TeamCredentialResourceCatalogEntryV1 = { id: selection.resourceId, teamId: teamAddress.teamId, displayName: { content: { t: 'plain', v: 'Shared sign-in' }, recipientEnvelope: null, legacyPlaintext: true } satisfies PrivateLabelReadV1, sourceOwnerDisplayName: null, resourceRevision: 3,
             readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
             directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', providerModels: [],
             connectedServiceSelections: [selection], sourcePresentation: { kind: 'connected_service', service: connectedAccountDeclaration.service },
@@ -1068,7 +1069,7 @@ describe('useCreateNewSession (projection currentness admission)', () => {
                 actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
             } });
         const enrollmentIdentity = { kind: 'guestProcess' as const, role: 'sandbox' as const };
-        const { createManagedMachinePresetAcquireOverrideV1, projectManagedMachinePresetForRecipientV1 } = await import(
+        const { createManagedMachinePresetAcquireOverrideV1, projectManagedMachinePresetForRecipientV1, ManagedMachinePresetStoredContentV1Schema } = await import(
             '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1',
         );
         const { ManagedOpaquePresetMachineV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
@@ -1112,9 +1113,9 @@ describe('useCreateNewSession (projection currentness admission)', () => {
             intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
         const admittedSnapshot = prepareManagedOpaquePresetReportV1({
             machine: row,
-            content: preset.content,
+            content: ManagedMachinePresetStoredContentV1Schema.parse(preset.content),
             recipients: preset.recipients,
-            opened: { ...preset.opened.content, reviewedFacts: { ...preset.opened.reviewedFacts,
+            opened: { ...preset.opened.content, launch: preset.opened.launch, reviewedFacts: { ...preset.opened.reviewedFacts,
                 provisioner: preset.opened.provisioner } },
             accountId: row.custodianAccountId,
             randomBytes: length => new Uint8Array(length).fill(7),
@@ -1153,7 +1154,7 @@ describe('useCreateNewSession (projection currentness admission)', () => {
                     return {
                         ...createPlainSharedMachineRowFixture({ id, custodianAccountId: 'company',
                             machine: createMachineFixture({ id, activeAt: Date.now() }) }),
-                        installationId: row.controller.installationId,
+                        installationId: controller.installationId,
                         installationPublicKey: machineInstallationPublicKey,
                     };
                 }
@@ -1264,7 +1265,7 @@ describe('useCreateNewSession (projection currentness admission)', () => {
             expect(controllerReads).toEqual(['/v1/machines/read-batch']);
             expect(consentRequests).not.toContain('/v1/machines/presets/get');
             expect(managedAcquireRequests).toHaveLength(1);
-            expect(managedAcquireRequests[0]).toMatchObject({ target: { kind: 'machine', machineId: row.controller.machineId },
+            expect(managedAcquireRequests[0]).toMatchObject({ target: { kind: 'machine', machineId: controller.machineId },
                 input: { selection: selection.selection, presetContentOverride } });
             expect(managedAcquireRequests[0]).not.toMatchObject({ input: { enrollmentIdentity: expect.anything() } });
         } finally {
