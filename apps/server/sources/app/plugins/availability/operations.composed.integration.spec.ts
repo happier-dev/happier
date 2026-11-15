@@ -30,6 +30,7 @@ import {
 import {
     createPackageAssetArchiveV1,
     encodePackageAssetArchiveBodyV1,
+    PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE,
 } from "@happier-dev/protocol/plugins/availability";
 import {
     computePluginUiArtifactFileSetSha256DigestV1,
@@ -537,6 +538,46 @@ describe("plugin Availability operations", () => {
             const lists = decoded.snapshots.map(snapshot => snapshot.materializations[0]!.uiArtifacts);
             expect(lists).toHaveLength(machineIds.length);
             expect(new Set(lists).size).toBe(1);
+        });
+    });
+
+    it('reads a named plugin set in one exact request with the single-read projection, Account-scoped', async () => {
+        await seedAccountAndMachine();
+        const otherAccountId = 'account-plugin-availability-other';
+        await db.account.create({ data: { id: otherAccountId, publicKey: null, encryptionMode: 'plain' } });
+        const intent = (accountId: string, pluginId: string, enabled: boolean) => db.accountPluginIntent.create({ data: {
+            accountId, pluginId, desiredVersion: null, enabled, offlineUiHosting: 'disabled', writableCollections: [] } });
+        await intent(ACCOUNT_ID, 'com.acme.alpha', true);
+        await intent(ACCOUNT_ID, 'com.acme.beta', false);
+        await intent(ACCOUNT_ID, 'com.acme.unnamed', true);
+        await intent(otherAccountId, 'com.acme.foreign', false);
+        const named = ['com.acme.beta', 'com.acme.alpha', 'com.acme.absent', 'com.acme.foreign'];
+        const listPath = PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'];
+        const readPath = PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'];
+        await withAuthenticatedTestApp(registerPluginAvailabilityRoutes, async app => {
+            const post = (url: string, payload: unknown, accountId: string | null = ACCOUNT_ID) => app.inject({ method: 'POST', url, payload,
+                headers: accountId ? { 'x-test-user-id': accountId } : {} });
+            const response = await post(listPath, { pluginIds: named });
+            expect(response.statusCode, response.body).toBe(200);
+            const batch = PluginAvailabilityIntentsListActionOutputV1Schema.parse(response.json());
+            // Exactly the named plugins: no census page, no continuation, no other Account's intent.
+            expect(batch.pluginIds).toEqual(['com.acme.alpha', 'com.acme.beta']);
+            expect(batch.failedPluginIds).toEqual([]);
+            expect(batch.nextCursor ?? null).toBeNull();
+            expect(batch.intentReads.map(entry => entry.pluginId)).toEqual([...named].sort());
+            // Each entry is the single exact read's projection, absent intents included.
+            for (const entry of batch.intentReads) {
+                const single = await post(readPath, { pluginId: entry.pluginId });
+                expect(single.statusCode, single.body).toBe(200);
+                expect(entry.response).toEqual(single.json());
+            }
+            expect(batch.intentReads.find(entry => entry.pluginId === 'com.acme.foreign')?.response.intent).toBeNull();
+            expect(batch.intentReads.find(entry => entry.pluginId === 'com.acme.beta')?.response.intent?.enabled).toBe(false);
+            // The same authentication and request-shape boundaries as the single read.
+            expect((await post(listPath, { pluginIds: named }, null)).statusCode).toBe(401);
+            const tooMany = Array.from({ length: PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE + 1 }, (_, index) => `com.acme.p${index}`);
+            expect((await post(listPath, { pluginIds: tooMany })).statusCode).toBe(400);
+            expect((await post(listPath, { pluginIds: ['com.acme.alpha'], knownPluginIds: ['com.acme.alpha'] })).statusCode).toBe(400);
         });
     });
 

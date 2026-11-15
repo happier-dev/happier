@@ -14,6 +14,7 @@ import {
   PluginAccountAvailabilityIntentReadResponseV1Schema,
   PluginAccountAvailabilityIntentsListResponseV1Schema,
   PluginAccountAvailabilityMaterializationsReadResponseV1Schema,
+  PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE,
   PluginAccountAvailabilityReleaseReadResponseV1Schema,
   PluginAccountPluginIntentV1Schema,
   PluginAccountPluginPackageAssetLinkV1Schema,
@@ -115,9 +116,19 @@ export type PluginAvailabilityIntentReadActionOutputV1 = z.infer<typeof PluginAv
 export const PluginAvailabilityIntentsListActionInputV1Schema = lazyZodSchema(() => z.strictObject({
   knownPluginIds: z.optional(z.readonly(z.array(asProtocolZod(PluginIdSchema)))),
   cursor: mini.optional(asProtocolZod(PluginIdSchema)),
+  /**
+   * An exact named read: the intent.read projection of exactly these plugins
+   * (absent intents read as `intent: null`), one page, no Account census.
+   */
+  pluginIds: z.optional(z.readonly(z.array(asProtocolZod(PluginIdSchema))
+    .check(z.minLength(1), z.maxLength(PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE)))),
   /** The caller reads intent and release facts only: no declaration body or digest is projected or sent. */
   omitDeclarations: z.optional(z.literal(true)),
-}));
+}).check(z.superRefine((input, context) => {
+  if (input.pluginIds !== undefined && (input.knownPluginIds !== undefined || input.cursor !== undefined)) {
+    context.addIssue({ code: 'custom', path: ['pluginIds'], message: 'An exact named read is not a census page.' });
+  }
+})));
 export type PluginAvailabilityIntentsListActionInputV1 = z.infer<typeof PluginAvailabilityIntentsListActionInputV1Schema>;
 
 export const PluginAvailabilityIntentsListActionOutputV1Schema =

@@ -2105,11 +2105,14 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                         throw new PluginAvailabilityOperationError('plugin_availability_invalid_request');
                     }
                 }
+                // An exact named read selects only its plugins: no census page.
+                const named = list?.pluginIds;
                 const capturedRows = await readIntentRows(tx, {
                     accountId: params.accountId,
                     ...(input ? { pluginId: input.pluginId } : {}),
+                    ...(named ? { pluginIds: named } : {}),
                     ...(list?.cursor ? { after: list.cursor } : {}),
-                    ...(list ? { take: PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE + 1 } : {}),
+                    ...(list && !named ? { take: PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE + 1 } : {}),
                     ...(bodyDigests ? {} : { list: true }),
                     ...(omitDeclarations ? { omitDeclarations: true } : {}),
                 });
@@ -2118,8 +2121,8 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                 const rows = capturedRows.filter((row): row is typeof row & { pluginId: string } => row.pluginId !== null);
                 const candidates = [...new Set([
                     ...rows.map(row => row.pluginId),
-                    ...(input ? [input.pluginId]
-                        : (list?.knownPluginIds ?? []).filter(pluginId => !list?.cursor || pluginId > list.cursor)),
+                    ...(input ? [input.pluginId] : named
+                        ?? (list?.knownPluginIds ?? []).filter(pluginId => !list?.cursor || pluginId > list.cursor)),
                 ])].sort(comparePluginIds);
                 const readPluginIds = list ? candidates.slice(0, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE) : candidates;
                 const pageIds = new Set(readPluginIds);

@@ -25,6 +25,8 @@ type IntentReadRow = Readonly<{
 export async function readIntentRows(tx: Tx, input: Readonly<{
     accountId: string;
     pluginId?: string;
+    /** Exactly these plugins' rows (an exact named read). */
+    pluginIds?: readonly string[];
     after?: string;
     take?: number;
     /** Read declaration identities only (the body-free storage summary), never bodies. */
@@ -56,6 +58,7 @@ export async function readIntentRows(tx: Tx, input: Readonly<{
         FROM ${identifier('Account')} a LEFT JOIN ${identifier('AccountPluginIntent')} i
             ON ${column('i', 'accountId')} = ${column('a', 'id')}
             ${input.pluginId === undefined ? prisma.empty : prisma.sql`AND ${column('i', 'pluginId')} = ${input.pluginId}`}
+            ${input.pluginIds === undefined ? prisma.empty : prisma.sql`AND ${column('i', 'pluginId')} IN (${prisma.join([...input.pluginIds])})`}
             ${input.after === undefined ? prisma.empty : prisma.sql`AND ${column('i', 'pluginId')} > ${input.after}`}
         WHERE ${column('a', 'id')} = ${input.accountId}
         ORDER BY ${column('i', 'pluginId')} ASC
