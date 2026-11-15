@@ -1,11 +1,10 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
-import { cp, mkdir, symlink } from 'node:fs/promises';
+import { mkdir, symlink } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CLI_BINARY_TARGETS, resolveCliToolsPlatformDir, resolveCurrentBinaryTarget, resolveExecutableName } from '../../../../packages/cli-common/src/componentArtifacts/targets.ts';
 import { run } from '../utils/proc/proc.mjs';
-import { removeOwnedDirectorySync } from '../utils/fs/fs.mjs';
 
 // Preserve the installer's existing flat or target-directory layout. The tools
 // producer's platform metadata identifies a native flat payload without parsing
@@ -34,7 +33,7 @@ export function readSourceGuestPayloadTargets(env) {
   return targets.length ? targets : null;
 }
 
-export async function buildSourceGuestPayload({ repoDir, sourceRepoDir, outputDir, runtimeDir, targets, sourceCapture, env, signal }) {
+export async function buildSourceGuestPayload({ repoDir, sourceRepoDir, outputDir, targets, sourceCapture, env, signal }) {
   const root = join(outputDir, 'guest-payload');
   // The caller owns one graph in an isolated finite worker. Reuse canonical
   // capture containment for its mounted installed dependencies across awaits.
@@ -61,19 +60,7 @@ export async function buildSourceGuestPayload({ repoDir, sourceRepoDir, outputDi
     const targetIdentities = {};
     for (const { target, relativeDir } of targets) {
       signal?.throwIfAborted();
-      const irohPackage = join(repoDir, 'packages/iroh-native');
-      if (existsSync(join(irohPackage, 'scripts/build-node-addon.mjs'))) {
-        const nativeDir = join(irohPackage, 'native');
-        removeOwnedDirectorySync(nativeDir);
-        const hostOs = process.platform === 'win32' ? 'windows' : process.platform;
-        if (target.os === hostOs && target.arch === process.arch && existsSync(join(runtimeDir, 'iroh-native/native'))) {
-          await cp(join(runtimeDir, 'iroh-native/native'), nativeDir, { recursive: true });
-        } else {
-          const { buildNodeAddon } = await import(pathToFileURL(join(irohPackage, 'scripts/build-node-addon.mjs')).href);
-          await buildNodeAddon({ packageDir: irohPackage, artifactDir: nativeDir,
-            platform: target.os === 'windows' ? 'win32' : target.os, arch: target.arch, env: captureEnv, runCommand });
-        }
-      }
+      // The payload owner builds the Iroh addon and Session holders from repoDir's Rust sources.
       const payload = await buildCliBinaryArtifactPayload({
         repoRoot: repoDir, payloadDir: join(root, relativeDir), target, runCommand,
       });

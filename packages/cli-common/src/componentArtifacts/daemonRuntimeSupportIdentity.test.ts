@@ -273,6 +273,7 @@ module.exports = { unpackTools };
     'packages/cli-common/nodePtySpawnHelperPermissions.cjs',
     'packages/cli-common/src/componentArtifacts/stageCliProxyApiManagedRuntime.ts',
     'packages/cli-common/src/componentArtifacts/stageProcessCustodyRuntime.ts',
+    'packages/cli-common/src/componentArtifacts/stageIrohNativeRuntime.ts',
     'packages/cli-common/src/service/windowsLauncher.ts',
     'packages/cli-common/src/componentArtifacts/cliRuntimeSidecars.ts',
     'packages/cli-common/src/workspaces/index.ts',
@@ -281,6 +282,60 @@ module.exports = { unpackTools };
   ]) {
     await writeFixtureFile(join(root, relativePath), 'owner input\n');
   }
+}
+
+/**
+ * A CLI that bundles `@happier-dev/iroh-native`, with the package's real addon
+ * builder. Rustup is the system boundary: the fixture's toolchain module is a
+ * stub, and Cargo is faked by `fakeNativeToolchainRunCommand`.
+ */
+async function createIrohNativeFixture(root: string): Promise<void> {
+  const cliPackagePath = join(root, 'apps/cli/package.json');
+  const cliPackage = JSON.parse(await readFile(cliPackagePath, 'utf8'));
+  await writeFixtureFile(cliPackagePath, JSON.stringify({ ...cliPackage,
+    bundledDependencies: [...cliPackage.bundledDependencies, '@happier-dev/iroh-native'] }));
+  const manifest = JSON.stringify({ name: '@happier-dev/iroh-native', version: '0.0.0', main: './dist/index.js',
+    files: ['dist', 'native/*.node', 'native/happier-session-holder.*', 'native/targets/happier-session-holder.*', 'scripts'] });
+  for (const packageDir of [join(root, 'packages/iroh-native'), join(root, 'apps/cli/node_modules/@happier-dev/iroh-native')]) {
+    await writeFixtureFile(join(packageDir, 'package.json'), manifest);
+    await writeFixtureFile(join(packageDir, 'dist/index.js'), 'export {};\n');
+  }
+  const irohSource = join(root, 'packages/iroh-native');
+  await mkdir(join(irohSource, 'scripts'), { recursive: true });
+  await copyFile(fileURLToPath(new URL('../../../iroh-native/scripts/build-node-addon.mjs', import.meta.url)),
+    join(irohSource, 'scripts/build-node-addon.mjs'));
+  await writeFixtureFile(join(irohSource, 'scripts/ensure-rust-toolchain.mjs'), [
+    'export function prepareRustToolchain() {}',
+    'export function readPinnedRustChannel() { return "fixture"; }',
+    'export function resolveRustCargoBinDir() { return "/nonexistent-cargo-bin"; }',
+  ].join('\n'));
+  await writeFixtureFile(join(irohSource, 'rust-toolchain.toml'), '[toolchain]\nchannel = "fixture"\n');
+  await writeFixtureFile(join(irohSource, 'rust/Cargo.toml'), '[workspace]\n');
+  await writeFixtureFile(join(irohSource, 'rust/Cargo.lock'), '');
+  await writeFixtureFile(join(irohSource, 'rust/happier-iroh-node/src/lib.rs'), '');
+  await writeFixtureFile(join(irohSource, 'rust/happier-session-holder/src/main.rs'), 'fn main() {}\n');
+}
+
+/** Go and Cargo are external toolchains: write each requested output where the real tool would. */
+async function fakeNativeToolchainRunCommand(
+  command: string,
+  args: string[],
+  options?: Readonly<{ cwd?: string; env?: NodeJS.ProcessEnv }>,
+): Promise<void> {
+  if (command === 'go') {
+    await writeFixtureFile(args[args.indexOf('-o') + 1]!, 'go-built helper');
+    return;
+  }
+  if (command === 'cargo') {
+    const rustTarget = args[args.indexOf('--target') + 1]!;
+    const profile = args.includes('--release') ? 'release' : 'debug';
+    const binary = args.includes('--bin') ? `${args[args.indexOf('--bin') + 1]}${rustTarget.includes('windows') ? '.exe' : ''}`
+      : rustTarget.includes('apple') ? 'libhappier_iroh_node.dylib'
+        : rustTarget.includes('windows') ? 'happier_iroh_node.dll' : 'libhappier_iroh_node.so';
+    await writeFixtureFile(join(options!.env!.CARGO_TARGET_DIR!, rustTarget, profile, binary), `cargo-built ${rustTarget} ${binary}`);
+    return;
+  }
+  await execOrThrow(command, args, options);
 }
 
 async function installCanonicalProjectionGenerator(root: string): Promise<string> {
@@ -1033,6 +1088,50 @@ await prepareSourcePluginUiArtifacts(JSON.parse(input));`);
         join(payloadDir, 'node_modules', '@happier-dev', 'cli-common', 'dist'),
       ),
     ).toBe(false);
+  });
+
+  it('builds the bundled Iroh addon and every Session holder into support instead of copying checkout outputs', async () => {
+    const root = await makeTempRepo();
+    await createSupportIdentityFixture(root);
+    const target = targetForHost();
+    const platform = process.platform;
+    const exe = platform === 'win32' ? '.exe' : '';
+    const irohSource = join(root, 'packages/iroh-native');
+    await createIrohNativeFixture(root);
+    // A checkout holder from older sources: the payload must never ship it.
+    await writeFixtureFile(join(irohSource, `native/happier-session-holder.${platform}-${process.arch}${exe}`), 'stale checkout holder');
+    const prebuiltCustodyPath = join(root, 'prebuilt', 'happier-process-custody');
+    const prebuiltRuntimePath = join(root, 'prebuilt', 'happier-cliproxyapi-managed');
+    await writeFixtureFile(prebuiltCustodyPath, 'prebuilt custody\n');
+    await writeFixtureFile(prebuiltRuntimePath, 'prebuilt runtime\n');
+    const identityInput = { repoRoot: root, target, goVersion: 'go version go1.fixture',
+      cliProxyApiManagedRuntimeExecutablePath: prebuiltRuntimePath, processCustodyRuntimeExecutablePath: prebuiltCustodyPath };
+    const identity = readCliBinaryArtifactSupportIdentity(identityInput);
+    const payloadDir = join(root, 'artifacts', 'daemon-support', 'fixture', 'payload');
+
+    await buildCliBinaryArtifactSupportPayload({
+      ...identityInput,
+      payloadDir,
+      supportArtifactFingerprint: identity.fingerprint,
+      commandProbe: (command) => command === 'pnpm',
+      runCommand: fakeNativeToolchainRunCommand,
+    });
+
+    const stagedNative = join(payloadDir, 'node_modules/@happier-dev/iroh-native/native');
+    const holder = `happier-session-holder.${platform}-${process.arch}${exe}`;
+    expect([
+      `happier-iroh-native-lifecycle.${platform}-${process.arch}.node`,
+      holder,
+      'targets/happier-session-holder.linux-x64-musl',
+      'targets/happier-session-holder.linux-arm64-musl',
+    ].filter((name) => existsSync(join(stagedNative, name)))).toHaveLength(4);
+    expect(await readFile(join(stagedNative, holder), 'utf8')).toMatch(/^cargo-built /);
+
+    // Identity follows the Rust inputs, not whatever outputs the checkout holds.
+    await writeFixtureFile(join(irohSource, `native/happier-session-holder.${platform}-${process.arch}${exe}`), 'another stale holder');
+    expect(readCliBinaryArtifactSupportIdentity(identityInput).fingerprint).toBe(identity.fingerprint);
+    await writeFixtureFile(join(irohSource, 'rust/happier-session-holder/src/main.rs'), 'fn main() { /* changed */ }\n');
+    expect(readCliBinaryArtifactSupportIdentity(identityInput).fingerprint).not.toBe(identity.fingerprint);
   });
 
   it('stages immutable daemon support without waiting for the mutable CLI dist lock', async () => {

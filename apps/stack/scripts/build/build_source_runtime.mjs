@@ -1346,7 +1346,7 @@ async function consumeSourceRuntimeBuildInputs({ repoDir, outputDir, component, 
       captureDependencies: Boolean(captured.revision) || env.HAPPIER_STACK_RUNTIME_MODE === 'source-snapshot',
       outputDir, component, serverComponent, dbProvider, retainedPluginUiInventoryPath, retainedRuntime, projectDir, runtimeDir, manifest, requireFromProject, esbuild, env, signal });
     if (guestPayloadTargets) {
-      built.guestPayload = await buildSourceGuestPayload({ repoDir, sourceRepoDir, outputDir, runtimeDir,
+      built.guestPayload = await buildSourceGuestPayload({ repoDir, sourceRepoDir, outputDir,
         targets: guestPayloadTargets, sourceCapture, env, signal });
       built.env = { ...built.env, HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: built.guestPayload.root,
         HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: JSON.stringify({ root: built.guestPayload.root,

@@ -61,6 +61,7 @@ import { stageProcessCustodyRuntime } from './stageProcessCustodyRuntime.js';
 import { readValidatedWindowsServiceLauncher, WINDOWS_SERVICE_LAUNCHER_FILE_NAME } from '../service/windowsLauncher.js';
 import { writeCliBinaryArtifactRuntimeAssetBuildManifest } from './refreshCliBinaryArtifactRuntimeAssetBuildManifest.js';
 import { stageIrohNativeReleaseEvidence } from './stageIrohNativeReleaseEvidence.js';
+import { IROH_NATIVE_PACKAGE_NAME, readIrohNativeRuntimeInputPaths, stageIrohNativeRuntime } from './stageIrohNativeRuntime.js';
 import { stageCliTargetRuntimeDependencies } from './stageCliTargetRuntimeDependencies.js';
 
 export { getCliBinaryArtifactSupportTargetUnavailableReason } from '../../componentArtifactTarget.mjs';
@@ -391,6 +392,13 @@ export function readCliBinaryArtifactSupportIdentity({
         'node_modules',
       ),
     });
+    if (packageName === IROH_NATIVE_PACKAGE_NAME) {
+      // Staging builds these outputs from the Rust inputs; checkout outputs are not inputs.
+      for (const sourcePath of readIrohNativeRuntimeInputPaths(dirname(packageJsonPath)))
+        hashRequiredSupportInputPath({ hash, repoRoot, sourcePath,
+          label: `workspace-support:${packageName}/${relative(dirname(packageJsonPath), sourcePath).replaceAll('\\', '/')}` });
+      continue;
+    }
     for (const name of resolveWorkspacePackageDeclaredFileEntries(dirname(packageJsonPath), 'native')) {
       const sourcePath = join(dirname(packageJsonPath), name);
       if (existsSync(sourcePath))
@@ -494,6 +502,7 @@ export function readCliBinaryArtifactSupportIdentity({
     'packages/cli-common/nodePtySpawnHelperPermissions.cjs',
     'packages/cli-common/src/componentArtifacts/stageCliProxyApiManagedRuntime.ts',
     'packages/cli-common/src/componentArtifacts/stageProcessCustodyRuntime.ts',
+    'packages/cli-common/src/componentArtifacts/stageIrohNativeRuntime.ts',
     'packages/cli-common/src/service/windowsLauncher.ts',
     'packages/cli-common/src/componentArtifacts/cliRuntimeSidecars.ts',
     'packages/cli-common/src/workspaces/index.ts',
@@ -936,7 +945,9 @@ async function stageCliBinaryArtifactSupportPayload({
     });
     // Native/static support is consumed beside the source-bundled graph.
     // Authored TypeScript and private package dist never enter this tree.
-    for (const name of resolveWorkspacePackageDeclaredFileEntries(srcDir, 'native')) {
+    if (packageName === IROH_NATIVE_PACKAGE_NAME)
+      await stageIrohNativeRuntime({ packageDir: srcDir, nativeDir: join(destination, 'native'), target, runCommand });
+    else for (const name of resolveWorkspacePackageDeclaredFileEntries(srcDir, 'native')) {
       const source = join(srcDir, name);
       if (existsSync(source)) {
         await mkdir(dirname(join(destination, name)), { recursive: true });
