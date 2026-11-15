@@ -762,7 +762,9 @@ export async function prepareInstalledRequesterAccountActionContext(input: Reado
     // HTTP destinations admit signed effects; native Stop consumes the local
     // custody of the already-admitted invocation.
     // Do not repeat Home root admission while opening its private read ports.
+    // An admitted finite wake likewise runs on local custody and cancellation.
     ...(input.purpose.kind === 'external_action'
+      || input.purpose.kind === 'managed_finite_wake'
       || input.purpose.kind === 'workspace_sync_prepare'
       || input.purpose.kind === 'machine_rpc' && input.purpose.method === RPC_METHODS.STOP_SESSION
         && binding.actionId === 'session.stop'

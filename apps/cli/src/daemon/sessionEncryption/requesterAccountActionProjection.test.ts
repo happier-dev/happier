@@ -1540,6 +1540,62 @@ describe('admitted requester Action projection', () => {
     } finally { await prepared.dispose(); }
   });
 
+  it('admits a foreign-requester finite wake once and keeps it on local custody and cancel afterwards', async () => {
+    const privateKey = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(37)).secretKey;
+    const installation = nacl.sign.keyPair.fromSecretKey(privateKey);
+    const wakeTarget = { homeId: 'srv_current_machine_fixture', managedId: 'managed', enrolledMachineId: 'private-guest',
+      expectedIntentRevision: 1, controller: { machineId: 'machine', installationId: 'installation' },
+      origin: { kind: 'finite-command' as const, actionRequestId: 'private-finite' }, reason: 'admitted-work' as const };
+    const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'private-finite-root', binding: {
+      accountId: 'bob', custodianAccountId: 'alice', authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+      serverIdentityId: 'srv_current_machine_fixture', machineId: 'private-guest', installationId: 'guest-installation',
+      actionId: 'projects.prepare', requestId: 'private-finite', target: { kind: 'machine', machineId: 'private-guest' },
+      requestEnvelopeDigest: 'a'.repeat(43),
+    }, managedFiniteWake: { target: wakeTarget, installationPublicKey: Buffer.from(installation.publicKey).toString('base64url') } });
+    vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'bob' } };
+      if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: null, version: 0 } };
+      if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: { mode: 'plain', version: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+      throw new Error(`Unexpected requester GET ${url}`);
+    });
+    // Genuine Home transport boundary: count every root verification.
+    const posts = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { ok: true } });
+    const verifies = () => posts.mock.calls.filter(([url]) => String(url).endsWith('/verify')).length;
+    vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
+      installationId: 'installation', createdAt: 1, publicKey: Buffer.from(installation.publicKey).toString('base64url'),
+      privateKey: Buffer.from(privateKey).toString('base64url') });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify(FeaturesResponseSchema.parse({
+      features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_current_machine_fixture' } },
+    })), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    const purpose = { kind: 'managed_finite_wake' as const, target: wakeTarget };
+    const sealed = sealExternalActionRequesterAccountContextV1({ authorization: root, purpose,
+      credentials: { token: 'bob-ordinary', secret: null, encryption: null }, installationPublicKey: installation.publicKey,
+      randomBytes: nacl.randomBytes });
+    const cancel = new AbortController();
+    const prepare = (wake = purpose) => requesterAccountOwner.prepareInstalledRequesterAccountActionContext({ authorization: sealed,
+      purpose: wake, machineId: 'machine', serverId: 'home-profile', serverHttpBaseUrl: 'https://requester-home.test',
+      resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({
+        serverUrl: 'https://requester-home.test', resolveCurrentMachineId: () => 'machine',
+      }), createExecutor: () => ({ execute: async () => ({ ok: false, errorCode: 'unused', error: 'unused' }) }),
+      signal: cancel.signal });
+    const prepared = await prepare();
+    const admitted = requesterAccountOwner.readRequesterAccountActionContext(prepared?.authorization);
+    if (!prepared || !admitted) throw new Error('Missing admitted finite-wake custody');
+    try {
+      expect(verifies()).toBe(1);
+      // Home is now unavailable for the same root; the admitted wake still runs locally.
+      posts.mockClear();
+      posts.mockResolvedValue({ status: 403, data: { ok: false } });
+      expect(await admitted.isCurrent()).toBe(true);
+      expect(verifies()).toBe(0);
+      // A changed wake target is a fresh admission and refuses.
+      expect(await prepare({ ...purpose, target: { ...wakeTarget, expectedIntentRevision: 2 } })).toBeNull();
+      cancel.abort();
+      expect(await admitted.isCurrent()).toBe(false);
+    } finally { await prepared.dispose(); }
+  });
+
   it('uses observed custody for signed HTTP and spends one Home verification per admitted operation', async () => {
     const envelope = { v: 1 as const, requestId: authorization.binding.requestId,
       target: authorization.binding.target, input: {} };

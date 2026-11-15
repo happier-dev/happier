@@ -372,6 +372,7 @@ async function executeExternalActionRequest(input: Readonly<{
       errorCode: current && !current.ok && current.executionFailure ? current.executionFailure.errorCode
         : envelope.data.v === 2 ? 'invalid_encrypted_envelope' : 'invalid_envelope', requestId: envelope.data.requestId };
     managedReviewedParent = opened.reviewedParent;
+    rootAdmittedTarget = authorization?.binding.target;
   }
   let pluginRuntimeLease: PluginRuntimeRegistryLease | null = null;
   // Diagnose the ordinary input corridor without serializing its carrier or

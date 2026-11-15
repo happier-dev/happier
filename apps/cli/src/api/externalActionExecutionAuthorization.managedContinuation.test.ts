@@ -601,6 +601,7 @@ describe('managed continuation through the ordinary public Action transport', ()
         });
         let managedReads = 0;
         let verify = true;
+        let verifies = 0;
         let tamper = false;
         vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
             const refusal = () => {
@@ -639,7 +640,9 @@ describe('managed continuation through the ordinary public Action transport', ()
                 principal: { accountId: 'account', authority: 'present_user', authentication: { kind: 'account', tokenEpoch: 2 } },
                 currentMachineId: 'guest', currentAccountId: 'account', currentServerId: 'home-profile',
                 currentServerHttpBaseUrl: 'https://home.example', currentInstallationId: 'guest-installation', executionAuthorization: authorization,
-                externalActionMachineRequestPrivateKey: keyPair.secretKey, verifyExecutionAuthorization: async () => verify,
+                externalActionMachineRequestPrivateKey: keyPair.secretKey, verifyExecutionAuthorization: async () => { verifies++; return verify; },
+                // Production ingress supplies the installed-identity port (rpc/handlers/externalAction.ts).
+                isInstallationCurrent: () => true,
                 resolveTarget: createDaemonExternalActionTargetResolver({ credentials }), executor,
                 prepareRequesterAccountContext: value => prepareRequesterAccountActionContext({ authorization: value.authorization,
                     purpose: { kind: 'external_action' }, machineId: 'guest', installationId: 'guest-installation',
@@ -665,6 +668,8 @@ describe('managed continuation through the ordinary public Action transport', ()
         expect(seedWarnings).toEqual([]);
         expect(mutations).toBe(1);
         expect(managedReads).toBe(0);
+        // Home admits the unchanged creation child target once; the effect reuses it.
+        expect(verifies).toBe(1);
         tamper = true;
         expect(await invoke()).toMatchObject({ ok: false, errorCode: 'action_not_admitted' });
         expect(mutations).toBe(1);
