@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type {
   BridgeLifecycleHookEventIdV1,
   BackendTargetRefV2Input,
@@ -197,7 +198,7 @@ export class SessionHostBridge implements SessionHostBridgeContract {
       const bootstrapFilePath = (
         foregroundBootstrapFilePath
         || String(
-          process.env[
+          sessionProcessEnvironment()[
             HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY
           ] ?? '',
         ).trim()
@@ -205,7 +206,7 @@ export class SessionHostBridge implements SessionHostBridgeContract {
       const readAuthorityFilePath = () => (
         hostOptions?.agentRuntimeDaemonServiceAuthorityFilePath?.trim()
         || String(
-          process.env[
+          sessionProcessEnvironment()[
             HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY
           ] ?? '',
         ).trim()

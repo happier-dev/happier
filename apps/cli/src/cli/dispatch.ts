@@ -15,6 +15,7 @@ import {
 } from '@/cli/commandSurfaceManifest';
 import { readStartedByArg } from '@/cli/readStartedByArg';
 import { HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY } from '@/agent/runtime/session/process/agentRuntimeRunnerEnvironment';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { applyDaemonAutostartEnvForInvocation, shouldEnsureDaemonForInvocation } from '@/daemon/daemonAutostartPolicy';
 import { printJsonEnvelope, wantsJson } from '@/cli/output/jsonEnvelope';
 import { errorFrame } from '@happier-dev/cli-common/output';
@@ -326,8 +327,10 @@ async function dispatchSelectedCli(params: Parameters<typeof dispatchCli>[0]): P
   const { terminalRuntime, rawArgv } = params;
   let signal = params.signal;
   let sessionStart: CommandContext['sessionStart'];
+  // A Session added to a session host reads its own environment, never the host's.
+  const invocationEnv = sessionProcessEnvironment();
   const scopedEnvironment =
-    resolveExplicitSpawnScopedEnvironmentFromProcessEnv(process.env);
+    resolveExplicitSpawnScopedEnvironmentFromProcessEnv(invocationEnv);
   const buildCommandContext = async (
     contextArgs: string[],
     startsSession: boolean,
@@ -337,9 +340,9 @@ async function dispatchSelectedCli(params: Parameters<typeof dispatchCli>[0]): P
     args: contextArgs,
     rawArgv,
     terminalRuntime: startsSession
-      ? process.env.HERDR_ENV === '1'
-        ? await (await import('@/terminal/runtime/inheritedHerdrRuntime')).resolveInheritedHerdrRuntime({ terminalRuntime, env: process.env })
-        : (await import('@/terminal/runtime/inheritedZellijRuntime')).resolveInheritedZellijRuntime({ terminalRuntime, env: process.env })
+      ? invocationEnv.HERDR_ENV === '1'
+        ? await (await import('@/terminal/runtime/inheritedHerdrRuntime')).resolveInheritedHerdrRuntime({ terminalRuntime, env: invocationEnv })
+        : (await import('@/terminal/runtime/inheritedZellijRuntime')).resolveInheritedZellijRuntime({ terminalRuntime, env: invocationEnv })
       : terminalRuntime,
     ...(signal ? { signal } : {}),
     ...(params.explicitServerSelection
@@ -375,7 +378,7 @@ async function dispatchSelectedCli(params: Parameters<typeof dispatchCli>[0]): P
   // Check if first argument is a subcommand
   const subcommand = args[0];
   const runnerBootstrapFilePath = readStartedByArg(globalOptionArgs).value === 'daemon'
-    ? process.env[HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY]?.trim()
+    ? invocationEnv[HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY]?.trim()
     : undefined;
   let commandDescriptor = subcommand ? findCommandDispatchDescriptor(subcommand) : null;
   let mergedCommandRegistryForSubcommand = false;
@@ -400,15 +403,15 @@ async function dispatchSelectedCli(params: Parameters<typeof dispatchCli>[0]): P
 
   applyCommandDaemonAutostartDefaultPolicy({
     args: [...globalOptionArgs],
-    env: process.env,
+    env: invocationEnv,
     policy: commandDescriptor?.policy,
   });
 
-  if (commandDescriptor) applyDaemonAutostartEnvForInvocation({ args: [...globalOptionArgs], env: process.env });
+  if (commandDescriptor) applyDaemonAutostartEnvForInvocation({ args: [...globalOptionArgs], env: invocationEnv });
 
   const pluginTmuxMode = resolvePluginCommandTmuxMode(globalOptionArgs);
   const isHelpOrVersionRequest = globalOptionArgs.includes('-h') || globalOptionArgs.includes('--help') || globalOptionArgs.includes('-v') || globalOptionArgs.includes('--version');
-  const isRunningInTmux = terminalRuntime?.mode === 'tmux' || Boolean(process.env.TMUX?.trim());
+  const isRunningInTmux = terminalRuntime?.mode === 'tmux' || Boolean(invocationEnv.TMUX?.trim());
 
   // Headless tmux launcher (CLI flow)
   if (globalOptionArgs.includes('--tmux')) {
@@ -546,8 +549,8 @@ async function dispatchSelectedCli(params: Parameters<typeof dispatchCli>[0]): P
       ? resolveSessionCreationAgentTarget(target, standaloneAgentCatalog)?.agentId : target?.backendId ?? DEFAULT_CATALOG_AGENT_ID;
     if (!selectedAgentId) throw new Error('Profile default Agent is not installed or unavailable');
     const entry = standaloneAgentCatalog?.catalogEntriesById[selectedAgentId] ?? requireCatalogEntry(selectedAgentId);
-    applyCommandDaemonAutostartDefaultPolicy({ args: [...globalOptionArgs], env: process.env, policy: entry.cliCommandPolicy });
-    applyDaemonAutostartEnvForInvocation({ args: [...globalOptionArgs], env: process.env });
+    applyCommandDaemonAutostartDefaultPolicy({ args: [...globalOptionArgs], env: invocationEnv, policy: entry.cliCommandPolicy });
+    applyDaemonAutostartEnvForInvocation({ args: [...globalOptionArgs], env: invocationEnv });
     if (target?.kind === 'agent' && target.definitionId !== undefined) {
       const { handleConfiguredAcpCatalogCliCommand } = await import('@/agent/acp/catalog/configured/handleCatalogCliCommand');
       await handleConfiguredAcpCatalogCliCommand(await buildCommandContext([...args, '--backend', target.definitionId], true));

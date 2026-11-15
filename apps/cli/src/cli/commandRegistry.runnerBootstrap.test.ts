@@ -17,6 +17,7 @@ import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY } from '@/agent/runtime/session/process/agentRuntimeRunnerEnvironment';
 import { ensureMergedAgentCommandRegistryLoaded, findCommandDispatchDescriptor } from './commandRegistry';
 import { dispatchCli } from './dispatch';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { PLUGIN_MANIFEST as codexManifest } from '../../../../packages/plugins/codex/src/manifest';
 import { PLUGIN_MANIFEST as ohMyPiManifest } from '../../../../packages/plugins/ohmypi/src/manifest';
 
@@ -78,11 +79,11 @@ describe('admitted runner command selection', () => {
     }
   });
 
-  it('keeps the admitted Codex command when the child cannot perform Account admission', async () => {
+  it.each([false, true])('keeps the admitted Codex command without Account admission (hosted=%s)', async hosted => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-runner-command-'));
     const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_LOCAL_SERVER_URL', 'HAPPIER_ACTIVE_SERVER_ID',
       'PATH', 'HAPPIER_SESSION_AUTOSTART_DAEMON', HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY]);
-    env.patch({ HAPPIER_HOME_DIR: happyHomeDir, HAPPIER_SERVER_URL: 'http://runner-command.test', HAPPIER_LOCAL_SERVER_URL: undefined,
+    env.patch({ HAPPIER_HOME_DIR: happyHomeDir, HAPPIER_SERVER_URL: 'https://runner-command.test', HAPPIER_LOCAL_SERVER_URL: undefined,
       HAPPIER_ACTIVE_SERVER_ID: 'runner-command' });
     reloadConfiguration();
     const bootstrap = await createRecordedAdmittedBootstrap('codex', codexManifest);
@@ -95,9 +96,10 @@ describe('admitted runner command selection', () => {
       return reply.code(403).send({ error: 'credential_scope_denied' });
     });
     await app.ready();
-    const restore = installAxiosFastifyAdapter({ app, origin: 'http://runner-command.test' });
+    const restore = installAxiosFastifyAdapter({ app, origin: 'https://runner-command.test' });
     const runnerExit = new Error('fixture-runner-exit');
     const exit = vi.spyOn(process, 'exit').mockImplementation(() => { throw runnerExit; });
+    const end = vi.fn(() => { throw runnerExit; });
     try {
       await writeCredentialsTokenOnly({ token: 'fixture-session-runner' });
       await ensureMergedAgentCommandRegistryLoaded({ happyHomeDir, commandRoot: 'codex' });
@@ -108,12 +110,15 @@ describe('admitted runner command selection', () => {
       await writeExecutableShim({ dir: binaryDir, fileName: process.platform === 'win32' ? 'codex.cmd' : 'codex',
         contents: process.platform === 'win32' ? '@echo off\r\nexit /b 0\r\n' : '#!/bin/sh\nexit 0\n' });
       env.patch({ PATH: `${binaryDir}${delimiter}${process.env.PATH ?? ''}`, HAPPIER_SESSION_AUTOSTART_DAEMON: '0',
-        [HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY]: bootstrap.authorization.bootstrapFilePath });
+        [HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY]: hosted ? undefined : bootstrap.authorization.bootstrapFilePath });
       // Version passthrough reaches a genuine OS executable without creating a
       // Session. Intercept only the final process exit so Vitest can observe it.
-      await expect(dispatchCli({ args: ['codex', '--version', '--started-by', 'daemon'],
-        rawArgv: [], terminalRuntime: null })).rejects.toBe(runnerExit);
-      expect(exit).toHaveBeenCalledWith(0);
+      const dispatch = () => dispatchCli({ args: ['codex', '--version', '--started-by', 'daemon'],
+        rawArgv: [], terminalRuntime: null });
+      await expect(hosted ? runAddedHostedSession({ environment: { ...process.env,
+        [HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY]: bootstrap.authorization.bootstrapFilePath },
+        workingDirectory: happyHomeDir, end }, dispatch) : dispatch()).rejects.toBe(runnerExit);
+      expect([...exit.mock.calls, ...end.mock.calls]).toContainEqual([0]);
       expect(accountAdmissions).toBe(0);
 
       // The carrier projects one admitted Agent; it cannot select a different
