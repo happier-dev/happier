@@ -44,6 +44,7 @@ export const SESSION_STATUS_PRESENTATION: ActionCliPresentation = {
     const parsed = SessionStatusResultSchema.parse(payload);
     const data = {
       session: parsed.session,
+      ...(parsed.pendingRequests !== undefined ? { pendingRequests: parsed.pendingRequests } : {}),
       ...(parsed.agentState ? { agentState: parsed.agentState } : {}),
       ...(parsed.awareness ? { awareness: parsed.awareness } : {}),
       ...(parsed.readiness ? { readiness: parsed.readiness } : {}),
