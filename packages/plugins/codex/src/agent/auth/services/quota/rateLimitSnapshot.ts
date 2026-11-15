@@ -231,6 +231,51 @@ export function readCodexRateLimitSnapshotAccountLabel(rawSnapshot: unknown): st
   );
 }
 
+function readBoolean(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null;
+}
+
+/**
+ * Codex credits (`wham/usage` `credits`, app-server `rateLimits.credits`): the balance Codex spends
+ * once the included windows are used up. Headroom comes from the credit facts themselves — a
+ * positive balance or unlimited credits, with neither the overage limit nor a workspace spend
+ * control reached. `rate_limit.allowed` is deliberately not consulted: whether it stays true while
+ * credits pay is unverified. Accounts without any credits facility get no meter.
+ */
+function buildCodexCreditMeter(
+  rawSnapshot: unknown,
+  source: AgentAccountUsageMeter['source'] | undefined,
+): AgentAccountUsageMeter | null {
+  const root = isRecord(rawSnapshot) ? rawSnapshot : {};
+  const nested = readCodexRateLimitRecord(rawSnapshot);
+  const credits = isRecord(root.credits) ? root.credits : isRecord(nested.credits) ? nested.credits : null;
+  if (!credits) return null;
+  const hasCredits = readBoolean(credits.has_credits ?? credits.hasCredits) === true;
+  const unlimited = readBoolean(credits.unlimited) === true;
+  if (!hasCredits && !unlimited) return null;
+  const balance = readFiniteNumber(credits.balance);
+  const spendControl = isRecord(root.spend_control) ? root.spend_control
+    : isRecord(root.spendControl) ? root.spendControl : null;
+  const blocked = readBoolean(credits.overage_limit_reached ?? credits.overageLimitReached) === true
+    || readBoolean(spendControl?.reached) === true;
+  return {
+    meterId: 'credits',
+    label: 'Credits',
+    used: null,
+    limit: null,
+    remaining: unlimited ? null : balance,
+    unit: 'credits',
+    utilizationPct: null,
+    resetsAt: null,
+    isExhausted: blocked || (!unlimited && !(balance !== null && balance > 0)),
+    status: 'ok',
+    source: source ?? 'in_band_provider_snapshot',
+    limitScope: 'account',
+    confidence: 'exact',
+    details: {},
+  };
+}
+
 export function mapCodexRateLimitSnapshotToUsageMeters(
   rawSnapshot: unknown,
   options: Readonly<{
@@ -241,7 +286,7 @@ export function mapCodexRateLimitSnapshotToUsageMeters(
 ): readonly AgentAccountUsageMeter[] {
   const legacyPrimary = options.legacyPrimary ?? { meterId: 'primary', label: 'Primary' };
   const legacySecondary = options.legacySecondary ?? { meterId: 'secondary', label: 'Secondary' };
-  return collectCodexRateLimitAllowances(rawSnapshot).flatMap((allowance) => (
+  const allowanceMeters = collectCodexRateLimitAllowances(rawSnapshot).flatMap((allowance) => (
     (['primary', 'secondary'] as const).flatMap((window) => {
       const legacy = window === 'primary' ? legacyPrimary : legacySecondary;
       const meter = buildMeter({
@@ -260,12 +305,18 @@ export function mapCodexRateLimitSnapshotToUsageMeters(
       return meter ? [meter] : [];
     })
   ));
+  const creditMeter = buildCodexCreditMeter(rawSnapshot, options.source);
+  return creditMeter ? [...allowanceMeters, creditMeter] : allowanceMeters;
 }
 
+/**
+ * Usage-limit recovery readiness after the provider itself reported a limit: included windows
+ * only, because that provider verdict stays authoritative over credit headroom.
+ */
 export function isCodexRateLimitSnapshotExhausted(rawSnapshot: unknown): boolean {
-  return mapCodexRateLimitSnapshotToUsageMeters(rawSnapshot).some((meter) =>
-    meter.isExhausted === true || (meter.utilizationPct !== null && meter.utilizationPct >= 100),
-  );
+  return mapCodexRateLimitSnapshotToUsageMeters(rawSnapshot).some((meter) => meter.unit !== 'credits' && (
+    meter.isExhausted === true || (meter.utilizationPct !== null && meter.utilizationPct >= 100)
+  ));
 }
 
 export function readEarliestCodexRateLimitResetAtMs(rawSnapshot: unknown): number | null {

@@ -411,6 +411,7 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
           includeThreads: request.includeThreads,
           updatedAfterMs: request.updatedAfterMs,
           includeTitles: request.includeTitles,
+          readCandidateIndexState: request.readCandidateIndexState,
           signal: request.signal,
           deadlineAtMs: request.deadlineAtMs,
           scanDeadlineAtMs: request.scanDeadlineAtMs,
@@ -421,7 +422,6 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
                 candidates: page.candidates.map(projectCodexExternalSessionCandidateToAgent),
                 nextCursor: page.nextCursor,
                 ...(page.searchIncomplete !== undefined ? { searchIncomplete: page.searchIncomplete } : {}),
-                ...(page.preparation !== undefined ? { preparation: page.preparation } : {}),
                 ...(page.contentCoverage !== undefined ? { contentCoverage: page.contentCoverage } : {}),
               }), request.maxSerializedBytes);
             },
@@ -433,7 +433,6 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
           candidates: listed.candidates.map(projectCodexExternalSessionCandidateToAgent),
           nextCursor: listed.nextCursor,
           ...(listed.searchIncomplete !== undefined ? { searchIncomplete: listed.searchIncomplete } : {}),
-          ...(listed.preparation !== undefined ? { preparation: listed.preparation } : {}),
           ...(listed.contentCoverage !== undefined ? { contentCoverage: listed.contentCoverage } : {}),
         }, request.maxSerializedBytes, 'external_sessions_result_byte_budget');
       } catch (error) {

@@ -1,3 +1,7 @@
+import {
+  parseExternalSessionActivityPosition,
+  type ExternalSessionActivityPosition,
+} from '@happier-dev/plugin-sdk/sessions/external';
 import type {
   CodexRolloutCandidateScanBoundary,
 } from '../../../rollout/discovery/candidates.js';
@@ -256,39 +260,35 @@ export function decodeCodexExternalSessionIndexCursor(
 }
 
 /**
- * v4 continues the bounded corpus scan the host candidate index drives: a
- * traversal position plus the cumulative file count that becomes
- * `preparation.scanned`. It supersedes both the v2 traversal boundary (no scan
- * progress, so the host could not prove a build advanced) and the v3
- * last-activity ordering key (a plugin-local ordered page needs a whole-corpus
- * mtime sweep per page, which does not fit the source head-acquisition budget).
- * Older cursors are rejected on purpose: the surface turns an undecodable cursor
- * into the same typed source-changed refresh used when the rollout set mutates
- * mid-browse.
+ * v7 continues an unsearched Browse page in activity order: the last consumed
+ * row's activity position (rollout mtime, then remote session id). One stat
+ * pass orders the corpus, so a later page resumes strictly after that position
+ * however the rows above it moved. Older traversal (v2, v4) and ordering (v3)
+ * cursors are rejected on purpose: the surface turns an undecodable cursor into
+ * the same typed source-changed refresh used when the rollout set mutates.
  */
-type CodexExternalSessionCandidateCursorV4 = Readonly<{
-  v: 4;
-  kind: 'codexRolloutCandidateScan';
-  sourceGeneration: string;
-  containerKey: string;
-  fileName: string;
-  scanned: number;
+type CodexExternalSessionCandidateCursorV7 = Readonly<{
+  v: 7;
+  kind: 'codexRolloutActivityPage';
+  updatedAtMs: number;
+  remoteSessionId: string;
 }>;
 
 export function encodeCodexExternalSessionCandidateCursor(
-  boundary: CodexRolloutCandidateScanBoundary,
+  position: ExternalSessionActivityPosition,
 ): string {
-  const cursor: CodexExternalSessionCandidateCursorV4 = {
-    v: 4,
-    kind: 'codexRolloutCandidateScan',
-    ...boundary,
+  const cursor: CodexExternalSessionCandidateCursorV7 = {
+    v: 7,
+    kind: 'codexRolloutActivityPage',
+    updatedAtMs: position.updatedAtMs,
+    remoteSessionId: position.remoteSessionId,
   };
   return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
 }
 
 export function decodeCodexExternalSessionCandidateCursor(
   raw: string | undefined,
-): CodexRolloutCandidateScanBoundary | null {
+): ExternalSessionActivityPosition | null {
   if (typeof raw !== 'string' || raw.trim().length === 0) return null;
   try {
     const parsed = JSON.parse(
@@ -298,8 +298,9 @@ export function decodeCodexExternalSessionCandidateCursor(
       return null;
     }
     const record = parsed as Record<string, unknown>;
-    return record.v === 4 && record.kind === 'codexRolloutCandidateScan'
-      ? decodeRolloutCandidateScanBoundary(record)
+    return record.v === 7 && record.kind === 'codexRolloutActivityPage'
+      && hasOnlyKeys(record, ['v', 'kind', 'updatedAtMs', 'remoteSessionId'])
+      ? parseExternalSessionActivityPosition(record)
       : null;
   } catch {
     return null;

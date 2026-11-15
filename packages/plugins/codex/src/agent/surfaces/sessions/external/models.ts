@@ -43,6 +43,8 @@ export type CodexExternalSessionCandidate = Readonly<{
   thread?: CodexSessionThread;
   match?: AgentExternalSessionCandidate['match'];
   details?: Readonly<Record<string, unknown>>;
+  /** Private host candidate-index checkpoint; the host persists it and never publishes it. */
+  candidateIndexState?: AgentExternalSessionCandidate['candidateIndexState'];
 }>;
 
 export type CodexExternalSessionTranscriptSourcePage = Readonly<{
@@ -178,6 +180,7 @@ export function projectCodexExternalSessionCandidateToAgent(
     ...(candidate.thread ? { thread: candidate.thread } : {}),
     ...(candidate.match ? { match: candidate.match } : {}),
     ...(Object.keys(linkData).length > 0 ? { linkData } : {}),
+    ...(candidate.candidateIndexState !== undefined ? { candidateIndexState: candidate.candidateIndexState } : {}),
   };
 }
 

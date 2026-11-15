@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 
@@ -291,6 +291,95 @@ describe('inventoryCodexRootSessionRolloutFiles', () => {
         ([path]) => String(path) === unrelatedHistoricalFile,
       ),
     ).toBe(false);
+  });
+
+  it('reads rollout heads only inside the family activity window and still finds late continuations and their children', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-inventory-activity-'));
+    const hourMs = 60 * 60 * 1000;
+    const dayMs = 24 * hourMs;
+    const rootStartMs = Math.trunc((Date.now() - 20 * dayMs) / 1000) * 1000;
+    const hex = rootStartMs.toString(16).padStart(12, '0').slice(-12);
+    const rootId = [hex.slice(0, 8), hex.slice(8), '7000', '8000', '000000000001'].join('-');
+    const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+    const rollout = async (atMs: number, suffix: string, payload: Record<string, unknown>, lastWriteMs: number) => {
+      const at = new Date(atMs);
+      const dir = join(codexHome, 'sessions', String(at.getUTCFullYear()),
+        String(at.getUTCMonth() + 1).padStart(2, '0'), String(at.getUTCDate()).padStart(2, '0'));
+      await mkdir(dir, { recursive: true });
+      const stamp = at.toISOString().slice(0, 19).replace(/:/g, '-');
+      const file = join(dir, `rollout-${stamp}-${suffix}.jsonl`);
+      await writeFile(file, JSON.stringify({ type: 'session_meta', payload }) + '\n', 'utf8');
+      await utimes(file, new Date(lastWriteMs), new Date(lastWriteMs));
+      return file;
+    };
+    try {
+      // The root ran for an hour and spawned a child during that hour.
+      const root = await rollout(rootStartMs, rootId, { id: rootId }, rootStartMs + hourMs);
+      const child = await rollout(rootStartMs + 30 * 60 * 1000, uuid(2), { id: uuid(2), session_id: rootId }, rootStartMs + 50 * 60 * 1000);
+      // Unrelated work after the root went quiet; nothing of the family was being written.
+      const quiet = await Promise.all([3, 4].map(async (offsetDays) => rollout(rootStartMs + offsetDays * dayMs, uuid(10 + offsetDays),
+        { id: uuid(10 + offsetDays) }, rootStartMs + offsetDays * dayMs + hourMs)));
+      // A later continuation of the same thread (found by its file name), a child it spawned that
+      // kept running, and a grandchild that long-running child spawned a day later.
+      const continuation = await rollout(rootStartMs + 6 * dayMs, `${rootId}_${uuid(20)}`, { id: rootId }, rootStartMs + 6 * dayMs + hourMs);
+      const lateChild = await rollout(rootStartMs + 6 * dayMs + 10 * 60 * 1000, uuid(21), { id: uuid(21), session_id: rootId },
+        rootStartMs + 8 * dayMs + 2 * hourMs);
+      const grandchild = await rollout(rootStartMs + 8 * dayMs + hourMs, uuid(22), { id: uuid(22), session_id: rootId },
+        rootStartMs + 8 * dayMs + 90 * 60 * 1000);
+      // Codex `thread/revert` writes a new `<thread>_<rollout>` file for a thread, here a child,
+      // whenever the user reverts it, independent of the family's last write.
+      const revertedChild = await rollout(rootStartMs + 15 * dayMs, `${uuid(2)}_${uuid(23)}`, { id: uuid(2), session_id: rootId },
+        rootStartMs + 15 * dayMs + 60 * 1000);
+      const afterAllActivity = await Promise.all([17, 18, 19].map(async (offsetDays) => rollout(rootStartMs + offsetDays * dayMs, uuid(30 + offsetDays),
+        { id: uuid(30 + offsetDays) }, rootStartMs + offsetDays * dayMs + hourMs)));
+
+      const inventory = await inventoryCodexRootSessionRolloutFiles({
+        codexHome, remoteSessionIds: [rootId], signal: new AbortController().signal,
+      });
+
+      expect(inventory.requested[0]?.files.map(({ filePath }) => filePath).sort()).toEqual(
+        [root, child, continuation, lateChild, grandchild, revertedChild].sort());
+      const opened = new Set(fsBoundary.open.mock.calls.map(([path]) => String(path)));
+      // Heads inside the activity window are still read; later unrelated heads are not.
+      expect(quiet.filter((file) => opened.has(file))).toHaveLength(2);
+      expect(afterAllActivity.filter((file) => opened.has(file))).toHaveLength(0);
+    } finally {
+      await rm(codexHome, { recursive: true, force: true });
+    }
+  });
+
+  it('does not list dated rollout directories that end before the requested root started', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-inventory-dated-'));
+    const rootStartMs = Date.UTC(2026, 2, 10, 12, 0, 0);
+    const hex = rootStartMs.toString(16).padStart(12, '0').slice(-12);
+    const rootId = [hex.slice(0, 8), hex.slice(8), '7000', '8000', '000000000001'].join('-');
+    const dirs = {
+      oldYear: join(codexHome, 'sessions', '2025', '12', '31'),
+      oldMonth: join(codexHome, 'sessions', '2026', '02', '27'),
+      dayBeforeWindow: join(codexHome, 'sessions', '2026', '03', '08'),
+      dayInsideWindow: join(codexHome, 'sessions', '2026', '03', '09'),
+      rootDay: join(codexHome, 'sessions', '2026', '03', '10'),
+    };
+    try {
+      for (const [name, dir] of Object.entries(dirs)) {
+        await mkdir(dir, { recursive: true });
+        const stamp = `${dir.split('/').slice(-3).join('-')}T23-00-00`;
+        const id = name === 'rootDay' ? rootId : `00000000-0000-4000-8000-${String(Object.keys(dirs).indexOf(name)).padStart(12, '0')}`;
+        await writeFile(join(dir, `rollout-${name === 'rootDay' ? '2026-03-10T12-00-00' : stamp}-${id}.jsonl`),
+          JSON.stringify({ type: 'session_meta', payload: { id } }) + '\n', 'utf8');
+      }
+      const inventory = await inventoryCodexRootSessionRolloutFiles({
+        codexHome, remoteSessionIds: [rootId], signal: new AbortController().signal,
+      });
+      expect(inventory.requested[0]?.files.map(({ filePath }) => filePath)).toEqual([
+        join(dirs.rootDay, `rollout-2026-03-10T12-00-00-${rootId}.jsonl`)]);
+      const listed = new Set(fsBoundary.readdir.mock.calls.map(([path]) => String(path)));
+      expect([dirs.oldYear, join(codexHome, 'sessions', '2025'), dirs.oldMonth, join(codexHome, 'sessions', '2026', '02'), dirs.dayBeforeWindow]
+        .filter((dir) => listed.has(dir))).toEqual([]);
+      expect(listed.has(dirs.dayInsideWindow)).toBe(true);
+    } finally {
+      await rm(codexHome, { recursive: true, force: true });
+    }
   });
 
   it('opens each same-day rollout once when batching current UUIDv7 root families', async () => {

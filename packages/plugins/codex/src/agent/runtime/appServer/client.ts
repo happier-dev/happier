@@ -409,6 +409,8 @@ function buildNativeCodexAppServerClientSpec(params: Readonly<{
         framing: isCodexProxyTransport(params.transport) ? 'webSocket' as const : 'jsonLines' as const,
         maxFrameBytes: readJsonLineMaxChars(params.env),
         requestTimeoutMs: readCodexAppServerRpcTimeoutMs(params.env),
+        // Replayed turn notifications on the primary thread open a provider turn.
+        adoptsHeldAgentTurns: true as const,
     };
 }
 

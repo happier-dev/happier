@@ -44,12 +44,21 @@ export const ProviderReasoningEffortLevelsV1Schema = lazyZodSchema(() => z.array
 ));
 
 export function formatProviderReasoningEffortLevelLabel(level: ProviderReasoningEffortLevelV1): string {
-  switch (level) {
+  return formatReasoningEffortTierLabel(level);
+}
+
+/**
+ * The one name for an Agent's or Provider's effort tier id ("xhigh" → "XHigh", "minimal" → "Minimal").
+ * Agents add tiers over time (`ultra`, `minimal`); a tier without a word here still reads as a name.
+ */
+export function formatReasoningEffortTierLabel(tier: string): string {
+  switch (tier) {
     case 'low': return 'Low';
     case 'medium': return 'Medium';
     case 'high': return 'High';
     case 'xhigh': return 'XHigh';
     case 'max': return 'Max';
+    default: return tier.length > 0 ? tier.charAt(0).toUpperCase() + tier.slice(1) : tier;
   }
 }
 

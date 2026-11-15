@@ -1,8 +1,9 @@
 import {
   deriveExternalSessionActivity,
+  pageExternalSessionCandidatesByActivity,
 } from '@happier-dev/plugin-sdk/sessions/external';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
-import type { AgentExternalSessionsInvocation } from '@happier-dev/plugin-sdk/sessions/external';
+import type { AgentExternalSessionCandidateIndexLookup, AgentExternalSessionsInvocation } from '@happier-dev/plugin-sdk/sessions/external';
 import { resolveCodexExternalTranscriptFiles, searchCodexExternalTranscript, parseCodexContentSearchProgress, CodexContentSearchYield } from './transcriptSource.js';
 import { raceWithTimeout } from '@happier-dev/plugin-sdk/async';
 import { findExternalSessionContentMatchRange } from '@happier-dev/plugin-sdk/sessions/external';
@@ -24,8 +25,10 @@ import {
 import {
   type CodexRolloutCandidateEntry,
   type CodexRolloutCandidateGroup,
+  type CodexRolloutHeadIndexStateLookup,
   type CodexRolloutCandidateScanBoundary,
   canSearchCodexRolloutFilename,
+  collectCodexRolloutCandidateEntries,
   compareCodexRolloutCandidateCodeUnits,
   filterCodexRolloutCandidatesBySearchTerm,
   normalizeCodexRolloutCandidateSearchTerm,
@@ -33,6 +36,7 @@ import {
   resolveCodexRolloutSearchCandidateLimit,
   scanCodexRolloutCandidateChunk,
   selectCodexRolloutCandidateEntries,
+  withRolloutCandidateTitles,
 } from '../../../rollout/discovery/candidates.js';
 import { homeEntries as resolveHomeEntries } from '../../../rollout/discovery/homeEntries.js';
 import { CodexRolloutPreparation, parseCodexRolloutPreparationState } from '../../../rollout/discovery/preparation.js';
@@ -51,9 +55,10 @@ import {
   type CodexExternalSessionNativeCandidateCursorState,
   type CodexExternalSessionRolloutScanState,
 } from './candidates.js';
-import type {
-  CodexExternalSessionCandidate,
-  CodexExternalSessionSource,
+import {
+  projectCodexExternalSessionCandidateToAgent,
+  type CodexExternalSessionCandidate,
+  type CodexExternalSessionSource,
 } from './models.js';
 import {
   mapCodexExternalSessionWorkWithConcurrency,
@@ -681,12 +686,8 @@ async function buildCodexMergedOrderingPage(
 }
 
 /**
- * Chunk rows carry identity, timestamps, archive state and the title the scan
- * already read for this exact row. Reading `session_meta` for every scanned
- * rollout would put a whole-corpus file-open cost back into a build the index
- * deliberately splits into bounded chunks; the title is different because the
- * scan reads it only for the rows it returns, and the host index serves those
- * rows without hydration while the build is still in progress.
+ * Page rows carry identity, timestamps (stat), archive state and the head the
+ * page read for this exact row. Rows the page only ordered are never opened.
  */
 function buildRolloutScanCandidate(params: Readonly<{
   entry: CodexRolloutCandidateEntry;
@@ -706,17 +707,37 @@ function buildRolloutScanCandidate(params: Readonly<{
     archived: group.archived,
     activity: deriveExternalSessionActivity({ updatedAtMs, env: params.env }),
     details: { source: params.entry.source, ...(params.entry.cwd ? { cwd: params.entry.cwd } : {}) },
+    ...(params.entry.headIndexState ? { candidateIndexState: params.entry.headIndexState } : {}),
   };
 }
 
 /**
- * The Codex rollout fallback's opt-in to the host candidate-index owner: each
- * call returns one bounded exact chunk plus its preparation state, and the host
- * accumulates, orders and serves the page. See
- * `scanCodexRolloutCandidateChunk` for why the ordered page cannot be produced
- * here within the per-source head-acquisition budget.
+ * The host keys its stored checkpoints by the published candidate identity, so
+ * a chunk row is looked up through the same projection that publishes it.
  */
-async function scanBoundedRolloutCandidateChunk(params: Readonly<{
+function createRolloutHeadIndexStateLookup(
+  readCandidateIndexState: AgentExternalSessionCandidateIndexLookup | undefined,
+): CodexRolloutHeadIndexStateLookup | undefined {
+  if (!readCandidateIndexState) return undefined;
+  return (entry) => {
+    const { remoteSessionId, linkData } = projectCodexExternalSessionCandidateToAgent({
+      remoteSessionId: entry.remoteSessionId,
+      updatedAtMs: 0,
+      details: { source: entry.source },
+    });
+    return readCandidateIndexState({ remoteSessionId, ...(linkData ? { linkData } : {}) });
+  };
+}
+
+/**
+ * Unsearched Browse in activity order. A Codex session's last activity is the
+ * newest mtime among its rollout files, so one stat pass
+ * (`collectCodexRolloutCandidateEntries`) orders the whole corpus without
+ * opening a rollout. Heads — title, cwd, thread classification — are read only
+ * for the rows this page shows, through the host's per-row checkpoint, and an
+ * internal thread in a top-level listing is classified from line 1 and skipped.
+ */
+async function listRolloutCandidatesByActivity(params: Readonly<{
   source: CodexExternalSessionSource;
   activeServerDir?: string;
   env: NodeJS.ProcessEnv;
@@ -725,51 +746,76 @@ async function scanBoundedRolloutCandidateChunk(params: Readonly<{
   includeThreads?: boolean;
   updatedAfterMs?: number;
   includeTitles?: boolean;
+  readCandidateIndexState?: AgentExternalSessionCandidateIndexLookup;
+  resultBudget?: Readonly<{ fits(page: CodexCandidateListPage): boolean }>;
 }> & CodexExternalSessionInvocationBounds): Promise<Readonly<{
   candidates: CodexExternalSessionCandidate[];
   nextCursor: string | null;
-  preparation: Readonly<{ kind: 'building_candidate_index'; scanned: number }>;
 }>> {
+  const resultBudget = params.resultBudget;
   const after = params.cursor
     ? decodeCodexExternalSessionCandidateCursor(params.cursor)
     : null;
   if (params.cursor && !after) {
     throw new CodexExternalSessionCandidateSourceChangedError();
   }
-  const chunk = await scanCodexRolloutCandidateChunk({
+  const entries = await collectCodexRolloutCandidateEntries({
     source: params.source,
     activeServerDir: params.activeServerDir,
     env: params.env,
-    limit: params.limit,
-    after,
-    updatedAfterMs: params.updatedAfterMs,
-    includeTitles: params.includeTitles,
     signal: params.signal,
     deadlineAtMs: params.deadlineAtMs,
     onProgress: params.onProgress,
     preparation: params.preparation,
   });
-  if (chunk.sourceChanged) {
-    throw new CodexExternalSessionCandidateSourceChangedError();
-  }
-  const entries = params.includeTitles === false
-    ? await mapCodexExternalSessionWorkWithConcurrency(chunk.entries, resolveCodexRolloutSearchBuildConcurrency(params.env), async entry => {
-      // Title-free inventory still obeys the same native thread admission as
-      // Browse; the head owner stops immediately after classifying metadata.
-      const { thread, cwd } = await readCodexRolloutHead(entry.group.earliestFilePath, params);
-      return { ...entry, ...(thread ? { thread } : {}), ...(cwd ? { cwd } : {}) };
-    }, params)
-    : chunk.entries;
+  const readHeadIndexState = createRolloutHeadIndexStateLookup(params.readCandidateIndexState);
+  const page = await pageExternalSessionCandidatesByActivity({
+    entries: entries.flatMap((entry) => (
+      params.updatedAfterMs !== undefined && entry.group.updatedAtMs < params.updatedAfterMs
+        ? []
+        : [{ updatedAtMs: Math.trunc(entry.group.updatedAtMs), remoteSessionId: entry.remoteSessionId, entry }]
+    )),
+    after,
+    limit: params.limit,
+    ...(params.signal ? { signal: params.signal } : {}),
+    ...(resultBudget ? {
+      fits: (candidates: readonly CodexExternalSessionCandidate[]) => {
+        const last = candidates.at(-1);
+        return resultBudget.fits({
+          candidates: [...candidates],
+          nextCursor: last ? encodeCodexExternalSessionCandidateCursor(last) : null,
+        });
+      },
+    } : {}),
+    readRows: async (rows) => {
+      const withHeads = params.includeTitles === false
+        ? await mapCodexExternalSessionWorkWithConcurrency(rows, resolveCodexRolloutSearchBuildConcurrency(params.env), async ({ entry }) => {
+          // Title-free inventory still obeys the same native thread admission as
+          // Browse; the head owner stops immediately after classifying metadata.
+          const { thread, cwd } = await readCodexRolloutHead(entry.group.earliestFilePath, params);
+          return { ...entry, ...(thread ? { thread } : {}), ...(cwd ? { cwd } : {}) };
+        }, params)
+        : await withRolloutCandidateTitles({
+          entries: rows.map(({ entry }) => entry),
+          env: params.env,
+          readHeadIndexState,
+          // A top-level listing drops internal threads: classify them from line 1 only.
+          ...(params.includeThreads === true ? {} : { includeThreadTitles: false }),
+          signal: params.signal,
+          deadlineAtMs: params.deadlineAtMs,
+          onProgress: params.onProgress,
+          preparation: params.preparation,
+        });
+      return withHeads.map((entry) => (
+        params.includeThreads || !entry.thread
+          ? buildRolloutScanCandidate({ entry, env: params.env })
+          : null
+      ));
+    },
+  });
   return {
-    // Filtering the chunk itself keeps every index built from these chunks —
-    // its pages, cursors and total — about the same listing.
-    candidates: entries
-      .filter((entry) => params.includeThreads || !entry.thread)
-      .map((entry) => buildRolloutScanCandidate({ entry, env: params.env })),
-    nextCursor: chunk.nextBoundary
-      ? encodeCodexExternalSessionCandidateCursor(chunk.nextBoundary)
-      : null,
-    preparation: { kind: 'building_candidate_index', scanned: chunk.scanned },
+    candidates: page.candidates,
+    nextCursor: page.next ? encodeCodexExternalSessionCandidateCursor(page.next) : null,
   };
 }
 
@@ -1012,7 +1058,6 @@ type CodexCandidateListPage = Readonly<{
   candidates: CodexExternalSessionCandidate[];
   nextCursor: string | null;
   searchIncomplete?: boolean;
-  preparation?: Readonly<{ kind: 'building_candidate_index'; scanned: number }>;
   contentCoverage?: 'complete' | 'partial' | 'unsupported';
 }>;
 
@@ -1033,6 +1078,8 @@ export async function listCodexSessionCandidates(input: Readonly<{
   includeThreads?: boolean;
   updatedAfterMs?: number;
   includeTitles?: boolean;
+  /** The host candidate index's stored checkpoints, consulted by unsearched index chunks. */
+  readCandidateIndexState?: AgentExternalSessionCandidateIndexLookup;
 }> & CodexExternalSessionInvocationBounds): Promise<CodexCandidateListPage> {
   const contentSearchControl = input.searchTarget === 'content' ? createExternalSessionContentSearchControl({
     signal: input.signal,
@@ -1046,12 +1093,11 @@ export async function listCodexSessionCandidates(input: Readonly<{
   const search = { target: params.searchTarget === 'content' ? 'content' as const : 'metadata' as const, term: searchTerm };
   const limit = Math.max(1, Math.trunc(params.limit));
   // Every unsearched browse — the ordinary mounted machine Browse included —
-  // builds the host candidate index from bounded scan chunks. An empty query
-  // has nothing to search. Real searches run the merged ordering against one
-  // bounded searched window per request (`listRolloutCandidateOrdering`), so
-  // no request walks the whole corpus.
+  // is one activity-ordered page. Real searches run the merged ordering against
+  // one bounded searched window per request (`listRolloutCandidateOrdering`).
   if (!searchTerm && params.searchTarget !== 'content') {
-    return await scanBoundedRolloutCandidateChunk({
+    return await listRolloutCandidatesByActivity({
+      resultBudget: params.resultBudget,
       source: params.source,
       activeServerDir: params.activeServerDir,
       env: params.env,
@@ -1060,6 +1106,7 @@ export async function listCodexSessionCandidates(input: Readonly<{
       includeThreads: params.includeThreads,
       updatedAfterMs: params.updatedAfterMs,
       includeTitles: params.includeTitles,
+      readCandidateIndexState: params.readCandidateIndexState,
       signal: params.signal,
       deadlineAtMs: params.deadlineAtMs,
       onProgress: params.onProgress,
@@ -1211,7 +1258,9 @@ export async function listCodexSessionCandidates(input: Readonly<{
       let processedRows = 0;
       for (const row of page.rows) {
         try {
-          contentSearchControl?.checkWork();
+          // Replaying source-bound preparation may consume the cooperative
+          // slice. The decoder's control commits a native step before yielding.
+          contentSearchControl?.assertNotYielded();
           throwIfCodexExternalSessionInvocationStopped(params);
           if (contentProgress && contentProgress.remoteSessionId !== row.remoteSessionId) throw new CodexExternalSessionCandidateSourceChangedError();
           const result = await searchCodexExternalTranscript({ ...params, remoteSessionId: row.remoteSessionId, query: searchTerm, ripgrep: params.ripgrep,

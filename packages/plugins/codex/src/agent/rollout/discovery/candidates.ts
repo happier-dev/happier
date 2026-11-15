@@ -16,7 +16,7 @@ import {
   parseCodexRolloutFilename,
   readCodexSessionMetaFromRollout,
 } from './indexData.js';
-import { readCodexRolloutHead } from './rolloutTitle.js';
+import { readCodexRolloutHead, readCodexRolloutHeadWithIndexState, type CodexRolloutHeadIndexState, type CodexRolloutHeadReadScope } from './rolloutTitle.js';
 import type { CodexSessionThread } from './sessionThread.js';
 
 export type CodexRolloutCandidateGroup = Readonly<{
@@ -42,7 +42,12 @@ export type CodexRolloutCandidateEntry = Readonly<{
   title?: string;
   /** Present only for an internal Codex thread, classified by the same head read. */
   thread?: CodexSessionThread;
+  /** The host candidate index's checkpoint for this row's head, when the host supplied a lookup. */
+  headIndexState?: CodexRolloutHeadIndexState;
 }>;
+
+/** The host candidate index's stored checkpoint for one chunk row, if it holds one. */
+export type CodexRolloutHeadIndexStateLookup = (entry: CodexRolloutCandidateEntry) => unknown;
 
 export type CodexRolloutCandidateSelection = Readonly<
   | {
@@ -653,30 +658,33 @@ function rolloutCandidateFileNames(entries: readonly Pick<Dirent, 'name' | 'isDi
 }
 
 /**
- * Reads the title for the rows a chunk actually returns — never for a scanned
- * file the chunk discards — from the same earliest rollout file the
- * selected-candidate build reads. This is the only reason the identifier-only
- * IN-PROGRESS page is not permanent on a large corpus: the host index serves
- * partial rows without hydration, so a title has to arrive on the row itself.
- * The same head read classifies internal threads from line 1's `session_meta`.
+ * Reads the head (title, cwd, thread classification) for exactly the rows a
+ * page shows — never for a row it only ordered or skipped — from the same
+ * earliest rollout file the selected-candidate build reads. The same head read
+ * classifies internal threads from line 1's `session_meta`; with
+ * `includeThreadTitles: false` it stops there for a thread.
  */
-async function withRolloutCandidateTitles(params: Readonly<{
+export async function withRolloutCandidateTitles(params: Readonly<{
   entries: readonly CodexRolloutCandidateEntry[];
   env: NodeJS.ProcessEnv;
+  readHeadIndexState?: CodexRolloutHeadIndexStateLookup;
+  includeThreadTitles?: CodexRolloutHeadReadScope['includeThreadTitles'];
 }> & CodexExternalSessionInvocationBounds): Promise<CodexRolloutCandidateEntry[]> {
+  const readHeadIndexState = params.readHeadIndexState;
   return await mapCodexExternalSessionWorkWithConcurrency(
     params.entries,
     resolveCodexRolloutSearchBuildConcurrency(params.env),
     async (entry) => {
-      const { title, thread, cwd } = await readCodexRolloutHead(
-        entry.group.earliestFilePath,
-        params,
-      );
+      // A row the host already checkpointed is not re-read while its rollout is unchanged.
+      const { head: { title, thread, cwd }, indexState } = readHeadIndexState
+        ? await readCodexRolloutHeadWithIndexState(entry.group.earliestFilePath, params, readHeadIndexState(entry))
+        : { head: await readCodexRolloutHead(entry.group.earliestFilePath, params), indexState: undefined };
       return {
         ...entry,
         ...(title ? { title } : {}),
         ...(cwd ? { cwd } : {}),
         ...(thread ? { thread } : {}),
+        ...(indexState ? { headIndexState: indexState } : {}),
       };
     },
     params,
@@ -685,19 +693,11 @@ async function withRolloutCandidateTitles(params: Readonly<{
 
 /**
  * One bounded scan chunk of the rollout corpus, in newest-container-first
- * traversal order.
- *
- * Complete work per call is bounded by `limit`: the corpus description reads
- * only `sessions/YYYY/MM/DD` directory metadata (measured ~10–25 ms on a
- * 49,880-file corpus), and only the rollout files this chunk actually consumes
- * are statted or opened. Nothing here reads, stats, or groups the whole corpus,
- * because the whole corpus does not fit the SDK's 3,000 ms per-source head
- * acquisition: sweeping every rollout mtime to sort by last activity measured
- * 2.9–3.7 s cold on that same corpus, and repeated once per continuation page.
- *
- * Last-activity ordering is therefore not this function's job. The host
- * candidate-index owner accumulates these exact chunks, sorts them with the same
- * `updatedAtMs`-then-code-unit rule, and alone serves the ordered page.
+ * traversal order, for a searched window (`listRolloutCandidateOrdering`).
+ * Only the rollout files this chunk consumes are statted or opened. Unsearched
+ * Browse does not use it: it orders the whole corpus by rollout mtime in one
+ * stat pass (`collectCodexRolloutCandidateEntries`) and reads heads only for
+ * the rows a page shows.
  */
 export async function scanCodexRolloutCandidateChunk(params: Readonly<{
   source: CodexExternalSessionSource;
@@ -706,7 +706,10 @@ export async function scanCodexRolloutCandidateChunk(params: Readonly<{
   limit: number;
   after?: CodexRolloutCandidateScanBoundary | null;
   includeTitles?: boolean;
+  /** False when the caller drops internal threads: they are classified from line 1 only. */
+  includeThreadTitles?: boolean;
   updatedAfterMs?: number;
+  readHeadIndexState?: CodexRolloutHeadIndexStateLookup;
 }> & CodexExternalSessionInvocationBounds): Promise<CodexRolloutCandidateScanChunk> {
   throwIfCodexExternalSessionInvocationStopped(params);
   const containers = await listCandidateCorpusContainers(params);
@@ -827,6 +830,8 @@ export async function scanCodexRolloutCandidateChunk(params: Readonly<{
     entries: params.includeTitles === false ? toOrderedRolloutCandidateEntries(grouped) : await withRolloutCandidateTitles({
       entries: toOrderedRolloutCandidateEntries(grouped),
       env: params.env,
+      readHeadIndexState: params.readHeadIndexState,
+      ...(params.includeThreadTitles === false ? { includeThreadTitles: false } : {}),
       signal: params.signal,
       deadlineAtMs: params.deadlineAtMs,
       onProgress: params.onProgress,

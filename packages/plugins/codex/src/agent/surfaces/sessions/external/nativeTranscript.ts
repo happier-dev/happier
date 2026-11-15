@@ -1,3 +1,4 @@
+import { createExternalSessionUnsupportedTranscriptItem } from '@happier-dev/plugin-sdk/sessions/file-stores';
 import { createHash } from 'node:crypto';
 import { z } from 'zod/mini';
 import type { AgentExternalSessionTranscriptItem } from '@happier-dev/plugin-sdk/sessions/external';
@@ -91,13 +92,19 @@ export async function pageCodexNativeTranscript(params: Readonly<{
     let bytes = 0;
     let index = state.skip;
     let offset = state.offset;
+    let unsupported = 0;
+    const withDiagnostics = <T extends object>(result: T) => unsupported === 0 ? result : { ...result,
+      diagnostics: [{ code: 'external_sessions_transcript_unsupported_record', severity: 'benign' as const, count: unsupported, positions: [] }] };
     for (; index < page.data.length; index += 1, offset = 0) {
       const entry = page.data[index]!;
       const key = identity(entry);
       const projected = projectCodexNativeHistoryItem(entry.item);
-      const messages = mapCodexProjectedEventsToExternalMessages({ projected,
-        createdAtMs: entry.startedAtMs ?? entry.completedAtMs ?? 0,
-        idForIndex: action => `codex:native:${params.remoteSessionId}:${key}:${action}` });
+      const createdAtMs = entry.startedAtMs ?? entry.completedAtMs ?? 0;
+      const idForIndex = (action: number) => `codex:native:${params.remoteSessionId}:${key}:${action}`;
+      const messages = projected === null
+        ? [createExternalSessionUnsupportedTranscriptItem({ agentId: 'codex', id: idForIndex(0), createdAtMs })]
+        : mapCodexProjectedEventsToExternalMessages({ projected,
+        createdAtMs, idForIndex });
       if (params.direction === 'older') messages.reverse();
       if (offset > messages.length) throw new Error('Codex native history changed its partial item');
       for (; offset < messages.length; offset += 1) {
@@ -109,10 +116,11 @@ export async function pageCodexNativeTranscript(params: Readonly<{
             anchor: index ? identity(page.data[index - 1]!) : null,
             fingerprint: index ? fingerprint(page.data[index - 1]!) : null });
           if (params.direction === 'older') items.reverse();
-          return { items, nextCursor, tailCursor, hasMore: true, truncated: params.direction === 'newer',
-            ...(params.direction === 'newer' ? { truncationReason: 'page_limit' as const } : {}) };
+          return withDiagnostics({ items, nextCursor, tailCursor, hasMore: true, truncated: params.direction === 'newer',
+            ...(params.direction === 'newer' ? { truncationReason: 'page_limit' as const } : {}) });
         }
         items.push(item); bytes += size;
+        if (projected === null) unsupported += 1;
       }
     }
     const last = page.data.at(-1);
@@ -121,9 +129,9 @@ export async function pageCodexNativeTranscript(params: Readonly<{
       : params.direction === 'older' ? null : encode({ ...state, skip: page.data.length, offset: 0, pendingId: null,
         anchor: last ? identity(last) : state.anchor, fingerprint: last ? fingerprint(last) : state.fingerprint });
     if (params.direction === 'older') items.reverse();
-    return { items, nextCursor, tailCursor, hasMore: page.nextCursor !== null,
+    return withDiagnostics({ items, nextCursor, tailCursor, hasMore: page.nextCursor !== null,
       truncated: params.direction === 'newer' && page.nextCursor !== null,
-      ...(params.direction === 'newer' && page.nextCursor ? { truncationReason: 'page_limit' as const } : {}) };
+      ...(params.direction === 'newer' && page.nextCursor ? { truncationReason: 'page_limit' as const } : {}) });
   } catch (error) {
     // Keep the exec owner's typed failure for safe diagnostics. Wrapping it
     // discarded EXITED/TIMEOUT identity from thread/items/list failures.

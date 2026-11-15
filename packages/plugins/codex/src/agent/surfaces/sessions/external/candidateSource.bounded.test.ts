@@ -15,6 +15,7 @@ const fsProbe = vi.hoisted(() => ({
   advanceDeadlineAtReadCall: null as number | null,
   advanceDeadlineAtStatCall: null as number | null,
   advanceDeadline: null as (() => void) | null,
+  bytesReadByPath: new Map<string, number>(),
 }));
 
 // Fast candidate tests must not touch the app-server client.
@@ -27,6 +28,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     open: async (...args: Parameters<typeof actual.open>) => {
       fsProbe.openCalls += 1;
       const handle = await actual.open(...args);
+      const openedPath = String(args[0]);
       return new Proxy(handle, {
         get(target, property) {
           if (property === 'read') {
@@ -38,7 +40,9 @@ vi.mock('node:fs/promises', async (importOriginal) => {
               if (fsProbe.readCalls === fsProbe.advanceDeadlineAtReadCall) {
                 fsProbe.advanceDeadline?.();
               }
-              return await Reflect.apply(target.read, target, readArgs);
+              const result = await Reflect.apply(target.read, target, readArgs) as Awaited<ReturnType<typeof target.read>>;
+              fsProbe.bytesReadByPath.set(openedPath, (fsProbe.bytesReadByPath.get(openedPath) ?? 0) + result.bytesRead);
+              return result;
             };
           }
           const value = Reflect.get(target, property, target);
@@ -59,6 +63,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   };
 });
 
+import { resolveExternalSessionCandidateIdentityKey } from '@happier-dev/plugin-sdk/sessions/external';
 import { createCodexExternalSessionsContribution } from './contribution.js';
 import {
   listCodexExternalSessionCandidatesViaExistingAppServerClient,
@@ -102,6 +107,7 @@ afterEach(() => {
   fsProbe.advanceDeadlineAtReadCall = null;
   fsProbe.advanceDeadlineAtStatCall = null;
   fsProbe.advanceDeadline = null;
+  fsProbe.bytesReadByPath.clear();
 });
 
 describe('Codex rollout candidate paging bounds', () => {
@@ -328,55 +334,41 @@ describe('Codex rollout candidate paging bounds', () => {
         limit: 64,
         searchMode: 'fast',
       } as const;
-      const firstChunk = await listCodexSessionCandidates(request);
+      const firstPage = await listCodexSessionCandidates(request);
 
-      expect(firstChunk.candidates).toHaveLength(64);
-      expect(firstChunk.preparation).toEqual({ kind: 'building_candidate_index', scanned: 64 });
-      expect(firstChunk.nextCursor).toEqual(expect.any(String));
-      // Complete work — not only rollout content opens — stays proportional to
-      // the chunk, so one chunk cannot exceed the source head-acquisition budget
-      // on a corpus far larger than this bucket. A row the chunk RETURNS costs
-      // one bounded head read for its title; a row it merely traverses past
-      // costs nothing, which is what keeps the cost proportional.
+      // Browse orders by last activity, and that fact is the rollout mtime: one
+      // stat pass orders the whole corpus, and only the rows page 1 shows have
+      // their heads read. No index build, no preparation round-trips.
+      expect(firstPage.preparation).toBeUndefined();
+      expect(firstPage.candidates.map((candidate) => candidate.remoteSessionId))
+        .toEqual(newestByActivity.slice(0, 64));
       expect(fsProbe.openCalls).toBeLessThanOrEqual(64);
       expect(fsProbe.readCalls).toBeLessThanOrEqual(64 * 2);
-      expect(fsProbe.statCalls).toBeLessThanOrEqual((64 * 2) + 8);
+      expect(firstPage.nextCursor).toEqual(expect.any(String));
 
-      // The chunks are exact: drained and sorted by the ordering rule the host
-      // candidate index applies, they reproduce the whole bucket in last-activity
-      // order — which no single bounded chunk could compute for itself.
-      const drained = [...firstChunk.candidates];
-      let cursor = firstChunk.nextCursor;
+      // The continuation resumes strictly after the last shown row, in the same
+      // order, without repeating or skipping a row.
+      const drained = [...firstPage.candidates];
+      let cursor = firstPage.nextCursor;
       while (cursor) {
         const next = await listCodexSessionCandidates({ ...request, cursor });
+        expect(next.preparation).toBeUndefined();
         drained.push(...next.candidates);
         cursor = next.nextCursor;
       }
-      expect(drained).toHaveLength(256);
-      expect(
-        [...drained]
-          .sort((left, right) =>
-            right.updatedAtMs - left.updatedAtMs
-            || (left.remoteSessionId < right.remoteSessionId ? -1 : 1),
-          )
-          .map((candidate) => candidate.remoteSessionId),
-      ).toEqual(newestByActivity);
+      expect(drained.map((candidate) => candidate.remoteSessionId)).toEqual(newestByActivity);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  it('serves an ordinary unsearched browse from one bounded chunk without draining the corpus', async () => {
+  it('serves an ordinary unsearched browse as one activity page with a seek continuation', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-codex-candidate-ordinary-'));
     try {
       const codexHome = await writeCandidateCorpus(root, 24);
 
       fsProbe.openCalls = 0;
-      fsProbe.readCalls = 0;
-      fsProbe.statCalls = 0;
       // No searchMode and no searchTerm: the ordinary mounted machine Browse.
-      // It must select the incumbent bounded chunk/preparation mode rather
-      // than enumerate the whole rollout corpus for its ordering.
       const firstPage = await listCodexSessionCandidates({
         source: { kind: 'codexHome', home: 'user' },
         activeServerDir: join(root, 'active-server'),
@@ -386,15 +378,11 @@ describe('Codex rollout candidate paging bounds', () => {
       });
 
       expect(firstPage.candidates).toHaveLength(4);
-      expect(firstPage.preparation).toEqual({ kind: 'building_candidate_index', scanned: 4 });
+      expect(firstPage.preparation).toBeUndefined();
       expect(firstPage.nextCursor).toEqual(expect.any(String));
-      // Complete work stays proportional to the chunk: a corpus far larger than
-      // one chunk must not be walked (statted) for an unsearched first page.
-      expect(fsProbe.statCalls).toBeLessThanOrEqual((4 * 2) + 8);
+      // Only the shown rows' heads are opened.
       expect(fsProbe.openCalls).toBeLessThanOrEqual(4);
 
-      // Continuation stays stable: the next chunk advances without repeating
-      // or draining the corpus in one call.
       const secondPage = await listCodexSessionCandidates({
         source: { kind: 'codexHome', home: 'user' },
         activeServerDir: join(root, 'active-server'),
@@ -404,13 +392,12 @@ describe('Codex rollout candidate paging bounds', () => {
         limit: 4,
       });
       expect(secondPage.candidates).toHaveLength(4);
-      expect(secondPage.preparation?.scanned).toBe(8);
-      expect(
-        new Set([
-          ...firstPage.candidates.map((candidate) => candidate.remoteSessionId),
-          ...secondPage.candidates.map((candidate) => candidate.remoteSessionId),
-        ]).size,
-      ).toBe(8);
+      const shown = [...firstPage.candidates, ...secondPage.candidates];
+      expect(new Set(shown.map((candidate) => candidate.remoteSessionId)).size).toBe(8);
+      expect(shown.map((candidate) => candidate.remoteSessionId)).toEqual(
+        [...shown].sort((left, right) => right.updatedAtMs - left.updatedAtMs
+          || (left.remoteSessionId < right.remoteSessionId ? -1 : 1)).map((candidate) => candidate.remoteSessionId),
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -508,46 +495,36 @@ describe('Codex rollout candidate paging bounds', () => {
         searchMode: 'fast',
       });
 
-      // Chunks traverse newest creation stamp first — here the exact reverse of
-      // last activity — and each chunk is internally ordered by the same rule the
-      // host index applies across chunks.
+      // Pages follow last activity — here the exact reverse of creation order.
       expect(firstPage.candidates.map((candidate) => candidate.remoteSessionId)).toEqual([
+        ids[0],
         ids[1],
-        ids[2],
       ]);
       expect(secondPage.candidates.map((candidate) => candidate.remoteSessionId)).toEqual([
-        ids[0],
+        ids[2],
       ]);
       expect(secondPage.nextCursor).toBeNull();
-      expect(firstPage.preparation?.scanned).toBe(2);
-      expect(secondPage.preparation?.scanned).toBe(3);
-      expect(
-        [...firstPage.candidates, ...secondPage.candidates]
-          .sort((left, right) => right.updatedAtMs - left.updatedAtMs)
-          .map((candidate) => candidate.remoteSessionId),
-      ).toEqual([ids[0], ids[1], ids[2]]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
   it.each(['newer file', 'older file', 'append', 'removed container', 'replaced container'] as const)(
-    'continues live rollout growth but fences container replacement/removal (%s)', async (change) => {
+    'continues strictly below the last shown row while the rollout set changes (%s)', async (change) => {
     const root = await mkdtemp(join(tmpdir(), 'happier-codex-candidate-generation-'));
     try {
       const codexHome = join(root, 'codex-home');
       const dayDir = join(codexHome, 'sessions', '2026', '07', '23');
       await mkdir(dayDir, { recursive: true });
-      for (const [time, remoteSessionId] of [
-        ['08-00-00', '11111111-1111-1111-1111-111111111111'],
-        ['09-00-00', '22222222-2222-2222-2222-222222222222'],
-      ] as const) {
-        await writeFile(
-          join(dayDir, `rollout-2026-07-23T${time}-${remoteSessionId}.jsonl`),
-          sessionMetaLine(remoteSessionId, `2026-07-23T${time.replaceAll('-', ':')}.000Z`),
-          'utf8',
-        );
-      }
+      const first = '11111111-1111-1111-1111-111111111111';
+      const second = '22222222-2222-2222-2222-222222222222';
+      const writeRollout = async (time: string, id: string, activity: string) => {
+        const filePath = join(dayDir, `rollout-2026-07-23T${time}-${id}.jsonl`);
+        await writeFile(filePath, sessionMetaLine(id, `2026-07-23T${time.replaceAll('-', ':')}.000Z`), 'utf8');
+        await utimes(filePath, new Date(activity), new Date(activity));
+      };
+      await writeRollout('08-00-00', first, '2026-07-23T08:30:00.000Z');
+      await writeRollout('09-00-00', second, '2026-07-23T09:30:00.000Z');
       const contribution = createCodexExternalSessionsContribution({
         env: { CODEX_HOME: codexHome },
       });
@@ -561,29 +538,24 @@ describe('Codex rollout candidate paging bounds', () => {
       if (!firstPage.ok || !firstPage.value.nextCursor) {
         throw new Error('Expected a candidate continuation cursor');
       }
+      expect(firstPage.value.candidates.map(({ remoteSessionId }) => remoteSessionId)).toEqual([second]);
 
       const addedSessionId = '33333333-3333-3333-3333-333333333333';
       if (change === 'removed container' || change === 'replaced container') {
-        await rename(dayDir, `${dayDir}-old`);
+        await rename(dayDir, join(root, 'moved-out-of-codex-home'));
         if (change === 'replaced container') {
           await mkdir(dayDir);
-          for (const [time, id] of [
-            ['08-00-00', '11111111-1111-1111-1111-111111111111'],
-            ['09-00-00', '22222222-2222-2222-2222-222222222222'],
-          ] as const) {
-            await writeFile(join(dayDir, `rollout-2026-07-23T${time}-${id}.jsonl`),
-              sessionMetaLine(id, `2026-07-23T${time.replaceAll('-', ':')}.000Z`), 'utf8');
-          }
+          await writeRollout('08-00-00', first, '2026-07-23T08:30:00.000Z');
+          await writeRollout('09-00-00', second, '2026-07-23T09:30:00.000Z');
         }
       } else if (change === 'append') {
-        await appendFile(join(dayDir, 'rollout-2026-07-23T08-00-00-11111111-1111-1111-1111-111111111111.jsonl'),
+        const filePath = join(dayDir, `rollout-2026-07-23T08-00-00-${first}.jsonl`);
+        await appendFile(filePath,
           `${JSON.stringify({ type: 'event_msg', payload: { type: 'user_message', message: 'live append' } })}\n`);
+        await utimes(filePath, new Date('2026-07-23T10:30:00.000Z'), new Date('2026-07-23T10:30:00.000Z'));
       } else {
-        const time = change === 'newer file' ? '10-00-00' : '07-00-00';
-        await writeFile(join(dayDir, `rollout-2026-07-23T${time}-${addedSessionId}.jsonl`),
-          sessionMetaLine(addedSessionId, `2026-07-23T${time.replaceAll('-', ':')}.000Z`), 'utf8');
-        // Make the directory metadata change deterministic even on coarse filesystems.
-        await utimes(dayDir, new Date('2026-07-24'), new Date('2026-07-24'));
+        // A new rollout's activity is its write time, whatever its creation stamp.
+        await writeRollout(change === 'newer file' ? '10-00-00' : '07-00-00', addedSessionId, '2026-07-23T11:00:00.000Z');
       }
 
       const secondPage = await contribution.listCandidates({
@@ -593,24 +565,143 @@ describe('Codex rollout candidate paging bounds', () => {
         searchMode: 'fast',
         ...invocation(),
       });
-      if (change === 'removed container' || change === 'replaced container') {
-        expect(secondPage).toMatchObject({ ok: false, code: 'source_invalid' });
-        return;
-      }
       if (!secondPage.ok) throw new Error(`Unexpected ${secondPage.code}: ${secondPage.message}`);
+      // The continuation resumes strictly after the last shown row's activity
+      // position. A row whose activity moved above it is shown by the next
+      // fresh first page, never repeated or shown out of order here.
       expect(secondPage.value.candidates.map(({ remoteSessionId }) => remoteSessionId))
-        .toEqual(['11111111-1111-1111-1111-111111111111']);
-      if (change === 'older file') {
-        if (!secondPage.value.nextCursor) throw new Error('Expected continuation to the newly discovered older rollout');
-        const thirdPage = await contribution.listCandidates({
-          source, cursor: secondPage.value.nextCursor, maxItems: 1, searchMode: 'fast', ...invocation(),
+        .toEqual(change === 'append' || change === 'removed container' ? [] : [first]);
+      expect(secondPage.value.nextCursor).toBeNull();
+      const fresh = await contribution.listCandidates({ source, maxItems: 3, searchMode: 'fast', ...invocation() });
+      if (!fresh.ok) throw new Error(`Unexpected ${fresh.code}: ${fresh.message}`);
+      expect(fresh.value.candidates.map(({ remoteSessionId }) => remoteSessionId)).toEqual(
+        change === 'append' ? [first, second]
+          : change === 'removed container' ? []
+            : change === 'replaced container' ? [second, first]
+              : [addedSessionId, second, first],
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('Codex rollout candidate head reads across index slices', () => {
+  function userMessageLine(text: string): string {
+    return `${JSON.stringify({
+      type: 'response_item',
+      payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] },
+    })}\n`;
+  }
+
+  /**
+   * Every unsearched Browse request re-lists the corpus head to anchor the host
+   * candidate index, so an unchanged rollout must not have its head re-read on
+   * each slice: the host hands back the checkpoint the previous slice produced.
+   * The only boundary is node:fs, counted through the real implementation.
+   */
+  it('reuses the indexed head of unchanged rollouts and re-reads only a changed one', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-candidate-head-state-'));
+    try {
+      const codexHome = join(root, 'codex-home');
+      const dayDir = join(codexHome, 'sessions', '2026', '07', '23');
+      await mkdir(dayDir, { recursive: true });
+      const ids = [0, 1, 2, 3].map((index) => `00000000-0000-0000-0000-00000000000${index}`);
+      const filePathFor = (index: number) => join(dayDir, `rollout-2026-07-23T08-00-0${index}-${ids[index]}.jsonl`);
+      await Promise.all(ids.map(async (id, index) => {
+        await writeFile(filePathFor(index), [
+          sessionMetaLine(id, `2026-07-23T08:00:0${index}.000Z`, 4 * 1024),
+          ...(index === 3 ? [] : [userMessageLine(`head title ${index}`)]),
+        ].join(''), 'utf8');
+      }));
+      const contribution = createCodexExternalSessionsContribution({ env: { CODEX_HOME: codexHome } });
+      const source = { kind: 'codexHome', home: 'user' } as const;
+      const states = new Map<string, unknown>();
+      const listSlice = async () => {
+        const page = await contribution.listCandidates({
+          source,
+          maxItems: 4,
+          searchMode: 'fast',
+          readCandidateIndexState: (candidate) => states.get(resolveExternalSessionCandidateIdentityKey(candidate)) as never,
+          ...invocation(),
         });
-        expect(thirdPage).toMatchObject({ ok: true, value: { nextCursor: null,
-          candidates: [{ remoteSessionId: addedSessionId }] } });
-      } else {
-        // Newer files above the traversal frontier are picked up on the next inventory.
-        expect(secondPage.value.nextCursor).toBeNull();
-      }
+        if (!page.ok) throw new Error(`Unexpected ${page.code}: ${page.message}`);
+        for (const candidate of page.value.candidates) {
+          if (candidate.candidateIndexState !== undefined) {
+            states.set(resolveExternalSessionCandidateIdentityKey(candidate), candidate.candidateIndexState);
+          }
+        }
+        return Object.fromEntries(page.value.candidates.map((candidate) => [candidate.remoteSessionId, candidate.title ?? null]));
+      };
+
+      const first = await listSlice();
+      expect(first).toEqual({
+        [ids[0]!]: 'head title 0', [ids[1]!]: 'head title 1', [ids[2]!]: 'head title 2', [ids[3]!]: null,
+      });
+
+      fsProbe.openCalls = 0;
+      const second = await listSlice();
+      const unchangedHeadOpens = fsProbe.openCalls;
+
+      // A rollout still inside its head window grows: its title may now exist.
+      await appendFile(filePathFor(3), userMessageLine('head title 3'), 'utf8');
+      fsProbe.openCalls = 0;
+      const third = await listSlice();
+      const changedHeadOpens = fsProbe.openCalls;
+
+      expect({ second, unchangedHeadOpens, third: third[ids[3]!], changedHeadOpens }).toEqual({
+        second: first,
+        unchangedHeadOpens: 0,
+        third: 'head title 3',
+        changedHeadOpens: 1,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * A top-level Browse listing drops internal threads, which are about half of
+   * a real corpus. Line 1's `session_meta` already classifies a thread, so only
+   * the first head page is read for a row the listing discards, never the rest
+   * of its 512 KiB title window (this body opens with a 320 KB record).
+   */
+  it('classifies an internal thread from its first record without reading its title window in a top-level listing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-candidate-thread-head-'));
+    try {
+      const codexHome = join(root, 'codex-home');
+      const dayDir = join(codexHome, 'sessions', '2026', '07', '24');
+      await mkdir(dayDir, { recursive: true });
+      const rootId = '00000000-0000-0000-0000-0000000000a1';
+      const childId = '00000000-0000-0000-0000-0000000000a2';
+      const rootPath = join(dayDir, `rollout-2026-07-24T08-00-01-${rootId}.jsonl`);
+      const childPath = join(dayDir, `rollout-2026-07-24T08-00-02-${childId}.jsonl`);
+      // Real rollouts carry multi-hundred-KB records (instructions, tool output) early on.
+      const body = `${userMessageLine('z'.repeat(320 * 1024))}${userMessageLine('child title')}`;
+      await writeFile(rootPath, `${sessionMetaLine(rootId, '2026-07-24T08:00:01.000Z')}${userMessageLine('root title')}`, 'utf8');
+      await writeFile(childPath, `${JSON.stringify({
+        type: 'session_meta',
+        payload: {
+          id: childId, timestamp: '2026-07-24T08:00:02.000Z', cwd: '/repo/bounded-candidate-test',
+          source: { subagent: { thread_spawn: { parent_thread_id: rootId } } },
+        },
+      })}\n${body}`, 'utf8');
+      const contribution = createCodexExternalSessionsContribution({ env: { CODEX_HOME: codexHome } });
+      const page = await contribution.listCandidates({
+        source: { kind: 'codexHome', home: 'user' },
+        maxItems: 10,
+        searchMode: 'fast',
+        readCandidateIndexState: () => undefined,
+        ...invocation(),
+      });
+      if (!page.ok) throw new Error(`Unexpected ${page.code}: ${page.message}`);
+      expect({
+        rows: page.value.candidates.map((candidate) => [candidate.remoteSessionId, candidate.title ?? null]),
+        childBytesReadInOneHeadPage: (fsProbe.bytesReadByPath.get(childPath) ?? 0) <= 128 * 1024,
+      }).toEqual({
+        rows: [[rootId, 'root title']],
+        childBytesReadInOneHeadPage: true,
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }

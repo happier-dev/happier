@@ -708,6 +708,8 @@ describe('createCodexAppServerClient', () => {
             framing: 'jsonLines',
             maxFrameBytes: 128 * 1024 * 1024,
             requestTimeoutMs: 60_000,
+            // A crashed runner's replacement may adopt this held app-server.
+            adoptsHeldAgentTurns: true,
         }]);
         expect(requests[0]).toEqual({
             method: 'initialize',

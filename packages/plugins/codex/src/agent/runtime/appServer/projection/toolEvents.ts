@@ -204,6 +204,8 @@ const TOOL_OUTPUT_OMITTED_KEYS = new Set([
   'input',
 ]);
 
+const NATIVE_ACTIVITY_INPUT_OMITTED_KEYS = new Set([...TOOL_INPUT_OMITTED_KEYS, 'agentsStates', 'contentItems', 'completedAtMs']);
+
 function readFileChangeToolCall(item: Readonly<Record<string, unknown>>): CodexAppServerProjectedToolEvent | null {
   const callId = readFirstString(item, ['callId', 'call_id', 'id', 'itemId', 'item_id']);
   if (!callId || !hasOwn(item, 'changes')) return null;
@@ -244,6 +246,20 @@ function projectNativeCodexAppServerToolEvents(params: Readonly<{
 
   if (isFunctionToolItemType(itemType) && (params.method === 'item/started' || params.method === 'item/completed')) {
     return projectResponseItemToolEvents(item);
+  }
+
+  if (itemType === 'subagentactivity' || itemType === 'collabagenttoolcall' || itemType === 'dynamictoolcall') {
+    const callId = readFirstString(item, ['callId', 'call_id', 'id', 'itemId', 'item_id']);
+    const name = itemType === 'subagentactivity' ? 'subAgentActivity' : trimStringValue(item.tool);
+    if (!callId || !name) return [];
+    const input = omitKeys(item, NATIVE_ACTIVITY_INPUT_OMITTED_KEYS);
+    const call: CodexAppServerProjectedToolEvent = { type: 'tool-call', callId, name, input, sidechainId: null };
+    if (params.method === 'item/started') return [call];
+    if (params.method !== 'item/completed') return [];
+    // Completion settles this occurrence, never the child thread's lifecycle.
+    const output = omitKeys(item, new Set([...TOOL_OUTPUT_OMITTED_KEYS, ...Object.keys(input)]));
+    return [call, { type: 'tool-result', callId, output, sidechainId: null,
+      ...(typeof item.success === 'boolean' ? { isError: !item.success } : {}) }];
   }
 
   // Native ThreadItem shapes from codex-cli 0.162.1. History and live

@@ -27,17 +27,15 @@ afterEach(() => {
 });
 
 describe('Codex external-session candidate helpers', () => {
-  it('round-trips generation-fenced candidate scan cursors', () => {
-    const boundary = {
-      sourceGeneration: 'source-generation',
-      containerKey: '000000:2:2026/07/23',
-      fileName: 'rollout-2026-07-23T10-00-00-session.jsonl',
-      scanned: 1_250,
+  it('round-trips activity-position candidate cursors', () => {
+    const position = {
+      updatedAtMs: 1_753_257_600_123,
+      remoteSessionId: '11111111-1111-1111-1111-111111111111',
     };
 
     expect(
-      decodeCodexExternalSessionCandidateCursor(encodeCodexExternalSessionCandidateCursor(boundary)),
-    ).toEqual(boundary);
+      decodeCodexExternalSessionCandidateCursor(encodeCodexExternalSessionCandidateCursor(position)),
+    ).toEqual(position);
     expect(decodeCodexExternalSessionCandidateCursor('not-a-cursor')).toBeNull();
   });
 
@@ -49,6 +47,14 @@ describe('Codex external-session candidate helpers', () => {
       containerKey: '000000:2:2026/07/23',
       fileName: 'rollout-2026-07-23T10-00-00-session.jsonl',
     }],
+    ['v4 bounded traversal scan', {
+      v: 4,
+      kind: 'codexRolloutCandidateScan',
+      sourceGeneration: 'source-generation',
+      containerKey: '000000:2:2026/07/23',
+      fileName: 'rollout-2026-07-23T10-00-00-session.jsonl',
+      scanned: 1_250,
+    }],
     ['v3 last-activity ordering key', {
       v: 3,
       kind: 'codexRolloutCandidatePage',
@@ -57,8 +63,8 @@ describe('Codex external-session candidate helpers', () => {
       remoteSessionId: '11111111-1111-1111-1111-111111111111',
     }],
   ])('rejects the superseded %s cursor', (_label, cursor) => {
-    // Neither superseded cursor names a position in the bounded scan the host
-    // candidate index drives. Rejecting them routes the surface through its
+    // No superseded cursor names a position in today's activity-ordered page.
+    // Rejecting them routes the surface through its
     // existing source-changed refresh instead of silently resuming from a
     // meaningless position.
     expect(decodeCodexExternalSessionCandidateCursor(
@@ -198,12 +204,10 @@ describe('Codex external-session candidate helpers', () => {
         searchMode: 'fast',
       } as const;
 
-      // Unsearched browse is the host candidate index's bounded build. Its rows
-      // carry preparation progress AND the title, because the chunk head-reads
-      // only the rows it returns — the whole-corpus work the chunked build
-      // exists to avoid is reading every SCANNED rollout, not every served one.
+      // Unsearched browse is one activity page; it head-reads only the rows it
+      // shows, so each shown row carries its title.
       const browse = await listCodexSessionCandidates(request);
-      expect(browse.preparation).toEqual({ kind: 'building_candidate_index', scanned: 1 });
+      expect(browse.preparation).toBeUndefined();
       expect(browse.candidates).toHaveLength(1);
       expect(browse.candidates[0]).toMatchObject({
         remoteSessionId,

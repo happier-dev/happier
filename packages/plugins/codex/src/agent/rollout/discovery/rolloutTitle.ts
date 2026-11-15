@@ -1,3 +1,5 @@
+import { stat } from 'node:fs/promises';
+
 import { isChangeTitleToolNameAlias } from '@happier-dev/plugin-sdk/sessions';
 import { isPluginError, isRecord } from '@happier-dev/plugin-sdk';
 import { readSessionInputPromptUserTextV1 } from '@happier-dev/plugin-sdk/sessions/external';
@@ -50,6 +52,13 @@ export type CodexRolloutHead = Readonly<{
 }>;
 
 /**
+ * What a head read must produce. `includeThreadTitles: false` is for listings
+ * that drop internal threads: line 1 classifies the thread, so its title window
+ * is never read for a row the caller discards.
+ */
+export type CodexRolloutHeadReadScope = Readonly<{ includeTitles?: boolean; includeThreadTitles?: boolean }>;
+
+/**
  * The single title and thread-classification reader for both corpus rows and
  * selected candidates. Both use the earliest rollout file and the same head
  * allowance; classification costs no additional file open. Every record in
@@ -58,7 +67,7 @@ export type CodexRolloutHead = Readonly<{
  */
 export async function readCodexRolloutHead(
   filePath: string,
-  bounds: CodexExternalSessionInvocationBounds & Readonly<{ includeTitles?: boolean }>,
+  bounds: CodexExternalSessionInvocationBounds & CodexRolloutHeadReadScope,
 ): Promise<CodexRolloutHead> {
   let thread: CodexSessionThread | null = null;
   let cwd: string | undefined;
@@ -106,7 +115,9 @@ export async function readCodexRolloutHead(
         }
         // Index ingestion needs source classification, not a display title.
         // Keep the same decoder and native head budget for large metadata rows.
-        if (bounds.includeTitles === false) return { title: null, thread, ...(cwd ? { cwd } : {}) };
+        if (bounds.includeTitles === false || (thread && bounds.includeThreadTitles === false)) {
+          return { title: null, thread, ...(cwd ? { cwd } : {}) };
+        }
       }
       for (const action of mapCodexRolloutEventToActions(line.value, { debug: false })) {
         if (action.type === 'tool-call' && isChangeTitleToolNameAlias(action.name)) {
@@ -125,4 +136,95 @@ export async function readCodexRolloutHead(
   }
 
   return { title: fallbackUserText, thread, ...(cwd ? { cwd } : {}) };
+}
+
+/**
+ * The host candidate index's private checkpoint for one rollout head. The head
+ * this module reads is a pure function of the file's first
+ * `CODEX_TITLE_SCAN_MAX_TRAVERSED_BYTES`: every page and oversize-record
+ * allowance is drawn from what is left of that traversal. Rollouts are
+ * append-only, so once the same file (device, inode, birth time) is longer than
+ * that window its head can no longer change; a shorter file is reused only while
+ * its size and mtime are unchanged.
+ */
+export type CodexRolloutHeadIndexState = Readonly<{
+  v: 1;
+  kind: 'codex_rollout_head';
+  device: string;
+  inode: string;
+  birthtimeNs: string;
+  sizeBytes: number;
+  mtimeNs: string;
+  title: string | null;
+  cwd: string | null;
+  thread: CodexSessionThread | null;
+}>;
+
+function readCodexRolloutHeadIndexState(value: unknown): CodexRolloutHeadIndexState | null {
+  if (!isRecord(value) || value.v !== 1 || value.kind !== 'codex_rollout_head') return null;
+  const { device, inode, birthtimeNs, sizeBytes, mtimeNs, title, cwd, thread } = value;
+  if (typeof device !== 'string' || typeof inode !== 'string' || typeof birthtimeNs !== 'string'
+    || typeof mtimeNs !== 'string' || !Number.isSafeInteger(sizeBytes) || (sizeBytes as number) < 0) return null;
+  if (title !== null && typeof title !== 'string') return null;
+  if (cwd !== null && typeof cwd !== 'string') return null;
+  if (thread !== null && (!isRecord(thread)
+    || (thread.kind !== 'reviewer' && thread.kind !== 'subagent')
+    || (thread.parentRemoteSessionId !== null && typeof thread.parentRemoteSessionId !== 'string'))) return null;
+  return value as CodexRolloutHeadIndexState;
+}
+
+/**
+ * Reads a rollout head unless the host-supplied checkpoint proves it unchanged.
+ * Only an unreadable file falls back to the plain read, so a stat failure never
+ * hides a title the read could still produce.
+ */
+export async function readCodexRolloutHeadWithIndexState(
+  filePath: string,
+  bounds: CodexExternalSessionInvocationBounds & CodexRolloutHeadReadScope,
+  previousState: unknown,
+): Promise<Readonly<{ head: CodexRolloutHead; indexState?: CodexRolloutHeadIndexState }>> {
+  const identity = await stat(filePath, { bigint: true }).catch(() => null);
+  throwIfCodexExternalSessionInvocationStopped(bounds);
+  if (!identity || identity.size > BigInt(Number.MAX_SAFE_INTEGER)) {
+    return { head: await readCodexRolloutHead(filePath, bounds) };
+  }
+  const current = {
+    device: identity.dev.toString(),
+    inode: identity.ino.toString(),
+    birthtimeNs: identity.birthtimeNs.toString(),
+    sizeBytes: Number(identity.size),
+    mtimeNs: identity.mtimeNs.toString(),
+  };
+  const previous = readCodexRolloutHeadIndexState(previousState);
+  if (
+    previous
+    && previous.device === current.device
+    && previous.inode === current.inode
+    && previous.birthtimeNs === current.birthtimeNs
+    && (
+      (previous.sizeBytes > CODEX_TITLE_SCAN_MAX_TRAVERSED_BYTES && current.sizeBytes >= previous.sizeBytes)
+      || (previous.sizeBytes === current.sizeBytes && previous.mtimeNs === current.mtimeNs)
+    )
+  ) {
+    return {
+      head: {
+        title: previous.title,
+        thread: previous.thread,
+        ...(previous.cwd ? { cwd: previous.cwd } : {}),
+      },
+      indexState: previous,
+    };
+  }
+  const head = await readCodexRolloutHead(filePath, bounds);
+  return {
+    head,
+    indexState: Object.freeze({
+      v: 1,
+      kind: 'codex_rollout_head',
+      ...current,
+      title: head.title,
+      cwd: head.cwd ?? null,
+      thread: head.thread,
+    }),
+  };
 }

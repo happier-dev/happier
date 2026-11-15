@@ -1,5 +1,6 @@
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { resolveModelDisplayName } from '@happier-dev/plugin-sdk/agents';
+import { formatReasoningEffortTierLabel } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 
 import { isCodexAppServerFastServiceTier } from '../serviceTier.js';
@@ -96,25 +97,6 @@ function readListEntries(value: unknown): unknown[] | null {
     return null;
 }
 
-function normalizeReasoningEffortLabel(value: string): string {
-    switch (value) {
-        case 'low':
-            return 'Low';
-        case 'medium':
-            return 'Medium';
-        case 'high':
-            return 'High';
-        case 'xhigh':
-            return 'XHigh';
-        case 'max':
-            return 'Max';
-        default:
-            // Codex adds levels over time (for example `ultra`); a level without a word here still
-            // reads as a name rather than a raw value.
-            return value.length > 0 ? value.charAt(0).toUpperCase() + value.slice(1) : value;
-    }
-}
-
 type ReasoningEffortChoice = Readonly<{
     value: string;
     description?: string;
@@ -177,7 +159,7 @@ function buildReasoningEffortModelOption(params: Readonly<{
         currentValue,
         options: values.map((value) => ({
             value: value.value,
-            name: normalizeReasoningEffortLabel(value.value),
+            name: formatReasoningEffortTierLabel(value.value),
             ...(value.description ? { description: value.description } : {}),
         })),
     };

@@ -22,6 +22,7 @@ import { ExternalSessionCandidateV1Schema, ExternalSessionCandidateMatchV1Schema
 import { parseCodexContentSearchProgress } from './transcriptSource.js';
 import { decodeCodexExternalSessionIndexCursor } from './candidates.js';
 import { parseCodexRolloutPreparationState } from '../../../rollout/discovery/preparation.js';
+import { admitTestExecSpawn } from '../../../runtime/appServer/client.test-support.js';
 
 // Native startup locks are per OS user; keep fixture processes separate from live Agents.
 const startupHome = vi.hoisted(() => ({ path: '' }));
@@ -168,6 +169,7 @@ function createThreadListingExec(
     spawn: vi.fn(async () => {
       throw new Error('The native app-server path must use exec.clients.spawn');
     }),
+    withSpawnAdmission: admitTestExecSpawn,
     clients: {
       spawn: async (spec: unknown) => { nativeHistory?.onLaunch?.(spec); return handle; },
     },
@@ -476,7 +478,7 @@ describe('Codex public Agent External Sessions contribution', () => {
     } finally { await rm(home, { recursive: true, force: true }); }
   });
 
-  it('rejects mixed native media instead of reporting its text as complete history', async () => {
+  it('reports unavailable media previews alongside text through public history', async () => {
     const home = await mkdtemp(join(tmpdir(), 'codex-native-media-plugin-'));
     try {
       const contribution = createCodexExternalSessionsContribution({ env: { CODEX_HOME: home } });
@@ -484,7 +486,9 @@ describe('Codex public Agent External Sessions contribution', () => {
         turnId: 'turn', startedAtMs: 1, completedAtMs: 2, item: { id: 'mixed', type: 'userMessage',
           content: [{ type: 'text', text: 'question with image' }, { type: 'image', url: 'https://example.invalid/image.png' }] },
       }] }) }), source: { kind: 'codexHome', home: 'user' }, remoteSessionId: 'native-thread', direction: 'older', maxItems: 2 });
-      expect(page.ok).toBe(false);
+      expect(page).toMatchObject({ ok: true, value: { items: [{ raw: {
+        role: 'user', content: { type: 'text', text: expect.stringMatching(/question with image\n\[Codex image:.*preview unavailable\]/) },
+      } }] } });
     } finally { await rm(home, { recursive: true, force: true }); }
   });
 
@@ -1315,6 +1319,11 @@ describe('Codex public Agent External Sessions contribution', () => {
         'utf8',
       );
 
+      // Browse activity is native file mtime, not the session creation timestamp
+      // (activity pager contract adopted in 07b618411b4).
+      await utimes(firstFile, new Date('2026-07-23T08:02:00Z'), new Date('2026-07-23T08:02:00Z'));
+      await utimes(join(sessionsDir, `rollout-2026-07-23T09-00-00-${secondSessionId}.jsonl`),
+        new Date('2026-07-23T09:00:00Z'), new Date('2026-07-23T09:00:00Z'));
       const env = { CODEX_HOME: codexHome } as NodeJS.ProcessEnv;
       const activeServerDir = join(root, 'active-server');
       const contribution = createCodexExternalSessionsContribution({ env });

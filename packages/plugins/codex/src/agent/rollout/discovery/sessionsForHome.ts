@@ -575,6 +575,81 @@ export async function inventoryCodexRootSessionRolloutFiles(params: Readonly<{
     progress.afterPath = path;
     preparation.control.checkWork();
   };
+  // Codex creates a family member (a subagent thread) while an earlier member
+  // is still being written: the spawner records the spawn after the child
+  // exists. Without a resumable preparation cursor, heads past the family's
+  // latest write (plus the local-time filename window) cannot hold a member and
+  // stay unread. Codex resume appends to the thread's existing rollout, which
+  // moves that member's last write. Members named by their file and revert
+  // rollouts are always read, and each member found widens the window, so later
+  // children are still found. Ids without a UUIDv7 start read every head.
+  const deferUnreadHeads = !progress && earliestRequestedStartMs !== null;
+  const deferredHeads: RolloutInventoryEntry[] = [];
+  let familyLastWriteMs = earliestRequestedStartMs ?? 0;
+  const classifyHead = async (entry: RolloutInventoryEntry, knownMetadata: Readonly<{ birthtimeMs: number; mtimeMs: number }> | null): Promise<void> => {
+    const full = entry.filePath;
+    const fileRelPath = entry.fileRelPath;
+    let metadata = knownMetadata;
+    await preparation?.authorize(full);
+    const sessionMeta = entry.facts?.sessionMeta ?? await readCodexSessionMetaFromRollout(full, nativeBounds);
+    throwIfCodexExternalSessionInvocationStopped(nativeBounds);
+    const sessionId = readNonEmptySessionId(sessionMeta?.id);
+    const metadataRootSessionId = readNonEmptySessionId(sessionMeta?.session_id);
+    const matchingIds = matchingRolloutSessionIds(full, sessionMeta, inventoryIds, 'root_session_family', entry.filename);
+    try {
+      const current = entry.facts?.metadata ?? await stat(full);
+      // Null/incomplete heads are retried; complete facts belong only to the
+      // live observation demand and invalidate on named writes or topology.
+      if (sessionMeta) entry.facts = { sessionMeta, metadata: current };
+      if (matchingIds.length === 0) {
+        entry.matches = { requested: requestedIdentity, ids: [] };
+        commitFile(fileRelPath); return;
+      }
+      metadata ??= current;
+      throwIfCodexExternalSessionInvocationStopped(nativeBounds);
+      const fromName = entry.fromName;
+      const fromBirth = (
+        Number.isFinite(metadata.birthtimeMs) && metadata.birthtimeMs > 0
+      )
+        ? metadata.birthtimeMs
+        : null;
+      const file = {
+        filePath: full,
+        fileRelPath: entry.nativeRelPath,
+        sortMs: Math.max(
+          fromName ?? 0,
+          fromBirth ?? 0,
+          metadata.mtimeMs,
+        ),
+        mtimeMs: metadata.mtimeMs,
+        ...(sessionId ? { sessionId } : {}),
+        ...(metadataRootSessionId ? { rootSessionId: metadataRootSessionId } : {}),
+      };
+      entry.matches = { requested: requestedIdentity, ids: matchingIds, file };
+      familyLastWriteMs = Math.max(familyLastWriteMs, file.mtimeMs);
+      if (progress) progress.files.push({ ref: { home: progress.home, path: fileRelPath }, matchingIds, generation: formatPhysicalGeneration(current),
+        sortMs: file.sortMs, mtimeMs: file.mtimeMs });
+      else for (const id of matchingIds) filesByRootSessionId.get(id)?.push(file);
+    } catch (error) {
+      throwIfCodexExternalSessionInvocationStopped(params);
+    }
+    commitFile(fileRelPath);
+  };
+  // Codex files a rollout under `sessions/YYYY/MM/DD` for the same local date its
+  // file name carries, so a dated directory that ends before the filename
+  // window of the earliest requested start holds only rollouts the walk skips.
+  const endsBeforeRequestedStart = (dirRelPath: string): boolean => {
+    if (earliestRequestedStartMs === null) return false;
+    const match = /^sessions\/(\d{4})(?:\/(\d{2})(?:\/(\d{2}))?)?$/.exec(dirRelPath);
+    if (!match) return false;
+    const year = Number(match[1]);
+    const month = match[2] === undefined ? null : Number(match[2]);
+    const day = match[3] === undefined ? null : Number(match[3]);
+    const endMs = month === null ? Date.UTC(year + 1, 0, 1)
+      : day === null ? Date.UTC(year, month, 1)
+      : Date.UTC(year, month - 1, day + 1);
+    return endMs <= earliestRequestedStartMs - ROOT_SESSION_FAMILY_FILENAME_TIMEZONE_WINDOW_MS;
+  };
   const walk = async (dir: string, depth: number): Promise<void> => {
     throwIfCodexExternalSessionInvocationStopped(nativeBounds);
     if (depth > 10) return;
@@ -600,13 +675,16 @@ export async function inventoryCodexRootSessionRolloutFiles(params: Readonly<{
       if (resumeAfter && comparePaths(fileRelPath, resumeAfter) <= 0
         && !(entry.kind === 'directory' && resumeAfter.startsWith(`${fileRelPath}/`))) continue;
       if (entry.kind === 'directory') {
-        await walk(full, depth + 1);
+        if (!endsBeforeRequestedStart(fileRelPath)) await walk(full, depth + 1);
         continue;
       }
       if (entry.kind !== 'file') continue;
       if (entry.facts && entry.matches?.requested === requestedIdentity) {
         const { file, ids } = entry.matches;
-        if (file) for (const id of ids) filesByRootSessionId.get(id)?.push(file);
+        if (file) {
+          familyLastWriteMs = Math.max(familyLastWriteMs, file.mtimeMs);
+          for (const id of ids) filesByRootSessionId.get(id)?.push(file);
+        }
         continue;
       }
       // Parse only past the cursor frontier, retaining the facts for observed
@@ -649,49 +727,14 @@ export async function inventoryCodexRootSessionRolloutFiles(params: Readonly<{
         }
       }
 
-      await preparation?.authorize(full);
-      const sessionMeta = entry.facts?.sessionMeta ?? await readCodexSessionMetaFromRollout(full, nativeBounds);
-      throwIfCodexExternalSessionInvocationStopped(nativeBounds);
-      const sessionId = readNonEmptySessionId(sessionMeta?.id);
-      const metadataRootSessionId = readNonEmptySessionId(sessionMeta?.session_id);
-      const matchingIds = matchingRolloutSessionIds(full, sessionMeta, inventoryIds, 'root_session_family', entry.filename);
-      try {
-        const current = entry.facts?.metadata ?? await stat(full);
-        // Null/incomplete heads are retried; complete facts belong only to the
-        // live observation demand and invalidate on named writes or topology.
-        if (sessionMeta) entry.facts = { sessionMeta, metadata: current };
-        if (matchingIds.length === 0) {
-          entry.matches = { requested: requestedIdentity, ids: [] };
-          commitFile(fileRelPath); continue;
-        }
-        metadata ??= current;
-        throwIfCodexExternalSessionInvocationStopped(nativeBounds);
-        const fromName = entry.fromName;
-        const fromBirth = (
-          Number.isFinite(metadata.birthtimeMs) && metadata.birthtimeMs > 0
-        )
-          ? metadata.birthtimeMs
-          : null;
-        const file = {
-          filePath: full,
-          fileRelPath: entry.nativeRelPath,
-          sortMs: Math.max(
-            fromName ?? 0,
-            fromBirth ?? 0,
-            metadata.mtimeMs,
-          ),
-          mtimeMs: metadata.mtimeMs,
-          ...(sessionId ? { sessionId } : {}),
-          ...(metadataRootSessionId ? { rootSessionId: metadataRootSessionId } : {}),
-        };
-        entry.matches = { requested: requestedIdentity, ids: matchingIds, file };
-        if (progress) progress.files.push({ ref: { home: progress.home, path: fileRelPath }, matchingIds, generation: formatPhysicalGeneration(current),
-          sortMs: file.sortMs, mtimeMs: file.mtimeMs });
-        else for (const id of matchingIds) filesByRootSessionId.get(id)?.push(file);
-      } catch (error) {
-        throwIfCodexExternalSessionInvocationStopped(params);
+      // A `<thread>_<rollout>` name is a revert's new immutable rollout, written
+      // whenever a thread is reverted, so it is always read.
+      if (deferUnreadHeads && !entry.facts && entry.fromName !== null && !entry.filename?.turnId
+        && matchingRolloutSessionIds(full, null, inventoryIds, 'root_session_family', entry.filename).length === 0) {
+        deferredHeads.push(entry);
+        continue;
       }
-      commitFile(fileRelPath);
+      await classifyHead(entry, metadata);
     }
   };
 
@@ -700,6 +743,12 @@ export async function inventoryCodexRootSessionRolloutFiles(params: Readonly<{
       // Preserve active-before-archived discovery and its cancellation boundary.
       await walk(join(params.codexHome, 'sessions'), 0);
       await walk(join(params.codexHome, 'archived_sessions'), 0);
+      deferredHeads.sort((left, right) => left.fromName! - right.fromName!);
+      for (const entry of deferredHeads) {
+        throwIfCodexExternalSessionInvocationStopped(nativeBounds);
+        if (entry.fromName! > familyLastWriteMs + ROOT_SESSION_FAMILY_FILENAME_TIMEZONE_WINDOW_MS + ROOT_SESSION_FAMILY_CLOCK_SKEW_MS) break;
+        await classifyHead(entry, null);
+      }
       if (progress) progress.complete = true;
       return true;
     };

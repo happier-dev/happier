@@ -103,11 +103,12 @@ export function mapCodexProjectedEventsToExternalMessages(params: Readonly<{
       if (shouldFilterHarnessBlob(action.text)) continue;
       out.push({
         id: stableId,
-        localId: stableId,
+        localId: action.clientId ?? stableId,
         createdAtMs,
         raw: {
           role: 'user',
           content: { type: 'text', text: action.text },
+          ...(action.nativeContent ? { meta: { nativeContent: action.nativeContent } } : {}),
         },
       });
       continue;
