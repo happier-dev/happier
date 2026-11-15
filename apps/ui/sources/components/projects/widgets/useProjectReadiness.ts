@@ -11,7 +11,12 @@ type Read = Readonly<{ input: ProjectReadinessReadInputV1; lifetime: ServerAccou
 
 /** Presentation request lifetime; all readiness decisions stay with projects.readiness.read. */
 export function useProjectReadiness(lifetime: ServerAccountScopeLifetime | null,
-  input: ProjectReadinessReadInputV1 | null, visible: boolean) {
+  requestedInput: ProjectReadinessReadInputV1 | null, visible: boolean) {
+  // Services may rebuild the same selection on health arrivals; only changed
+  // operands (or explicit refresh) demand another readiness read.
+  const inputKey = JSON.stringify(requestedInput);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const input = React.useMemo(() => requestedInput, [inputKey]);
   const [read, setRead] = React.useState<Read | null>(null);
   const active = React.useRef<AbortController | null>(null);
   React.useEffect(() => {

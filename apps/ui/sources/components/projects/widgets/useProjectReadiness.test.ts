@@ -47,6 +47,13 @@ describe('Project Readiness presentation demand', () => {
                 requests: homes.requests.map(request => ({ method: request.method, path: request.path, input: request.input })),
             })).toBe('production'));
             expect(reads).toHaveLength(1);
+            // Services rebuilds equal readiness operands when sibling health facts arrive.
+            // Those publications must not repeat the admitted Machine read.
+            for (let arrival = 0; arrival < 10; arrival++) {
+                input = { ...input, environments: input!.environments.map(environment => ({ ...environment })) };
+                await hook.rerender();
+            }
+            expect(reads, 'ten equal Services arrivals must add zero readiness requests').toHaveLength(1);
             await act(async () => { await hook.getCurrent().refresh(); });
             expect(reads).toHaveLength(2);
             input = { ...input, environments: [{ environmentId: 'staging', expectedRevision: 8 }] };
