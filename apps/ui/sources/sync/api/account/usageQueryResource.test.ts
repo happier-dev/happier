@@ -2538,8 +2538,13 @@ describe('usage query captured Resource adapter', () => {
       held.resolve();
       held = undefined;
       await settled();
-      expect.soft(reads() - beforeBurst, 'Ten ingests during an active read demand only one fresh follow-up').toBe(2);
-      expect.soft(decodeUsageQueryResource(relevant.getSnapshot().value!).results[0]?.accounting?.totals.tokens.total).toBe(4);
+      // USAGE-PENDING-STARVATION: newer ingests age the finite read;
+      // they must not keep its selected answer pending through replacement reads.
+      expect.soft(reads() - beforeBurst, 'Ten ingests during an active read settle its answer without an automatic follow-up').toBe(1);
+      const settledBurst = decodeUsageQueryResource(relevant.getSnapshot().value!).results[0]!;
+      expect.soft(settledBurst.accounting?.totals.tokens.total).toBe(3);
+      expect.soft(settledBurst.pending).toBe(false);
+      expect.soft(settledBurst.sources).toContainEqual(expect.objectContaining({ source: 'accounting', status: 'stale' }));
 
       const beforeNative = reads();
       revision = 5;

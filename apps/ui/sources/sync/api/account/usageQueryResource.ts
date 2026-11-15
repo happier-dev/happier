@@ -1614,6 +1614,7 @@ type UsageQueryReadDemand = Readonly<{
     authorityChanged: boolean;
     /** Nothing reached this watch since its previous read, whose bytes are therefore still current. */
     unchanged: boolean;
+    hasPendingChanges(): boolean;
     isCurrent(): boolean;
     finish(): void;
 }>;
@@ -2118,6 +2119,17 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 const contentFor = async (batch: UsageQueryBatchResult): Promise<ResourceContent> => {
                     assertProjectionCurrent();
                     requireCurrent(sharedContext, options?.signal);
+                    // Usage arrivals age the admitted answer; they do not revoke
+                    // it. Publish completed facts with their original input basis,
+                    // so Refresh/reopen can acquire the newer accounting inputs.
+                    const staleAccounting = new Set(queries.filter((query, index) => readDemand.some(demand => demand.hasPendingChanges()) && query.includeAccounting
+                        && readInputs[readInputs.length - queries.length + index]
+                            !== accountingInputs.get(accountingInputKey(query))?.identity).map(getUsageQueryKey));
+                    if (staleAccounting.size) batch = { ...batch, results: batch.results.map(slice => !staleAccounting.has(slice.key)
+                        ? slice : { ...slice, sources: slice.sources.map(source => source.source === 'accounting' && source.status === 'available'
+                            ? { ...source, status: 'stale' as const } : source),
+                            ...(slice.comparison?.source.status === 'available'
+                                ? { comparison: { ...slice.comparison, source: { ...slice.comparison.source, status: 'stale' as const } } } : {}) }) };
                     // An older in-flight batch may publish after a sibling has
                     // settled. Pending is activity, never a replacement for those facts.
                     if (allowance && batch.results.some(slice => slice.requestedQuery.includeQuota !== false)) {
@@ -2363,6 +2375,10 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     allowanceOnlyDemand = allowanceOnlyDemand !== false && !accountModeChanged
                         && (change === 'quota-inputs' || typeof change === 'object' && isUsageQuotaHomeAccountChange(change));
                     woken = true;
+                    // An accounting push changes freshness, not the admitted
+                    // read's lifetime. Let that read settle as stale instead of
+                    // feeding an endless chain of queued replacement reads.
+                    if (!accountModeChanged && typeof change === 'object' && change.usageAccountingChange && activeReadDemand) return;
                     // Presentation inputs keep the admitted source facts fresh.
                     // The same-process invalidation keeps the store's existing
                     // continuity hint without materializing transport bytes.
@@ -2406,7 +2422,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                             allowanceRecordIds: authorityChanged ? undefined : allowanceRecordIds,
                             projectionOnly: !authorityChanged && projectionOnly === true, authorityChanged,
                             allowanceOnly: !authorityChanged && allowanceOnlyDemand === true,
-                            unchanged: !authorityChanged && !woken, isCurrent: witness.isCurrent,
+                            unchanged: !authorityChanged && !woken, hasPendingChanges: () => woken, isCurrent: witness.isCurrent,
                             finish() { if (activeReadDemand === demand) activeReadDemand = undefined; } };
                         activeReadDemand = demand;
                         allowanceReadDemand = undefined;

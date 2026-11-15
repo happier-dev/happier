@@ -19,6 +19,7 @@ import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import * as usageCost from '@happier-dev/protocol/usage/usageCost';
 import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import { USAGE_COACH_DETECTOR_IDS } from '@happier-dev/protocol/usage/coach/coachFinding';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { invalidateUsageQueryResources, readUiUsageQueryBatch } from './usageQueryResource';
 import { computePluginUiArtifactSha256Digest } from '@/sync/domains/plugins/ui/artifactIntegrity';
 import * as platformDigest from '@/platform/digest';
@@ -693,4 +694,65 @@ it('reads each accounting fact once across a cold Usage page mount at fixture sc
             'a cold mount POSTs each distinct accounting request once').toEqual({
             firstMount: 2, pageMount: 1, hydration: 0, refresh: 3, nextDay: 3, coldDistinct: 3 });
     } finally { release(); }
+});
+
+
+it('settles a slow accounting read as stale under continuous usage pushes without reissuing it', async () => {
+    const entered = createDeferred<void>();
+    const released = createDeferred<void>();
+    let reads = 0;
+    const capturedCounts: number[] = [];
+    let streaming = true;
+    let revision = 1;
+    home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-starvation.test', accountId: 'account-a' }],
+        route: async request => {
+            if (request.path !== '/v2/usage/query-batch') return undefined;
+            reads++;
+            const input = UsageAnalyticsQueryBatchRequestSchema.parse(request.body);
+            const eventCount = revision;
+            capturedCounts.push(eventCount);
+            entered.resolve();
+            await released.promise;
+            if (streaming && reads <= 3) {
+                revision++;
+                publishHomeAccountChange(server.id, [], { changeKinds: ['account'], usageQueryAffects: true,
+                    usageAccountingChange: { sessionId: null } });
+                await flushHookEffects({ cycles: 2 });
+            }
+            return Response.json({ v: 1, results: input.queries.map(query => ({ query, value: { v: 1,
+                totals: { eventCount, tokens: { input: 10, output: 5, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 15 },
+                    cost: { reportedUsd: 1, estimatedUsd: 0, currency: 'USD' } } } })) });
+        } });
+    const server = home.homes.a!;
+    publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    const captured = captureUiUsageQueryAccountContext((await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!)!;
+    storage.setState({ profileScope: captured.accountLifetime.scope, profile: AccountProfileSchema.parse({ id: 'account-a' }) });
+    const query = normalizeUsageQuery({ period: { relative: '7days' }, includeContributions: false, includeQuota: false,
+        includeComparison: false, includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false });
+    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
+        input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    const stop = entry.subscribe(() => {}, true);
+    try {
+        await entered.promise;
+        for (let index = 0; index < 20; index++) {
+            revision++;
+            publishHomeAccountChange(server.id, [], { changeKinds: ['account'], usageQueryAffects: true,
+                usageAccountingChange: { sessionId: null } });
+            await flushHookEffects({ cycles: 2 });
+        }
+        released.resolve();
+        await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+        const slice = decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!;
+        expect(slice.pending).toBe(false);
+        expect.soft(reads, 'reads per settled answer under a continuous event stream').toBeLessThanOrEqual(2);
+        expect(slice.accounting?.totals.eventCount).toBe(capturedCounts.at(-1));
+        expect(slice.sources).toContainEqual(expect.objectContaining({ source: 'accounting', status: 'stale' }));
+        console.log('[USAGE-PENDING-STARVATION]', JSON.stringify({ pushes: 20, reads, settledAnswers: 1 }));
+        streaming = false;
+        await entry.refresh();
+        const refreshed = decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!;
+        expect(refreshed.accounting?.totals.eventCount).toBe(revision);
+        expect(refreshed.sources).toContainEqual(expect.objectContaining({ source: 'accounting', status: 'available' }));
+    } finally { released.resolve(); stop(); }
 });
