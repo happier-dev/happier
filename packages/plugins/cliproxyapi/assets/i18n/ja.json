@@ -7,5 +7,5 @@
   "managedPurpose.kimi.title": "Kimi Code アカウントまたはプール",
   "managedPurpose.xai.title": "xAI アカウントまたはプール",
   "managedPurpose.devin.title": "Devin アカウントまたはプール",
-  "managedPurpose.unavailable.sdkRegistration": "このアカウント種別は現在のゲートウェイランタイムではサポートされていません。"
+  "managedPurpose.unavailable.sdkRegistration": "ゲートウェイではまだこのアカウントを使えません。代わりに専用のエージェントで使ってください。"
 }

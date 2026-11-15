@@ -7,5 +7,5 @@
   "managedPurpose.kimi.title": "Учётная запись или пул Kimi Code",
   "managedPurpose.xai.title": "Учётная запись или пул xAI",
   "managedPurpose.devin.title": "Учётная запись или пул Devin",
-  "managedPurpose.unavailable.sdkRegistration": "Это семейство аккаунтов не поддерживается текущей средой выполнения шлюза."
+  "managedPurpose.unavailable.sdkRegistration": "Шлюз пока не может использовать эти аккаунты. Используйте их в их собственном агенте."
 }

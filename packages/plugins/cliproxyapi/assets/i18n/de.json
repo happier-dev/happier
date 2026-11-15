@@ -7,5 +7,5 @@
   "managedPurpose.kimi.title": "Kimi Code-Konto oder Pool",
   "managedPurpose.xai.title": "xAI-Konto oder Pool",
   "managedPurpose.devin.title": "Devin-Konto oder Pool",
-  "managedPurpose.unavailable.sdkRegistration": "Diese Kontofamilie wird von der aktuellen Gateway-Laufzeit nicht unterstützt."
+  "managedPurpose.unavailable.sdkRegistration": "Das Gateway kann diese Konten noch nicht nutzen. Nutze sie stattdessen mit ihrem eigenen Agenten."
 }

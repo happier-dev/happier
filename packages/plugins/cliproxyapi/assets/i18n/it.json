@@ -7,5 +7,5 @@
   "managedPurpose.kimi.title": "Account o pool Kimi Code",
   "managedPurpose.xai.title": "Account o pool xAI",
   "managedPurpose.devin.title": "Account o pool Devin",
-  "managedPurpose.unavailable.sdkRegistration": "Questa famiglia di account non è supportata dall’ambiente di esecuzione attuale del gateway."
+  "managedPurpose.unavailable.sdkRegistration": "Il gateway non può ancora usare questi account. Usali con il loro agente."
 }

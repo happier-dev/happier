@@ -7,5 +7,5 @@
   "managedPurpose.kimi.title": "Kimi Code 帐户或帐户池",
   "managedPurpose.xai.title": "xAI 帐户或帐户池",
   "managedPurpose.devin.title": "Devin 帐户或帐户池",
-  "managedPurpose.unavailable.sdkRegistration": "当前网关运行时不支持此账号类型。"
+  "managedPurpose.unavailable.sdkRegistration": "网关暂时无法使用这些账号。请改用它们自己的智能体。"
 }

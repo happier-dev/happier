@@ -7,5 +7,5 @@
   "managedPurpose.kimi.title": "Compte o grup de Kimi Code",
   "managedPurpose.xai.title": "Compte o grup de xAI",
   "managedPurpose.devin.title": "Compte o grup de Devin",
-  "managedPurpose.unavailable.sdkRegistration": "L’entorn d’execució actual de la passarel·la no admet aquesta família de comptes."
+  "managedPurpose.unavailable.sdkRegistration": "La passarel·la encara no pot fer servir aquests comptes. Fes-los servir amb el seu propi agent."
 }

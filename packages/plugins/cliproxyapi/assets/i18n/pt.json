@@ -7,5 +7,5 @@
   "managedPurpose.kimi.title": "Conta ou grupo do Kimi Code",
   "managedPurpose.xai.title": "Conta ou grupo do xAI",
   "managedPurpose.devin.title": "Conta ou grupo do Devin",
-  "managedPurpose.unavailable.sdkRegistration": "Esta família de contas não é compatível com o ambiente de execução atual do gateway."
+  "managedPurpose.unavailable.sdkRegistration": "O gateway ainda não pode usar estas contas. Usa-as com o próprio agente."
 }

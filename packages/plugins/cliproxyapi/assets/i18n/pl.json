@@ -7,5 +7,5 @@
   "managedPurpose.kimi.title": "Konto lub pula Kimi Code",
   "managedPurpose.xai.title": "Konto lub pula xAI",
   "managedPurpose.devin.title": "Konto lub pula Devin",
-  "managedPurpose.unavailable.sdkRegistration": "Ta rodzina kont nie jest obsługiwana przez bieżące środowisko uruchomieniowe bramy."
+  "managedPurpose.unavailable.sdkRegistration": "Brama nie może jeszcze używać tych kont. Użyj ich w ich własnym agencie."
 }

@@ -7,5 +7,5 @@
   "managedPurpose.kimi.title": "Compte ou groupe Kimi Code",
   "managedPurpose.xai.title": "Compte ou groupe xAI",
   "managedPurpose.devin.title": "Compte ou groupe Devin",
-  "managedPurpose.unavailable.sdkRegistration": "Cette famille de comptes n’est pas prise en charge par l’environnement d’exécution actuel de la passerelle."
+  "managedPurpose.unavailable.sdkRegistration": "La passerelle ne peut pas encore utiliser ces comptes. Utilise-les plutôt avec leur propre agent."
 }

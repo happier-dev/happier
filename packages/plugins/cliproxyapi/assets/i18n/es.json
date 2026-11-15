@@ -7,5 +7,5 @@
   "managedPurpose.kimi.title": "Cuenta o grupo de Kimi Code",
   "managedPurpose.xai.title": "Cuenta o grupo de xAI",
   "managedPurpose.devin.title": "Cuenta o grupo de Devin",
-  "managedPurpose.unavailable.sdkRegistration": "El entorno de ejecución actual de la pasarela no admite esta familia de cuentas."
+  "managedPurpose.unavailable.sdkRegistration": "La pasarela aún no puede usar estas cuentas. Úsalas con su propio agente."
 }

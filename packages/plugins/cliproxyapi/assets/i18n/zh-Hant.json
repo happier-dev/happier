@@ -7,5 +7,5 @@
   "managedPurpose.kimi.title": "Kimi Code 帳戶或帳戶集區",
   "managedPurpose.xai.title": "xAI 帳戶或帳戶集區",
   "managedPurpose.devin.title": "Devin 帳戶或帳戶集區",
-  "managedPurpose.unavailable.sdkRegistration": "目前的閘道執行環境不支援此帳號類型。"
+  "managedPurpose.unavailable.sdkRegistration": "閘道暫時無法使用這些帳號。請改用它們自己的代理。"
 }
