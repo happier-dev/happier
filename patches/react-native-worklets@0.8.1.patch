@@ -217,3 +217,45 @@ index f270194343dc394cdfe0f7dc892fe73ad0a56efd..464caacc579bad4acfaeef979783e0b1
 +      : cached;
 +  },
  };
+diff --git a/android/src/networking/com/swmansion/worklets/WorkletsModule.java b/android/src/networking/com/swmansion/worklets/WorkletsModule.java
+index 6294cde..1f45ab5 100644
+--- a/android/src/networking/com/swmansion/worklets/WorkletsModule.java
++++ b/android/src/networking/com/swmansion/worklets/WorkletsModule.java
+@@ -63,6 +63,8 @@ public class WorkletsModule extends NativeWorkletsModuleSpec implements Lifecycl
+ 
+     mAndroidUIScheduler = new AndroidUIScheduler(reactContext);
+     mAnimationFrameQueue = new AnimationFrameQueue(reactContext);
++    // Pause the UI-runtime frame loop while the host is paused (upstream registers it in later releases, e.g. 0.13.1).
++    reactContext.addLifecycleEventListener(this);
+     mWorkletsNetworking = new WorkletsNetworking();
+   }
+ 
+@@ -148,6 +150,7 @@ public class WorkletsModule extends NativeWorkletsModuleSpec implements Lifecycl
+     if (mInvalidated.getAndSet(true)) {
+       return;
+     }
++    getReactApplicationContext().removeLifecycleEventListener(this);
+     if (mHybridData != null && mHybridData.isValid()) {
+       // We have to destroy extra runtimes when invalidate is called. If we clean
+       // it up later instead there's a chance the runtime will retain references
+diff --git a/android/src/no-networking/com/swmansion/worklets/WorkletsModule.java b/android/src/no-networking/com/swmansion/worklets/WorkletsModule.java
+index b9a5df4..74dc5dc 100644
+--- a/android/src/no-networking/com/swmansion/worklets/WorkletsModule.java
++++ b/android/src/no-networking/com/swmansion/worklets/WorkletsModule.java
+@@ -59,6 +59,8 @@ public class WorkletsModule extends NativeWorkletsModuleSpec implements Lifecycl
+ 
+     mAndroidUIScheduler = new AndroidUIScheduler(reactContext);
+     mAnimationFrameQueue = new AnimationFrameQueue(reactContext);
++    // Pause the UI-runtime frame loop while the host is paused (upstream registers it in later releases, e.g. 0.13.1).
++    reactContext.addLifecycleEventListener(this);
+   }
+ 
+   @OptIn(markerClass = FrameworkAPI.class)
+@@ -111,6 +113,7 @@ public class WorkletsModule extends NativeWorkletsModuleSpec implements Lifecycl
+     if (mInvalidated.getAndSet(true)) {
+       return;
+     }
++    getReactApplicationContext().removeLifecycleEventListener(this);
+     if (mHybridData != null && mHybridData.isValid()) {
+       // We have to destroy extra runtimes when invalidate is called. If we clean
+       // it up later instead there's a chance the runtime will retain references
