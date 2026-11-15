@@ -14,6 +14,7 @@ import {
 } from '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobLease';
 import type { SessionHandoffAgentBundle } from '../../../session/handoff/types';
 import type { ImportedSessionHandoffBundle } from '../../../session/handoff/types';
+import type { MemberSessionHandoffImport } from '../../../session/handoff/agentBundle/memberImport';
 import { ensureSessionHandoffWorkspaceCwd } from '../../../session/handoff/paths/sessionHandoffWorkspaceCwd';
 import { expandHomeDirPath } from '../../../utils/path/expandHomeDirPath';
 import { createManagedSessionDirectories } from '../../../session/creation/managedSessionDirectories';
@@ -56,6 +57,8 @@ export type RunSessionHandoffPrepareTargetJobInput = Readonly<{
   directPeerTransfer: SessionHandoffDirectPeerTransferHandle | undefined;
   resolveExistingSessionState?: (request: SessionHandoffPrepareTargetRequest, targetPath: string) => Promise<ImportedSessionHandoffBundle>;
   managedDirectoryPayloadPlacement?: ManagedSessionDirectoryPayloadPlacement;
+  /** Requester without Manage on a separate-users Machine: cwd and import run as the member. */
+  memberImport?: MemberSessionHandoffImport;
   importSessionBundle: (
     bundle: SessionHandoffAgentBundle,
     targetPath: string,
@@ -328,10 +331,12 @@ export async function runSessionHandoffPrepareTargetJob(
         // Seed promotion replaces the leaf; restore the admitted exact-UID ACL.
         await seed.restoreProtection();
       }
-      if (!managedIdentity && request.workspaceRootPath !== undefined && request.workspaceSessionRelativeCwd !== undefined) {
+      const workspace = !managedIdentity && request.workspaceRootPath !== undefined && request.workspaceSessionRelativeCwd !== undefined
+        ? { rootPath: request.workspaceRootPath, sessionRelativeCwd: request.workspaceSessionRelativeCwd } : undefined;
+      if (workspace && !params.memberImport) {
         await ensureSessionHandoffWorkspaceCwd({
-          workspaceRootPath: request.workspaceRootPath,
-          sessionRelativeCwd: request.workspaceSessionRelativeCwd,
+          workspaceRootPath: workspace.rootPath,
+          sessionRelativeCwd: workspace.sessionRelativeCwd,
           targetPath,
         });
       }
@@ -341,7 +346,10 @@ export async function runSessionHandoffPrepareTargetJob(
             if (!params.resolveExistingSessionState) throw Object.assign(new Error('Existing native session resolver is unavailable'), { code: 'existing_session_state_unsupported' });
             return params.resolveExistingSessionState(request, targetPath);
           })()
-        : await importSessionBundle(agentBundle!, targetPath, sessionStorageMode);
+        : params.memberImport
+          ? await params.memberImport.import({ bundle: agentBundle!, targetPath, sessionStorageMode,
+            ...(workspace ? { workspace } : {}), signal: new AbortController().signal })
+          : await importSessionBundle(agentBundle!, targetPath, sessionStorageMode);
       const directSource = ExternalSessionsSourceSchema.parse(imported.directSource);
       const readyForCutoverStatusBase: SessionHandoffStatus = {
         ...pendingStatus,

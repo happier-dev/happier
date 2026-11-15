@@ -8,15 +8,9 @@ import type {
   HostRequesterExecutionIdentity,
 } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import {
-  authorizeResolvedProjectExecLaunchForHost,
-  spawnAuthorizedHostExecLaunchForHost,
-} from '@/plugins/runtime/invocation/services/exec';
-import { createBackgroundServiceProcessServiceHost } from '@/plugins/runtime/lifecycle/contributions/backgroundServiceProcessBridge';
-import {
-  createBackgroundServiceProcessFrameDecoder,
-  encodeBackgroundServiceProcessFrame,
-  parseBackgroundServiceProcessMessage,
-} from '@/plugins/runtime/lifecycle/contributions/backgroundServiceProcessProtocol';
+  authorizeWorkspaceEffectLaunch,
+  runWorkspaceEffectChild,
+} from '@/workspaces/activation/workspaceEffectProcess';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import {
@@ -93,7 +87,7 @@ export async function readScmAsMember(
       input: input.input,
       scm: admitted.effect,
     };
-    const launch = await authorizeResolvedProjectExecLaunchForHost({
+    const launch = await authorizeWorkspaceEffectLaunch({
       agentIsolation: input.agentIsolation,
       requesterIdentity: input.requesterIdentity,
       signal: input.signal,
@@ -101,98 +95,36 @@ export async function readScmAsMember(
         input.signal.throwIfAborted();
         admitted.assertCurrent();
       },
-      agentLaunchKind: 'workspaceExec',
-      agentNativeLaunch: false,
-      launch: {
-        command: executable,
-        args: ['workspace-effect'],
-        cwd: input.workspaceRoot,
-        env: {},
-        maxStdoutBytes: 0,
-        maxStderrBytes: 0,
+      managedHappierBinaryPath: executable,
+      workspaceRoot: input.workspaceRoot,
+    });
+    let result: { value: unknown } | undefined;
+    let failure: unknown;
+    const outcome = await runWorkspaceEffectChild({
+      launch,
+      signal: input.signal,
+      id: randomUUID(),
+      effect,
+      refusal: unavailable,
+      services: {
+        onEffectsIssued: async () => {},
+        complete: async () => {
+          throw unavailable('workspace_effect_protocol_invalid');
+        },
+        fail: async (error: Error) => {
+          failure = error;
+        },
+        completeScmRead: async (value: unknown) => {
+          result = { value };
+        },
       },
     });
-    let transferred = false;
-    try {
-      const process = spawnAuthorizedHostExecLaunchForHost(launch, {
-        signal: input.signal,
-      });
-      transferred = true;
-      const id = randomUUID();
-      const decoder = createBackgroundServiceProcessFrameDecoder();
-      let result: { value: unknown } | undefined;
-      let failure: unknown;
-      let settled = false;
-      const send = (value: unknown) => {
-        process.child.stdin.write(encodeBackgroundServiceProcessFrame(value));
-      };
-      const services = createBackgroundServiceProcessServiceHost({
-        signal: input.signal,
-        services: {
-          onEffectsIssued: async () => {},
-          complete: async () => {
-            throw unavailable('workspace_effect_protocol_invalid');
-          },
-          fail: async (error: Error) => {
-            failure = error;
-          },
-          completeScmRead: async (value: unknown) => {
-            result = { value };
-          },
-        },
-        send: (message) => send({ kind: 'services', message }),
-      });
-      const receive = (chunk: Buffer) => {
-        try {
-          for (const raw of decoder.push(chunk)) {
-            const message = parseBackgroundServiceProcessMessage(raw);
-            if (message.kind === 'services') {
-              services.receive(message.message);
-              continue;
-            }
-            if (message.kind === 'settled' && message.id === id) {
-              settled = true;
-              process.child.stdin.end();
-              continue;
-            }
-            if (message.kind === 'failed' && message.id === id) {
-              failure = unavailable(message.error.code);
-              process.child.stdin.end();
-              continue;
-            }
-            throw unavailable('workspace_effect_protocol_invalid');
-          }
-        } catch (error) {
-          failure = error;
-          void process.dispose('caller');
-        }
-      };
-      process.child.stdout.on('data', receive);
-      process.child.stdin.on('error', () => {});
-      try {
-        send({
-          kind: 'run',
-          id,
-          context: effect,
-          services: services.description,
-        });
-        await process.handle.wait();
-        await process.dispose('caller');
-        await process.waitForSettlement();
-        if (failure) throw failure;
-        input.signal.throwIfAborted();
-        if (!settled || !result)
-          throw unavailable('workspace_effect_outcome_unknown');
-        return result.value;
-      } finally {
-        process.child.stdout.off('data', receive);
-        await services.dispose();
-        await process.dispose('caller');
-        await process.waitForSettlement();
-      }
-    } finally {
-      if (!transferred) await launch.release();
-    }
+    if (outcome.failure !== undefined) throw outcome.failure;
+    if (failure) throw failure;
+    input.signal.throwIfAborted();
+    if (!outcome.settled || !result)
+      throw unavailable('workspace_effect_outcome_unknown');
+    return result.value;
   } finally {
     await lease.release();
   }

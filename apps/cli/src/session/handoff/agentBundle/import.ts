@@ -28,7 +28,7 @@ export class SessionHandoffTypedImportError extends Error {
   }
 }
 
-function readSessionHandoffTypedImportFailureCode(
+export function readSessionHandoffTypedImportFailureCode(
   error: unknown,
 ): SessionHandoffTypedImportFailureCode | null {
   if (!error || typeof error !== 'object') return null;
@@ -80,6 +80,20 @@ export async function importSessionHandoffAgentBundle(params: Readonly<{
   }
   return projectNativeSessionHandoffState({ value: imported.value, currentRuntime, agentId: params.bundle.agentId,
     targetPath: params.targetPath, sessionStorageMode: params.sessionStorageMode });
+}
+
+/** The member import returns the Agent's native result; the host projects it once, as here. */
+export async function projectImportedSessionHandoffState(params: Readonly<{
+  value: HandoffImportResultV1;
+  agentId: string;
+  targetPath: string;
+  sessionStorageMode?: 'direct' | 'persisted';
+}>): Promise<ImportedSessionHandoffBundle> {
+  const currentRuntime = await getSessionHostBridge().resolveCurrentExecutionSurfacesForCatalogAgent(params.agentId);
+  if (!currentRuntime || currentRuntime.agentId !== params.agentId) {
+    throw new Error(`Unsupported handoff provider: ${params.agentId}`);
+  }
+  return projectNativeSessionHandoffState({ ...params, currentRuntime });
 }
 
 function projectNativeSessionHandoffState(params: Readonly<{

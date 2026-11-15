@@ -38,6 +38,7 @@ export type RegisterSessionHandoffPrepareTargetRpcHandlerInput = Readonly<{
   existingStateSupported?: boolean;
   prepareManagedDirectoryPlacement?: (request: Parameters<NonNullable<ResolvePrepareTargetBootstrapInput['prepareManagedDirectoryPlacement']>>[0], context?: RpcHandlerContext) => ReturnType<NonNullable<ResolvePrepareTargetBootstrapInput['prepareManagedDirectoryPlacement']>>;
   resolveExistingSessionState?: (request: Parameters<NonNullable<RunSessionHandoffPrepareTargetJobInput['resolveExistingSessionState']>>[0], targetPath: string, context?: RpcHandlerContext) => ReturnType<NonNullable<RunSessionHandoffPrepareTargetJobInput['resolveExistingSessionState']>>;
+  prepareMemberImport?: (context?: RpcHandlerContext) => Promise<RunSessionHandoffPrepareTargetJobInput['memberImport']>;
   importSessionBundle: (
     bundle: SessionHandoffAgentBundle,
     targetPath: string,
@@ -61,6 +62,7 @@ export function createSessionHandoffPrepareTargetActionHandler(
   const createWorkflow = (context?: RpcHandlerContext) => createSessionHandoffPrepareTargetWorkflow({ ...params,
     ...(params.prepareManagedDirectoryPlacement ? { prepareManagedDirectoryPlacement: request => params.prepareManagedDirectoryPlacement!(request, context) } : {}),
     ...(params.resolveExistingSessionState ? { resolveExistingSessionState: (request, targetPath) => params.resolveExistingSessionState!(request, targetPath, context) } : {}),
+    ...(params.prepareMemberImport ? { prepareMemberImport: () => params.prepareMemberImport!(context) } : {}),
   });
 
   return {

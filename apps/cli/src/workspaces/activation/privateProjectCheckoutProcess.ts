@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { authorizeResolvedProjectExecLaunchForHost, spawnAuthorizedHostExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
+import { authorizeWorkspaceEffectLaunch, runWorkspaceEffectChild } from './workspaceEffectProcess';
 import { createBackgroundServiceProcessServiceHost } from '@/plugins/runtime/lifecycle/contributions/backgroundServiceProcessBridge';
 import { createBackgroundServiceProcessFrameDecoder, encodeBackgroundServiceProcessFrame, parseBackgroundServiceProcessMessage } from '@/plugins/runtime/lifecycle/contributions/backgroundServiceProcessProtocol';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
@@ -34,11 +35,8 @@ async function prepareNativeWorkspaceEffectLaunch(input: PrivateProjectNativePro
       message: 'The private checkout operation is unavailable' });
   input.launch.signal.throwIfAborted();
   await input.verifyCurrent();
-  return authorizeResolvedProjectExecLaunchForHost({ ...input.launch,
-    agentLaunchKind: 'workspaceExec', agentNativeLaunch: false,
-    launch: { command: input.managedHappierBinaryPath, args: ['workspace-effect'],
-      cwd: input.memberRoot.workspaceRoot, env: {}, maxStdoutBytes: 0, maxStderrBytes: 0 },
-  });
+  return authorizeWorkspaceEffectLaunch({ ...input.launch, managedHappierBinaryPath: input.managedHappierBinaryPath,
+    workspaceRoot: input.memberRoot.workspaceRoot });
 }
 
 /** The existing Workspace operation retains its exact native/material leases.
@@ -48,79 +46,40 @@ export async function materializePrivateProjectCheckoutProcess(input: PrivatePro
     message: 'The private checkout operation is unavailable',
     details: { reason: code, phase: 'native_execution_preparation' } });
   const launch = await prepareNativeWorkspaceEffectLaunch(input);
-  let transferred = false;
-  try {
-    await input.verifyCurrent();
-    input.launch.assertCurrent();
-    const process = spawnAuthorizedHostExecLaunchForHost(launch, { signal: input.launch.signal });
-    transferred = true; // The incumbent supervisor now owns launch.release().
+  let result: MaterializedProjectCheckout | undefined;
+  let failure: unknown;
+  let issued = false;
+  const onEffectsIssued = () => { if (!issued) { issued = true; input.onEffectsIssued(); } };
+  const outcome = await runWorkspaceEffectChild({ launch, signal: input.launch.signal, refusal,
     // One invocation per pipe; the existing checkout id is sufficient routing.
-    const id = input.prepared.workspaceRefId;
-    const decoder = createBackgroundServiceProcessFrameDecoder();
-    let result: MaterializedProjectCheckout | undefined;
-    let failure: unknown;
-    let settled = false;
-    let issued = false;
-    const onEffectsIssued = () => { if (!issued) { issued = true; input.onEffectsIssued(); } };
-    const send = (value: unknown) => { process.child.stdin.write(encodeBackgroundServiceProcessFrame(value)); };
-    const services = createBackgroundServiceProcessServiceHost({ signal: input.launch.signal,
-      services: {
-        ...(input.connectedAccounts ? { connectedAccounts: createWorkspaceEffectConnectedAccounts({
-          effect: input.effect, owner: input.connectedAccounts, signal: input.launch.signal, assertCurrent: input.verifyCurrent,
-        }) } : {}),
-        onEffectsIssued: async () => { onEffectsIssued(); },
-        fail: async (error: Error, effectsIssued: boolean) => {
-          if (effectsIssued) onEffectsIssued();
-          failure = error;
-        },
-        complete: async (checkout: MaterializedProjectCheckout) => {
-          await input.verifyCurrent();
-          // The captured native child already verified physical paths as the
-          // member. The daemon must not traverse that private checkout again.
-          if (checkout.rootPath !== input.prepared.rootPath
-            || !isCanonicalAbsolutePathInsideRoot(input.prepared.rootPath, checkout.directory)) throw refusal();
-          result = checkout;
-        },
-      }, send: message => send({ kind: 'services', message }),
-    });
-    const receive = (chunk: Buffer) => {
-      try {
-        for (const raw of decoder.push(chunk)) {
-          const message = parseBackgroundServiceProcessMessage(raw);
-          if (message.kind === 'services') { services.receive(message.message); continue; }
-          if (message.kind === 'settled' && message.id === id) { settled = true; process.child.stdin.end(); continue; }
-          if (message.kind === 'failed' && message.id === id) {
-            failure = refusal(message.error.code); process.child.stdin.end(); continue;
-          }
-          throw refusal('workspace_effect_protocol_invalid');
-        }
-      } catch (error) { failure = error; void process.dispose('caller'); }
-    };
-    process.child.stdout.on('data', receive);
-    process.child.stdin.on('error', () => {}); // Physical result below owns failed writes.
-    try {
-      send({ kind: 'run', id, context: input.effect, services: services.description });
-      const completed = await process.handle.wait();
-      // Root exit is not descendant settlement. The incumbent supervisor's
-      // disposal owns that proof; waiting for it before requesting disposal
-      // would retain the finished checkout and native material indefinitely.
-      await process.dispose('caller');
-      await process.waitForSettlement();
-      // A settled canonical child can attest no-effect auth/admission refusal.
-      // Abrupt transport loss cannot: clone may already have reserved its path.
-      if (!settled && input.effect.request.materialization.kind === 'clone') onEffectsIssued();
-      if (failure) throw failure;
-      if (!settled || !result || completed.termination.observed.kind !== 'exit'
-        || completed.termination.observed.exitCode !== 0) throw refusal('workspace_effect_outcome_unknown');
-      await input.verifyCurrent();
-      return result;
-    } finally {
-      process.child.stdout.off('data', receive);
-      await services.dispose();
-      await process.dispose('caller');
-      await process.waitForSettlement();
-    }
-  } finally { if (!transferred) await launch.release(); }
+    id: input.prepared.workspaceRefId, effect: input.effect,
+    beforeSpawn: async () => { await input.verifyCurrent(); input.launch.assertCurrent(); },
+    services: {
+      ...(input.connectedAccounts ? { connectedAccounts: createWorkspaceEffectConnectedAccounts({
+        effect: input.effect, owner: input.connectedAccounts, signal: input.launch.signal, assertCurrent: input.verifyCurrent,
+      }) } : {}),
+      onEffectsIssued: async () => { onEffectsIssued(); },
+      fail: async (error: Error, effectsIssued: boolean) => {
+        if (effectsIssued) onEffectsIssued();
+        failure = error;
+      },
+      complete: async (checkout: MaterializedProjectCheckout) => {
+        await input.verifyCurrent();
+        // The captured native child already verified physical paths as the
+        // member. The daemon must not traverse that private checkout again.
+        if (checkout.rootPath !== input.prepared.rootPath
+          || !isCanonicalAbsolutePathInsideRoot(input.prepared.rootPath, checkout.directory)) throw refusal();
+        result = checkout;
+      },
+    } });
+  // A settled canonical child can attest no-effect auth/admission refusal.
+  // Abrupt transport loss cannot: clone may already have reserved its path.
+  if (!outcome.settled && input.effect.request.materialization.kind === 'clone') onEffectsIssued();
+  if (outcome.failure !== undefined) throw outcome.failure;
+  if (failure) throw failure;
+  if (!outcome.settled || !result || !outcome.exitedCleanly) throw refusal('workspace_effect_outcome_unknown');
+  await input.verifyCurrent();
+  return result;
 }
 
 /** The existing native invocation keeps the private pipe until the incumbent

@@ -17,6 +17,8 @@ import {
   isTerminalHandoffStatus,
   readPersistedPrepareJob,
 } from './prepareTargetState';
+import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
+import { privateProjectCheckoutRefusal } from '@/workspaces/activation/privateProjectCheckout';
 import { runSessionHandoffPrepareTargetJob } from './prepareTargetRunJob';
 import {
   resolvePrepareTargetResponse,
@@ -61,6 +63,8 @@ export type ResolvePrepareTargetBootstrapInput = Readonly<{
   importSessionBundle: SessionHandoffPrepareTargetJobInput['importSessionBundle'];
   resolveExistingSessionState?: SessionHandoffPrepareTargetJobInput['resolveExistingSessionState'];
   prepareManagedDirectoryPlacement?: (request: SessionHandoffPrepareTargetRequest) => Promise<SessionHandoffPrepareTargetJobInput['managedDirectoryPayloadPlacement']>;
+  /** Ingress-bound member import for a requester without Manage; undefined keeps host import. */
+  prepareMemberImport?: () => Promise<SessionHandoffPrepareTargetJobInput['memberImport']>;
 }>;
 
 export async function resolvePrepareTargetResponseAfterBootstrap(input: Readonly<{
@@ -165,6 +169,22 @@ export async function resolvePrepareTargetBootstrap(
         error: 'Choose an accepted Workspace or path for this Session' } };
     }
   }
+  let memberImport: SessionHandoffPrepareTargetJobInput['memberImport'];
+  if (!existingActiveJob && input.request.stateTransfer !== 'existing') {
+    try {
+      memberImport = await input.prepareMemberImport?.();
+    } catch (error) {
+      if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'agent_isolation_unavailable') throw error;
+      return { kind: 'response', response: { ok: false, errorCode: 'agent_isolation_unavailable',
+        error: 'Member execution setup is unavailable' } };
+    }
+    // Only the requester's own member folder is reachable without Manage; the checkout owner names the refusal.
+    if (memberImport && input.request.targetDirectory?.kind !== 'managed' && input.request.targetPath
+      && !isCanonicalAbsolutePathInsideRoot(memberImport.workspaceRoot, input.request.targetPath)) {
+      const refusal = privateProjectCheckoutRefusal('workspace_private_checkout_review_required');
+      return { kind: 'response', response: { ok: false, errorCode: refusal.code, error: refusal.message } };
+    }
+  }
   const pendingUpdatedAtMs = Date.now();
   const createdAtMs = persistedJob?.createdAtMs ?? pendingUpdatedAtMs;
   const isRestartingPersistedJob = Boolean(
@@ -216,6 +236,7 @@ export async function resolvePrepareTargetBootstrap(
       importSessionBundle: input.importSessionBundle,
       ...(input.resolveExistingSessionState ? { resolveExistingSessionState: input.resolveExistingSessionState } : {}),
       ...(managedDirectoryPayloadPlacement ? { managedDirectoryPayloadPlacement } : {}),
+      ...(memberImport ? { memberImport } : {}),
     }).finally(() => {
       if (input.activePrepareJobs.get(jobId) === runJob) {
         input.activePrepareJobs.delete(jobId);

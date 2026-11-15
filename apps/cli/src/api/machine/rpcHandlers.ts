@@ -1065,6 +1065,9 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     ...(params.deps?.currentMachineId ? { localMachineId: params.deps.currentMachineId } : {}),
     ...(admitExistingSessionState ? { admitExistingSessionState } : {}),
     ...(params.deps?.workspaceSync?.captureHandoffWorkspace ? { captureWorkspace: params.deps.workspaceSync.captureHandoffWorkspace } : {}),
+    prepareMemberImport: async context => (await import('@/session/handoff/agentBundle/memberImport')).prepareMemberSessionHandoffImport(context, {
+      agentIsolation: params.deps?.agentIsolation,
+      resolveHostHomeServerIdentityId: params.deps?.resolveHostHomeServerIdentityId }),
     ...(params.deps?.requesterSessionRuntime ? { requesterSessionRuntime: params.deps.requesterSessionRuntime } : {}),
     ...(params.deps?.requesterBootstrapBoundary ? { requesterBootstrapBoundary: params.deps.requesterBootstrapBoundary } : {}),
     sessionOperationExclusion: externalSessionOperationExclusion,
