@@ -2,7 +2,7 @@ import * as React from 'react';
 import { workflowRunStoreKey } from '@/sync/store/domains/workflowRuns';
 
 import { useWorkflowsAvailability } from '@/components/workflows/gating/workflowsAvailability';
-import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { retryServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import type {
@@ -128,7 +128,7 @@ export function useContextManagedWorkflowRuns(params: Readonly<{
     const rows = retainWhileResolving ? retainedRows : window.rows;
     const retry = React.useCallback(() => {
         if (retainWhileResolving && lifetime?.isCurrent()) {
-            fireAndForget(getServerFeaturesSnapshot({ serverId: lifetime.scope.serverId, force: true }), {
+            fireAndForget(retryServerFeaturesSnapshot({ serverId: lifetime.scope.serverId }), {
                 tag: 'useContextManagedWorkflowRuns.retryCapabilities',
             });
             return;

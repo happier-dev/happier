@@ -1,4 +1,4 @@
-import { getCachedServerFeaturesSnapshot, getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { getCachedServerFeaturesSnapshot, retryServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { resolveRuntimeFeatureDecisionFromSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { storage } from '@/sync/domains/state/storage';
@@ -32,7 +32,8 @@ const loader = createScopedSnapshotLoader<MachinePoolProjectionTarget>({
         const forceFeaturesRequested = forceFeatureRefreshByServerId.delete(target.serverId);
         const forceFeatures = target.forceFeatures || forceFeaturesRequested;
         if (forceFeatures) {
-            const featureSnapshot = await getServerFeaturesSnapshot({ serverId: target.serverId, force: true });
+            // Features are the Home's answer for this connection: only an unready answer is read again.
+            const featureSnapshot = await retryServerFeaturesSnapshot({ serverId: target.serverId });
             // Missing, malformed and disabled feature state fails closed. Wakes may discover a
             // newly enabled Home, but never send an unsupported Pool Action speculatively.
             if (

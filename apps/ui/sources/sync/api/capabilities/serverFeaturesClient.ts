@@ -35,7 +35,12 @@ import { resolveHomeConnectionAddress } from '@/sync/domains/server/homeAddressS
 
 export { isServerFeaturesProbeRetryable } from './serverFeaturesProbeRetryability';
 
-const TTL_READY_MS = 10 * 60 * 1000;
+/**
+ * A ready descriptor is the Home's answer for the current connection: deploys restart the server
+ * and drop sockets, and the reconnect expires it (`expireServerFeaturesSnapshotForReconnect`).
+ * A bit changed without a reconnect shows at the next one; server gates still refuse per request.
+ */
+const TTL_READY_MS = Number.POSITIVE_INFINITY;
 const TTL_UNSUPPORTED_ENDPOINT_MISSING_MS = 60 * 60 * 1000;
 const TTL_UNSUPPORTED_INVALID_PAYLOAD_MS = 10 * 60 * 1000;
 const TTL_ERROR_NETWORK_MS = 5 * 1000;
@@ -113,8 +118,9 @@ function persistPublicSnapshot(cacheKey: string): void {
         }
         const serverUrl = publicSnapshotServerUrl(cacheKey);
         if (!serverUrl) return;
+        // A reload is a new connection: a per-connection answer restores as last-known, not fresh.
         getPersistenceStorage().set(key, JSON.stringify({ serverUrl, updatedAt: entry.updatedAt,
-            expiresAt: entry.expiresAt, features: entry.value.features }));
+            expiresAt: Number.isFinite(entry.expiresAt) ? entry.expiresAt : entry.updatedAt, features: entry.value.features }));
     } catch {
         // Optional derived persistence cannot turn successful discovery into a failure.
     }
@@ -897,6 +903,30 @@ export function primeServerFeaturesSnapshot(params: {
         params.snapshot,
         params.ttlMs ?? getCacheTtlMs(params.snapshot),
     );
+}
+
+/**
+ * The Home's socket reconnected: its per-connection answers are no longer current. Last-known
+ * values stay readable while one read replaces them, and only while something observes features.
+ */
+export function expireServerFeaturesSnapshotForReconnect(params: { serverId: string }): void {
+    const cacheKey = getCacheKey(params.serverId);
+    for (const projectionCache of [cache, authenticatedCache]) {
+        const entry = projectionCache.get(cacheKey);
+        if (entry?.kind === 'success') projectionCache.setSuccess(cacheKey, entry.value, { nowMs: entry.updatedAt, ttlMs: 0 });
+    }
+    if (snapshotListeners.size === 0) return;
+    fireAndForget(getServerFeaturesSnapshot({ serverId: params.serverId }), { tag: 'serverFeaturesClient.reconnect' });
+}
+
+/**
+ * A person's Retry of feature discovery: re-reads only an answer that is not ready (failed,
+ * unsupported, transitional). A ready answer holds for the connection.
+ */
+export async function retryServerFeaturesSnapshot(params: { serverId: string; signal?: AbortSignal }): Promise<ServerFeaturesSnapshot> {
+    const cached = getCachedServerFeaturesSnapshot({ serverId: params.serverId });
+    const ready = cached?.status === 'ready' && getServerFeaturesSnapshotRetryDelayMs({ serverId: params.serverId, snapshot: cached }) === null;
+    return await getServerFeaturesSnapshot({ ...params, force: !ready });
 }
 
 export function deleteServerFeaturesSnapshot(params?: { serverId?: string }): void {

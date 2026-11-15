@@ -12,7 +12,7 @@ import { useRouter } from 'expo-router';
 import { resolveFeatureToggleHref } from '@/components/settings/features/featuresSettings';
 import { useSetting } from '@/sync/domains/state/storage';
 import { useEffectiveServerSelection } from '@/hooks/server/useEffectiveServerSelection';
-import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { retryServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 
 const stylesheet = StyleSheet.create((theme) => ({
     loadingContainer: {
@@ -62,7 +62,7 @@ function AutomationsGateUnavailable(props: Readonly<{
     const selection = useEffectiveServerSelection();
     const retryProbe = React.useCallback(async () => {
         // The canonical per-Home feature probe, asked again; nothing else can change the answer.
-        await Promise.all(selection.serverIds.map((serverId) => getServerFeaturesSnapshot({ serverId, force: true })));
+        await Promise.all(selection.serverIds.map((serverId) => retryServerFeaturesSnapshot({ serverId })));
     }, [selection.serverIds]);
 
     if (support.arm === 'unknown') {

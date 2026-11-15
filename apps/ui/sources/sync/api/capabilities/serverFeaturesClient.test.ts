@@ -586,6 +586,44 @@ describe('serverFeaturesClient', () => {
         expect(featuresFetchMock.mock.calls.length).toBe(2);
     });
 
+    it('reads features once per connection: 30 min with 5 mounted consumers reads nothing more; a reconnect reads once', async () => {
+        featuresFetchMock.mockImplementation(async () => createResponse(200, createValidFeaturesPayload()));
+        const {
+            getServerFeaturesSnapshot,
+            subscribeServerFeaturesSnapshot,
+            resetServerFeaturesClientForTests,
+            ...client
+        } = await import('./serverFeaturesClient');
+        resetServerFeaturesClientForTests();
+        useFrozenServerFeaturesClock();
+
+        const connectPromise = getServerFeaturesSnapshot({ timeoutMs: 50 });
+        await vi.advanceTimersByTimeAsync(0);
+        expect((await connectPromise).status).toBe('ready');
+        const mounts = Array.from({ length: 5 }, () => subscribeServerFeaturesSnapshot(() => {}));
+        try {
+            for (let minute = 1; minute <= 30; minute += 1) {
+                setFrozenServerFeaturesClock(new Date(frozenServerFeaturesTime.getTime() + minute * 60_000));
+                for (let mount = 0; mount < 5; mount += 1) {
+                    const read = getServerFeaturesSnapshot({ timeoutMs: 50 });
+                    await vi.advanceTimersByTimeAsync(0);
+                    expect((await read).status).toBe('ready');
+                }
+            }
+            expect(featuresFetchMock.mock.calls.length).toBe(1);
+
+            // The Home's socket reconnected (a deploy restarts the server and drops sockets): one read.
+            client.expireServerFeaturesSnapshotForReconnect({ serverId: 'server-a' });
+            await vi.waitFor(() => expect(featuresFetchMock.mock.calls.length).toBe(2));
+            const after = getServerFeaturesSnapshot({ timeoutMs: 50 });
+            await vi.advanceTimersByTimeAsync(0);
+            expect((await after).status).toBe('ready');
+            expect(featuresFetchMock.mock.calls.length).toBe(2);
+        } finally {
+            for (const unsubscribe of mounts) unsubscribe();
+        }
+    });
+
     it('retries after a short ttl when probing fails (network error)', async () => {
         const payload = {
             features: {

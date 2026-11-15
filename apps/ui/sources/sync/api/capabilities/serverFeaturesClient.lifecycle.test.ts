@@ -18,6 +18,7 @@ import {
     useServerFeaturesSnapshotForServerId,
 } from '@/sync/domains/features/featureDecisionRuntime';
 import {
+    expireServerFeaturesSnapshotForReconnect,
     getCachedServerFeaturesSnapshot,
     getServerFeaturesSnapshot,
     resetServerFeaturesClientForTests,
@@ -639,6 +640,8 @@ it('projects the exact canonical Services cache on the first reopen and Home-swi
         await act(async () => { await vi.advanceTimersByTimeAsync(600_001); });
         expect(featureRequests()).toHaveLength(1);
         revision = 'refreshed';
+        // A ready answer holds for the connection; the Home's reconnect expires it.
+        expireServerFeaturesSnapshotForReconnect({ serverId: home.id });
         committedReasons.length = 0;
         presented = true;
         await hook.rerender();

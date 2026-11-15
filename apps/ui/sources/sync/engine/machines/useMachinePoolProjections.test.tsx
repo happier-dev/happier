@@ -4,7 +4,7 @@ import { act } from 'react-test-renderer';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { createDeferred, renderHook } from '@/dev/testkit';
 import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUtils';
-import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
+import { expireServerFeaturesSnapshotForReconnect, getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
@@ -483,7 +483,7 @@ describe('useMachinePoolProjections', () => {
         await hook.unmount();
     });
 
-    it('discovers Pools enabled after mount without sending an Action while they are disabled', async () => {
+    it('discovers Pools enabled at the Home reconnect without sending an Action while they are disabled', async () => {
         boundary.poolFeatureEnabled = false;
         await publishPoolsFeature(false);
         boundary.requests.length = 0;
@@ -494,6 +494,8 @@ describe('useMachinePoolProjections', () => {
 
         boundary.poolFeatureEnabled = true;
         await act(async () => {
+            // Features hold for the connection (an Account wake reads none); the reconnect re-reads once.
+            expireServerFeaturesSnapshotForReconnect({ serverId: boundary.serverId });
             publishHomeAccountChange(boundary.serverId);
         });
 

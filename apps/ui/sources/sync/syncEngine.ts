@@ -754,6 +754,7 @@ import {
 } from './engine/pending/pendingInputServerWireContract';
 import {
     getServerFeaturesSnapshot,
+    expireServerFeaturesSnapshotForReconnect,
     refreshAuthenticatedServerFeaturesSnapshot,
     observePublicServerFeaturesFresh,
     primeServerFeaturesSnapshot,
@@ -12871,6 +12872,8 @@ class Sync {
                   // follows daemon state reconciled by resumeSync, not socket gaps.
                   const serverId = this.getAppliedTransportTarget()?.serverId;
                   if (serverId) {
+                      // A reconnect (deploys restart the server) ends the per-connection features answer.
+                      expireServerFeaturesSnapshotForReconnect({ serverId });
                       // resumeSync below runs this Home's changes catch-up for what changed while away.
                       publishHomeAccountChange(serverId, undefined, { source: 'connected', changesCatchUp: true });
                   }

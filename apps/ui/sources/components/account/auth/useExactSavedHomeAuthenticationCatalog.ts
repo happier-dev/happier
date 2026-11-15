@@ -3,7 +3,7 @@ import * as React from 'react';
 import { acquireAccountServiceAuthTransport } from '@/auth/accountDirectory/accountDirectoryAuthClient';
 import { fetchHomeAuthEntry } from '@/auth/entry/authEntryClient';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
-import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { retryServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { resolveServerProfileScopeId, type ServerProfile } from '@/sync/domains/server/serverProfiles';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -126,7 +126,7 @@ export function useExactSavedHomeAuthenticationCatalog(
 
     const retry = React.useCallback(() => {
         if (scopeId) {
-            fireAndForget(getServerFeaturesSnapshot({ serverId: scopeId, force: true }), {
+            fireAndForget(retryServerFeaturesSnapshot({ serverId: scopeId }), {
                 tag: 'useExactSavedHomeAuthenticationCatalog.retryFeatures',
             });
         }
