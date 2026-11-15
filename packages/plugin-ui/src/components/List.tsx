@@ -114,7 +114,7 @@ import {
 import { NATIVE_COLLECTION_VIRTUALIZER } from '../presentation/collection/nativeCollectionVirtualizer.js';
 import { PageCollectionVirtualizer } from '../presentation/collection/pageCollectionVirtualizer.js';
 import { useOptionalPluginUiScrollActivityTracker } from '../presentationHost/scrollActivity.js';
-import { HappierListRowOpenContext, HappierListRowPrecedesSelectedContext, type HappierCollectionRowRole } from '../presentation/collection/CollectionList.js';
+import { HappierListRowFollowedContext, HappierListRowOpenContext, HappierListRowPrecedesSelectedContext, type HappierCollectionRowRole } from '../presentation/collection/CollectionList.js';
 import { CatalogDirectory } from '../presentation/collection/CatalogDirectory.js';
 
 const LIST_MORE_ACTIONS_TRANSLATION_KEY = 'happier.plugin-ui.list.moreActions';
@@ -700,6 +700,8 @@ type VirtualizedListRowProps<Item> = Readonly<{
   unavailableReason?: string | null;
   /** The list sits on a framed page sheet: its rows are the sheet's rows, divided by its hairline. */
   onSheet: boolean;
+  /** Another row of this row's section stands below it (in a directory's columns, the next line holds one). */
+  followed: boolean;
 }>;
 
 /**
@@ -764,9 +766,11 @@ class VirtualizedListRow<Item> extends PureComponent<
         <>{renderedItem}</>
       );
 
+    const followed = props.followed;
     return selection === null ? (
-      row
+      <HappierListRowFollowedContext.Provider value={followed}>{row}</HappierListRowFollowedContext.Provider>
     ) : (
+      <HappierListRowFollowedContext.Provider value={followed}>
       <HappierListRowOpenContext.Provider value={props.open}>
         <HappierListRowPrecedesSelectedContext.Provider value={props.precedesSelected}>
           <ListItemSelectionContext.Provider value={selection}>
@@ -774,6 +778,7 @@ class VirtualizedListRow<Item> extends PureComponent<
           </ListItemSelectionContext.Provider>
         </HappierListRowPrecedesSelectedContext.Provider>
       </HappierListRowOpenContext.Provider>
+      </HappierListRowFollowedContext.Provider>
     );
   }
 }
@@ -1616,6 +1621,8 @@ function VirtualizedList<Item>(
     return selectionEnabled && next !== undefined && (selectedKeyRef.current === next
       || (multiStore !== null && multiSelectedKeysRef.current.has(next)));
   }, [multiStore, selectionEnabled]);
+  // A page directory lays its rows out row-major in columns: a row's column continues on the next line.
+  const catalogDirectoryColumns = collectionControl?.pageScroll === true ? collectionControl.catalogDirectory?.columns : undefined;
   const renderRow = useCallback(
     (
       input: Readonly<{
@@ -1667,6 +1674,8 @@ function VirtualizedList<Item>(
             singleChoice === undefined && selectedKeyRef.current === itemKey
           }
           precedesSelected={rowPrecedesSelected(input.rowIndex)}
+          // The one list-row rule is drawn only between rows: in a directory's columns, over the next line's row.
+          followed={input.index + (catalogDirectoryColumns ?? 1) < input.setSize}
           isTabStop={
             selectionEnabled && tabStopIndexRef.current === input.rowIndex
           }
@@ -1693,6 +1702,7 @@ function VirtualizedList<Item>(
       selectItem,
       selectionEnabled,
       singleChoice?.unavailableReason,
+      catalogDirectoryColumns,
     ],
   );
 
@@ -2020,9 +2030,7 @@ function VirtualizedList<Item>(
       >
         {oneSheetSections && pageSheet !== undefined && virtualizedSections !== undefined ? (
           // One table's groups: its bar, each group's band and rows, then its totals, on one sheet.
-          <HappierPageSheet colors={pageSheet.colors} rowDividers={false}
-            surface={pageSheet.flatSheet === false ? 'none' : 'sheet'}
-            {...(pageSheet.flatSheet === false ? {} : { style: flatPageSheetStyle })}>
+          <HappierPageSheet colors={pageSheet.colors} rowDividers={false} {...pageSheetSurface(pageSheet, flatPageSheetStyle)}>
             <View>
               {pageSheet.header}
               {virtualizedSections.map((section) => (
@@ -2100,6 +2108,7 @@ function VirtualizedList<Item>(
                     <HappierPageSheet
                       colors={pageSheet.colors}
                       rowDividers={false}
+                      {...pageSheetSurface(pageSheet)}
                     >
                       <View>
                         {sheetHeader}
@@ -2113,9 +2122,7 @@ function VirtualizedList<Item>(
           : flatPageSheet && pageSheet !== undefined ? (
               // An ungrouped page list is one page section: its bar, rows and totals on one sheet (the enclosing
               // section's own sheet when it already sits on one).
-              <HappierPageSheet colors={pageSheet.colors} rowDividers={false}
-                surface={pageSheet.flatSheet === false ? 'none' : 'sheet'}
-                {...(pageSheet.flatSheet === false ? {} : { style: flatPageSheetStyle })}>
+              <HappierPageSheet colors={pageSheet.colors} rowDividers={false} {...pageSheetSurface(pageSheet, flatPageSheetStyle)}>
                 <View>
                   {pageSheet.header}
                   {(visibleItems ?? []).map((item, index) => (
@@ -2177,6 +2184,15 @@ function VirtualizedList<Item>(
 
 // The header gap down to its sheet, as a page section's title sits above its own (the search or toolbar above it).
 const flatPageSheetStyle = { marginTop: HAPPIER_PAGE_METRICS.sectionHeaderGapPx } as const;
+
+/** A page list's sheet, or none: its rows lie on the page when the collection says so (`flatSheet: false`). */
+function pageSheetSurface(
+  pageSheet: Readonly<{ flatSheet?: boolean; rowInsetPx?: number }>,
+  sheetStyle?: typeof flatPageSheetStyle,
+): Readonly<{ surface: 'none' | 'sheet'; style?: typeof flatPageSheetStyle; rowInsetPx?: number }> {
+  if (pageSheet.flatSheet === false) return pageSheet.rowInsetPx === undefined ? { surface: 'none' } : { surface: 'none', rowInsetPx: pageSheet.rowInsetPx };
+  return sheetStyle === undefined ? { surface: 'sheet' } : { surface: 'sheet', style: sheetStyle };
+}
 
 // A sub-heading inside a shared section's sheet: on the rows' inset, the group heading gap down to its rows; the
 // first one takes a row's air from the sheet's top edge.

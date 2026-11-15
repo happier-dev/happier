@@ -41,7 +41,7 @@ import {
   type HappierRovingCollectionItem,
 } from './semantics.js';
 import { useHappierItemGroupItemBehavior } from './ItemGroup.js';
-import { ListItemFrame, ListItemOverlayActions } from './ListItemFrame.js';
+import { ListItemFrame, ListItemOverlayActions, useHappierListRowHovered } from './ListItemFrame.js';
 export { HappierRowActionsReveal } from './ListItemFrame.js';
 import {
   HAPPIER_COLLECTION_LIST_METRICS,
@@ -56,6 +56,10 @@ import {
   useHappierCollectionListRow,
   useHappierCollectionTableRow,
   HappierCollectionTreeRowContext,
+  HappierListRowFollowedContext,
+  HappierListRowRule,
+  resolveHappierCollectionRowTextStartPx,
+  resolveHappierListRowRuleShown,
 } from './CollectionList.js';
 import { resolveHappierTextStepStyle } from '../layout/pageText.js';
 import { useHappierMaterialColorResolver } from '../layout/Surface.js';
@@ -1289,7 +1293,7 @@ export function HappierListItem({
 
   return (
     <ListItemFrame
-      hoverEnabled={collectionRow && isInteractive && !(cardCornerAccessory !== null && precisePointer)}
+      hoverEnabled={(collectionRow || navigationRow) && isInteractive && !(cardCornerAccessory !== null && precisePointer)}
       hoverFill={collectionRow && resolvedTheme && isInteractive && disabled !== true && selected !== true && !openRow
         ? paintColor(collectionPalette(resolvedTheme, navigationPalette).navigationHover) : undefined}
       restingFill={collectionRow && resolvedTheme
@@ -1361,6 +1365,7 @@ export function HappierListItem({
           {/* Overlays, never layout: the row keeps the exact height its Collection planned. A selected row's fill
               parts it from its neighbours and a group's band parts it from the next group: no line there. */}
           {collectionItem?.hairline === false || collectionItem?.insetFill === true || collectionItem?.beforeBand === true
+            || collectionItem?.listRule === true
             || selected === true || openRow || precedesSelected ? null : (
             <View
               pointerEvents="none"
@@ -1372,6 +1377,14 @@ export function HappierListItem({
             />
           )}
         </>
+      ) : null}
+      {navigationRow && resolvedTheme ? (
+        // A column's rows are parted by the one list-row rule, from the row's text column (owner 2026-11-15).
+        <NavigationRowRule
+          startPx={resolveHappierCollectionRowTextStartPx({ glyph: icon !== undefined && icon !== null })}
+          color={collectionPalette(resolvedTheme, navigationPalette).rowDivider}
+          selected={selected === true}
+        />
       ) : null}
       {rowDescriptionId ? (
         // Referenced only. `display: none` keeps it out of the row's visible
@@ -1392,4 +1405,13 @@ export function HappierListItem({
       ) : null}
     </ListItemFrame>
   );
+}
+
+/** A navigation row's rule: drawn while its list says another row follows and neither it nor the next row is filled. */
+function NavigationRowRule(props: Readonly<{ startPx: number; color: string; selected: boolean }>) {
+  const followed = useContext(HappierListRowFollowedContext);
+  const precedesSelected = useContext(HappierListRowPrecedesSelectedContext);
+  const hovered = useHappierListRowHovered();
+  return resolveHappierListRowRuleShown({ followed, selected: props.selected, precedesSelected, hovered })
+    ? <HappierListRowRule startPx={props.startPx} color={props.color} /> : null;
 }

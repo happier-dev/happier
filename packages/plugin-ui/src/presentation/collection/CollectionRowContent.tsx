@@ -1,4 +1,4 @@
-import type { ReactElement, ReactNode } from 'react';
+import { useContext, type ReactElement, type ReactNode } from 'react';
 import {
   Platform,
   View,
@@ -18,7 +18,13 @@ import {
   resolveHappierTypeScale,
   type HappierTypeRole,
 } from '../text/typeScale.js';
-import { HAPPIER_COLLECTION_LIST_METRICS } from './CollectionList.js';
+import {
+  HAPPIER_COLLECTION_LIST_METRICS,
+  HappierListRowFollowedContext,
+  HappierListRowPrecedesSelectedContext,
+  HappierListRowRule,
+  resolveHappierListRowRuleShown,
+} from './CollectionList.js';
 import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
 import { useHappierMaterialColorResolver } from '../layout/Surface.js';
 
@@ -180,7 +186,10 @@ export type HappierCollectionRowContentProps = Readonly<{
   hovered?: boolean;
   /** The host's fills for the open row and the pointer's hover, on the plane under the row. */
   fills: Readonly<{ selected: string; hover: string }>;
-  /** A hairline under the row, for a row embedded in a card that separates its rows. */
+  /**
+   * The ink of the one list-row rule: the row draws it under itself, from its text column, while its list says another
+   * row follows (`HappierListRowFollowedContext`) and neither it nor the next row is filled.
+   */
   separator?: Readonly<{ color: string }> | null;
   /** Independent leading controls, outside navigation (the reports disclosure, a depth gutter). */
   leading?: ReactNode;
@@ -414,9 +423,6 @@ export function HappierCollectionRowContent(
       ? { flexDirection: 'column', alignItems: 'stretch', justifyContent: 'center', paddingVertical: M.padding[props.density] } as const
       : null,
     fill ? { backgroundColor: paintColor(fill) } : null,
-    props.separator
-      ? { borderBottomWidth: 1, borderBottomColor: props.separator.color }
-      : null,
     props.style,
   ];
   const content = (
@@ -454,6 +460,21 @@ export function HappierCollectionRowContent(
         </View>
         {engaged ? <View style={engagedTrailingBand}>{engaged.node}</View> : null}
       </View>
+      {props.separator ? (
+        <CollectionRowContentRule
+          startPx={M.padding[props.density] + titleEdge}
+          color={props.separator.color}
+          selected={props.selected === true}
+          hovered={props.hovered === true}
+        />
+      ) : null}
     </View>
   );
+}
+
+function CollectionRowContentRule(props: Readonly<{ startPx: number; color: string; selected: boolean; hovered: boolean }>): ReactElement | null {
+  const followed = useContext(HappierListRowFollowedContext);
+  const precedesSelected = useContext(HappierListRowPrecedesSelectedContext);
+  return resolveHappierListRowRuleShown({ followed, selected: props.selected, precedesSelected, hovered: props.hovered })
+    ? <HappierListRowRule startPx={props.startPx} color={props.color} /> : null;
 }

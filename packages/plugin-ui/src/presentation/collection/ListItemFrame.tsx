@@ -33,6 +33,11 @@ export function ListItemFrame({ hoverEnabled, hoverFill, restingFill, actionsRev
   </RowInteractionContext.Provider>;
 }
 
+/** Whether the pointer is over the row whose frame holds this content (a list row's rule steps aside for its fill). */
+export function useHappierListRowHovered(): boolean {
+  return useContext(RowInteractionContext).hovered;
+}
+
 /** A precise pointer reveals the row's overflow without rebuilding its content. */
 export function HappierRowActionsReveal(props: Readonly<{ children: ReactNode }>): ReactElement {
   const { actionsRevealed } = useContext(RowInteractionContext);

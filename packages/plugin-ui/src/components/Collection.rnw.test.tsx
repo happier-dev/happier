@@ -3641,9 +3641,11 @@ describe('the group band', () => {
 
 describe('row hairlines', () => {
   /** The hairline a ruled row draws at its foot: an overlay, absolutely placed along the row's bottom edge. */
-  const hasHairline = (cell: HTMLElement) => [...cell.querySelectorAll<HTMLElement>('*')].some((node) =>
-    node.style.position === 'absolute' && node.style.bottom === '0px' && node.style.left === '0px'
-    && node.style.right === '0px' && Number.parseFloat(node.style.height || '9') <= 1 && node.children.length === 0);
+  // The table's full-bleed line, or a list row's inset rule (from its text column).
+  const hasHairline = (cell: HTMLElement) => cell.querySelector('[data-testid="happier-list-row-rule"]') !== null
+    || [...cell.querySelectorAll<HTMLElement>('*')].some((node) =>
+      node.style.position === 'absolute' && node.style.bottom === '0px' && node.style.left === '0px'
+      && node.style.right === '0px' && Number.parseFloat(node.style.height || '9') <= 1 && node.children.length === 0);
   const ruled = (view: ReturnType<typeof mount>) =>
     Object.fromEntries(entries.map((entry) => [entry.id, hasHairline(view.query(`row:${entry.id}:cell`)!)]));
 
@@ -3655,8 +3657,9 @@ describe('row hairlines', () => {
     expect(ruled(view)).toEqual({ a: true, b: false, c: true });
     await view.setOpen('b');
     view.measure(1440);
-    // b is open: its own foot and the row above it both stop drawing the line between them.
-    expect(ruled(view)).toEqual({ a: false, b: false, c: true });
+    // b is open: its own foot and the row above it both stop drawing the line between them. Beside the detail the rows
+    // are a list, whose rule stands only between rows (owner 2026-11-15), so the list's last row draws none.
+    expect(ruled(view)).toEqual({ a: false, b: false, c: false });
     await view.setOpen('c');
     view.measure(1440);
     expect(ruled(view)).toEqual({ a: true, b: false, c: false });

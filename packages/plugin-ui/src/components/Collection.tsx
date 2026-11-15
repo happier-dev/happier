@@ -48,7 +48,8 @@ import type { HappierTypeRole, HappierUiTheme, HappierUiTypography } from '../en
 import { useOptionalPluginUiPresentationHost, type PluginUiMenuSelection } from '../presentationHost/context.js';
 import { PluginUiScrollActivityProvider } from '../presentationHost/scrollActivity.js';
 import { HappierCollectionDetailWidthContext, HappierCollectionLayoutContext, resolveHappierCollectionLayoutState } from '../presentation/collection/collectionLayout.js';
-import { HAPPIER_COLLECTION_LIST_METRICS, HAPPIER_COLLECTION_LIST_TEXT, HappierCollectionRestingRowsContext, HappierCollectionTableRowContext, resolveHappierCollectionRowRole, type HappierCollectionRowRole, type HappierCollectionRestingRows, HappierCollectionTreeRowContext, type HappierCollectionTableRowFacts, type HappierCollectionTreeRowFacts } from '../presentation/collection/CollectionList.js';
+import { HAPPIER_COLLECTION_LIST_METRICS, HAPPIER_COLLECTION_LIST_TEXT, HappierCollectionRestingRowsContext, HappierCollectionTableRowContext, resolveHappierCollectionRowRole, type HappierCollectionRowRole, type HappierCollectionRestingRows, HappierCollectionTreeRowContext, type HappierCollectionTableRowFacts, type HappierCollectionTreeRowFacts, HappierListRowFollowedContext, HappierListRowOpenContext, HappierListRowPrecedesSelectedContext, HappierListRowRule, resolveHappierListRowRuleShown } from '../presentation/collection/CollectionList.js';
+import { useHappierListRowHovered } from '../presentation/collection/ListItemFrame.js';
 import {
   HAPPIER_COLLECTION_INSTANT_MOTION,
   HAPPIER_INSTANT_DISCLOSURE_MOTION,
@@ -791,6 +792,8 @@ const RULED_ROW: HappierCollectionTableRowFacts = Object.freeze({ hairline: true
 /** A ruled group's last row with another group's band under it: the band parts them. */
 const RULED_ROW_BEFORE_BAND: HappierCollectionTableRowFacts = Object.freeze({ hairline: true, beforeBand: true });
 const RESTING_LIST_ROW: HappierCollectionTableRowFacts = Object.freeze({ hairline: false });
+/** A list row beside the detail: its content draws the one list-row rule from its text column (owner 2026-11-15). */
+const RULED_LIST_ROW: HappierCollectionTableRowFacts = Object.freeze({ hairline: true, listRule: true });
 /** A catalog row beside the detail parts by air with an inset rounded fill (lab m:mcp), never a hairline. */
 const CATALOG_SIDE_ROW: HappierCollectionTableRowFacts = Object.freeze({ hairline: true, insetFill: true });
 /** The catalog side list's mark edge from the list's edge (lab m:mcp), its group headings on it. */
@@ -1444,6 +1447,8 @@ function ListCells<Item>(props: Readonly<{
   beneath: ReactNode;
   /** The `listColumn` fields drawn as the row's end columns (`CollectionStage.listColumns`). */
   listColumns: readonly CollectionField<Item>[];
+  /** The row draws the one list-row rule under it (every list row but a page sheet's, whose sheet divides its rows). */
+  rule: boolean;
 }>): ReactElement {
   const { item, anatomy, AnimatedView } = props;
   const typography = useOptionalHappierUiTypography();
@@ -1497,6 +1502,8 @@ function ListCells<Item>(props: Readonly<{
   // other sheet on the page, so a collection's sheet and an `ItemGroup` below it read as one anatomy. The list
   // never travels there (no table), so its rows size to their text.
   const page = props.pageSection;
+  // A page row's content starts on its section's row inset (a flat phone list: the page text edge).
+  const pageRowInsetPx = useHappierPageSection()?.rowInsetPx ?? HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx;
   // The resting list on the page's canvas (rows parted by air): its marks take the page row's leading column.
   const restingFlat = props.wrapTitle && !page && props.ruledInsetPx === null;
   const secondLine = page ? { ...resolveHappierPageTextStyle('rowDescription', typography), flexShrink: 1 } : undefined;
@@ -1540,9 +1547,11 @@ function ListCells<Item>(props: Readonly<{
   );
   return (
     <View pointerEvents={layer?.content} {...(catalog ? { onLayout: onCatalogRowLayout } : {})} style={[listRowContentStyle,
-      page ? pageRowContentStyle : props.wrapTitle || (catalog && !props.travelling) ? { minHeight: props.height } : { height: props.height },
+      page ? (pageRowInsetPx === HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx ? pageRowContentStyle
+        : [pageRowContentStyle, { paddingLeft: pageRowInsetPx - 1 }]) : props.wrapTitle || (catalog && !props.travelling) ? { minHeight: props.height } : { height: props.height },
       // A page row with nothing after it ends on the page row's inset, where a sub-heading's action ends.
-      page && props.ownsTrailingInset ? pageRowTrailingStyle : null,
+      page && props.ownsTrailingInset ? (pageRowInsetPx === HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx ? pageRowTrailingStyle
+        : { paddingRight: pageRowInsetPx - 1 }) : null,
       catalog ? catalogRowContentStyle : null,
       catalog && !page && !props.wrapTitle ? catalogSideRowContentStyle : null,
       props.wrapTitle && !page ? (props.ruledInsetPx !== null
@@ -1649,8 +1658,32 @@ function ListCells<Item>(props: Readonly<{
           <ListColumnValue value={field.render(item)} textStyle={secondLine} />
         </View>
       ))}
+      {props.rule ? (
+        <CollectionListRowRule
+          // The row's text column: its content inset, then its glyph column and gap when it leads with one.
+          startPx={(page ? pageRowInsetPx - 1
+            : props.wrapTitle ? (props.ruledInsetPx !== null ? ruledPaddingPx : HAPPIER_PAGE_METRICS.headingOpticalInsetPx - 1)
+            : catalog ? CATALOG_SIDE_INSET - 1 - HAPPIER_COLLECTION_LIST_METRICS.rowInset
+            : TABLE.insetStart - 1)
+            + (leadingControl === null && glyph === null && badge === null ? 0
+              : (catalog ? CATALOG_ROW.markBox : page || restingFlat ? HAPPIER_PAGE_METRICS.rowLeadingColumnPx : TABLE.glyphWidth - TABLE.gap)
+                + (page || restingFlat ? HAPPIER_PAGE_METRICS.rowLeadingGapPx : TABLE.gap))}
+          color={uiTheme.colors.divider}
+        />
+      ) : null}
     </View>
   );
+}
+
+/** A list row's rule, drawn while its list says another row follows and neither it nor the next row is filled. */
+function CollectionListRowRule(props: Readonly<{ startPx: number; color: string }>): ReactElement | null {
+  const followed = useContext(HappierListRowFollowedContext);
+  const selection = useContext(ListItemSelectionContext);
+  const open = useContext(HappierListRowOpenContext);
+  const precedesSelected = useContext(HappierListRowPrecedesSelectedContext);
+  const hovered = useHappierListRowHovered();
+  return resolveHappierListRowRuleShown({ followed, selected: selection?.selected === true || open, precedesSelected, hovered })
+    ? <HappierListRowRule startPx={props.startPx} color={props.color} /> : null;
 }
 
 /**
@@ -1793,6 +1826,7 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string; befo
         travelling={travel !== null}
         beneath={beneath}
         listColumns={stage.listColumns}
+        rule={stage.dividedKeys === null}
       />
       {travel === null ? null : (
         // The table's other columns, fading where they stood while the rows travel.
@@ -1854,7 +1888,8 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string; befo
     <HappierCollectionTableRowContext.Provider value={stage.catalogDirectory && geometry === 'list' ? CATALOG_SIDE_ROW
       : stage.wrapTitles && !stage.restingRuled ? RESTING_LIST_ROW
       : catalog && geometry === 'list' && !stage.wrapTitles ? CATALOG_SIDE_ROW
-      : props.beforeBand ? RULED_ROW_BEFORE_BAND : RULED_ROW}>
+      : props.beforeBand ? RULED_ROW_BEFORE_BAND
+      : geometry === 'list' && stage.dividedKeys === null ? RULED_LIST_ROW : RULED_ROW}>
       <HappierCollectionTreeRowContext.Provider value={treeFacts}>
         {renderCollectionItemDestination(host, anatomy, item, rowItem)}
       </HappierCollectionTreeRowContext.Provider>
@@ -2627,7 +2662,14 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
         columns: directoryColumns,
         columnGapPx: CATALOG_ROW.directoryColumnGap,
         ...(props.testID === undefined ? {} : { lineTestID: `${props.testID}:directory-line` }),
-      } } : { pageSheet: { colors: palette, header: pageSheetHeader, flatSheet: enclosingPageSheet === null, stackedHeadings: narrowRows } }),
+      } } : { pageSheet: {
+        colors: palette,
+        header: pageSheetHeader,
+        // A browse list on a phone lies flat on the page, its rows parted by their text-inset hairlines (owner 2026-11-15).
+        flatSheet: enclosingPageSheet === null && !narrowRows,
+        ...(enclosingPageSheet === null && narrowRows ? { rowInsetPx: HAPPIER_PAGE_METRICS.headingOpticalInsetPx } : {}),
+        stackedHeadings: narrowRows,
+      } }),
     } : wrapTitles || catalogSideList ? {
       // The resting list (a phone, a narrow page) groups on the page canvas: a plain heading over rows parted by
       // air (lab phone `.grp`), seated on its rows rather than banded off them. A catalog list beside its detail

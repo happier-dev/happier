@@ -67,8 +67,13 @@ export type ListCollectionControl = Readonly<{
      * (the table's column header recomposed: what the rows are, and the order they are in).
      */
     header?: ReactNode;
-    /** `false` inside a sheet that already encloses the collection (a page section's sheet): no second sheet. */
+    /**
+     * `false`: the rows lie on the page with no sheet of their own — inside a sheet that already encloses the collection
+     * (a page section's sheet), or a browse list on a phone (owner 2026-11-15: browse flat, no card per list).
+     */
     flatSheet?: boolean;
+    /** With no sheet of its own, from the page column to the rows' content (a phone's browse list: the page text edge). */
+    rowInsetPx?: number;
     /** A grouped list that is one table (it has totals): the bar, every group's band and rows, then the footer on one sheet. */
     oneSheet?: boolean;
     /**
