@@ -402,6 +402,25 @@ it.skipIf(process.platform !== 'linux')('preserves the encrypted original Action
 });
 
 
+/** Model Home's real exclusion of the originating daemon socket (forwardRpcCall self-call). */
+function rejectSelfCalls(setup: Awaited<ReturnType<typeof createRequesterWorkspaceSyncFixture>>): string[] {
+  const rejected: string[] = [];
+  Reflect.set(setup.installed.machine, 'socket', createApiSessionSocketStub({ connected: true,
+    emitWithAck: async (event, payload) => {
+      if (event === MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1) {
+        return MachineUpdateOperationProtocolCapabilitiesResponseV1Schema.parse({ v: 1, result: 'success', revision: 1 });
+      }
+      if (event === 'rpc-call' && payload && typeof payload === 'object' && 'method' in payload
+        && typeof payload.method === 'string' && payload.method.startsWith(`${setup.installed.machineId}:`)
+        && payload.method !== `${setup.installed.machineId}:${RPC_METHODS.CAPABILITIES_DESCRIBE}`) {
+        rejected.push(payload.method);
+        return { ok: false, error: 'Cannot call RPC on the same socket' };
+      }
+      return resolveApiSessionSocketDefaultAck(event, payload);
+    } }));
+  return rejected;
+}
+
 // Owner ruling 2026-11-14: Can use reaches only its own member folder through Project
 // Open; a same-Machine worker copy through relationship.create needs Manage.
 it.skipIf(process.platform !== 'linux')('refuses a Can use same-Machine worker copy through relationship.create with the typed Manage cause', async () => {
@@ -431,8 +450,9 @@ it.skipIf(process.platform !== 'linux').each([
   const setup = await createRequesterWorkspaceSyncFixture({ role, socketIo,
     remoteTarget, targetCustodianAccountId: role === 'manage' ? 'requester' : 'member-a',
     workerCleanCopy: true, originalActionHomeHttp: true });
+  const rejectedSelfCalls = remoteTarget ? [] : rejectSelfCalls(setup);
   const result = await setup.executeNativeRelationshipAction();
-  expect(result, JSON.stringify({ result, diagnostics: setup.rpcDiagnostics, target: setup.targetRpcDiagnostics }))
+  expect(result, JSON.stringify({ result, rejectedSelfCalls, diagnostics: setup.rpcDiagnostics, target: setup.targetRpcDiagnostics }))
     .toMatchObject({ ok: true, result: { created: true } });
   expect(setup.approvalArtifacts.size).toBe(0);
   expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
@@ -443,6 +463,7 @@ it.skipIf(process.platform !== 'linux')('executes local exact-copy native review
   executionBoundary.member = false;
   const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo,
     workerCleanCopy: true, allowRelationshipAction: true, originalActionHomeHttp: true });
+  const rejectedSelfCalls = rejectSelfCalls(setup);
 
   const preflight = vi.spyOn(setup.installed.machine, 'preflightWorkspaceSyncRelationshipTarget');
   const result = await setup.executeNativeRelationshipAction();
@@ -450,7 +471,7 @@ it.skipIf(process.platform !== 'linux')('executes local exact-copy native review
     try { return await call.value; }
     catch (error) { return error instanceof Error ? { message: error.message, stack: error.stack } : String(error); }
   }));
-  expect(result, JSON.stringify({ result, preflightResults, diagnostics: setup.rpcDiagnostics,
+  expect(result, JSON.stringify({ result, rejectedSelfCalls, preflightResults, diagnostics: setup.rpcDiagnostics,
     approvalArtifactIds: [...setup.approvalArtifacts.keys()] })).toMatchObject({ ok: true, result: { created: true } });
   expect(setup.homeActionRequests).toHaveLength(2);
   expect(setup.approvalArtifacts.size).toBe(0);

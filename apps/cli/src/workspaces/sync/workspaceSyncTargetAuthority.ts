@@ -951,9 +951,10 @@ export function createWorkspaceSyncTargetAuthority(
   const readInvocationSnapshot = async (signal?: AbortSignal, context?: RpcHandlerContext, operationId?: string): Promise<ActiveProjectAccountRowsSnapshot> => {
     const authorization = context?.callerInputAuthorization;
     if (!authorization) return getSnapshot(operationId);
-    const account = authorization.requesterAccountProjection;
-    const http = authorization.requesterHttpProjection;
-    if (!account || !http || !dependencies.refreshProjectSnapshot) {
+    // The refresh owner decides requester currentness once: the installed row
+    // reader validates the host-only projections, and a member's refresh is the
+    // host's already-admitted requester custody. Do not re-check them here.
+    if (!dependencies.refreshProjectSnapshot) {
       throw authorityError('project_requester_authority_unavailable', 'The admitted requester projection is unavailable');
     }
     signal?.throwIfAborted();

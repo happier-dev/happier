@@ -739,6 +739,9 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
     }),
   });
   registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: diagnosticRegistrarFor(rpc), service: fixture.parent.workspaceSync });
+  // As in production, the installed daemon's own manager carries the Sync
+  // handlers: a same-Machine TARGET phase is invoked there in-process.
+  registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: installed.rpcHandlerManager, service: fixture.parent.workspaceSync });
   sourceRpc = rpc;
   workspaceSyncService = fixture.parent.workspaceSync;
   await fixture.registerSeedExport(installed.rpcHandlerManager);

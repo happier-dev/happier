@@ -4319,7 +4319,25 @@ export class ApiMachineClient {
                     targetContext: workspaceSyncSourceWriterTargetRouting.source.sourceContext })) {
                 throw Object.assign(new Error('Workspace target authority is unavailable'), { code: 'peer_unavailable' });
             }
-            const result = await this.callWorkspaceSyncPhysicalMachineRpc({ ...input,
+            // Home never routes a daemon's signed call back to its own socket. A
+            // same-Machine TARGET receives the context Home would deliver, in-process:
+            // the source side's admitted requester and its verified native consent;
+            // cleanup phases run as this installed writer, as Home delivers them.
+            const cleanup = isWorkspaceSyncSourceWriterCleanupPhaseV1(input.routing.phase);
+            const admission = input.context.machineAdmission;
+            const result = input.routing.targetMachineId === this.machine.id
+                ? await this.rpcHandlerManager.invokeLocal(input.method, input.request, {
+                    ...(input.signal ?? input.context.signal ? { signal: input.signal ?? input.context.signal } : {}),
+                    rpcContext: { machineAdmission: cleanup && admission
+                            ? { ...admission, actorAccountId: admission.custodianAccountId, role: 'manage' as const } : admission,
+                        verifyMachineAdmissionCurrent: input.context.verifyMachineAdmissionCurrent,
+                        ...(cleanup ? {} : { callerInputAuthorization: input.context.callerInputAuthorization }),
+                        callerAuthority: input.context.authority ?? 'account_automation',
+                        ...(input.context.callerInputConstraints ? { callerInputConstraints: input.context.callerInputConstraints } : {}),
+                        ...(input.context.sessionActionOrigin ? { sessionActionOrigin: input.context.sessionActionOrigin } : {}),
+                        ...(input.context.originalActionEnvelope ? { originalActionEnvelope: input.context.originalActionEnvelope } : {}),
+                        workspaceSyncSourceWriterTargetRouting } })
+                : await this.callWorkspaceSyncPhysicalMachineRpc({ ...input,
                 originalMachineId: workspaceSyncSourceWriterTargetRouting.source.sourceMachineId,
                 accountServerId: input.routing.accountServerId, requireCurrentAdmission: input.routing.phase !== 'release',
                 signedEffectActionId: input.context.callerInputAuthorization.binding.actionId, routing: { workspaceSyncSourceWriterTargetRouting } });
