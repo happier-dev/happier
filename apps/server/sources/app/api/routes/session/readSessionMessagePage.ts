@@ -7,7 +7,7 @@ import { catchupFollowupFetchesCounter } from "@/app/monitoring/metrics/index";
 import { EXTERNAL_SHAREABLE_TRANSCRIPT_MAX_PAGE_ROWS_V1, EXTERNAL_SHAREABLE_TRANSCRIPT_MAX_REFERENCED_USER_ROWS_V1, EXTERNAL_SHAREABLE_TRANSCRIPT_MAX_SNAPSHOT_TURNS_V1, ExternalShareableTranscriptSnapshotV1Schema } from '@happier-dev/protocol/sessions/messages/sessionExternalShareableTranscriptV1';
 import { projectSessionMessageAccountActors } from "@/app/session/messages/projectSessionMessageAccountActors";
 import { parseSessionMessageSidechainId } from "@/app/session/parseSessionMessageSidechainId";
-import { buildSessionMessagePublicationWhere, buildShareableSessionMessagePublicationWhere, isExternalShareableSessionTurnVisible, isSessionTranscriptPublicationBlocked, loadSessionTranscriptPublication, resolveExternalShareableTranscriptBlockedFromSeq, resolveExternalShareableTranscriptTurnSettlementBlockedFromSeq } from "@/app/session/sessionTranscriptPublicationPolicy";
+import { buildSessionMessagePublicationWhere, buildShareableSessionMessagePublicationWhere, isExternalShareableSessionTurnVisible, isSessionTranscriptPublicationBlocked, hasSessionTranscriptPublicationLiveFacts, loadSessionTranscriptPublication, resolveExternalShareableTranscriptBlockedFromSeq, resolveExternalShareableTranscriptTurnSettlementBlockedFromSeq } from "@/app/session/sessionTranscriptPublicationPolicy";
 import { parseStoredSessionTurns } from "@/app/session/turns/parseSessionTurnState";
 import { isSessionTurnTranscriptAnchorProjectionCurrent } from "@/app/session/turns/sessionTurnTranscriptAnchorProjection";
 import { ensureSessionTurnTranscriptAnchorProjection } from "@/app/session/turns/sessionTurnTranscriptAnchorProjectionBackfill";
@@ -16,6 +16,7 @@ import { resolveSessionAccessForOperation } from '@/app/session/access/sessionAc
 import { captureReadSnapshot } from '@/storage/captureReadSnapshot';
 import { PRESENT_USER_REQUIRED_ERROR } from "@/app/api/utils/apiTokenRouteAdmission";
 import { SessionTranscriptMessagePageResponseSchema, type SessionListPreviewQuery, isAdmittedSessionListPreviewRequest, readExternalShareableSequence, projectExternalShareableReferencedUserRow, resolveRequestedMessageRoles, buildRequestedMessageRoleWhere, SESSION_MESSAGE_PAGE_ROW_SELECT, projectSessionMessagePage, SESSION_MESSAGE_PAGE_DEFAULT_LIMIT } from './sessionMessagePageProjection';
+import { readSessionMessagePageActivity } from './readSessionMessagePageActivity';
 /** Paginated projections share admission and row projection with first-page batches. */
 export async function readSessionMessagePage(input: Readonly<{
     userId: string;
@@ -42,6 +43,7 @@ export async function readSessionMessagePage(input: Readonly<{
         && previewRequest.externalActionEffectActionId === "session.list";
     const externalShareableProjection = query?.projection === "externalShareableV1";
     const turnProjection = query?.projection === "turns";
+    const activityProjection = query?.projection === "activity";
     const { beforeSeq, afterSeq } = query ?? {};
     const limit = query?.limit ?? (externalShareableProjection
         ? EXTERNAL_SHAREABLE_TRANSCRIPT_MAX_PAGE_ROWS_V1
@@ -57,6 +59,9 @@ export async function readSessionMessagePage(input: Readonly<{
             return raw;
         return "main";
     })();
+    if (activityProjection && scope !== "main") {
+        return { status: 400, body: { error: "Invalid parameters", code: "invalid-activity-scope" } };
+    }
     const parsedSidechainId = parseSessionMessageSidechainId(query?.sidechainId, { emptyString: "null" });
     const sidechainId = parsedSidechainId.ok ? parsedSidechainId.sidechainId : null;
     if (scope === "sidechain" && sidechainId === null) {
@@ -91,13 +96,13 @@ export async function readSessionMessagePage(input: Readonly<{
     if (admittedAccessDecision?.status === 'allowed') {
         await ensureSessionTurnTranscriptAnchorProjection(sessionId);
     }
-    const { messages: resultMessages, hasMore, publicationBlocked, externalShareableSnapshot, accessDecision: snapshotAccessDecision, turnProjectionNextBeforeSeq, pageAccountActors, } = await captureReadSnapshot(async (tx) => {
+    const { messages: resultMessages, hasMore, publicationBlocked, externalShareableSnapshot, accessDecision: snapshotAccessDecision, turnProjectionNextBeforeSeq, pageAccountActors, activity, pendingOwnsTranscriptLocalIds, } = await captureReadSnapshot(async (tx) => {
         const accessDecision = admittedAccessDecision ?? await resolveSessionAccessForOperation(tx, { accountId: userId,
             sessionId, authentication, capability: 'readTranscript' });
         if (accessDecision.status !== 'allowed')
             return { messages: [], hasMore: false,
                 publicationBlocked: false, externalShareableSnapshot: undefined, accessDecision,
-                turnProjectionNextBeforeSeq: null, pageAccountActors: [] };
+                turnProjectionNextBeforeSeq: null, pageAccountActors: [], activity: undefined, pendingOwnsTranscriptLocalIds: undefined };
         const publication = await loadSessionTranscriptPublication(tx, sessionId);
         const currentParticipantWhere = { id: sessionId };
         // TURN PROJECTION: each prompt plus that turn's final reply, read from the anchors
@@ -155,6 +160,10 @@ export async function readSessionMessagePage(input: Readonly<{
         const messages = turnProjectionPaging !== null
             ? fetchedMessages
             : hasMore ? fetchedMessages.slice(0, limit) : fetchedMessages;
+        const activitySnapshot = activityProjection && hasSessionTranscriptPublicationLiveFacts(publication)
+            ? await readSessionMessagePageActivity(tx, { sessionId, messages,
+                includeActivity: beforeSeq === undefined && afterSeq === undefined })
+            : undefined;
         let externalShareableSnapshot: ReturnType<typeof ExternalShareableTranscriptSnapshotV1Schema.parse> | undefined;
         let turnSettlementBlockedFromSeq: number | null = null;
         let publicationBlockedFromSeq: number | null = null;
@@ -295,6 +304,8 @@ export async function readSessionMessagePage(input: Readonly<{
         return {
             messages,
             hasMore,
+            activity: activitySnapshot?.activity,
+            pendingOwnsTranscriptLocalIds: activitySnapshot?.pendingOwnsTranscriptLocalIds,
             publicationBlocked: externalShareableProjection
                 && isSessionTranscriptPublicationBlocked(publication),
             externalShareableSnapshot,
@@ -321,5 +332,5 @@ export async function readSessionMessagePage(input: Readonly<{
         return { status: 404, body: { error: 'Session not found' } };
     }
     return projectSessionMessagePage({ sessionId, resultMessages, hasMore, publicationBlocked, externalShareableSnapshot,
-        turnProjectionNextBeforeSeq, pageAccountActors, sessionListPreviewProjection, externalShareableProjection, turnProjection, afterSeq });
+        turnProjectionNextBeforeSeq, pageAccountActors, activity, pendingOwnsTranscriptLocalIds, sessionListPreviewProjection, externalShareableProjection, turnProjection, afterSeq });
 }

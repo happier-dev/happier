@@ -294,3 +294,8 @@ export function isPendingDeliveryStatusTransitionAllowedV1(
   }
   return to.status === 'queued';
 }
+
+/** A durable Pending row keeps its committed transcript twin provisional until delivery starts. */
+export function doesPendingDeliveryOwnTranscriptV1(status: Pick<PendingDeliveryStatusV1, 'status'>): boolean {
+    return status.status !== 'delivering' && status.status !== 'external_handoff';
+}

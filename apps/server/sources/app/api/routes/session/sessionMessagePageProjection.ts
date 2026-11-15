@@ -1,3 +1,4 @@
+import { SessionMessagePageActivityV1Schema, type SessionMessagePageActivityV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import type { Prisma } from "@prisma/client";
 import type { FastifyRequest } from "fastify";
 import { z } from "zod/mini";
@@ -71,6 +72,7 @@ export const SessionTranscriptMessagePageResponseSchema = z.strictObject({
         sidechainId: z.optional(z.string().check(z.minLength(1))),
         messageRole: z.optional(SessionMessageRoleSchema),
         deliveryResolution: z.optional(SessionMessageDeliveryResolutionV1Schema),
+        pendingOwnsTranscript: z.optional(z.literal(true)),
         followDeliveryProjection: z.optional(FollowDeliveryProjectionV1Schema),
         createdAt: z.number().check(z.int(), z.minimum(0)),
         updatedAt: z.number().check(z.int(), z.minimum(0)),
@@ -93,6 +95,7 @@ export const SessionTranscriptMessagePageResponseSchema = z.strictObject({
     nextAfterSeq: z.nullable(z.number().check(z.int(), z.minimum(0))),
     publicationBlocked: z.optional(z.boolean()),
     externalShareableSnapshot: z.optional(ExternalShareableTranscriptSnapshotV1Schema),
+    activity: z.optional(SessionMessagePageActivityV1Schema),
 });
 export function deriveExternalShareableActor(params: Readonly<{
     inputAdmissionReceipt: unknown;
@@ -262,6 +265,8 @@ export function projectSessionMessagePage(input: Readonly<{
     hasMore: boolean;
     publicationBlocked?: boolean;
     externalShareableSnapshot?: z.infer<typeof ExternalShareableTranscriptSnapshotV1Schema>;
+    activity?: SessionMessagePageActivityV1;
+    pendingOwnsTranscriptLocalIds?: ReadonlySet<string>;
     turnProjectionNextBeforeSeq: number | null;
     pageAccountActors: readonly (z.infer<typeof SessionMessageAccountActorV1Schema> | null)[] | undefined;
     sessionListPreviewProjection: boolean;
@@ -269,7 +274,7 @@ export function projectSessionMessagePage(input: Readonly<{
     turnProjection: boolean;
     afterSeq?: number;
 }>): SessionMessagePageResponse {
-    const { sessionId, resultMessages, hasMore, publicationBlocked, externalShareableSnapshot, turnProjectionNextBeforeSeq, pageAccountActors, sessionListPreviewProjection, externalShareableProjection, turnProjection, afterSeq } = input;
+    const { sessionId, resultMessages, hasMore, publicationBlocked, externalShareableSnapshot, activity, pendingOwnsTranscriptLocalIds, turnProjectionNextBeforeSeq, pageAccountActors, sessionListPreviewProjection, externalShareableProjection, turnProjection, afterSeq } = input;
     const parsedResultContents: SessionStoredMessageContent[] = [];
     for (const message of resultMessages) {
         const parsedContent = SessionStoredMessageContentSchema.safeParse(message.content);
@@ -319,6 +324,7 @@ export function projectSessionMessagePage(input: Readonly<{
                 })() : {}),
                 ...(!externalShareableProjection && !sessionListPreviewProjection
                     ? projectSessionFollowWakeBatchDelivery(v) : {}),
+                ...(pendingOwnsTranscriptLocalIds?.has(v.localId ?? '') ? { pendingOwnsTranscript: true as const } : {}),
                 createdAt: v.createdAt.getTime(),
                 updatedAt: v.updatedAt.getTime(),
                 ...(!sessionListPreviewProjection && v.sourceCreatedAt
@@ -371,5 +377,6 @@ export function projectSessionMessagePage(input: Readonly<{
             nextBeforeSeq: sessionListPreviewProjection ? null : nextBeforeSeq,
             nextAfterSeq: sessionListPreviewProjection ? null : nextAfterSeq,
             ...(externalShareableProjection ? { publicationBlocked, externalShareableSnapshot } : {}),
+            ...(activity ? { activity } : {}),
         }) };
 }

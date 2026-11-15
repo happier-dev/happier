@@ -278,7 +278,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
                 afterSeq: z.optional(z.coerce.number().check(z.int(), z.minimum(0))),
                 role: z.optional(SessionMessageRoleSchema),
                 roles: z.optional(z.string()),
-                projection: z.optional(z.enum(["externalShareableV1", "turns"])),
+                projection: z.optional(z.enum(["externalShareableV1", "turns", "activity"])),
             }).check(z.superRefine((value, ctx) => {
                 if (value.messageId !== undefined && (value.beforeSeq !== undefined
                     || value.afterSeq !== undefined || value.limit !== undefined || value.projection !== undefined)) {
