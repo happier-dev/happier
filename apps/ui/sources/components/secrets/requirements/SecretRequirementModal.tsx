@@ -36,8 +36,6 @@ import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 
 
-const secretRequirementSelectionMemory = new Map<string, 'machine' | 'saved' | 'once'>();
-
 export type SecretRequirementModalResult =
     | { action: 'cancel' }
     | { action: 'useMachine'; envVarName: string }
@@ -191,7 +189,6 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
         return typeof initial === 'string' ? initial : '';
     });
     const sessionOnlyInputRef = React.useRef<React.ElementRef<typeof TextInput> | null>(null);
-    const selectionKey = `${props.profile.id}:${activeEnvVarName}:${props.machineId ?? 'no-machine'}`;
     const [selectedSource, setSelectedSource] = React.useState<'machine' | 'saved' | 'once' | null>(() => {
         if (variant === 'defaultForProfile') return 'saved';
         const selectedRaw = props.selectedSecretIdByEnvVarName?.[activeEnvVarName];
@@ -251,11 +248,6 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
         }
         setSelectedSource(null);
     }, [allowedSources, localDefaultSecretId, props.defaultSecretId, props.machineId, selectedSource, variant]);
-
-    React.useEffect(() => {
-        if (!selectedSource) return;
-        secretRequirementSelectionMemory.set(selectionKey, selectedSource);
-    }, [selectionKey, selectedSource]);
 
     // When "Use once" is selected, focus the input. This avoids cases where touch handling
     // inside nested modal/list layouts makes the TextInput hard to focus.

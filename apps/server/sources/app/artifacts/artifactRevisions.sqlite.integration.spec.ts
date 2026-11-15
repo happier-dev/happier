@@ -4,6 +4,8 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL
 import tweetnacl from "tweetnacl";
 import { createHash } from "node:crypto";
 import { request as requestHttp } from 'node:http';
+import { Readable } from 'node:stream';
+import { readFiniteTransferConfig } from '@happier-dev/transfers/node';
 import { readPrivateFile } from "@/storage/blob/files";
 import * as privateFiles from '@/storage/blob/files';
 import { db } from "@/storage/db";
@@ -211,6 +213,49 @@ describe("Artifact revisions and storage budgets (real SQLite)", () => {
                 boundary.mockRestore();
             }
         });
+    });
+
+    it.each(['plain', 'e2ee'] as const)('keeps a request-owned %s upload alive while awaiting more bytes beyond the transfer TTL', async mode => {
+        const owner = await db.account.create({ data: { encryptionMode: mode,
+            ...(mode === 'e2ee' ? createSignedAccountContentBinding() : {}) } });
+        const id = crypto.randomUUID();
+        const blobId = crypto.randomUUID();
+        const bytes = Uint8Array.of(0, 255, 12);
+        const content = privacyKit.encodeBase64(bytes);
+        const metadata = { kind: 'create', artifactId: id, blobId, t: mode === 'plain' ? 'plain' : 'encrypted',
+            sizeBytes: bytes.length,
+            header: mode === 'plain' ? encodePlainArtifactStoredContent({ title: 'Slow upload' }) : content,
+            body: mode === 'plain' ? encodePlainArtifactStoredContent({ body: { blobId, mime: 'application/octet-stream',
+                sizeBytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') } }) : content,
+            dataEncryptionKey: mode === 'plain' ? ARTIFACT_PLAIN_DATA_KEY_MARKER
+                : privacyKit.encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: tweetnacl.randomBytes(32),
+                    recipientPublicKey: owner.contentPublicKey!, randomBytes: tweetnacl.randomBytes })) };
+        const ttlMs = readFiniteTransferConfig(process.env).ttlMs;
+        const clock = vi.spyOn(Date, 'now');
+        // Supply the network boundary as a demand-driven stream. Its next body
+        // chunk is requested only after the real route has admitted metadata and
+        // opened the real temporary file; no internal lifecycle is replaced.
+        const stream = new Readable({ read() {} });
+        Object.defineProperty(stream, Symbol.asyncIterator, { value: async function* () {
+            yield Buffer.from(`${JSON.stringify(metadata)}\n`);
+            clock.mockReturnValue(Date.now() + ttlMs + 1);
+            yield bytes;
+        } });
+        try {
+            await withAuthenticatedTestApp(app => {
+                app.addHook('preHandler', async (request: { body: unknown; url: string }) => {
+                    if (request.url === '/v1/artifacts/content/upload') request.body = stream;
+                });
+                artifactsRoutes(app);
+            }, async app => {
+                const response = await app.inject({ method: 'POST', url: '/v1/artifacts/content/upload',
+                    headers: { ...headers(owner.id), 'content-type': 'application/vnd.happier.artifact-upload-v1' }, payload: '' });
+                expect(response.statusCode, response.body).toBe(200);
+                const read = await app.inject({ method: 'GET', url: `/v1/artifacts/${id}/blobs/${blobId}`, headers: headers(owner.id) });
+                expect(read.statusCode, read.body).toBe(200);
+                expect(read.json()).toEqual({ blobId, content: mode === 'plain' ? { t: 'plain', v: content } : { t: 'encrypted', c: content } });
+            });
+        } finally { clock.mockRestore(); stream.destroy(); }
     });
 
     it('uploads binary bytes beyond the JSON body boundary through authenticated finite chunks', async () => {

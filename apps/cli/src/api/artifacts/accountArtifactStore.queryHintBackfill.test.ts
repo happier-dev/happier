@@ -24,7 +24,8 @@ async function withHome(mode: 'plain' | 'e2ee', options: Readonly<{ supported?: 
   unreadableIndex?: number; omitNotice?: boolean; classifiedNoticeInventory?: boolean; approvalInventory?: boolean; onFeaturesRequest?(): Promise<void>;
   onUnclassifiedPage?(): void }>,
   run: (home: Readonly<{ store: ReturnType<typeof createAccountArtifactStore>; requests: string[]; batches: string[][];
-    bodyReads: string[]; approvalHints: unknown[]; credentials: StoredCredentials; serverUrl: string; remaining(): number; setAccountMode(mode: 'plain' | 'e2ee'): void }>) => Promise<void>) {
+    bodyReads: string[]; approvalHints: unknown[]; credentials: StoredCredentials; serverUrl: string; remaining(): number;
+    featureDecisions(): number; setAccountMode(mode: 'plain' | 'e2ee'): void }>) => Promise<void>) {
   const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
   const credentials = { token, encryption: mode === 'plain' ? null : { type: 'legacy' as const, secret: new Uint8Array(32).fill(21) } };
   const resource = await createResourceDataKey({ credentials, mode });
@@ -54,6 +55,7 @@ async function withHome(mode: 'plain' | 'e2ee', options: Readonly<{ supported?: 
   const batches: string[][] = [];
   const bodyReads: string[] = [];
   const approvalHints: unknown[] = [];
+  let featureDecisions = 0;
   const unclassified = (row: typeof rows[number]) => !decodeArtifactKindV1(row.kind).classified
     || isApprovalArtifactKindV1(decodeArtifactKindV1(row.kind).kindHint) && row.approvalState === null;
   const remaining = () => rows.filter(unclassified).length;
@@ -140,9 +142,9 @@ async function withHome(mode: 'plain' | 'e2ee', options: Readonly<{ supported?: 
     const serverUrl = `http://127.0.0.1:${address.port}`;
     await runWithServerHttpBaseUrl(serverUrl, async () => {
       const input = { credentials, getAccountEncryptionMode: async () => mode,
-        resolveServerFeaturesSnapshot: () => fetchServerFeaturesSnapshot({ serverUrl }) };
+        resolveServerFeaturesSnapshot: () => { featureDecisions++; return fetchServerFeaturesSnapshot({ serverUrl }); } };
       await run({ store: createAccountArtifactStore(input), requests, batches, bodyReads, approvalHints, credentials, serverUrl, remaining,
-        setAccountMode: value => { accountMode = value; } });
+        featureDecisions: () => featureDecisions, setAccountMode: value => { accountMode = value; } });
     });
   } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 }
@@ -163,6 +165,7 @@ describe('explicit daemon Account Artifact query-hint backfill', () => {
   it.each(['plain', 'e2ee'] as const)('labels all 1001 %s legacy headers with one framed write, then never rewrites completed inventory', async mode => {
     await withHome(mode, {}, async home => {
       expect(await backfill(home.store)).toMatchObject({ status: 'complete', unclassifiedCount: 0 });
+      expect(home.featureDecisions()).toBe(1);
       expect(home.batches).toHaveLength(1);
       expect(home.batches[0]).toHaveLength(1001);
       expect(home.bodyReads).toEqual([]);
@@ -170,6 +173,7 @@ describe('explicit daemon Account Artifact query-hint backfill', () => {
       expect(home.requests.filter(path => path.includes('unclassified=true')).every(path => new URL(path.slice(4), 'http://localhost').searchParams.get('ownerAccountId') === 'owner')).toBe(true);
       expect(home.requests.filter(path => path.includes('kinds=%5B%5D'))).toHaveLength(1);
       expect(await backfill(home.store)).toMatchObject({ status: 'complete', unclassifiedCount: 0 });
+      expect(home.featureDecisions()).toBe(2);
       expect(home.batches).toHaveLength(1);
       expect(home.bodyReads).toEqual([]);
       const before = home.requests.length;

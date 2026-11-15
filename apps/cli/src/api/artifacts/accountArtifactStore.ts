@@ -1466,8 +1466,6 @@ export function createAccountArtifactStore(params: Readonly<{
       } while (cursor);
       for (const input of frameArtifactKindWriteBatchesV1(labels)) {
         if (options.signal.aborted) return { status: 'retired' };
-        if (!await supportsQueryHints()) return { status: 'unsupported' };
-        if (options.signal.aborted) return { status: 'retired' };
         phase = 'write_unavailable';
         const response = await axios.post(`${resolveServerHttpBaseUrl()}/v1/artifacts/query-hints/batch`, input, accessConfig(options.signal));
         if (options.signal.aborted) return { status: 'retired' };

@@ -1694,6 +1694,9 @@ upload-reservation Discussion, file ACL or attachment key is created. Metadata e
 structural IDs, envelope kinds and stored lengths, not names or plaintext hashes.
 The per-leaf boundary derives from the existing attachment-upload size preference
 and its supported maximum; there is no new Discussion count or aggregate quota.
+The HTTP request retains each active attachment receiver while awaiting bytes;
+transfer inactivity expiry does not interrupt it. Its existing request cleanup
+releases temporary files on completion or failure.
 
 `GET /v1/discussions/:discussionId/messages/:messageId/attachments/:blobId`
 returns the explicit plain/encrypted byte envelope under current exact-message
@@ -3111,6 +3114,9 @@ finalized conversion stage uses `DELETE /v1/artifacts/content/uploads/:uploadId`
 The existing request-bound transfer lifecycle
 owns chunk order, declared length, integrity and temporary-file cleanup; normal
 uploads finalize through the same Artifact mutation owner, not another writer.
+The open HTTP request retains its receiver while waiting for bytes; transfer
+inactivity expiry does not interrupt it. Request completion or failure releases
+the receiver's temporary file.
 An `encryption-conversion` destination instead finalizes to private staging
 custody `{t,uploadId,contentSha256}`. The existing signed Account conversion
 directive includes that stage with `blobId` and `expectedContentSha256` for each

@@ -1845,6 +1845,8 @@ Promise<Readonly<{ authorization: ExternalActionExecutionAuthorizationV1; envelo
   if (remoteReceiver) return { authorization: Object.freeze(carried), envelope };
   const authorization = await projectExternalActionRequesterHttpAuthorization({
     authorization: carried,
+    // Home just admitted this exact locally received binding above.
+    rootAdmitted: true,
     serverId: input.serverId, serverIdentityId: input.serverIdentityId,
     serverHttpBaseUrl: input.serverHttpBaseUrl, target: input.target,
     installationId: input.installationId, privateKey: input.privateKey, isCurrent: continuationCurrent,

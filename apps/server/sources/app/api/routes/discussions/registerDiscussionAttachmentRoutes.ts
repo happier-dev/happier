@@ -136,7 +136,7 @@ export function registerDiscussionAttachmentRoutes(app: Fastify,
         const routes = createServerFeatureGatedRouteApp(scoped, 'sessions.conversations', process.env, { error: 'discussions_unavailable' });
         const rateLimit = resolveApiHotEndpointRateLimit(process.env, 'session.discussions');
         const config = readFiniteTransferConfig(process.env);
-        const store = new TransferSessionStore({ ttlMs: config.ttlMs, expiryTrigger: 'self' });
+        const store = new TransferSessionStore({ ttlMs: config.ttlMs });
         const lifecycle = createTransferSessionLifecycle({ store, chunkSizeBytes: config.chunkSizeBytes });
         scoped.addHook('onClose', async () => { await store.dispose(); });
         scoped.addContentTypeParser(DISCUSSION_UPLOAD_CONTENT_TYPE_V1, (_request, payload, done) => done(null, payload));
@@ -240,16 +240,20 @@ export function registerDiscussionAttachmentRoutes(app: Fastify,
                             },
                         } });
                         uploadIds.push(opened.uploadId);
-                        let chunkIndex = 0;
-                        for await (const chunk of chunks) for (let offset = 0; offset < chunk.byteLength; offset += config.chunkSizeBytes) {
-                            if (canceled) throw new Error('Discussion upload canceled');
-                            const written = await lifecycle.writeUploadTransferChunk({ uploadId: opened.uploadId, index: chunkIndex++,
-                                contentBase64: encodeBase64(new Uint8Array(chunk.subarray(offset, offset + config.chunkSizeBytes))) });
-                            if (!written.success) throw new Error('Discussion upload chunk refused');
-                        }
-                        const finalized = await lifecycle.finalizeUploadTransferSession({ uploadId: opened.uploadId });
-                        if (!finalized.success) throw new Error('Discussion upload incomplete');
-                        if (target.operation === 'encryption-conversion') conversionResult = finalized.finalized.result;
+                        // The request owns this segment across waits for its next bytes.
+                        const releaseUpload = store.beginUploadSessionOperation(opened.uploadId)?.release;
+                        try {
+                            let chunkIndex = 0;
+                            for await (const chunk of chunks) for (let offset = 0; offset < chunk.byteLength; offset += config.chunkSizeBytes) {
+                                if (canceled) throw new Error('Discussion upload canceled');
+                                const written = await lifecycle.writeUploadTransferChunk({ uploadId: opened.uploadId, index: chunkIndex++,
+                                    contentBase64: encodeBase64(new Uint8Array(chunk.subarray(offset, offset + config.chunkSizeBytes))) });
+                                if (!written.success) throw new Error('Discussion upload chunk refused');
+                            }
+                            const finalized = await lifecycle.finalizeUploadTransferSession({ uploadId: opened.uploadId });
+                            if (!finalized.success) throw new Error('Discussion upload incomplete');
+                            if (target.operation === 'encryption-conversion') conversionResult = finalized.finalized.result;
+                        } finally { releaseUpload?.(); }
                     },
                 });
                 if (canceled) throw new DiscussionUploadRefusal('discussion_invalid_content');

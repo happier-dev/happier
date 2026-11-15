@@ -46,12 +46,13 @@ async function admitDestination(accountId: string, metadata: ArtifactBlobUploadI
 export function registerArtifactUploadRoutes(app: Fastify): void {
     app.register(async scoped => {
         const config = readFiniteTransferConfig(process.env);
-        const store = new TransferSessionStore({ ttlMs: config.ttlMs, expiryTrigger: 'self' });
+        const store = new TransferSessionStore({ ttlMs: config.ttlMs });
         const lifecycle = createTransferSessionLifecycle({ store, chunkSizeBytes: config.chunkSizeBytes });
         scoped.addHook('onClose', async () => { await store.dispose(); });
         scoped.addContentTypeParser(ARTIFACT_UPLOAD_CONTENT_TYPE_V1, (_request, payload, done) => done(null, payload));
         scoped.post(ARTIFACT_UPLOAD_PATH_V1, { preHandler: scoped.authenticate }, async (request, reply) => {
             let uploadId: string | null = null;
+            let releaseUpload: (() => void) | undefined;
             let stageId: string | null = null;
             let canceled = request.raw.aborted;
             const cancelStage = async () => {
@@ -118,6 +119,8 @@ export function registerArtifactUploadRoutes(app: Fastify): void {
                             },
                         } });
                         uploadId = session.uploadId;
+                        // The HTTP request owns this receiver across waits for its next bytes.
+                        releaseUpload = store.beginUploadSessionOperation(uploadId)?.release;
                         return [{ storedSizeBytes: metadata.sizeBytes }];
                     },
                     onSegment: async (_index, chunks) => { for await (const bytes of chunks) await writeBytes(bytes); },
@@ -138,7 +141,9 @@ export function registerArtifactUploadRoutes(app: Fastify): void {
                 return reply.code(refusal.statusCode).send(refusal.body);
             } finally {
                 request.raw.off('aborted', onAbort);
-                if (uploadId) await lifecycle.abortUploadTransferSession({ uploadId });
+                try {
+                    if (uploadId) await lifecycle.abortUploadTransferSession({ uploadId });
+                } finally { releaseUpload?.(); }
             }
         });
         scoped.delete<{ Params: { uploadId: string } }>('/v1/artifacts/content/uploads/:uploadId', { preHandler: scoped.authenticate,

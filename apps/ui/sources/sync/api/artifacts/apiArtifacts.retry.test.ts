@@ -2,10 +2,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const runtimeFetchSpy = vi.hoisted(() => vi.fn());
 
-vi.mock('@/utils/system/runtimeFetch', () => ({
-    runtimeFetch: (...args: unknown[]) => runtimeFetchSpy(...args),
-    get runtimeFetchManualResponse() { return this.runtimeFetch; },
-}));
+vi.mock('@/utils/system/runtimeFetch', () => {
+    // Named first so the getter's `this` is this object, not vi.mock's Partial<unknown> factory type.
+    const mocked = {
+        runtimeFetch: (...args: unknown[]) => runtimeFetchSpy(...args),
+        get runtimeFetchManualResponse() { return this.runtimeFetch; },
+    };
+    return mocked;
+});
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
@@ -123,9 +127,38 @@ describe('apiArtifacts retry modes', () => {
         const cancelled = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
         await failedAttempt.promise;
         await vi.advanceTimersByTimeAsync(0);
+        const timersBeforeCancel = vi.getTimerCount();
         controller.abort();
         await cancelled;
+        await vi.advanceTimersByTimeAsync(0);
+        expect(vi.getTimerCount()).toBe(timersBeforeCancel - 1);
         await vi.runAllTimersAsync();
+        expect(attempts).toBe(1);
+    });
+
+    it.each(['create', 'update'] as const)('cancels %s recovery without waiting for its retry delay', async operation => {
+        vi.useFakeTimers();
+        const { createArtifact, updateArtifact } = await import('./apiArtifacts');
+        const failedAttempt = createDeferred<void>();
+        let attempts = 0;
+        const request: ServerFetch = async () => {
+            attempts++;
+            failedAttempt.resolve();
+            return Response.json({ error: 'unavailable' }, { status: 503 });
+        };
+        const controller = new AbortController();
+        const opts = { request, signal: controller.signal };
+        const pending = operation === 'create'
+            ? createArtifact({ token: 'captured-token' }, { id: 'document', header: 'header', body: 'body', dataEncryptionKey: 'key' }, opts)
+            : updateArtifact({ token: 'captured-token' }, 'document', { header: 'header', expectedHeaderVersion: 1 }, opts);
+        let settled = false;
+        const cancelled = expect(pending).rejects.toMatchObject({ name: 'AbortError' }).then(() => { settled = true; });
+        await failedAttempt.promise;
+        await vi.advanceTimersByTimeAsync(0);
+        controller.abort();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(settled).toBe(true);
+        await cancelled;
         expect(attempts).toBe(1);
     });
 

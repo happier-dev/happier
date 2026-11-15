@@ -1632,7 +1632,7 @@ use their existing content-replacement owner. The same transaction admits each
 source write and CASes each captured revision or exact retained carrier before
 removing the personal source. Missing material or authority refuses promotion
 before cleanup. The server neither discovers private references nor parses them.
-The UI's delete reference census opens captured Presets and retained snapshots
+The shared UI and CLI delete reference classifier opens captured Presets and retained snapshots
 through Account custody and reports only bindings to the secret being deleted.
 Unrelated Presets do not prevent deletion; an unreadable captured body refuses
 the capture. The census covers its captured readable rows; generic
@@ -6712,7 +6712,9 @@ Teams. Account catalog and source writes remain Account-mode fenced; a Saved Sec
 own stored encryption mode governs its material, including independently converted resources.
 Plugin Account secret creation uses this same resource custody. Its
 `pluginSecretBindingsV1` Settings entries contain only the selected reference and
-cleanup provenance, changed on explicit set, bind, remove or erase. Replacement
+cleanup provenance, changed on explicit set, bind, remove or erase. The binding
+root follows the Account Settings structural and document budgets, with no
+separate aggregate byte ceiling. Replacement
 and unbinding clean up unused binding-created resources through the resource
 owner's current reference census; selecting an existing recipient-visible resource
 does not acquire deletion ownership. An unknown binding-write outcome retains the

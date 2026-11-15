@@ -475,7 +475,7 @@ export async function fetchArtifactListPage(credentials: AuthCredentials, opts: 
                     ...(filtered ? { hasUnclassified: hasUnclassified as boolean } : {}), ...(kindCoverage ? { kindCoverage } : {}) };
             });
         };
-        return opts.retry === 'none' ? run() : backoff(run);
+        return opts.retry === 'none' ? run() : backoff(run, { signal: sharedSignal });
     }, { scope: binding.scope, signal: opts.signal, fresh: opts.fresh });
     throwIfAborted(opts.signal);
     return result;
@@ -507,7 +507,7 @@ export async function fetchArtifact(
                 return readArtifactResponse(value);
             });
         };
-        return opts.retry === 'none' ? run() : backoff(run);
+        return opts.retry === 'none' ? run() : backoff(run, { signal: sharedSignal });
     }, { scope: binding.scope, signal: opts.signal, fresh: opts.fresh });
     throwIfAborted(opts.signal);
     return result;
@@ -568,7 +568,7 @@ export async function createArtifact(
         return await artifactMutationAttempt(mutationOptions, run);
     }
 
-    return await backoff(() => artifactMutationAttempt(mutationOptions, run));
+    return await backoff(() => artifactMutationAttempt(mutationOptions, run), { signal: opts.signal });
 }
 
 /**
@@ -638,7 +638,7 @@ export async function updateArtifact(
         return await artifactMutationAttempt(mutationOptions, run);
     }
 
-    return await backoff(() => artifactMutationAttempt(mutationOptions, run));
+    return await backoff(() => artifactMutationAttempt(mutationOptions, run), { signal: opts.signal });
 }
 
 /**

@@ -886,6 +886,47 @@ describe('requester HTTP authority on the existing external Action carrier', () 
     expect(post).toHaveBeenCalledTimes(1);
   });
 
+  it.each(['matching', 'installation', 'envelope'] as const)('uses the exact fresh local Home mint as admission (%s)', async reply => {
+    const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      if (String(url).endsWith('/verify')) return { status: 403, data: { error: 'invalid_token' } };
+      const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+      return { status: 200, data: { v: 1, token: 'fresh-local-proof', binding: {
+        accountId: 'bob', authentication: { kind: 'account', tokenEpoch: 7 }, custodianAccountId: 'alice',
+        serverIdentityId: 'srv_bob_home', machineId: target.machineId, target,
+        installationId: reply === 'installation' ? 'replaced-installation' : 'alice-installation',
+        actionId: 'notifications.notify_me', requestId: envelope.requestId, accountEncryptionMode: 'plain',
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(reply === 'envelope'
+          ? { ...request.envelope, input: { message: 'Substituted' } } : request.envelope),
+      } } };
+    });
+    const current = { value: true };
+    const args = { actionId: 'notifications.notify_me', input: envelope.input, requestId: envelope.requestId,
+      target, machineId: target.machineId, accountId: 'bob', accountEncryptionMode: 'plain' as const,
+      tokenEpochHint: 7, token: accountToken, serverId: 'bob-profile', serverIdentityId: 'srv_bob_home',
+      serverHttpBaseUrl: 'https://home.test', installationId: 'alice-installation', privateKey: keys.secretKey,
+      isCurrent: async () => current.value };
+    const prepared = await prepareExternalActionRequesterAccountAuthorization(args);
+    expect(post).toHaveBeenCalledTimes(1);
+    if (reply !== 'matching') {
+      expect(prepared).toBeNull();
+      return;
+    }
+    expect(prepared?.requesterHttpProjection).toBeDefined();
+    if (!prepared?.requesterHttpProjection) throw new Error('Fresh local admission was not retained');
+    expect(await prepared.requesterHttpProjection.isCurrent()).toBe(true);
+    current.value = false;
+    expect(await prepared.requesterHttpProjection.isCurrent()).toBe(false);
+    expect(post).toHaveBeenCalledTimes(1);
+    // Crossing the wire loses private local admission. The next receiver still
+    // verifies Home, even when the carrier was minted successfully elsewhere.
+    const received = ExternalActionExecutionAuthorizationV1Schema.parse(JSON.parse(JSON.stringify(prepared)));
+    expect(await executionAuthorizationOwner.projectExternalActionRequesterHttpAuthorization({
+      authorization: received, target, serverId: args.serverId, serverIdentityId: args.serverIdentityId,
+      serverHttpBaseUrl: args.serverHttpBaseUrl, installationId: args.installationId, privateKey: keys.secretKey,
+    })).toBeNull();
+    expect(post).toHaveBeenCalledTimes(2);
+  });
+
   it('preserves retryable Home mint transport failure during requester preparation', async () => {
     const post = vi.spyOn(axios, 'post').mockRejectedValue(Object.assign(new Error('private connection detail'), { code: 'ECONNRESET' }));
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'bob', tokenEpoch: 7,

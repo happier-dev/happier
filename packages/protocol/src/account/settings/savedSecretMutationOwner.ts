@@ -7,6 +7,7 @@ import {
 import type { SecretStringV1 } from '../../crypto/settingsSecretStringSchemasV1.js';
 import {
   ACCOUNT_SETTINGS_MAX_SAVED_SECRETS_BYTES,
+  inspectAccountSettingJsonStructuralBounds,
   inspectAccountSettingValueBounds,
 } from './catalog/accountSettingBounds.js';
 import {
@@ -100,8 +101,6 @@ export const SAVED_SECRET_REFERENCE_SETTINGS_KEYS_V1 = Object.freeze([
   CONNECTED_ACCOUNT_SERVICE_CONFIGURATIONS_SETTINGS_KEY,
 ]);
 const savedSecretReferenceSettingsKeys = new Set<string>(SAVED_SECRET_REFERENCE_SETTINGS_KEYS_V1);
-const MAX_PLUGIN_SECRET_BINDINGS = 256;
-const MAX_PLUGIN_SECRET_BINDINGS_BYTES = 64 * 1024;
 export {
   SAVED_SECRET_REF_MAX_LENGTH_V1,
   SHARED_SAVED_SECRET_REF_V1_PREFIX,
@@ -899,20 +898,15 @@ function readPluginAccountSecretBindings(
   if (!root) {
     pluginSecretBindingError('Plugin SavedSecret bindings are invalid');
   }
-  const entries = Object.entries(root);
-  if (entries.length > MAX_PLUGIN_SECRET_BINDINGS) {
-    pluginSecretBindingError('Plugin SavedSecret bindings exceed the entry limit');
+  // Account Settings owns the root's structural limits and document budget.
+  // A separate aggregate byte limit would reject otherwise valid bindings.
+  if (inspectAccountSettingJsonStructuralBounds(root)) {
+    pluginSecretBindingError('Plugin SavedSecret bindings exceed Account Settings structural limits');
   }
-  const bindings = Object.fromEntries(entries.map(([key, value]) => [
+  const bindings = Object.fromEntries(Object.entries(root).map(([key, value]) => [
     key,
     parsePluginAccountSecretBinding(key, value),
   ])) as Record<string, PluginAccountSecretBinding>;
-  if (
-    new TextEncoder().encode(canonicalPluginSecretBindingsJson(bindings)).byteLength
-      > MAX_PLUGIN_SECRET_BINDINGS_BYTES
-  ) {
-    pluginSecretBindingError('Plugin SavedSecret bindings exceed the byte limit');
-  }
   return Object.freeze(bindings);
 }
 

@@ -22,7 +22,8 @@ import { VoiceProviderContributionSchema } from '../../plugins/contributions/voi
 import { LegacyVoiceCredentialBindingV1Schema, VoiceCredentialBindingV1Schema, listLegacyVoiceCredentialMigrationCandidatesV1 } from '../../voice/realtime/providerSettings.js';
 import { SAVED_SECRET_COLLECTION_MAX_ENTRIES, SavedSecretSchema } from '../../profiles/backendProfileSchema.js';
 import { accountSettingsParse } from './accountSettings.js';
-import { ACCOUNT_SETTINGS_MAX_SAVED_SECRETS_BYTES } from './catalog/accountSettingBounds.js';
+import { applyAccountSettingMutationV1 } from './accountSettingMutationV1.js';
+import { ACCOUNT_SETTING_MAX_COLLECTION_ENTRIES, ACCOUNT_SETTINGS_MAX_SAVED_SECRETS_BYTES } from './catalog/accountSettingBounds.js';
 import { ProfileRecordV1Schema } from '../../profiles/profileRecordV1.js';
 import * as savedSecretOwner from './savedSecretMutationOwner.js';
 import type { ArtifactSharingResourceV1 } from '../../artifacts/artifactSharingV1.js';
@@ -3014,6 +3015,30 @@ describe('Account Settings SavedSecret mutation owner', () => {
     })).toThrowError(expect.objectContaining<AccountSettingsSavedSecretMutationError>({
       code: 'saved_secret_conflict',
     }));
+  });
+
+  it('reads every plugin binding from a canonically admitted Settings root above 64 KiB', () => {
+    const bindings = Object.fromEntries(Array.from({ length: ACCOUNT_SETTING_MAX_COLLECTION_ENTRIES }, (_, index) => {
+      const target = { pluginId: 'acme.notifications', localId: `field-${index}-${'x'.repeat(100)}` };
+      return [qualifyPluginAccountSecretBindingKey(target), { ...target, custody: 'account',
+        savedSecretId: secret.id, createdForBinding: false }];
+    }));
+    expect(new TextEncoder().encode(JSON.stringify(bindings)).byteLength).toBeGreaterThan(64 * 1024);
+    const admitted = applyAccountSettingMutationV1({ secrets: [secret], pluginSecretBindingsV1: bindings }, {
+      operations: [{ op: 'set', key: 'schemaVersion', value: 1 }],
+    });
+    expect(admitted.status).toBe('applied');
+    if (admitted.status !== 'applied') throw new Error('Expected canonically admitted Settings');
+    expect(listAccountSettingsSavedSecretReferences(admitted.raw, secret.id)).toHaveLength(ACCOUNT_SETTING_MAX_COLLECTION_ENTRIES);
+    const binding = Object.values(bindings)[0]!;
+    expect(resolveAccountSettingsPluginSecret(admitted.raw, { pluginId: binding.pluginId, localId: binding.localId }))
+      .toEqual({ binding, secret });
+    const excess = { ...bindings, [qualifyPluginAccountSecretBindingKey({ pluginId: 'acme.notifications', localId: 'extra' })]: {
+      ...binding, localId: 'extra',
+    } };
+    expect(applyAccountSettingMutationV1({ pluginSecretBindingsV1: excess }, {
+      operations: [{ op: 'set', key: 'schemaVersion', value: 1 }],
+    })).toEqual({ status: 'invalid', reason: 'tooLarge' });
   });
 
   it('does not treat unrelated equal strings or literal refs as SavedSecret references', () => {
