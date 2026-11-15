@@ -232,6 +232,40 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
         },
     );
 
+    it('follows titles without acquiring activity or invalidating on unrelated transcript changes', async () => {
+        const serverId = await homes.addHome({ name: 'Title Home', serverUrl: 'https://title-demand.test', accountId: 'account-a' });
+        const session = installSessionActionFixture({ homes, storage, serverId, session: waitingSession({
+            id: 'title-session', metadata: { ...waitingSession().metadata!, name: 'Linked title' },
+        }) });
+        homes.answer(serverId, `GET /v1/sessions/${session.id}/messages`, { body: {
+            messages: [], hasMore: false, nextBeforeSeq: null, publicationBlocked: false,
+            externalShareableSnapshot: { turns: [] },
+        } });
+        const mounted = mountSurface({ serverId, accountId: 'account-a' });
+        const events: ResourceSubscriptionEvent[] = [];
+        try {
+            const watch = await mounted.api.watchSession(session.id, event => events.push(event), { includeActivity: false });
+            const state = await mounted.api.readSession(session.id, { includeActivity: false });
+            expect(state?.title).toBe('Linked title');
+            expect(state).not.toHaveProperty('latestActivity');
+            for (let index = 0; index < 5; index += 1) storage.getState().applyMessages(session.id, [{
+                id: `reply-${index}`, role: 'user', localId: null, createdAt: index + 1, seq: index + 2,
+                isSidechain: false, content: { type: 'text', text: `Reply ${index}` },
+            }]);
+            expect(events).toHaveLength(0);
+            expect(homes.requests.filter(request => request.path.includes('/messages'))).toHaveLength(0);
+            const current = storage.getState().sessions[session.id]!;
+            storage.getState().applySessions([{ ...current, metadata: { ...current.metadata!, name: 'Renamed link' } }]);
+            expect(events).toHaveLength(1);
+            await expect(mounted.api.readSession(session.id, { includeActivity: false })).resolves.toMatchObject({ title: 'Renamed link' });
+            expect(homes.requests.filter(request => request.path.includes('/messages'))).toHaveLength(0);
+            // Existing full-state consumers still acquire activity through the same owner.
+            await expect(mounted.api.readSession(session.id)).resolves.toMatchObject({ latestActivity: { kind: 'empty' } });
+            expect(homes.requests.filter(request => request.path.includes('/messages'))).toHaveLength(1);
+            watch.dispose();
+        } finally { mounted.dispose(); }
+    });
+
     it.each(['ready', 'empty', 'hidden', 'unavailable', 'paged', 'missingWitness', 'modeMismatch'] as const)('publishes %s external-shareable activity through the real bound controller without marking read', async (outcome) => {
         const serverId = await homes.addHome({ name: 'Activity Home', serverUrl: 'https://activity.test', accountId: 'account-a' });
         const session = installSessionActionFixture({ homes, storage, serverId, session: waitingSession({
@@ -353,21 +387,21 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
         storage.getState().applySessions([session]);
         const mounted = mountSurface({ serverId, accountId: 'account-a' });
         const events: ResourceSubscriptionEvent[] = [];
-        const subscription = await mounted.api.watchSession(session.id, (event) => { events.push(event); });
+        const subscription = await mounted.api.watchSession(session.id, (event) => { events.push(event); }, { includeActivity: false });
         try {
-            await expect(mounted.api.readSession(session.id)).resolves.toMatchObject({ title: 'repo' });
+            await expect(mounted.api.readSession(session.id, { includeActivity: false })).resolves.toMatchObject({ title: 'repo' });
             storage.getState().applyMessages(session.id, [{
                 id: 'first-prompt', role: 'user', localId: null, createdAt: 1, seq: 2, isSidechain: false,
                 content: { type: 'text', text: 'Investigate the mobile panel' },
             }]);
             await vi.waitFor(() => expect(events).toHaveLength(1));
-            await expect(mounted.api.readSession(session.id)).resolves.toMatchObject({ title: 'Investigate the mobile panel' });
+            await expect(mounted.api.readSession(session.id, { includeActivity: false })).resolves.toMatchObject({ title: 'Investigate the mobile panel' });
             const { getSessionName } = await import('@/utils/sessions/sessionUtils');
             const row = storage.getState().sessionListRowsByServerId[serverId]![session.id]!;
             expect(getSessionName(row, serverId)).toBe('Investigate the mobile panel');
             storage.getState().applySessions([{ ...session, metadataVersion: session.metadataVersion + 1,
                 metadata: { ...session.metadata!, summary: { text: 'Saved investigation', updatedAt: 2 } } }]);
-            await expect(mounted.api.readSession(session.id)).resolves.toMatchObject({ title: 'Saved investigation' });
+            await expect(mounted.api.readSession(session.id, { includeActivity: false })).resolves.toMatchObject({ title: 'Saved investigation' });
         } finally { subscription.dispose(); mounted.dispose(); restoreHome(); }
     });
 

@@ -1,5 +1,34 @@
 # Compatibility and version skew
 
+## Session authoring open (unreleased 0.3)
+
+`session.authoring.open` remains the admission owner for first-party, agent and
+MCP New Session entry points. Its source-Session input additionally accepts a
+`seed` of editable changes, a `replay` cutoff using `SessionForkPointSchema`, and
+`connectedServices` using the canonical binding ingress schema. The client reads
+the source from its captured Home and Account, copies configuration through the
+existing authoring adapter, and leaves creation to the composer's explicit Send.
+Embedded UI callers supply only private navigation and draft-identity ports after
+admission; these callbacks never enter Action input or approval custody.
+
+This is an additive change to the unpublished 0.3 Action input. Existing seed-only
+and source-address-only requests remain valid; producers and strict development
+readers deploy together. No persisted document or released 0.2 wire format changes.
+Post-launch Pool recovery restores already-admitted draft custody and is the sole
+internal seed-opening exemption, scoped by the parity walker to that callback.
+
+## Plan Action round context (unreleased 0.3)
+
+`subagents.plan.start` accepts optional JSON `previousRoundContext`. Its Action
+executor adds that context to the planning request before the plan-intent profile
+runs. Plan with a panel binds its retained round context to this input; omission
+or `null` keeps the request unchanged. This input affects planning semantics and
+is not safely ignorable: matching Protocol, CLI and generated SDK source reload
+together under the unpublished development direct cut. The existing Action
+envelope and detached-target object remain closed; the context is opaque JSON
+data and grants no identity, authority or routing meaning. No migration, wire
+epoch, capability gate or earlier-development adapter is added.
+
 ## Failure cause carriers (unreleased 0.3)
 
 Execution-run Action completion observations and review, plan and narration terminal

@@ -94,6 +94,46 @@ function rowStatusLabel(row: ChannelsConversationIndexRow, t: Translate): string
   return undefined;
 }
 
+function ChannelsColumnRow(props: Readonly<{
+  row: ChannelsConversationIndexRow;
+  selected: boolean;
+  onOpen: (bindingId: string) => void;
+}>): React.ReactElement {
+  const t = usePluginTranslation();
+  const { locale } = useSurfaceContext();
+  const bindings = React.useMemo(() => [props.row.binding], [props.row.binding]);
+  const sessionStates = useConversationSessionStates(bindings);
+  const row = props.row;
+  const activity = channelsConversationActivity(row.binding.target.kind === 'session'
+    ? sessionStates.get(row.binding.target.sessionId ?? '') : undefined);
+  // Work that needs the reader is the row's state; otherwise its end says when the Session last replied.
+  const workNeedsYou = activity?.work !== undefined && activity.work.tone !== 'neutral' ? activity.work : undefined;
+  const statusLabel = rowStatusLabel(row, t) ?? workNeedsYou?.word;
+  const time = activity?.preview?.kind === 'ready' ? formatConversationTime(activity.preview.createdAt, locale) : undefined;
+  return (
+    <NavigationList.Row
+      testID={`channels-column-row-${row.binding.bindingId}`}
+      title={row.title}
+      selected={props.selected}
+      {...(time === undefined || statusLabel !== undefined ? {} : { detail: time })}
+      {...(activity?.unread === true ? {
+        accessibilityLabel: `${row.title}, ${t('plugins.channels.page.activityUnread', 'Unread')}`,
+      } : {})}
+      {...(statusLabel === undefined ? {} : {
+        status: { kind: row.status?.kind === 'paused' ? 'paused' as const : 'attention' as const, label: statusLabel },
+      })}
+      onPress={() => props.onOpen(row.binding.bindingId)}
+    />
+  );
+}
+
+type ChannelsColumnEntry = Readonly<{ kind: 'group'; group: ChannelsConversationIndexGroup; first: boolean }>
+  | Readonly<{ kind: 'row'; row: ChannelsConversationIndexRow }>;
+
+function columnEntryKey(entry: ChannelsColumnEntry): string {
+  return entry.kind === 'group' ? `group:${entry.group.key}` : `row:${entry.row.binding.bindingId}`;
+}
+
 function ChannelsColumn(props: Readonly<{
   snapshot: ChannelsConversationSnapshot;
   subPath: string | undefined;
@@ -103,7 +143,6 @@ function ChannelsColumn(props: Readonly<{
   const navigation = useOpenChannels();
   const [query, setQuery] = React.useState('');
   const { bindings, connections } = props.snapshot;
-  const { locale } = useSurfaceContext();
   const groups = React.useMemo(
     () => buildChannelsConversationIndex({ bindings, connections, providerName, t }),
     [bindings, connections, providerName, t],
@@ -118,8 +157,10 @@ function ChannelsColumn(props: Readonly<{
     : groups
       .map((group) => ({ ...group, rows: group.rows.filter((row) => row.title.toLocaleLowerCase().includes(needle)) }))
       .filter((group) => group.rows.length > 0)), [groups, needle]);
-  const visibleBindings = React.useMemo(() => visibleGroups.flatMap((group) => group.rows.map((row) => row.binding)), [visibleGroups]);
-  const sessionStates = useConversationSessionStates(visibleBindings);
+  const entries = React.useMemo(() => visibleGroups.flatMap<ChannelsColumnEntry>((group, index) => [
+    { kind: 'group', group, first: index === 0 },
+    ...group.rows.map((row): ChannelsColumnEntry => ({ kind: 'row', row })),
+  ]), [visibleGroups]);
   const hasBots = connections.some((connection) => connection.deletionState === 'none');
 
   return (
@@ -147,7 +188,24 @@ function ChannelsColumn(props: Readonly<{
         onPress: navigation.openSettings,
         testID: 'channels-column-bots',
       }}
-    >
+      items={entries}
+      keyForItem={columnEntryKey}
+      renderItem={(entry) => entry.kind === 'row' ? (
+        <ChannelsColumnRow row={entry.row} selected={entry.row.binding.bindingId === selectedBindingId}
+          onOpen={navigation.openConversation} />
+      ) : (
+        <NavigationList.Group
+          first={entry.first}
+          title={groupTitle(entry.group, providerName, t)}
+          {...(entry.group.providerPluginId === undefined ? {} : {
+            mark: <BrandMark pluginId={entry.group.providerPluginId} size="small" externallyLabelled />,
+          })}
+          {...(entry.group.botAttention === undefined ? {} : {
+            status: { kind: 'attention' as const, label: entry.group.botAttention.label },
+          })}
+        />
+      )}
+      empty={<>
       {props.snapshot.state === 'loading' ? (
         <LoadingState testID="channels-column-loading" title={t('plugins.channels.page.loadingTitle', 'Loading conversations')} rows={3} />
       ) : null}
@@ -172,45 +230,8 @@ function ChannelsColumn(props: Readonly<{
           title={t('plugins.channels.column.noResults', 'No conversation matches “{query}”.', { query: query.trim() })}
         />
       ) : null}
-      {visibleGroups.map((group, index) => (
-        <NavigationList.Group
-          key={group.key}
-          first={index === 0}
-          title={groupTitle(group, providerName, t)}
-          {...(group.providerPluginId === undefined ? {} : {
-            mark: <BrandMark pluginId={group.providerPluginId} size="small" externallyLabelled />,
-          })}
-          {...(group.botAttention === undefined ? {} : {
-            status: { kind: 'attention' as const, label: group.botAttention.label },
-          })}
-        >
-          {group.rows.map((row) => {
-            const activity = channelsConversationActivity(row.binding.target.kind === 'session'
-              ? sessionStates.get(row.binding.target.sessionId ?? '') : undefined);
-            // Work that needs the reader is the row's state; otherwise its end says when the Session last replied.
-            const workNeedsYou = activity?.work !== undefined && activity.work.tone !== 'neutral' ? activity.work : undefined;
-            const statusLabel = rowStatusLabel(row, t) ?? workNeedsYou?.word;
-            const time = activity?.preview?.kind === 'ready' ? formatConversationTime(activity.preview.createdAt, locale) : undefined;
-            return (
-              <NavigationList.Row
-                key={row.binding.bindingId}
-                testID={`channels-column-row-${row.binding.bindingId}`}
-                title={row.title}
-                selected={row.binding.bindingId === selectedBindingId}
-                {...(time === undefined || statusLabel !== undefined ? {} : { detail: time })}
-                {...(activity?.unread === true ? {
-                  accessibilityLabel: `${row.title}, ${t('plugins.channels.page.activityUnread', 'Unread')}`,
-                } : {})}
-                {...(statusLabel === undefined ? {} : {
-                  status: { kind: row.status?.kind === 'paused' ? 'paused' as const : 'attention' as const, label: statusLabel },
-                })}
-                onPress={() => navigation.openConversation(row.binding.bindingId)}
-              />
-            );
-          })}
-        </NavigationList.Group>
-      ))}
-    </NavigationList>
+      </>}
+    />
   );
 }
 

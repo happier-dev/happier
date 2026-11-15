@@ -1,5 +1,9 @@
 import type { SessionStateV1 } from '@happier-dev/plugin-sdk/ui';
 
+export function selectChannelsSessionTitle(state: SessionStateV1) {
+  return state.title;
+}
+
 /** Module-stable selector shared by the row consumer and the 2,000-Session owner measurement. */
 export function selectChannelsConversationSessionState(state: SessionStateV1) {
   return {

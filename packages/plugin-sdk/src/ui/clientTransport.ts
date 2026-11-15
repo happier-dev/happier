@@ -1074,7 +1074,9 @@ export async function createPluginUiHostApiClientFromTransport(
             });
         },
         readSession: async (sessionId, requestOptions) => {
-            const payload = PluginUiReadSessionRequestV1Schema.safeParse({ sessionId });
+            const payload = PluginUiReadSessionRequestV1Schema.safeParse({ sessionId,
+                ...(requestOptions?.includeActivity !== undefined ? { includeActivity: requestOptions.includeActivity } : {}),
+            });
             if (!payload.success) {
                 throw new PluginUiHostApiClientError('invalid_payload', 'readSession request is invalid.');
             }
@@ -1122,7 +1124,9 @@ export async function createPluginUiHostApiClientFromTransport(
             return Object.freeze({ dispose: subscription.dispose });
         },
         watchSession: async (sessionId, listener, requestOptions) => {
-            const payload = PluginUiWatchSessionRequestV1Schema.safeParse({ sessionId });
+            const payload = PluginUiWatchSessionRequestV1Schema.safeParse({ sessionId,
+                ...(requestOptions?.includeActivity !== undefined ? { includeActivity: requestOptions.includeActivity } : {}),
+            });
             if (!payload.success) {
                 throw new PluginUiHostApiClientError('invalid_payload', 'watchSession request is invalid.');
             }

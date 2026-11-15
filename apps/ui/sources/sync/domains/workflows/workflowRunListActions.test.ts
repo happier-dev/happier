@@ -18,7 +18,7 @@ await loadSyncSingletonForTests();
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
 const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
-const { buildWorkflowRunListFilter, listWorkflowRuns } = await import('./workflowRunListActions');
+const { buildWorkflowRunListFilter, listWorkflowRuns, readWorkflowRunRolePrefill } = await import('./workflowRunListActions');
 const { WorkflowActionError } = await import('./workflowActionError');
 const { workflowRunStoreKey, workflowRunListWindowStoreKey } = await import('@/sync/store/domains/workflowRuns');
 const route = '/v3/automations/runs/workflow-storage';
@@ -66,6 +66,51 @@ async function runPage(metadata?: { title: string }) {
 function requests() {
     return home.requestsFor(route).map(({ input }) => input && typeof input === 'object' && 'request' in input ? input.request : null);
 }
+
+it.each([false, true])('prefills with one starter-scoped page despite newer teammate history (own Run: %s)', async hasOwnRun => {
+    const sourceArtifactId = 'shared-definition';
+    const own = createWorkflowRunSummaryFixture({ ...run, sourceArtifactId, origin: { kind: 'direct' } });
+    const teammate = createWorkflowRunSummaryFixture({ id: 'newer-teammate', ownerAccountId: 'teammate', sourceArtifactId, origin: { kind: 'direct' } });
+    const definition = createWorkflowDefinitionFixture({ blocks: [{ kind: 'wait', id: 'wait',
+        document: { text: 'Continue', references: [], attachments: [] } }] });
+    const roleOverrides = [{ roleId: 'reviewer', workspaceWrites: 'deny' as const }];
+    const materialized = await materializeWorkflowAcceptedSnapshotV1({
+        definition, roleOverrides, admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true },
+        context: { source: { kind: 'inline', sourceArtifactId }, inputs: {}, machineId: own.machineId,
+            executionTarget: { kind: 'session' }, workspaceTarget: { project: { machineId: own.machineId, directory: '/repo', checkoutRootPath: '/repo' } },
+            origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } } },
+    });
+    if (!materialized.ok) throw new Error(`fixture_materialization_failed:${materialized.error.code}`);
+    const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+        binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId: own.id }, acceptedSnapshot: materialized.snapshot }));
+    const ownPage = await createWorkflowRunListStorageFixture({ runs: [own], definition });
+    const teammatePage = await createWorkflowRunListStorageFixture({ runs: [teammate], definition });
+    home.answer(serverId, route, { select: input => {
+        if (!input || typeof input !== 'object' || !('operation' in input)) throw new Error('Expected storage operation');
+        if (input.operation === 'list' && 'request' in input && input.request && typeof input.request === 'object') {
+            // Model several teammate pages ahead of the starter's retained Run.
+            const request = input.request;
+            if ('starter' in request && request.starter === 'current_account') return { body: hasOwnRun ? ownPage
+                : { runs: [], acceptedEnvelopesByRunId: {}, keyCensusByRunId: {} } };
+            if (!('cursor' in request)) return { body: { ...teammatePage, nextCursor: 'teammate-page-2' } };
+            if (request.cursor === 'teammate-page-2') return { body: { ...teammatePage, nextCursor: 'own-page' } };
+            return { body: hasOwnRun ? ownPage : { runs: [], acceptedEnvelopesByRunId: {}, keyCensusByRunId: {} } };
+        }
+        if (input.operation === 'get') {
+            if (!('runId' in input) || input.runId !== own.id) throw new Error('Prefill requested teammate detail');
+            return { body: { run: own, acceptedEnvelope, checkpointEnvelope: null, resultEnvelope: null,
+                keyCensus: ownPage.keyCensusByRunId[own.id] } };
+        }
+        if (input.operation === 'invocations.list') return { body: { invocations: [], parentRevision: own.revision,
+            keyCensus: ownPage.keyCensusByRunId[own.id], progressEnvelopesByInvocationId: {} } };
+        throw new Error(`Unexpected storage operation:${input.operation}`);
+    } });
+    const overrides = await readWorkflowRunRolePrefill({ sourceArtifactId, signal: new AbortController().signal });
+    const listRequests = requests().filter(request => request !== null);
+    expect(listRequests).toHaveLength(1);
+    expect(overrides).toEqual(hasOwnRun ? roleOverrides : undefined);
+    expect(listRequests).toEqual([{ sourceArtifactId, starter: 'current_account', limit: 1 }]);
+});
 
 describe('workflow Run list Action client through the Account storage transport', () => {
     it.each(['exhausted burst', 'non-exhausted burst', 'active removal'] as const)(

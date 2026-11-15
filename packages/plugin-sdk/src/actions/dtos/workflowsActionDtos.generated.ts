@@ -165,6 +165,7 @@ export type WorkflowsActionInputById = {
             invocationRecordIds: string[];
         }[];
         sourceArtifactId?: string | undefined;
+        starter?: 'current_account' | undefined;
         origin?: 'automation' | 'direct' | undefined;
         states?: ('cancelled' | 'claimed' | 'dispatch_failed' | 'expired' | 'failed' | 'interrupted' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'queued' | 'running' | 'skipped' | 'succeeded' | 'waiting_for_review')[] | undefined;
         attention?: 'required' | undefined;
@@ -1433,9 +1434,9 @@ export type WorkflowsActionInputById = {
         deploymentBackup: {
             serverId: string;
             machineId: string;
+            installationId: string;
             environmentId: string;
             deploymentId: string;
-            installationId: string;
             targetLinkId: string;
             configRevision: number;
         };
@@ -1856,13 +1857,13 @@ export type WorkflowsActionInputById = {
             name: string;
             description: null | string;
         };
-        approvalProfileId?: null | string | undefined;
         inputs?: Record<string, unknown> | undefined;
         executionTarget?: undefined | {
             kind: 'detached_run';
         } | {
             kind: 'session';
         };
+        approvalProfileId?: null | string | undefined;
         visibleTeamId?: null | string | undefined;
         roleOverrides?: undefined | {
             roleId: string;
@@ -2095,13 +2096,13 @@ export type WorkflowsActionInputById = {
                 name: string;
                 description: null | string;
             };
-            approvalProfileId?: null | string | undefined;
             inputs?: Record<string, unknown> | undefined;
             executionTarget?: undefined | {
                 kind: 'detached_run';
             } | {
                 kind: 'session';
             };
+            approvalProfileId?: null | string | undefined;
             visibleTeamId?: null | string | undefined;
             roleOverrides?: undefined | {
                 roleId: string;
@@ -2350,13 +2351,13 @@ export type WorkflowsActionInputById = {
             name: string;
             description: null | string;
         };
-        approvalProfileId?: null | string | undefined;
         inputs?: Record<string, unknown> | undefined;
         executionTarget?: undefined | {
             kind: 'detached_run';
         } | {
             kind: 'session';
         };
+        approvalProfileId?: null | string | undefined;
         visibleTeamId?: null | string | undefined;
         roleOverrides?: undefined | {
             roleId: string;
@@ -2595,13 +2596,13 @@ export type WorkflowsActionInputById = {
                 name: string;
                 description: null | string;
             };
-            approvalProfileId?: null | string | undefined;
             inputs?: Record<string, unknown> | undefined;
             executionTarget?: undefined | {
                 kind: 'detached_run';
             } | {
                 kind: 'session';
             };
+            approvalProfileId?: null | string | undefined;
             visibleTeamId?: null | string | undefined;
             roleOverrides?: undefined | {
                 roleId: string;
@@ -9538,6 +9539,10 @@ export type WorkflowsActionResultById = {
                                 stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                 requestId?: string | undefined;
                             };
+                            carrierFailure?: undefined | {
+                                closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
+                            };
                             connectedServicesDefault?: undefined | {
                                 v: 1;
                                 source: 'account_default';
@@ -10188,6 +10193,10 @@ export type WorkflowsActionResultById = {
                                 code: string;
                                 stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                 requestId?: string | undefined;
+                            };
+                            carrierFailure?: undefined | {
+                                closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                             };
                             connectedServicesDefault?: undefined | {
                                 v: 1;
@@ -11094,6 +11103,10 @@ export type WorkflowsActionResultById = {
                                 code: string;
                                 stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                 requestId?: string | undefined;
+                            };
+                            carrierFailure?: undefined | {
+                                closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                             };
                             connectedServicesDefault?: undefined | {
                                 v: 1;

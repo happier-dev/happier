@@ -2543,6 +2543,19 @@ nothing moves when they arrive.
 title. `detailEnd` is the part that tells same-named groups apart (a machine's short
 id, "Offline"): it stays whole while a narrow label shortens `detail` first.
 
+In 0.3 development source, data-sized navigation columns use `NavigationList`'s
+`items`, `keyForItem` and `renderItem` props. The shared list virtualizer mounts
+the presented window; put row-specific Session hooks inside the row component
+so offscreen entries do not acquire activity. Use `empty` for loading or empty
+content. Children remain available for a fixed set of destinations.
+
+```tsx
+<NavigationList title={t('Conversations')} items={conversations}
+  keyForItem={(conversation) => conversation.id}
+  renderItem={(conversation) => <ConversationRow conversation={conversation} />}
+  empty={<Text value={t('No conversations yet')} />} />
+```
+
 ```tsx
 <PageHeader title={machine.name} leading={<BrandMark />} actionsLayout="hang"
   meta={[{ key: 'path', text: machine.home, mono: true }]} actions={<Menu />} />

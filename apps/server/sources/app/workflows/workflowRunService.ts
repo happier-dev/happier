@@ -6,7 +6,7 @@ import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/ca
 import { toAutomationRunExecutionInputV1Origin } from '@happier-dev/protocol/automations/automationApiV3';
 import { projectAutomationAccountCurrentnessWitnessV1, sameAutomationAccountContentIdentityV1, type AutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
 import { WorkflowRunListRequestV1Schema, WorkflowRunAutomationSummariesRequestV1Schema, workflowRunListRequiresAcceptedProgramV1,
-    type WorkflowRunSummariesResultV1,
+    type WorkflowRunListRequestV1, type WorkflowRunSummariesResultV1,
     type WorkflowRunSourceSummariesResultV1, type WorkflowRunAutomationSummariesResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import type { Prisma } from "@prisma/client";
 import { WorkflowDirectRunAdmissionIdV1Schema, WorkflowInvocationRecordIdSchema } from '@happier-dev/protocol/workflows/workflowIdsV1';
@@ -1130,6 +1130,7 @@ function shipsAcceptedEnvelope(row: Readonly<{ workflowAcceptedSnapshotEnvelope:
 
 export async function listWorkflowRuns(params: PageOptions & Readonly<{
     accountId: string; runId?: string; origin?: "automation" | "direct"; states?: readonly WorkflowRunState[]; attention?: "required";
+    starter?: WorkflowRunListRequestV1['starter'];
     runIds?: readonly string[];
     invocationProvenance?: readonly Readonly<{ runId: string; invocationRecordIds: readonly string[] }>[];
     originSessionId?: string; originDiscussionId?: string; targetSessionId?: string; underSessionId?: string; automationId?: string; triggerId?: string; machineId?: string; sourceArtifactId?: string;
@@ -1155,6 +1156,7 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
         runIds: params.runIds ? [...params.runIds].sort() : null, invocationProvenance: params.invocationProvenance ?? null,
         origin: params.origin ?? null, states: [...(params.states ?? [])].sort(), attention: params.attention ?? null, originSessionId: params.originSessionId ?? null, targetSessionId: params.targetSessionId ?? null, underSessionId: params.underSessionId ?? null, automationId: params.automationId ?? null, machineId: params.machineId ?? null,
         ...(params.triggerId ? { triggerId: params.triggerId } : {}),
+        ...(params.starter ? { starter: params.starter } : {}),
         ...(params.originDiscussionId ? { originDiscussionId: params.originDiscussionId } : {}),
         ...(membershipOnly ? { projection: params.projection } : {}) });
     const decoded = params.cursor ? decodeKeysetCursorV1(params.cursor, queryKey) : null;
@@ -1181,6 +1183,7 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
         const rows = await tx.automationRun.findMany({
             where: {
                 ...callerScope,
+                ...(params.starter === "current_account" ? { accountId: params.accountId } : {}),
                 workflowCustodyState: { not: null },
                 ...(params.runId ? { id: params.runId } : {}),
                 ...(params.origin ? { originKind: params.origin } : {}),

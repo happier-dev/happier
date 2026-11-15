@@ -299,6 +299,15 @@ uptime buckets and `failingSince`/`failureStreak`. Down and degraded share a fai
 streak; up or unknown resets it. On an older checkpoint, the earliest known failed
 sample starts the reported streak; missing earlier samples remain partial history.
 No additional probe or scheduler produces history.
+The safe Account Action `happier.machine.services/actions/health/results` reads one native
+KV page through `readHealthResultProjections`, the same reader used by the saved
+health UI. It returns `{ items: [{ key, projection }], nextCursor? }`; each
+projection retains its automation/trigger revision and source-selector members
+alongside current results, uptime and recent history. Consumers match those
+members to their current saved source before attributing results. The portable
+`health-account-runtime` artifact needs no Machine or fresh probe. Pass the
+returned cursor to continue; malformed stored projections and deleted rows are
+omitted, and storage failures remain failures rather than empty history.
 Plugin saved-check controls and core controls share `runSavedHealthCheck`: it
 resolves the saved kind through the public catalog and invokes that kind's public
 Action with the exact saved selector. Core dispatch uses `action.invoke` through
@@ -4991,8 +5000,11 @@ gap/long-offline snapshot refresh, a declaration claim) and any refresh without
 named plugins. An Availability AccountChange names its plugin, and while the UI
 holds a complete projection (every Machine readable, census complete) it reads
 only the named plugins: `materializations.read` with `pluginIds` (every current
-Account Machine, filtered to them) plus one `intent.read` each, merged into the
-held projection by its single writer. Other plugins keep their last-good facts;
+Account Machine, filtered to them) plus one exact named `intents.list` read
+(`pluginIds`, at most one server page each request; no census, cursor or
+`knownPluginIds`) that returns each named plugin's `intent.read` projection,
+absent intents as `intent: null` and unreadable ones in `failedPluginIds`. The
+result is merged into the held projection by its single writer. Other plugins keep their last-good facts;
 a held Machine the filtered answer omits has left the inventory, as a complete
 read would show. An incomplete filtered answer falls back to the complete read.
 Named plugins stay pending until their read is adopted, so a superseded or
@@ -11538,12 +11550,16 @@ Those owners preserve report-aware settlement and offline priority; a plugin
 does not classify host Session facts independently. Existing watches digest the
 complete snapshot, so reports-only Work changes invalidate the same subscription.
 
-The public `useSessionStates` hook can select the serializable facts its mounted
+The public `useSessionState` and `useSessionStates` hooks can select the serializable facts their mounted
 consumer needs with a stable `select` function. It retains the selected snapshot
 when those facts are equal, so a list following Work facts does not render again
 for a Session title or workspace change. Omitting the selector keeps the complete
-Session snapshot. Both forms use the same host reads, watches and activity
-lifecycle; selection adds no transport or Session-state owner.
+Session snapshot. In unreleased 0.3 source, both hooks and the host's existing
+`readSession`/`watchSession` options also accept `includeActivity: false` for
+title or identity consumers. This omits `latestActivity`, acquires no transcript
+tail, and excludes transcript-only watch invalidations. Omitting the option or
+passing `true` retains activity acquisition. Selection and activity demand use
+the same host snapshot and mounted lifecycle; neither adds a Session-state owner.
 
 In this development contract, a successful null snapshot is the hook's terminal
 `missing` state (absent or inaccessible), distinct from `unavailable` after a

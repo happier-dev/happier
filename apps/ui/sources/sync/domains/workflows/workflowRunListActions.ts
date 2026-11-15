@@ -1,6 +1,7 @@
 import {
     type WorkflowRunPrivateMetadataV1,
     WorkflowRunListRequestV1Schema,
+    type WorkflowRunListRequestV1,
     WorkflowRunListResultV1Schema,
     WorkflowRunSummariesRequestV1Schema,
     WorkflowRunSourceSummariesResultV1Schema,
@@ -28,7 +29,7 @@ import { throwIfAborted } from '@/utils/runtime/abortSignals';
  * The Workflows collection's Run **list** reader.
  *
  * Exact Run detail, invocation pages and run controls remain owned by the
- * Run-detail reader. Role prefill composes that reader with the paged list;
+ * Run-detail reader. Role prefill composes that reader with the starter-scoped list;
  * it does not implement another detail client. Row bodies are stored by the
  * existing Account-scoped `workflowRunsById` owner; this module never keeps
  * a second cache.
@@ -46,6 +47,7 @@ export type WorkflowRunListFilter = Readonly<{
     runIds?: readonly string[];
     invocationProvenance?: readonly Readonly<{ runId: string; invocationRecordIds: readonly string[] }>[];
     sourceArtifactId?: string;
+    starter?: WorkflowRunListRequestV1['starter'];
     /** `attention: 'required'` asks the server's indexed predicate, not a cached page. */
     attention?: 'required';
     states?: readonly WorkflowRunStateV1[];
@@ -150,30 +152,18 @@ export async function listAllWorkflowRuns(params: Readonly<{
 /** FIN §4.8: memory is the starter's newest accepted Run, not another preference store. */
 export async function readWorkflowRunRolePrefill(params: Readonly<{
     sourceArtifactId: string;
-    accountId: string;
     signal: AbortSignal;
     accountLifetime?: ServerAccountScopeLifetime | null;
 }>): Promise<WorkflowRunAcceptedContextV1['roleOverrides']> {
     const detail = params.accountLifetime === undefined ? workflowRunDetailActions
         : createWorkflowRunDetailActions({ accountLifetime: params.accountLifetime });
-    let cursor: string | undefined;
-    do {
-        const page = await listWorkflowRuns({ filter: { sourceArtifactId: params.sourceArtifactId },
-            ...(cursor === undefined ? {} : { cursor }), signal: params.signal,
-            ...(params.accountLifetime === undefined ? {} : { accountLifetime: params.accountLifetime }) });
-        const own = page.runs.find((run) => run.ownerAccountId === params.accountId
-            && run.sourceArtifactId === params.sourceArtifactId);
-        if (own) {
-            const accepted = await detail.getRun(own.id, params.signal);
-            if (accepted.run.ownerAccountId !== params.accountId
-                || accepted.run.sourceArtifactId !== params.sourceArtifactId) {
-                throw new WorkflowActionError({ message: 'Workflow role prefill unavailable', rawCode: 'run_access_denied' });
-            }
-            return accepted.acceptedContext.roleOverrides;
-        }
-        cursor = page.nextCursor;
-    } while (cursor !== undefined);
-    return undefined;
+    const page = await listWorkflowRuns({ filter: { sourceArtifactId: params.sourceArtifactId, starter: 'current_account' },
+        limit: 1, signal: params.signal,
+        ...(params.accountLifetime === undefined ? {} : { accountLifetime: params.accountLifetime }) });
+    const latest = page.runs[0];
+    if (!latest) return undefined;
+    const accepted = await detail.getRun(latest.id, params.signal);
+    return accepted.acceptedContext.roleOverrides;
 }
 
 /** Lean batch for the rendered saved-workflow page; no Run-detail cache or reads. */

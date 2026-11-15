@@ -94,7 +94,7 @@ type ProjectedSession = Readonly<{
     requests: ReadonlyMap<string, ProjectedPendingPermission>;
 }>;
 
-function projectSession(session: Session, accountScope: ServerAccountScope | null): ProjectedSession {
+function projectSession(session: Session, accountScope: ServerAccountScope | null, includeActivity = true): ProjectedSession {
     const status = getSessionStatus(session, Date.now(), { vibingIndex: 0 });
     const { awareness } = status;
     const agentId = readSessionPresentationAgentId(session);
@@ -167,7 +167,7 @@ function projectSession(session: Session, accountScope: ServerAccountScope | nul
         ...(awareness.workspace ? { workspace: awareness.workspace } : {}),
         pendingPermissions,
         hasUnreadMessages: deriveSessionListRenderableHasUnreadMessagesFromSession(session),
-        latestActivity: { kind: session.access?.capabilities.readTranscript === true ? 'unavailable' : 'hidden' },
+        ...(includeActivity ? { latestActivity: { kind: session.access?.capabilities.readTranscript === true ? 'unavailable' : 'hidden' } } : {}),
     });
     return { state, requests };
 }
@@ -182,9 +182,9 @@ function readScopedSession(
         || areServerProfileIdentifiersEquivalent(session.serverId, accountScope.serverId)) ? session : undefined;
 }
 
-function readProjectedSession(sessionId: string, accountScope: ServerAccountScope | null): ProjectedSession | null {
+function readProjectedSession(sessionId: string, accountScope: ServerAccountScope | null, includeActivity = true): ProjectedSession | null {
     const session = readScopedSession(sessionId, accountScope);
-    return session ? projectSession(session, accountScope) : null;
+    return session ? projectSession(session, accountScope, includeActivity) : null;
 }
 
 function digestSessionState(state: PluginUiSessionStateV1): `sha256:${string}` {
@@ -201,7 +201,7 @@ type ActiveSessionWatch = Readonly<{ release: () => void }>;
 
 export type PluginSurfaceSessionHandlers = Readonly<{
     /** The same exact-Account read without requiring a mounted transport envelope. */
-    readSession: (sessionId: string, options?: PluginSurfaceHostApiRequestOptions) => Promise<PluginUiJsonValueV1>;
+    readSession: (sessionId: string, options?: PluginSurfaceHostApiRequestOptions & Readonly<{ includeActivity?: boolean }>) => Promise<PluginUiJsonValueV1>;
     handlers: Required<Pick<
         PluginSurfaceHostApiHandlers,
         'readSession' | 'watchSession' | 'respondToSessionPermission' | 'disposeHostResource'
@@ -298,9 +298,10 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
             const retired = refusal(options);
             if (retired) return retired;
         }
-        const projected = readProjectedSession(parsed.data.sessionId, input.accountScope);
+        const includeActivity = parsed.data.includeActivity !== false;
+        const projected = readProjectedSession(parsed.data.sessionId, input.accountScope, includeActivity);
         if (!projected) return createPluginSurfaceHostApiError('unavailable', ['session_projection_unavailable'], undefined, { retryable: true });
-        if (!input.accountScope || projected.state.latestActivity?.kind === 'hidden') return projected.state;
+        if (!includeActivity || !input.accountScope || projected.state.latestActivity?.kind === 'hidden') return projected.state;
         const cancellation = mergeAbortSignals([lifetime.signal, options?.signal]);
         try {
             const latestActivity = await readSessionLatestExternalShareableActivity({
@@ -326,19 +327,22 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
         const record = readPayloadRecord(request.payload);
         const subscriptionId = typeof record?.subscriptionId === 'string' ? record.subscriptionId.trim() : '';
         const parsed = PluginUiWatchSessionRequestV1Schema.safeParse(
-            record ? { sessionId: record.sessionId } : undefined,
+            record ? { sessionId: record.sessionId,
+                ...(record.includeActivity !== undefined ? { includeActivity: record.includeActivity } : {}),
+            } : undefined,
         );
         if (!subscriptionId || !parsed.success) {
             return createPluginSurfaceHostApiError('invalid_payload', ['session_watch_payload_invalid']);
         }
         const { sessionId } = parsed.data;
+        const includeActivity = parsed.data.includeActivity !== false;
         await hydrateSession(sessionId, options);
         const retiredAfterHydration = refusal(options);
         if (retiredAfterHydration) return retiredAfterHydration;
         if (watches.has(subscriptionId)) {
             return createPluginSurfaceHostApiError('invalid_payload', ['session_watch_subscription_reused']);
         }
-        const initial = readProjectedSession(sessionId, input.accountScope);
+        const initial = readProjectedSession(sessionId, input.accountScope, includeActivity);
         if (!initial) return createPluginSurfaceHostApiError('unavailable', ['session_unavailable']);
 
         let lastDigest = digestSessionState(initial.state);
@@ -353,7 +357,7 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
                 machineId, serverId: input.accountScope?.serverId ?? null,
             }, () => {
                 if (!input.isCurrent()) return;
-                const current = readProjectedSession(sessionId, input.accountScope);
+                const current = readProjectedSession(sessionId, input.accountScope, includeActivity);
                 if (current) input.deliver({
                     version: 1, subscriptionId, kind: 'invalidated', digest: digestSessionState(current.state),
                 });
@@ -362,7 +366,7 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
         bindCatalog(initial.state);
         const readInputs = (state: ReturnType<typeof storage.getState>) => ({
             session: readScopedSession(sessionId, input.accountScope, state),
-            messages: state.sessionMessages?.[sessionId],
+            messages: includeActivity ? state.sessionMessages?.[sessionId] : undefined,
             displayRow: input.accountScope
                 ? readSessionListRowForServerId(state.sessionListRowsByServerId, input.accountScope.serverId, sessionId)
                 : undefined,
@@ -372,12 +376,12 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
         let lastInputs = readInputs(storage.getState());
         const unsubscribe = storage.subscribe((state) => {
             const nextInputs = readInputs(state);
-            const transcriptChanged = nextInputs.messages !== lastInputs.messages
+            const transcriptChanged = includeActivity && (nextInputs.messages !== lastInputs.messages
                 || nextInputs.session?.seq !== lastInputs.session?.seq
                 || nextInputs.session?.sessionTurns !== lastInputs.session?.sessionTurns
                 || nextInputs.session?.latestTurnStatusObservedAt !== lastInputs.session?.latestTurnStatusObservedAt
                 || nextInputs.session?.publishedThroughServerSeq !== lastInputs.session?.publishedThroughServerSeq
-                || nextInputs.session?.currentStorageState !== lastInputs.session?.currentStorageState;
+                || nextInputs.session?.currentStorageState !== lastInputs.session?.currentStorageState);
             if (nextInputs.session === lastInputs.session && nextInputs.messages === lastInputs.messages
                 && nextInputs.displayRow === lastInputs.displayRow
                 && nextInputs.workspaceRefs === lastInputs.workspaceRefs
@@ -395,13 +399,13 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
                 });
                 return;
             }
-            const projected = projectSession(nextInputs.session, input.accountScope).state;
+            const projected = projectSession(nextInputs.session, input.accountScope, includeActivity).state;
             bindCatalog(projected);
             const digest = digestSessionState(projected);
             if (digest === lastDigest && !transcriptChanged) return;
             lastDigest = digest;
             input.deliver({ version: 1, subscriptionId, kind: 'invalidated', digest });
-        }, { sessions: [sessionId], sessionMessages: [sessionId], sessionListRowsByServerId: true,
+        }, { sessions: [sessionId], ...(includeActivity ? { sessionMessages: [sessionId] } : {}), sessionListRowsByServerId: true,
             settings: ['preferredLanguage'], projectAccountRows: true, profileScope: true });
         watches.set(subscriptionId, { release: () => { unsubscribe(); unsubscribeCatalog(); } });
         return null;
@@ -460,7 +464,9 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
     };
 
     return Object.freeze({
-        readSession: (sessionId: string, options?: PluginSurfaceHostApiRequestOptions) => readSession({ payload: { sessionId } }, options),
+        readSession: (sessionId, options) => readSession({ payload: { sessionId,
+            ...(options?.includeActivity !== undefined ? { includeActivity: options.includeActivity } : {}),
+        } }, options),
         handlers: Object.freeze({ readSession, watchSession, respondToSessionPermission, disposeHostResource }),
         dispose: () => {
             if (disposed) return;

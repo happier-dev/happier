@@ -304,6 +304,32 @@ describe('Automation Event authoring navigation', () => {
 });
 
 describe('linked Session activity over the hosted transport', () => {
+    it('sends explicit activity demand on Session reads and watches without changing default requests', async () => {
+        let receive: ((message: unknown) => void) | undefined;
+        const payloads: unknown[] = [];
+        const api = await createPluginUiHostApiClientFromTransport({ identity, transport: {
+            subscribe(listener) { receive = listener; return { dispose() {} }; },
+            send(message) {
+                if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
+                    apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['readSession', 'watchSession'] });
+                if (message.kind === 'request' || message.kind === 'subscribe') {
+                    payloads.push(message.payload);
+                    receive?.({ wireVersion: 1, kind: 'result', identity, requestId: message.requestId,
+                        method: message.method, result: null });
+                }
+            },
+        } });
+        await api.readSession('linked', { includeActivity: false });
+        const watch = await api.watchSession('linked', () => {}, { includeActivity: false });
+        await api.readSession('linked');
+        expect(payloads).toEqual([
+            { sessionId: 'linked', includeActivity: false },
+            { sessionId: 'linked', includeActivity: false },
+            { sessionId: 'linked' },
+        ]);
+        watch.dispose();
+    });
+
     it('returns only a chosen exact Session address from the no-invoke native picker', async () => {
         let receive: ((message: unknown) => void) | undefined;
         const methods: string[] = [];

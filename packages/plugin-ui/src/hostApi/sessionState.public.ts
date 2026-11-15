@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { isPluginError } from '@happier-dev/plugin-sdk';
-import type { SessionStateV1 } from '@happier-dev/plugin-sdk/ui';
+import type { PluginUiHostApi, SessionStateV1 } from '@happier-dev/plugin-sdk/ui';
 
 import { usePluginHostApi, usePluginHostApiResourceActive } from './context.js';
 
@@ -31,6 +31,9 @@ export type SessionStatesReadV1<T = SessionStateV1> = Readonly<{
   refresh(): void;
 }>;
 
+type SessionActivityOptions = Pick<NonNullable<Parameters<PluginUiHostApi['readSession']>[1]>, 'includeActivity'>;
+const selectSessionState = (state: SessionStateV1) => state;
+
 /**
  * Read and follow the live state of one Session — typically one linked to this
  * plugin's own entry — through the mounted host.
@@ -43,9 +46,17 @@ export type SessionStatesReadV1<T = SessionStateV1> = Readonly<{
  * activity re-reads it. Providers without an activity fact remain live. A host
  * that serves reads but not watches yields a truthful one-shot snapshot.
  */
-export function useSessionState(sessionId: string | null): SessionStateReadV1 {
+export function useSessionState(sessionId: string | null, options?: SessionActivityOptions): SessionStateReadV1;
+export function useSessionState<T>(
+  sessionId: string | null, options: SessionActivityOptions & Readonly<{ select(state: SessionStateV1): T }>,
+): SessionStateReadV1<T>;
+export function useSessionState<T>(
+  sessionId: string | null, options?: SessionActivityOptions & Readonly<{ select?(state: SessionStateV1): T }>,
+): SessionStateReadV1<T | SessionStateV1> {
   const ids = React.useMemo(() => sessionId === null ? [] : [sessionId], [sessionId]);
-  return useSessionStates(ids).sessions.get(sessionId ?? '') ?? MISSING;
+  return useSessionStates<T | SessionStateV1>(ids, {
+    includeActivity: options?.includeActivity, select: options?.select ?? selectSessionState,
+  }).sessions.get(sessionId ?? '') ?? MISSING;
 }
 
 /**
@@ -54,13 +65,15 @@ export function useSessionState(sessionId: string | null): SessionStateReadV1 {
  * meaning. This is a mount-local projection, with no polling or persistence.
  * An optional stable selector narrows the serializable facts this consumer
  * follows; changes outside that projection do not publish a new snapshot.
+ * Set `includeActivity: false` when that projection does not need latestActivity;
+ * the host then skips transcript-tail reads and transcript-only invalidations.
  */
-export function useSessionStates(sessionIds: readonly string[]): SessionStatesReadV1;
+export function useSessionStates(sessionIds: readonly string[], options?: SessionActivityOptions): SessionStatesReadV1;
 export function useSessionStates<T>(
-  sessionIds: readonly string[], options: Readonly<{ select(state: SessionStateV1): T }>,
+  sessionIds: readonly string[], options: SessionActivityOptions & Readonly<{ select(state: SessionStateV1): T }>,
 ): SessionStatesReadV1<T>;
 export function useSessionStates<T>(
-  sessionIds: readonly string[], options?: Readonly<{ select(state: SessionStateV1): T }>,
+  sessionIds: readonly string[], options?: SessionActivityOptions & Readonly<{ select?(state: SessionStateV1): T }>,
 ): SessionStatesReadV1<T | SessionStateV1> {
   const host = usePluginHostApi();
   const active = usePluginHostApiResourceActive();
@@ -70,6 +83,7 @@ export function useSessionStates<T>(
   const ids = Array.from(new Set(sessionIds)).sort();
   const sessionKey = JSON.stringify(ids);
   const select = options?.select;
+  const includeActivity = options?.includeActivity;
   const [reads, setReads] = React.useState<ReadonlyMap<string, SessionStateReadV1<T | SessionStateV1>>>(() => new Map());
   const [demand, setDemand] = React.useState(0);
   const refresh = React.useCallback(() => setDemand((value) => value + 1), []);
@@ -100,7 +114,7 @@ export function useSessionStates<T>(
       const refresh = async (): Promise<void> => {
         if (!current) return;
         try {
-          const state = await host.readSession(sessionId, { signal: cancellation.signal });
+          const state = await host.readSession(sessionId, { signal: cancellation.signal, includeActivity });
           publish(sessionId, state ? Object.freeze({ status: 'ready', state: select === undefined ? state : select(state) }) : MISSING);
         } catch (error) {
           publish(sessionId, isPluginError(error) && !error.retryable ? NON_RETRYABLE : UNAVAILABLE);
@@ -114,7 +128,7 @@ export function useSessionStates<T>(
               // A terminated watch establishes no snapshot fact. Read once to distinguish
               // terminal absence from a failed read, without reopening the watch or polling.
               void refresh();
-            }, { signal: cancellation.signal });
+            }, { signal: cancellation.signal, includeActivity });
             if (!current) {
               established.dispose();
               return;
@@ -135,7 +149,7 @@ export function useSessionStates<T>(
     };
     // The key encodes the deduplicated set, so equivalent input arrays do not
     // retire and recreate the host subscriptions.
-  }, [active, canRead, canWatch, demand, host, select, sessionKey]);
+  }, [active, canRead, canWatch, demand, host, includeActivity, select, sessionKey]);
 
   const sessions = React.useMemo(() => new Map(ids.map((id) => [
     id, reads.get(id) ?? (canRead ? LOADING : UNSUPPORTED),

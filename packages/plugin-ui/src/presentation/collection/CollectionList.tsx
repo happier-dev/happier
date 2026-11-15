@@ -273,6 +273,8 @@ export const HAPPIER_COLLECTION_LIST_METRICS = Object.freeze({
   /** A group label sits this far below what precedes it and this far above its first row. */
   groupLabelPaddingTop: 24,
   groupLabelPaddingBottom: 0,
+  /** Air after the last row, in both static and virtualized navigation columns. */
+  endSpacing: 16,
   /** A label directly under the header needs less air. */
   groupLabelFirstPaddingTop: 4,
   /**
@@ -436,6 +438,13 @@ export const HappierListRowPrecedesSelectedContext = createContext(false);
 export const HappierCardSelectionRingContext = createContext(false);
 
 /**
+ * Set by a grid card (CollectionCards): the row fills its grid cell. On the web each wrapped grid line stretches
+ * its cards to the tallest one, so the row's layers take the cell's height; native cards stay content-sized
+ * (Yoga's wrapped-row erratum), so the row reads this only on the web.
+ */
+export const HappierCardFillsCellContext = createContext(false);
+
+/**
  * Where a Collection grid card's row actions sit: the end of its title line (`top` from the card's edge,
  * `end` from its trailing edge, `height` the title line's). Without it the actions take a cell beside the
  * card's body and centre on it, which puts them between the body's lines. Under a precise pointer the
@@ -498,7 +507,7 @@ const stripStyle: ViewStyle = { paddingLeft: M.contentInset, paddingRight: M.row
 const stripWithAccessoryStyle: ViewStyle = { flexDirection: 'row', alignItems: 'center', gap: TITLE_ACCESSORY_GAP };
 const stripLeadStyle: ViewStyle = { flex: 1, minWidth: 0 };
 const scrollerStyle: HappierPortableStyle = { paddingTop: 0 };
-const footerStyle: ViewStyle = { height: 16 };
+const footerStyle: ViewStyle = { height: HAPPIER_COLLECTION_LIST_METRICS.endSpacing };
 const groupLabelRowStyle: ViewStyle = {
   flexDirection: 'row',
   alignItems: 'center',

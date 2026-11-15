@@ -11199,6 +11199,7 @@ describe('Channels page (the one owner of linked conversations)', () => {
       }],
     }, 'd');
     const readSessionIds: string[] = [];
+    const activityDemands: (boolean | undefined)[] = [];
     const opened: unknown[] = [];
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'fixture-target-session', mountNonce: 'fixture-target-session' },
@@ -11217,8 +11218,9 @@ describe('Channels page (the one owner of linked conversations)', () => {
           throw new Error(`Unexpected mounted Action: ${String(action)}`);
         },
         readResource: bindingResourceReader(() => bindings),
-        readSession: ({ sessionId: requested }) => {
+        readSession: ({ sessionId: requested, includeActivity }) => {
           readSessionIds.push(requested);
+          activityDemands.push(includeActivity);
           return requested === sessionId
             ? { sessionId, title: 'Chantier Morges', lifecycle: 'active', runtime: 'idle', operational: 'none', pendingPermissions: [],
               workStatus: { state: 'waiting', bucket: 'idle', tone: 'neutral', attentionType: null, word: 'Idle' } }
@@ -11231,6 +11233,7 @@ describe('Channels page (the one owner of linked conversations)', () => {
         await expect(fixture.getByText('Chantier Morges')).resolves.toBeDefined();
       });
       expect(readSessionIds).toContain(sessionId);
+      expect(activityDemands).toEqual([false]);
       await fixture.press(await fixture.getByRole('button', { name: 'Open session' }));
       await vi.waitFor(() => {
         expect(opened).toEqual([{ sessionId }]);

@@ -221,6 +221,8 @@ export const WorkflowRunListRequestV1Schema = lazyZodSchema(() => z.strictObject
     invocationRecordIds: z.array(WorkflowInvocationRecordIdSchema),
   }))),
   sourceArtifactId: zMini.optional(WorkflowDefinitionIdV1Schema),
+  /** Select the authenticated starter while retaining the server-owned Run audience. */
+  starter: z.optional(z.literal('current_account')),
   origin: z.optional(z.enum(['automation', 'direct'])),
   states: z.optional(z.array(WorkflowRunStateV1Schema).check(z.minLength(1))),
   attention: z.optional(WorkflowRunAttentionFilterV1Schema),

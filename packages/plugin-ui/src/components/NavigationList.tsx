@@ -6,6 +6,7 @@ import { ScrollView, StyleSheet, View, type ViewStyle } from 'react-native';
 import { useOptionalHappierUiTypography } from '../environment/context.js';
 import {
   HAPPIER_COLLECTION_LIST_TEXT,
+  HAPPIER_COLLECTION_LIST_METRICS,
   HappierCollectionList,
   HappierCollectionListGroupLabel,
   type HappierCollectionListHost,
@@ -19,6 +20,7 @@ import type { HappierStyleProp } from '../presentation/portableTypes.js';
 import { HappierText } from '../presentation/text/Text.js';
 import { Icon, PluginUiIconGlyph, type IconName } from './Icon.js';
 import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
+import { List } from './List.js';
 import { resolveAuthorText } from './resolveAuthorText.js';
 
 export type NavigationListSearchProps = Readonly<{
@@ -47,7 +49,7 @@ export type NavigationListFooter = Readonly<{
   testID?: string;
 }>;
 
-export type NavigationListProps = Readonly<{
+export type NavigationListProps<Item = unknown> = Readonly<{
   /** The column's title, beside its count. */
   title?: string;
   titleKey?: string;
@@ -62,9 +64,23 @@ export type NavigationListProps = Readonly<{
   search?: NavigationListSearchProps | null;
   /** A row pinned under the scrolling rows, above a hairline. */
   footer?: NavigationListFooter;
-  children?: ReactNode;
   testID?: string;
-}>;
+}> & (Readonly<{
+  /** Dynamic rows are mounted by the shared Collection virtualizer, never eagerly mapped. */
+  items: readonly Item[];
+  keyForItem: (item: Item, index: number) => string;
+  renderItem: (item: Item, index: number) => ReactNode;
+  /** Loading, empty or unavailable content when there are no rows. */
+  empty?: ReactNode;
+  children?: never;
+}> | Readonly<{
+  /** A small, fixed set of navigation destinations. */
+  children?: ReactNode;
+  items?: never;
+  keyForItem?: never;
+  renderItem?: never;
+  empty?: never;
+}>);
 
 export type NavigationListGroupProps = Readonly<{
   /** What the rows share, as a quiet sentence-case label. */
@@ -191,7 +207,10 @@ const NAVIGATION_LIST_HOST: HappierCollectionListHost = Object.freeze({
   surfaceStyle: null,
 });
 
-function NavigationListRoot(props: NavigationListProps): ReactElement {
+const virtualizedListStyle = { flex: 1, minHeight: 0 };
+const virtualizedListContentStyle = { paddingBottom: HAPPIER_COLLECTION_LIST_METRICS.endSpacing };
+
+function NavigationListRoot<Item>(props: NavigationListProps<Item>): ReactElement {
   const translate = usePluginTranslation();
   const title = resolveAuthorText(translate, props.title, props.titleKey) ?? '';
   return (
@@ -208,6 +227,19 @@ function NavigationListRoot(props: NavigationListProps): ReactElement {
         ...(props.search.testID === undefined ? {} : { testID: props.search.testID }),
       } : null}
       {...(props.footer === undefined ? {} : { footer: <NavigationListFootRow footer={props.footer} /> })}
+      {...(props.items === undefined ? {} : {
+        scrollContent: <List
+          items={props.items}
+          keyForItem={props.keyForItem}
+          renderItem={props.renderItem}
+          accessibilityLabel={title}
+          density="flush"
+          style={virtualizedListStyle}
+          contentContainerStyle={virtualizedListContentStyle}
+          empty={props.empty}
+          {...(props.testID === undefined ? {} : { testID: `${props.testID}-rows` })}
+        />,
+      })}
     >
       {props.children}
     </HappierCollectionList>

@@ -38,7 +38,7 @@ export function useWorkflowRunRolePrefill(sourceArtifactId: string | null | unde
         const abort = new AbortController();
         const retirement = lifetime.onRetire(() => abort.abort());
         setState({ identity, lifetime, status: 'loading', overrides: EMPTY_OVERRIDES });
-        void readWorkflowRunRolePrefill({ sourceArtifactId, accountId: lifetime.scope.accountId, signal: abort.signal, accountLifetime: lifetime })
+        void readWorkflowRunRolePrefill({ sourceArtifactId, signal: abort.signal, accountLifetime: lifetime })
             .then((overrides) => {
                 if (!abort.signal.aborted && lifetime.isCurrent()) {
                     const value = overrides ?? EMPTY_OVERRIDES;

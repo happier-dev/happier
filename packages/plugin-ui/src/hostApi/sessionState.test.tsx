@@ -3,11 +3,11 @@ import renderer from 'react-test-renderer';
 import type { PluginUiHostApi, SessionStateV1 } from '@happier-dev/plugin-sdk/ui';
 import { describe, expect, it, vi } from 'vitest';
 
-import { PluginHostApiProvider } from '../advanced/index.js';
+import { PluginHostApiProvider } from './context.js';
 import { createHostApiStub } from '../surfaceFixture.testSupport.js';
-import { useSessionStates, type SessionStatesReadV1 } from './sessionState.public.js';
+import { useSessionState, useSessionStates, type SessionStateReadV1, type SessionStatesReadV1 } from './sessionState.public.js';
 import { PluginHostApiProviderInternal } from './context.js';
-import { selectChannelsConversationSessionState as select } from '../../../plugins/channels/src/ui/conversationSessionState.js';
+import { selectChannelsConversationSessionState as select, selectChannelsSessionTitle } from '../../../plugins/channels/src/ui/conversationSessionState.js';
 
 const WORKING: SessionStateV1 = {
   sessionId: 'first', lifecycle: 'active', runtime: 'working', operational: 'working',
@@ -15,6 +15,45 @@ const WORKING: SessionStateV1 = {
 };
 
 describe('useSessionStates', () => {
+  it('keeps a title-only reader stable through activity changes and follows a real title change', async () => {
+    let snapshot = { ...WORKING, title: 'Linked title' };
+    let invalidate: Parameters<PluginUiHostApi['watchSession']>[1] | undefined;
+    const base = createHostApiStub();
+    const demands: unknown[] = [];
+    const hostApi = createHostApiStub(undefined, {
+      version: () => ({ ...base.version(), methods: ['readSession', 'watchSession'] }),
+      readSession: async (_id, options) => { demands.push(options?.includeActivity); return snapshot; },
+      watchSession: async (_id, listener, options) => {
+        demands.push(options?.includeActivity);
+        invalidate = listener;
+        return { dispose() {} };
+      },
+    });
+    let current: SessionStateReadV1<string | undefined> | undefined;
+    let renders = 0;
+    function Probe() {
+      renders += 1;
+      current = useSessionState('first', { select: selectChannelsSessionTitle, includeActivity: false });
+      return null;
+    }
+    let tree!: renderer.ReactTestRenderer;
+    try {
+      await act(async () => { tree = renderer.create(<PluginHostApiProvider hostApi={hostApi}><Probe /></PluginHostApiProvider>); });
+      expect(current?.state).toBe('Linked title');
+      expect(demands).toEqual([false, false]);
+      const before = renders;
+      for (let index = 0; index < 5; index += 1) {
+        snapshot = { ...snapshot, hasUnreadMessages: true, runtime: 'idle' };
+        await act(async () => { invalidate!({ version: 1, subscriptionId: 'first', kind: 'invalidated', digest: `activity-${index}` }); });
+      }
+      expect(renders - before).toBe(0);
+      snapshot = { ...snapshot, title: 'Renamed link' };
+      await act(async () => { invalidate!({ version: 1, subscriptionId: 'first', kind: 'invalidated', digest: 'title' }); });
+      expect(current?.state).toBe('Renamed link');
+      expect(renders - before).toBe(1);
+    } finally { act(() => tree?.unmount()); }
+  });
+
   it('publishes only selected facts while preserving unchanged Sessions and following real work transitions', async () => {
     const watchers = new Map<string, Parameters<PluginUiHostApi['watchSession']>[1]>();
     const ids = ['first', 'second', ...Array.from({ length: 1998 }, (_, index) => `session-${index}`)];

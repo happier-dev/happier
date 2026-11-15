@@ -1,3 +1,5 @@
+import { SessionForkPointSchema } from '../../sessions/forkPoint.js';
+import { ConnectedServiceBindingsV2IngressSchema } from '../../connect/connectedServiceBindings.js';
 import { ActionExecuteFailureSchema } from '../../actions/actionExecutionResult.js';
 import { PluginDiagnosticRemediationV1Schema } from '../../daemon/pluginContributionIntrospection.js';
 import * as zMini from '../../zodRuntimePolicy.js';
@@ -359,6 +361,8 @@ export type PluginUiSessionStateV1 = z.infer<typeof PluginUiSessionStateV1Schema
 
 export const PluginUiReadSessionRequestV1Schema = lazyZodSchema(() => z.strictObject({
   sessionId: z.string().check(z.trim(), z.minLength(1)),
+  /** False omits latestActivity and avoids transcript-tail acquisition; omission preserves full state. */
+  includeActivity: z.optional(z.boolean()),
 }));
 export type PluginUiReadSessionRequestV1 = z.infer<typeof PluginUiReadSessionRequestV1Schema>;
 /** `null` is a Session this Account's client cannot reach, never an error. */
@@ -883,7 +887,13 @@ export type SessionNewSessionSeedOutcome = z.infer<typeof SessionNewSessionSeedO
 
 export const SessionAuthoringOpenV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ seed: PluginUiNewSessionSeedV1Schema }),
-  z.strictObject({ sourceSession: VoiceTrackedSessionAddressV1Schema }),
+  z.strictObject({
+    sourceSession: VoiceTrackedSessionAddressV1Schema,
+    /** Editable changes to the copied setup, not an execution request. */
+    seed: z.optional(PluginUiNewSessionSeedV1Schema),
+    replay: z.optional(SessionForkPointSchema),
+    connectedServices: z.optional(z.nullable(ConnectedServiceBindingsV2IngressSchema)),
+  }),
 ]));
 export type SessionAuthoringOpenV1 = z.infer<typeof SessionAuthoringOpenV1Schema>;
 

@@ -813,7 +813,10 @@ export interface PluginUiHostApi {
      * A plugin typically reads the Sessions linked to its own entries; the
      * scope is the Account's own Session visibility, not a plugin ACL.
      */
-    readSession(sessionId: string, options?: PluginCancellationOptions): Promise<SessionStateV1 | null>;
+    readSession(sessionId: string, options?: PluginCancellationOptions & Readonly<{
+        /** False omits latestActivity and avoids acquiring transcript-tail activity. Defaults to true. */
+        includeActivity?: boolean;
+    }>): Promise<SessionStateV1 | null>;
     /** Read a visible Machine's display name in this mounted Account; another Home or unknown id is unavailable. */
     readMachineDisplayName(request: ReadMachineDisplayNameRequest, options?: PluginCancellationOptions): Promise<ReadMachineDisplayNameResult>;
     /**
@@ -833,7 +836,10 @@ export interface PluginUiHostApi {
     watchSession(
         sessionId: string,
         listener: (event: ResourceSubscriptionEvent) => void,
-        options?: PluginCancellationOptions,
+        options?: PluginCancellationOptions & Readonly<{
+            /** Match the read's activity demand; false ignores transcript-only changes. Defaults to true. */
+            includeActivity?: boolean;
+        }>,
     ): Promise<Disposable>;
     /** View one source for this mounted occurrence. Host sources require Action approval. */
     watchLiveStream(

@@ -58,16 +58,16 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Workflow audien
         await db.artifact.create({ data: artifactData(sourceArtifactId) });
         await db.artifactGrant.create({ data: { principalKind: 'team', artifactId: sourceArtifactId, teamId: team.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
-        const createRuns = async (count: number, automationId?: string) => {
+        const createRuns = async (count: number, automationId?: string, starterAccountId = owner.id) => {
             const ids = Array.from({ length: count }, () => randomUUID());
-            await db.automationRun.createMany({ data: ids.map(id => ({ id, accountId: owner.id,
+            await db.automationRun.createMany({ data: ids.map(id => ({ id, accountId: starterAccountId,
                 automationId, originKind: automationId ? 'automation' : 'direct',
                 ...(automationId ? encodeAutomationRunCause({ kind: 'manual', invokedAt: Date.now() }) : { causeKind: null }),
                 sourceArtifactId, visibleTeamId: team.id,
                 state: 'succeeded', workflowCustodyState: 'settled', workflowAcceptedSnapshotEnvelope: '{}',
                 scheduledAt: new Date(), dueAt: new Date(), finishedAt: new Date() })) });
             if (!automationId) {
-                const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, metadata: '{}' } });
+                const machine = await db.machine.create({ data: { id: randomUUID(), accountId: starterAccountId, metadata: '{}' } });
                 const acceptedSnapshot = await materializeWorkflowAcceptedSnapshotFixture({
                     definition: { version: 1, blocks: [{ kind: 'wait', id: 'answer',
                         document: { text: 'Answer', references: [], attachments: [] }, result: { kind: 'text' } }] },
@@ -78,7 +78,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Workflow audien
                 });
                 for (const id of ids) await db.automationRun.update({ where: { id }, data: {
                     workflowAcceptedSnapshotEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
-                        mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId: owner.id, runId: id }, acceptedSnapshot,
+                        mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId: starterAccountId, runId: id }, acceptedSnapshot,
                     })), assignments: { create: { machineId: machine.id, priority: 0 } },
                 } });
             }
@@ -90,6 +90,41 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Workflow audien
     function sourceReads() {
         return queries.filter(query => /^SELECT\b/.test(query.query.trimStart()) && /FROM\s+(?:"public"\.)?"Artifact"(?:\s|$)/.test(query.query));
     }
+
+    it('selects the latest current-starter Run without paging newer Team history through the authenticated storage route', async () => {
+        const f = await fixture();
+        await db.teamMembership.create({ data: { teamId: f.team.id, accountId: f.owner.id, role: 'member', status: 'active' } });
+        const [ownId] = await f.createRuns(1);
+        await db.automationRun.update({ where: { id: ownId! }, data: { createdAt: new Date('2026-01-01') } });
+        const teammateIds = await f.createRuns(3, undefined, f.viewer.id);
+        await db.automationRun.updateMany({ where: { id: { in: teammateIds } }, data: { createdAt: new Date('2026-02-01') } });
+        const input = { operation: 'list', request: { sourceArtifactId: f.sourceArtifactId, starter: 'current_account', limit: 1 },
+            pageByteLimit: 1_000_000 };
+        const app = createAuthenticatedTestApp();
+        try {
+            registerWorkflowRunStorageRoutes(app);
+            await app.ready();
+            queries.length = 0;
+            const response = await app.inject({ method: 'POST', url: '/v3/automations/runs/workflow-storage',
+                headers: { 'x-test-user-id': f.owner.id }, payload: input });
+            expect(response.statusCode).toBe(200);
+            const page = response.json();
+            expect(page.runs.map((run: { id: string }) => run.id)).toEqual([ownId]);
+            expect(page.nextCursor).toBeUndefined();
+            const pageReads = queries.filter(query => /FROM\s+(?:"public"\.)?"AutomationRun"(?:\s|$)/.test(query.query)
+                && /ORDER BY.*"createdAt"/s.test(query.query));
+            expect(pageReads).toHaveLength(1);
+        } finally { await app.close(); }
+        expect((await listWorkflowRuns({ accountId: f.revoked.id, sourceArtifactId: f.sourceArtifactId,
+            starter: 'current_account', limit: 1, pageByteLimit: 1_000_000 })).runs).toEqual([]);
+        const shared = await listWorkflowRuns({ accountId: f.owner.id, sourceArtifactId: f.sourceArtifactId,
+            limit: 1, pageByteLimit: 1_000_000 });
+        expect(teammateIds).toContain(shared.runs[0]?.id);
+        expect(shared.nextCursor).toEqual(expect.any(String));
+        await expect(listWorkflowRuns({ accountId: f.owner.id, sourceArtifactId: f.sourceArtifactId,
+            starter: 'current_account', cursor: shared.nextCursor, limit: 1, pageByteLimit: 1_000_000 }))
+            .rejects.toMatchObject({ code: 'invalid_input' });
+    });
 
     it.each([undefined, 'required'] as const)('admits default lists with attention=%s in set reads even without Runs', async attention => {
         const f = await fixture();

@@ -838,6 +838,24 @@ reads and release watches when the host marks their surface inactive. They keep
 the last ready snapshot, ignore late callbacks, and re-read when activity resumes.
 Providers without a host activity fact keep their existing live behavior.
 
+In 0.3 development source, title-only readers can skip transcript activity and
+select just the title. Keep the selector stable across renders:
+
+```tsx
+const selectTitle = (session: SessionStateV1) => session.title;
+
+function LinkedSessionTitle({ sessionId }: { sessionId: string }) {
+  const read = useSessionState(sessionId, { includeActivity: false, select: selectTitle });
+  return <Text value={read.state ?? 'Linked Session'} />;
+}
+```
+
+Import `SessionStateV1` from `@happier-dev/plugin-sdk/ui`, and `Text` and
+`useSessionState` from `@happier-dev/plugin-ui`. The same option works with
+`useSessionStates` and the host's `readSession` and `watchSession` methods.
+`includeActivity: false` omits `latestActivity` and transcript-only invalidations;
+omitting it preserves full activity demand.
+
 The hooks distinguish a successful `null` snapshot (`status: 'missing'`) from
 a failed read (`status: 'unavailable'`). Keep a missing Session's relationship
 visible, but do not offer Retry as though its activity read had failed.

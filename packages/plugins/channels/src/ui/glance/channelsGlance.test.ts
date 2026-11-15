@@ -168,6 +168,9 @@ describe('the Channels column', () => {
 
     // The open conversation is the page location's; a press opens another one there.
     expect(document.querySelector('[data-testid="channels-column-row-dev"]')?.getAttribute('aria-current')).toBe('page');
+    await act(async () => { await column.updatePageLocation('release'); });
+    expect(document.querySelector('[data-testid="channels-column-row-dev"]')?.getAttribute('aria-current')).toBeNull();
+    expect(document.querySelector('[data-testid="channels-column-row-release"]')?.getAttribute('aria-current')).toBe('page');
     await column.press(await column.getByRole('button', { name: 'release-0.3' }));
     expect(opened.map((open) => [viewName(open), open.subPath])).toEqual([['conversations', 'release']]);
 
@@ -213,11 +216,10 @@ describe('the Channels column', () => {
   });
 });
 
-describe('the Channels Home widget', () => {
-  it.each([
-    { view: 'widget' as const, count: 1000, presented: 4 },
-    { view: 'column' as const, count: 12, presented: 12 },
-  ])('reads and watches only the $presented presented $view conversations out of $count', async ({ view, count, presented }) => {
+describe('the Channels glance activity and loading', () => {
+  it('reads and watches only the four presented widget conversations out of 1000', async () => {
+    const presented = 4;
+    const count = 1000;
     const bindings = Array.from({ length: count }, (_, index) => {
       const id = String(index).padStart(4, '0');
       const row = binding({ id, connectionId: 'dc-bot', label: `Conversation ${id}` });
@@ -227,7 +229,7 @@ describe('the Channels Home widget', () => {
     const watchedIds: string[] = [];
     let reply = 'The first reply';
     const surface = await mountGlance({
-      view,
+      view: 'widget',
       openSurface: () => undefined,
       readResource: async ({ resource }) => {
         const localId = typeof resource === 'string' ? resource : 'localId' in resource ? resource.localId : '';
@@ -245,7 +247,7 @@ describe('the Channels Home widget', () => {
       },
     });
     await vi.waitFor(() => {
-      expect(document.querySelectorAll(`[data-testid^="channels-${view}-row-"]`)).toHaveLength(presented);
+      expect(document.querySelectorAll('[data-testid^="channels-widget-row-"]')).toHaveLength(presented);
       expect(readIds.length).toBeGreaterThan(0);
     });
     const expected = bindings.slice(0, presented).map((row) => row.target.sessionId);
@@ -260,27 +262,121 @@ describe('the Channels Home widget', () => {
     reply = 'The updated reply';
     await act(async () => { surface.invalidateSession('session-0000', `sha256:${'e'.repeat(64)}`); });
     await vi.waitFor(() => { expect(readIds).toHaveLength(presented + 1); });
-    if (view === 'widget') {
-      await vi.waitFor(() => {
-        expect(document.querySelector('[data-testid="channels-widget-row-0000"]')?.textContent).toContain(reply);
-      });
-    } else {
-      const search = document.querySelector('[data-testid="channels-column-search"]');
-      if (!(search instanceof HTMLInputElement)) throw new Error('Column search was not mounted');
-      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-      if (setValue === undefined) throw new Error('Browser input value setter missing');
-      await act(async () => {
-        setValue.call(search, 'Conversation 0000');
-        search.dispatchEvent(new Event('input', { bubbles: true }));
-      });
-      await vi.waitFor(() => {
-        expect(document.querySelectorAll('[data-testid^="channels-column-row-"]')).toHaveLength(1);
-        expect(watchedIds.slice(presented)).toEqual(['session-0000']);
-      });
-      const readsAfterFilter = readIds.length;
-      await act(async () => { surface.invalidateSession('session-0001', `sha256:${'f'.repeat(64)}`); });
-      expect(readIds).toHaveLength(readsAfterFilter);
-    }
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-testid="channels-widget-row-0000"]')?.textContent).toContain(reply);
+    });
+  });
+
+  it('acquires activity only for mounted column rows and acquires newly presented rows on scroll', async () => {
+    const bindings = Array.from({ length: 1000 }, (_, index) => {
+      const id = String(index).padStart(4, '0');
+      const row = binding({ id, connectionId: 'dc-bot', label: `Conversation ${id}` });
+      return { ...row, target: { ...row.target, sessionId: `session-${id}` } };
+    });
+    const readIds: string[] = [];
+    const watchedIds: string[] = [];
+    const surface = await mountGlance({
+      view: 'column', openSurface: () => undefined,
+      readResource: async ({ resource }) => {
+        const localId = typeof resource === 'string' ? resource : 'localId' in resource ? resource.localId : '';
+        return localId === 'bindings-v1' ? jsonResource({ bindings }, 'b')
+          : jsonResource({ connections: [connection({ id: 'dc-bot', provider: DISCORD, label: 'Happier bot' })] }, 'c');
+      },
+      sessionHandlers: {
+        readSession: ({ sessionId }): SessionStateV1 => {
+          readIds.push(sessionId);
+          return { sessionId, lifecycle: 'active', runtime: 'idle', operational: 'none', pendingPermissions: [],
+            latestActivity: { kind: 'ready', text: 'Current reply', createdAt: 1_700_000_000_000 } };
+        },
+        watchSession: ({ sessionId }) => { watchedIds.push(sessionId); },
+      },
+    });
+    await vi.waitFor(async () => { await surface.getByRole('button', { name: 'Conversation 0000' }); });
+    expect(document.querySelector('[data-testid="channels-column-row-0999"]')).toBeNull();
+    const initialRows = [...document.querySelectorAll('[data-testid^="channels-column-row-"]')]
+      .map(row => `session-${row.getAttribute('data-testid')!.slice(-4)}`);
+    expect(new Set(readIds)).toEqual(new Set(initialRows));
+    expect(new Set(watchedIds)).toEqual(new Set(initialRows));
+    expect(readIds).not.toContain('session-0100');
+
+    // jsdom has no browser layout. Supply that OS boundary while retaining
+    // RNW's real FlatList, render mask, spacer cells and scroll lifecycle.
+    type LayoutNode = HTMLElement & { __reactLayoutHandler?: (event: Readonly<{ nativeEvent: Readonly<{
+      layout: Readonly<{ x: number; y: number; width: number; height: number }>;
+    }> }>) => void };
+    const scroll = document.querySelector<LayoutNode>('[data-testid="channels-column-rows"]')!;
+    expect(scroll).not.toBeNull();
+    const content = scroll.firstElementChild as LayoutNode;
+    const viewportHeight = 420;
+    const rowHeight = 42;
+    let contentHeight = 0;
+    Object.defineProperties(scroll, {
+      clientHeight: { configurable: true, get: () => viewportHeight },
+      offsetHeight: { configurable: true, get: () => viewportHeight },
+      clientWidth: { configurable: true, get: () => 320 },
+      offsetWidth: { configurable: true, get: () => 320 },
+      scrollHeight: { configurable: true, get: () => contentHeight },
+    });
+    const report = (node: LayoutNode, y: number, height: number) => node.__reactLayoutHandler?.({
+      nativeEvent: { layout: { x: 0, y, width: 320, height } },
+    });
+    vi.useFakeTimers();
+    try {
+      const settle = async () => {
+        for (let frame = 0; frame < 5; frame += 1) {
+          await act(async () => {
+            report(scroll, 0, viewportHeight);
+            let y = 0;
+            for (const child of Array.from(content.children) as LayoutNode[]) {
+              const height = child.querySelector('[data-testid^="channels-column-row-"], [role="heading"]') !== null
+                ? rowHeight : Number.parseFloat(child.style.height) || 0;
+              report(child, y, height);
+              y += height;
+            }
+            contentHeight = y;
+            report(content, 0, contentHeight);
+            await vi.advanceTimersByTimeAsync(100);
+          });
+        }
+      };
+      await settle();
+      const initialReads = new Set(readIds);
+      for (let step = 0; step < 8; step += 1) {
+        await act(async () => {
+          scroll.scrollTop = viewportHeight * 4;
+          scroll.dispatchEvent(new Event('scroll', { bubbles: true }));
+          await vi.advanceTimersByTimeAsync(100);
+        });
+        await settle();
+      }
+      expect(document.querySelector('[data-testid="channels-column-row-0044"]')).not.toBeNull();
+      expect(initialReads.has('session-0044')).toBe(false);
+      expect(readIds).toContain('session-0044');
+      expect(watchedIds).toContain('session-0044');
+      expect(readIds).not.toContain('session-0999');
+      const beforeHiddenPush = readIds.length;
+      await act(async () => { surface.invalidateSession('session-0999', `sha256:${'d'.repeat(64)}`); });
+      expect(readIds).toHaveLength(beforeHiddenPush);
+      await act(async () => { surface.invalidateSession('session-0044', `sha256:${'e'.repeat(64)}`); });
+      expect(readIds).toHaveLength(beforeHiddenPush + 1);
+    } finally { vi.useRealTimers(); }
+
+    const search = document.querySelector('[data-testid="channels-column-search"]');
+    if (!(search instanceof HTMLInputElement)) throw new Error('Column search was not mounted');
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    if (setValue === undefined) throw new Error('Browser input value setter missing');
+    await act(async () => {
+      setValue.call(search, 'Conversation 0999');
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll('[data-testid^="channels-column-row-"]')).toHaveLength(1);
+      expect(readIds).toContain('session-0999');
+      expect(watchedIds).toContain('session-0999');
+    });
+    const readsAfterFilter = readIds.length;
+    await act(async () => { surface.invalidateSession('session-0044', `sha256:${'f'.repeat(64)}`); });
+    expect(readIds).toHaveLength(readsAfterFilter);
   });
 
   it.each(['connections-v1', 'bindings-v1'])('settles a completed %s refusal while the other Resource is still pending', async (refusedResource) => {

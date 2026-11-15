@@ -226,7 +226,7 @@ import {
   type ChannelsConversationActivity,
   type ChannelsConversationIndexRow,
 } from './conversationRows.js';
-import { selectChannelsRouterThreadSessionState, type ChannelsRouterThreadSessionState } from './conversationSessionState.js';
+import { selectChannelsRouterThreadSessionState, selectChannelsSessionTitle, type ChannelsRouterThreadSessionState } from './conversationSessionState.js';
 import {
   bindingPermissionIntentLabel,
   bindingPermissionIntentOptions,
@@ -1973,11 +1973,11 @@ function ConversationTargetSection(props: Readonly<{
   const isSession = binding.target.kind === 'session';
   // The summary is a bounded display projection; the Session is read and opened by its exact id.
   const sessionId = isSession ? binding.target.sessionId : undefined;
-  const session = useSessionState(sessionId ?? null);
+  const session = useSessionState(sessionId ?? null, { select: selectChannelsSessionTitle, includeActivity: false });
   const [openFailed, setOpenFailed] = React.useState(false);
   const [opening, setOpening] = React.useState(false);
   const title = isSession
-    ? session.state?.title ?? binding.target.summary
+    ? session.state ?? binding.target.summary
     : binding.target.summary;
   const openSession = props.openSession;
   return (
@@ -5571,7 +5571,9 @@ function BindingCreateJourney(props: Readonly<{
   const hostApi = usePluginHostApi();
   const surface = useSurfaceContext();
   const summarizeRecipe = useRouterRecipeSummary(props.t);
-  const preferredSessionTitle = useSessionState(props.preferredSessionId ?? null).state?.title;
+  const preferredSessionTitle = useSessionState(props.preferredSessionId ?? null, {
+    select: selectChannelsSessionTitle, includeActivity: false,
+  }).state;
   const [createdBindingId, setCreatedBindingId] = React.useState<string | undefined>();
   const resolveAction = useExecutePluginAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingResolve);
   const createAction = useExecutePluginAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingCreate);
@@ -8464,7 +8466,8 @@ function BindingsContent(props: BindingsContentProps): React.ReactElement {
   // A link journey started for a Session names it in the page's purpose.
   const linkSessionTitle = useSessionState(
     props.location.step === 'link' ? props.location.sessionId ?? null : null,
-  ).state?.title;
+    { select: selectChannelsSessionTitle, includeActivity: false },
+  ).state ?? undefined;
   const { execution, execute, reset } = props.operation;
   const [activeBindingId, setActiveBindingId] = React.useState<string | undefined>();
   const [enablementFailure, setEnablementFailure] = React.useState<BindingEnablementFailure | undefined>();
