@@ -340,6 +340,13 @@ export function describeUpdatesStatus(
       install: null,
     };
   }
+  if (updates.status === 'drifted' && updates.reason === 'native_effect_failed') {
+    return {
+      title: t(`${s}.installFailed`, { machine }),
+      subtitle: describeReason(updates.reason),
+      install: 'all',
+    };
+  }
   if (security !== null && security > 0) {
     return {
       title: t(`${s}.securityWaiting`, { count: security }),

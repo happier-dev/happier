@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { observeNativeUpdates, createNativeUpdatesSteps } from './nativeUpdates.js';
 import type { NativeRun } from './nativeSystemBackend.js';
 import { dnf5Fixtures } from './nativeUpdates.dnf5.fixtures.js';
+import { applyMachineSetupEffectPlan, checkMachineSetupEffectPlan } from './index.js';
+import { createMachineSetupNativeBackend } from './nativeBackend.js';
 
 const ok = (stdout = '') => ({ code: 0, stdout, stderr: '' });
 const missing = { code: null, stdout: '', stderr: '', errorCode: 'ENOENT' };
@@ -9,6 +11,7 @@ function aptRun(packages: unknown[], rebootCode = 1): NativeRun {
     return async (executable, args) => {
         if (executable === 'apt-get') return ok('apt 2.6');
         if (executable === 'python3') return ok(JSON.stringify({ architecture: 'amd64', packages }));
+        if (executable === 'dpkg-query') return ok();
         if (executable === 'test' && args.join(' ') === '-e /var/run/reboot-required') return { ...ok(), code: rebootCode };
         throw new Error(`Unexpected command ${executable}`);
     };
@@ -44,6 +47,64 @@ function dnf5Run(mode: 'updates' | 'empty' | 'security-failure' | 'reboot-failur
 }
 
 describe('native OS updates', () => {
+    it.each([
+        { scope: 'all', upgrade: false }, { scope: 'security', upgrade: false },
+        { scope: 'all', upgrade: true }, { scope: 'security', upgrade: true },
+    ] as const)('reviews and applies interrupted package configuration ($scope, upgrades=$upgrade)', async ({ scope, upgrade }) => {
+        let configured = false, curlVersion = '8.4.0-1';
+        const effects: string[][] = [];
+        // Only OS command execution is substituted; update selection, exact review,
+        // package observation and Apply/Verify use the real production owners.
+        const run: NativeRun = async (executable, args) => {
+            if (executable === 'python3') return ok(JSON.stringify({ architecture: 'amd64',
+                packages: upgrade && curlVersion !== ordinary.version ? [ordinary] : [] }));
+            if (executable === 'dpkg-query') {
+                const rows = [
+                    `dracut\tinstall ok ${configured ? 'installed' : 'half-configured'}\t110-11ubuntu0.1\tall\n`,
+                    `curl\tinstall ok installed\t${curlVersion}\tamd64\n`,
+                ];
+                const selected = args.includes('--') ? args.slice(args.indexOf('--') + 1) : null;
+                return ok(rows.filter(row => !selected || selected.includes(row.split('\t')[0]!)).join(''));
+            }
+            if (executable === 'dpkg' && args[0] === '--print-architecture') return ok('amd64\n');
+            if (executable === 'apt-get' && args[0] === '--version') return ok('apt 3.2\n');
+            if (executable === 'test') return { ...ok(), code: 1 };
+            if (executable === 'lslocks') return ok('{"locks":[]}');
+            if (executable === 'apt-cache') return args[0] === 'policy'
+                ? ok(`Candidate: ${ordinary.version}\n  ${ordinary.version} 500\n`)
+                : ok(`Package: curl\nVersion: ${ordinary.version}\nArchitecture: amd64\n`);
+            effects.push([executable, ...args]);
+            if (executable === 'dpkg') {
+                expect(args).toEqual(['--configure', '--', 'dracut']);
+                configured = true;
+            } else {
+                expect(executable).toBe('apt-get');
+                expect(configured).toBe(true);
+                expect(args).toContain(`curl=${ordinary.version}`);
+                curlVersion = ordinary.version;
+            }
+            return ok();
+        };
+        const observed = await observeNativeUpdates({ platform: 'linux', run });
+        expect(observed.observation).toMatchObject({ status: 'drifted', reason: 'native_effect_failed',
+            pendingAll: upgrade ? 1 : 0, pendingSecurity: 0 });
+        const backend = createMachineSetupNativeBackend({ run: command => run(command.executable, command.args, command.env) });
+        const steps = createNativeUpdatesSteps({ scope, candidates: observed.candidates! });
+        expect(steps).toMatchObject([{ kind: 'package', packages: [
+            ...(upgrade && scope === 'all' ? [{ name: ordinary.name, version: ordinary.version }] : []),
+            { name: 'dracut', version: '110-11ubuntu0.1' },
+        ] }]);
+        const plan = await checkMachineSetupEffectPlan({ basis: { kind: 'updates', machineId: 'guest', scope }, steps: [...steps], backend });
+        expect(plan.nativeFacts).toMatchObject([{ status: 'drifted' }]);
+        expect(effects).toEqual([]);
+        expect(await applyMachineSetupEffectPlan({ plan, backend })).toMatchObject({ status: 'applied' });
+        expect(configured).toBe(true);
+        expect(effects.filter(command => command[0] === 'apt-get')).toHaveLength(upgrade && scope === 'all' ? 1 : 0);
+        expect((await observeNativeUpdates({ platform: 'linux', run })).observation).toMatchObject({
+            status: upgrade && scope === 'security' ? 'drifted' : 'satisfied',
+        });
+    });
+
     it.each(['apt', 'dnf'] as const)('timestamps the completed %s check rather than a later read', async manager => {
         const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000);
         const native = manager === 'apt' ? aptRun([]) : dnf5Run('empty');
@@ -120,6 +181,19 @@ describe('native OS updates', () => {
             expect(result).toMatchObject({ observation: { status: 'unavailable', backend: 'apt', reason: 'required_fact_unavailable' } });
             expect(result.candidates).toBeUndefined();
             expect(result.observation.pendingAll).toBeUndefined();
+        }
+    });
+
+    it('keeps unreadable or non-configurable dpkg states unavailable rather than reporting zero updates as clean', async () => {
+        for (const response of [
+            { code: 2, stdout: '', stderr: 'Permission denied' },
+            ok('dracut\tinstall ok half-installed\t110-11ubuntu0.1\tall\n'),
+            ok('dracut\tinstall reinstreq half-configured\t110-11ubuntu0.1\tall\n'),
+            ok('dracut\tinstall ok triggers-awaited\t110-11ubuntu0.1\tall\n'),
+        ]) {
+            const result = await observeNativeUpdates({ platform: 'linux', run: async (executable, args, env) =>
+                executable === 'dpkg-query' ? response : aptRun([])(executable, args, env) });
+            expect(result).toEqual({ observation: { status: 'unavailable', backend: 'apt', reason: 'required_fact_unavailable' } });
         }
     });
 

@@ -3,11 +3,13 @@ import { MachineRecipePackageStepV1Schema } from '@happier-dev/protocol/machines
 import type { MachineRecipeStepV1 } from './index.js';
 import type { MachineSetupNativeCommandResult } from './nativeBackend.js';
 import type { NativeRun } from './nativeSystemBackend.js';
+import { readNativeAptPackages } from './nativeAptPackages.js';
 
 export type NativeUpdatesCandidates = Readonly<{
     manager: 'apt' | 'dnf';
     all: readonly Readonly<{ name: string; version: string }>[];
     security: readonly Readonly<{ name: string; version: string }>[];
+    configurationPending?: readonly Readonly<{ name: string; version: string }>[];
 }>;
 export type NativeUpdatesObservation = Readonly<{
     observation: NonNullable<MachineSetupObservationV1['updates']>;
@@ -47,7 +49,9 @@ function candidates(manager: 'apt' | 'dnf', values: unknown): NativeUpdatesCandi
     return packages.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
 }
 function observed(value: NativeUpdatesCandidates, rebootNeeded: boolean): NativeUpdatesObservation {
-    return { observation: { status: value.all.length || rebootNeeded ? 'drifted' : 'satisfied', backend: value.manager,
+    const recovery = Boolean(value.configurationPending?.length);
+    return { observation: { status: value.all.length || rebootNeeded || recovery ? 'drifted' : 'satisfied', backend: value.manager,
+        ...(recovery ? { reason: 'native_effect_failed' as const } : {}),
         pendingAll: value.all.length, pendingSecurity: value.security.length, rebootNeeded, checkedAt: Date.now() }, candidates: value };
 }
 async function apt(run: NativeRun): Promise<NativeUpdatesObservation> {
@@ -64,9 +68,17 @@ async function apt(run: NativeRun): Promise<NativeUpdatesObservation> {
     const all = candidates('apt', value.packages);
     const security = candidates('apt', value.packages.filter(pkg => object(pkg) && pkg.security === true));
     if (!all || !security) return unavailable('apt');
+    const installed = await run('dpkg-query', ['--show', '--showformat=${binary:Package}\t${Status}\t${Version}\t${Architecture}\n'], locale);
+    if (installed.code !== 0) return unavailable('apt', installed);
+    const states = readNativeAptPackages(installed.stdout);
+    if (!states) return unavailable('apt');
+    const pending = states.filter(pkg => pkg.configurationPending);
+    if (pending.some(pkg => pkg.architecture !== architecture && pkg.architecture !== 'all')) return unavailable('apt');
+    const configurationPending = candidates('apt', pending);
+    if (!configurationPending) return unavailable('apt');
     const reboot = await run('test', ['-e', '/var/run/reboot-required'], locale);
     if ((reboot.code !== 0 && reboot.code !== 1) || reboot.errorCode) return unavailable('apt', reboot);
-    return observed({ manager: 'apt', all, security }, reboot.code === 0);
+    return observed({ manager: 'apt', all, security, configurationPending }, reboot.code === 0);
 }
 async function dnf(run: NativeRun): Promise<NativeUpdatesObservation> {
     const version = await run('dnf', ['--version'], locale);
@@ -112,6 +124,10 @@ export async function observeNativeUpdates(input: Readonly<{ run: NativeRun; pla
 
 /** Exact candidates flow through the existing checked package interpreter. */
 export function createNativeUpdatesSteps(input: Readonly<{ scope: 'security' | 'all'; candidates: NativeUpdatesCandidates }>): readonly MachineRecipeStepV1[] {
-    const packages = input.candidates[input.scope];
+    const packages = [...input.candidates[input.scope]];
+    // Pending configuration is a reviewed prerequisite, not a security upgrade.
+    for (const pkg of input.candidates.configurationPending ?? []) {
+        if (!packages.some(candidate => candidate.name === pkg.name)) packages.push(pkg);
+    }
     return packages.length ? [{ id: 'os-updates', kind: 'package', manager: input.candidates.manager, packages: [...packages] }] : [];
 }

@@ -79,6 +79,20 @@ const row = (screen: Awaited<ReturnType<typeof render>>, testID: string) =>
   findTestInstanceByTypeWithProps(screen, Item, { testID });
 
 describe('Machine → Security page', () => {
+  it('offers the existing reviewed Apply for pending configuration with zero upgrades, but not a clean machine', async () => {
+    const onPrepare = vi.fn();
+    const recovery = await render(model({ status: 'drifted', reason: 'native_effect_failed',
+      pendingSecurity: 0, pendingAll: 0, rebootNeeded: false }), true, controls({ onPrepare }));
+    expect(row(recovery, 'machine-security-updates')?.props.title).not.toBe(t('machineDetailPage.security.upToDate'));
+    expect(findTestInstanceByTypeWithProps(recovery, RoundButton, { testID: 'machine-security-install' })?.props.disabled).toBe(false);
+    await recovery.pressByTestIdAsync('machine-security-install');
+    expect(onPrepare).toHaveBeenCalledWith('all');
+
+    const clean = await render(model({ status: 'satisfied', pendingSecurity: 0, pendingAll: 0, rebootNeeded: false }), true);
+    expect(row(clean, 'machine-security-updates')?.props.title).toBe(t('machineDetailPage.security.upToDate'));
+    expect(findTestInstanceByTypeWithProps(clean, RoundButton, { testID: 'machine-security-install' })).toBeUndefined();
+  });
+
   it('never reads a missing count as zero', async () => {
     const neither = await render(
       model({ status: 'drifted', backend: 'apt' }),
@@ -243,7 +257,7 @@ describe('Machine → Security page', () => {
           summary: 'Install 2 updates as the administrator you name' } },
     }));
     // The step's own description is the Machine's consequence; its Install is the confirmation.
-    expect(screen.getTextContent()).toContain('Install 2 updates as the administrator you name');
+    expect(screen.getTextContent().split('Install 2 updates as the administrator you name')).toHaveLength(2);
     const install = findTestInstanceByTypeWithProps(screen, RoundButton, { testID: 'machine-security-apply' });
     expect(install?.props).toMatchObject({ disabled: false, loading: false });
     await screen.pressByTestIdAsync('machine-security-apply');

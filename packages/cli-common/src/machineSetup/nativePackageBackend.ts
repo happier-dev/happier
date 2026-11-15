@@ -5,11 +5,12 @@ import type { MachineElevationFailureV1 } from '@happier-dev/protocol/machines/a
 import type { MachineSetupNativeCommandResult } from './nativeBackend.js';
 import type { NativeRun } from './nativeSystemBackend.js';
 import { isMissingNativeFile } from './nativeFileSafety.js';
+import { readNativeAptPackages } from './nativeAptPackages.js';
 
 type PackageStep = Extract<MachineRecipeStepV1, { kind: 'package' }>;
 type Package = PackageStep['packages'][number];
 type Facts = MachineSetupStepObservationV1['facts'];
-type Installed = { version: string; architecture: string };
+type Installed = { version: string; architecture: string; configurationPending?: boolean };
 const locale = { LC_ALL: 'C' };
 const observation = (step: PackageStep, status: MachineSetupStepObservationV1['status'], facts: Facts,
     reason?: string): MachineSetupStepObservationV1 => ({ stepId: step.id, status, facts, ...(reason ? { reason } : {}) });
@@ -22,7 +23,7 @@ function packageKey(pkg: { name: string; kind?: unknown; source?: unknown; scope
 }
 function pending(step: PackageStep, installed: ReadonlyMap<string, Installed>) {
     return step.packages.filter(pkg => step.state === 'absent' ? installed.has(packageKey(pkg))
-        : !installed.has(packageKey(pkg)) || pkg.version !== undefined && installed.get(packageKey(pkg))?.version !== pkg.version
+        : installed.get(packageKey(pkg))?.configurationPending || !installed.has(packageKey(pkg)) || pkg.version !== undefined && installed.get(packageKey(pkg))?.version !== pkg.version
             && !(step.manager === 'dnf' && installed.get(packageKey(pkg))?.version === `0:${pkg.version}`));
 }
 
@@ -113,20 +114,15 @@ async function apt(run: NativeRun, step: PackageStep) {
     const result = await run('dpkg-query', ['--show', '--showformat=${binary:Package}\t${Status}\t${Version}\t${Architecture}\n', '--', ...step.packages.map(pkg => pkg.name)], locale);
     if (result.code !== 0 && result.code !== 1) return unavailable(step);
     const installed = new Map<string, Installed>();
-    for (const [nativeId, status, version, nativeArch] of rows(result.stdout)) {
-        if (!nativeId || !status) return unavailable(step);
-        const [id, ...qualifiers] = nativeId.split(':');
-        if (!step.packages.some(pkg => pkg.name === id)) continue;
-        if (/^(?:unknown|install|hold|deinstall|purge) ok not-installed$/u.test(status)) continue;
-        // Residual configuration is not installed software and is never purged.
-        if (/^(?:deinstall|purge) ok config-files$/u.test(status)) continue;
-        if (!version || !nativeArch) return unavailable(step);
+    const states = readNativeAptPackages(result.stdout);
+    if (!states) return unavailable(step);
+    for (const pkg of states) {
+        if (!step.packages.some(selected => selected.name === pkg.name)) continue;
         // An unqualified lookup can return a foreign-architecture installation.
         // It is neither absent nor authority to remove a different architecture.
-        if (!id || nativeArch !== arch && nativeArch !== 'all' || qualifiers.length > 1
-            || qualifiers.length === 1 && qualifiers[0] !== nativeArch || installed.has(packageKey({ name: id }))) return unavailable(step);
-        if (status.endsWith(' ok installed')) installed.set(packageKey({ name: id }), { version, architecture: nativeArch });
-        else return unavailable(step);
+        if (pkg.architecture !== arch && pkg.architecture !== 'all' || installed.has(packageKey(pkg))) return unavailable(step);
+        installed.set(packageKey(pkg), { version: pkg.version, architecture: pkg.architecture,
+            ...(pkg.configurationPending ? { configurationPending: true } : {}) });
     }
     const packages = step.packages.map(pkg => ({ manager: 'apt', name: pkg.name, present: installed.has(packageKey(pkg)), ...installed.get(packageKey(pkg)) }));
     const facts: Facts = { manager: 'apt', architecture: arch, packages };
@@ -140,6 +136,8 @@ async function apt(run: NativeRun, step: PackageStep) {
     if (step.state === 'absent') return observation(step, 'drifted', facts);
     const unresolved: string[] = [];
     for (const pkg of changes) {
+        const current = installed.get(packageKey(pkg));
+        if (current?.configurationPending && (pkg.version === undefined || pkg.version === current.version)) continue;
         const policy = await run('apt-cache', ['policy', '--', pkg.name], locale);
         if (policy.code !== 0) return unavailable(step, facts);
         const candidate = /^\s*Candidate:\s*(\S+)$/m.exec(policy.stdout)?.[1];
@@ -332,7 +330,7 @@ export function createNativePackageBackend(currentProcessRun: NativeRun, runAsDa
         let state = await observe(step);
         if (state.status === 'satisfied') return;
         if (state.status !== 'drifted') throw new MachineSetupEffectError(state.reason === 'package_manager_busy' ? 'package_manager_busy' : 'required_fact_unavailable');
-        const effect = async (executable: string, args: readonly string[], env = locale) => {
+        const effect = async (executable: string, args: readonly string[], env: Readonly<Record<string, string>> = locale) => {
             const result = await run(executable, args, env);
             if (result.code !== 0) throw new MachineSetupEffectError(step.manager === 'dnf' && result.code === 200 ? 'package_manager_busy' : 'native_effect_failed');
         };
@@ -351,12 +349,21 @@ export function createNativePackageBackend(currentProcessRun: NativeRun, runAsDa
         if (!Array.isArray(packages)) throw new MachineSetupEffectError('required_fact_unavailable');
         const installed = new Map<string, Installed>();
         for (const value of packages) if (object(value) && value.present === true && typeof value.name === 'string' && typeof value.version === 'string') {
-            installed.set(packageKey({ ...value, name: value.name }), { version: value.version, architecture: typeof value.architecture === 'string' ? value.architecture : 'native' });
+            installed.set(packageKey({ ...value, name: value.name }), { version: value.version, architecture: typeof value.architecture === 'string' ? value.architecture : 'native',
+                ...(value.configurationPending === true ? { configurationPending: true } : {}) });
         }
         const changes = pending(step, installed);
         if (step.manager === 'apt') {
             if (step.state === 'absent') { await requireAptUnlocked(run); await effect('dpkg', ['--remove', '--', ...changes.map(pkg => pkg.name)]); }
-            else await mutateApt(run, ['install', '--yes', '--no-install-recommends', '--no-remove', ...(changes.some(pkg => pkg.version !== undefined) ? ['--allow-downgrades'] : []), '--', ...changes.map(pkg => pkg.version === undefined ? pkg.name : `${pkg.name}=${pkg.version}`)]);
+            else {
+                const configure = changes.filter(pkg => installed.get(packageKey(pkg))?.configurationPending);
+                if (configure.length) {
+                    await requireAptUnlocked(run);
+                    await effect('dpkg', ['--configure', '--', ...configure.map(pkg => pkg.name)], { ...locale, DEBIAN_FRONTEND: 'noninteractive' });
+                }
+                const install = changes.filter(pkg => !installed.has(packageKey(pkg)) || pkg.version !== undefined && pkg.version !== installed.get(packageKey(pkg))?.version);
+                if (install.length) await mutateApt(run, ['install', '--yes', '--no-install-recommends', '--no-remove', ...(install.some(pkg => pkg.version !== undefined) ? ['--allow-downgrades'] : []), '--', ...install.map(pkg => pkg.version === undefined ? pkg.name : `${pkg.name}=${pkg.version}`)]);
+            }
         } else if (step.manager === 'dnf') {
             if (step.state === 'absent') await effect('rpm', ['--erase', '--', ...changes.map(pkg => `${pkg.name}-${installed.get(packageKey(pkg))!.version}.${installed.get(packageKey(pkg))!.architecture}`)]);
             else {
