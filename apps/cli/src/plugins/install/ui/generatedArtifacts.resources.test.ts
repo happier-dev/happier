@@ -8,10 +8,37 @@ import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { buildResourcesById } from '@/plugins/projection/registry/projection/v2';
-import { readGeneratedPluginCompiledManifestSync } from './generatedArtifacts';
+import { readGeneratedPluginCompiledAccountResourceIdsSync } from './generatedArtifacts';
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+
+it('retains compiled Account Resource facts independently of unrelated Action schema bytes', () => {
+    const pluginId = 'acme.account-relay';
+    const root = mkdtempSync(join(tmpdir(), 'compiled-resource-size-'));
+    roots.push(root);
+    const graph = join(root, 'dist/happier-plugin-ui');
+    mkdirSync(graph, { recursive: true });
+    const readWithActions = (count: number) => {
+        writeFileSync(join(graph, WORKSPACE_PACKAGE_BUILD_INPUT_RECORD), JSON.stringify({ version: 2,
+            manifest: { schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Relay', runtime: { apiVersion: 1 },
+                contributes: {
+                    resources: [{ id: 'target-options', source: 'dynamic', kind: 'config', scope: 'global',
+                        execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
+                        contentType: 'application/json' }],
+                    actions: Array.from({ length: count }, (_, index) => ({ id: `inspect${index}`, title: 'Inspect',
+                        scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' }, dangerLevel: 'safe',
+                        inputSchema: { type: 'object', properties: { value: { type: 'string', description: 'x'.repeat(4096) } } },
+                        resultSchema: { type: 'object' },
+                    })),
+                } },
+        }));
+        const compiled = readGeneratedPluginCompiledAccountResourceIdsSync(root, pluginId);
+        expect(compiled).not.toBeNull();
+        return Buffer.byteLength(JSON.stringify(compiled));
+    };
+    expect(readWithActions(100)).toBe(readWithActions(1));
+});
 
 it('projects the adopted compiled Resource declaration instead of borrowing it from the moving source catalog', () => {
     const pluginId = 'acme.account-relay';
@@ -31,14 +58,14 @@ it('projects the adopted compiled Resource declaration instead of borrowing it f
     for (const compiledResources of [[], [declaration], [previousArtifactDeclaration]]) {
         writeFileSync(join(graph, WORKSPACE_PACKAGE_BUILD_INPUT_RECORD), JSON.stringify({ version: 2, packageName: '@acme/relay',
             manifest: { ...source, contributes: { resources: compiledResources } } }));
-        const compiledAccountManifest = readGeneratedPluginCompiledManifestSync(root, pluginId);
+        const compiledAccountResourceIds = readGeneratedPluginCompiledAccountResourceIdsSync(root, pluginId);
         const registry = createResolvedContributionRegistry({ pluginDeclarations: [{ pluginId, pluginRootPath: root, manifestPath: '',
             daemonEntryPath: null, devDaemonEntryPath: null, sourceSpec: { kind: 'bundled', locator: '@acme/relay', trustPolicy: 'local_trusted', installPolicy: 'link' },
-            manifest: normalizePluginManifestV2(source), ...(compiledAccountManifest ? { compiledAccountManifest } : {}),
+            manifest: normalizePluginManifestV2(source), ...(compiledAccountResourceIds ? { compiledAccountResourceIds } : {}),
         }], resources: [{ pluginId, pluginVersion: '1.0.0', identity: createPluginContributionIdentity({ pluginId, localId: resource.id }),
             definition: resource, provenance: 'first_party', sourceKind: 'bundled' }] });
         const projected = buildResourcesById(registry, [])[`${pluginId}/${resource.id}`];
         expect(PluginProjectedResourceV2Schema.parse(projected).accountRuntimeDeclared).toBe(compiledResources.length > 0);
     }
-    expect(readGeneratedPluginCompiledManifestSync(root, 'acme.other')).toBeNull();
+    expect(readGeneratedPluginCompiledAccountResourceIdsSync(root, 'acme.other')).toBeNull();
 });

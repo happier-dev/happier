@@ -814,8 +814,7 @@ export function buildResourcesById(
 ): PluginProjectionV2['resourcesById'] {
     const resourcesById: PluginProjectionV2['resourcesById'] = {};
     const compiledAccountResources = new Set(registry.pluginDeclarations?.flatMap(plugin =>
-        plugin.compiledAccountManifest?.contributes.resources.flatMap(resource => isDynamicPluginResourceContributionV2(resource) && resource.execution?.target === 'account'
-            ? [qualifiedProjectionKey(plugin.pluginId, resource.id)] : []) ?? []));
+        plugin.compiledAccountResourceIds?.map(id => qualifiedProjectionKey(plugin.pluginId, id)) ?? []));
     for (const resource of registry.resources) {
         if (!resource.pluginId) {
             continue;

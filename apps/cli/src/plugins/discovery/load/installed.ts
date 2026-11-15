@@ -13,7 +13,7 @@ import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
 import type { StoredApprovedPluginManifest } from '@/plugins/store/registry/generationStore';
 import type { ResolvedLocalPathPluginSourceSuccess } from '@/plugins/discovery/sources/localPath';
 import { resolveInstalledPluginSource } from '@/plugins/discovery/sources/resolve';
-import { readGeneratedPluginUiArtifactsManifest, readGeneratedPluginCompiledManifestSync } from '@/plugins/install/ui/generatedArtifacts';
+import { readGeneratedPluginUiArtifactsManifest, readGeneratedPluginCompiledAccountResourceIdsSync } from '@/plugins/install/ui/generatedArtifacts';
 
 export type LoadedPlugin = Readonly<{
   pluginId: string;
@@ -23,7 +23,7 @@ export type LoadedPlugin = Readonly<{
   devDaemonEntryPath: string | null;
   generatedUiArtifactsManifest?: PluginUiArtifactsManifestV2;
   /** Descriptive build input of the adopted Account graph, never activation authority. */
-  compiledAccountManifest?: CanonicalPluginManifest;
+  compiledAccountResourceIds?: readonly string[];
   manifest: CanonicalPluginManifest;
   admissionDiagnostics?: readonly PluginCompatibilityDiagnostic[];
   sourceSpec: PluginSourceSpecV1;
@@ -93,9 +93,9 @@ export async function loadPluginsFromState(
     const generatedUiArtifactsManifest = await readGeneratedPluginUiArtifactsManifest(
       resolvedSource.pluginRootPath,
     );
-    const compiledAccountManifest = generatedUiArtifactsManifest
+    const compiledAccountResourceIds = generatedUiArtifactsManifest
       && resolvedSource.manifest.contributes.resources.some(resource => isDynamicPluginResourceContributionV2(resource) && resource.execution?.target === 'account')
-      ? readGeneratedPluginCompiledManifestSync(resolvedSource.pluginRootPath, pluginId) : null;
+      ? readGeneratedPluginCompiledAccountResourceIdsSync(resolvedSource.pluginRootPath, pluginId) : null;
 
     const loadedPlugin: LoadedPlugin = {
       pluginId,
@@ -104,7 +104,7 @@ export async function loadPluginsFromState(
       daemonEntryPath: daemonEntryResolution.daemonEntryPath,
       devDaemonEntryPath: daemonEntryResolution.devDaemonEntryPath,
       ...(generatedUiArtifactsManifest ? { generatedUiArtifactsManifest } : {}),
-      ...(compiledAccountManifest ? { compiledAccountManifest } : {}),
+      ...(compiledAccountResourceIds ? { compiledAccountResourceIds } : {}),
       manifest: resolvedSource.manifest,
       sourceSpec: mergeLoadedPluginSourceSpec({
         recordSource: record.source,

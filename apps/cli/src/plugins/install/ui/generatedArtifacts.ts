@@ -3,10 +3,10 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { PluginUiArtifactsManifestV2Schema } from '@happier-dev/protocol/plugins/ui/uiArtifactsManifest';
+import { isDynamicPluginResourceContributionV2 } from '@happier-dev/protocol/plugins/contributions/v2';
 import type { PluginUiArtifactsManifestV2 } from '@happier-dev/protocol/plugins/ui';
 import { WORKSPACE_PACKAGE_BUILD_INPUT_RECORD } from '@happier-dev/cli-common/packageBuildOutputTargets';
 import { readCanonicalPluginManifest } from '@/plugins/manifest/normalize';
-import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
 
 export const GENERATED_PLUGIN_UI_ARTIFACTS_ROOT_RELATIVE_PATH = 'dist/happier-plugin-ui';
 export const GENERATED_PLUGIN_UI_ARTIFACTS_MANIFEST_RELATIVE_PATH =
@@ -58,13 +58,17 @@ export function readGeneratedPluginUiArtifactsManifestSync(
 }
 
 /** The build owner writes this beside the adopted graph, including after retaining an older build. */
-export function readGeneratedPluginCompiledManifestSync(pluginRootPath: string, pluginId: string): CanonicalPluginManifest | null {
+export function readGeneratedPluginCompiledAccountResourceIdsSync(pluginRootPath: string, pluginId: string): readonly string[] | null {
   try {
     const record: unknown = JSON.parse(readFileSync(join(pluginRootPath, GENERATED_PLUGIN_UI_ARTIFACTS_ROOT_RELATIVE_PATH,
       WORKSPACE_PACKAGE_BUILD_INPUT_RECORD), 'utf8'));
     if (!record || typeof record !== 'object' || !('version' in record) || record.version !== 2 || !('manifest' in record)) return null;
     const manifest = readCanonicalPluginManifest(record.manifest);
-    return manifest?.id === pluginId ? manifest : null;
+    if (manifest?.id !== pluginId) return null;
+    // Loaded declarations live for the registry's lifetime. The projection only
+    // needs these IDs, not a second copy of every compiled Action schema.
+    return Object.freeze(manifest.contributes.resources.flatMap(resource =>
+      isDynamicPluginResourceContributionV2(resource) && resource.execution?.target === 'account' ? [resource.id] : []));
   } catch {
     return null;
   }
