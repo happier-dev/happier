@@ -2110,6 +2110,36 @@ describe('createExecutionRunRpcActionExecutor', () => {
     expect(applyAction).not.toHaveBeenCalled();
   });
 
+  // SEC-BATCH-BI-1115 D3: the runtime sub-executor reaches the shared router with the host's settings.
+  it('honors an explicit agent Require for execution.run.action runtime ids', async () => {
+    const diagnostics = { dispatch: vi.fn(async () => ({ v: 1 as const, machineId: 'machine_1',
+      generatedAt: 2_000, refreshState: 'idle' as const, events: [], diagnostics: [] })) };
+    const approvalsCreate = vi.fn<NonNullable<ExecutionRunRpcApprovalDeps['approvalsCreate']>>(
+      async () => ({ artifactId: 'approval_runtime_require' }),
+    );
+    const executor = createExecutionRunRpcActionExecutor({
+      manager: createExecutionRunBridgeWithRun(),
+      context: { sessionId: 'sess_1', cwd: '/workspace', browserDiagnostics: diagnostics,
+        getServerFeaturesSnapshot: () => BROWSER_DIAGNOSTICS_RUNTIME_ACTIONS_ENABLED },
+      policy: resolveExecutionRunPolicy({ defaults: { boundedTimeoutMs: null, reviewBoundedTimeoutMs: null, maxTurns: null } }),
+      isExecutionRunsEnabled: () => true,
+      actionsSettingsProvider: createScopedRuntimeActionSettingsProvider(normalizeActionsSettingsV1({
+        v: 1, actions: { 'browser.diagnostics.snapshot': { approvalRequiredSurfaces: ['agent'] } },
+      })),
+      approvalDeps: { approvalsCreate, approvalsUpdate: async () => ({ ok: true }) },
+    });
+
+    const result = await executor.execute('execution.run.action', {
+      runId: 'run_1', actionId: 'browser.diagnostics.snapshot', input: { browserSessionId: 'sess_1', viewId: 'view_1' },
+    }, { surface: 'rpc', authority: 'account_automation', defaultSessionId: 'sess_1',
+      serverId: 'server-1', runtimeAccountId: 'account-1', actionRequestId: 'runtime-require-request-1' });
+
+    expect(result).toMatchObject({ ok: true, result: { ok: true, result: {
+      kind: 'approval_request_created', artifactId: 'approval_runtime_require',
+    } } });
+    expect(diagnostics.dispatch).not.toHaveBeenCalled();
+  });
+
   it.each(['builtin:read-propose', null])('binds child Action approval to retained Run selection (%s)', async approvalProfileId => {
     const original = createExecutionRunBridgeWithRun();
     const run = original.get('run_1')!;

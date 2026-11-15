@@ -250,6 +250,14 @@ function readPermissionRequestStore(value: unknown): ExecutionRunPermissionReque
     : null;
 }
 
+/**
+ * This host owns the Actions settings source. Every executor it builds stamps them into the
+ * invocation context so the shared router decides approval with the full context.
+ */
+function withHostActionsSettings<Context extends ActionExecutorContext>(provider: RuntimeActionSettingsProvider, context: Context) {
+  return { ...context, actionsSettings: provider.getActionsSettings() };
+}
+
 type ExecutionRunRpcInstalledActionDeps = ActionExecutorDeps & Required<Pick<ActionExecutorDeps,
   'executionRunStart' | 'executionRunGet' | 'executionRunWait' | 'executionRunAction'>>;
 
@@ -296,7 +304,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       return { ok: false, errorCode: 'execution_run_failed', error: 'execution_run_action_executor_unavailable' };
     }
     runtimeActionExecutorForRunActions ??= createActionExecutor(actionDeps);
-    return await runtimeActionExecutorForRunActions.execute(actionId, input, {
+    return await runtimeActionExecutorForRunActions.execute(actionId, input, withHostActionsSettings(actionsSettingsProvider, {
       defaultSessionId: context.defaultSessionId,
       approvalProfileId: context.approvalProfileId ?? null,
       ...(context.serverId ? { serverId: context.serverId } : {}),
@@ -322,7 +330,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       ...(context.causalPermissionAuthority
         ? { causalPermissionAuthority: context.causalPermissionAuthority }
         : {}),
-    });
+    }));
   }
 
   function isAuthoritativeScope(sessionId: string | null): boolean {
@@ -1070,9 +1078,7 @@ export function createExecutionRunRpcActionExecutor(
   const executor = createActionExecutor(deps);
   return {
     execute: async (actionId, input, callerContext) => {
-      // This host owns the settings source; the shared router decides approval
-      // from them with the full invocation context (no host-local re-decision).
-      let context = { ...(callerContext ?? {}), actionsSettings: actionsSettingsProvider.getActionsSettings() };
+      let context = withHostActionsSettings(actionsSettingsProvider, callerContext ?? {});
       // Account governance precedes Project custody/preparation. A disabled
       // Action must still report its own policy result without a launch context.
       try {
