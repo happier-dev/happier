@@ -1,6 +1,7 @@
 import { fetchGitHubReleases } from '@happier-dev/release-runtime/github';
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
+import { doesVersionMatchReleaseRing } from '../update/releaseRingVersion.js';
 import { compareVersions } from '../update/compareVersions.js';
 import { getFirstPartyComponentCatalogEntry } from './componentCatalog.js';
 import { resolveFirstPartyReleaseArtifactSource, type FirstPartyReleaseArtifactSource } from './releaseArtifactSource.js';
@@ -56,12 +57,11 @@ export function assertManagedGuestCliVersion(params: Readonly<{
   assertNoDowngrade(params.candidateVersion, params.installedVersion);
 }
 
-/** Returns an exact acquisition version; the Home line, not the controller's ring, selects it. */
+/** Returns an exact acquisition version within the Home's line and channel. */
 export async function resolveManagedGuestCliRelease(params: Readonly<{
   line: string;
   installedVersion?: string;
-  /** The caller can retain its installation layout channel; it does not filter releases. */
-  channel?: PublicReleaseRingId;
+  channel: PublicReleaseRingId;
   artifactSource?: FirstPartyReleaseArtifactSource;
   githubRepo?: string;
   githubToken?: string;
@@ -79,11 +79,11 @@ export async function resolveManagedGuestCliRelease(params: Readonly<{
       || typeof release.tag_name !== 'string' || 'draft' in release && release.draft === true
       || !release.tag_name.startsWith(prefix)) continue;
     const candidate = release.tag_name.slice(prefix.length);
-    if (readExactVersionLine(candidate) !== params.line) continue;
+    if (readExactVersionLine(candidate) !== params.line || !doesVersionMatchReleaseRing(candidate, params.channel)) continue;
     if (versionId === undefined || compareVersions(candidate, versionId) > 0) versionId = candidate;
   }
   if (versionId === undefined) {
-    throw new ManagedGuestCliReleaseError('managed_guest_cli_release_unavailable', `No public CLI release is available for the Home release line ${params.line}.`);
+    throw new ManagedGuestCliReleaseError('managed_guest_cli_release_unavailable', `No public CLI release is available for the Home release line ${params.line} and channel ${params.channel}.`);
   }
   assertNoDowngrade(versionId, params.installedVersion);
   return { versionId };

@@ -1,3 +1,5 @@
+import { doesVersionMatchReleaseRing } from './releaseRingVersion.js';
+export { doesVersionMatchReleaseRing } from './releaseRingVersion.js';
 import { compareVersions } from './compareVersions.js';
 export { compareVersions } from './compareVersions.js';
 import { spawnSync, spawn } from 'node:child_process';
@@ -347,15 +349,6 @@ export function formatUpdateNotice(params: Readonly<{
  * other ring. A version belongs to a ring by its prerelease identifier: none for stable,
  * `preview.*` for preview, `dev.*` for dev.
  */
-export function doesVersionMatchReleaseRing(version: string | null | undefined, ring: PublicReleaseRingId): boolean {
-  const value = String(version ?? '').trim().toLowerCase();
-  const parsed = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9a-z.-]+))?(?:\+.*)?$/.exec(value);
-  if (!parsed) return false;
-  const prerelease = parsed[4] ?? '';
-  if (ring === 'stable') return prerelease === '';
-  if (ring === 'preview') return prerelease.startsWith('preview.');
-  return prerelease.startsWith('dev.');
-}
 
 export type CachedCliUpdateState = Readonly<{
   currentVersion: string;

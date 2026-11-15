@@ -65,7 +65,7 @@ describe('installRemoteFirstPartyComponent', () => {
     try {
       await writeFile(join(fixture.payloadRoot, 'home-build.json'), JSON.stringify({ version: '0.3.0-dev' }));
       vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', fixture.payloadRoot);
-      vi.stubGlobal('fetch', async () => Response.json({ capabilities: { guestCli: { source: 'home-payload', line: '0.3' } } }));
+      vi.stubGlobal('fetch', async () => Response.json({ capabilities: { guestCli: { source: 'home-payload', line: '0.3', channel: 'stable' } } }));
       const installed = await installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli', homeUrl: 'https://home.example', requireHomePayload: true }, {
         resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
         preparePayload: async () => { throw new Error('Public latest 0.2.20 must never be selected'); },
@@ -91,7 +91,7 @@ describe('installRemoteFirstPartyComponent', () => {
       await writeFile(join(fixture.payloadRoot, 'package.json'), JSON.stringify({ version: '0.2.10' }));
       vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', fixture.payloadRoot);
       // Home HTTP and guest command execution are the external boundaries.
-      vi.stubGlobal('fetch', async () => Response.json({ capabilities: { guestCli: { source: 'home-payload', line: '0.3' } } }));
+      vi.stubGlobal('fetch', async () => Response.json({ capabilities: { guestCli: { source: 'home-payload', line: '0.3', channel: 'stable' } } }));
       await expect(installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli', homeUrl: 'https://home.example', requireHomePayload: true }, {
         resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
         runRemoteText: async ({ remoteCommand }) => ({ status: 0, stdout: remoteCommand.includes('--version') ? '0.3.3\n' : '', stderr: '' }),
@@ -107,7 +107,7 @@ describe('installRemoteFirstPartyComponent', () => {
     try {
       await writeFile(join(fixture.payloadRoot, 'package.json'), JSON.stringify({ version: '0.2.10' }));
       vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', fixture.payloadRoot);
-      vi.stubGlobal('fetch', async () => Response.json({ capabilities: { guestCli: { source: 'home-payload', line: '0.3' } } }));
+      vi.stubGlobal('fetch', async () => Response.json({ capabilities: { guestCli: { source: 'home-payload', line: '0.3', channel: 'stable' } } }));
       const installed = await installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli', homeUrl: 'https://home.example', requireHomePayload: true }, {
         resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
         runRemoteText: async ({ remoteCommand }) => ({ status: 0, stdout: remoteCommand.includes('--version') ? 'managed_guest_cli_absent\n' : '', stderr: '' }),
@@ -129,7 +129,7 @@ describe('installRemoteFirstPartyComponent', () => {
       vi.stubEnv('NODE_ENV', 'development');
       vi.stubEnv('HAPPIER_FIRST_PARTY_RELEASE_API_BASE_URL', `http://127.0.0.1:${address.port}`);
       vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', fixture.payloadRoot);
-      vi.stubGlobal('fetch', async () => Response.json({ capabilities: { guestCli: { source: 'public-release', line: '0.3' } } }));
+      vi.stubGlobal('fetch', async () => Response.json({ capabilities: { guestCli: { source: 'public-release', line: '0.3', channel: 'stable' } } }));
       await expect(installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli', homeUrl: 'https://home.example', requireHomePayload: true }, {
         resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
         runRemoteText: async ({ remoteCommand }) => ({ status: 0, stdout: remoteCommand.includes('--version') ? 'managed_guest_cli_absent\n' : '', stderr: '' }),

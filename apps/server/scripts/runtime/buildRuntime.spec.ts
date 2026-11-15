@@ -27,12 +27,15 @@ describe('buildServerRuntime', () => {
     await writeFile(join(projectDir, 'tsconfig.json'), '{}');
     await symlink(fileURLToPath(new URL('../../node_modules', import.meta.url)), join(projectDir, 'node_modules'), 'junction');
     for (const name of ['main.ts', 'main.light.ts']) {
-      await writeFile(join(projectDir, 'sources', name), 'export const source = typeof __HAPPIER_GUEST_CLI_SOURCE__ === "undefined" ? null : __HAPPIER_GUEST_CLI_SOURCE__;');
+      await writeFile(join(projectDir, 'sources', name), 'export const source = typeof __HAPPIER_GUEST_CLI_SOURCE__ === "undefined" ? null : __HAPPIER_GUEST_CLI_SOURCE__; export const channel = typeof __HAPPIER_GUEST_CLI_CHANNEL__ === "undefined" ? null : __HAPPIER_GUEST_CLI_CHANNEL__; ');
     }
-    const outDir = join(projectDir, 'out');
-    await bundleServerRuntimeEntrypoints({ projectDir, outDir });
-    for (const name of ['main.js', 'main.light.js']) {
-      expect((await import(/* @vite-ignore */ pathToFileURL(join(outDir, name)).href)).source).toBe('public-release');
+    for (const releaseChannel of ['stable', 'preview', 'publicdev'] as const) {
+      const outDir = join(projectDir, releaseChannel);
+      await bundleServerRuntimeEntrypoints({ projectDir, outDir, releaseChannel });
+      for (const name of ['main.js', 'main.light.js']) {
+        expect((await import(/* @vite-ignore */ pathToFileURL(join(outDir, name)).href)).source).toBe('public-release');
+        expect((await import(/* @vite-ignore */ pathToFileURL(join(outDir, name)).href)).channel).toBe(releaseChannel);
+      }
     }
   });
   it('emits full and light runtime entrypoints', async () => {

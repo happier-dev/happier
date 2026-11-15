@@ -1,3 +1,5 @@
+import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+
 import { copyFile, cp, mkdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -150,6 +152,7 @@ export async function buildServerRuntimeSupportPayload({
 }
 
 export async function buildServerBinaryArtifactPayload({
+  releaseChannel = 'publicdev',
   repoRoot,
   payloadDir,
   uiWebDistPath,
@@ -168,6 +171,7 @@ export async function buildServerBinaryArtifactPayload({
   includeIrohNativeReleaseEvidence = false,
   readPublicProfileAssetFiles = readServerPublicProfileAssetFiles,
 }: {
+  releaseChannel?: PublicReleaseRingId;
   repoRoot: string;
   payloadDir: string;
   uiWebDistPath?: string;
@@ -228,6 +232,7 @@ export async function buildServerBinaryArtifactPayload({
     bunCommand,
     runCommand,
     buildRunnerEntrypoint: join(repoRoot, 'packages', 'cli-common', 'scripts', 'buildServerBunBinary.mjs'),
+    defines: { __HAPPIER_GUEST_CLI_CHANNEL__: JSON.stringify(releaseChannel) },
   });
 
   // The compiled executable's import.meta.url is Bun's virtual /$bunfs root, so the server

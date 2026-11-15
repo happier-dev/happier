@@ -31,7 +31,7 @@ export async function resolveManagedGuestCliSource(input: ManagedGuestCliSourceR
   const body: unknown = await response.json();
   const capabilities = body && typeof body === 'object' && 'capabilities' in body ? body.capabilities : undefined;
   const parsed = GuestCliIdentityV1Schema.safeParse(capabilities && typeof capabilities === 'object' && 'guestCli' in capabilities ? capabilities.guestCli : undefined);
-  if (!parsed.success) throw new SystemTaskExecutionError('guest_cli_identity_unavailable', 'This Home does not advertise a valid guest CLI source and release line.');
+  if (!parsed.success) throw new SystemTaskExecutionError('guest_cli_identity_unavailable', 'This Home does not advertise a valid guest CLI source, release line and channel.');
   const identity = parsed.data;
   if (identity.source === 'home-payload' && !input.localPayloadAvailable) {
     throw new SystemTaskExecutionError('guest_payload_missing', 'This Home requires its guest CLI payload. Choose a connected controller that has the payload, then retry.');
@@ -49,7 +49,7 @@ export async function resolveManagedGuestCliSource(input: ManagedGuestCliSourceR
       if (installedVersion) assertManagedGuestCliVersion({ candidateVersion: input.localPayloadVersion ?? '', installedVersion });
       return { kind: 'home-payload' };
     }
-    const release = await resolveManagedGuestCliRelease({ line: identity.line, installedVersion, signal: input.signal,
+    const release = await resolveManagedGuestCliRelease({ line: identity.line, channel: identity.channel, installedVersion, signal: input.signal,
       ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}) });
     return { kind: 'public-release', versionId: release.versionId };
   } catch (error) {

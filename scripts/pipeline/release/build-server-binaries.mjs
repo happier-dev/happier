@@ -73,6 +73,7 @@ async function main() {
   for (const target of targets) {
     const stageDir = join(tempDir, `happier-server-v${version}-${target.os}-${target.arch}`);
     await buildServerBinaryArtifactPayload({
+      releaseChannel: channel,
       repoRoot,
       payloadDir: stageDir,
       uiWebDistPath,

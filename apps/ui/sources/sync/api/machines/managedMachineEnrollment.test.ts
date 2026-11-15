@@ -93,7 +93,7 @@ describe('app managed enrollment', () => {
                 capabilities: { serverIdentity: { serverIdentityId: homeId } },
                 });
                 return Response.json({ ...features, capabilities: { ...features.capabilities,
-                    guestCli: { source: 'public-release', line: '0.3' } } });
+                    guestCli: { source: 'public-release', line: '0.3', channel: 'stable' } } });
             }
             if (path === '/v1/auth/request/status') return Response.json({ status: 'pending', supportsV2: true });
             if (path === '/v1/auth/response') {

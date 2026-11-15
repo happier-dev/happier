@@ -6,11 +6,13 @@ import { CapabilitiesSchema } from './capabilitiesSchema.js';
 describe('CapabilitiesSchema (server capabilities)', () => {
   it('reads the Home guest CLI artifact identity independently of release diagnostics', () => {
     for (const source of ['home-payload', 'public-release']) {
-      const guestCli = { source, line: '0.3' };
-      expect(Reflect.get(CapabilitiesSchema.parse({ guestCli }), 'guestCli')).toEqual(guestCli);
+      for (const channel of ['stable', 'preview', 'publicdev']) {
+        const guestCli = { source, line: '0.3', channel };
+        expect(Reflect.get(CapabilitiesSchema.parse({ guestCli }), 'guestCli')).toEqual(guestCli);
+      }
     }
     expect(Reflect.get(CapabilitiesSchema.parse({}), 'guestCli')).toBeUndefined();
-    for (const guestCli of [{ source: 'unknown', line: '0.3' }, { source: 'public-release', line: '0.3.1' }]) {
+    for (const guestCli of [{ source: 'unknown', line: '0.3', channel: 'stable' }, { source: 'public-release', line: '0.3.1', channel: 'stable' }, { source: 'public-release', line: '0.3' }, { source: 'public-release', line: '0.3', channel: 'dev' }, { source: 'public-release', line: '0.3', channel: 'internaldev' }]) {
       const parsed = CapabilitiesSchema.parse({ guestCli, serverRelease: { version: '0.2.10' } });
       expect(Reflect.get(parsed, 'guestCli')).toBeUndefined();
       expect(parsed.serverRelease).toEqual({ version: '0.2.10' });

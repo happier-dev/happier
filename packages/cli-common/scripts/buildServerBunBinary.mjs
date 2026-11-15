@@ -16,6 +16,15 @@ function readArg(name) {
   return index >= 0 ? String(process.argv[index + 1] ?? '') : '';
 }
 
+const defines = Object.fromEntries(process.argv.slice(2)
+  .filter(value => value.startsWith('--define='))
+  .map(value => {
+    const definition = value.slice('--define='.length);
+    const separator = definition.indexOf('=');
+    if (separator < 1) throw new Error(`Invalid compile definition: ${value}`);
+    return [definition.slice(0, separator), definition.slice(separator + 1)];
+  }));
+
 const entrypointArg = readArg('--entrypoint');
 const outfileArg = readArg('--outfile');
 const target = readArg('--target');
@@ -37,7 +46,8 @@ const requireFromProject = createRequire(pathToFileURL(join(repoRoot, 'apps/serv
 
 const result = await Bun.build({
   entrypoints: [entrypoint],
-  define: { __HAPPIER_GUEST_CLI_SOURCE__: JSON.stringify('public-release') },
+  define: { __HAPPIER_GUEST_CLI_SOURCE__: JSON.stringify('public-release'),
+    __HAPPIER_GUEST_CLI_CHANNEL__: JSON.stringify('publicdev'), ...defines },
   conditions: [SOURCE_CONDITION],
   external,
   compile: {

@@ -5,6 +5,7 @@ import { z } from '../../../zodRuntimePolicy.js';
 export const GuestCliIdentityV1Schema = lazyZodSchema(() => z.strictObject({
   source: z.enum(['home-payload', 'public-release']),
   line: z.string().check(z.regex(/^(0|[1-9]\d*)\.(0|[1-9]\d*)$/)),
+  channel: z.enum(['stable', 'preview', 'publicdev']),
 }));
 
 export type GuestCliIdentityV1 = z.infer<typeof GuestCliIdentityV1Schema>;

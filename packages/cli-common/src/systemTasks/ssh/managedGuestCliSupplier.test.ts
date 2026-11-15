@@ -10,12 +10,12 @@ import { SystemTaskExecutionError } from '../runSystemTask.js';
 const exec = promisify(execFile);
 describe('managed guest CLI source supplier', () => {
   afterEach(() => vi.unstubAllGlobals());
-  const homeFetch = (source: 'home-payload' | 'public-release', releases: readonly string[] = []) => {
+  const homeFetch = (source: 'home-payload' | 'public-release', releases: readonly string[] = [], channel = 'stable') => {
     const urls: string[] = [];
     const boundary: typeof fetch = async input => {
       const url = String(input); urls.push(url);
       return Response.json(url.endsWith('/v1/features')
-        ? { capabilities: { guestCli: { source, line: '0.3' } } }
+        ? { capabilities: { guestCli: { source, line: '0.3', channel } } }
         : releases.map(version => ({ tag_name: `cli-v${version}`, draft: false, prerelease: false, assets: [] })));
     };
     return { boundary, urls };
@@ -34,6 +34,30 @@ describe('managed guest CLI source supplier', () => {
       runRemoteText: async command => { const result = await exec('/bin/sh', ['-c', command]); return { status: 0, ...result }; },
     });
     expect(source).toEqual({ kind: 'public-release', versionId: '0.3.10' });
+  });
+  it.each([
+    ['stable', 'preview', '0.3.10'],
+    ['preview', 'stable', '0.3.20-preview.1'],
+    ['publicdev', 'stable', '0.3.30-dev.1'],
+  ])('uses Home channel %s instead of controller channel %s', async (homeChannel, channel, versionId) => {
+    const http = homeFetch('public-release', ['0.3.10', '0.3.20-preview.1', '0.3.30-dev.1'], homeChannel);
+    await expect(resolveManagedGuestCliSource({ homeUrl: 'https://home.example', channel,
+      binaryPath: '/missing/happier', fetchImpl: http.boundary,
+      runRemoteText: async () => ({ status: 0, stdout: 'managed_guest_cli_absent', stderr: '' }),
+    })).resolves.toEqual({ kind: 'public-release', versionId });
+  });
+  it('refuses an identity without a channel before guest commands or public lookup', async () => {
+    const urls: string[] = [];
+    const fetchImpl: typeof fetch = async input => {
+      urls.push(String(input));
+      return Response.json({ capabilities: { guestCli: { source: 'public-release', line: '0.3' } } });
+    };
+    let guestCommands = 0;
+    await expect(resolveManagedGuestCliSource({ homeUrl: 'https://home.example', binaryPath: '/missing/happier', fetchImpl,
+      runRemoteText: async () => { guestCommands++; return { status: 0, stdout: 'managed_guest_cli_absent', stderr: '' }; },
+    })).rejects.toMatchObject({ code: 'guest_cli_identity_unavailable' });
+    expect(guestCommands).toBe(0);
+    expect(urls).toEqual(['https://home.example/v1/features']);
   });
   it('refuses a lower local payload than the installed CLI through the real version command', async () => {
     const root = await mkdtemp(join(tmpdir(), 'managed-guest-version-'));
@@ -54,7 +78,7 @@ describe('managed guest CLI source supplier', () => {
   });
   it('preserves release rate-limit recovery as a typed task failure', async () => {
     const boundary: typeof fetch = async input => String(input).endsWith('/v1/features')
-      ? Response.json({ capabilities: { guestCli: { source: 'public-release', line: '0.3' } } })
+      ? Response.json({ capabilities: { guestCli: { source: 'public-release', line: '0.3', channel: 'stable' } } })
       : new Response('', { status: 429, headers: { 'x-ratelimit-remaining': '0' } });
     await expect(resolveManagedGuestCliSource({ homeUrl: 'https://home.example', binaryPath: '/missing/happier', fetchImpl: boundary,
       runRemoteText: async () => ({ status: 0, stdout: 'managed_guest_cli_absent', stderr: '' }),

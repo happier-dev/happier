@@ -3,6 +3,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { build, type Plugin } from 'esbuild';
+import { normalizePublicReleaseRingId, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import { buildPublicShareViewerBundle } from '../buildPublicShareViewer.mjs';
 import { buildPublicProfileRenderer, stagePublicProfileAssets } from '../buildPublicProfileRenderer.mjs';
 import {
@@ -14,6 +15,7 @@ type BuildServerRuntimeParams = Readonly<{
   projectDir?: string;
   outDir: string;
   clean?: boolean;
+  releaseChannel?: PublicReleaseRingId;
 }>;
 
 type BuildServerRuntimeResult = Readonly<{
@@ -56,7 +58,7 @@ export async function buildServerRuntime(params: BuildServerRuntimeParams): Prom
 
   await buildPublicShareViewerBundle({ projectDir });
   await buildPublicProfileRenderer({ projectDir, check: true });
-  await bundleServerRuntimeEntrypoints({ projectDir, outDir });
+  await bundleServerRuntimeEntrypoints({ projectDir, outDir, releaseChannel: params.releaseChannel });
   await stagePublicProfileAssets({ projectDir, outDir });
 
   return {
@@ -90,6 +92,7 @@ function externalGeneratedPrismaClients(outDir: string): Plugin {
 export async function bundleServerRuntimeEntrypoints(params: Readonly<{
   projectDir: string;
   outDir: string;
+  releaseChannel?: PublicReleaseRingId;
 }>): Promise<void> {
   const { projectDir, outDir } = params;
   const external = await readRuntimeExternalPackages(projectDir);
@@ -100,7 +103,8 @@ export async function bundleServerRuntimeEntrypoints(params: Readonly<{
     format: 'esm',
     platform: 'node',
     target: 'node20',
-    define: { __HAPPIER_GUEST_CLI_SOURCE__: JSON.stringify('public-release') },
+    define: { __HAPPIER_GUEST_CLI_SOURCE__: JSON.stringify('public-release'),
+      __HAPPIER_GUEST_CLI_CHANNEL__: JSON.stringify(params.releaseChannel ?? 'publicdev') },
     outdir: outDir,
     entryPoints: {
       main: join(projectDir, 'sources', 'main.ts'),
@@ -132,13 +136,16 @@ if (invokedAsMain) {
   const argv = process.argv.slice(2);
   const outDir = takeArgValue(argv, '--out-dir');
   const projectDir = takeArgValue(argv, '--project-dir');
+  const rawChannel = takeArgValue(argv, '--channel') || process.env.HAPPIER_BUILD_GUEST_CLI_CHANNEL || 'publicdev';
+  const releaseChannel = normalizePublicReleaseRingId(rawChannel);
+  if (!releaseChannel) throw new Error(`[server runtime] invalid public release channel: ${rawChannel}`);
 
   if (!outDir) {
     console.error('[server runtime] missing --out-dir');
     process.exit(1);
   }
 
-  buildServerRuntime({ outDir, ...(projectDir ? { projectDir } : {}) }).catch((error) => {
+  buildServerRuntime({ outDir, releaseChannel, ...(projectDir ? { projectDir } : {}) }).catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
   });

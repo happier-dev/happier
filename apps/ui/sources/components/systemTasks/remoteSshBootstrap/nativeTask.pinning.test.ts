@@ -75,7 +75,7 @@ const resolveInstallPlan = async () => ({ binaryPath: '$HOME/.happier/cli/curren
 
 describe('native SSH bootstrap host pinning', () => {
     it('refuses a managed guest when native SSH cannot transfer the Home payload', async () => {
-        setRuntimeFetch(async () => Response.json({ capabilities: { guestCli: { source: 'home-payload', line: '0.3' } } }));
+        setRuntimeFetch(async () => Response.json({ capabilities: { guestCli: { source: 'home-payload', line: '0.3', channel: 'stable' } } }));
         const boundary = createNativeBoundary();
         const spec = createSpec({ trustedHostKey: HOST_KEY });
         let publicResolutions = 0;
@@ -98,7 +98,7 @@ describe('native SSH bootstrap host pinning', () => {
         vi.stubEnv('HAPPIER_FIRST_PARTY_RELEASE_TOKEN', 'synthetic-test-credential');
         setRuntimeFetch(async url => {
             if (String(url) === 'https://home.example/v1/features') {
-                return Response.json({ capabilities: { guestCli: { source: 'public-release', line: '0.3' } } });
+                return Response.json({ capabilities: { guestCli: { source: 'public-release', line: '0.3', channel: 'stable' } } });
             }
             releaseRequests.push(String(url));
             const release = { tag_name: 'cli-v0.3.4', draft: false, prerelease: false, assets: [

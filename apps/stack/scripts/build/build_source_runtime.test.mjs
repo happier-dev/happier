@@ -53,15 +53,17 @@ test('server source builds select Home payloads and Docker builds select public 
   await writeFile(join(repoDir, 'package.json'), JSON.stringify({ private: true, workspaces: ['apps/*'] }));
   await writeFile(join(server, 'package.json'), JSON.stringify({ name: '@happier-dev/server', type: 'module' }));
   await writeFile(join(server, 'tsconfig.json'), '{}');
-  await writeFile(join(server, 'sources/main.light.ts'), 'export const source = typeof __HAPPIER_GUEST_CLI_SOURCE__ === "undefined" ? null : __HAPPIER_GUEST_CLI_SOURCE__;');
+  await writeFile(join(server, 'sources/main.light.ts'), 'export const source = typeof __HAPPIER_GUEST_CLI_SOURCE__ === "undefined" ? null : __HAPPIER_GUEST_CLI_SOURCE__; export const channel = typeof __HAPPIER_GUEST_CLI_CHANNEL__ === "undefined" ? null : __HAPPIER_GUEST_CLI_CHANNEL__; ');
   await writeFile(join(server, 'scripts/migrate.sqlite.deploy.ts'), 'export async function runSqliteMigrationDeploy() {}');
   await symlink(dirname(createRequire(import.meta.url).resolve('esbuild/package.json')), join(server, 'node_modules/esbuild'),
     process.platform === 'win32' ? 'junction' : 'dir');
   const native = process.platform === 'linux' ? await installSourceAdmissionFixture(fixture.root) : null;
-  for (const source of ['home-payload', 'public-release']) {
-    const built = await (native?.build ?? buildSourceRuntimeBundle)({ repoDir, outputDir: fixture.path(source), component: 'server',
-      env: { ...process.env, ...native?.env, HAPPIER_BUILD_GUEST_CLI_SOURCE: source === 'home-payload' ? undefined : source } });
-    assert.equal((await import(pathToFileURL(built.entrypoint))).source, source);
+  for (const [source, channel] of [['home-payload', 'publicdev'], ['public-release', 'stable'], ['public-release', 'preview'], ['public-release', 'publicdev']]) {
+    const built = await (native?.build ?? buildSourceRuntimeBundle)({ repoDir, outputDir: fixture.path(`${source}-${channel}`), component: 'server',
+      env: { ...process.env, ...native?.env, HAPPIER_BUILD_GUEST_CLI_SOURCE: source === 'home-payload' ? undefined : source, HAPPIER_BUILD_GUEST_CLI_CHANNEL: source === 'home-payload' ? undefined : channel } });
+    const identity = await import(pathToFileURL(built.entrypoint));
+    assert.equal(identity.source, source);
+    assert.equal(identity.channel, channel);
   }
 });
 

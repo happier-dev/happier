@@ -7,7 +7,7 @@ import { resolveServerUrlCapabilitiesFeature } from "./serverUrlCapabilitiesFeat
 describe("capabilities.server", () => {
     it("states the running server release and flavour (plan §3.7), whatever the address configuration", () => {
         expect(resolveServerUrlCapabilitiesFeature({ HAPPIER_SERVER_FLAVOR: "light" })).toEqual({
-            capabilities: { serverRelease: { version: packageJson.version, flavor: "light" }, guestCli: { source: "home-payload", line: "0.3" } },
+            capabilities: { serverRelease: { version: packageJson.version, flavor: "light" }, guestCli: { source: "home-payload", line: "0.3", channel: "publicdev" } },
         });
         expect(resolveServerUrlCapabilitiesFeature({
             HAPPIER_SERVER_FLAVOR: "full",
@@ -16,9 +16,9 @@ describe("capabilities.server", () => {
             // The strict server object released readers parse carries only the addresses.
             server: { canonicalServerUrl: "https://home.example.test" },
             serverRelease: { version: packageJson.version, flavor: "full" },
-            guestCli: { source: "home-payload", line: "0.3" },
+            guestCli: { source: "home-payload", line: "0.3", channel: "publicdev" },
         });
         // A process that never declared its flavour does not guess one.
-        expect(resolveServerUrlCapabilitiesFeature({}).capabilities).toEqual({ serverRelease: { version: packageJson.version }, guestCli: { source: "home-payload", line: "0.3" } });
+        expect(resolveServerUrlCapabilitiesFeature({}).capabilities).toEqual({ serverRelease: { version: packageJson.version }, guestCli: { source: "home-payload", line: "0.3", channel: "publicdev" } });
     });
 });

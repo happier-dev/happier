@@ -307,9 +307,10 @@ Home's explicit `capabilities.guestCli` identity through the shared supplier.
 `guest_payload_missing` when unavailable. The released server artifact and Docker
 image advertise `source: 'public-release'`; they need no embedded guest archive.
 That source selects the newest published signed CLI in the advertised major.minor
-`line`, then acquires its exact immutable version. A rolling channel or controller
-version cannot choose a different line. Before either source promotes a payload,
-the supplier reads an existing guest CLI's version and refuses a downgrade; an
+`line` and `channel`, then acquires its exact immutable version. Stable Homes
+select stable releases; preview and dev Homes select only their own channel.
+The controller's channel cannot choose a different line or channel. Before either
+source promotes a payload, the supplier reads an existing guest CLI's version and refuses a downgrade; an
 unreadable installed version refuses instead of being treated as absent.
 Standalone SSH setup retains its own verified release acquisition contract. A missing target executable or release archive reports
 `guest_payload_missing` during installation, and a mismatched native executable
@@ -344,6 +345,8 @@ independently of diagnostic `capabilities.serverRelease.version`. The current
 source program explicitly declares line `0.3`, even while development package
 versions retain `0.2.10`. Stack source builds advertise `home-payload`; release
 binary, standalone server bundle and Docker producers stamp `public-release`.
+The identity also carries the Home's public release channel (`stable`, `preview`,
+or `publicdev`, the dev channel); release packaging supplies that channel.
 Older Homes without a valid identity report `guest_cli_identity_unavailable`;
 the supplier does not infer a release line from their package version.
 

@@ -178,7 +178,8 @@ async function sourceBundleFingerprint({ repoDir, identityRepoDir = repoDir, com
   const fingerprintFiles = consumed && !guestPayloadTargets ? files.filter(path => !isCompilerTracedSource(path) || consumed.has(path)) : files;
   const options = [identityRepoDir, component, serverComponent, dbProvider, process.version, process.platform, process.arch, esbuild.version, files,
     guestPayloadTargets?.map(({ target, relativeDir }) => [target.bunTarget, relativeDir]) ?? null,
-    component === 'server' ? env.HAPPIER_BUILD_GUEST_CLI_SOURCE ?? 'home-payload' : null];
+    component === 'server' ? env.HAPPIER_BUILD_GUEST_CLI_SOURCE ?? 'home-payload' : null,
+    component === 'server' ? env.HAPPIER_BUILD_GUEST_CLI_CHANNEL ?? 'publicdev' : null];
   return await readBuildInputIdentity({ sourceDir: sharedSourceInputs?.repoDir ?? repoDir,
     files: fingerprintFiles, options });
 }
@@ -1556,7 +1557,8 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
     chunkNames: `${outputPrefix}/src/chunks/[name]-[hash]`,
     banner: { js: "import { createRequire as __sourceCreateRequire } from 'node:module'; import {fileURLToPath as __sourceFileURLToPath} from 'node:url'; import {dirname as __sourcePathDirname} from 'node:path'; const require = __sourceCreateRequire(import.meta.url); const __sourceFilename = __sourceFileURLToPath(import.meta.url); const __sourceDirname = __sourcePathDirname(__sourceFilename);" },
     define: { __dirname: '__sourceDirname', __filename: '__sourceFilename',
-      ...(component === 'server' ? { __HAPPIER_GUEST_CLI_SOURCE__: JSON.stringify(env.HAPPIER_BUILD_GUEST_CLI_SOURCE ?? 'home-payload') } : {}) },
+      ...(component === 'server' ? { __HAPPIER_GUEST_CLI_SOURCE__: JSON.stringify(env.HAPPIER_BUILD_GUEST_CLI_SOURCE ?? 'home-payload'),
+        __HAPPIER_GUEST_CLI_CHANNEL__: JSON.stringify(env.HAPPIER_BUILD_GUEST_CLI_CHANNEL ?? 'publicdev') } : {}) },
     metafile: true, logLevel: 'silent', plugins: [
       ...(derivesDaemonProjections ? [createCliSourceProjectionResolver({projectionRoot: daemonProjectionRoot})] : []),
       plugin, createWorkspaceSourceResolver({workspacePackages, requireFromProject}),
