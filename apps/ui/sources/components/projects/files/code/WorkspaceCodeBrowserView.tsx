@@ -293,11 +293,11 @@ export const WorkspaceCodeBrowserView = React.memo(function WorkspaceCodeBrowser
     // Nothing was ever listed and the machine isn't answering: the widget keeps only its header (the
     // page's line says why), so no empty sheet is drawn around nothing.
     const waitingWithNothing = reachability.unreachable && entryCount === null;
-    const body = location.kind === 'folder' ? (widget && !waitingWithNothing ? (
+    const body = location.kind === 'folder' ? (widget ? (waitingWithNothing ? null : (
         <GlassSurface surfaceGroup="card" nested finishRole="card" testID={`${testID}-table`} style={[sheetStyle, styles.fileSheet]} onLayout={onTableLayout}>
             {folderBrowser}
         </GlassSurface>
-    ) : folderBrowser) : (
+    )) : folderBrowser) : (
         <GlassSurface surfaceGroup="card" nested finishRole="card" testID={`${testID}-file`} style={[sheetStyle, styles.fileSheet]}>
             {strip}
             {/* The reader sits inside the Code page, under the Project's own header: it doesn't take the pane's controls into its band. */}

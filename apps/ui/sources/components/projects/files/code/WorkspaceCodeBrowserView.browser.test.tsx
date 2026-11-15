@@ -99,6 +99,23 @@ describe('Code consumes the qualified browser and real entry-history batch', () 
             && (request.payload as { paths: string[] }).paths.includes(entries[900].name))).toBe(true));
     });
 
+    // Owner 11-15 (MOBILE-FIX-1115 H4): an offline Machine's Code card kept an empty body under its header (58 px web,
+    // ~72 pt iOS). With nothing ever listed, the widget keeps only its header; the page's line says why.
+    it('draws no tree in the Overview widget while its Machine is offline and nothing was listed', async () => {
+        const rootPath = '/code-widget-offline';
+        fixture = await createSessionFilesViewFixture({ rootPath, rpc: () => ({ success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'Unavailable boundary operation' }) });
+        const screen = await fixture.render(<WorkspaceCodeBrowserView paneScopeId="code-widget-offline" scope={fixture.scope}
+            rootLabel="Code" location={{ path: '', kind: 'folder' }} onNavigate={() => {}} onOpenFile={() => {}} presentation="widget" />);
+        await act(async () => {
+            fixture!.storage.getState().applyMachineActivityUpdates([
+                { id: fixture!.scope.machineId, active: false, activeAt: Date.now() },
+            ], { sourceServerId: fixture!.scope.serverId });
+        });
+        await vi.waitFor(() => expect(screen.findHostByTestId('workspace-code-offline')).toBeTruthy());
+        expect(screen.findHostByTestId('repository-tree-drop-zone')).toBeNull();
+        expect(screen.findHostByTestId('workspace-code-table')).toBeNull();
+    });
+
     it('retires history and filesystem effects on pushed presence withdrawal without replacing the Machine row', async () => {
         const rootPath = '/code-presence-expiry';
         fixture = await createSessionFilesViewFixture({ rootPath, rpc: request => {
