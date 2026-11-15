@@ -328,7 +328,8 @@ it('refreshes daemon-created sources in the UI and reads tokened sources through
     } };
     const actionCalls: string[] = [];
     let appRevision = 3, appReadable = true, appUpstreamReads = 0, appAdmissionReads = 0;
-    const appEnvironment = createDeploymentEnvironmentHeaderV1({ id: 'template-environment', serverId: homeIdentityId });
+    const appEnvironment = createDeploymentEnvironmentHeaderV1({ id: 'template-environment', serverId: homeIdentityId,
+        controllerMachineId: machineId });
     let appContentBodyVersion = appEnvironment.contentBodyVersion;
     let appMetadataReads = 0;
     const appSource = listRegistrySourcesV1({ record: { v: 2, sources: [], disabledSourceIds: [] }, pluginSources: [] })
@@ -614,8 +615,12 @@ it('refreshes daemon-created sources in the UI and reads tokened sources through
         listHistory: async () => { throw new Error('An app observation cannot load History'); },
         readReceipt: async () => { throw new Error('An app observation cannot load receipts'); },
     } });
+    // An unrelated/offline Store choice must not place an installed App's catalog read.
+    const { StoreMachineScopeContext } = await import('@/components/settings/plugins/model/useStoreMachineScope');
+    const unrelatedStore = ({ children }: React.PropsWithChildren) => <StoreMachineScopeContext.Provider
+        value={{ serverId: account.serverId, machineId: 'offline-store-choice' }}>{children}</StoreMachineScopeContext.Provider>;
     let appPage = await renderHook(() => useDeploymentEnvironment(controller, appEnvironment.id,
-        { mounted: true, visible: true, focused: true }));
+        { mounted: true, visible: true, focused: true }), { wrapper: unrelatedStore });
     onTestFinished(() => controller.retire());
     await waitForHomeGovernance(() => expect(appPage.getCurrent()).toMatchObject({
         catalogUpdate: { upstream: { state: 'current', latest: appRef.ref }, loading: false, error: null },

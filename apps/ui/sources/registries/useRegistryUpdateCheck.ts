@@ -80,7 +80,7 @@ export function useRegistryAppUpdate(detail: DeploymentEnvironmentDetailV1 | nul
     const input = React.useMemo(() => ({ kind: 'app' as const, environments: environment
         ? [{ environmentId: environment.id, expectedRevision: environment.revision }] : [] }), [environment?.id, environment?.revision]);
     const read = useRegistryActionRead('registries.updates.check', input,
-        value => value, sourceRevision, active);
+        value => value, sourceRevision, active, { installMachineId: environment?.controllerMachineId });
     const result = active && !read.stale && read.error === null
         ? read.value?.results.find(result => result.key === environment?.id) : undefined;
     return { upstream: result?.upstream ?? null, sourceTitle: result?.sourceTitle,
