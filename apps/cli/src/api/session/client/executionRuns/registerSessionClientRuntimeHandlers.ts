@@ -539,10 +539,15 @@ export function registerSessionClientRuntimeHandlers(
             composeRunToolBinding: (request: NativeAgentSessionRunToolBindingRequest) => runWithServerHttpBaseUrl(params.serverUrl, async () => {
                 const ownerCredentials = await readOwnerAccountCredentials();
                 const credentials = ownerCredentials ?? restrictedRuntimeAdmission?.credentials ?? null;
-                if (!credentials) return {
-                    supportedSessionReadActions: [],
-                    dispose: (): void => undefined,
-                };
+                if (!credentials) {
+                    logger.infoFile('[Session] Run tool binding unavailable', {
+                        sessionId: params.sessionId, runId: request.runId, agentId: request.agentId,
+                        credentialKind: 'none', runtimePrincipalAccountId: params.runtimePrincipalAccountId ?? null,
+                        catalogEntryPresent: Boolean(request.agentCatalogEntry),
+                        agentToolsDelivery: request.agentCatalogEntry?.toolDelivery ?? null,
+                    });
+                    return { supportedSessionReadActions: [], dispose: (): void => undefined };
+                }
                 const managedMcpExplicitlyEmpty = hasExplicitlyEmptyManagedMcpSelection(parentSessionForTools.getMetadataSnapshot());
                 const context = ownerCredentials && !managedMcpExplicitlyEmpty
                     ? await resolveRunAccountSettingsSnapshot.readAgentExecutionContext?.(request.signal) : null;
@@ -636,6 +641,17 @@ export function registerSessionClientRuntimeHandlers(
                     },
                 });
                 const mcpServers = toAgentSessionMcpLaunchConfigs(resolved.mcpServers);
+                // Admission diagnostics project identity and presence only. Configs,
+                // environments and bearer material must never enter the log.
+                logger.infoFile('[Session] Run tool binding composed', {
+                    sessionId: params.sessionId, runId: request.runId, agentId: request.agentId,
+                    credentialKind: ownerCredentials ? 'owner_account' : 'admitted_runtime',
+                    credentialAccountId: readAccountIdFromToken(credentials.token),
+                    runtimePrincipalAccountId: params.runtimePrincipalAccountId ?? null,
+                    catalogEntryPresent: Boolean(agentToolCapabilities), agentToolsDelivery,
+                    mcpServerNames: Object.keys(mcpServers ?? {}),
+                    sessionMcpContextPresent: Boolean(resolved.sessionMcpContext),
+                });
                 const capturedMcpAccount = runAccountOperationContext;
                 const getMcpToolContext = capturedMcpAccount && capturedMcpAccount.readSnapshot()?.scopeKey === accountSettingsSnapshot?.scopeKey
                     ? () => ({ mcpServerIdentities: resolved.mcpServerIdentities ?? {},
