@@ -21,7 +21,7 @@ import { consumeNotificationPermissionRecoveryNotice, markNotificationPermission
 import { findSavedNotificationServerProfile as findSavedServerProfileForUrl, resolveNotificationPermissionTarget } from './resolveNotificationPermissionTarget';
 
 import { isNotificationExecutionAction, isUnsafeNotificationServerUrl, parseNotificationTap } from '../notificationRouting';
-import { navigateWithNotificationAccount, type NotificationAccountNavigationTarget } from './navigateWithNotificationAccount';
+import { claimNotificationNavigationIntent, navigateWithNotificationAccount, type NotificationAccountNavigationTarget, type NotificationNavigationIntent } from './navigateWithNotificationAccount';
 
 type ExpoNotificationsWithClear = ExpoNotificationsModule & Readonly<{
     clearLastNotificationResponseAsync?: () => Promise<void>;
@@ -106,12 +106,14 @@ export function useNotificationResponseRouting(params: Readonly<{
         const navigateToNotificationAccount = (
             target: NotificationAccountNavigationTarget,
             navigate: () => void,
+            intent?: NotificationNavigationIntent,
         ): void => {
             fireAndForget(navigateWithNotificationAccount({
                 target,
                 navigate,
                 refreshAuth: refreshAuthRef.current,
                 isDisposed: () => disposed,
+                intent,
             }), { tag: 'notificationSessionNavigation' });
         };
 
@@ -176,7 +178,8 @@ export function useNotificationResponseRouting(params: Readonly<{
                 handledNavigationResponsesRef.current.add(parsed.dedupeKey);
             }
 
-            if (!parsed.route) return;
+            if (disposed || !parsed.route) return;
+            const navigationIntent = claimNotificationNavigationIntent();
 
             const route = parsed.route;
             const routeSessionId = parsed.routeSessionId;
@@ -197,13 +200,13 @@ export function useNotificationResponseRouting(params: Readonly<{
                     } else {
                         router.push(route);
                     }
-                });
+                }, navigationIntent);
             };
             const routeToServerSettingsForUrl = (url: string) => {
                 router.push(`/settings/server?url=${encodeURIComponent(url)}&source=notification`);
             };
 
-            if (routeSessionId && (!serverUrl || savedTarget)) {
+            if ((routeSessionId || navigationTarget.accountId) && (!serverUrl || savedTarget)) {
                 navigateToRoute(savedTarget?.id);
                 return;
             }
@@ -221,6 +224,7 @@ export function useNotificationResponseRouting(params: Readonly<{
                                     scope: 'device',
                                     refreshAuth: refreshAuthRef.current,
                                 });
+                                if (disposed || !navigationIntent.isCurrent()) return;
                                 clearPendingNotificationNav();
                                 navigateToRoute(saved.id);
                             } catch {
@@ -232,7 +236,7 @@ export function useNotificationResponseRouting(params: Readonly<{
 
                     if (isUnsafeNotificationServerUrl(serverUrl)) {
                         // Unsafe/mismatched server url: fail closed for actions; navigate only.
-                        navigateToNotificationAccount(navigationTarget, () => { router.push(route); });
+                        navigateToNotificationAccount(navigationTarget, () => { router.push(route); }, navigationIntent);
                         return;
                     }
 
@@ -246,6 +250,7 @@ export function useNotificationResponseRouting(params: Readonly<{
                                     scope: 'device',
                                     refreshAuth: refreshAuthRef.current,
                                 });
+                                if (disposed || !navigationIntent.isCurrent()) return;
                                 clearPendingNotificationNav();
                                 navigateToRoute(findSavedServerProfileForUrl(serverUrl)?.id);
                             } catch {
@@ -262,7 +267,7 @@ export function useNotificationResponseRouting(params: Readonly<{
             }
 
             if (parsed.isOpenAction) {
-                navigateToNotificationAccount(navigationTarget, () => { router.push(route); });
+                navigateToNotificationAccount(navigationTarget, () => { router.push(route); }, navigationIntent);
             }
         };
 

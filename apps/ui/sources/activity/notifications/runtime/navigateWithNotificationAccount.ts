@@ -17,18 +17,28 @@ export type NotificationAccountNavigationTarget = Readonly<{
 
 let latestNavigationIntent: symbol | null = null;
 
+export type NotificationNavigationIntent = Readonly<{ isCurrent: () => boolean }>;
+
+/** Carry the accepted click through any Home work before Account admission. */
+export function claimNotificationNavigationIntent(): NotificationNavigationIntent {
+    const intent = Symbol();
+    latestNavigationIntent = intent;
+    return { isCurrent: () => latestNavigationIntent === intent };
+}
+
 export async function navigateWithNotificationAccount(params: Readonly<{
     target: NotificationAccountNavigationTarget;
     navigate: () => void;
     refreshAuth: (() => Promise<void>) | null;
     isDisposed: () => boolean;
+    intent?: NotificationNavigationIntent;
 }>): Promise<void> {
     const { target, navigate, refreshAuth } = params;
     if (params.isDisposed()) return;
-    const intent = Symbol();
-    latestNavigationIntent = intent;
+    const intent = params.intent ?? claimNotificationNavigationIntent();
     // A newer click owns navigation while an earlier Home admission is pending.
-    const isInactive = () => params.isDisposed() || latestNavigationIntent !== intent;
+    const isInactive = () => params.isDisposed() || !intent.isCurrent();
+    if (isInactive()) return;
     if (!target.accountId) {
         navigate();
         return;

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { AppState, Platform } from 'react-native';
 import { AccountProfileSchema, PUSH_NOTIFICATION_ACTION_IDS } from '@happier-dev/protocol';
-import { createOkFetchResponse, createReactNativeAppStateEmitter, createServerFetchWithReachabilityProbe, getServerFetchUrl, renderHook, flushHookEffects } from '@/dev/testkit';
+import { createDeferred, createOkFetchResponse, createReactNativeAppStateEmitter, createServerFetchWithReachabilityProbe, getServerFetchUrl, renderHook, flushHookEffects } from '@/dev/testkit';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import * as profiles from '@/sync/domains/server/serverProfiles';
 import { parseNotificationTap } from '../notificationRouting';
@@ -728,6 +728,61 @@ describe('Native notification permission entry points', () => {
             expect(boundary.navigate).not.toHaveBeenCalled();
             expect(boundary.rpc).not.toHaveBeenCalled();
         } finally { await hook.unmount(); }
+    });
+
+    it('refuses an explicit session URL for a replaced Account before changing Home', async () => {
+        const current = response('expo.modules.notifications.actions.DEFAULT');
+        const hinted = { ...current, notification: { request: { ...current.notification.request,
+            content: { data: { ...current.notification.request.content.data,
+                accountId: 'account', url: '/session/session/info?jumpSeq=3' } } } } };
+        await TokenStorage.setCredentials({ token: token('replacement-account') });
+        const other = profiles.upsertServerProfile({ serverUrl: 'https://other.example.test', name: 'Other' });
+        profiles.setActiveServerId(other.id, { scope: 'device' });
+        await TokenStorage.setCredentials({ token: token('other-account') });
+        const hook = await renderHook(() => useNotificationResponseRouting({ enabled: true, refreshAuth: async () => {} }));
+        try {
+            await act(async () => { boundary.listener?.(hinted); });
+            await vi.waitFor(() => expect(boundary.alert).toHaveBeenCalledTimes(1));
+            expect(profiles.getActiveServerSnapshot().serverId).toBe(other.id);
+            expect(boundary.push).not.toHaveBeenCalled();
+            expect(boundary.navigate).not.toHaveBeenCalled();
+            expect(boundary.rpc).not.toHaveBeenCalled();
+        } finally { await hook.unmount(); }
+    });
+
+    it.each([true, false])('keeps a newer Expo session click after an older explicit URL Home switch finishes (Account-bound: %s)', async (accountBound) => {
+        const { getPendingNotificationNav } = await import('@/sync/domains/pending/pendingNotificationNav');
+        const current = response('expo.modules.notifications.actions.DEFAULT', 'older-explicit-session');
+        const explicitRoute = '/session/older/info?jumpSeq=3';
+        const older = { ...current, notification: { request: { ...current.notification.request,
+            content: { data: { ...current.notification.request.content.data,
+                ...(accountBound ? { accountId: 'account' } : {}), url: explicitRoute } } } } };
+        const newer = response('expo.modules.notifications.actions.DEFAULT', 'newer-generated-session');
+        const newerSession = { ...newer, notification: { request: { ...newer.notification.request,
+            content: { data: { ...newer.notification.request.content.data, sessionId: 'newer', accountId: 'account' } } } } };
+        const other = profiles.upsertServerProfile({ serverUrl: 'https://other.example.test', name: 'Other' });
+        profiles.setActiveServerId(other.id, { scope: 'device' });
+        await TokenStorage.setCredentials({ token: token('other-account') });
+        const refreshStarted = createDeferred<void>();
+        const releaseRefresh = createDeferred<void>();
+        const hook = await renderHook(() => useNotificationResponseRouting({ enabled: true,
+            refreshAuth: async () => { refreshStarted.resolve(); await releaseRefresh.promise; },
+        }));
+        try {
+            await act(async () => { boundary.listener?.(older); });
+            await refreshStarted.promise;
+            await act(async () => { boundary.listener?.(newerSession); });
+            await vi.waitFor(() => expect(boundary.navigate).toHaveBeenCalledTimes(1));
+            expect(String(boundary.navigate.mock.calls[0]?.[0])).toContain('/session/newer?');
+            expect(getPendingNotificationNav()).toBeNull();
+            await act(async () => { releaseRefresh.resolve(); });
+            await flushHookEffects();
+            expect(boundary.push).not.toHaveBeenCalled();
+            expect(boundary.navigate).toHaveBeenCalledTimes(1);
+        } finally {
+            releaseRefresh.resolve();
+            await hook.unmount();
+        }
     });
 
     it('keeps Add Home presentation for supplied Account session notifications without admitting session content', async () => {
