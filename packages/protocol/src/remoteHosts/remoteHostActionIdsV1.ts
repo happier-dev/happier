@@ -1,4 +1,13 @@
 export const REMOTE_HOST_SSH_DISCOVER_ACTION_ID_V1 = 'remote_hosts.ssh.discover';
+export const REMOTE_HOST_DEVICE_LOCAL_ACTION_IDS_V1 = [
+  'remote_hosts.trusted_keys.list',
+  'remote_hosts.trusted_keys.remove',
+  'remote_hosts.trusted_keys.clear',
+  'remote_hosts.tunnel.stop',
+  'remote_hosts.tunnel.list',
+  REMOTE_HOST_SSH_DISCOVER_ACTION_ID_V1,
+] as const;
+
 export const REMOTE_HOST_ACTION_IDS_V1 = [
   'remote_hosts.list',
   'remote_hosts.read',
@@ -25,14 +34,12 @@ export const REMOTE_HOST_ACTION_IDS_V1 = [
   'remote_hosts.relay.restart',
   'remote_hosts.credential.change',
   'remote_hosts.personal_home.erase',
-  'remote_hosts.trusted_keys.list',
-  'remote_hosts.trusted_keys.remove',
-  'remote_hosts.trusted_keys.clear',
-  'remote_hosts.tunnel.stop',
-  'remote_hosts.tunnel.list',
-  REMOTE_HOST_SSH_DISCOVER_ACTION_ID_V1,
+  ...REMOTE_HOST_DEVICE_LOCAL_ACTION_IDS_V1,
 ] as const;
 export type RemoteHostActionIdV1 = typeof REMOTE_HOST_ACTION_IDS_V1[number];
 export function isRemoteHostActionIdV1(value: string): value is RemoteHostActionIdV1 {
   return (REMOTE_HOST_ACTION_IDS_V1 as readonly string[]).includes(value);
+}
+export function isRemoteHostDeviceLocalActionIdV1(value: string): value is typeof REMOTE_HOST_DEVICE_LOCAL_ACTION_IDS_V1[number] {
+  return (REMOTE_HOST_DEVICE_LOCAL_ACTION_IDS_V1 as readonly string[]).includes(value);
 }

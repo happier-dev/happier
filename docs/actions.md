@@ -3291,7 +3291,9 @@ observations and exact operands kept in live-only custody.
 
 Development `remote_hosts.ssh.discover` reads the answering desktop device's
 configured SSH hosts through its existing discovery task. Account callers use
-the read Action's disabled and approval policy. UI callers retain the task snapshot; agent and MCP callers
+the read Action's disabled and approval policy. Device-local discovery and tunnel
+inventory do not require the Home's Remote host management service.
+UI callers retain the task snapshot; agent and MCP callers
 receive a typed `listed` host result after settlement, or the task's failure
 reason. It accepts no arbitrary configuration path or SSH credentials.
 The Remote host form and pre-sign-in SSH onboarding read the same task directly
@@ -7430,11 +7432,13 @@ launches a Session nor creates a directory, and it preserves the prompt. Browse/
 `sessions.external.*` and the exact Session's Home and Machine operation owners;
 they are not alternate import or takeover implementations.
 
-`session.draft.agent.set` addresses an existing New Session composer by its
-draft reference. It applies the Agent target together with its model, mode and
+`session.draft.agent.set` addresses a mounted New Session or Session composer by its
+exact draft reference. It applies the Agent target together with its model, mode and
 configuration through the picker's existing selection writer, without opening
-another draft or sending the prompt. A closed or unavailable composer returns
-the existing unavailable result.
+another draft or sending the prompt. On a Session it arms the next message through
+the existing continuation picker; it does not replace the running Agent.
+`session.draft.model.set` edits that armed continuation, and refuses when none is armed.
+An unmounted or unavailable composer returns the existing unavailable result.
 Mode and individual configuration edits use the same Action and retain the
 authoring owner's typed overrides. These closed development Action inputs
 require matching 0.3 hosts; the existing persisted draft format is unchanged.

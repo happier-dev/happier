@@ -6,7 +6,7 @@ import { TEAM_ACTION_IDS_V1 } from '../teams/actionsV1.js';
 import { isSessionFollowActionIdV1 } from '../sessions/follow/actions.js';
 import { MACHINE_POOL_ACTION_IDS_V1 } from '../machines/pools/actionsV1.js';
 import { EPHEMERAL_RUNNER_ACTION_IDS_V1 } from '../ephemeralRunner/actionIdsV1.js';
-import { isRemoteHostActionIdV1 } from '../remoteHosts/remoteHostActionIdsV1.js';
+import { isRemoteHostActionIdV1, isRemoteHostDeviceLocalActionIdV1 } from '../remoteHosts/remoteHostActionIdsV1.js';
 import type { ActionExecutorContext } from './executor/types.js';
 import { isDeploymentActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
 
@@ -116,10 +116,8 @@ export function getActionRequiredServerFeatureId(
   if (actionId === 'session.bot.face.set') return 'bots';
   if (actionId === 'template.draft' || actionId === 'template.release'
     || actionId === 'template.instantiate' || actionId === 'template.updates.apply') return 'bots';
-  // Device-local trust withdrawal and resource cleanup do not use the Home's
-  // management service, and must remain available after that service is disabled.
-  if (actionId === 'remote_hosts.trusted_keys.list' || actionId === 'remote_hosts.trusted_keys.remove'
-    || actionId === 'remote_hosts.trusted_keys.clear' || actionId === 'remote_hosts.tunnel.stop') return null;
+  // Device-local SSH reads, trust and cleanup do not use the Home's management service.
+  if (isRemoteHostDeviceLocalActionIdV1(actionId)) return null;
   if (isRemoteHostActionIdV1(actionId)) return 'remoteHosts.management';
   if ((ACTION_ID_FAMILIES_V1.session_agent_transition as readonly string[]).includes(actionId)) return 'sessions.agentSwitching';
   const presentHumanUi = context?.surface === 'ui' && context.authority === 'present_user';

@@ -32,6 +32,9 @@ describe('getActionRequiredServerFeatureId', () => {
     }
     expect(getActionRequiredServerFeatureId('remote_hosts.connect')).toBe('remoteHosts.management');
   });
+  it.each(['remote_hosts.ssh.discover', 'remote_hosts.tunnel.list'])('keeps device-local read %s independent of the Home management service', actionId => {
+    expect(getActionRequiredServerFeatureId(actionId)).toBeNull();
+  });
   it('classifies ordinary catalog misses without allocating validation errors', async () => {
     const inspector = new Session();
     inspector.connect();
