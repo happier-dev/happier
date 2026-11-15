@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Metadata } from '@/api/types';
+import { createNativeAgentSessionPublications } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionPublications';
 import { readSessionProviderBindingMetadataStateV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import type { AuthorizedSessionModelTransitionTarget } from '@/providers/sessions/sessionModelTransitionCoordinator';
@@ -9,6 +10,11 @@ import {
 } from './sessionRuntimeModelsPublisher';
 import type { AgentSessionHostServices } from '@happier-dev/plugin-sdk/agents/runtime';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import {
+  createSessionOwnerMetadataV1,
+  projectSessionOwnerCompatibilityViewV1,
+  projectSessionSharedMetadataV1,
+} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 type AgentSessionModelsSnapshot = ReturnType<
   Parameters<AgentSessionHostServices['models']['bind']>[0]['read']
@@ -101,6 +107,31 @@ function sessionRunnerRuntime(
 }
 
 describe('createSessionRuntimeModelsPublisher', () => {
+  it('publishes exact runtime readback independently of unverified catalog membership', async () => {
+    const source = createSource();
+    const session = createSession(createTestMetadata());
+    const publications = createNativeAgentSessionPublications({ agentId: 'opencode', session: null,
+      signal: new AbortController().signal, isCurrent: () => true, supportsInFlightSteer: false });
+    const binding = publications.services.models.bind(source);
+    const selection = { agentTargetKey: 'agent:happier.agent.opencode/opencode',
+      providerConnectionId: null, modelId: 'openai/gpt-4.1-mini' };
+    const runner = { pid: 2358024, processStartTimeMs: 945567640 };
+    const publisher = createSessionRuntimeModelsPublisher({ agentId: 'opencode',
+      agentTargetKey: selection.agentTargetKey, runnerProcessIdentity: runner,
+      session, source: publications.modelsSource });
+    try {
+      source.publish({ currentModelId: selection.modelId, observedAt: 0, catalogConfidence: 'account_unverified',
+        models: [{ id: selection.modelId, name: 'GPT-4.1 Mini' }] });
+      await publisher.flush();
+      expect(session.getMetadataSnapshot().sessionModelsV1).toMatchObject({
+        currentModelId: selection.modelId, availableModels: [],
+        activeSelectionV1: { source: 'runtime_readback', selection, runner },
+      });
+      source.publish({ currentModelId: null, observedAt: 0, catalogConfidence: 'account_unverified', models: [] });
+      await publisher.flush();
+      expect(session.getMetadataSnapshot().sessionModelsV1?.activeSelectionV1).toBeUndefined();
+    } finally { publisher.dispose(); binding.dispose(); publications.dispose(); }
+  });
   it.each([false, true])('requires actual readback before publishing current-runner proof or inventing a current model (prior observation: %s)', async (hasPriorObservation) => {
     const source = createSource();
     source.publish({ currentModelId: null, models: [{ id: 'configured', name: 'Configured' }] });
@@ -1088,5 +1119,56 @@ describe('createSessionRuntimeModelsPublisher', () => {
       agentId: 'cursor', availableModels: [{ id: 'runtime', name: 'Runtime' }],
     });
     publisher.dispose();
+  });
+
+  it.each([
+    ['current facts over a retained catalog (observedAt 0)', 0],
+    ['a timestamped runtime catalog', 5],
+  ])('writes nothing for unrelated metadata updates once its catalog is stored: %s', async (_label, observedAt) => {
+    // The session holds the owner compatibility view, as the real client does after each
+    // commit: owner-schema key order plus predecessor write aliases this publisher never writes.
+    const storedView = (metadata: Metadata): Metadata => {
+      const owner = createSessionOwnerMetadataV1({ metadata });
+      if (!owner.ok) throw new Error('fixture metadata must be owner-admissible');
+      return projectSessionOwnerCompatibilityViewV1({
+        sharedMetadata: projectSessionSharedMetadataV1({ metadata: metadata as never, agentState: null }),
+        ownerMetadata: owner.ownerMetadata,
+      }) as unknown as Metadata;
+    };
+    const session = createSession(storedView(createTestMetadata({ sessionModelsV1: {
+      v: 1, agentId: 'claude', updatedAt: 1, currentModelId: 'opus',
+      availableModels: [{ id: 'opus', name: 'Opus' }, { id: 'sonnet', name: 'Sonnet' }],
+    } })));
+    const updateAsPublisher = session.updateMetadataAsCurrentPublisher;
+    session.updateMetadataAsCurrentPublisher = async (updater) =>
+      updateAsPublisher((current) => storedView(updater(current)));
+    // Boxed: assigned inside the `on` override, which control-flow narrowing cannot see.
+    const metadataListener: { current: (() => void) | null } = { current: null };
+    const on = session.on;
+    session.on = function (event: string, listener: () => void) {
+      if (event === 'metadata-updated') metadataListener.current = listener;
+      return on.call(this, event, listener);
+    };
+    const source = createSource();
+    source.publish({ observedAt, currentModelId: 'opus', models: [
+      { id: 'opus', name: 'Opus', description: 'Largest', contextWindowTokens: 200_000,
+        modelOptions: [{ id: 'reasoning_effort', name: 'Effort', type: 'select', currentValue: 'high',
+          options: [{ value: 'high', name: 'High' }] }] },
+      { id: 'sonnet', name: 'Sonnet', description: 'Balanced', contextWindowTokens: 200_000 },
+    ] });
+    const publisher = createSessionRuntimeModelsPublisher({ agentId: 'claude', agentTargetKey: 'backend:claude',
+      runnerProcessIdentity: { pid: 7, processStartTimeMs: 1 }, session, source });
+    try {
+      await publisher.flush();
+      const startupWrites = session.updateCount();
+      expect(session.getMetadataSnapshot().sessionModelsV1).toMatchObject({ currentModelId: 'opus', provider: 'claude' });
+      // Pending-queue changes, lifecycle and other producers all emit `metadata-updated`.
+      for (let unrelated = 0; unrelated < 5; unrelated += 1) {
+        metadataListener.current?.();
+        await publisher.flush();
+      }
+      expect({ startupWrites, writesAfterUnrelatedUpdates: session.updateCount() - startupWrites })
+        .toEqual({ startupWrites: 1, writesAfterUnrelatedUpdates: 0 });
+    } finally { publisher.dispose(); }
   });
 });

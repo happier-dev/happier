@@ -637,6 +637,16 @@ async function prepareTupleMutation<M, A>(params: Readonly<{
     createdOwnerMetadata.ownerMetadata,
     previousProjectedOwnerMetadata.ownerMetadata,
   );
+  // The view compared above carries view-only compatibility aliases that a field
+  // producer never writes. A write is a change only when a persisted leaf changes.
+  if (
+    mutation.kind === 'metadata'
+    && params.projectKey === undefined
+    && !ownerMetadataChanged
+    && tupleValuesEqual(sharedMetadata, current.value.sharedMetadata)
+  ) {
+    return null;
+  }
   const ownerMetadata = ownerMetadataChanged
     ? createdOwnerMetadata.ownerMetadata
     : current.value.ownerMetadata;

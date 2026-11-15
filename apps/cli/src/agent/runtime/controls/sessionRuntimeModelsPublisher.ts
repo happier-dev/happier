@@ -5,6 +5,7 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { readExactSessionActiveModelSelection } from '@happier-dev/protocol/providers/active-model-selection';
 import { readSessionProviderBindingMetadataStateV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import { projectSessionMetadataAgentVocabularyWriteCompatibilityV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import type { ProviderBoundModelRef, TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol';
 import { createSessionActiveModelSelection, type SessionActiveModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { isProviderSourceModelCatalogConfidenceUsable } from '@/providers/modelManagement/sourceCatalog';
@@ -33,8 +34,14 @@ function publisherAuthorityLostError(message: string): Error & {
   });
 }
 
+// Compare catalogs as the Session stores them: the client's metadata view adds the
+// predecessor write aliases and the owner schema's key order, neither of which this
+// publisher writes. Comparing raw JSON made every unrelated metadata update a rewrite.
 function stateFingerprint(state: SessionModelsState | null): string {
-  return JSON.stringify(state);
+  const stored = projectSessionMetadataAgentVocabularyWriteCompatibilityV1({ sessionModelsV1: state }).sessionModelsV1;
+  return JSON.stringify(stored ?? null, (_key, value: unknown) => value && typeof value === 'object' && !Array.isArray(value)
+    ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)))
+    : value);
 }
 
 function stateForAgent(

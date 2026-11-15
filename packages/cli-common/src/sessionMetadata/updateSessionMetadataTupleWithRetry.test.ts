@@ -970,6 +970,38 @@ describe('updateSessionMetadataTupleWithRetry', () => {
     });
   });
 
+  it('commits nothing when a producer republishes an unchanged catalog without the view-only compatibility alias', async () => {
+    // The returned compatibility view carries predecessor write aliases (`provider` on
+    // `sessionModelsV1`). A producer that rebuilds its own field never writes that alias,
+    // so its unchanged catalog differs from the view only by the alias.
+    const catalog = {
+      v: 1, agentId: 'claude', updatedAt: 1, currentModelId: 'opus',
+      availableModels: [{ id: 'opus', name: 'Opus', description: 'Big', contextWindowTokens: 200_000 }],
+    };
+    const first = await updateSessionMetadataTupleWithRetry({
+      initialSnapshot: ownerSnapshot(),
+      mutation: { kind: 'metadata', update: (metadata) => ({ ...metadata, sessionModelsV1: catalog }) },
+      crypto: cryptoAdapter(),
+      commit: async () => ({ result: 'success', metadataVersion: 3, agentStateVersion: 5 }),
+    });
+    expect((first.value.metadata as Metadata).sessionModelsV1).toMatchObject({ provider: 'claude' });
+    const crypto = cryptoAdapter();
+    const commit = vi.fn(async () => ({ result: 'success' as const, metadataVersion: 4, agentStateVersion: 6 }));
+    let snapshot: SessionMetadataTupleMutationSnapshotV1<Metadata, AgentState> = first;
+    for (let republish = 0; republish < 5; republish += 1) {
+      snapshot = await updateSessionMetadataTupleWithRetry({
+        initialSnapshot: snapshot,
+        mutation: { kind: 'metadata', update: (metadata) => ({ ...metadata, sessionModelsV1: { ...catalog } }) },
+        crypto,
+        commit,
+      });
+    }
+
+    expect({ commits: commit.mock.calls.length, ownerEncodes: crypto.encodeOwnerMetadata.mock.calls.length,
+      sharedEncrypts: crypto.encryptPayload.mock.calls.length }).toEqual({ commits: 0, ownerEncodes: 0, sharedEncrypts: 0 });
+    expect(snapshot).toBe(first);
+  });
+
   it('reprojects shared metadata for an Agent-state-only mutation while preserving the owner envelope', async () => {
     const crypto = cryptoAdapter();
     const commit = vi.fn(async () => ({
