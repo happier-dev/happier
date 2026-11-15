@@ -244,7 +244,7 @@ it.skipIf(process.platform !== 'linux')('offers cold member Sync roots without p
   })).toMatchObject({ errorCode: 'RPC_FORBIDDEN', effectAttempted: false });
 });
 
-it.skipIf(process.platform !== 'linux').each(['use', 'manage'] as const)('materializes an empty accepted target for %s Sync through requester Account rows and filesystem authority', async role => {
+it.skipIf(process.platform !== 'linux').each(['use', 'manage'] as const)('enforces %s Sync admission through requester Account rows and filesystem authority', async role => {
   executionBoundary.member = role === 'use';
   const setup = await createRequesterWorkspaceSyncFixture({ role, socketIo });
 
@@ -265,6 +265,9 @@ it.skipIf(process.platform !== 'linux').each(['use', 'manage'] as const)('materi
   await Promise.resolve();
   expect(setup.memberReads() - readsBeforeAvailability).toBe(role === 'use' ? 1 : 0);
   expect(setup.requesterProjectionReads()).toBe(readsAfterAvailability);
+  expect(scoped.requesterAvailability).toEqual(role === 'use'
+    ? { kind: 'available', homeDir: member.home, workspaceRoot: member.workspaceRoot }
+    : { kind: 'available', homeDir: expect.any(String), workspaceRoot: null });
   const invoke = async (input: typeof request.actionInput) => {
     const fresh = await setup.prepareInvocation({ ...request, actionInput: input });
     return rpc.handleRequest({ method: `${installed.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE}`,
@@ -285,6 +288,18 @@ it.skipIf(process.platform !== 'linux').each(['use', 'manage'] as const)('materi
     params: request, callerAuthority: 'present_user', callerInputAuthorization: authorization,
     machineAdmission: { actorAccountId: 'member-a', custodianAccountId: 'requester', machineId: installed.machineId,
       installationId: installed.installation.installationId, role, encryptionMode: 'plain' } });
+  if (role === 'use') {
+    // Can-use materializes through Project Open; direct relationship creation
+    // retains the destination's Manage requirement (OWNER-RULINGS 2026-11-14).
+    expect(created).toMatchObject({ errorCode: 'workspace_sync_unavailable',
+      failureCause: { errorCode: 'machine_manage_required' } });
+    expect(await native.identity.run('member', () => readdir(targetPath))).toEqual([]);
+    expect((await scoped.controller.listRelationships({})).relationships).toEqual([]);
+    expect(custodianRows).toEqual(custodianBefore);
+    await expect(realpath(sourcePath)).rejects.toMatchObject({ code: 'EACCES' });
+    await expect(realpath(targetPath)).rejects.toMatchObject({ code: 'EACCES' });
+    return;
+  }
   expect(created).toMatchObject({ v: 1, created: true, sourceWorkspaceRefId: fixture.sourceRef.id, targetWorkspaceRefId: fixture.targetRef.id });
   const createRowRequests = setup.requesterRowRequests.slice(rowRequestsBeforeCreate);
   const writeAttempts = createRowRequests.filter(event => event.path.endsWith('/mutate')).length;
@@ -293,15 +308,8 @@ it.skipIf(process.platform !== 'linux').each(['use', 'manage'] as const)('materi
   expect(writeAttempts).toBeGreaterThan(0);
   expect(setup.requesterProjectionReads() - readsBeforeCreate).toBe(writeAttempts + 1);
   expect(setup.requesterMachineAuthorityReads.slice(authorityReadsBeforeCreate)).toEqual([]);
-  expect(scoped.requesterAvailability).toEqual(role === 'use'
-    ? { kind: 'available', homeDir: member.home, workspaceRoot: member.workspaceRoot }
-    : { kind: 'available', homeDir: expect.any(String), workspaceRoot: null });
   expect(rows.some(row => row.key.kind === 'relationship-graph')).toBe(true);
   expect(custodianRows).toEqual(custodianBefore);
-  if (role === 'use') {
-    await expect(realpath(sourcePath)).rejects.toMatchObject({ code: 'EACCES' });
-    await expect(realpath(targetPath)).rejects.toMatchObject({ code: 'EACCES' });
-  }
   expect(await native.identity.run('member', () => readFile(join(sourcePath, 'payload.txt'), 'utf8'))).toBe('before quiesce');
   expect(await native.identity.run('member', () => readFile(join(targetPath, 'payload.txt'), 'utf8'))).toBe('before quiesce');
   expect(authorization.binding.accountId).toBe('member-a');
@@ -572,12 +580,11 @@ it.skipIf(process.platform !== 'linux')('refuses another Account executing recei
 it.skipIf(process.platform !== 'linux')('preflights the shared Manage destination through the source Action before creating its worker copy', async () => {
   executionBoundary.member = false;
   const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo, remoteTarget: true,
-    targetCustodianAccountId: 'requester', workerCleanCopy: true, accountMode: 'e2ee', targetResourceMode: 'e2ee' });
+    targetCustodianAccountId: 'requester', workerCleanCopy: true, accountMode: 'e2ee', targetResourceMode: 'e2ee', originalActionHomeHttp: true });
 
-  const result = await setup.executeRelationshipAction();
+  const result = await setup.executeNativeRelationshipAction();
   expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { created: true } });
-  expect(setup.approvalArtifacts.size).toBeGreaterThan(0);
-  expect([...setup.approvalArtifacts.values()].every(row => row.ownerAccountId === 'member-a')).toBe(true);
+  expect(setup.approvalArtifacts.size).toBe(0);
   expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
   expect(setup.custodianRows).toEqual(setup.custodianBefore);
 });
@@ -589,7 +596,7 @@ it.skipIf(process.platform !== 'linux').each([true, false])(
     const recovery = { pending, root: '', calls: 0 };
     executionBoundary.recovery = recovery;
     const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo, remoteTarget: true,
-      targetCustodianAccountId: 'requester', workerCleanCopy: true,
+      targetCustodianAccountId: 'requester', workerCleanCopy: true, originalActionHomeHttp: true,
       prepareActiveServerDirectory: async directory => {
         if (!directory.includes('/target-parent/')) return;
         const resolution = join(directory, 'workspace-sync', 'resolution');
@@ -600,7 +607,7 @@ it.skipIf(process.platform !== 'linux').each([true, false])(
       } });
     recovery.root = setup.targetPath;
 
-    const result = await setup.executeRelationshipAction();
+    const result = await setup.executeNativeRelationshipAction();
     expect(result, JSON.stringify(result)).toMatchObject(pending
       ? { ok: false, failureCause: { phase: 'rpc.handler', errorCode: 'workspace_sync_recovery_needed' } }
       : { ok: true, result: { created: true } });
@@ -649,6 +656,11 @@ it.skipIf(process.platform !== 'linux').each([
 it.skipIf(process.platform !== 'linux')('restores requester target custody through the controller reconnect after target daemon restart', async () => {
   executionBoundary.member = false;
   const signingKey = tweetnacl.sign.keyPair();
+  let holdTunnel = false;
+  let releaseTunnel!: () => void;
+  const tunnelRelease = new Promise<void>(resolve => { releaseTunnel = resolve; });
+  let tunnelOpened!: () => void;
+  const tunnelOpening = new Promise<void>(resolve => { tunnelOpened = resolve; });
   const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', sourceCustodianAccountId: 'member-a',
     remoteTarget: true, targetCustodianAccountId: 'target-owner', remoteSeed: true, socketIo, allowRelationshipAction: true,
     nativeCarrierHome: {
@@ -671,9 +683,14 @@ it.skipIf(process.platform !== 'linux')('restores requester target custody throu
         if (!target || handshake.flow !== 'workspace_sync' || handshake.initiator.kind !== 'machine') {
           throw new Error('Target native boundary is unavailable');
         }
-        return await target.acquireWorkspaceSyncMachineIngress({ operationId: handshake.operationId,
+        const ingress = await target.acquireWorkspaceSyncMachineIngress({ operationId: handshake.operationId,
           sourceMachineId: handshake.initiator.machineId, targetMachineId: handshake.target.machineId,
           actorAccountId: handshake.accountId });
+        if (holdTunnel) {
+          tunnelOpened();
+          await tunnelRelease;
+        }
+        return ingress;
       },
     } });
   const targetBefore = [...setup.targetAccountRows];
@@ -687,7 +704,16 @@ it.skipIf(process.platform !== 'linux')('restores requester target custody throu
   if (!('kind' in unclaimed)) await unclaimed.release();
   const controller = setup.fixture.parentManagedWorkspaceSync;
   if (!(controller instanceof WorkspaceSyncController)) throw new Error('Source controller is unavailable');
-  const stream = await controller.openExternalStream({ endpointId: deriveWorkspaceSyncEndpointId(relationshipId, 'beta') });
+  const definition = (await controller.listRelationships({})).relationships.find(item => item.definition.relationshipId === relationshipId)?.definition;
+  if (!definition) throw new Error('Created Sync relationship is unavailable');
+  holdTunnel = true;
+  const opening = controller.openExternalStream({ endpointId: deriveWorkspaceSyncEndpointId(relationshipId, 'beta') });
+  await tunnelOpening;
+  // A normal Account graph refresh can settle while the network acknowledges
+  // the retained target ingress. Identical intent must keep its live custody.
+  try { await controller.rehydrateFromSettings([definition]); }
+  finally { releaseTunnel(); }
+  const stream = await opening;
   try {
     const recovered = await setup.fixture.probeTarget();
     if (!('kind' in recovered)) await recovered.release();

@@ -34,7 +34,7 @@ import { createDaemonExternalActionTargetResolver, createDaemonApprovalExecution
 import { createDaemonApprovalExecutionAuthorizationPreparer } from '@/daemon/externalActions/approvalExecutionAuthorization';
 import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1, verifyExternalActionMachineRequestV1, verifyExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { ExternalActionMachineRpcExecutionV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema,
-  ExternalActionDaemonDispatchRequestSchema, ExternalActionMachineBootstrapV1Schema, parseExternalActionDaemonDispatchResultV1,
+  ExternalActionDaemonDispatchRequestSchema, ExternalActionMachineBootstrapV1Schema, parseExternalActionDaemonDispatchResult,
   EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, type ExternalActionRequestEnvelope,
   type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ACTION_API_SERVER_ORIGIN } from '@happier-dev/protocol/socketRpc';
@@ -510,7 +510,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
           authorization: ACTION_API_SERVER_ORIGIN, machineAdmission: { actorAccountId: 'member-a',
             custodianAccountId: sourceCustodianAccountId, machineId: installed.machineId,
             installationId: installed.installation.installationId, role, encryptionMode: sourceResourceMode } });
-        const result = parseExternalActionDaemonDispatchResultV1(received);
+        const result = parseExternalActionDaemonDispatchResult(received);
         if (result?.kind !== 'response') throw new Error(`Original Home Action receiver refused: ${readRpcErrorCode(received) ?? result?.kind ?? 'invalid_response'}`);
         return { status: 200, data: result.prepared.response };
       }

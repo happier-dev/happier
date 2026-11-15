@@ -1,5 +1,6 @@
 import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
 import { describe, expect, it } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import * as mod from './githubRepositoryRestAdapter.js';
 import { createGithubRepositoryProvisioningAdapter } from './createRepositoryWithAuthFallback.js';
 
@@ -33,6 +34,28 @@ function jsonResponse(body: unknown, init?: Readonly<{
 }
 
 describe('GitHub REST repository provisioning adapter', () => {
+  it.each(['public', 'private', 'missing'] as const)('uses anonymous metadata after native login absence for a %s clone', async visibility => {
+    const adapter = createGithubRepositoryProvisioningAdapter({ restAdapter: mod.createGithubRepositoryRestAdapter({
+      fetcher: async (_url, init) => {
+        expect(new Headers(init?.headers).has('authorization')).toBe(false);
+        return visibility === 'missing' ? jsonResponse({ message: 'Not Found' }, { status: 404 })
+          : jsonResponse({ full_name: 'octocat/Hello-World', html_url: 'https://github.com/octocat/Hello-World',
+            clone_url: 'https://github.com/octocat/Hello-World.git', visibility });
+      },
+    }) });
+    const result = adapter.describeCloneTargets({ provider: githubProvider,
+      repository: { nameWithOwner: 'octocat/Hello-World', visibility: 'public' },
+      runtimeServices: { resolveScmHostingTokenMaterialization: async () => {
+        // Host credential boundary: fresh guests have no native GitHub CLI login.
+        throw new PluginError({ code: 'plugin_connected_account_native_unavailable', message: 'Sign in with gh CLI' });
+      } },
+    });
+    if (visibility === 'public') await expect(result).resolves.toMatchObject({
+      auth: { profileKind: 'no_auth' }, targets: [{ protocol: 'https', url: 'https://github.com/octocat/Hello-World.git' }],
+    });
+    else await expect(result).rejects.toMatchObject({ errorCode: 'REMOTE_AUTH_REQUIRED' });
+  });
+
   it.each([200, 404, 403, 410])('resolves latest stable only, falls back on no release, preserves HTTP failure (%s)', async status => {
     const requests: string[] = [];
     const adapter = createGithubRepositoryProvisioningAdapter({ restAdapter: mod.createGithubRepositoryRestAdapter({

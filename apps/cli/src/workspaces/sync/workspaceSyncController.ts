@@ -14,6 +14,7 @@ import {
 } from './workspaceSyncMachineCarrierStream';
 import type { Duplex } from 'node:stream';
 import { realpath } from 'node:fs/promises';
+import { isDeepStrictEqual } from 'node:util';
 import type { WorkspaceRootOwnershipHandle, WorkspaceRootOwnershipManager } from './workspaceSyncRootOwnership';
 import { getPathRemainderWithinBase } from '@/session/handoff/paths/sessionHandoffPathNormalization';
 import { resolveWorkspaceSyncRelationshipEndpointRoles } from './workspaceSyncRelationshipEndpoints';
@@ -1188,7 +1189,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
       // A cold staged row may already occupy definitions. After successful
       // transient engine admission, retain its live definition, not that
       // disabled restart intent, for the existing reconciliation owner.
-      this.definitions.set(valid.relationshipId, runtimeDefinition);
+      this.retainLiveDefinition(runtimeDefinition);
       if (preparation?.transient) this.transientDefinitions.add(valid.relationshipId);
       else this.transientDefinitions.delete(valid.relationshipId);
       this.ownershipLost.delete(valid.relationshipId);
@@ -1202,6 +1203,14 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
         this.fences.delete(valid.relationshipId);
       }
       throw error;
+    }
+  }
+  private retainLiveDefinition(definition: WorkspaceSyncRelationshipV1): void {
+    // Native ingress captures this identity while opening. Refreshing the same
+    // schema-owned value preserves its custody; changed intent replaces it.
+    const current = this.definitions.get(definition.relationshipId);
+    if (!current || !isDeepStrictEqual(current, definition)) {
+      this.definitions.set(definition.relationshipId, definition);
     }
   }
   private async recoverConflictResolutionForRelationship(
@@ -2788,7 +2797,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
           const status = recoveringOwnership
             ? await this.adapter.ensure(relationship, undefined)
             : adopted ?? await this.adapter.ensure(relationship, undefined);
-          this.definitions.set(relationship.relationshipId, relationship);
+          this.retainLiveDefinition(relationship);
           if (recoveringOwnership) this.ownershipLost.delete(relationship.relationshipId);
           statuses.push(this.publish(status));
         } catch (error) {

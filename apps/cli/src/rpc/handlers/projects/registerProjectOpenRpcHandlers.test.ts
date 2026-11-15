@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import tweetnacl from 'tweetnacl';
 import { mkdtemp, mkdir, writeFile, readFile, copyFile, access, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -506,6 +507,9 @@ describe('Project Open RPC', () => {
       resolveTarget: async () => null,
       projectTargetAccounts: async () => ({ status: 'complete', accounts: [] }),
       materializeAccount: async () => { throw new Error('An unbound public clone must not materialize credentials'); },
+      // A fresh host has the native credential adapter, with no GitHub login.
+      materializeNative: async () => { throw new PluginError({ code: 'plugin_connected_account_native_unavailable',
+        message: 'Native GitHub login is unavailable' }); },
       assertTargetAccountMaterializable: async () => undefined,
     });
     const accountDefinition = GITHUB_PLUGIN_MANIFEST.contributes.connectedAccountDescriptors?.[0];
@@ -612,21 +616,21 @@ describe('Project Open RPC', () => {
         const { result: refusal, operation } = await observeOpen(input, `rate-limit-${limit}`);
         expect.soft(operation).toMatchObject({ kind: 'found', operation: { state: 'failed', error: {
           errorCode: 'REMOTE_RATE_LIMITED',
-          failureCause: { phase: 'projects.open', errorClass: 'Error', errorCode: null, httpStatus: null },
+          failureCause: { phase: 'projects.open', errorClass: 'Error', errorCode: 'REMOTE_RATE_LIMITED', httpStatus: null },
           details: { kind: 'refused', code: 'REMOTE_RATE_LIMITED', effectAttempted: false,
             retryNotBeforeMs: limit === 'timed' ? retryAt : expect.any(Number),
             remediation: { kind: 'retry', action: 'connect_github' } },
         } } });
         expect.soft(publicSettlement(input, refusal)).toMatchObject({ status: 'failed', execution: {
           ok: false, errorCode: 'REMOTE_RATE_LIMITED', effectAttempted: false,
-          failureCause: { phase: 'projects.open', errorClass: 'Error', errorCode: null, httpStatus: null },
+          failureCause: { phase: 'projects.open', errorClass: 'Error', errorCode: 'REMOTE_RATE_LIMITED', httpStatus: null },
           details: { kind: 'refused', code: 'REMOTE_RATE_LIMITED', effectAttempted: false,
             retryNotBeforeMs: limit === 'timed' ? retryAt : expect.any(Number),
             remediation: { kind: 'retry', action: 'connect_github' } },
         } });
         expect.soft(refusal).toEqual({ kind: 'refused', code: 'REMOTE_RATE_LIMITED',
           effectAttempted: false,
-          failureCause: { phase: 'projects.open', errorClass: 'Error', errorCode: null, httpStatus: null },
+          failureCause: { phase: 'projects.open', errorClass: 'Error', errorCode: 'REMOTE_RATE_LIMITED', httpStatus: null },
           retryNotBeforeMs: limit === 'timed' ? retryAt : expect.any(Number),
           remediation: { kind: 'retry', action: 'connect_github' } });
         const parsed = OpenProjectResultV1Schema.parse(refusal);
@@ -672,16 +676,16 @@ describe('Project Open RPC', () => {
         materialization: { ...input.materialization, destinationDirectoryName: 'missing-ref' } };
       const { result: missingRef, operation: missingRefOperation } = await observeOpen(missingRefInput, 'missing-ref');
       expect(missingRefOperation).toMatchObject({ kind: 'found', operation: { state: 'failed', error: {
-        errorCode: 'COMMAND_FAILED', failureCause: { phase: 'project_open.checkout_ref', errorCode: null },
+        errorCode: 'COMMAND_FAILED', failureCause: { phase: 'project_open.checkout_ref', errorCode: 'COMMAND_FAILED' },
         details: { kind: 'refused', code: 'COMMAND_FAILED', effectAttempted: true },
       } } });
       expect(missingRef).toMatchObject({ kind: 'refused', code: 'COMMAND_FAILED', effectAttempted: true,
-          failureCause: { phase: 'project_open.checkout_ref', errorCode: null } });
+          failureCause: { phase: 'project_open.checkout_ref', errorCode: 'COMMAND_FAILED' } });
       expect(publicSettlement(missingRefInput, missingRef)).toMatchObject({ status: 'failed', execution: {
         ok: false, errorCode: 'COMMAND_FAILED', effectAttempted: true,
-        failureCause: { phase: 'project_open.checkout_ref', errorCode: null },
+        failureCause: { phase: 'project_open.checkout_ref', errorCode: 'COMMAND_FAILED' },
         details: { kind: 'refused', code: 'COMMAND_FAILED', effectAttempted: true,
-          failureCause: { phase: 'project_open.checkout_ref', errorCode: null } },
+          failureCause: { phase: 'project_open.checkout_ref', errorCode: 'COMMAND_FAILED' } },
       } });
       await access(join(root, 'missing-ref', '.git'));
       expect(rows).toHaveLength(acceptedRows);

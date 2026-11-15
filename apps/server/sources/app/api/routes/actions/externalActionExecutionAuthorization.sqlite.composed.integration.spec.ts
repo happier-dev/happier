@@ -8791,7 +8791,7 @@ describe("external Action execution authorization", () => {
                 installationId: source.installationId!, machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: root.token,
                     effectActionId: 'session.handoff', target: root.binding.target, installationId: source.installationId!, event: SOCKET_RPC_EVENTS.CALL,
                     method, requestId: root.binding.requestId, params, workspaceSyncSourceWriterTargetRouting: routing, privateKey: sourceKey.secretKey }) };
-            const socket = Object.assign(createFakeSocket({ id: 'ordinary-source-writer', data: { clientType: 'machine-scoped', machineId: source.id,
+            const socket = Object.assign(createFakeSocket({ id: 'ordinary-source-writer', data: { clientType: 'machine-scoped', userId: sourceCustodian.id, machineId: source.id,
                 verifiedMachineInstallationId: source.installationId, authTokenKind: 'account', authAuthority: 'present_user' } }), { handshake: { auth: { token } } });
             qualifyCurrentAccountStoredContentSocket(socket);
             registerSocketRpcHandlers({ userId: sourceCustodian.id, socket: socket as unknown as Socket, io, sessionPublisherPresence: presence });
@@ -10278,6 +10278,7 @@ describe("external Action execution authorization", () => {
         const keys = tweetnacl.sign.keyPair();
         const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: custodian.id,
             metadata: fixture.machine.metadata, dataEncryptionKey: fixture.machine.dataEncryptionKey,
+            operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] } }, operationProtocolCapabilitiesRevision: 1,
             installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(keys.publicKey) } });
         await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: machine.id,
             principal: { kind: 'account', accountId: fixture.account.id }, level: 'view' }));

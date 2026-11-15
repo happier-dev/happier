@@ -16,6 +16,7 @@ import type {
   ScmHostingRepositorySummary,
 } from '@happier-dev/plugin-sdk/scm';
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
+import { PluginError } from '@happier-dev/plugin-sdk';
 
 import { createGithubRequestHeaders } from '../observations/githubRequestHeaders.js';
 import { readGithubDecodedResponseFacts, type GithubApiMethodV1 } from '../observations/githubApiClient.js';
@@ -90,6 +91,13 @@ async function defaultRuntimeTokenResolver(input: Readonly<{
     providerId: input.providerId,
     host: input.host,
     provider: input.provider,
+  }).catch((error: unknown) => {
+    // An absent Machine login is an unbound account, not a refusal of a
+    // selected account. Clone still requires observed public visibility below.
+    if (error instanceof PluginError && error.code === 'plugin_connected_account_native_unavailable') {
+      return { kind: 'missing', reason: 'account_unbound' } as const;
+    }
+    throw error;
   });
   if (result.kind !== 'available') return { kind: 'missing', reason: result.reason };
   return {
