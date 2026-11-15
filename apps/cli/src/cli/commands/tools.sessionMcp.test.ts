@@ -22,7 +22,15 @@ import { ApprovalRequestV2Schema, type ApprovalRequest } from '@happier-dev/prot
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { createHappierToolInventory } from '@/agent/tools/happierTools/listBuiltInHappierTools';
-import { prepareHappierMcpToolInventory, registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
+import { formatHappierMcpToolFailure, prepareHappierMcpToolInventory, registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
+import { createNativeAgentSessionInteractionHostRuntime } from '@/agent/runtime/bridges/executionRun/nativeAgentExecutionRun';
+import { createNativeSessionBoundary, createVoiceSessionContextLease } from '@/agent/runtime/bridges/executionRun/testkit/nativeSessionContext';
+import { createLazyExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/hostRuntime/lazy';
+import { withExecutionRunHostRuntimeCleanup } from '@/agent/runtime/bridges/executionRun/hostRuntime/cleanup';
+import { withExecutionRunPermissionResponder } from '@/agent/runtime/bridges/executionRun/hostRuntime/permissionResponder';
+import { withExecutionRunRuntimeIdentityPublication } from '@/agent/runtime/identity/executionRunRuntimeIdentityPublication';
+import { borrowExecutionRunRuntimeTurn } from '@/agent/runtime/bridges/executionRun/hostRuntime/borrowedTurn';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -36,6 +44,10 @@ const deploymentInput = { serverId: 'home', environmentId: 'staging', expectedRe
 const deploymentSettings = normalizeActionsSettingsV1({ v: 1,
   approvalWaivedSurfaces: { 'deployments.deploy': ['agent', 'cli'] } });
 const actionSessionId = 'cmvbeu0ig0040m203zcysq5v8';
+const diagnosticFailure = { ok: false, errorCode: 'action_failed', error: 'Action failed',
+  requestId: 'diagnostic-action', effectAttempted: false, details: { expectedRevision: 3 },
+  failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: null },
+} as const;
 
 async function createDeploymentAdmissionFixture() {
   const root = await mkdtemp(join(tmpdir(), 'happier-action-inbox-'));
@@ -111,6 +123,9 @@ async function openSessionMcpBoundary(useHappierOwner = false, actionExecutor?: 
         // The real registrar serializes ActionExecuteResult.result, not another
         // ActionExecuteResult wrapper. Keep this network fixture at that seam.
         const input = request.params.arguments?.input;
+        if (input && typeof input === 'object' && 'skillId' in input && input.skillId === 'diagnostic') {
+          return formatHappierMcpToolFailure(diagnosticFailure);
+        }
         const refused = input && typeof input === 'object' && 'skillId' in input && input.skillId === 'refused';
         return { content: [{ type: 'text' as const, text: JSON.stringify(refused
           ? { errorCode: 'approval_required', error: 'Approval required', details: { scope: 'owning-session' } }
@@ -146,6 +161,72 @@ async function openSessionMcpBoundary(useHappierOwner = false, actionExecutor?: 
 }
 
 describe('Agent tools Session MCP authority', () => {
+  it('retains canonical failure identity through the Action options bridge', async () => {
+    const executor = createActionExecutor({});
+    const bridge = createActionToolExecutorBridge({ executor: {
+      execute: (id, input, context) => executor.execute(id, input, {
+        ...context, actionRequestId: 'options-diagnostic',
+      }),
+    } });
+    await expect(bridge.resolveActionOptions({ actionId: null, fieldPath: null,
+      optionsSourceId: 'missing-source', sessionId: null, limit: null, query: null }, actionSessionId))
+      .resolves.toMatchObject({ ok: false, requestId: 'options-diagnostic' });
+  });
+  it.runIf(process.platform === 'linux')('retains canonical failure diagnostics through the MCP producer and Session CLI reader', async () => {
+    const boundary = await openSessionMcpBoundary();
+    try {
+      await expect(executeSessionMcpAction('skills.read', { skillId: 'diagnostic' })).resolves.toEqual(diagnosticFailure);
+    } finally { await boundary.close(); }
+  });
+  it.runIf(process.platform === 'linux')('retains canonical executor diagnostics through the Action tool bridge and Session CLI reader', async () => {
+    const executor = createActionExecutor({
+      // Session-list transport is the system boundary; Action admission and projection remain real.
+      sessionList: async () => { throw createActionExecuteFailureError(diagnosticFailure); },
+    });
+    const boundary = await openSessionMcpBoundary(false, executor);
+    try {
+      await expect(executeSessionMcpAction('session.list', {})).resolves.toMatchObject({
+        ...diagnosticFailure, requestId: expect.any(String),
+      });
+    } finally { await boundary.close(); }
+  });
+  it.runIf(process.platform === 'linux')('returns the bound native Action result with provider identity through every host wrapper', async () => {
+    const bound = await openSessionMcpBoundary();
+    const ambient = await openSessionMcpBoundary();
+    const native = createNativeSessionBoundary();
+    const host = createNativeAgentSessionInteractionHostRuntime({
+      runtime: { sessions: { open: native.open } },
+      lease: { pluginId: 'acme.voice', pluginVersion: '1', agentId: 'acme.voice/agents/default',
+        localAgentId: 'default', occurrenceId: 'bound-action', isCurrent: () => true },
+      sessionCapabilities: { open: ['create'], delivery: ['newTurn'], cancel: true },
+      createSessionContext: ({ services, signal }) => ({
+        ...createVoiceSessionContextLease({ services, signal, async dispose() {} }),
+        sessionMcpContext: { v: 1, socketPath: bound.socketPath, bearerToken: bound.bearer },
+      }),
+      options: { cwd: '/repo', runId: 'bound-action', backendId: 'acme.voice/agents/default', scope: 'session_owned', permissionMode: 'read_only' },
+    });
+    const runtime = createLazyExecutionRunHostRuntime({ resolveRuntime: async () =>
+      withExecutionRunHostRuntimeCleanup(withExecutionRunRuntimeIdentityPublication({
+        runtime: withExecutionRunPermissionResponder(borrowExecutionRunRuntimeTurn(host, 'bound-action', () => true, async () => {}), {}),
+        identity: { runtimeDescriptor: null, runtimeCapabilities: {}, runtimeFacets: null },
+      }), async () => {}),
+    });
+    try {
+      expect(runtime.executeAction).toEqual(expect.any(Function));
+      await expect(runtime.executeAction?.('skills.read', { skillId: 'selected' }, 'provider-call-1'))
+        .resolves.toEqual({ ok: true, result: skillResult });
+      await expect(runtime.executeAction?.('skills.read', { skillId: 'refused' }, 'provider-call-2'))
+        .resolves.toEqual({ ok: false, errorCode: 'approval_required', error: 'Approval required', details: { scope: 'owning-session' } });
+      expect(bound.calls).toMatchObject([
+        { name: 'action_execute', arguments: { actionId: 'skills.read', input: { skillId: 'selected' } }, _meta: { 'happier/action-request-id': 'provider-call-1' } },
+        { name: 'action_execute', _meta: { 'happier/action-request-id': 'provider-call-2' } },
+      ]);
+      expect(ambient.calls).toEqual([]);
+      expect(process.env.HAPPIER_SESSION_MCP_CONTEXT_FILE).toBe(ambient.contextPath);
+      expect(native.opens).toEqual([]);
+    } finally { await runtime.dispose(); await host.dispose(); await ambient.close(); await bound.close(); }
+  });
+
   it.runIf(process.platform === 'linux').each([false, true])(
     'auto-detects generic Session Action identity and creates an Inbox approval before any deployment (wait=%s)', async wait => {
       const fixture = await createDeploymentAdmissionFixture();

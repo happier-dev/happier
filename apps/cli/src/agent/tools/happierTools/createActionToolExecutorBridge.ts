@@ -79,16 +79,13 @@ export type ActionToolExecutionOptions = Readonly<{
   actionRequestId?: string | null;
 }>;
 
+function normalizeActionExecutorFailure(result: Extract<ActionExecutorResult, { ok: false }>): ActionExecuteFailure {
+  const { operationCredentialUses: _operationCredentialUses, ...failure } = result;
+  return failure;
+}
+
 function normalizeActionExecutorResult(result: ActionExecutorResult): ActionToolBridgeResult {
-  return result.ok
-    ? { ok: true, result: result.result }
-    : {
-        ok: false,
-        errorCode: result.errorCode,
-        error: result.error,
-        ...(result.details !== undefined ? { details: result.details } : {}),
-        ...(result.failureCause !== undefined ? { failureCause: result.failureCause } : {}),
-      };
+  return result.ok ? { ok: true, result: result.result } : normalizeActionExecutorFailure(result);
 }
 
 function normalizeActionToolResult(
@@ -104,13 +101,7 @@ function normalizeActionToolResult(
   }
 
   if (!result.ok) {
-    return {
-      ok: false,
-      errorCode: result.errorCode,
-      error: result.error,
-      ...(result.details !== undefined ? { details: result.details } : {}),
-      ...(result.failureCause !== undefined ? { failureCause: result.failureCause } : {}),
-    };
+    return normalizeActionExecutorResult(result);
   }
 
   return normalizeExecutionRunToolResult(
@@ -503,13 +494,7 @@ export function createActionToolExecutorBridge(params: Readonly<{
           sessionListAccess: params.resolveSessionListAccess?.(defaultSessionId) }),
       );
       if (!result.ok) {
-        return {
-          ok: false,
-          errorCode: result.errorCode,
-          error: result.error,
-          ...(result.details === undefined ? {} : { details: result.details }),
-          ...(result.failureCause === undefined ? {} : { failureCause: result.failureCause }),
-        };
+        return normalizeActionExecutorFailure(result);
       }
 
       const payload = readActionOptionsPayload(result.result);

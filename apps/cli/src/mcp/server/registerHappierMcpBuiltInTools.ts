@@ -9,6 +9,7 @@ import { ExternalActionRequestIdV1Schema } from '@happier-dev/protocol/actions/e
 import { BrowserScreenshotMediaReferenceV1Schema } from '@happier-dev/protocol/browser/context/v1';
 import { SessionImageMediaReferenceV1Schema } from '@happier-dev/protocol/sessions/media/imageReferenceV1';
 import type { HappierBuiltInToolDefinition, HappierBuiltInToolDispatchResult } from '@/agent/tools/happierTools/types';
+import { projectActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { z } from 'zod/mini';
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
 import { logger } from '@/ui/logger';
@@ -142,12 +143,11 @@ function stringifyMcpToolTextPayload(value: unknown): string {
 }
 
 export function formatHappierMcpToolFailure(result: Extract<HappierBuiltInToolDispatchResult, { ok: false }>): CallToolResult {
+    const { ok: _ok, ...failure } = projectActionExecuteFailure(result);
     return {
         content: [{ type: 'text', text: JSON.stringify({
-            errorCode: result.errorCode,
-            error: result.error,
-            ...(result.details === undefined ? {} : { details: result.details }),
-            ...(result.failureCause === undefined ? {} : { failureCause: result.failureCause }),
+            ...failure,
+            ...(result.candidates === undefined ? {} : { candidates: result.candidates }),
         }) }],
         isError: true,
     };

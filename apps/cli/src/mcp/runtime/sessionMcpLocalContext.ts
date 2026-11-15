@@ -22,6 +22,11 @@ export class SessionMcpUnavailableError extends Error {
     }
 }
 
+/** No Session MCP transport reaches this caller (a detached run, a process outside a Session); not an authentication verdict. */
+export function sessionActionTransportUnavailable(): Readonly<{ ok: false; errorCode: 'action_transport_unavailable'; error: string }> {
+    return { ok: false, errorCode: 'action_transport_unavailable', error: 'No Session Action transport is available for this caller.' };
+}
+
 const SessionMcpBearerTokenSchema = z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u));
 
 /**

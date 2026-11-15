@@ -1,14 +1,15 @@
 import { CallToolResultSchema, McpError, type Tool } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod/mini';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { callMcpToolWithResolvedTimeout } from '@/mcp/mcpToolCallRequestOptions';
 import { connectSessionMcpClient, readSessionMcpContextFromEnvironment } from '@/mcp/runtime/sessionMcpLocalClient';
-import { SESSION_MCP_CONTEXT_FILE_ENV } from '@/mcp/runtime/sessionMcpLocalContext';
+import { SESSION_MCP_CONTEXT_FILE_ENV, sessionActionTransportUnavailable, type SessionMcpAgentContext } from '@/mcp/runtime/sessionMcpLocalContext';
 import { SESSION_MCP_ACTION_REQUEST_ID_META_KEY, SESSION_MCP_TOOL_SOURCES_META_KEY, SESSION_MCP_TOOL_SOURCE_META_KEY, SESSION_MCP_TOOL_WARNINGS_META_KEY } from '@/mcp/runtime/sessionMcpToolsBridge';
 
-const failureSchema = z.object({ ok: z.literal(false), errorCode: z.string(), error: z.string(),
-  details: z.optional(z.unknown()), candidates: z.optional(z.array(z.string())) });
+const failureSchema = z.object({ ...ActionExecuteFailureSchema.shape,
+  candidates: z.optional(z.array(z.string())) });
 const customResultSchema = z.union([z.object({ ok: z.literal(true), result: z.unknown() }), failureSchema]);
 const warningsSchema = z.array(z.object({ source: z.string(), error: z.string() }));
 
@@ -41,10 +42,10 @@ function transportFailure(error: unknown): ToolFailure {
   return { ok: false, errorCode: code, error: code };
 }
 
-async function withSessionMcp<Result>(operation: (connection: Awaited<ReturnType<typeof connectSessionMcpClient>>) => Promise<Result>, signal?: AbortSignal): Promise<Result | ToolFailure> {
-  let context;
-  try { context = await readSessionMcpContextFromEnvironment(); }
-  catch { return { ok: false, errorCode: 'not_authenticated', error: 'Authenticated Session MCP context is required.' }; }
+async function withSessionMcp<Result>(operation: (connection: Awaited<ReturnType<typeof connectSessionMcpClient>>) => Promise<Result>, signal?: AbortSignal, sessionContext?: SessionMcpAgentContext): Promise<Result | ToolFailure> {
+  let context = sessionContext;
+  try { context ??= await readSessionMcpContextFromEnvironment(); }
+  catch { return sessionActionTransportUnavailable(); }
   let connection: Awaited<ReturnType<typeof connectSessionMcpClient>> | undefined;
   try {
     connection = await connectSessionMcpClient(context, signal);
@@ -63,6 +64,7 @@ function readToolPayload(value: unknown): unknown {
 
 export async function callSessionMcpTool(input: Readonly<{
   source: string; toolName: string; args: unknown; toolCallId?: string; actionRequestId?: string; signal?: AbortSignal;
+  sessionContext?: SessionMcpAgentContext;
 }>): Promise<ToolResult> {
   return await withSessionMcp(async ({ client }) => {
     const metadata = {
@@ -79,7 +81,7 @@ export async function callSessionMcpTool(input: Readonly<{
     if (!called.isError) return { ok: true as const, result: payload };
     const failure = failureSchema.safeParse(payload && typeof payload === 'object' ? { ...payload, ok: false } : null);
     return failure.success ? failure.data : { ok: false as const, errorCode: 'tool_failed', error: 'Session tool failed.' };
-  }, input.signal);
+  }, input.signal, input.sessionContext);
 }
 
 export async function listSessionMcpTools(signal?: AbortSignal): Promise<ToolFailure | Readonly<{
