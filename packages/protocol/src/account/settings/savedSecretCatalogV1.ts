@@ -236,6 +236,21 @@ export type SavedSecretResourceEnvelopeCensusResponseV1 = z.infer<
   typeof SavedSecretResourceEnvelopeCensusResponseV1Schema
 >;
 
+/**
+ * The custodian's owed envelopes in one read: each owned E2EE resource that has an authorized recipient able to hold
+ * an envelope but without a current one, listing only those recipients. Resources owing nothing are omitted.
+ */
+export const SavedSecretResourceOwedEnvelopeCensusResponseV1Schema = lazyZodSchema(() => z.strictObject({
+  resources: z.array(z.strictObject({
+    resourceId: z.string().check(z.minLength(1)),
+    revision: z.number().check(z.int(), z.positive()),
+    recipients: z.array(SavedSecretResourceEnvelopeCensusRecipientV1Schema),
+  })),
+}));
+export type SavedSecretResourceOwedEnvelopeCensusResponseV1 = z.infer<
+  typeof SavedSecretResourceOwedEnvelopeCensusResponseV1Schema
+>;
+
 
 export type SavedSecretCatalogReferenceV1 = Readonly<{
   kind: 'personal' | 'shared_resource';

@@ -130,13 +130,17 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
     // moment the custodian is present to close that, so prepare what is owed
     // here. Nothing is mutated and nothing is shown: the sweep either has
     // work and does it, or asks the census once and stops.
+    // Leaving Saved Secrets stops the sweep: the custodian is no longer present for it.
     useFocusEffect(React.useCallback(() => {
         const encryption = getSyncSingleton().encryption;
         if (!scope || !encryption || !catalog.sharedEnabled) return;
+        const presence = new AbortController();
         void repairCustodiedSavedSecretResourceEnvelopesBestEffort({
             scope,
             decryptDataKeyEnvelope: (encryptedDataKey) => encryption.decryptEncryptionKey(encryptedDataKey, scope),
+            signal: presence.signal,
         }).catch(() => undefined);
+        return () => presence.abort();
     }, [catalog.sharedEnabled, scope]));
 
     const updateResource = React.useCallback(async (

@@ -71,6 +71,7 @@ import {
     readTargetOwnerRecipientEnvelopeRejectionV1,
     resolveSavedSecretAudienceAccountIdsInTx,
     type ResourceRecipientAccountRow,
+    type ResourceRecipientEnvelopeRow,
     type ResourceRecipientEnvelopeRejectionV1,
 } from "@/app/encryption/savedSecretRecipientEnvelopeCensus";
 import { resolveShareAccountSubjectsInTx, resolveShareSubjectInTx } from "@/app/teams/shareEligibility";
@@ -483,11 +484,20 @@ async function listAuthorizedAccountIdsForResourcesInTx(
     tx: Tx,
     resourceIds: readonly string[],
 ): Promise<readonly string[]> {
-    const accountIds = new Set<string>();
+    return [...new Set([...(await listAuthorizedAccountIdsByResourceInTx(tx, resourceIds)).values()].flat())];
+}
+
+/** Each resource's authorized Accounts (owner, direct grants, principal Team members, Group members). */
+async function listAuthorizedAccountIdsByResourceInTx(
+    tx: Tx,
+    resourceIds: readonly string[],
+): Promise<ReadonlyMap<string, readonly string[]>> {
+    const byResource = new Map<string, readonly string[]>();
     for (const ids of portableQueryChunks({ values: [...new Set(resourceIds)], bindingsPerValue: 1 })) {
         const rows = await tx.savedSecretResource.findMany({
             where: { id: { in: [...ids] } },
             select: {
+                id: true,
                 ownerAccountId: true,
                 accountGrants: { select: { accountId: true } },
                 teamGrants: {
@@ -518,7 +528,7 @@ async function listAuthorizedAccountIdsForResourcesInTx(
                 },
             },
         });
-        for (const row of rows) for (const accountId of [
+        for (const row of rows) byResource.set(row.id, [...new Set([
             row.ownerAccountId,
             ...row.accountGrants.map((grant) => grant.accountId),
             ...row.teamGrants.flatMap((grant) => grant.team.memberships
@@ -528,9 +538,9 @@ async function listAuthorizedAccountIdsForResourcesInTx(
                 })
                 .map((member) => member.accountId)),
             ...row.groupGrants.flatMap((grant) => grant.teamGroup.memberships.map((member) => member.teamMembership.accountId)),
-        ]) accountIds.add(accountId);
+        ])]);
     }
-    return [...accountIds];
+    return byResource;
 }
 
 async function listAuthorizedAccountIdsForResourceInTx(tx: Tx, resourceId: string): Promise<readonly string[]> {
@@ -1031,6 +1041,49 @@ async function refuseSavedSecretNonOwnerInTx(tx: Tx, input: Readonly<{
     });
     const retained = await retainQualifiedSavedSecretRowsInTx(tx, { rows, accountId: input.accountId, authentication: input.authentication });
     return retained.rows.length > 0 ? "forbidden" : "resource_not_found";
+}
+
+/**
+ * The custodian's owed envelopes in one read (the Saved Secrets surface's repair sweep): every owned E2EE resource
+ * with an authorized recipient who can hold an envelope but has no current one, and only those recipients. The same
+ * per-recipient projection as the single-resource census decides readiness and envelope status.
+ */
+export async function listOwedSavedSecretResourceEnvelopesInTx(
+    tx: Tx,
+    input: Readonly<{ accountId: string }>,
+): Promise<readonly Readonly<{ resourceId: string; revision: number; recipients: readonly SavedSecretResourceEnvelopeCensusRecipientV1[] }>[]> {
+    const resources = await tx.savedSecretResource.findMany({
+        where: { ownerAccountId: input.accountId, encryptionMode: "e2ee" },
+        select: { id: true, revision: true },
+        orderBy: { id: "asc" },
+    });
+    if (resources.length === 0) return [];
+    const resourceIds = resources.map((resource) => resource.id);
+    const authorizedByResource = await listAuthorizedAccountIdsByResourceInTx(tx, resourceIds);
+    const accountIds = [...new Set([...authorizedByResource.values()].flat())];
+    const accountsById = new Map<string, ResourceRecipientAccountRow>();
+    for (const ids of portableQueryChunks({ values: accountIds, bindingsPerValue: 1 })) {
+        const accounts = await tx.account.findMany({ where: { id: { in: [...ids] }, status: "active" }, select: RESOURCE_RECIPIENT_ACCOUNT_SELECT });
+        for (const account of accounts) accountsById.set(account.id, account);
+    }
+    const envelopesByResource = new Map<string, ResourceRecipientEnvelopeRow[]>();
+    for (const ids of portableQueryChunks({ values: resourceIds, bindingsPerValue: 1 })) {
+        const envelopes = await tx.savedSecretResourceKeyEnvelope.findMany({ where: { resourceId: { in: [...ids] } },
+            select: { resourceId: true, recipientAccountId: true, encryptedDataKey: true, recipientContentPublicKeyFingerprint: true } });
+        for (const envelope of envelopes) {
+            const rows = envelopesByResource.get(envelope.resourceId) ?? [];
+            rows.push({ accountId: envelope.recipientAccountId, encryptedDataKey: envelope.encryptedDataKey,
+                recipientContentPublicKeyFingerprint: envelope.recipientContentPublicKeyFingerprint });
+            envelopesByResource.set(envelope.resourceId, rows);
+        }
+    }
+    return resources.flatMap((resource) => {
+        const accounts = (authorizedByResource.get(resource.id) ?? []).flatMap((accountId) => accountsById.get(accountId) ?? [])
+            .sort((left, right) => left.id.localeCompare(right.id));
+        const recipients = projectSavedSecretRecipientEnvelopeCensusRecipientsV1({ accounts, envelopes: envelopesByResource.get(resource.id) ?? [] })
+            .filter((recipient) => recipient.readiness.status === "available" && recipient.envelopeStatus !== "prepared");
+        return recipients.length > 0 ? [{ resourceId: resource.id, revision: resource.revision, recipients }] : [];
+    });
 }
 
 export async function listSavedSecretResourceEnvelopeCensusInTx(

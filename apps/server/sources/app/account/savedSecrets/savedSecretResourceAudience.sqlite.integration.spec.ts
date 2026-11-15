@@ -1,4 +1,9 @@
 import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
+import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
+import { deriveAccountRecipientEnvelopeReadinessFromRow } from "@/app/encryption/accountRecipientEnvelopeReadiness";
+import { sealEncryptedDataKeyEnvelopeV1 } from "@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1";
+import { SavedSecretResourceOwedEnvelopeCensusResponseV1Schema } from "@happier-dev/protocol/account/settings/savedSecretCatalogV1";
+import tweetnacl from "tweetnacl";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { SavedSecretResourceMaterialsResponseV1Schema } from "@happier-dev/protocol";
@@ -306,5 +311,42 @@ describe("Saved Secret resource audience lifecycle (SQLite integration)", () => 
         await db.teamMembership.update({ where: { id: memberships[0].id }, data: { status: "active" } });
         await db.account.update({ where: { id: guest.id }, data: { status: "suspended" } });
         await expect(recipientIds("group")).resolves.toEqual([owner.id, member.id].sort());
+    });
+    // The Saved Secrets repair sweep asks once for everything this custodian owes, not once per resource.
+    it("answers every owned E2EE resource's owed envelopes in one read, omitting resources that owe nothing", async () => {
+        const keys = tweetnacl.box.keyPair();
+        const owner = await db.account.create({ data: { encryptionMode: "e2ee", ...createSignedAccountContentBinding(keys.publicKey) } });
+        const ready = await db.account.create({ data: { encryptionMode: "e2ee", ...createSignedAccountContentBinding() } });
+        const unready = await db.account.create({ data: { encryptionMode: "e2ee" } });
+        const other = await db.account.create({ data: { encryptionMode: "e2ee", ...createSignedAccountContentBinding() } });
+        const envelopeFor = (account: typeof owner) => {
+            const readiness = deriveAccountRecipientEnvelopeReadinessFromRow(account);
+            if (readiness.status !== "available") throw new Error("Fixture recipient is unavailable");
+            return { recipientAccountId: account.id, recipientContentPublicKeyFingerprint: readiness.binding.contentPublicKeyFingerprint,
+                encryptedDataKey: new Uint8Array(sealEncryptedDataKeyEnvelopeV1({ dataKey: tweetnacl.randomBytes(32),
+                    recipientPublicKey: account.contentPublicKey!, randomBytes: tweetnacl.randomBytes })) };
+        };
+        const resource = (id: string, ownerAccountId: string, encryptionMode: "e2ee" | "plain", grants: readonly string[], envelopes: readonly ReturnType<typeof envelopeFor>[]) =>
+            db.savedSecretResource.create({ data: { id, ownerAccountId, displayName: id, kind: "token", encryptionMode, storedContent: "{}",
+                accountGrants: { create: grants.map(accountId => ({ accountId, createdByAccountId: ownerAccountId })) },
+                keyEnvelopes: { create: envelopes.map(envelope => envelope) } } });
+        await resource("owes_ready", owner.id, "e2ee", [ready.id, unready.id], [envelopeFor(owner)]);
+        await resource("all_prepared", owner.id, "e2ee", [ready.id], [envelopeFor(owner), envelopeFor(ready)]);
+        await resource("unshared", owner.id, "e2ee", [], [envelopeFor(owner)]);
+        await resource("plain_shared", owner.id, "plain", [ready.id], []);
+        await resource("someone_elses", other.id, "e2ee", [ready.id], [envelopeFor(other)]);
+        const app = createAuthenticatedTestApp({ authentication: "real" });
+        registerSavedSecretResourceRoutes(app);
+        try {
+            const response = await app.inject({ method: "GET", url: "/v1/account/saved-secrets/resources/envelope-census/owed",
+                headers: { authorization: `Bearer ${await createAccountTokenForTests(owner.id, { kind: "account", authority: "present_user" })}` } });
+            expect(response.statusCode).toBe(200);
+            const census = SavedSecretResourceOwedEnvelopeCensusResponseV1Schema.parse(response.json());
+            expect(census.resources.map(row => ({ resourceId: row.resourceId, recipients: row.recipients.map(recipient => recipient.account.accountId) })))
+                .toEqual([{ resourceId: "owes_ready", recipients: [ready.id] }]);
+            expect(census.resources[0]).toMatchObject({ revision: 1, recipients: [{ readiness: { status: "available" }, envelopeStatus: "missing" }] });
+        } finally {
+            await app.close();
+        }
     });
 });

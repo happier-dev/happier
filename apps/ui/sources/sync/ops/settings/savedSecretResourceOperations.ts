@@ -1,4 +1,4 @@
-import { formatSavedSecretCatalogReferenceV1, formatSavedSecretCatalogFingerprintV1, SavedSecretCatalogEntryV1Schema, SavedSecretResourceEnvelopeCensusRequestV1Schema, SavedSecretResourceEnvelopeCensusResponseV1Schema, type SavedSecretResourceEnvelopeCensusRecipientV1, type SavedSecretResourceMaterialV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { formatSavedSecretCatalogReferenceV1, formatSavedSecretCatalogFingerprintV1, SavedSecretCatalogEntryV1Schema, SavedSecretResourceEnvelopeCensusRequestV1Schema, SavedSecretResourceEnvelopeCensusResponseV1Schema, SavedSecretResourceOwedEnvelopeCensusResponseV1Schema, type SavedSecretResourceEnvelopeCensusRecipientV1, type SavedSecretResourceMaterialV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { listAccountSettingsSavedSecretReferences, listSavedSecretPersonalImportSourceReferencesV1, listSavedSecretReferenceCatalogRefsV1, promotePersonalSavedSecretReference,
     promoteLegacyInferenceSavedSecretReferenceV1, promoteLegacyVoiceSavedSecretReferenceV1,
     type SavedSecretLegacyInferenceCredentialV1, type SavedSecretLegacyChatCredentialV1, type SavedSecretLegacyVoiceCredentialV1,
@@ -259,10 +259,22 @@ async function repairSavedSecretResourceEnvelopesBestEffort(params: Readonly<{
     const census = await readSavedSecretResourceRecipientReadiness(params);
     if (!census.ok || census.revision !== params.expectedRevision) return false;
     const recipientsReady = census.recipients.every(recipient => recipient.readiness.status === 'available');
+    return await writeSavedSecretResourceRecipientEnvelopes({ ...params, recipients: census.recipients }) && recipientsReady;
+}
+
+/** Seals and writes the envelopes the census says are owed at one revision; nothing owed writes nothing. */
+async function writeSavedSecretResourceRecipientEnvelopes(params: Readonly<{
+    scope: ServerAccountScope;
+    resourceId: string;
+    expectedRevision: number;
+    resourceDataKey: Uint8Array;
+    recipients: readonly SavedSecretResourceEnvelopeCensusRecipientV1[];
+    signal?: AbortSignal;
+}>): Promise<boolean> {
     const keyEnvelopes = prepareSavedSecretResourceRecipientEnvelopesV1({
-        recipients: census.recipients, resourceDataKey: params.resourceDataKey, randomBytes: getRandomBytes,
+        recipients: params.recipients, resourceDataKey: params.resourceDataKey, randomBytes: getRandomBytes,
     });
-    if (keyEnvelopes.length === 0) return recipientsReady;
+    if (keyEnvelopes.length === 0) return true;
     const repaired = await requestHomeDomain({
         scope: params.scope,
         path: '/v1/account/saved-secrets/resources/envelopes/repair',
@@ -274,8 +286,9 @@ async function repairSavedSecretResourceEnvelopesBestEffort(params: Readonly<{
             keyEnvelopes,
         },
         schema: SavedSecretResourceEnvelopeRepairOutputV1Schema,
+        ...(params.signal ? { signal: params.signal } : {}),
     });
-    return repaired.ok && recipientsReady;
+    return repaired.ok;
 }
 
 async function repairCatalogedSavedSecretResourceEnvelopesBestEffort(params: Readonly<{
@@ -352,20 +365,49 @@ export async function repairApprovedSavedSecretResourceEnvelopesBestEffort(param
 export async function repairCustodiedSavedSecretResourceEnvelopesBestEffort(params: Readonly<{
     scope: ServerAccountScope;
     decryptDataKeyEnvelope: (encryptedDataKey: string) => Promise<Uint8Array | null>;
+    /** The surface's presence: closing it stops the sweep between steps and cancels its reads. */
+    signal?: AbortSignal;
 }>): Promise<void> {
-    const catalog = await readSavedSecretCatalog(params.scope);
+    const signal = params.signal;
+    try {
+        await sweepOwedSavedSecretResourceEnvelopes(params);
+    } catch (error) {
+        // Leaving the surface cancels the sweep; that is its end, not a failure.
+        if (!signal?.aborted) throw error;
+    }
+}
+
+async function sweepOwedSavedSecretResourceEnvelopes(params: Parameters<typeof repairCustodiedSavedSecretResourceEnvelopesBestEffort>[0]): Promise<void> {
+    const signal = params.signal;
+    // One custodian-wide census names only what is owed; a sweep with nothing owed stops after it.
+    const owed = await requestHomeDomain({
+        scope: params.scope,
+        path: '/v1/account/saved-secrets/resources/envelope-census/owed',
+        method: 'GET',
+        effect: 'read',
+        input: undefined,
+        schema: SavedSecretResourceOwedEnvelopeCensusResponseV1Schema,
+        ...(signal ? { signal } : {}),
+    });
+    if (!owed.ok || owed.value.resources.length === 0 || signal?.aborted) return;
+    const catalog = await readSavedSecretCatalog(params.scope, signal);
     if (!catalog.ok) return;
-    for (const candidate of catalog.resources) {
-        if (!isHealthySavedSecretResourceMaterialV1(candidate)) continue;
-        if (candidate.encryptionMode !== 'e2ee' || candidate.entry.relationship !== 'owner') continue;
-        const expectedRevision = candidate.entry.revision;
-        if (expectedRevision === null) continue;
-        await repairCatalogedSavedSecretResourceEnvelopesBestEffort({
-            scope: params.scope,
-            resource: candidate,
-            expectedRevision,
-            decryptDataKeyEnvelope: params.decryptDataKeyEnvelope,
-        }).catch(() => undefined);
+    for (const census of owed.value.resources) {
+        if (signal?.aborted) return;
+        const resource = catalog.resources.find((candidate): candidate is HealthySavedSecretResourceMaterialV1 => (
+            isHealthySavedSecretResourceMaterialV1(candidate) && candidate.resourceId === census.resourceId
+            && candidate.encryptionMode === 'e2ee' && candidate.entry.relationship === 'owner'));
+        // The census and the owner's own envelope must describe the same revision.
+        if (!resource?.recipientEnvelope || resource.entry.revision !== census.revision) continue;
+        const resourceDataKey = await params.decryptDataKeyEnvelope(resource.recipientEnvelope.encryptedDataKey).catch(() => null);
+        if (!resourceDataKey) continue;
+        try {
+            if (signal?.aborted) return;
+            await writeSavedSecretResourceRecipientEnvelopes({ scope: params.scope, resourceId: census.resourceId,
+                expectedRevision: census.revision, resourceDataKey, recipients: census.recipients, ...(signal ? { signal } : {}) }).catch(() => false);
+        } finally {
+            resourceDataKey.fill(0);
+        }
     }
 }
 

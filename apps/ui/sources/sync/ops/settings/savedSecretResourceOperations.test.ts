@@ -192,6 +192,7 @@ async function openAccount(mode: 'plain' | 'e2ee' = 'plain', options: { ask?: bo
         voiceSources: readonly NonNullable<ReturnType<typeof readSavedSecretTransferSourceV1>['legacyVoiceCredentials']>[number]['source'][];
         voicePresent: boolean }[] = [];
     const censusReads: string[] = [];
+    const owedCensusReads: string[] = [];
     const catalogReadPaths: string[] = [];
     const materialReadPaths: string[] = [];
     const metadataReadPaths: string[] = [];
@@ -326,6 +327,10 @@ async function openAccount(mode: 'plain' | 'e2ee' = 'plain', options: { ask?: bo
                 censusReads.push(String(rawUrl));
                 return effect(path, undefined);
             }
+            if (path === '/v1/account/saved-secrets/resources/envelope-census/owed' && effect) {
+                owedCensusReads.push(String(rawUrl));
+                return effect(path, undefined);
+            }
             if (path === '/v2/account/settings/history') {
                 historyReadPaths.push(path);
                 await beforeHistoryRead?.();
@@ -386,7 +391,7 @@ async function openAccount(mode: 'plain' | 'e2ee' = 'plain', options: { ask?: bo
         resources.set(resourceId, material);
         return material;
     }
-    return { scope, writes, settingsWriteStacks, sourceReads, censusReads, catalogReadPaths, materialReadPaths, metadataReadPaths, historyReadPaths, get artifacts() { return artifacts.list(); }, rows, catalogRows, resources, materialRow,
+    return { scope, writes, settingsWriteStacks, sourceReads, censusReads, owedCensusReads, catalogReadPaths, materialReadPaths, metadataReadPaths, historyReadPaths, get artifacts() { return artifacts.list(); }, rows, catalogRows, resources, materialRow,
         get raw() { return raw; }, set raw(value: Record<string, unknown>) { raw = value; },
         get settingsVersion() { return settingsVersion; }, set settingsVersion(value: number) { settingsVersion = value; },
         get referenceGuardRevision() { return referenceGuardRevision; }, set referenceGuardRevision(value: number) { referenceGuardRevision = value; },
@@ -3835,7 +3840,12 @@ describe('Saved Secret operations through their real Account and Action owners',
         const recipientSeed = new Uint8Array(32).fill(17);
         const recipientPublicKey = tweetnacl.box.keyPair.fromSecretKey(recipientSeed).publicKey;
         const recipientFingerprint = computeContentPublicKeyFingerprint(recipientPublicKey);
+        const readyRecipient = (envelopeStatus: 'prepared' | 'missing') => ({ account: { kind: 'account', accountId: 'ready-recipient', firstName: null, lastName: null, username: null, avatarUrl: null },
+            readiness: { status: 'available', contentPublicKey: encodeBase64(recipientPublicKey, 'base64'), contentPublicKeyFingerprint: recipientFingerprint }, envelopeStatus });
         account.setEffect((path, body) => {
+            // The custodian-wide census lists only owed recipients of resources that owe something.
+            if (path.endsWith('/envelope-census/owed')) return Response.json({ resources: phase === 'already-prepared' ? []
+                : [{ resourceId: 'resource-a', revision: 4, recipients: [readyRecipient('missing')] }] });
             if (path.endsWith('/envelope-census')) return Response.json({ resourceId: 'resource-a', revision: 4, nextCursor: null,
                 recipients: [
                     ...(phase === 'explicit-agent-complete' ? [] : [{ account: { kind: 'account', accountId: 'plain-recipient', firstName: null, lastName: null, username: null, avatarUrl: null }, readiness: { status: 'unavailable', reason: 'plain_account' }, envelopeStatus: 'missing' }]),
@@ -3905,8 +3915,14 @@ describe('Saved Secret operations through their real Account and Action owners',
             } else expect(result).toEqual({ ok: true, result: { resourceId: 'resource-a', revision: 4,
                 status: phase === 'explicit-agent-complete' ? 'complete' : 'incomplete' } });
         } else await repairCustodiedSavedSecretResourceEnvelopesBestEffort({ scope: account.scope, decryptDataKeyEnvelope: async () => key });
-        if (phase !== 'explicit-ui') expect(account.censusReads).toHaveLength(1);
-        expect(new URL(account.censusReads[0]!).searchParams.get('resourceId')).toBe('resource-a');
+        if (phase === 'custody' || (phase === 'already-prepared')) {
+            // The surface sweep asks once, custodian-wide, and never per resource.
+            expect(account.owedCensusReads).toHaveLength(1);
+            expect(account.censusReads).toHaveLength(0);
+        } else {
+            if (phase !== 'explicit-ui') expect(account.censusReads).toHaveLength(1);
+            expect(new URL(account.censusReads[0]!).searchParams.get('resourceId')).toBe('resource-a');
+        }
         const repairs = account.writes.filter(write => write.path.endsWith('/envelopes/repair'));
         expect(repairs).toHaveLength(phase === 'already-prepared' ? 0 : 1);
         if (repairs.length) {
@@ -3919,7 +3935,48 @@ describe('Saved Secret operations through their real Account and Action owners',
         if (phase.startsWith('explicit-')) {
             // Explicit recovery never replaces the already-approved audience.
             expect(account.writes).toHaveLength(1);
+        } else if (phase === 'already-prepared') {
+            // Nothing owed: the owner's data key is never opened.
+            expect(key).toEqual(new Uint8Array(32).fill(9));
         } else expect(key).toEqual(new Uint8Array(32));
+    });
+
+    // Opening Saved Secrets used to read one census per owned E2EE resource. The sweep asks once for everything owed,
+    // and leaving the surface stops it before any further read or write.
+    it.each(['present', 'left'] as const)('sweeps every owned E2EE resource with one census read (%s)', async presence => {
+        const account = await openAccount('e2ee');
+        const key = new Uint8Array(32).fill(9);
+        for (let index = 0; index < 6; index++) {
+            const resourceId = `owned-${index}`;
+            account.materialRow(resourceId, 'e2ee', sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'e2ee', resourceDataKey: key,
+                content: { v: 1, name: `Key ${index}`, kind: 'token', value: `private-${index}` }, randomBytes: tweetnacl.randomBytes }), 4, key);
+        }
+        const recipientPublicKey = tweetnacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(17)).publicKey;
+        const recipientFingerprint = computeContentPublicKeyFingerprint(recipientPublicKey);
+        const leave = new AbortController();
+        account.setEffect((path, body) => {
+            if (path.endsWith('/envelope-census/owed')) {
+                if (presence === 'left') leave.abort();
+                return Response.json({ resources: [{ resourceId: 'owned-3', revision: 4, recipients: [{
+                    account: { kind: 'account', accountId: 'ready-recipient', firstName: null, lastName: null, username: null, avatarUrl: null },
+                    readiness: { status: 'available', contentPublicKey: encodeBase64(recipientPublicKey, 'base64'), contentPublicKeyFingerprint: recipientFingerprint },
+                    envelopeStatus: 'missing' }] }] });
+            }
+            if (path.endsWith('/envelope-census')) throw new Error('No per-resource census');
+            const repair = SavedSecretResourceEnvelopeRepairInputV1Schema.parse(body);
+            return Response.json({ resourceId: repair.resourceId, revision: 4 });
+        });
+        await repairCustodiedSavedSecretResourceEnvelopesBestEffort({ scope: account.scope, decryptDataKeyEnvelope: async () => new Uint8Array(key),
+            signal: leave.signal });
+        expect(account.owedCensusReads).toHaveLength(1);
+        expect(account.censusReads).toHaveLength(0);
+        const repairs = account.writes.filter(write => write.path.endsWith('/envelopes/repair'));
+        if (presence === 'left') {
+            expect(repairs).toHaveLength(0);
+            expect(account.materialReadPaths).toHaveLength(0);
+        } else {
+            expect(repairs.map(write => SavedSecretResourceEnvelopeRepairInputV1Schema.parse(write.body).resourceId)).toEqual(['owned-3']);
+        }
     });
 
     it('settles an Inbox-refused update with its retained typed cause', async () => {

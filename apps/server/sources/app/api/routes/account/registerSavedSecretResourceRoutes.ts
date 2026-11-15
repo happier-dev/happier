@@ -2,7 +2,7 @@ import { decodeBase64, encodeBase64 } from "privacy-kit";
 import { z } from "zod/mini";
 
 import { SavedSecretResourceActionErrorV1Schema, SavedSecretResourceEnvelopeRepairInputV1Schema, SavedSecretResourceEnvelopeRepairOutputV1Schema, SavedSecretResourceRecipientEnvelopeInputV1Schema, SharedSavedSecretCreateInputV1Schema, SharedSavedSecretDeleteInputV1Schema, SharedSavedSecretDeleteOutputV1Schema, SharedSavedSecretGrantsSetInputV1Schema, SharedSavedSecretListOutputV1Schema, SharedSavedSecretMutationOutputV1Schema, SharedSavedSecretPromoteInputV1Schema, SharedSavedSecretPromoteOutputV1Schema, SharedSavedSecretUpdateInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
-import { SavedSecretResourceMaterialsResponseV1Schema, SavedSecretResourceEnvelopeCensusRequestV1Schema, SavedSecretResourceEnvelopeCensusResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { SavedSecretResourceMaterialsResponseV1Schema, SavedSecretResourceEnvelopeCensusRequestV1Schema, SavedSecretResourceEnvelopeCensusResponseV1Schema, SavedSecretResourceOwedEnvelopeCensusResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { inReadSnapshot, inTx } from "@/storage/inTx";
 import { getDbProviderFromEnv } from '@/storage/prisma';
 import { AccountSettingsPublicationConflict } from '@/app/accountSettings/writeAccountSettingsInTx';
@@ -14,6 +14,7 @@ import {
     deleteSavedSecretResourceInTx,
     listSavedSecretResourceMaterialsForAccountInTx,
     listSavedSecretResourceEnvelopeCensusInTx,
+    listOwedSavedSecretResourceEnvelopesInTx,
     listSavedSecretResourcesForAccountInTx,
     promoteSavedSecretResourceInTx,
     repairSavedSecretResourceKeyEnvelopesInTx,
@@ -160,6 +161,15 @@ export function registerSavedSecretResourceRoutes(app: Fastify): void {
         } catch {
             return reply.code(500).send({ error: "internal" });
         }
+    });
+
+    // The custodian's repair sweep: every owned E2EE resource's owed envelopes in one read (owner-only by query).
+    routes.get("/v1/account/saved-secrets/resources/envelope-census/owed", {
+        preHandler: app.authenticate,
+        schema: { response: { 200: SavedSecretResourceOwedEnvelopeCensusResponseV1Schema } },
+    }, async (request, reply) => {
+        const resources = await inReadSnapshot((tx) => listOwedSavedSecretResourceEnvelopesInTx(tx, { accountId: request.userId }));
+        return reply.code(200).send({ resources: resources.map((resource) => ({ ...resource, recipients: [...resource.recipients] })) });
     });
 
     routes.get("/v1/account/saved-secrets/resources/envelope-census", {
