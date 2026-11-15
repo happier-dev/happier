@@ -336,6 +336,17 @@ describe('plugin page anatomy through the shared page owners', () => {
     own.unmount();
   });
 
+  it('aligns a right-to-left title with the page, keeping its own reading order', () => {
+    const mount = mountPage(<PageHeader title="تعطل تسجيل الدخول — QA-F fixture" testID="header" />);
+    try {
+      const heading = mount.container.querySelector<HTMLElement>('[data-testid="header"] [role="heading"]')!;
+      // The text keeps its own direction (the browser orders its words), but it starts on the page's edge, beside
+      // its mark, rather than on the far side of the row an Arabic first word would choose.
+      expect(heading.getAttribute('dir')).toBe('auto');
+      expect(heading.style.textAlign).toBe('left');
+    } finally { mount.unmount(); }
+  });
+
   it.each(['band', 'backOnly'] as const)('publishes the presented detail title in %s placement independently of phone chrome', (placement) => {
     const published: Array<string | undefined> = [];
     const mount = mountPage(<PushedDetailHeader title="New task" placement={placement} onClose={() => {}} />,

@@ -64,6 +64,7 @@ import {
   TriageActivityTimeline,
   TriageChangedFilesList,
   TriageChangedFilesLoading,
+  TriageChangedFilesProgress,
   TriageDetailInstance,
   TriageDetailPanel,
   TriageDetailStory,
@@ -525,13 +526,19 @@ function FilesPanel({
     };
   }) }], [state.rows, text, pullRequestUrl]);
 
+  const comparisonLine = currentIterationId === undefined
+    ? text('plugins.azureDevops.ui.noComparisonIteration', 'No iteration to compare against.')
+    : text('plugins.azureDevops.ui.comparingIteration', "Comparing iteration {iteration} against the pull request's base.",
+      { iteration: currentIterationId });
+  // The comparison line stands above the files from the first frame, so they arrive where their placeholders stood:
+  // its words once the iteration is known, its place before.
   if (iterations.kind === 'loading') {
     return <TriageChangedFilesLoading title="Reading the iterations from Azure DevOps" titleKey="plugins.azureDevops.ui.readingIterations"
-      progress={false} />;
+      progress />;
   }
   if (state.kind === 'idle' || state.kind === 'loading') {
     return <TriageChangedFilesLoading title="Reading the changed files from Azure DevOps" titleKey="plugins.azureDevops.ui.readingFiles"
-      progress={false} />;
+      progress={comparisonLine} />;
   }
   if (state.kind === 'unavailable') {
     return (
@@ -551,17 +558,7 @@ function FilesPanel({
       <PageFailureBanner state={state} />
       <SettledReadEvidence state={iterations} />
       {/* The same quiet line GitHub's Files keeps for its progress: a fact about the page, never the page's lead. */}
-      <Text
-        variant="micro"
-        tone="secondary"
-        valueKey={currentIterationId === undefined
-          ? 'plugins.azureDevops.ui.noComparisonIteration'
-          : 'plugins.azureDevops.ui.comparingIteration'}
-        fallback={currentIterationId === undefined
-          ? 'No iteration to compare against.'
-          : "Comparing iteration {iteration} against the pull request's base."}
-        values={{ iteration: currentIterationId ?? '' }}
-      />
+      <TriageChangedFilesProgress value={comparisonLine} />
     </Stack>
   );
   if (state.rows.length === 0) {

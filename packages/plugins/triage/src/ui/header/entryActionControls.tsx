@@ -4,6 +4,7 @@ import {
   AgentActionButton,
   Button,
   Icon,
+  type LayoutChangeEvent,
   Menu,
   Row,
   Stack,
@@ -128,8 +129,9 @@ export type TriageEntryActionControlsPropsV1 = Readonly<{
   /** Quiet context at the end of the action row (the entry's attention reason). */
   trailing?: React.ReactNode;
   /**
-   * A phone's pinned action band (lab c7/t1 phone): one row of the primary (its label ends in "…" first), Ask and ⋯.
-   * Everything else the row would hold (the source's write, Make task, the rest) is a row of that ⋯.
+   * A phone's pinned action band (lab c7/t1 phone): one row of the primary, Ask and ⋯. The primary keeps its whole
+   * word: where the band cannot hold all three, Ask is a row of ⋯ too, and the primary ends in "…" only when it
+   * alone cannot fit. Everything else the row would hold (the source's write, Make task, the rest) is a row of that ⋯.
    */
   compact?: boolean;
   /** The entry's own state control leading the one action row (a task's Status button, lab t1 `dpa`). */
@@ -282,6 +284,10 @@ export function TriageEntryActionControls(
   const [moreOpen, setMoreOpen] = React.useState(false);
   const [startOpen, setStartOpen] = React.useState(false);
   const compact = props.compact === true;
+  // The pinned band's room, and the width its controls needed when Ask last had to yield (null: it never did).
+  const [bandRoom, setBandRoom] = React.useState<number | null>(null);
+  const [bandNeed, setBandNeed] = React.useState<number | null>(null);
+  const bandControlsWidth = React.useRef(0);
   const makeTask = useTriageMakeTask(props.taskDraft);
   const offered = React.useMemo(
     () => planTriageOfferedActionsV1(actions, workflowSubject),
@@ -350,8 +356,31 @@ export function TriageEntryActionControls(
   const primaryActionId = readTriagePrimaryActionIdV1(offered, reviewPreparation, { workflowSubject, viewerIsAuthor });
   const primary = readTriageEntryPrimaryActionV1(offered, reviewPreparation, workflowSubject, viewerIsAuthor);
   // Beside the one filled action stays the one quiet question (Ask); every other action is one press behind More.
-  const beside = offered.find((action) => action !== primary && readTriageActionIntentV1(action) === 'ask') ?? null;
-  const overflowActions = offered.filter((action) => action !== primary && action !== beside);
+  const asking = offered.find((action) => action !== primary && readTriageActionIntentV1(action) === 'ask') ?? null;
+  // The pinned band's one rule (DESIGN-F 1115 g): the primary keeps its word. When the band cannot hold the primary,
+  // Ask and ⋯ at their own widths, Ask yields into ⋯ (its first row); it comes back once the band has that width again.
+  const askYields = compact && asking !== null && bandNeed !== null && bandRoom !== null && bandRoom < bandNeed;
+  const beside = askYields ? null : asking;
+  const overflowActions = [
+    ...(askYields && asking !== null ? [asking] : []),
+    ...offered.filter((action) => action !== primary && action !== asking),
+  ];
+  // Measured from the band's own layout, never from a guessed breakpoint: the primary's words, the agent it names and
+  // the locale all change the width the row needs. The controls are drawn at their own widths while Ask is beside the
+  // primary, so their width is what the band needs; once Ask has yielded they may shrink again (the primary's "…").
+  const fitBand = (room: number, needed: number) => {
+    if (compact && asking !== null && !askYields && room > 0 && needed > room) setBandNeed(needed);
+  };
+  const onBandRoom = (event: LayoutChangeEvent) => {
+    const room = event.nativeEvent.layout.width;
+    setBandRoom(room);
+    fitBand(room, bandControlsWidth.current);
+  };
+  const onBandControls = (event: LayoutChangeEvent) => {
+    if (askYields) return;
+    bandControlsWidth.current = event.nativeEvent.layout.width;
+    fitBand(bandRoom ?? 0, bandControlsWidth.current);
+  };
   const extraItems = props.overflowItems ?? [];
   // Make task is a rarer action than Ask, so it is always a row of ⋯. On a phone the source's write is one too; a
   // write with several methods keeps them as one group.
@@ -519,47 +548,60 @@ export function TriageEntryActionControls(
     extraItems.find((item) => `${EXTRA_ITEM_PREFIX}${item.id}` === id)?.onPress();
   };
 
+  const controls = (
+    <>
+      {primary === null ? null : !startDestinations ? (
+        compact ? <Stack style={COMPACT_PRIMARY_STYLE_V1}>{button(primary, press)}</Stack> : button(primary, press)
+      ) : (
+        // One control with two presses (lab c7/t1, owner ruling 2026-11-07): the action in its own launch mode,
+        // and on its chevron the other launch, editing it, and the Sessions it can be sent to.
+        <AgentActionButton
+          title={startWithLabel ?? primaryWords}
+          actionName={primaryWords}
+          launchMode={readTriageActionLaunchModeV1(primary)}
+          {...(startUnavailable === undefined ? {} : { startUnavailableReason: startUnavailable })}
+          compact={compact}
+          groups={startGroups}
+          showGroupLabels={recentRows.length > 0}
+          onMenuOpenChange={setStartOpen}
+          onLaunch={launchPrimary}
+          {...(props.onEditAction === undefined ? {} : { onEdit: () => { props.onEditAction?.(primary.actionId); } })}
+          onSelectDestination={selectStartItem}
+        />
+      )}
+      {beside === null ? null : compact ? <Stack style={COMPACT_KEEP_STYLE_V1}>{button(beside, press, undefined, 'conversations')}</Stack> : button(beside, press)}
+      {hasOverflow ? (
+        <Menu
+          open={moreOpen}
+          onOpenChange={setMoreOpen}
+          trigger={moreLabel}
+          triggerIcon="more"
+          triggerAccessibilityLabel={moreLabel}
+          items={menuItems}
+          {...(menuGroups.length === 0 ? {} : { groups: [...menuGroups], showGroupLabels: true })}
+          {...(mergeChoices?.explanation == null ? {} : { sheet: { title: moreLabel, footer: mergeChoices.explanation } })}
+          onSelect={selectMenuItem}
+        />
+      ) : null}
+      {/* The source's own write follows ⋯. It arrives with the source's body, after the row has painted, so in this
+          place it joins the row without moving anything already there (lab b4/c7 drew it before ⋯). */}
+      {props.sourceWrite === undefined || (compact && writeShown) ? null
+        : <TriageSourceWriteCluster write={props.sourceWrite} sourceLabel={props.sourceLabel} choices="host" />}
+    </>
+  );
+
   return (
     <Stack gap="small">
       <Row gap="small" align="center" wrap={!compact}>
         {props.leading ?? null}
-        {primary === null ? null : !startDestinations ? (
-          compact ? <Stack style={COMPACT_PRIMARY_STYLE_V1}>{button(primary, press)}</Stack> : button(primary, press)
-        ) : (
-          // One control with two presses (lab c7/t1, owner ruling 2026-11-07): the action in its own launch mode,
-          // and on its chevron the other launch, editing it, and the Sessions it can be sent to.
-          <AgentActionButton
-            title={startWithLabel ?? primaryWords}
-            actionName={primaryWords}
-            launchMode={readTriageActionLaunchModeV1(primary)}
-            {...(startUnavailable === undefined ? {} : { startUnavailableReason: startUnavailable })}
-            compact={compact}
-            groups={startGroups}
-            showGroupLabels={recentRows.length > 0}
-            onMenuOpenChange={setStartOpen}
-            onLaunch={launchPrimary}
-            {...(props.onEditAction === undefined ? {} : { onEdit: () => { props.onEditAction?.(primary.actionId); } })}
-            onSelectDestination={selectStartItem}
-          />
-        )}
-        {beside === null ? null : compact ? <Stack style={COMPACT_KEEP_STYLE_V1}>{button(beside, press, undefined, 'conversations')}</Stack> : button(beside, press)}
-        {hasOverflow ? (
-          <Menu
-            open={moreOpen}
-            onOpenChange={setMoreOpen}
-            trigger={moreLabel}
-            triggerIcon="more"
-            triggerAccessibilityLabel={moreLabel}
-            items={menuItems}
-            {...(menuGroups.length === 0 ? {} : { groups: [...menuGroups], showGroupLabels: true })}
-            {...(mergeChoices?.explanation == null ? {} : { sheet: { title: moreLabel, footer: mergeChoices.explanation } })}
-            onSelect={selectMenuItem}
-          />
-        ) : null}
-        {/* The source's own write follows ⋯. It arrives with the source's body, after the row has painted, so in this
-            place it joins the row without moving anything already there (lab b4/c7 drew it before ⋯). */}
-        {props.sourceWrite === undefined || (compact && writeShown) ? null
-          : <TriageSourceWriteCluster write={props.sourceWrite} sourceLabel={props.sourceLabel} choices="host" />}
+        {compact ? (
+          <Row grow gap="small" align="center" onLayout={onBandRoom} testID={TRIAGE_ACTION_BAND_ROOM_TEST_ID_V1}>
+            <Row gap="small" align="center" onLayout={onBandControls} testID={TRIAGE_ACTION_BAND_CONTROLS_TEST_ID_V1}
+              style={asking !== null && !askYields ? COMPACT_BAND_OWN_WIDTH_STYLE_V1 : COMPACT_BAND_SHRINK_STYLE_V1}>
+              {controls}
+            </Row>
+          </Row>
+        ) : controls}
         {/* The far end of the one action row (lab b4/c7) is why the entry is here, alone: never a control. */}
         {props.trailing === undefined || props.trailing === null ? null : (
           <Row gap="small" align="center" wrap style={TRAILING_STYLE_V1}>
@@ -606,10 +648,18 @@ const START_MENU_RECENT_ROWS = 3;
 
 const COMPACT_PRIMARY_STYLE_V1 = Object.freeze({ flexShrink: 1, minWidth: 0 });
 /**
- * In the pinned phone band Ask is the chat glyph, named "Ask" (lab merged-detail-pr phone; owner 2026-11-11), so the
- * primary keeps its whole label beside it at 360; it keeps its own width. Wherever the band has room it keeps its word.
+ * In the pinned phone band Ask is the chat glyph, named "Ask" (lab merged-detail-pr phone; owner 2026-11-11). It keeps
+ * its own width; where the band cannot hold it beside the primary's whole word, it is a row of ⋯ instead.
  */
 const COMPACT_KEEP_STYLE_V1 = Object.freeze({ flexShrink: 0 });
+/** While Ask stands beside the primary, the band's controls take their own widths, so the band can tell whether they fit. */
+const COMPACT_BAND_OWN_WIDTH_STYLE_V1 = Object.freeze({ flexShrink: 0 });
+/** With nothing left to yield, the primary gives up width last and ends in "…". */
+const COMPACT_BAND_SHRINK_STYLE_V1 = Object.freeze({ flexShrink: 1, minWidth: 0 });
+
+/** The pinned band's room and its controls, by the layouts that decide whether Ask yields into ⋯. */
+export const TRIAGE_ACTION_BAND_ROOM_TEST_ID_V1 = 'triage-action-band-room';
+export const TRIAGE_ACTION_BAND_CONTROLS_TEST_ID_V1 = 'triage-action-band-controls';
 
 /** The attention reason sits at the far end of the action row, as the lab places it. */
 const TRAILING_STYLE_V1 = Object.freeze({ marginLeft: 'auto' as const, justifyContent: 'flex-end' as const });

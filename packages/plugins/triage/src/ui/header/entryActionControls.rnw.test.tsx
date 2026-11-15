@@ -17,6 +17,8 @@ import { TRIAGE_DEFAULT_FIX_ACTION_ID_V1, TRIAGE_DEFAULT_INVESTIGATE_ACTION_ID_V
 import {
   readTriagePrimaryActionIdV1,
   resolveTriageReviewPreparationV1,
+  TRIAGE_ACTION_BAND_CONTROLS_TEST_ID_V1,
+  TRIAGE_ACTION_BAND_ROOM_TEST_ID_V1,
   TriageEntryActionControls,
   type TriageEntryActionRequestV1,
 } from './entryActionControls.js';
@@ -382,6 +384,39 @@ describe('the mounted configured entry action controls', () => {
     await fixture.press(await fixture.getByRole('button', { name: 'Security review' }));
     await expect(fixture.getByText('That action is no longer available for this entry.'))
       .resolves.toBeDefined();
+  });
+
+  it('keeps the primary\'s whole word in a narrow phone band: Ask yields into ⋯, and comes back when the band widens', async () => {
+    const requests: TriageEntryActionRequestV1[] = [];
+    const entryRef = testkitEntryRef({ kindId: 'error-issue', entryId: 'narrow-band' });
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'narrow-band', mountNonce: 'one' },
+      authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+      surface: defineUiSurface(() => <TriageEntryActionControls compact
+        target={{ kind: 'entry', sectionId: 'open', entryRef, sourceInstanceId: '11111111-1111-4111-8111-111111111111' }}
+        actions={TRIAGE_DEFAULT_ACTIONS_V1} workflowSubject="errorIssue" viewerIsAuthor={false}
+        reviewPreparation="unsupported" onAction={(request) => { requests.push(request); }} />),
+      surfaceContext: createSurfaceContextFixture(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
+    });
+    mounted.push(fixture);
+    await fixture.getByRole('button', { name: 'Ask' });
+    // RNW reports layout through the element's handler; jsdom lays nothing out, so the test hands it the widths.
+    const layout = (testID: string, width: number) => act(() => {
+      const node = document.querySelector(`[data-testid="${testID}"]`) as unknown as
+        { __reactLayoutHandler?: (event: { nativeEvent: { layout: { x: number; y: number; width: number; height: number } } }) => void } | null;
+      node?.__reactLayoutHandler?.({ nativeEvent: { layout: { x: 0, y: 0, width, height: 36 } } });
+    });
+    // The band has 200 px; the primary, Ask and ⋯ need 260 at their own widths.
+    layout(TRIAGE_ACTION_BAND_ROOM_TEST_ID_V1, 200);
+    layout(TRIAGE_ACTION_BAND_CONTROLS_TEST_ID_V1, 260);
+    await expect(fixture.queryByRole('button', { name: 'Ask' })).resolves.toBeUndefined();
+    await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'More actions' })); });
+    await act(async () => { await fixture.press(await fixture.getByRole('menuitem', { name: 'Ask' })); });
+    expect(requests.map((request) => request.action.actionId)).toEqual(['ask']);
+    // Room for all three again: Ask returns beside the primary.
+    layout(TRIAGE_ACTION_BAND_ROOM_TEST_ID_V1, 300);
+    await expect(fixture.getByRole('button', { name: 'Ask' })).resolves.toBeDefined();
   });
 });
 

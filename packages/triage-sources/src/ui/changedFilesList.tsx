@@ -100,8 +100,8 @@ export function TriageChangedFilesProgress({
 }
 
 /**
- * The Files panel while its first page is read: the progress line's place (when the source keeps Viewed marks), then
- * compact rows of the files' own shape, so the files replace placeholders of their size.
+ * The Files panel while its first page is read: the quiet line that will stand above the files (Viewed progress, the
+ * comparison being read), then compact rows of the files' own shape, so the files replace placeholders of their size.
  */
 export function TriageChangedFilesLoading({
   title,
@@ -110,8 +110,11 @@ export function TriageChangedFilesLoading({
 }: Readonly<{
   title: string;
   titleKey: string;
-  /** The source keeps Viewed marks, so a progress line will stand above the files. */
-  progress: boolean;
+  /**
+   * The quiet line above the files: `true` keeps its place while its words are not known yet (Viewed progress), a
+   * string draws the words already known (the comparison being read), `false` when the files stand alone.
+   */
+  progress: boolean | string;
 }>): React.ReactElement {
   const rows = (
     <LoadingState
@@ -124,7 +127,7 @@ export function TriageChangedFilesLoading({
   if (!progress) return rows;
   return (
     <Stack gap="small">
-      <TriageChangedFilesProgress value={null} />
+      <TriageChangedFilesProgress value={progress === true ? null : progress} />
       {rows}
     </Stack>
   );
