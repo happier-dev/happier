@@ -170,6 +170,32 @@ export async function resolveAntigravityConversationCandidate(params: Readonly<{
   };
 }
 
+/**
+ * Browse's cheap activity fact for every conversation: the transcript's mtime,
+ * which is also the published `updatedAtMs`. One readdir plus one stat per
+ * conversation; no transcript is opened here.
+ */
+export async function listAntigravityConversationActivity(params: Readonly<{
+  brainDir: string;
+  signal?: AbortSignal;
+}>): Promise<readonly Readonly<{ remoteSessionId: string; updatedAtMs: number }>[]> {
+  let entries;
+  try {
+    entries = await readdir(params.brainDir, { withFileTypes: true });
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return [];
+    throw error;
+  }
+  params.signal?.throwIfAborted();
+  const rows = await Promise.all(entries.map(async (entry) => {
+    if (!entry.isDirectory() || !isSafeAntigravityConversationId(entry.name)) return null;
+    const snapshot = await snapshotAntigravityTranscriptSource(resolveAntigravityTranscriptFullPath(params.brainDir, entry.name));
+    return snapshot ? { remoteSessionId: entry.name, updatedAtMs: snapshot.mtimeMs } : null;
+  }));
+  params.signal?.throwIfAborted();
+  return rows.filter((row): row is NonNullable<typeof row> => row !== null);
+}
+
 export async function pageAntigravityConversationCandidates(params: Readonly<{
   brainDir: string;
   afterDirectoryEntryOffset?: number | null;

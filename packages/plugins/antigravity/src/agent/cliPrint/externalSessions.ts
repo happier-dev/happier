@@ -21,6 +21,10 @@ import type {
 import {
   compareExternalSessionCandidatePrecedence,
   createAgentExternalSessionsProducerOverflowFailure,
+  ExternalSessionActivityPageBudgetError,
+  pageExternalSessionCandidatesByActivity,
+  parseExternalSessionActivityPosition,
+  type ExternalSessionActivityPosition,
   getAgentExternalSessionsInvocationFailure,
   isAgentExternalSessionsResultWithinByteBudget,
 } from '@happier-dev/plugin-sdk/sessions/external';
@@ -37,6 +41,7 @@ import {
   AntigravityCandidateSourceChangedError,
   authorizeAntigravityConversationTranscriptFile,
   isSafeAntigravityConversationId,
+  listAntigravityConversationActivity,
   pageAntigravityConversationCandidates,
   resolveAntigravityBrainDir,
   resolveAntigravityConversationCandidate,
@@ -58,6 +63,14 @@ type CandidateCursorV2 = Readonly<{
   brainDir: string;
   sourceGeneration: string;
   directoryEntryOffset: number;
+}>;
+
+/** Unsearched Browse continuation: the last row served, in activity order. */
+type ActivityCandidateCursorV3 = Readonly<{
+  v: 3;
+  kind: 'antigravityCandidateActivity';
+  brainDir: string;
+  after: ExternalSessionActivityPosition;
 }>;
 
 type FullCandidateSearchCursorV2 = Readonly<{
@@ -216,7 +229,7 @@ function readString(value: AgentExternalSessionLinkDataValue | undefined): strin
 }
 
 function encodeCandidateCursor(
-  cursor: CandidateCursorV2 | FullCandidateSearchCursorV2,
+  cursor: CandidateCursorV2 | FullCandidateSearchCursorV2 | ActivityCandidateCursorV3,
 ): string {
   return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
 }
@@ -375,6 +388,80 @@ function decodeFullCandidateSearchCursor(raw: string | undefined): FullCandidate
   } catch {
     return null;
   }
+}
+
+function decodeActivityCandidateCursor(raw: string): ActivityCandidateCursorV3 | null {
+  try {
+    const value = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as unknown;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    const after = parseExternalSessionActivityPosition(record.after);
+    return record.v === 3 && record.kind === 'antigravityCandidateActivity' && typeof record.brainDir === 'string' && after
+      ? { v: 3, kind: 'antigravityCandidateActivity', brainDir: record.brainDir, after }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Unsearched Browse: every conversation's transcript mtime in one stat pass,
+ * newest first, and titles read only for the rows this page serves. A cursor
+ * from the retired directory-offset scan names no activity position, so it is
+ * a stale source continuation (`source_invalid`).
+ */
+async function listAntigravityCandidatesByActivity(params: Readonly<{
+  invocation: AgentExternalSessionsListCandidatesRequest;
+  brainDir: string;
+}>): Promise<AgentExternalSessionsResult<AgentExternalSessionsListCandidatesResult>> {
+  const request = params.invocation;
+  const cursor = request.cursor ? decodeActivityCandidateCursor(request.cursor) : null;
+  if (request.cursor && !cursor) {
+    // A continuation of the retired directory-offset scan is stale, not malformed.
+    return decodeCandidateCursor(request.cursor)?.brainDir === params.brainDir
+      ? failed('source_invalid', 'Antigravity candidate cursor is stale.', true)
+      : failed('invalid_request', 'Invalid Antigravity candidate cursor.');
+  }
+  if (cursor && cursor.brainDir !== params.brainDir) {
+    return failed('invalid_request', 'Invalid Antigravity candidate cursor.');
+  }
+  const updatedAfterMs = request.updatedAfterMs;
+  const entries = (await listAntigravityConversationActivity({ brainDir: params.brainDir, signal: request.signal }))
+    .filter((entry) => updatedAfterMs === undefined || entry.updatedAtMs >= updatedAfterMs);
+  let page;
+  try {
+    page = await pageExternalSessionCandidatesByActivity({
+      entries,
+      after: cursor?.after ?? null,
+      limit: request.maxItems,
+      signal: request.signal,
+      readRows: async (rows) => await Promise.all(rows.map(async (row) => {
+        const candidate = await resolveAntigravityConversationCandidate({
+          brainDir: params.brainDir,
+          conversationId: row.remoteSessionId,
+        });
+        // The listed activity is the row's place in this order; publish it.
+        return candidate ? toCandidate({ ...candidate, updatedAtMs: row.updatedAtMs }) : null;
+      })),
+      fits: (candidates, next) => isAgentExternalSessionsResultWithinByteBudget(
+        ok({ candidates, nextCursor: next ? encodeCandidateCursor({ v: 3, kind: 'antigravityCandidateActivity', brainDir: params.brainDir, after: next }) : null }),
+        request.maxSerializedBytes,
+      ),
+    });
+  } catch (error) {
+    if (error instanceof ExternalSessionActivityPageBudgetError) {
+      return createAgentExternalSessionsProducerOverflowFailure(
+        'Antigravity candidate result cannot fit the valid serialized-byte bound.',
+      );
+    }
+    throw error;
+  }
+  return boundedResult(request, ok({
+    candidates: page.candidates,
+    nextCursor: page.next
+      ? encodeCandidateCursor({ v: 3, kind: 'antigravityCandidateActivity', brainDir: params.brainDir, after: page.next })
+      : null,
+  }));
 }
 
 function decodeCandidateCursor(raw: string | undefined): CandidateCursorV2 | null {
@@ -995,8 +1082,9 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
       ) {
         return failed('invalid_request', 'Invalid Antigravity full-search candidate cursor.');
       }
-      const decoded = fullSearch ? null : request.cursor ? decodeCandidateCursor(request.cursor) : null;
-      if (!fullSearch && request.cursor && (!decoded || decoded.brainDir !== validation.value.brainDir)) {
+      const browse = !searchTerm;
+      const decoded = fullSearch || browse ? null : request.cursor ? decodeCandidateCursor(request.cursor) : null;
+      if (!fullSearch && !browse && request.cursor && (!decoded || decoded.brainDir !== validation.value.brainDir)) {
         return failed('invalid_request', 'Invalid Antigravity candidate cursor.');
       }
       try {
@@ -1010,6 +1098,12 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
             maxItems: request.maxItems,
           });
         }
+        if (browse) {
+          return await listAntigravityCandidatesByActivity({
+            invocation: request,
+            brainDir: validation.value.brainDir,
+          });
+        }
         const page = await pageAntigravityConversationCandidates({
           brainDir: validation.value.brainDir,
           afterDirectoryEntryOffset: decoded?.directoryEntryOffset,
@@ -1017,12 +1111,10 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
           maxItems: request.maxItems,
           signal: request.signal,
         });
-        const filtered = searchTerm
-          ? page.candidates.filter((candidate) => (
-            candidate.conversationId.toLowerCase().includes(searchTerm)
-            || candidate.title?.toLowerCase().includes(searchTerm)
-          ))
-          : page.candidates;
+        const filtered = page.candidates.filter((candidate) => (
+          candidate.conversationId.toLowerCase().includes(searchTerm)
+          || candidate.title?.toLowerCase().includes(searchTerm)
+        ));
         const candidates: AgentExternalSessionCandidate[] = [];
         for (let index = 0; index < filtered.length; index += 1) {
           const candidate = filtered[index];
@@ -1041,9 +1133,7 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
           const proposed = ok({
             candidates: [...candidates, mapped],
             nextCursor,
-            ...(searchTerm
-              ? { searchIncomplete: true }
-              : { preparation: { kind: 'building_candidate_index' as const, scanned: candidate.directoryEntryOffset } }),
+            searchIncomplete: true,
           });
           if (!isAgentExternalSessionsResultWithinByteBudget(
             proposed,
@@ -1067,14 +1157,7 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
                 sourceGeneration: page.sourceGeneration,
                 directoryEntryOffset: lastAcceptedCandidate.directoryEntryOffset,
               }),
-              ...(searchTerm
-                ? { searchIncomplete: true }
-                : {
-                  preparation: {
-                    kind: 'building_candidate_index' as const,
-                    scanned: lastAcceptedCandidate.directoryEntryOffset,
-                  },
-                }),
+              searchIncomplete: true,
             });
           }
           candidates.push(mapped);
@@ -1090,9 +1173,7 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
                 directoryEntryOffset: page.nextDirectoryEntryOffset,
               })
             : null,
-          ...(searchTerm
-            ? { searchIncomplete: true }
-            : { preparation: { kind: 'building_candidate_index' as const, scanned: page.scanned } }),
+          searchIncomplete: true,
         });
         return boundedResult(request, result);
       } catch (error) {
