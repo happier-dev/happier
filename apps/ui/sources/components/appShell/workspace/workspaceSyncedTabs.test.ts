@@ -25,6 +25,70 @@ describe('workspace synced tab intent owner', () => {
         expect(changed.order).toEqual(original.order);
         expect(observed.tabsById.a.pinned).toBe(false);
     });
+    it('reconciles a shared record with membership work linear in the tab count', () => {
+        // Elements scanned by array membership lookups during one reconcile of a remote reorder.
+        const scanned = (count: number) => {
+            const ids = Array.from({ length: count }, (_, index) => `t${index}`);
+            let state = createWorkspaceState(tab(ids[0]!));
+            for (const id of ids.slice(1)) state = reduceWorkspaceState(state, { type: 'openTab', groupId: 'group:1', tab: tab(id) });
+            const remote = { ...record(...ids), order: [...ids.slice(1), ids[0]!] };
+            const { includes, indexOf } = Array.prototype;
+            let elements = 0;
+            Array.prototype.includes = function (this: unknown[], ...args: Parameters<typeof includes>) { elements += this.length; return includes.apply(this, args); };
+            Array.prototype.indexOf = function (this: unknown[], ...args: Parameters<typeof indexOf>) { elements += this.length; return indexOf.apply(this, args); };
+            let reconciled;
+            try { reconciled = reconcileWorkspaceSyncedTabs(state, remote, () => 'blank'); }
+            finally { Array.prototype.includes = includes; Array.prototype.indexOf = indexOf; }
+            expect(reconciled.groups['group:1'].tabIds).toEqual(remote.order);
+            return elements;
+        };
+        const small = scanned(100);
+        const large = scanned(1000);
+        expect({ small, large, linear: large <= 12 * Math.max(small, 1000) }).toMatchObject({ linear: true });
+    });
+    // Elements scanned by array lookups and filters while `run` executes (counts O(T) vs O(T²) work, not time).
+    const scannedElements = (run: () => void) => {
+        const { includes, indexOf, filter } = Array.prototype;
+        let elements = 0;
+        Array.prototype.includes = function (this: unknown[], ...args: Parameters<typeof includes>) { elements += this.length; return includes.apply(this, args); };
+        Array.prototype.indexOf = function (this: unknown[], ...args: Parameters<typeof indexOf>) { elements += this.length; return indexOf.apply(this, args); };
+        Array.prototype.filter = function (this: unknown[], ...args: Parameters<typeof filter>) { elements += this.length; return filter.apply(this, args as never); } as typeof filter;
+        try { run(); } finally { Array.prototype.includes = includes; Array.prototype.indexOf = indexOf; Array.prototype.filter = filter; }
+        return elements;
+    };
+    const openTabs = (count: number) => {
+        const ids = Array.from({ length: count }, (_, index) => `t${index}`);
+        let state = createWorkspaceState(tab(ids[0]!));
+        for (const id of ids.slice(1)) state = reduceWorkspaceState(state, { type: 'openTab', groupId: 'group:1', tab: tab(id) });
+        return { ids, state };
+    };
+    it('restores a saved layout with membership work linear in the tab count', () => {
+        const scanned = (count: number) => {
+            const { state } = openTabs(count);
+            const saved: unknown = JSON.parse(JSON.stringify(serializeWorkspaceLayout(state)));
+            let parsed: ReturnType<typeof parseWorkspaceLayout> = null;
+            const elements = scannedElements(() => { parsed = parseWorkspaceLayout(saved); });
+            expect(parsed).toEqual(state);
+            return elements;
+        };
+        const small = scanned(100);
+        const large = scanned(1000);
+        expect({ small, large, linear: large <= 12 * Math.max(small, 1000) }).toMatchObject({ linear: true });
+    });
+    it('collects and replays a local reorder with order work linear in the tab count', () => {
+        const scanned = (count: number) => {
+            const { ids, state } = openTabs(count);
+            const reordered = reduceWorkspaceState(state, { type: 'reorderTab', groupId: 'group:1', tabId: ids[0]!, index: count - 1 });
+            const shared = record(...ids);
+            let replayed: ReturnType<typeof applyWorkspaceTabIntents> = shared;
+            const elements = scannedElements(() => { replayed = applyWorkspaceTabIntents(shared, collectWorkspaceTabIntents(state, reordered)); });
+            expect(replayed.order).toEqual([...ids.slice(1), ids[0]]);
+            return elements;
+        };
+        const small = scanned(100);
+        const large = scanned(1000);
+        expect({ small, large, linear: large <= 12 * Math.max(small, 1000) }).toMatchObject({ linear: true });
+    });
     it('keeps the device active destination when another client retargets its shared tab', () => {
         const local = createWorkspaceState({ ...tab('workflows'), pinned: true, target: {
             kind: 'workflows', params: { workspacePathname: '/workflows/new', definitionDraftSeedId: 'SECOND' },

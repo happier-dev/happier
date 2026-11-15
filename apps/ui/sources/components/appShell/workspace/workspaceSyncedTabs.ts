@@ -44,16 +44,17 @@ export function projectWorkspaceSharedTabs(state: WorkspaceState, pairs: SharedW
 export function applyWorkspaceTabIntents(record: SharedWorkspaceTabs, intents: readonly WorkspaceTabIntent[]): SharedWorkspaceTabs {
     if (!intents.length) return record;
     const tabsById = { ...record.tabsById };
-    let order = [...record.order];
+    // A reorder replays one move per tab, so order edits are O(1) each on a linked order, read back once.
+    const order = createLinkedOrder(record.order);
     let pairs = record.pairs;
     for (const intent of intents) {
         switch (intent.type) {
             case 'open':
-                if (!tabsById[intent.tab.id]) { tabsById[intent.tab.id] = intent.tab; order.push(intent.tab.id); }
+                if (!tabsById[intent.tab.id]) { tabsById[intent.tab.id] = intent.tab; order.insertBefore(intent.tab.id, null); }
                 break;
             case 'close':
                 delete tabsById[intent.tabId];
-                order = order.filter(id => id !== intent.tabId);
+                order.remove(intent.tabId);
                 break;
             case 'patch': {
                 const tab = tabsById[intent.tabId];
@@ -65,17 +66,50 @@ export function applyWorkspaceTabIntents(record: SharedWorkspaceTabs, intents: r
             }
             case 'move':
                 if (!tabsById[intent.tabId] || intent.beforeId === intent.tabId) break;
-                order = order.filter(id => id !== intent.tabId);
+                order.remove(intent.tabId);
                 // The ordinary insertion fallback for a closed anchor is append.
-                const index = intent.beforeId === null ? -1 : order.indexOf(intent.beforeId);
-                order.splice(index < 0 ? order.length : index, 0, intent.tabId);
+                order.insertBefore(intent.tabId, intent.beforeId !== null && order.has(intent.beforeId) ? intent.beforeId : null);
                 break;
             case 'pairs': pairs = intent.pairs; break;
         }
     }
     pairs = pruneWorkspaceTabPairs(pairs, tabsById);
-    const result: SharedWorkspaceTabs = { v: 1, tabsById, order, pairs };
+    const result: SharedWorkspaceTabs = { v: 1, tabsById, order: order.read(), pairs };
     return same(result, record) ? record : result;
+}
+
+/** An order as a doubly linked list keyed by id; ids are unique, as in every shared order. */
+function createLinkedOrder(ids: readonly string[]) {
+    const previous = new Map<string, string | null>();
+    const next = new Map<string, string | null>();
+    let head: string | null = null;
+    let tail: string | null = null;
+    const insertBefore = (id: string, beforeId: string | null) => {
+        const prior = beforeId === null ? tail : previous.get(beforeId)!;
+        previous.set(id, prior);
+        next.set(id, beforeId);
+        if (prior === null) head = id; else next.set(prior, id);
+        if (beforeId === null) tail = id; else previous.set(beforeId, id);
+    };
+    for (const id of ids) insertBefore(id, null);
+    return {
+        has: (id: string) => next.has(id),
+        insertBefore,
+        remove: (id: string) => {
+            if (!next.has(id)) return;
+            const prior = previous.get(id)!;
+            const after = next.get(id)!;
+            if (prior === null) head = after; else next.set(prior, after);
+            if (after === null) tail = prior; else previous.set(after, prior);
+            previous.delete(id);
+            next.delete(id);
+        },
+        read: () => {
+            const result: string[] = [];
+            for (let id = head; id !== null; id = next.get(id)!) result.push(id);
+            return result;
+        },
+    };
 }
 
 export function collectWorkspaceTabIntents(before: WorkspaceState, after: WorkspaceState, action?: WorkspaceAction): WorkspaceTabIntent[] {
@@ -130,7 +164,8 @@ export function reconcileWorkspaceSyncedTabs(state: WorkspaceState, record: Shar
     }
     const groups = { ...next.groups };
     for (const group of Object.values(next.groups)) {
-        const sharedIds = record.order.filter(id => group.tabIds.includes(id));
+        const groupTabIds = new Set(group.tabIds);
+        const sharedIds = record.order.filter(id => groupTabIds.has(id));
         // Shared order fills the existing shared slots; previews and empty tabs keep
         // their device-local positions. New remote tabs precede trailing local tabs.
         const tabIds = group.tabIds.filter(id => !record.tabsById[id] || state.tabs[id]);
@@ -144,7 +179,10 @@ export function reconcileWorkspaceSyncedTabs(state: WorkspaceState, record: Shar
         tabIds.splice(insertionIndex, 0, ...sharedIds.slice(sharedIndex));
         const old = state.groups[group.id];
         const activeTabId = old && tabIds.includes(old.activeTabId) ? old.activeTabId : group.activeTabId;
-        const mru = [...(old?.mru ?? group.mru).filter(id => tabIds.includes(id)), ...tabIds.filter(id => !(old?.mru ?? group.mru).includes(id))];
+        const previousMru = old?.mru ?? group.mru;
+        const keptTabIds = new Set(tabIds);
+        const previousMruIds = new Set(previousMru);
+        const mru = [...previousMru.filter(id => keptTabIds.has(id)), ...tabIds.filter(id => !previousMruIds.has(id))];
         if (!same(tabIds, group.tabIds) || activeTabId !== group.activeTabId || !same(mru, group.mru)) groups[group.id] = { ...group, tabIds, activeTabId, mru };
     }
     const focusedGroupId = groups[state.focusedGroupId] ? state.focusedGroupId : next.focusedGroupId;
