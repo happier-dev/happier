@@ -64,6 +64,25 @@ describe('receipt facts', () => {
             targetLinkId: receipt.deployment.targetLinkId, machineId: 'controller', installationId: 'installation' } }]);
     });
 
+    it('says where a receipt ran from its target kind: a platform keeps its own releases, so no Machine keep count (COR4B ui-60)', () => {
+        const machine = createDeploymentReceiptDetailV1();
+        const runtime = createDeploymentTargetLinkHeaderV1({ activeDeploymentId: 'serving' });
+        const retainedHistory = { receipt: machine.deployment, items: [{ ...machine.deployment, source: projectDeploymentReceiptFactsV1(machine).source }],
+            complete: true, runtime, targetLinks: [runtime], retainPreviousDeployments: 0 };
+        expect(projectDeploymentReceiptFactsV1(machine, retainedHistory)).toMatchObject({ placement: 'machine', retainedPreviousCount: 0 });
+        const platform = createDeploymentReceiptDetailV1();
+        platform.content.ownServer = undefined;
+        platform.content.platform = { targetLinkRevision: 1,
+            credentialPrincipal: { kind: 'account', accountId: 'actor',
+                purpose: { consumer: { pluginId: 'acme.alpha', localId: 'inspect' }, purpose: 'deploy' },
+                target: { kind: 'account', account: { service: { pluginId: 'acme.alpha', localId: 'account' }, accountId: 'provider' } } },
+            providerIdentity: { providerAccountId: 'provider', providerResourceId: 'project', providerEnvironment: 'production' },
+            providerEnvironment: { kind: 'production' }, observation: { v: 1, state: 'succeeded', observedAtMs: 1, providerDeploymentId: 'dpl_exact' } };
+        // The same history and retention setting: a platform release is not "kept on a Machine", so nothing reads "Off".
+        expect(projectDeploymentReceiptFactsV1(platform, { ...retainedHistory, receipt: platform.deployment }))
+            .toMatchObject({ placement: 'platform', retainedPreviousCount: null });
+    });
+
     it('joins previous, retained count and rollback to the same history instead of captured admission and configured capacity', () => {
         const base = createDeploymentReceiptDetailV1();
         if (base.content.sourceIntent.kind !== 'repository') throw new Error('Expected repository fixture');

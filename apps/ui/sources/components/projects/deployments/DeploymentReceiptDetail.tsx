@@ -767,9 +767,12 @@ const SucceededOutcome = React.memo(function SucceededOutcome(props: Readonly<{
         leftElement={<WorkStatusGlyph status={deploymentWorkStatus('succeeded')} testIDSuffix="deployment-outcome" />}
         title={address
           ? t('projects.deployments.liveAt', { address })
-          : props.serving
-            ? t('projects.deployments.servingOn', { machine: props.machine })
-            : t('projects.deployments.ranOn', { machine: props.machine })}
+          // A platform release has no Machine to name: it simply deployed (the facts owner says where it ran).
+          : props.facts.placement === 'platform'
+            ? t('projects.deployments.stateSucceeded')
+            : props.serving
+              ? t('projects.deployments.servingOn', { machine: props.machine })
+              : t('projects.deployments.ranOn', { machine: props.machine })}
         // A Domain that needs a look says so first, as the Domains tab does; Open then steps back.
         subtitle={attention ? <DomainStateLine state={attention} route={parts.join(' · ') || null} />
           : parts.length > 0 ? parts.join(' · ') : undefined}

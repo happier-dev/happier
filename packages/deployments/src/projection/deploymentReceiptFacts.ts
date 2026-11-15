@@ -63,6 +63,11 @@ export type DeploymentReceiptStepLogFactV1 = Readonly<{
     reference: DeploymentReceiptLogFactV1['reference'] & Readonly<{ ref: string }>;
 }>;
 export type DeploymentReceiptFactsV1 = Readonly<{
+    /**
+     * Where the release ran, from the target kind: a Machine (Docker images kept by its own retention) or a platform
+     * that keeps its own releases. Machine wording ("Ran on", "Kept for rollback", "cleaned up") is for Machines only.
+     */
+    placement: 'machine' | 'platform';
     failure: DeploymentReceiptFailureV1 | null;
     /** Historical restoration evidence, including whether health was verified. */
     restoration: Readonly<{ kind: 'not_attempted' | 'failed' | 'outcome_unknown' }>
@@ -145,9 +150,13 @@ export function projectDeploymentReceiptFactsV1(receipt: DeploymentReceiptDetail
     }
     const forStep = (step: DeploymentStepV1, machineId?: string) => byStep.get(JSON.stringify([step.streamRef ?? step.id, machineId])) ?? [];
     const rollout = content.ownServer?.approvedInputBasis.ownServer?.rollout;
+    const placement = content.platform !== undefined ? 'platform' as const : 'machine' as const;
     return {
         ...(retainedHistory ? selectDeploymentReceiptRetainedHistoryV1(retainedHistory)
             : { previousVersion: undefined, retainedPreviousCount: null, retainedRollbackTarget: null }),
+        // A platform keeps its own releases: the Machine keep count is not a fact about it (rollback stays the reader's).
+        ...(placement === 'platform' ? { retainedPreviousCount: null } : {}),
+        placement,
         failure: content.failure ?? null,
         restoration: projectRestoration(content),
         ...projectDeploymentReceiptSourceFactsV1(content), rollbackTarget: content.ownServer?.rollbackTarget,

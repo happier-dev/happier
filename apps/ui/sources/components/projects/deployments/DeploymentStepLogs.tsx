@@ -97,7 +97,8 @@ export function DeploymentStepLogs(
       }));
       return [...recorded, ...facts.logs.filter(({ reference }) =>
         (machineId === undefined || reference.machineId === machineId) &&
-        !recorded.some(({ log }) => log?.machineId === reference.machineId && log.installationId === reference.installationId),
+        // A step without its own stage log has no reference to match; a platform log carries no Machine.
+        !recorded.some(({ log }) => log !== null && log.machineId === reference.machineId && log.installationId === reference.installationId),
       ).map(({ reference }) => ({ id: `build-log.${reference.machineId}.${reference.installationId}`,
         // Beside steps it is the whole deploy log; with no steps, sibling logs differ only by their Machine.
         label: recorded.length > 0 ? t('projects.deployments.deployLog')
