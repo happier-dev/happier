@@ -29,6 +29,14 @@ import { resolveSpawnChildEnvironment } from '@/daemon/spawn/resolveSpawnChildEn
 import { buildSpawnChildProcessEnv } from '@/daemon/spawn/buildSpawnChildProcessEnv';
 import { captureSessionLaunchControlMetadata, createSessionMetadata } from '@/agent/runtime/createSessionMetadata';
 
+// Native process lifecycle boundary; resume now observes construction after its webhook.
+const nativeStartup = {
+  stopSession: async () => true,
+  awaitAgentSessionOpen: async ({ sessionId }: { sessionId: string }) => ({
+    status: 'opened' as const, request: { kind: 'create' as const, sessionId, cwd: '/tmp/project' },
+  }),
+};
+
 describe('createSpawnNewSessionLifecycleActionHandler', () => {
   it('keeps admitted spawn authority invocation-only for the exact native credential child', async () => {
     const input = { directory: '/repo', backendTarget: { kind: 'backend' as const, backendId: 'codex', sourceKind: 'built_in' as const } };
@@ -289,7 +297,7 @@ describe('createSpawnNewSessionLifecycleActionHandler', () => {
       type: 'success',
       sessionId: 'session-created',
     } as const));
-    const handler = createSpawnNewSessionLifecycleActionHandler({ spawnSession });
+    const handler = createSpawnNewSessionLifecycleActionHandler({ spawnSession, ...nativeStartup });
     const sessionCreationTag = deriveSessionCreationTagV1({
       callerCreationNamespace: 'user',
       creationKey: 'creation-1',
@@ -662,7 +670,7 @@ describe('createSpawnNewSessionLifecycleActionHandler', () => {
     { phase: 'directory consent', result: { type: 'requestToApproveDirectoryCreation', directory: '/tmp/voice' } },
   ])('forwards startup instructions for the supported resume-session path and retains $phase custody', async ({ result }) => {
     const spawnSession = vi.fn(async (_options: SpawnSessionOptions) => result);
-    const handler = createSpawnNewSessionLifecycleActionHandler({ spawnSession });
+    const handler = createSpawnNewSessionLifecycleActionHandler({ spawnSession, ...nativeStartup });
     const agentSessionStartupInstructionsV1 = {
       v: 1,
       id: 'happier.global_voice_agent',
@@ -693,6 +701,7 @@ describe('createSpawnNewSessionLifecycleActionHandler', () => {
       await rm(allocation.directory, { recursive: true });
       // The process boundary consumes the real directory owner's preparation.
       const handler = createSpawnNewSessionLifecycleActionHandler({
+        ...nativeStartup,
         spawnSession: async (options) => {
           const prepared = await directories.prepareForSpawn(options);
           return prepared.ok

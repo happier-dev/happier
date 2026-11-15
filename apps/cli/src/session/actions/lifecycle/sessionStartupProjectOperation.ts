@@ -39,25 +39,28 @@ export function createSessionStartupProjectSpawn(input: Readonly<{
     };
     return async options => {
         // Webhook acknowledgement and native open consume one startup budget.
-        const startupDeadline = operation ? Date.now() + resolveSessionStartupTimeoutMs() : null;
-        if (operation && (!input.awaitAgentSessionOpen || !input.stopSession)) {
+        // Resume has no fresh-creation operation, but a webhook still does not
+        // prove that native authentication and Session construction succeeded.
+        const observeNativeOpen = Boolean(operation || (options.existingSessionId && !options.freshSessionCreation));
+        const startupDeadline = observeNativeOpen ? Date.now() + resolveSessionStartupTimeoutMs() : null;
+        if (observeNativeOpen && (!input.awaitAgentSessionOpen || !input.stopSession)) {
             return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
                 errorMessage: 'Session native startup observation or retirement unavailable' };
         }
         const result = await input.spawnSession({ ...options, ...(operation ? { projectSetupOperation: operation } : {}) });
-        if (result.type !== 'success' || !result.sessionId || !operation) return result;
+        if (result.type !== 'success' || !result.sessionId || !observeNativeOpen) return result;
         // The native-fork owner awaits this same attestation inside its child
         // cleanup scope. Keep its physical child id available before refusal.
         if (options.nativeForkSource) return result;
         // Runner-created Sessions first prove their committed id at the webhook.
         // Daemon-committed launches already offered the same acceptance after attach.
         // In either case the original operation retains native/input custody.
-        if (operation.operationAcceptance?.actionId === 'session.spawn_new') {
+        if (operation?.operationAcceptance?.actionId === 'session.spawn_new') {
             operation.operationAcceptance.accept({ type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted', sessionId: result.sessionId });
         }
         const opened = await input.awaitAgentSessionOpen!({ sessionId: result.sessionId,
-            timeoutMs: Math.max(0, startupDeadline! - Date.now()), signal: operation.signal });
-        operation.signal.throwIfAborted();
+            timeoutMs: Math.max(0, startupDeadline! - Date.now()), signal: context?.signal });
+        context?.signal?.throwIfAborted();
         // A native-mode refusal remains terminal after row commitment;
         // creation reconciliation must not reinterpret it as success.
         if (opened.status === 'refused') {
@@ -91,7 +94,7 @@ export function createSessionStartupProjectSpawn(input: Readonly<{
             // The committed birth can accept input even though native open is
             // waiting on its broker. Message admission retains that input;
             // the existing Pending activation owner owns subsequent launches.
-            if (operation.operationAcceptance?.actionId === 'session.spawn_new'
+            if (operation?.operationAcceptance?.actionId === 'session.spawn_new'
                 && isSessionSpawnBrokerUnavailable(failure)) return result;
             if (opened.status === 'construction_failed') {
                 await retireRefusedRunner(result.sessionId, opened.expectedTrackedRunner);

@@ -2,6 +2,16 @@
 
 ## Resumed Session input targets (0.3 development)
 
+Machine resume observes the existing native-open attestation before reporting
+success, including when no fresh-creation operation is present. A runner webhook
+alone does not establish an input target. Native construction or authentication
+failure returns the startup owner's typed cause through the ordinary resume result.
+
+Stop and Session archive do not discard retained Pending inputs. Stop withdraws
+runtime execution; archive withdraws Session activation eligibility. Pending keeps
+its queued or blocked custody until its ordinary acceptance, discard, or recovery
+transition; unarchiving alone does not prove delivery.
+
 A definite Machine refusal during resume-and-send settles the carried input as
 failed through the existing Pending discard owner (`resume_failed`), for every
 Agent. The nullable `deliveryFailure` column retains a closed, content-free
