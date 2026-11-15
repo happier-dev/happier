@@ -768,7 +768,7 @@ describe('held Agent isolation launch admission', () => {
                 const context = { read: () => { reads++; return snapshot; } };
                 const admission = admitAgentIsolationLaunchForHost({ context, cwd,
                     agentNativeLaunch: agentLaunchKind !== 'workspaceExec', agentLaunchKind });
-                if (agentLaunchKind === 'managedService' || agentLaunchKind === 'attach') {
+                if (agentLaunchKind === 'attach') {
                     await expect(admission).rejects.toMatchObject({ code: 'agent_isolation_unavailable', retryable: false,
                         data: { details: { reason: 'agent_launch_kind_unavailable', launchKind: agentLaunchKind } } });
                 } else {

@@ -230,6 +230,18 @@ describe.skipIf(process.platform !== 'linux')('member setup → selected materia
             usernames.push(launch.args[2]!);
           } finally { await launch.release(); }
         }
+        // R126U3B: an Agent's runner-managed server (OpenCode's `serve`) is the
+        // member's own Agent process, so it runs as that member like Exec/ACP.
+        const service = await authorizeResolvedProjectExecLaunchForHost({
+          launch: { command: '/bin/cat', args: [], cwd: expected.home, env: { PATH: '/usr/bin' }, release() {} },
+          agentIsolation: context, agentNativeLaunch: true, agentLaunchKind: 'managedService',
+          sessionMcpContext: transport.localContext, signal, assertCurrent() {},
+        });
+        try {
+          expect(service.args).toEqual(['-n', '-u', expected.username, '--', effects.installedCli, 'agent-launch']);
+          const frame = await readAgentLaunchFrame(Readable.from([service.stdinPreamble], { objectMode: false }));
+          expect(frame.nativeIdentity).toEqual({ username: expected.username, agentUid: uid, agentGid: uid, home: expected.home });
+        } finally { await service.release(); }
       }
       expect(new Set(usernames).size).toBe(3);
       const a = members[0]!, b = members[1]!;

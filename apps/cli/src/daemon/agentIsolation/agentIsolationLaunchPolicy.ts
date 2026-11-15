@@ -356,7 +356,11 @@ function assertHostIsolationLaunchKindSupported(
     launchKind: HostAgentIsolationLaunchKind | undefined,
     refuse: (reason: 'unsupported_platform' | 'agent_launch_kind_unavailable') => never,
 ): void {
-    if (launchKind === 'managedService' || launchKind === 'attach') {
+    // An Agent's runner-managed server (e.g. OpenCode `serve`) starts a new
+    // process through the same prepared RunAs launch as Exec/ACP, so it runs as
+    // the requester's own native identity. Attach adopts an existing process,
+    // whose identity cannot be changed.
+    if (launchKind === 'attach') {
         return refuse(process.platform !== 'linux' ? 'unsupported_platform' : 'agent_launch_kind_unavailable');
     }
 }

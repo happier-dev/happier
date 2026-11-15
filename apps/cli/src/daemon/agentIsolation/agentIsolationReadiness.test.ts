@@ -257,10 +257,11 @@ it.skipIf(process.platform !== 'linux').each([false, true])('settles applied eff
     const terminal = await authorizeResolvedProjectExecLaunchForHost({ ...input, agentIsolation: ownerAgent, agentLaunchKind: 'terminal' });
     expect(terminal.command).toBe('sudo');
     await terminal.release();
-    for (const agentLaunchKind of ['managedService', 'attach'] as const) {
-      await expect(authorizeResolvedProjectExecLaunchForHost({ ...input, agentIsolation: ownerAgent, agentLaunchKind }))
-        .rejects.toMatchObject({ code: 'agent_isolation_unavailable', details: { reason: 'agent_launch_kind_unavailable' }, execLaunch: 'notStarted' });
-    }
+    const service = await authorizeResolvedProjectExecLaunchForHost({ ...input, agentIsolation: ownerAgent, agentLaunchKind: 'managedService' });
+    expect(service.command).toBe('sudo');
+    await service.release();
+    await expect(authorizeResolvedProjectExecLaunchForHost({ ...input, agentIsolation: ownerAgent, agentLaunchKind: 'attach' }))
+      .rejects.toMatchObject({ code: 'agent_isolation_unavailable', details: { reason: 'agent_launch_kind_unavailable' }, execLaunch: 'notStarted' });
     const retainedMaterial = material;
     material = undefined;
     await expect(restrictedLaunch()).rejects.toMatchObject({ code: 'agent_isolation_unavailable', execLaunch: 'notStarted' });
