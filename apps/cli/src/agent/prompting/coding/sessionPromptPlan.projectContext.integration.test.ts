@@ -104,6 +104,8 @@ beforeEach(async () => {
   notices = [];
   taskHome = await createTempDir('happier-project-context-plan-');
   vi.stubEnv('HAPPIER_HOME_DIR', taskHome);
+  // These cases exercise Account policy, independently of the invoking Agent's launch override.
+  vi.stubEnv('HAPPIER_ACTIONS_SETTINGS_V1', '');
   for (const key of ['HAPPIER_SERVER_URL', 'HAPPIER_LOCAL_SERVER_URL', 'HAPPIER_SERVER_ID', 'HAPPIER_WEBAPP_URL']) vi.stubEnv(key, '');
   const workspace = { id: 'checkout', serverId, machineId: 'context-machine', rootPath: '/tmp/project', createdAtMs: 1,
     projectKey: 'project', get source() { return sourceLinked ? { sourceId: 'source', revision: 1 } : undefined; } };
@@ -202,6 +204,8 @@ afterEach(async () => {
   projects.withdrawActiveProjectAccountRowsSnapshot();
   peer.closeAllConnections();
   await new Promise<void>((resolve, reject) => peer.close(error => error ? reject(error) : resolve()));
+  // Drain this fixture's buffered log before deleting its Home; a later flush recreates it.
+  (await import('@/ui/logger')).logger.flushSync();
   vi.unstubAllEnvs();
   await removeTempDir(taskHome);
 });
