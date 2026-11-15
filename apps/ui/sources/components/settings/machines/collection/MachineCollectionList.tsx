@@ -761,8 +761,11 @@ function MachineRowsFold(props: Readonly<{
     </ExpandableItem>;
 }
 
-/** Accessible presets remain separate from resources, with exact-Home read and approval custody. */
-export function MachinePresetCollectionSectionView(props: Readonly<{
+/**
+ * Accessible presets remain separate from resources, with exact-Home read and approval custody. Memoized on its
+ * (key-stable) section: a Machine arriving or opening redraws the rail, never this group's rows.
+ */
+export const MachinePresetCollectionSectionView = React.memo(function MachinePresetCollectionSectionView(props: Readonly<{
     section: MachinePresetCollectionSection;
     state?: MachinePresetQueryState<readonly ManagedMachinePresetListEntryV1[]>;
     rail: boolean;
@@ -827,7 +830,7 @@ export function MachinePresetCollectionSectionView(props: Readonly<{
     if (!props.rail) return <ItemGroup title={title} action={add}>{rows}</ItemGroup>;
     return <><CollectionListGroupLabel title={title} actions={add ?? undefined} />
         {rows}</>;
-}
+});
 
 /**
  * The machine being added (lab `add-flows` M4/M5), at the top of the rail while its form is open or its

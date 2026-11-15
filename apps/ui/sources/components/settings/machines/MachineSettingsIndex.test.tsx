@@ -1351,6 +1351,41 @@ describe('the presets group in the rail', () => {
     await screen.unmount();
   });
 
+  // On a busy Account Machines arrive and open one at a time, and each arrival redraws the rail. The Presets group lists
+  // no Machine: a Machine's change is not a reason to redraw its rows (each with a provider mark), only a change to the
+  // presets, their read state or the selection.
+  it('keeps the Presets group still while a Machine row changes', async () => {
+    const { MachineCollectionRail } = await import('./collection/MachineCollectionList');
+    const named = machine('machine-a1', 'Studio', 'studio.local');
+    await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [named] }]);
+    routeState.pathname = '/settings/machines/machine-a1';
+    await primeFeatures();
+    const profileId = homeProfiles.get('srv_a')!;
+    home.answer(profileId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [createPlainManagedMachinePresetFixture({
+      id: 'build', homeId: 'srv_a', revision: 1, owner: { kind: 'account', accountId: 'account-a' },
+      controller: { machineId: 'machine-a1', installationId: 'machine-a1-installation' },
+      name: 'Build recipe',
+      launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Build box', choices: {} },
+    })] } });
+    const screen = await renderScreen(<MachineCollectionRail />);
+    // The composite row the group draws: its props are a new object each time the group draws it.
+    const presetRow = () => screen.tree.findAll(node => typeof node.type !== 'string'
+      && node.props.testID === 'settings.machines.preset.srv_a.build')[0];
+    await waitForHomeGovernance(() => expect(presetRow()).toBeDefined());
+    await flushHookEffects();
+    const drawn = new Set<unknown>([presetRow()!.props]);
+    for (let index = 1; index <= 3; index++) {
+      await act(async () => storage.getState().applyMachines([machine(`machine-b${index}`, `Builder ${index}`, `builder-${index}.local`)],
+        false, { sourceServerId: 'srv_a' }));
+      await flushHookEffects();
+      await waitForHomeGovernance(() => expect(screen.tree.findAll(node => typeof node.type === 'string'
+        && node.props.testID === `settings.machines.row.srv_a.machine-b${index}`)[0]).toBeDefined());
+      drawn.add(presetRow()!.props);
+    }
+    expect(drawn.size).toBe(1);
+    await screen.unmount();
+  });
+
   it('keeps its group and its add control while the list is read again, and only waits for the first answer', async () => {
     const { MachinesColumn } = await import('@/components/machines/collection/MachinesColumn');
     await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [machine('machine-a1', 'Machine A1', 'a.local')] }]);
