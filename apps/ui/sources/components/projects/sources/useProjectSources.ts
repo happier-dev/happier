@@ -7,6 +7,10 @@ import { readProjectSourceAddressMachines } from './projectSourceAddressMachines
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { readProjectSourcesCatalog } from './projectSourcesCatalog';
 import { useActiveServerAccountScopeLifetime, useMachineListStatusForServer } from '@/sync/store/hooks';
+import { useProjectAccountWorkspaceRefs } from '@/sync/domains/workspaces/projectAccountRows';
+import { projectSourceRepositoryFacts, type ProjectSourceRepositoryFacts } from './projectSourceRepositoryFacts';
+
+const NO_REPOSITORY_FACTS: ReadonlyMap<string, ProjectSourceRepositoryFacts> = new Map();
 
 /** The Sources' action executor, loaded at first use (shared with Open's repository address). */
 export function useProjectSourceActionExecute() {
@@ -20,7 +24,7 @@ export function useProjectSourceActionExecute() {
 }
 
 /** The screen opts into catalog demand; mounting a closed picker does no work. */
-export function useProjectSources(scope: ServerAccountScope, options: Readonly<{ enabled?: boolean }> = {}) {
+export function useProjectSources(scope: ServerAccountScope, options: Readonly<{ enabled?: boolean; repositoryFacts?: boolean }> = {}) {
     const execute = useProjectSourceActionExecute();
     const activeLifetime = useActiveServerAccountScopeLifetime();
     const lifetime = activeLifetime && areServerAccountScopesEqual(activeLifetime.scope, scope) ? activeLifetime : null;
@@ -30,6 +34,11 @@ export function useProjectSources(scope: ServerAccountScope, options: Readonly<{
         () => readProjectSourceAddressMachines(scope.serverId), catalog?.read),
         [scope.serverId, scope.accountId, execute, catalog]);
     const state = React.useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
+    const wantsRepositoryFacts = options.enabled !== false && options.repositoryFacts === true;
+    const workspaceRefs = useProjectAccountWorkspaceRefs(wantsRepositoryFacts && lifetime !== null);
+    const repositoryFacts = React.useMemo(() => wantsRepositoryFacts
+        ? projectSourceRepositoryFacts(scope.serverId, state.rows, workspaceRefs) : NO_REPOSITORY_FACTS,
+        [wantsRepositoryFacts, scope.serverId, state.rows, workspaceRefs]);
     React.useEffect(() => {
         // React replays setup after development StrictMode cleanup. The same
         // captured owner resumes; scope replacement still retires the old one.
@@ -51,7 +60,7 @@ export function useProjectSources(scope: ServerAccountScope, options: Readonly<{
         const stopDetail = observeProjectSources(controller, { detailOnly: Boolean(catalog) });
         return () => { stopDemand?.(); stopDetail(); };
     }, [catalog, controller, options.enabled]);
-    return { state, controller };
+    return { state, controller, repositoryFacts };
 }
 
 type SourceReadState = Pick<ProjectSourcesState, 'current' | 'detailStatus' | 'issue'>;

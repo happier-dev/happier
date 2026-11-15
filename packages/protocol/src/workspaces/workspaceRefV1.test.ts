@@ -1,10 +1,25 @@
 import { describe, expect, it } from 'vitest';
 
-import { ProjectKeyV1Schema, WorkspaceRefV1Schema } from './workspaceRefV1.js';
+import { ProjectKeyV1Schema, WorkspaceRefV1Schema, WorkspaceRefV1WriteSchema } from './workspaceRefV1.js';
 import { matchSessionProjectFilterV1 } from '../sessions/listFilter/sessionListFilterV1.js';
 import { resolveWorkspaceRefV1, enrichWorkspaceRefV1, projectWorkspaceRefV1, resolveSessionProjectKeyV1, createSessionProjectKeyResolverV1, resolveWorkspaceProjectKeyV1, resolveWorkspaceGroupingV1 } from './workspaceRefResolutionV1.js';
 
 describe('workspaceRefV1', () => {
+  it('keeps repository observations optional, closes publication and projects additive stored facts recursively', () => {
+    const ref = { id: 'checkout', serverId: 'home', machineId: 'machine', rootPath: '/repo', createdAtMs: 1 };
+    expect(WorkspaceRefV1Schema.parse(ref).repositoryObservation).toBeUndefined();
+    const observation = { source: { sourceId: 'source', revision: 3 }, observedAtMs: 10, coverage: 'complete',
+      rootFiles: { dockerfile: 'absent', compose: 'unknown' },
+      applications: [{ file: 'package.json', framework: 'next', runtime: { name: 'node', version: '22' } }] };
+    const additive = { ...ref, repositoryObservation: { ...observation,
+      rootFiles: { ...observation.rootFiles, futureFile: 'present' },
+      applications: [{ ...observation.applications[0], runtime: { name: 'node', version: '22', future: true } }] } };
+    expect(WorkspaceRefV1WriteSchema.safeParse(additive).success).toBe(false);
+    expect(WorkspaceRefV1Schema.parse(additive).repositoryObservation).toEqual(observation);
+    const invalid = { ...ref, repositoryObservation: { ...observation, observedAtMs: 'yesterday' } };
+    expect(WorkspaceRefV1WriteSchema.safeParse(invalid).success).toBe(false);
+    expect(WorkspaceRefV1Schema.safeParse(invalid).success).toBe(false);
+  });
   it('resolves accepted Session Project identity without private refs and qualifies it by Home', () => {
     for (const serverId of ['a', 'b']) {
       expect(resolveSessionProjectKeyV1(null, serverId, undefined, { projectKey: 'anchor' }))

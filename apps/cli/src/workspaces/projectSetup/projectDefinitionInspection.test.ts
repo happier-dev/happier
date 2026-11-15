@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { discoverLocalServiceRunTargets } from '@/daemon/local/services/launch/runTargets';
-import { inspectProjectDefinitions, inspectProjectDefinitionExecutionFacts, inspectProjectToolFacts } from './projectDefinitionInspection';
+import { inspectProjectDefinitions, inspectProjectDefinitionExecutionFacts, inspectProjectToolFacts, inspectProjectDefinitionFiles } from './projectDefinitionInspection';
 import { resolveNativePackageManager } from './nativePackageScripts';
 import { ProjectDefinitionDetectionV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import { selectProjectDefinitionRead } from './projectDefinitionRead';
@@ -22,6 +22,18 @@ async function fixture(files: Record<string, string>): Promise<string> {
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
 
 describe('inspectProjectDefinitions', () => {
+    it('reports only observed root container files, distinguishing absence from a refused file', async () => {
+        const root = await fixture({ Dockerfile: 'FROM scratch', 'nested/compose.yaml': 'services: {}' });
+        const detected = await inspectProjectDefinitions(root);
+        expect(detected.observedAtMs).toEqual(expect.any(Number));
+        expect(detected).toMatchObject({ rootFiles: { dockerfile: 'present', compose: 'absent' } });
+        expect(await inspectProjectDefinitionFiles(root, [{ file: 'compose.yaml' }])).toMatchObject({ rootFiles: { dockerfile: 'unknown', compose: 'unknown' } });
+        const read = selectProjectDefinitionRead({ basis: { kind: 'absent' }, document: null }, detected, { kind: 'applications' });
+        expect(ProjectDefinitionDetectionV1Schema.parse(read.detection)).toMatchObject({ rootFiles: { dockerfile: 'present', compose: 'absent' } });
+        const outside = await fixture({ 'compose.yaml': 'services: {}' });
+        await symlink(join(outside, 'compose.yaml'), join(root, 'compose.yaml'));
+        expect(await inspectProjectDefinitions(root)).toMatchObject({ rootFiles: { dockerfile: 'present', compose: 'unknown' }, coverage: 'partial' });
+    });
     it('carries recognized app declarations without resolving commands, returning script rows or guessing ports', async () => {
         const root = await fixture({ 'package.json': JSON.stringify({ dependencies: { next: '15', react: '19' },
             engines: { node: '>=20' }, scripts: { build: 'next build', start: 'TOKEN=never-project next start --port 4321' } }),

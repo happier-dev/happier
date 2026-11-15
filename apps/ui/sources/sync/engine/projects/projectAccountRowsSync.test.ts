@@ -52,6 +52,27 @@ function harness(mode: 'plain' | 'e2ee' = 'plain') {
 }
 
 describe('Project Account row sync owner', () => {
+    it.each(['plain', 'e2ee'] as const)('records exact checkout observations through %s CAS without re-dating retained facts', async mode => {
+        const h = harness(mode);
+        const key = { kind: 'workspace-ref' as const, serverId: 'home', id: 'ref' };
+        const physicalKey = buildProjectAccountRowPhysicalKeyV1(key);
+        const ref = { id: 'ref', serverId: 'home', machineId: 'machine', rootPath: '/repo', createdAtMs: 1,
+            projectKey: 'anchor', source: { sourceId: 'source', revision: 3 } };
+        h.rows.set(physicalKey, { key, revision: 0, content: h.cipher.seal({ key, value: ref }) });
+        const address = { serverId: 'home', workspaceId: ref.id, machineId: ref.machineId, rootPath: ref.rootPath };
+        const observation = { observedAtMs: 10, coverage: 'complete' as const,
+            rootFiles: { dockerfile: 'present' as const, compose: 'absent' as const }, applications: [] };
+        expect(await h.owner.recordWorkspaceRepositoryObservation(address, observation)).toEqual({ ok: true, workspaceRefId: ref.id });
+        const saved = h.rows.get(physicalKey)!;
+        expect(saved.content?.t).toBe(mode === 'plain' ? 'plain' : 'encrypted');
+        expect(h.projection()?.workspaceRefs[0]).toEqual({ ...ref, repositoryObservation: { ...observation, source: ref.source } });
+        await h.owner.recordWorkspaceRepositoryObservation(address, { ...observation, observedAtMs: 20, coverage: 'partial' });
+        await h.owner.recordWorkspaceRepositoryObservation(address, observation);
+        expect(h.rows.get(physicalKey)).toBe(saved);
+        expect(await h.owner.recordWorkspaceRepositoryObservation({ ...address, rootPath: '/elsewhere' }, observation))
+            .toEqual({ ok: false, code: 'workspace_ref_not_found' });
+        expect(h.requests).toHaveLength(1);
+    });
     it('settles an acknowledged Workspace wait through its exact pushed row, cancellation, absence or failed materialization', async () => {
         const h = harness('plain');
         await h.owner.refresh();

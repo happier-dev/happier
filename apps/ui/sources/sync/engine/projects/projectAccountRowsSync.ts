@@ -9,6 +9,7 @@ import {
 import { assertProjectAccountSnapshotTransition, parseProjectAccountSnapshotV1 } from '@happier-dev/protocol/projects/projectAccountSnapshotV1';
 import type { ProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import type { WorkspaceAddressV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { ProjectRepositoryObservationV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import { resolveWorkspaceRefByAddress, resolveWorkspaceRefById, resolveWorkspaceRefByScope, resolveWorkspaceRefRemoval, upsertWorkspaceRefByScope,
     workspaceRefResolutionContextV1, type WorkspaceRefAccountMutation, type WorkspaceRefAccountMutationResult } from '@/sync/domains/workspaces/workspaceRefs';
 import { resolveWorkspaceGroupingV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
@@ -293,7 +294,9 @@ export function createProjectAccountRowsSync(options: Readonly<{
     }
     /** Accepted Source/SCM observations patch only the exact checkout already owned by this Account. */
     async function recordWorkspaceFacts(
-        address: WorkspaceAddressV1, facts: Pick<WorkspaceRefV1, 'source' | 'repositoryIdentity'>, signal?: AbortSignal,
+        address: WorkspaceAddressV1, facts: Pick<WorkspaceRefV1, 'source' | 'repositoryIdentity'> & Readonly<{
+            repositoryObservation?: ProjectRepositoryObservationV1;
+        }>, signal?: AbortSignal,
     ): Promise<Readonly<{ ok: true; workspaceRefId: string }> | Extract<WorkspaceRefAccountMutationResult, { ok: false }>> {
         if (!areServerProfileIdentifiersEquivalent(address.serverId, options.scope.serverId)) throw failure('project_account_scope_mismatch');
         while (true) {
@@ -303,14 +306,25 @@ export function createProjectAccountRowsSync(options: Readonly<{
             if (resolved.kind === 'ambiguous') return { ok: false, code: 'workspace_ref_ambiguous' };
             if (resolved.kind === 'invalid') return { ok: false, code: 'workspace_ref_invalid' };
             const existing = resolved.ref;
+            const { repositoryObservation, ...identityFacts } = facts;
+            let acceptedFacts: Pick<WorkspaceRefV1, 'source' | 'repositoryIdentity' | 'repositoryObservation'> = identityFacts;
+            if (repositoryObservation) {
+                if (!existing.source) return { ok: true, workspaceRefId: existing.id };
+                const previous = existing.repositoryObservation;
+                const sameSource = previous?.source.sourceId === existing.source.sourceId && previous.source.revision === existing.source.revision;
+                if (sameSource && (repositoryObservation.coverage === 'partial' || previous.observedAtMs >= repositoryObservation.observedAtMs)) {
+                    return { ok: true, workspaceRefId: existing.id };
+                }
+                acceptedFacts = { ...identityFacts, repositoryObservation: { ...repositoryObservation, source: existing.source } };
+            }
             // Navigation never overwrites a retained identity. A new ordinary SCM
             // observation can fill a missing one; changed-identity decisions stay upstream.
             if (facts.repositoryIdentity && existing.repositoryIdentity) return { ok: true, workspaceRefId: existing.id };
             const { lastOpenedAtMs: _recency, ...accepted } = existing;
-            const structural = ProjectAccountWorkspaceRefV1Schema.parse({ ...accepted, ...facts });
+            const structural = ProjectAccountWorkspaceRefV1Schema.parse({ ...accepted, ...acceptedFacts });
             if (areAccountSettingsJsonValuesEqual(accepted, structural)) return { ok: true, workspaceRefId: existing.id };
             assertProjectAccountSnapshotTransition(before, { ...before,
-                workspaceRefs: before.workspaceRefs.map(ref => ref === existing ? { ...ref, ...facts } : ref),
+                workspaceRefs: before.workspaceRefs.map(ref => ref === existing ? { ...ref, ...acceptedFacts } : ref),
             });
             const key = { kind: 'workspace-ref' as const, serverId: existing.serverId, id: existing.id };
             const request = { mutations: [mutation({ key, value: structural }, key)], expectedRefs: [], topologyChange: false } satisfies ProjectAccountRowMutationRequestV1;
@@ -379,6 +393,8 @@ export function createProjectAccountRowsSync(options: Readonly<{
             recordWorkspaceFacts(address, { source }, signal),
         recordWorkspaceRepositoryIdentity: (address: WorkspaceAddressV1, repositoryIdentity: NonNullable<WorkspaceRefV1['repositoryIdentity']>, signal?: AbortSignal) =>
             recordWorkspaceFacts(address, { repositoryIdentity }, signal),
+        recordWorkspaceRepositoryObservation: (address: WorkspaceAddressV1, repositoryObservation: ProjectRepositoryObservationV1, signal?: AbortSignal) =>
+            recordWorkspaceFacts(address, { repositoryObservation }, signal),
         mutateOrganizationAtRevision,
         refreshRecency: (reader?: typeof options.readRecency) => {
             assertCurrent();

@@ -41,6 +41,9 @@ export function selectProjectDefinitionRead(definition: ProjectManifestInspectio
         toolchains: fullDetection ? detection.toolchains : [], devcontainers: fullDetection ? detection.devcontainers : [],
         coverage: detection.coverage, diagnostics: detection.diagnostics,
         ...(read.kind === 'applications' && detection.applications ? { applications: detection.applications } : {}),
+        ...(read.kind === 'applications' && detection.rootFiles ? { rootFiles: detection.rootFiles } : {}),
+        ...(read.kind === 'applications' && detection.applications && detection.rootFiles && detection.observedAtMs !== undefined
+            ? { observedAtMs: detection.observedAtMs } : {}),
         ...(fullDetection && detection.tools ? { tools: detection.tools } : {}) };
     const document = definition.document;
     const statusOnly = read.kind === 'detail' || read.kind === 'tools' || read.kind === 'imports' || read.kind === 'applications';

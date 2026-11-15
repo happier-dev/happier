@@ -3,6 +3,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { ScmHostingRepositoryIdentityV1Schema } from '../scm/hostingRepositoryIdentity.js';
 import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
+import { ProjectRepositoryObservationV1Schema } from './projectSetup/projectManifestV1.js';
 
 const StoredNonEmptyStringSchema = lazyZodSchema(() => z.string().check(z.minLength(1)));
 const LookupNonEmptyStringSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
@@ -13,6 +14,9 @@ export const WorkspaceProjectFactsV1Schema = lazyZodSchema(() => z.strictObject(
   source: z.optional(z.strictObject({ sourceId: StoredNonEmptyStringSchema, revision: z.number().check(z.int(), z.nonnegative()) })),
 }));
 export type WorkspaceProjectFactsV1 = z.infer<typeof WorkspaceProjectFactsV1Schema>;
+export const WorkspaceRepositoryObservationV1Schema = lazyZodSchema(() => z.extend(ProjectRepositoryObservationV1Schema, {
+  source: z.nonoptional(WorkspaceProjectFactsV1Schema.shape.source),
+}));
 
 export const WorkspaceRefV1WriteSchema = lazyZodSchema(() => z.strictObject({
     id: StoredNonEmptyStringSchema,
@@ -22,6 +26,7 @@ export const WorkspaceRefV1WriteSchema = lazyZodSchema(() => z.strictObject({
     label: z.catch(z.optional(z.nullable(StoredNonEmptyStringSchema)), null),
     createdAtMs: z.number().check(z.nonnegative()),
     lastOpenedAtMs: z.catch(z.optional(z.nullable(z.number().check(z.nonnegative()))), null),
+    repositoryObservation: z.optional(WorkspaceRepositoryObservationV1Schema),
     ...WorkspaceProjectFactsV1Schema.shape,
   }));
 export const WorkspaceRefV1Schema = createStoredReadSchema(WorkspaceRefV1WriteSchema);

@@ -10,7 +10,7 @@ export const NATIVE_PROJECT_DEFINITION_FILES = [
     'package.json', 'mise.toml', '.mise.toml', '.config/mise/config.toml',
     'Makefile', 'makefile', 'GNUmakefile', 'justfile', 'Justfile', '.justfile',
     'Taskfile.yml', 'Taskfile.yaml', 'Taskfile.dist.yml', 'Taskfile.dist.yaml',
-    'turbo.json', 'compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml',
+    'turbo.json', 'Dockerfile', 'compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml',
     'Procfile', 'devbox.json', 'devenv.nix', '.flox/env/manifest.toml', 'flake.nix',
     '.devcontainer/devcontainer.json', '.devcontainer.json',
 ] as const;
@@ -42,6 +42,13 @@ export async function inspectProjectDefinitionFacts(root: string, files: readonl
 
 async function inspectDefinitionReads(root: string, files: readonly Readonly<{ file: string; format?: NativeTool | 'nix_flake' | 'devcontainer'; read: ProjectDefinitionFileRead }>[]): Promise<ProjectDefinitionDetectionV1> {
     const detection: ProjectDefinitionDetectionV1 = { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [], applications: [] };
+    const presence = (names: readonly string[]) => {
+        const reads = names.map(name => files.find(file => file.file === name)?.read.kind);
+        return reads.some(kind => kind === 'read') ? 'present' as const
+            : reads.every(kind => kind === 'absent') ? 'absent' as const : 'unknown' as const;
+    };
+    detection.rootFiles = { dockerfile: presence(['Dockerfile']),
+        compose: presence(NATIVE_PROJECT_DEFINITION_FILES.filter(file => /^(?:docker-)?compose\.ya?ml$/.test(file))) };
     const formatNames = { package_script: 'package.json', mise: 'mise.toml', make: 'Makefile', just: 'justfile', taskfile: 'Taskfile.yml', turbo: 'turbo.json', compose: 'compose.yml', procfile: 'Procfile', devbox: 'devbox.json', devenv: 'devenv.nix', flox: '.flox/env/manifest.toml', nix_flake: 'flake.nix', devcontainer: 'devcontainer.json' } as const;
     const diagnostic = (file: string, code: string) => {
         detection.coverage = 'partial';
@@ -152,6 +159,7 @@ async function inspectDefinitionReads(root: string, files: readonly Readonly<{ f
             }
         } catch { diagnostic(file, 'invalid_definition'); }
     }
+    detection.observedAtMs = Date.now();
     return detection;
 }
 

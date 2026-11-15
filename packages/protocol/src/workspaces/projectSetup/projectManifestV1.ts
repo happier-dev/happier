@@ -88,6 +88,10 @@ export const ProjectDetectedApplicationV1Schema = z.strictObject({
   port: z.nullable(z.number().check(z.int(), z.minimum(1), z.maximum(65535))),
 });
 export type ProjectDetectedApplicationV1 = z.infer<typeof ProjectDetectedApplicationV1Schema>;
+/** Only the conventional files at the inspected checkout root; unknown is not absence. */
+export const ProjectRootContainerFilesV1Schema = z.strictObject({
+  dockerfile: z.enum(['present', 'absent', 'unknown']), compose: z.enum(['present', 'absent', 'unknown']),
+});
 export const ProjectDefinitionDetectionV1Schema = z.strictObject({
   entries: z.array(z.strictObject({ source: ProjectNativeRefV1Schema, usage: z.enum(['script', 'service', 'setup']) }).check(z.refine(
     entry => entry.usage === 'service' || isFiniteSource(entry.source), 'Compose and Procfile references are services',
@@ -98,8 +102,18 @@ export const ProjectDefinitionDetectionV1Schema = z.strictObject({
   diagnostics: z.array(z.strictObject({ file: nonempty, code: nonempty })),
   tools: z.optional(z.array(ProjectToolRequirementV1Schema)),
   applications: z.optional(z.array(ProjectDetectedApplicationV1Schema)),
+  rootFiles: z.optional(ProjectRootContainerFilesV1Schema),
+  observedAtMs: z.optional(z.number().check(z.int(), z.nonnegative())),
 });
 export type ProjectDefinitionDetectionV1 = z.infer<typeof ProjectDefinitionDetectionV1Schema>;
+/** Last observed declarations, not current deployability. Application paths are checkout-relative. */
+export const ProjectRepositoryObservationV1Schema = z.strictObject({
+  observedAtMs: z.nonoptional(ProjectDefinitionDetectionV1Schema.shape.observedAtMs),
+  coverage: ProjectDefinitionDetectionV1Schema.shape.coverage,
+  rootFiles: z.nonoptional(ProjectDefinitionDetectionV1Schema.shape.rootFiles),
+  applications: z.array(z.pick(ProjectDetectedApplicationV1Schema, { file: true, framework: true, runtime: true })),
+});
+export type ProjectRepositoryObservationV1 = z.infer<typeof ProjectRepositoryObservationV1Schema>;
 
 /** Passive import offers: an unproved tool/version never becomes an automatic selection. */
 export const ProjectDefinitionImportCandidateV1Schema = z.strictObject({

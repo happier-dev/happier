@@ -1,6 +1,6 @@
 import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { PROJECT_DEFINITION_ACTION_IDS, PROJECT_DEFINITION_ACTION_RPC_METHODS_V1 } from './projectDefinitionActionIdsV1.js';
-export { PROJECT_DEFINITION_ACTION_IDS } from './projectDefinitionActionIdsV1.js';
+export { PROJECT_DEFINITION_ACTION_IDS, PROJECT_DEFINITION_INSPECT_ACTION_ID } from './projectDefinitionActionIdsV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { ProjectDefinitionDetectionV1Schema, ProjectDefinitionImportCandidateV1Schema, ProjectExecutionInputV1Schema, ProjectNativeInvocationPreviewV1Schema, ProjectNativeRefV1Schema, ProjectToolInspectionV1Schema } from '../workspaces/projectSetup/projectManifestV1.js';
