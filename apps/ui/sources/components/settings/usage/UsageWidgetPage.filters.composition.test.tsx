@@ -11,7 +11,7 @@ import { getStorage } from '@/sync/domains/state/storage';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { getUsageQueryBatchKey, getUsageQueryKey, normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { buildWidgetSurfaceArtifactHeaderV1, buildWidgetSurfaceArtifactIdV1, WidgetAreaLayoutV1Schema,
     WIDGET_SURFACE_ARTIFACT_KIND_V1, type WidgetAreaLayoutV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import { renderScreen, standardCleanup, flushHookEffects } from '@/dev/testkit';
@@ -24,6 +24,8 @@ import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccou
 import { planSyncActionsFromChanges, plannedChangesAffectUsageAccounting, plannedChangesAffectUsageQuery } from '@/sync/runtime/orchestration/changesPlanner';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { invalidateUsageQueryResources } from '@/sync/api/account/usageQueryResource';
+import * as usageResources from '@/sync/api/account/usageQueryResource';
+import * as homeChanges from '@/sync/runtime/orchestration/homeAccountChange';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { MainAppTabStateProvider } from '@/components/navigation/mobile/chrome/MainAppTabStateProvider';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
@@ -149,6 +151,185 @@ afterEach(async () => {
 });
 
 describe('mounted Usage page scope commands', () => {
+    it('keeps Overview entries, projections and subscriptions bounded across twenty settled period and filter switches', async () => {
+        const { Session: InspectorSession } = await import('node:inspector');
+        const { createPlainSessionWithDisplayRecordFixture } = await import('@/dev/testkit/fixtures/sessionDisplayFixtures');
+        const { SessionSystemRecordStoredUpsertRequestSchema } = await import('@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes');
+        vi.spyOn(Date, 'now').mockReturnValue(1_791_749_300_000);
+        const fixture = usageQaAccountingFixture();
+        let observationRevision = 0;
+        const fixtureSessionIds = [...new Set(fixture.contributions!.flatMap(row => row.sessionId ? [row.sessionId] : []))];
+        const fixtureMachineIds = [...new Set(fixture.contributions!.flatMap(row => row.machineId ? [row.machineId] : []))];
+        const machines = Array.from({ length: 62 }, (_, index) => createMachineFixture({
+            id: fixtureMachineIds[index] ?? `retention-machine-${index}`, activeAt: Date.now(),
+        }));
+        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-overview-retention.test', accountId: 'account-a' }],
+            route: request => {
+                if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+                if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
+                if (request.path === '/v1/machines') return Response.json(machines.map(machine =>
+                    createPlainMachineRowFixture({ id: machine.id, accountId: 'account-a', machine })));
+                if (request.method === 'PUT' && /^\/v2\/sessions\/[^/]+\/system-records$/.test(request.path)) {
+                    const { address, content } = SessionSystemRecordStoredUpsertRequestSchema.parse(request.body);
+                    return Response.json({ record: { address, content, id: 'sysrec_1', revision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ',
+                        createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() } });
+                }
+                if (request.path === '/v2/usage/query') return Response.json({ ...fixture,
+                    // A corrected observation timestamp changes the facts without
+                    // changing the captured cohort's dimensions, totals or buckets.
+                    contributions: fixture.contributions!.map((row, index) => index === 0
+                        ? { ...row, observedAtMs: row.observedAtMs + observationRevision } : row),
+                });
+                if (request.path === USAGE_SESSION_EVIDENCE_PATH) {
+                    const input = UsageSessionEvidenceRequestSchema.parse(request.body);
+                    const requests = input.requests.map(demand => ({ query: demand.query,
+                        sessionIds: demand.sessionIds ?? fixtureSessionIds }));
+                    return Response.json({ requests, results: [...new Set(requests.flatMap(demand => demand.sessionIds))].map(id => ({
+                        sessionId: id,
+                        detail: { status: 200, body: { session: createPlainSessionWithDisplayRecordFixture({ id, seq: 1 }) } },
+                        turns: { status: 200, body: { v: 1, sessionId: id, updatedAt: Date.now(), turns: [] } },
+                        messageEvidence: { acceptedInputs: [] }, messagesComplete: true,
+                    })) });
+                }
+                return artifacts.handle(request.url.toString(), { method: request.method })
+                    ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+            } });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+        const entries: WeakRef<object>[] = [];
+        const projections: WeakRef<object>[] = [];
+        const results: WeakRef<object>[] = [];
+        const accountingGenerations: WeakRef<object>[] = [];
+        const subscriptions: WeakRef<object>[] = [];
+        const resourceKeys = new Set<string>();
+        const seen = new WeakSet<object>();
+        const observe = (values: WeakRef<object>[], value: object) => {
+            if (!seen.has(value)) { seen.add(value); values.push(new WeakRef(value)); }
+        };
+        // Observation only: execute every real owner and retain only weak handles.
+        // Clear spy histories before GC; they otherwise retain arguments/results themselves.
+        const getStore = usageResources.getUsageQueryResourceStore;
+        const resourceObservation = vi.spyOn(usageResources, 'getUsageQueryResourceStore').mockImplementation((...args) => {
+            const store = getStore(...args);
+            return { ...store, getEntry(...entryArgs) {
+                const reference = entryArgs[0];
+                const isUsageQuery = typeof reference !== 'string' && 'hostRead' in reference && reference.hostRead === 'usage.query';
+                if (isUsageQuery)
+                    resourceKeys.add(getUsageQueryBatchKey(reference.input));
+                const entry = store.getEntry(...entryArgs);
+                observe(entries, entry);
+                return { ...entry, getSnapshot() {
+                    const snapshot = entry.getSnapshot();
+                    if (isUsageQuery && snapshot.value) {
+                        observe(results, snapshot.value);
+                        for (const slice of usageResources.decodeUsageQueryResource(snapshot.value).results)
+                            if (slice.accounting) observe(accountingGenerations, slice.accounting);
+                    }
+                    return snapshot;
+                } };
+            } };
+        });
+        const buildView = usageAnalytics.buildUsageAnalyticsViewModel;
+        const projectionObservation = vi.spyOn(usageAnalytics, 'buildUsageAnalyticsViewModel').mockImplementation((...args) => {
+            const view = buildView(...args);
+            observe(projections, view);
+            return view;
+        });
+        const subscribe = homeChanges.subscribeHomeAccountChange;
+        const subscriptionObservation = vi.spyOn(homeChanges, 'subscribeHomeAccountChange').mockImplementation((...args) => {
+            observe(subscriptions, args[0]);
+            return subscribe(...args);
+        });
+        const screen = await renderMeasuredPage(<InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+                <CurrentContextPort /><RoutedUsagePage />
+            </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>);
+        const { sync } = await import('@/sync/sync');
+        await sync.awaitBootstrapForegroundAcquisition();
+        const summary = () => screen.findAllByType(UsagePeriodSummaryWidget)[0]?.props.slice;
+        const settle = async (period: string) => {
+            try {
+                await waitForHomeGovernance(() => {
+                    expect(summary()?.requestedQuery.period.relative).toBe(period);
+                    expect(summary()?.shownQuery?.period.relative).toBe(period);
+                    expect(summary()?.requestedQuery.machines).toEqual(screen.findByType(UsageFilterBar).props.page.scope.machines);
+                    expect(summary()?.shownQuery?.machines).toEqual(summary()?.requestedQuery.machines);
+                    expect(summary()?.pending).toBe(false);
+                    expect(summary()?.accounting).toBeDefined();
+                });
+            } catch (error) {
+                console.info('USAGE-OVERVIEW-UNSETTLED', JSON.stringify({ wantedPeriod: period,
+                    period: summary()?.requestedQuery.period.relative, machineFilters: summary()?.requestedQuery.machines.length,
+                    pending: summary()?.pending, accounting: !!summary()?.accounting,
+                    sources: summary()?.sources.map((state: { source: string; status: string }) => ({
+                        sourceKind: state.source.split(':')[0], status: state.status })),
+                    accountingReads: home!.httpRequests.filter(request => request.path === '/v2/usage/query').length,
+                    evidenceReads: home!.httpRequests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH).length }));
+                throw error;
+            }
+            await flushHookEffects({ cycles: 20 });
+            return getUsageQueryKey(summary()!.requestedQuery);
+        };
+        const inspector = new InspectorSession();
+        inspector.connect();
+        const counts: Array<{ switch: number; resourceKeys: number; entries: number; results: number; accounting: number; projections: number; subscriptions: number }> = [];
+        try {
+            let requestId = await settle('7days');
+            for (let index = 1; index <= 20; index++) {
+                const period = index % 2 ? '30days' : '7days';
+                await act(async () => { await screen.findByType(UsageFilterBar).props.onPeriodChange(period); });
+                // The mounted chooser toggles an actual fixture Machine every second
+                // visit, exercising four warmed period/scope combinations.
+                if (index % 2 === 0) {
+                    const filter = screen.findByType(UsageFilterBar).props.scopeFilters
+                        .find((filter: { field: string }) => filter.field === 'machines');
+                    await act(async () => { await filter.select(fixtureMachineIds[0]!); });
+                }
+                const settledRequest = await settle(period);
+                console.info('USAGE-OVERVIEW-SETTLED', index);
+                expect(settledRequest, 'a completed control invocation must settle its replacement query').not.toBe(requestId);
+                requestId = settledRequest;
+                const prior = new WeakRef(summary()!.accounting);
+                // Replacing facts prevents a cached revisit from hiding a retired
+                // result/projection lifetime. Refresh goes through the widget's owner.
+                observationRevision++;
+                await act(async () => { await screen.findAllByType(UsagePeriodSummaryWidget)[0]!.props.model.refresh(); });
+                await settle(period);
+                expect(summary()!.accounting).not.toBe(prior.deref());
+                if (index % 5 !== 0) continue;
+                resourceObservation.mockClear(); projectionObservation.mockClear(); subscriptionObservation.mockClear();
+                await new Promise<void>(resolve => setImmediate(resolve));
+                await new Promise<void>((resolve, reject) => inspector.post('HeapProfiler.collectGarbage', error => error ? reject(error) : resolve()));
+                counts.push({ switch: index, resourceKeys: resourceKeys.size, entries: entries.filter(value => value.deref() !== undefined).length,
+                    results: results.filter(value => value.deref() !== undefined).length,
+                    accounting: accountingGenerations.filter(value => value.deref() !== undefined).length,
+                    projections: projections.filter(value => value.deref() !== undefined).length,
+                    subscriptions: subscriptions.filter(value => value.deref() !== undefined).length });
+            }
+            console.info('USAGE-OVERVIEW-RETENTION', JSON.stringify({ machines: machines.length, contributions: fixture.contributions?.length,
+                events: fixture.totals.eventCount, counts }));
+            const warmed = counts[1]!;
+            for (const current of counts.slice(2)) {
+                expect(current.resourceKeys, 'the repeated Overview workload must reuse its warmed query entries').toBe(warmed.resourceKeys);
+                expect(current.entries, 'retired Overview Resource facades must not accumulate').toBeLessThanOrEqual(warmed.entries);
+                expect(current.results, 'superseded Overview Resource results must not accumulate').toBeLessThanOrEqual(warmed.results);
+                expect(current.accounting, 'superseded Overview accounting generations must not accumulate').toBeLessThanOrEqual(warmed.accounting);
+                expect(current.projections, 'superseded Overview analytics projections must not accumulate').toBeLessThanOrEqual(warmed.projections);
+                expect(current.subscriptions, 'retired Overview source subscriptions must not accumulate').toBeLessThanOrEqual(warmed.subscriptions);
+            }
+        } finally {
+            inspector.disconnect();
+            resourceObservation.mockRestore(); projectionObservation.mockRestore(); subscriptionObservation.mockRestore();
+            await screen.unmount();
+        }
+    // Twenty mounted reads with the captured cohort exceed the suite's
+    // single-journey 60s deadline (the initial run completed four switches).
+    }, 300_000);
+
     it.each(['agents', 'named', 'unnamed', 'unnamed-omitted', 'unnamed-ranked'] as const)('selects Agents and folded Projects after route feedback and updates the Work ledger (%s)', async selection => {
         const fixture = usageQaAccountingFixture();
         const unnamed = ['a'.repeat(64), 'b'.repeat(64)];

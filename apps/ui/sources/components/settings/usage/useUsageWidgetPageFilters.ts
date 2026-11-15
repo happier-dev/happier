@@ -43,6 +43,32 @@ function sameFilters(left: readonly UsageWidgetPageFilter[], right: readonly Usa
     return left.length === right.length && left.every((filter, index) => sameFilter(filter, right[index]!));
 }
 
+// Rendered choices can survive later inventory reads. Create their callbacks outside
+// the selector/render frame so they cannot retain its accounting slices or previous filters.
+function createScopeSelection(field: Exclude<ScopeField, 'projects'>, selected: readonly string[], listed: readonly string[],
+    setScope: UsageWidgetPageContextState['setScope']): UsageWidgetPageFilter['select'] {
+    return (id, callerContext) => {
+        if (id !== USAGE_SCOPE_FILTER_ALL && !listed.includes(id)) return false;
+        return setScope({ [field]: id === USAGE_SCOPE_FILTER_ALL ? [] : toggleUsageScopeSelection(selected, id, listed) }, callerContext);
+    };
+}
+
+function createProjectSelection(selectedKeys: readonly (readonly [string, string])[], selected: readonly string[],
+    groups: ReadonlyMap<string, ReadonlySet<string>>, setScope: UsageWidgetPageContextState['setScope']): UsageWidgetPageFilter['select'] {
+    const listed = [...groups.keys()];
+    return (id, callerContext) => {
+        if (id !== USAGE_SCOPE_FILTER_ALL && !groups.has(id)) return false;
+        const next = id === USAGE_SCOPE_FILTER_ALL ? [] : toggleUsageScopeSelection(selected, id, listed);
+        // Expand only a newly selected group; retain exact keys in existing selections,
+        // including a route that selected only part of the unnamed group.
+        const projects = next.length === 0 ? [] : [...new Set([
+            ...selectedKeys.filter(([, group]) => next.includes(group)).map(([key]) => key),
+            ...(!selected.includes(id) && next.includes(id) ? groups.get(id) ?? [] : []),
+        ])].sort();
+        return setScope({ projects }, callerContext);
+    };
+}
+
 const CAPTURE_KIND_KEY = {
     measured: 'usage.board.page.sourceKindMeasured',
     from_logs: 'usage.board.page.sourceKindFromLogs',
@@ -111,24 +137,15 @@ export function useUsageWidgetPageFilters(page: UsageWidgetPageContextState, fal
                     members.add(projectAnchorOf.resolve(key));
                     groups.set(id, members);
                 }
-                const selected = [...new Set(scopeSelected.map(groupId))];
+                const selectedKeys = scopeSelected.map(key => [key, groupId(key)] as const);
+                const selected = [...new Set(selectedKeys.map(([, group]) => group))];
                 const listed = [...groups.keys()];
                 return { field, title, selected, options: [
                     { id: USAGE_SCOPE_FILTER_ALL, label: t('usage.board.page.filterAllOf', { what: title.toLocaleLowerCase() }) },
                     ...listed.map(id => ({ id, label: projectNames.label(id === UNNAMED_PROJECT_OPTION ? null : id),
                         subtitle: id === UNNAMED_PROJECT_OPTION ? undefined
                             : usageMachinePlace(projectNames.machineIds.get(id) ?? [], machineNames) || undefined })),
-                ], select: (id: string, callerContext?: ActionExecutorContext) => {
-                    if (id !== USAGE_SCOPE_FILTER_ALL && !groups.has(id)) return false;
-                    const next = id === USAGE_SCOPE_FILTER_ALL ? [] : toggleUsageScopeSelection(selected, id, listed);
-                    // Expand only a newly selected group; retain exact keys in existing selections,
-                    // including a route that selected only part of the unnamed group.
-                    const projects = next.length === 0 ? [] : [...new Set([
-                        ...scopeSelected.filter(key => next.includes(groupId(key))),
-                        ...(!selected.includes(id) && next.includes(id) ? groups.get(id) ?? [] : []),
-                    ])].sort();
-                    return setScope({ projects }, callerContext);
-                } };
+                ], select: createProjectSelection(selectedKeys, selected, groups, setScope) };
             }
             const selected = scopeSelected;
             const listed = [...labels.keys()];
@@ -147,10 +164,7 @@ export function useUsageWidgetPageFilters(page: UsageWidgetPageContextState, fal
                         // "All sources", so a source with a gap carries the dot and, failing other facts, the short fact.
                         ...(field === 'sources' ? sourceOptionDetail(slices, id, sourceGap !== undefined) : {}) };
                 })];
-            return { field, title, selected, options, select: (id: string, callerContext?: ActionExecutorContext) => {
-                if (id !== USAGE_SCOPE_FILTER_ALL && !labels.has(id)) return false;
-                return setScope({ [field]: id === USAGE_SCOPE_FILTER_ALL ? [] : toggleUsageScopeSelection(selected, id, listed) }, callerContext);
-            } };
+            return { field, title, selected, options, select: createScopeSelection(field, selected, listed, setScope) };
         });
     }, [machineNames, projectAnchorOf, projectNames, scope, setScope, sessionScoped, fallbackSlices]);
     const filters = useUsageWidgetBatchInventorySelection(selectFilters, sameFilters);

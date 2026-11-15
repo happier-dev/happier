@@ -39,6 +39,7 @@ import { UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolve
 import { createSessionAccessFixture, createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createPlainSessionWithDisplayRecordFixture as createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionDisplayFixtures';
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { usageQaAccountingFixture } from '@/dev/testkit/fixtures/usageQaAccountingFixture';
 import { observeMachinePresenceForTest, publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
@@ -4506,33 +4507,61 @@ describe('usage query captured Resource adapter', () => {
     } finally { gate.resolve(); await refreshing; release(); inspector.disconnect(); }
   });
 
-  it('releases superseded read facts while the same Resource keeps its newest admission', async () => {
+  it('retains only current query admissions across twenty settled period switches', async () => {
     const { Session: InspectorSession } = await import('node:inspector');
+    const population = usageQaAccountingFixture();
     let eventCount = 1;
     const captured = await context(request => request.path === '/v2/usage/query'
-      ? Response.json({ ...value, totals: { ...value.totals, eventCount } }) : undefined);
-    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({
-      queries: [normalizeUsageQuery({ period: { relative: 'all' }, includeSessionEvidence: false, includeWorkEvidence: false })],
-    }) });
+      ? Response.json({ ...population, totals: { ...population.totals, eventCount } }) : undefined);
+    storage.setState({ machines: Object.fromEntries(Array.from({ length: 62 }, (_, index) => {
+      const machine = createMachineFixture({ id: `retention-machine-${index}` });
+      return [machine.id, machine];
+    })) });
+    const store = getUsageQueryResourceStore(captured);
+    const queries = ['7days', '30days'].map(relative => normalizeUsageQuery({ period: { relative },
+      includeContributions: true, includeQuota: false, includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false }));
+    const entries = queries.map(query => store.getEntry({ hostRead: 'usage.query',
+      input: projectNativeJsonValueForTransport({ queries: [query] }) }));
     const inspector = new InspectorSession();
     inspector.connect();
     try {
-      await entry.refresh();
-      const generations = [new WeakRef(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!.accounting!.totals)];
-      for (eventCount = 2; eventCount <= 4; eventCount++) {
+      const generations: WeakRef<object>[] = [];
+      const batches: WeakRef<object>[] = [];
+      const contents: WeakRef<object>[] = [];
+      const observers: WeakRef<object>[] = [];
+      for (eventCount = 1; eventCount <= 20; eventCount++) {
+        const index = (eventCount - 1) % entries.length;
+        const entry = entries[index]!;
         await entry.refresh();
+        expect(entry.getSnapshot().pending).toBe('idle');
+        expect(entry.getSnapshot().error).toBeUndefined();
+        expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!.key).toBe(getUsageQueryKey(queries[index]!));
         expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!.accounting!.totals.eventCount).toBe(eventCount);
         generations.push(new WeakRef(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!.accounting!.totals));
-        const release = entry.subscribe(() => {}, true);
-        await flushHookEffects();
-        release();
+        batches.push(new WeakRef(decodeUsageQueryResource(entry.getSnapshot().value!)));
+        contents.push(new WeakRef(entry.getSnapshot().value!));
+        observers.push(await (async () => {
+          const listener = () => {};
+          const observer = new WeakRef(listener);
+          const release = entry.subscribe(listener, true);
+          await flushHookEffects();
+          release();
+          return observer;
+        })());
       }
       // End the weak-reference job before asking the actual V8 collector.
       await new Promise<void>(resolve => setImmediate(resolve));
       await new Promise<void>((resolve, reject) => inspector.post('HeapProfiler.collectGarbage', error => error ? reject(error) : resolve()));
       expect(generations.filter(generation => generation.deref() !== undefined).length,
-        'four completed refreshes retain only the current accounting generation').toBe(1);
-      expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!.accounting!.totals.eventCount).toBe(4);
+        'twenty settled switches retain one current accounting generation per cached query').toBe(entries.length);
+      expect(batches.filter(batch => batch.deref() !== undefined).length,
+        'superseded query projections must be collectible').toBe(entries.length);
+      expect(contents.filter(content => content.deref() !== undefined).length,
+        'superseded Resource results must be collectible').toBe(entries.length);
+      expect(observers.filter(observer => observer.deref() !== undefined).length,
+        'retired period subscriptions must be collectible').toBe(0);
+      expect(entries.map(entry => decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!.accounting!.totals.eventCount))
+        .toEqual([19, 20]);
     } finally { inspector.disconnect(); }
   });
 
