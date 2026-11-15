@@ -282,6 +282,35 @@ describe('resolveSessionRuntimeSnapshot', () => {
     expect('initialTranscriptAfterSeq' in result.spawnOptions).toBe(false);
   });
 
+  it('keeps one launch\'s admission hook and held-Agent token out of the durable respawn options', async () => {
+    const runtimeSnapshot = await loadRuntimeSnapshotModule();
+    expect(runtimeSnapshot).not.toBeNull();
+    if (!runtimeSnapshot) return;
+
+    // A Resume that reaches an already-running Session carries its own launch-scoped
+    // facts (the requester admission hook closes over that operation's temporary
+    // requester context). A later crash respawn must re-admit, not replay them.
+    let staleHookCalls = 0;
+    const result = runtimeSnapshot.resolveSessionRuntimeSnapshot({
+      resolutionMode: 'retained_live_process',
+      incomingOptions: {
+        directory: '/tmp/repo',
+        existingSessionId: 'session-1',
+        permissionMode: 'yolo',
+        beforeSessionRunnerLaunch: async () => { staleHookCalls += 1; return true; },
+        adoptSessionHolder: { socketPath: '/tmp/holder.sock', holderPid: 11, agentPid: 12 },
+        initialGoal: { v: 1, kind: 'set', objective: 'one-shot' } as unknown as SpawnSessionOptions['initialGoal'],
+      },
+      persistedMetadata: null,
+      trackedSpawnOptions: { directory: '/tmp/repo' },
+    });
+
+    const launchScoped = ['beforeSessionRunnerLaunch', 'adoptSessionHolder', 'initialGoal']
+      .filter(key => key in result.spawnOptions);
+    expect({ launchScoped, staleHookCalls, permissionMode: result.spawnOptions.permissionMode })
+      .toEqual({ launchScoped: [], staleHookCalls: 0, permissionMode: 'yolo' });
+  });
+
   it('does not let undocumented bare metadata replace a canonical provider-bound selection', async () => {
     const runtimeSnapshot = await loadRuntimeSnapshotModule();
     expect(runtimeSnapshot).not.toBeNull();

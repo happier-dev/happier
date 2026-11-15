@@ -208,6 +208,11 @@ export interface SpawnSessionOptions extends SessionCreateOriginFieldsV1 {
   sessionId?: string;
   /** Resume an existing provider session by its provider-owned id. */
   resume?: string;
+  /**
+   * Respawn after a runner crash only: the crashed runner's held primary Agent,
+   * which the new runner adopts instead of starting one (single use; never persisted).
+   */
+  adoptSessionHolder?: Readonly<{ socketPath: string; holderPid: number; agentPid: number; turnId?: string }>;
   /** Additional deny-only native-state verification for a no-copy handoff launch. */
   handoffStateTransfer?: 'transfer' | 'existing';
   /** Secret-free source consumed once by the child native Agent session opener. */

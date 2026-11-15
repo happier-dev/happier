@@ -11,6 +11,7 @@ import {
   resolveSessionModeOverrideFromMetadataSnapshot,
 } from '@/agent/runtime/permissions/modeFromMetadata';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
+import { omitLaunchScopedSpawnOptions } from '@/daemon/spawn/omitLaunchScopedSpawnOptions';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { SessionCapabilitySelectionV1Schema } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
@@ -361,18 +362,9 @@ function applySnapshotToSpawnOptions(
   // spawn options and replayed by crash/auth respawns). One-shot delivery fields from a single
   // resume RPC must not survive into it: a stale `initialTranscriptAfterSeq` makes every later
   // respawn replay already-processed user messages through the explicit startup catch-up.
-  const {
-    initialTranscriptAfterSeq: _initialTranscriptAfterSeq,
-    executionAuthorization: _executionAuthorization,
-    freshSessionCreation: _freshSessionCreation,
-    managedDirectorySeed: _managedDirectorySeed,
-    verifyRequesterMachineAdmissionCurrent: _verifyRequesterMachineAdmissionCurrent,
-    spawnActionContext: _spawnActionContext,
-    requesterSessionCredentialFile: _requesterSessionCredentialFile,
-    requesterSessionBootstrap: _requesterSessionBootstrap,
-    requesterSessionRuntimeContext: _requesterSessionRuntimeContext,
-    ...durableOptions
-  } = options;
+  // That includes a Resume's admission hook, which closes over its own temporary requester
+  // context: kept here, every later respawn re-ran it against the retired context and was refused.
+  const { executionAuthorization: _executionAuthorization, ...durableOptions } = omitLaunchScopedSpawnOptions(options);
   const next: SpawnSessionOptions = { ...durableOptions };
 
   if (snapshot.connectedServices) {

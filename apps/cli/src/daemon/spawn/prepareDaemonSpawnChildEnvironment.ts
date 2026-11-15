@@ -1,4 +1,5 @@
 import { SESSION_HOLDER_ADOPT_ENV_KEY } from '@/subprocess/supervision/sessionHolder';
+import { omitLaunchScopedSpawnOptions } from '@/daemon/spawn/omitLaunchScopedSpawnOptions';
 import type { ConnectedServiceMaterializationIdentityV1 } from '@happier-dev/protocol';
 import { readSessionModelSelectionV2FromMetadata } from '@happier-dev/agents/session/state/metadataReaders';
 import { restoreAcceptedSessionTeamCredentialModelIntent } from '@/agent/runtime/mergeSessionMetadataForStartup';
@@ -259,33 +260,12 @@ export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
             'HAPPIER_SESSION_REQUESTER_SESSION_ID',
         ],
     });
+    // Model selection and provider binding are re-derived for this launch just below.
     const {
-        initialTranscriptAfterSeq: _initialTranscriptAfterSeq,
-        pendingFirstInput: _pendingFirstInput,
-        initialGoal: _initialGoal,
-        initialAccess: _initialAccess,
-        manager: _manager,
-        initialSessionRolesV1: _initialSessionRolesV1,
-        authoringOrigin: _authoringOrigin,
-        freshSessionCreation: _freshSessionCreation,
-        managedDirectorySeed: _managedDirectorySeed,
-        primaryTeamId: _primaryTeamId,
-        persistedTakeoverAdmission: _persistedTakeoverAdmission,
-        verifyRequesterMachineAdmissionCurrent: _verifyRequesterMachineAdmissionCurrent,
-        beforeSessionRunnerLaunch: _beforeSessionRunnerLaunch,
-        resumeActionContext: _resumeActionContext,
-        spawnActionContext: _spawnActionContext,
-        projectSetupOperation: _projectSetupOperation,
-        requesterSessionCredentialFile: _requesterSessionCredentialFile,
-        requesterSessionBootstrap: _requesterSessionBootstrap,
-        requesterSessionRuntimeContext: _requesterSessionRuntimeContext,
-        // Single-use: this launch consumes the held Agent; a later respawn gets its own token.
-        adoptSessionHolder: _adoptSessionHolder,
         modelSelection: _requestedModelSelection,
         providerBindingMetadataV1: _priorProviderBindingMetadataV1,
-        providerBindingSecurityChangeConfirmationV1: _transientProviderBindingSecurityChangeConfirmationV1,
         ...trackedSpawnOptionsBase
-    } = input.options;
+    } = omitLaunchScopedSpawnOptions(input.options);
     const trackedSpawnOptions: SpawnSessionOptions = {
         ...trackedSpawnOptionsBase,
         // The protected attach is the accepted source, not the caller's old
