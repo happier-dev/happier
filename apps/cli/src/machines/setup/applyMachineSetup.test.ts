@@ -9,6 +9,7 @@ import type { ActionOperationOwnerUpdate } from '@/daemon/actionOperations/actio
 import { createTerminalPtySessionManager } from '@/terminal/pty/sessions';
 import type { PtyExitEvent, PtyProcess, PtyProvider, PtySpawnParams } from '@/terminal/pty/provider';
 import { applyMachineSetup } from './applyMachineSetup';
+import { createBoundMachineSetupTarget } from './boundMachineSetup';
 import { ActionOperationDomainRefV1Schema, ActionOperationSnapshotV1Schema, projectActionOperationSnapshotForV1Reader } from '@happier-dev/protocol/actions/operations/v1';
 import { createActionOperationRunner } from '@/daemon/actionOperations/actionOperationRunner';
 import { getActionSpec } from '@happier-dev/protocol/actions';
@@ -66,7 +67,7 @@ describe('applyMachineSetup', () => {
       homeId: 'home', machineId: 'guest', preset: { id: 'preset', revision: 4 }, requesterAccountId: 'owner', userHomeDirectory: home,
       setup: { toolchain: { adapterId: 'mise', config: '[env]\nREMOVE = false\n' }, scripts: [{ body: 'echo setup', affects: 'none' as const }],
         secretRefs: { v: 1 as const, bindings: { SETUP_SECRET: { ref: 'saved' } } } },
-      terminalSessions, platform: 'linux' as const, hostEnvironment: { SHELL: '/bin/bash', PATH: '/host', REMOVE: 'remove' },
+      terminalSessions, platform: 'linux' as const, hostEnvironment: { NODE_ENV: 'test' as const, SHELL: '/bin/bash', PATH: '/host', REMOVE: 'remove' },
       isCurrent: async () => true,
       secretEnvironment: withSavedSecretMaterializer({ accountSettings: { secrets: [{ id: 'saved', name: 'Setup', kind: 'apiKey',
         encryptedValue: { _isSecretValue: true as const, value: 'private-value' }, createdAt: 1, updatedAt: 1 }] }, settingsSecretsReadKeys: [] }),
@@ -79,6 +80,98 @@ describe('applyMachineSetup', () => {
     };
     return { home, spawned, updates, input, nativeRequests, controller, stopped: () => stopped };
   }
+  it('runs a bound preset through transport IO without a target terminal, preserving typed failure and retry', async () => {
+    const f = await fixture(true);
+    const requests: Array<{ command: string; args: readonly string[] }> = [];
+    let exitCode = 17;
+    let admissionReads = 0;
+    {
+      const input = { ...f.input, setup: { scripts: [{ body: 'echo bound', affects: 'none' as const }] },
+        isCurrent: async () => { admissionReads++; return true; },
+        boundTarget: { administrator: false,
+          writeConfiguration: async () => { throw new Error('No configuration in this preset'); },
+          run: async (request: { command: string; args: readonly string[] }) => {
+            requests.push(request); return { exitCode, stdout: '', stderr: '' };
+          } },
+      };
+      const failed = await applyMachineSetup(input);
+      expect(failed).toMatchObject({ ok: false, errorCode: 'machine_setup_setup_failed',
+        details: { kind: 'finiteCommand', phase: 'setup', step: 0, exitCode: 17 } });
+      exitCode = 0;
+      expect(await applyMachineSetup(input)).toMatchObject({ ok: true });
+    }
+    expect(requests.map(request => request.args.at(-1))).toEqual(['echo bound', 'echo bound']);
+    expect(f.spawned).toHaveLength(0);
+    expect(admissionReads).toBe(2); // once per admitted attempt, never per script
+  });
+
+  it('writes bound toolchain configuration and reads its environment through the target only', async () => {
+    const f = await fixture(true);
+    const files: Array<{ path: string; content: string }> = [];
+    const requests: string[] = [];
+    await machineNativeEffectAdmission.run({ operation: { operationId: 'setup-operation', kind: 'machine_setup', signal: f.controller.signal },
+      keys: [{ kind: 'machineSetup' }] }, async nativeEffectContext => {
+      expect(await applyMachineSetup({ ...f.input, nativeEffectContext,
+        boundTarget: { administrator: false,
+          writeConfiguration: async (path: string, content: string) => { files.push({ path, content }); },
+          run: async (request: { command: string }) => { requests.push(request.command); return { exitCode: 0, stdout: 'PATH=/target\0' }; } },
+      })).toMatchObject({ ok: true });
+    });
+    expect(files).toEqual([{ path: join(f.home, '.config/mise/config.toml'), content: f.input.setup.toolchain.config }]);
+    await expect(readFile(join(f.home, '.config/mise/config.toml'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(requests).toContain('/tools/runtime');
+    expect(f.spawned).toHaveLength(0);
+    expect(f.nativeRequests).toHaveLength(0);
+  });
+
+  it('uses the existing recipe interpreter on a bound target with the admitted administrator principal', async () => {
+    const f = await fixture(true);
+    const item = { kind: 'setupRecipe' as const, selection: {
+      ref: { pluginId: 'com.example.tools', recipeId: 'bound', revision: '1' }, inputs: {},
+    } };
+    const plan = await checkMachineSetupEffectPlan({ basis: { kind: 'setup', machineId: 'guest', desiredRevision: 0,
+      selection: item.selection }, steps: [{ id: 'bound-command', kind: 'command', executable: 'fixture-apply', args: [],
+        check: { executable: 'fixture-check', args: [], unsatisfiedExitCodes: [1] } }],
+      backend: createMachineSetupNativeBackend({ run: async () => ({ code: 1, stdout: '', stderr: '' }) }) });
+    let applied = false;
+    const commands: string[] = [];
+    await machineNativeEffectAdmission.run({ operation: { operationId: 'setup-operation', kind: 'machine_setup', signal: f.controller.signal },
+      keys: [{ kind: 'machineSetup' }] }, async nativeEffectContext => {
+      const transported = createBoundMachineSetupTarget({ administrator: false,
+        transport: { exec: async () => { throw new Error('No script effects'); }, putFile: async () => {} },
+        effectCli: { binaryPath: '/guest/happier', machineId: 'guest', installationId: 'guest-installation', operationId: 'setup-operation',
+          transport: { putFile: async () => {}, exec: async request => {
+            const stdin = new PassThrough(), stdout = new PassThrough();
+            let output = '';
+            stdout.on('data', (chunk: Buffer) => { const text = chunk.toString(); output += text; request.onStdoutChunk?.(text); });
+            stdin.end(request.input);
+            const status = await runMachineSetupEffectInternal(['--operation-id=setup-operation', '--installation-id=guest-installation'], {
+              stdin, stdout, readUid: () => 0, platform: 'linux', runNative: async command => {
+                commands.push(command.executable);
+                if (command.executable === 'fixture-apply') applied = true;
+                return { code: applied ? 0 : 1, stdout: '', stderr: '' };
+              } });
+            return { status, stdout: output, stderr: '' };
+          } } } });
+      const boundTarget = { ...transported, administrator: false,
+        writeConfiguration: async () => { throw new Error('No configuration'); },
+        run: async (request: { command: string }) => {
+          commands.push(request.command);
+          if (request.command === 'fixture-apply') applied = true;
+          return { exitCode: applied ? 0 : 1, stdout: '', stderr: '' };
+        } };
+      const input = { ...f.input, nativeEffectContext, setup: { items: [item] },
+        recipePlans: [{ sourceIndex: 0, itemIndex: 0, plan }], boundTarget };
+      expect(await applyMachineSetup(input)).toMatchObject({ ok: false, errorCode: 'admin_access_unavailable' });
+      expect(commands).toEqual([]);
+      expect(await applyMachineSetup({ ...input, boundTarget: { ...boundTarget, administrator: true } })).toMatchObject({ ok: true });
+    });
+    expect(applied).toBe(true);
+    expect(commands).toContain('fixture-check');
+    expect(f.spawned).toHaveLength(0);
+    expect(f.nativeRequests).toHaveLength(0);
+  });
+
   it('runs canonical ordered scripts verbatim with each source overlay and each script check, skipping empty bodies', async () => {
     const f = await fixture(true);
     const first = 'echo first\r\n', second = 'echo second\n', third = 'echo third';

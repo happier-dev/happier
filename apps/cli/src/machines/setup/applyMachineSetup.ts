@@ -22,7 +22,7 @@ import type { ProjectNativeToolchainIo } from '@/workspaces/toolchain/preparePro
 import type { SecretReferenceOverlayEnvironmentInput } from '@/settings/secrets/secretReferenceOverlay';
 import type { TerminalPtySessionManager } from '@/terminal/pty/sessions';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve, posix } from 'node:path';
 import { userInfo } from 'node:os';
 import { logger } from '@/ui/logger';
 import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
@@ -39,6 +39,19 @@ import {
   type MachineNativeEffectContext,
   type MachineNativeEffectKey,
 } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
+
+/** Transport IO for an unenrolled target. The controller has already selected
+ * the execution principal and administrator permission; commands never elevate
+ * on the controller or acquire a second target admission. */
+export type BoundMachineSetupTarget = Readonly<{
+  administrator: boolean;
+  run: ProjectNativeToolchainIo['run'];
+  writeConfiguration(path: string, content: string, signal: AbortSignal): Promise<void>;
+  /** Execute the incumbent effect interpreter on the target, including its
+   * filesystem effects. Substituting only its command runner is insufficient. */
+  applyPlans?: (plans: readonly MachineSetupEffectPlanV1[], signal: AbortSignal,
+    onProgress: NonNullable<Parameters<typeof applyMachineSetupEffectPlans>[0]['onProgress']>) => Promise<MachineSetupApplyResultV1>;
+}>;
 
 export type ApplyMachineSetupInput = Readonly<{
   homeId: string;
@@ -57,8 +70,9 @@ export type ApplyMachineSetupInput = Readonly<{
   elevation?: MachineElevationDependencies;
   groupRefreshNative?: DaemonGroupRefreshNative;
   operation: ProjectSetupOperationContext;
-  terminalSessions: Pick<TerminalPtySessionManager, 'ensure' | 'waitForExit' | 'requestStop' | 'observeOutput'>;
+  terminalSessions?: Pick<TerminalPtySessionManager, 'ensure' | 'waitForExit' | 'requestStop' | 'observeOutput'>;
   environmentIo: ProjectNativeToolchainIo;
+  boundTarget?: BoundMachineSetupTarget;
   secretEnvironment?: Omit<SecretReferenceOverlayEnvironmentInput, 'secretReferenceOverlay'>;
   hostEnvironment?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
@@ -196,8 +210,15 @@ async function applyMachineSetupWithNativeAdmission(input: AdmittedMachineSetupI
   if (signal.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
   if (!operationId) return { ok: false, errorCode: 'machine_setup_operation_unavailable', error: 'machine_setup_operation_unavailable' };
   try {
-    const scope = await resolveMachineSetupNativeEffects({ ...input, signal,
-      ...(input.setup.scripts ? { scripts: input.setup.scripts } : {}) });
+    // Bound targets are exclusively held by the admitted Session birth. Host
+    // native keys describe this controller, so acquiring them for guest effects
+    // would create a second, unrelated admission authority.
+    if (input.boundTarget) {
+      await input.onAdmitted?.();
+      return await applyAdmittedMachineSetup(input, () => input.operation.operationOwnerUpdate.update({
+        observation: { kind: 'outcome_uncertain', code: 'outcome_uncertain' },
+      }));
+    }
     const execute = async (context: MachineNativeEffectContext) => {
       try {
         await input.onAdmitted?.();
@@ -215,6 +236,8 @@ async function applyMachineSetupWithNativeAdmission(input: AdmittedMachineSetupI
       if (input.nativeEffectContext.operation.operationId !== operationId) throw new MachineNativeEffectAdmissionError('admission_unavailable');
       return await execute(input.nativeEffectContext);
     }
+    const scope = await resolveMachineSetupNativeEffects({ ...input, signal,
+      ...(input.setup.scripts ? { scripts: input.setup.scripts } : {}) });
     return await machineNativeEffectAdmission.run({ operation: { operationId, kind: 'machine_setup', signal }, ...scope,
       ...(input.settleNative ? { settleNative: input.settleNative } : {}) }, execute);
   } catch (error) {
@@ -227,6 +250,8 @@ async function applyMachineSetupWithNativeAdmission(input: AdmittedMachineSetupI
 
 async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput, onUnsettledNativeProcess: () => void): Promise<ActionExecuteResult> {
   const fail = (code: string): ActionExecuteResult => ({ ok: false, errorCode: code, error: code });
+  const environmentIo = input.boundTarget ? { ...input.environmentIo, run: input.boundTarget.run } : input.environmentIo;
+  const targetPath = input.boundTarget ? posix : { basename, dirname, join, resolve };
   const platform = input.platform ?? process.platform;
   const signal = input.signal ?? input.operation.signal;
   const isCurrent = async () => !signal.aborted && await input.isCurrent() && !signal.aborted;
@@ -243,7 +268,9 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput, onUns
   if (input.plans.length) {
     const plans = input.plans.map(plan => ({ plan }));
     let daemonRestartRequired = false;
-    if (machineSetupPlansRequireAdministratorV1(input.plans)) {
+    const requiresAdministrator = machineSetupPlansRequireAdministratorV1(input.plans);
+    if (input.boundTarget && requiresAdministrator && !input.boundTarget.administrator) return fail('admin_access_unavailable');
+    if (requiresAdministrator && !input.boundTarget) {
       if (!input.elevation) return fail('admin_access_unavailable');
       const elevated = await runElevatedEffect({ machineId: input.machineId, operationId, signal,
         effect: { kind: 'setupOperation', plans },
@@ -260,14 +287,18 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput, onUns
             ? { details: { kind: 'machineSetup', failure: elevated.failure } } : {}) };
       }
     } else {
-      const result = await applyMachineSetupEffectPlans({ plans, signal,
-        backend: createMachineSetupNativeBackend({ signal, run: async command => {
+      const onProgress: NonNullable<Parameters<typeof applyMachineSetupEffectPlans>[0]['onProgress']> = event => input.emit?.({ type: 'machine.setup.progress', stepId: event.stepId,
+        data: { phase: event.phase, status: event.status, planIndex: event.planIndex,
+          ...(event.reason ? { reason: event.reason } : {}) } });
+      if (input.boundTarget && !input.boundTarget.applyPlans) return fail('machine_setup_operation_unavailable');
+      const result = input.boundTarget
+        ? await input.boundTarget.applyPlans!(input.plans, signal, onProgress)
+        : await applyMachineSetupEffectPlans({ plans, signal,
+        backend: createMachineSetupNativeBackend({ signal, platform, run: async command => {
           signal.throwIfAborted();
           return runMachineSetupNativeCommand(command, { terminateOnAbort: terminateProcessTree });
         } }),
-        onProgress: event => input.emit?.({ type: 'machine.setup.progress', stepId: event.stepId,
-          data: { phase: event.phase, status: event.status, planIndex: event.planIndex,
-            ...(event.reason ? { reason: event.reason } : {}) } }),
+        onProgress,
       });
       input.emit?.({ type: 'machine.setup.result', data: result });
       daemonRestartRequired = result.daemonRestartRequired;
@@ -280,7 +311,9 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput, onUns
       }
     }
     if (signal.aborted) return fail('cancelled');
-    const requiredStep = await readMachineSetupSessionRefreshRequirement(input.plans, input.groupRefreshNative, daemonRestartRequired);
+    // There is no guest daemon in a bound target whose groups need refreshing.
+    const requiredStep = input.boundTarget ? null
+      : await readMachineSetupSessionRefreshRequirement(input.plans, input.groupRefreshNative, daemonRestartRequired);
     if (requiredStep) {
       const elevation = input.elevation;
       // A deferred refresh cannot provide groups to scripts that must finish
@@ -308,6 +341,16 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput, onUns
   let env: Readonly<Record<string, string>> = hostEnv;
   const run = async (phase: string, command: string, args: readonly string[], launchEnv: Readonly<Record<string, string>>, failureCode: string, step?: number) => {
     if (signal.aborted) return fail('cancelled');
+    if (input.boundTarget) {
+      input.operation.operationProgress.update({ phase, label: phase === 'install' ? 'Installing machine tools' : 'Setting up machine' });
+      const result = await input.boundTarget.run({ command, args, cwd: input.userHomeDirectory, env: launchEnv, signal });
+      if (signal.aborted) return fail('cancelled');
+      return result.exitCode === 0 ? { ok: true as const, result: { operationId } } : {
+        ok: false as const, errorCode: failureCode, error: failureCode,
+        details: { kind: 'finiteCommand', phase, ...(step === undefined ? {} : { step }), exitCode: result.exitCode, signal: null },
+      };
+    }
+    if (!input.terminalSessions) return fail('machine_setup_operation_unavailable');
     const outcome = await executeHostFiniteTerminalProcess({ operation: input.operation, terminalSessions: input.terminalSessions,
       requesterAccountId: input.requesterAccountId, terminalCustody: input.terminalCustody,
       signal,
@@ -327,19 +370,22 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput, onUns
     // Consumes the exact builtin B3 contract, not a guessed adapter command.
     const adapter = listMachineSetupAdaptersV1(platform).find(candidate => candidate.id === toolchain.adapterId);
     if (!adapter) return fail('native_adapter_not_characterized');
-    const tool = await input.environmentIo.resolveTool(adapter.id, signal);
+    const tool = await environmentIo.resolveTool(adapter.id, signal);
     if (signal.aborted) return fail('cancelled');
     if (!tool) return fail('native_tool_unavailable');
     if (tool.version !== adapter.nativeVersion) return fail('native_version_not_characterized');
     // Mise v2026.10.4 crates/mise-util/src/env.rs (reexported by src/env.rs):
     // GLOBAL_CONFIG_FILE > CONFIG_FILE > CONFIG_DIR > XDG_CONFIG_HOME.
     const configured = hostEnv.MISE_GLOBAL_CONFIG_FILE || hostEnv.MISE_CONFIG_FILE;
-    const configDirectory = hostEnv.MISE_CONFIG_DIR || join(hostEnv.XDG_CONFIG_HOME || join(input.userHomeDirectory, '.config'), 'mise');
-    const configPath = resolve(input.userHomeDirectory, expandHomeDirPath(configured || join(configDirectory, adapter.globalEnvironment.configFile), hostEnv, platform));
+    const configDirectory = hostEnv.MISE_CONFIG_DIR || targetPath.join(hostEnv.XDG_CONFIG_HOME || targetPath.join(input.userHomeDirectory, '.config'), 'mise');
+    const configPath = targetPath.resolve(input.userHomeDirectory, expandHomeDirPath(configured || targetPath.join(configDirectory, adapter.globalEnvironment.configFile), hostEnv, platform));
     try {
-      await mkdir(dirname(configPath), { recursive: true });
-      if (signal.aborted) return fail('cancelled');
-      await writeFile(configPath, toolchain.config, 'utf8');
+      if (input.boundTarget) await input.boundTarget.writeConfiguration(configPath, toolchain.config, signal);
+      else {
+        await mkdir(targetPath.dirname(configPath), { recursive: true });
+        if (signal.aborted) return fail('cancelled');
+        await writeFile(configPath, toolchain.config, 'utf8');
+      }
     }
     catch { return fail('machine_setup_configuration_failed'); }
     if (signal.aborted) return fail('cancelled');
@@ -347,11 +393,12 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput, onUns
       { ...hostEnv, MISE_OVERRIDE_CONFIG_FILENAMES: configPath }, 'machine_setup_install_failed');
     if (!installed.ok) return installed;
     if (signal.aborted) return fail('cancelled');
-    const produced = await prepareProjectNativeToolchain({ selection: { kind: 'toolchain', tool: adapter.id, configPath: basename(configPath) },
-      root: dirname(configPath), cwd: input.userHomeDirectory, env: hostEnv, platform, signal,
-      io: { ...input.environmentIo, run: async request => {
+    const produced = await prepareProjectNativeToolchain({ selection: { kind: 'toolchain', tool: adapter.id, configPath: targetPath.basename(configPath) },
+      ...(input.boundTarget ? { configurationContent: toolchain.config } : {}),
+      root: targetPath.dirname(configPath), cwd: input.userHomeDirectory, env: hostEnv, platform, signal,
+      io: { ...environmentIo, run: async request => {
         signal.throwIfAborted();
-        return input.environmentIo.run(request);
+        return environmentIo.run(request);
       } } });
     if (signal.aborted) return fail('cancelled');
     if (produced.status !== 'ready') return fail(produced.kind === 'cancelled' ? 'cancelled' : produced.code);
@@ -370,9 +417,9 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput, onUns
     }
     const scriptEnvironment = { ...env, ...secretEnv };
     const check = script.check;
-    const backend = check ? createMachineSetupNativeBackend({ signal, run: async command => {
+    const backend = check ? createMachineSetupNativeBackend({ signal, platform, run: async command => {
       signal.throwIfAborted();
-      const result = await input.environmentIo.run({ command: command.executable, args: command.args,
+      const result = await environmentIo.run({ command: command.executable, args: command.args,
         cwd: input.userHomeDirectory, env: { ...scriptEnvironment, ...command.env }, signal });
       return { code: result.exitCode, stdout: result.stdout, stderr: result.stderr ?? '' };
     } }) : undefined;

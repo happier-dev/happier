@@ -1,5 +1,5 @@
 import type { ProjectToolchainSelectionV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
-import { basename, dirname, resolve } from 'node:path';
+import { posix, win32 } from 'node:path';
 import { findBuiltinNativeToolchainAdapterV1 } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
 import type { ProjectNativeAdapterProductionV1 } from '@/plugins/runtime/lifecycle/contributions/targetProjectNativeAdapters';
 import { isPluginError } from '@happier-dev/plugin-sdk/errors';
@@ -60,6 +60,9 @@ function readIsolationRefusal(error: unknown): ProjectNativeToolchainResult | un
 
 export type ProjectNativeToolchainInput = Readonly<{
   selection: ProjectToolchainSelectionV1;
+  /** Setup already wrote this configuration at the selected target. Reuse the
+   * owner's input instead of rereading the controller's filesystem. */
+  configurationContent?: string;
   /** Reviewed Project root; cwd may be a nested command working directory. */
   root?: string;
   cwd: string;
@@ -135,13 +138,16 @@ export async function prepareProjectNativeToolchain(input: ProjectNativeToolchai
     if (selected.configPath === undefined) return { status: 'refused', kind: 'unavailable', code: 'native_configuration_unavailable' };
     const { readProjectDefinitionFile } = await import('../projectSetup/nativeDefinitionFiles.ts');
     const root = input.root ?? input.cwd;
-    const config = await readProjectDefinitionFile(root, selected.configPath);
+    const config = input.configurationContent === undefined
+      ? await readProjectDefinitionFile(root, selected.configPath)
+      : { kind: 'read' as const, content: input.configurationContent };
     if (input.signal?.aborted) return cancelled();
     if (config.kind !== 'read') return {
       status: 'refused', kind: 'unavailable',
       code: config.kind === 'refused' ? config.code : 'native_configuration_unavailable',
     };
-    const configPath = resolve(root, selected.configPath.replaceAll('\\', '/'));
+    const targetPath = input.platform === 'win32' ? win32 : posix;
+    const configPath = targetPath.resolve(root, selected.configPath.replaceAll('\\', '/'));
     const envInput = { ...input.env };
     // Native activation may move to its config root and print hook diagnostics.
     // Restore the actual launch cwd with literal argv, then frame the complete
@@ -157,26 +163,26 @@ export async function prepareProjectNativeToolchain(input: ProjectNativeToolchai
         args = ['exec', '--', '/usr/bin/env', '-0'];
         break;
       case 'devbox':
-        if (basename(configPath) !== 'devbox.json') return { status: 'refused', kind: 'unsupported', code: 'native_configuration_not_characterized' };
+        if (targetPath.basename(configPath) !== 'devbox.json') return { status: 'refused', kind: 'unsupported', code: 'native_configuration_not_characterized' };
         // Devbox 0.18.4 RunScript evals its command and double-quotes each
         // additional arg, expanding $/backticks inside them. Supply the fully
         // shell-quoted fixed probe as the command itself, with no extra args.
-        args = ['run', '--config', dirname(configPath), '--', probeCommand];
+        args = ['run', '--config', targetPath.dirname(configPath), '--', probeCommand];
         break;
       case 'devenv':
-        if (basename(configPath) !== 'devenv.nix') return { status: 'refused', kind: 'unsupported', code: 'native_configuration_not_characterized' };
-        args = ['--from', `path:${dirname(configPath)}`, 'shell', '--', ...probe];
+        if (targetPath.basename(configPath) !== 'devenv.nix') return { status: 'refused', kind: 'unsupported', code: 'native_configuration_not_characterized' };
+        args = ['--from', `path:${targetPath.dirname(configPath)}`, 'shell', '--', ...probe];
         break;
       case 'flox':
         if (!configPath.endsWith('/.flox/env/manifest.toml')) return { status: 'refused', kind: 'unsupported', code: 'native_configuration_not_characterized' };
         // Direct exec skips Flox profiles. Shell-command activation includes
         // common/bash profiles; select the installed, characterized Linux shell.
         envInput.FLOX_SHELL = '/bin/bash';
-        args = ['activate', '--dir', dirname(dirname(dirname(configPath))), '--no-start-services', '-c', probeCommand];
+        args = ['activate', '--dir', targetPath.dirname(targetPath.dirname(targetPath.dirname(configPath))), '--no-start-services', '-c', probeCommand];
         break;
       case 'nix_flake':
-        if (basename(configPath) !== 'flake.nix') return { status: 'refused', kind: 'unsupported', code: 'native_configuration_not_characterized' };
-        args = ['--extra-experimental-features', 'nix-command flakes', 'develop', `path:${dirname(configPath)}`, '--command', ...probe];
+        if (targetPath.basename(configPath) !== 'flake.nix') return { status: 'refused', kind: 'unsupported', code: 'native_configuration_not_characterized' };
+        args = ['--extra-experimental-features', 'nix-command flakes', 'develop', `path:${targetPath.dirname(configPath)}`, '--command', ...probe];
         break;
     }
     const output = await input.io.run({

@@ -3157,6 +3157,17 @@ editor or the complete live journey has been verified.
 
 #### Machine setup and bootstrap ownership
 
+In 0.3 development, controller-held, unenrolled targets use
+`apps/cli/src/machines/setup/boundMachineSetup.ts#applyBoundMachineSetup`.
+It runs the existing Setup interpreter with the controller's admitted operation,
+target environment and tool resolver. The bound transport supplies
+commands and configuration writes; no target daemon or terminal is required.
+The controller selects the target principal and administrator permission before
+this stage. Nested recipe and script steps inherit that decision. Existing
+Setup progress and typed failures remain available to the containing operation
+for Retry; the caller publishes Ready only after Setup succeeds. Happier CLI
+installation remains with the managed guest CLI supplier, separate from Setup.
+
 Enrollment is a bootstrap flow owned by
 `packages/cli-common/src/systemTasks/flows/enrollMachineFlow.ts#runEnrollMachineFlow`
 and its executor adapters. It configures the Home connection, authenticates and
