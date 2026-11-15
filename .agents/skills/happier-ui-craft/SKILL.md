@@ -30,6 +30,10 @@ means the owner's value; never copy a number from this file into a component.
 5. **What happens while it loads, when it fails, offline, empty, and on a phone?** Decide these now;
    they are part of the design, not polish.
 
+## Presentation continuity
+
+Apply apps/ui/AGENTS.md's stable component topology rule across pane, dialog, anchored popover and phone sheet presentations. Keep one mounted input or operation body through `useRetainedPlacement` in `apps/ui/sources/modal/components/RetainedModalFrame.tsx` (a0fcf7f04db, 0c74336595a).
+
 ## Core taste rules
 
 These keep a surface correct. What makes it feel premium and alive rather than bland is in

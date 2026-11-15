@@ -94,13 +94,13 @@ When more than 1,000 paths exist and no prior campaign-level sizing preference i
 
 Split a file by hunk when its changes serve different intents. Do not force an entire mixed file into the first convenient group.
 
-Every commit must type-resolve at its own resulting tree for each package it touches. CI builds every package at the pushed commit, so one consumer committed without its producer fails the shared prepare gate for every later push. Therefore:
+**Producer closure before every commit.** Inspect newly referenced symbols in the selected hunks: each must exist at HEAD or be included in the same commit, including its export, registration and runtime source. Use a cheap textual check, not a compiler. A queued or unavailable entry-load never waives producer closure or counts as a pass; reuse applicable passing sentinel graphs under the existing entry-load rule. This merges the ORCH-TOP and Voice commit proposals (2026-11-15: selectWorkspaceSource, isConfigurationCurrent, Session host registration and runner bootstrap broke revision-based stacks). Therefore:
 
 - a mixed file commits only this packet's hunks, even under a WIP or whole-path authorization;
 - a consumer commits with every producer change it relies on, or stays uncommitted;
 - a producer change that removes, renames, or reshapes an export commits with the importer adaptations it forces.
 
-Module existence ("no unresolved local imports") is not enough: changed exports, signatures, and object shapes of tracked producers break the commit the same way. Prove the invariant with the check in section 7.
+Module existence ("no unresolved local imports") is not enough: inspect the referenced export, signature and object shape. Section 7's compiler check applies at the pre-push or explicitly requested exact-tree boundary, not to each lane commit.
 
 Order packets by dependency: contracts and shared owners before consumers, implementation with defining tests, migrations before cleanup, and mechanical follow-ups after behavior is established.
 
@@ -129,7 +129,7 @@ GIT_INDEX_FILE="$idx" git diff --cached
 
 Run the narrowest deciding tests appropriate to each packet. Batch compatible package-wide typechecks, builds, and broader suites once per wave rather than repeating an identical expensive check after every commit. Record which packets a shared check covers and invalidate that evidence only when later bytes touch its deciding corridor. For pre-existing behavior changes, inspect whether tests and implementation agree rather than automatically changing whichever fails. Classify failures as a real defect, test drift, harness/environment failure, external-contract change, resource saturation, or unrelated concurrent failure.
 
-Check type resolution for every packet that changes TypeScript. When committing, use the combined checker/finalizer in section 8 so the same result survives HEAD movement; do not run a separate check first. For inspection without committing, check the private tree with:
+For a pre-push coherence pass or explicitly requested exact-tree check, check type resolution on the private tree with:
 
 ```bash
 tree=$(GIT_INDEX_FILE="$idx" git write-tree)
@@ -138,7 +138,7 @@ node scripts/workspaces/checkCommitTypeCoherence.mjs --base="$head" --tree="$tre
 
 It type-checks the changed files and their direct importers as they exist in that tree, with the Microsoft compiler, and prints only diagnostics the base tree does not already have. Exit 1 means the slice is incoherent: add the missing producer or importer hunks, or drop the consumer, and rerun. It runs locally because it reads the Git object store, which worker replicas do not carry. Before a push, run it once with `--base=<remote tip> --tree=HEAD`, then pass commit ids to attribute any finding. It is a slice check, not the package typecheck: when a packet changes a barrel that other packages consume, a package's exports or tsconfig, or the check cannot run, run the touched packages' typecheck at the exact commit on a basis worktree through `hstack-exec --repo` (see `happier-remote-work`).
 
-If the user explicitly requests a WIP commit-only campaign with no tests, builds, formatters, or generators, preserve that validation posture through continuations and delegation. Skip those commands, but still require exact manifest review, `git diff --cached --check`, the type-resolution check above, blob equality, deletion and secret/size audits, hook/signing policy checks, author verification, CAS, and post-commit index/worktree reconciliation. Report the skipped checks plainly and never imply they passed.
+If the user explicitly requests a WIP commit-only campaign with no tests, builds, formatters, or generators, preserve that validation posture through continuations and delegation. Skip those commands, but still require exact manifest review, `git diff --cached --check`, producer closure, blob equality, deletion and secret/size audits, hook/signing policy checks, author verification, CAS, and post-commit index/worktree reconciliation. Report the skipped checks plainly and never imply they passed.
 
 `git commit-tree` does not run ordinary `pre-commit`, `prepare-commit-msg`, `commit-msg`, or `post-commit` hooks. Before the campaign's first commit, inspect repository hook policy and run the required hook-equivalent checks explicitly for every applicable packet and message. Preserve required signing policy rather than silently creating unsigned commits.
 
@@ -146,7 +146,7 @@ Check for accidental secrets and objects that violate the remote's file-size pol
 
 Do not claim a test or typecheck passed unless it ran. A coherent commit may proceed with a known unrelated failing check or unavailable saturated test environment only when the limitation is evidenced, unaffected, and disclosed. Do not repeatedly launch checks known to be infrastructure-blocked; continue independent packets and retry at a useful wave boundary.
 
-Use direct `node scripts/workspaces/checkCommitTypeCoherence.mjs ...` for every packet, including `--message-file` finalization. The Git-only changed-source decision keeps zero-TS packets compiler-free. For TS packets on Unix hosts, the CLI replaces itself with canonical shell admission before loading compiler modules or Git blobs, releasing its heap while queued. The re-entered checker and API launcher inherit that reservation rather than reserving a second slot. Native Windows retains its existing native API path.
+At that pre-push or exact-tree boundary, use direct `node scripts/workspaces/checkCommitTypeCoherence.mjs ...`, including `--message-file` finalization. The Git-only changed-source decision keeps zero-TS packets compiler-free. For TS packets on Unix hosts, the CLI replaces itself with canonical shell admission before loading compiler modules or Git blobs, releasing its heap while queued. The re-entered checker and API launcher inherit that reservation rather than reserving a second slot. Native Windows retains its existing native API path.
 
 ## 8. Commit from a private index
 

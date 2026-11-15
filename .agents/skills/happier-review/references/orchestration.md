@@ -8,6 +8,10 @@ Reuse the existing canonical program/boundary record; create a `.project/reviews
 
 Never read or merge sibling review workspaces unless the user explicitly placed them in scope. They may belong to concurrent agents.
 
+## Defect routing
+
+The corridor owner routes its defects. A cross-program orchestrator checks the board and routes only after ten minutes of owner silence; reuse the existing live lane rather than launch a second fix (ORCH-TOP, 2026-11-15: duplicate Create-link, backup publication and DJ24 containment lanes).
+
 ## Lane design
 
 Map the target and affected corridor before dispatch. Skip a separate cartography wave when the orchestrator can already identify coherent lanes. Use cartography only for a genuinely ambiguous or very broad surface where its output changes decomposition.

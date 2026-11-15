@@ -14,6 +14,10 @@ The CLI owns local runtime, daemon control, provider execution, authentication, 
 - `src/daemon/**` — daemon lifecycle, spawning, diagnostics, local control, and session tracking.
 - `src/integrations/**`, `src/terminal/**`, `src/ui/**`, `src/features/**`, and `src/utils/**` — package-local runtime domains.
 
+## Session scope
+
+Code running for one Session reads `sessionProcessEnvironment()` and the Session directory owner, not the shared host's `process.env`, `process.cwd()` or `os.homedir()`. Path identity uses the canonical mapping owner (`resolveSessionWorkspaceRootForMachine`) and root Path canonicalization rules. Test shared-host behavior with two concurrent Sessions whose environment and directory differ (6c0c5830329, 1047a16c4b8, 463ab03c269).
+
 ## Commands and validation
 
 Use pnpm and the package scripts. TypeScript changes require:
