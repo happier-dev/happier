@@ -1,9 +1,50 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import { z } from 'zod/mini';
+import { z as classic } from 'zod';
 import * as mini from 'zod/mini';
 import { lazyDefinition, lazyZodSchema } from './lazyZodSchema.js';
 
 describe('lazyZodSchema', () => {
+  it('preserves native deferred record-key projection for Mini schemas', () => {
+    const concrete = z.record(z.literal(1), z.string());
+    const schema = lazyZodSchema(() => concrete);
+    for (const target of ['draft-7', 'draft-2020-12'] as const) {
+      for (const io of ['input', 'output'] as const) {
+        expect(z.toJSONSchema(schema, { target, io })).toEqual(z.toJSONSchema(concrete, { target, io }));
+      }
+    }
+  });
+
+  it('preserves registered Mini schema IDs and metadata in root and repeated projections', () => {
+    const concrete = z.string().check(z.minLength(2), z.meta({
+      id: 'LazyRegisteredString', description: 'A constrained identifier',
+    }));
+    const schema = lazyZodSchema(() => concrete);
+    const parent = z.strictObject({ first: schema, repeated: z.array(schema) });
+    const expected = z.strictObject({ first: concrete, repeated: z.array(concrete) });
+    for (const target of ['draft-7', 'draft-2020-12'] as const) {
+      for (const io of ['input', 'output'] as const) {
+        expect(z.toJSONSchema(schema, { target, io })).toEqual(z.toJSONSchema(concrete, { target, io }));
+        expect(z.toJSONSchema(parent, { target, io })).toEqual(z.toJSONSchema(expected, { target, io }));
+      }
+    }
+  });
+
+  it('preserves a named refinement instead of referencing its less restrictive parent', () => {
+    const concrete = classic.string().meta({ id: 'LazyRefinementBase' }).min(2).meta({ id: 'LazyRefinementChild' });
+    const schema = lazyZodSchema(() => concrete);
+    expect(classic.toJSONSchema(classic.object({ value: schema })))
+      .toEqual(classic.toJSONSchema(classic.object({ value: concrete })));
+    expect(schema.safeParse('x').success).toBe(false);
+  });
+
+  it('preserves refinements of a named parent in draft-7 projection', () => {
+    const concrete = classic.string().meta({ id: 'LazyDraft7Base' }).min(2);
+    const schema = lazyZodSchema(() => concrete);
+    expect(classic.toJSONSchema(classic.object({ value: schema }), { target: 'draft-7' }))
+      .toEqual(classic.toJSONSchema(classic.object({ value: concrete }), { target: 'draft-7' }));
+  });
+
   it('keeps cyclic schema dependencies cold when React Fast Refresh registers exports', async () => {
     const { createRequire } = await import('node:module');
     const refresh: { register(value: unknown, id: string): void } = createRequire(import.meta.url)('react-refresh/runtime');

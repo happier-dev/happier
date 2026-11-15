@@ -94,7 +94,9 @@ class LazyDefinitionState<TSchema extends object> implements ProxyHandler<TSchem
       if (concreteSchema && this.canonicalZodIdentity && !resolvedDefinitionSources.has(concreteSchema)) {
         resolvedDefinitionSources.set(concreteSchema, this.definition);
       }
-      if (concreteSchema) {
+      // Core/Mini processors use the native walker's facade directly. Only
+      // instance-bound hooks need the scoped concrete-to-facade identity view.
+      if (concreteSchema && (!this.canonicalZodIdentity || concreteSchema._zod.processJSONSchema)) {
         // Projection processors close over the concrete instance. Construction
         // deferral is not a new schema wrapper: share its traversal identity so
         // recursive definitions and refinements do not gain extra references.
@@ -109,25 +111,43 @@ class LazyDefinitionState<TSchema extends object> implements ProxyHandler<TSchem
             context.seen.set(this.definition as unknown as core.$ZodType, context.seen.get(concreteSchema)!);
             return;
           }
-          // Native callbacks refer to their concrete constructor instance.
-          // Give that callback the facade's existing record, rather than
-          // traversing a second wrapper or processing its parent twice.
+          // Canonical schemas keep their public facade as the native walker's
+          // sole identity. Bound hooks see that same record through the concrete
+          // instance they capture, without a second ancestry/metadata walk.
           const facade = this.definition as unknown as core.$ZodType;
-          const seen = context.seen.get(facade)!;
-          const existing = context.seen.get(concreteSchema);
-          if (existing) {
-            core.process(concreteSchema, context, params);
-            context.seen.set(facade, existing);
-            return;
-          }
-          context.seen.set(concreteSchema, seen);
-          const processor = concreteSchema._zod.processJSONSchema;
-          const callbackParams = { ...params, schemaPath: [...params.schemaPath, concreteSchema] };
-          if (processor) processor(context, json, callbackParams);
-          else {
-            const fallback = context.processors[concreteSchema._zod.def.type];
-            if (!fallback) throw new Error(`[toJSONSchema]: Non-representable type encountered: ${concreteSchema._zod.def.type}`);
-            fallback(concreteSchema, context, json, callbackParams);
+          const records = new Set<core.Seen>();
+          const trackRecord = (record: core.Seen | undefined) => {
+            if (record) records.add(record);
+            return record;
+          };
+          const nativeSeen = context.seen;
+          const seen = new Proxy(nativeSeen, {
+            get: (target, field) => {
+              const translate = (schema: core.$ZodType) => schema === concreteSchema ? facade : schema;
+              if (field === 'get') return (schema: core.$ZodType) => trackRecord(target.get(translate(schema)));
+              if (field === 'has') return (schema: core.$ZodType) => target.has(translate(schema));
+              if (field === 'set') return (schema: core.$ZodType, entry: core.Seen) => {
+                target.set(translate(schema), trackRecord(entry)!);
+                return seen;
+              };
+              if (field === 'delete') return (schema: core.$ZodType) => target.delete(translate(schema));
+              const value: unknown = Reflect.get(target, field, target);
+              return typeof value === 'function' ? value.bind(target) : value;
+            },
+          });
+          context.seen = seen;
+          try {
+            trackRecord(nativeSeen.get(facade));
+            concreteSchema._zod.processJSONSchema!(context, json, {
+              ...params, schemaPath: [...params.schemaPath, concreteSchema],
+            });
+          } finally {
+            context.seen = nativeSeen;
+            // Native hooks settle refs synchronously; the finalizer must read
+            // facade edges without replacing records held by reentrant hooks.
+            for (const record of records) {
+              if (record.ref === concreteSchema) record.ref = facade;
+            }
           }
         };
         descriptors._zod = {
