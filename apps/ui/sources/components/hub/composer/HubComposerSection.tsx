@@ -56,13 +56,18 @@ export const HubComposerSection = React.memo(function HubComposerSection(props: 
     const docked = useNewSessionShellHost()?.visible === true;
     // Measured while the composer stands here, so the place it leaves keeps its height.
     const composerHeight = React.useRef<number | undefined>(undefined);
-    // Home shares the ordinary draft with /new. A retained pane or a covered
-    // native screen must release its composer, including its local attachment
-    // controller, before the visible route takes that draft.
-    if (!destinationVisible || !screenFocused) return null;
-    return docked
-        ? <HubComposerHeld {...props} height={composerHeight.current} />
-        : <HubComposerSectionContent {...props} composerHeight={composerHeight} />;
+    // Home shares the ordinary draft with /new. A retained pane releases its composer, including its local
+    // attachment controller, before the visible route takes that draft; the dock takes it through `docked`.
+    // A page that only covers Home's screen (Settings, a Session) takes no draft: the composer stays mounted
+    // and hidden, its effects withdrawn, so a return neither rebuilds it nor re-asks what it already holds.
+    if (!destinationVisible) return null;
+    return (
+        <React.Activity mode={screenFocused ? 'visible' : 'hidden'}>
+            {docked
+                ? <HubComposerHeld {...props} height={composerHeight.current} />
+                : <HubComposerSectionContent {...props} composerHeight={composerHeight} />}
+        </React.Activity>
+    );
 });
 
 type HubComposerFill = (suggestion: HomeComposerSuggestionFill) => void;

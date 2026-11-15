@@ -55,7 +55,6 @@ import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { useHeaderHeight } from '@/utils/platform/responsive';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
-import { sync } from '@/sync/sync';
 import { getTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
 import { navigateWithBlurOnWeb } from '@/utils/platform/deferOnWeb';
 import {
@@ -65,7 +64,6 @@ import {
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
 import { readBackendNewSessionOptionStateByTargetKey, type BackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 import { Modal } from '@/modal';
 import { useTeamCredentialSelectionCoordinator } from '@/components/sessions/teamCredentials/useTeamCredentialSelectionCoordinator';
 import {
@@ -1028,17 +1026,9 @@ export function useNewSessionScreenModel(input?: Readonly<{
 
     useFocusEffect(
         React.useCallback(() => {
+            // A newly registered Machine arrives by push (`new-machine`, or the resume census after a lost
+            // socket), so focus reads no Machine list; the picker's manual refresh stays for a person's retry.
             setLoadedScopedPersistedDraft(loadScopedNewSessionDraft());
-            // Ensure newly-registered machines show up without requiring an app restart.
-            // Throttled to avoid spamming the server when navigating back/forth.
-            // Defer until after interactions so the screen feels instant on iOS;
-            // the timeout fallback guarantees the refresh still runs when
-            // interactions never settle (hang class).
-            // Freshness is judged at focus, not when interactions finally settle.
-            const focusedAt = Date.now();
-            runAfterInteractionsWithFallback(() => {
-                fireAndForget(sync.refreshMachinesThrottled({ staleMs: 15_000, asOf: focusedAt }), { tag: 'NewSessionScreenModel.refreshMachinesThrottled.focus' });
-            });
         }, [loadScopedNewSessionDraft, setLoadedScopedPersistedDraft])
     );
 

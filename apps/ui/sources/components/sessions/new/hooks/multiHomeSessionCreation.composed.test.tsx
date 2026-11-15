@@ -56,6 +56,8 @@ const modalBoundary = vi.hoisted(() => ({
     show: vi.fn((_params: unknown) => 'composed-modal'),
 }));
 const observabilityBoundary = vi.hoisted(() => ({ capture: vi.fn() }));
+// Native screen focus (React Navigation) is a platform boundary; tests that cover a Home screen move it.
+const screenFocusBoundary = vi.hoisted(() => ({ focused: true }));
 const routeBoundary = vi.hoisted(() => ({
     params: {} as Record<string, string | undefined>,
     push: vi.fn(),
@@ -123,7 +125,7 @@ vi.mock('@react-navigation/native', async (importOriginal) => {
     return {
         ...await importOriginal<typeof import('@react-navigation/native')>(),
         useFocusEffect: (effect: () => void | (() => void)) => React.useEffect(effect, [effect]),
-        useIsFocused: () => true,
+        useIsFocused: () => screenFocusBoundary.focused,
     };
 });
 vi.mock('@/utils/system/sentry', async (importOriginal) => ({
@@ -1220,6 +1222,90 @@ describe('multi-Home Session creation composition', () => {
             expect(screen.root.findByType(AgentInput).props.attachmentRowItems).toEqual([]);
             expect(getSessionDraftSnapshot(scope, address)).toBeNull();
         } finally { await screen.unmount(); }
+    });
+
+    it('keeps the Home composer mounted while a page covers its screen and back again', async () => {
+        const coreHttp = await createDraftSurfaceCoreHttpBoundary();
+        sessionHttpBoundary = async url => coreHttp(new URL(url).pathname);
+        ({ homeA, homeAScopeId, homeAToken } = await arrangeFocusedHomeA('covered-composer', { applyConnectionManager: true }));
+        const { HubComposerSection } = await import('@/components/hub/composer/HubComposerSection');
+        const { DestinationInstanceContext } = await import('@/components/appShell/workspace/destinationInstanceContext');
+        const { NavigationContext } = await import('@react-navigation/native');
+        const { NewSessionComposerCard } = await import('../components/NewSessionComposerCard');
+        const navigation = { push: routeBoundary.push, replace: routeBoundary.replace, back: () => {} };
+        // A covering page changes only native screen focus; the Home destination stays visible beneath it.
+        const element = (screenFocused: boolean) => {
+            screenFocusBoundary.focused = screenFocused;
+            const screenNavigation = { isFocused: () => screenFocusBoundary.focused } as unknown as React.ContextType<typeof NavigationContext>;
+            return <InjectedAuthProvider credentials={{ token: homeAToken }}>
+                <NavigationContext.Provider value={screenNavigation}>
+                    <DestinationInstanceContext.Provider value={{ tabId: 'home', ref: { kind: 'home', params: {} }, pathname: '/', focused: true, isFocused: () => true, visible: true, navigation }}>
+                        <HubComposerSection suggestions="tiles" />
+                    </DestinationInstanceContext.Provider>
+                </NavigationContext.Provider>
+            </InjectedAuthProvider>;
+        };
+        const screen = await renderScreen(element(true));
+        try {
+            await vi.waitFor(() => expect(screen.root.findAllByType(NewSessionComposerCard)).toHaveLength(1));
+            const composer = screen.root.findByType(NewSessionComposerCard);
+            let rebuilt = 0;
+            for (let index = 0; index < 3; index += 1) {
+                await screen.update(element(false));
+                await screen.update(element(true));
+                await flushHookEffects();
+                const shown = screen.root.findAllByType(NewSessionComposerCard);
+                expect(shown).toHaveLength(1);
+                if (shown[0] !== composer) rebuilt += 1;
+            }
+            expect(rebuilt).toBe(0);
+        } finally {
+            screenFocusBoundary.focused = true;
+            await screen.unmount();
+        }
+    });
+
+    it('reads no Machine census when the Home composer regains focus; Machine changes arrive by push', async () => {
+        const coreHttp = await createDraftSurfaceCoreHttpBoundary();
+        let censusReads = 0;
+        sessionHttpBoundary = async url => {
+            const path = new URL(url).pathname;
+            if (path === '/v1/machines') { censusReads += 1; return null; }
+            return coreHttp(path);
+        };
+        ({ homeA, homeAScopeId, homeAToken } = await arrangeFocusedHomeA('census-focus', { applyConnectionManager: true }));
+        const { HubComposerSection } = await import('@/components/hub/composer/HubComposerSection');
+        const { DestinationInstanceContext } = await import('@/components/appShell/workspace/destinationInstanceContext');
+        const { AgentInput } = await import('@/components/sessions/agentInput');
+        const navigation = { push: routeBoundary.push, replace: routeBoundary.replace, back: () => {} };
+        // Native screen focus is the navigation boundary this file doubles: a return to Home is modelled by
+        // the composer leaving and standing again, which runs its focus effects as a real return does.
+        const element = (shown: boolean) => <InjectedAuthProvider credentials={{ token: homeAToken }}>
+            <DestinationInstanceContext.Provider value={{ tabId: 'home', ref: { kind: 'home', params: {} }, pathname: '/', focused: true, isFocused: () => true, visible: true, navigation }}>
+                {shown ? <HubComposerSection suggestions="tiles" /> : null}
+            </DestinationInstanceContext.Provider>
+        </InjectedAuthProvider>;
+        // Each return comes well after any staleness window: the clock is the only boundary moved.
+        const realNow = Date.now.bind(Date);
+        let offsetMs = 0;
+        const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offsetMs);
+        const screen = await renderScreen(element(true));
+        try {
+            await vi.waitFor(() => expect(screen.root.findAllByType(AgentInput)).toHaveLength(1));
+            await flushHookEffects();
+            const settled = censusReads;
+            for (let index = 0; index < 3; index += 1) {
+                offsetMs += 60_000;
+                await screen.update(element(false));
+                await screen.update(element(true));
+                await flushHookEffects();
+                await act(async () => { await new Promise<void>(resolve => setImmediate(resolve)); });
+            }
+            expect(censusReads - settled).toBe(0);
+        } finally {
+            clock.mockRestore();
+            await screen.unmount();
+        }
     });
 
     it.each(['disabled', 'waived', 'defaultApproved', 'defaultRejected', 'retargeted', 'pointerChanged'] as const)('routes the composer delete through the %s Action policy', async policy => {
