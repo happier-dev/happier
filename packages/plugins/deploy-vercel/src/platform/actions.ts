@@ -1,10 +1,11 @@
 import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs, DeploymentTargetRoleResultV1ProtocolSchema as output,
-  PluginError, type DeploymentTargetDeployInputV1, type DeploymentTargetObserveInputV1, type DeploymentTargetCancelInputV1, type DeploymentTargetRollbackInputV1, type DeploymentTargetRoleResultV1,
+  PluginError, type DeploymentTargetDeployInputV1, type DeploymentTargetObserveInputV1, type DeploymentTargetCancelInputV1, type DeploymentTargetRollbackInputV1, type DeploymentTargetTeardownInputV1, type DeploymentTargetRoleResultV1,
   type DeploymentTargetRoleFailureV1, type JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { cancelVercelDeployment, deployVercelCommit, observeVercelDeployment } from './operations.js';
 import { changeVercelTraffic, observeVercelTraffic } from './traffic.js';
+import { observeVercelTeardown, teardownVercelProject } from './teardown.js';
 
 const common = { execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
   scopes: ['global'], surfaces: ['cli', 'plugin'], placementBindings: [],
@@ -23,10 +24,12 @@ function result(outcome: DeploymentTargetRoleResultV1 | DeploymentTargetRoleFail
 async function deploy(input: DeploymentTargetDeployInputV1, ctx: PluginAccountActionContext) {
   const io = context(ctx);
   if (input.providerDeploymentId) return result(await observeVercelDeployment(input, io));
-  if (!input.preparedNative || !input.repositoryAccess) throw new PluginError({ code: 'deployment_content_unavailable' });
+  if (!input.preparedNative) throw new PluginError({ code: 'deployment_content_unavailable' });
   if ('scriptName' in input.providerEnvironment) throw new PluginError({ code: 'unsupported_action' });
+  // Repository access is the commit producer's decision: a link without it settles as needsGitAccess.
   return result(await deployVercelCommit({ providerIdentity: input.providerIdentity,
-    providerEnvironment: input.providerEnvironment, repositoryAccess: input.repositoryAccess,
+    providerEnvironment: input.providerEnvironment,
+    ...(input.repositoryAccess ? { repositoryAccess: input.repositoryAccess } : {}),
     ...input.preparedNative, sourceIntent: input.sourceIntent }, io));
 }
 export const lifecycleActions = {
@@ -39,6 +42,7 @@ export const lifecycleActions = {
     inputSchema: inputs.observe.jsonSchema,
     run: async (input: JsonValue, ctx: PluginAccountActionContext) => {
       const selection = input as unknown as DeploymentTargetObserveInputV1;
+      if (selection.operation === 'teardown') return observeVercelTeardown(selection, context(ctx));
       return selection.operation === 'promote' || selection.operation === 'rollback'
         ? observeVercelTraffic(selection, selection.operation, context(ctx))
         : result(await observeVercelDeployment(selection, context(ctx)));
@@ -49,6 +53,9 @@ export const lifecycleActions = {
   rollback: { ...common, title: 'Restore the selected Vercel deployment', dangerLevel: 'writesRemote', readOnly: false,
     confirmation: { title: 'Restore production traffic to this Vercel deployment?' }, inputSchema: inputs.rollback.jsonSchema,
     run: (input: JsonValue, ctx: PluginAccountActionContext) => changeVercelTraffic(input as unknown as DeploymentTargetRollbackInputV1, 'rollback', context(ctx)) },
+  teardown: { ...common, title: 'Delete the selected Vercel project', dangerLevel: 'writesRemote', readOnly: false,
+    confirmation: { title: 'Delete this Vercel project and its deployments?' }, inputSchema: inputs.teardown.jsonSchema,
+    run: (input: JsonValue, ctx: PluginAccountActionContext) => teardownVercelProject(input as unknown as DeploymentTargetTeardownInputV1, context(ctx)) },
   cancel: { ...common, title: 'Cancel the selected Vercel deployment', dangerLevel: 'writesRemote', readOnly: false,
     confirmation: { title: 'Cancel this Vercel deployment?' },
     inputSchema: inputs.cancel.jsonSchema,
