@@ -77,9 +77,10 @@ async function withColdNativeLogTarget<T>(input: MachineServiceTargetInput,
     }, { agentIsolation: null, signal });
     const tuple = launch;
     const env = Object.fromEntries(Object.entries(tuple.env ?? {}).filter((entry): entry is [string, string] => entry[1] !== undefined));
-    const run = (args: readonly string[], readSignal?: AbortSignal) => runtime.nativeIo.run({
+    const run = (args: readonly string[], readSignal?: AbortSignal,
+      capture?: Parameters<Parameters<typeof nativeLogs.readNativeComposeLogsForHost>[0]['run']>[2]) => runtime.nativeIo.run({
       command: tuple.command, args: [...tuple.args, ...args], cwd: tuple.cwd!, env,
-      signal: readSignal ?? signal,
+      signal: readSignal ?? signal, ...capture,
     });
     const targets = await readColdNativeComposeTargetsForHost({ ...identity, composeServices: [composeService], run });
     const target = targets?.[0];

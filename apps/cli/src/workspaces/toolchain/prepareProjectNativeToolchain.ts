@@ -19,9 +19,14 @@ export type ProjectNativeToolchainIo = Readonly<{
   run: (request: Readonly<{ command: string; args: readonly string[]; cwd: string; env: Readonly<Record<string, string>>; signal?: AbortSignal;
     /** Host-owned native config input; existing supervisor owns byte custody. */
     stdin?: Uint8Array;
+    /** Finite host readers may retain the settled bounded prefix and its incompleteness fact. */
+    allowTruncatedStdout?: true;
+    /** Existing process capture selection; streaming readers own their result projection. */
+    maxStdoutBytes?: number;
+    maxStderrBytes?: number;
     /** Host-only stage capture; the supervisor sanitizes before this sink or its result buffers. */
     output?: Readonly<{ redaction: ProviderRedactionLease; onChunk(stream: 'stdout' | 'stderr', chunk: Uint8Array): void }>;
-  }>) => Promise<Readonly<{ exitCode: number; stdout: string; stderr?: string }>>;
+  }>) => Promise<Readonly<{ exitCode: number; stdout: string; stderr?: string; stdoutTruncated?: boolean }>>;
 }>;
 
 export type ProjectNativeToolchainResult =

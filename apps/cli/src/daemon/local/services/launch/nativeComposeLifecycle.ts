@@ -1,4 +1,6 @@
 import { classifyNativeComposeFailure } from './nativeComposeFailure';
+import { readNativeComposeLogsForHost } from './nativeComposeLogs';
+export { readNativeComposeLogsForHost } from './nativeComposeLogs';
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { SQLITE_RUNTIME_V1 } from '@happier-dev/deployments';
 import type { ManagedServiceNativeObservationV1 } from '@happier-dev/plugin-sdk/managed-services';
@@ -11,8 +13,6 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
 import { authorizePluginExecLaunchForHost, type HostAuthorizedPluginExecLaunch } from '@/plugins/runtime/invocation/services/exec';
 import { createProviderRedactionLease, type ProviderRedactionLease } from '@/providers/spawn/redaction';
-import type { ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol';
-import type { ManagedServiceNativeLogReadForHost } from '@/plugins/runtime/invocation/services/managedServiceNativeLogs';
 import type { ProjectBuiltinNativeLifecycle, ProjectNativeContainerObservation, ProjectNativeAccountingResult, ProjectNativeRuntimeFacts, ProjectNativeStageOutput } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
 import type { ProjectNativeToolchainIo } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
 import type { DeploymentImageV1, OwnServerDeploymentInputBasisV1, OwnServerDeploymentSourceV1 } from '@happier-dev/deployment-protocol';
@@ -343,58 +343,6 @@ export function readNativeComposeLogTargetForHost(input: Readonly<{
         project: first.row.composeProject, containerIds: selected.map(({ row }) => row.id) };
 }
 
-/** Warm and cold readers share the same generation page and masking owner. */
-export async function readNativeComposeLogsForHost(input: Readonly<{
-    containerIds: readonly string[];
-    observedIds?: readonly string[];
-    environment?: boolean;
-    redactionLease?: Pick<ProviderRedactionLease, 'isActive' | 'redact'>;
-    redactionComplete?: boolean;
-    run(args: readonly string[], signal?: AbortSignal): Promise<Readonly<{ exitCode: number | null; stdout: string; stderr?: string }>>;
-}>, options: ManagedServiceNativeLogReadForHost): Promise<ManagedServiceNativeLogResultV1> {
-    const assertRedaction = () => {
-        const missingOriginalMasking = Boolean((input.environment || input.redactionLease) && !input.redactionLease?.isActive());
-        const incomplete = input.redactionComplete === false || missingOriginalMasking;
-        if (incomplete && !options.allowIncompleteSecretMasking) {
-            throw new PluginError({ code: 'secret_redaction_unavailable',
-                message: missingOriginalMasking ? 'Redeploy the Environment to restore service log secret masking'
-                    : 'Service log secret masking is unavailable',
-                ...(missingOriginalMasking ? {
-                    details: { reason: 'secret_redaction_redeploy_required', remedy: 'redeploy_environment', retryable: false },
-                    failureCause: { phase: 'service.logs.redaction', errorClass: 'Error',
-                        errorCode: 'secret_redaction_redeploy_required', httpStatus: null },
-                } : {}),
-            });
-        }
-        return incomplete;
-    };
-    options.signal?.throwIfAborted();
-    assertRedaction();
-    if (!input.containerIds.length) return { kind: 'unavailable', reason: 'admission_unavailable' };
-    const sourceRevision = JSON.stringify([...input.containerIds].sort());
-    const observedRevision = input.observedIds ? JSON.stringify([...input.observedIds].sort()) : sourceRevision;
-    if (observedRevision !== sourceRevision || options.cursor && options.cursor.sourceRevision !== sourceRevision) {
-        return { kind: 'source-changed', sourceRevision: observedRevision };
-    }
-    const output: string[] = [];
-    for (const id of input.containerIds) {
-        // Docker tails by lines; the existing diagnostic byte budget bounds
-        // that upstream window without rediscovering the admitted instances.
-        const result = await input.run(['logs', '--tail', String(options.maxBytes), id], options.signal);
-        if (result.exitCode !== 0) return { kind: 'unavailable', reason: 'unavailable' };
-        output.push(result.stdout + (result.stderr ?? ''));
-    }
-    options.signal?.throwIfAborted();
-    const incomplete = assertRedaction();
-    const raw = output.join('\n');
-    const masked = input.redactionLease?.isActive() ? input.redactionLease.redact(raw) : raw;
-    const bytes = Buffer.from(masked, 'utf8');
-    return { kind: 'page', page: { sourceRevision,
-        text: new TextDecoder('utf-8').decode(bytes.subarray(0, options.maxBytes), { stream: true }),
-        nextCursor: null, truncated: bytes.byteLength > options.maxBytes,
-        ...(incomplete ? { secretMasking: 'incomplete' as const } : {}) } };
-}
-
 function endpoint(rows: readonly Container[]): string | null {
     const ports = new Map<number, Set<string>>();
     for (const row of rows) for (const [containerPort, publishers] of Object.entries(row.ports)) {
@@ -465,17 +413,18 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
     let runtimeFacts: ProjectNativeRuntimeFacts = { configuration: input.environment?.facts?.configuration ?? null,
         observedAt: null, freshness: 'unavailable' };
     const imageProofs = new Map(input.environment?.facts?.containerImages.map(image => [image.id, image]));
-    const run = async (args: readonly string[], signal?: AbortSignal, stageOutput?: ProjectNativeStageOutput,
-        inputBytes?: Uint8Array, allowTruncatedStdout?: true) => {
+    const run = async (args: readonly string[], signal?: AbortSignal,
+        options?: Omit<Parameters<ProjectNativeToolchainIo['run']>[0], 'command' | 'args' | 'cwd' | 'env' | 'signal'>
+            & Readonly<{ stageOutput?: ProjectNativeStageOutput }>) => {
         if (!launch?.cwd) throw new Error('native_service_admission_required');
+        const { stageOutput, ...capture } = options ?? {};
         const env: Record<string, string> = {};
         for (const [key, value] of Object.entries(launch.env ?? {})) if (value !== undefined) env[key] = value;
         if (stageOutput && !launch.secretRedactionLease?.isActive()) {
             throw new PluginError({ code: 'secret_redaction_unavailable', message: 'Native effect output custody is unavailable' });
         }
         const output = await input.io.run({ command: launch.command, args: [...prefix, ...args], cwd: launch.cwd, env,
-            ...(signal ? { signal } : {}), ...(inputBytes ? { stdin: inputBytes } : {}),
-            ...(allowTruncatedStdout ? { allowTruncatedStdout } : {}), ...(stageOutput ? { output: { redaction: launch.secretRedactionLease!,
+            ...(signal ? { signal } : {}), ...capture, ...(stageOutput ? { output: { redaction: launch.secretRedactionLease!,
                 onChunk: stageOutput.appendRedacted } } : {}) });
         stageOutput?.assertWritten();
         return output;
@@ -633,7 +582,8 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
                 cwd: launch.cwd, env, signal: options?.signal });
             if (current.id !== engineId) throw new PluginError({ code: 'service_unavailable', message: 'The native generation engine changed' });
             return { engineId, engineKind: current.kind, run: (args, signal, inputBytes, options) =>
-                run(args, signal, undefined, inputBytes, options?.allowTruncatedStdout) };
+                run(args, signal, { ...(inputBytes ? { stdin: inputBytes } : {}),
+                    ...(options?.allowTruncatedStdout ? { allowTruncatedStdout: true } : {}) }) };
         },
         nativeInstances() {
             if (!engineId) return undefined;
@@ -767,7 +717,8 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
                 const current = await readRemoval(options?.signal);
                 if (!current) return { status: 'termination_incomplete' as const };
                 if (current.length && !await removeWitnessedProjectResources({ ids: current.map(row => row.id), project, services: [target],
-                    run: args => run(args, options?.signal, args[0] === 'container' && args[1] === 'rm' ? options?.stageOutput : undefined) })) return { status: 'termination_incomplete' as const };
+                    run: args => run(args, options?.signal, args[0] === 'container' && args[1] === 'rm' && options?.stageOutput
+                        ? { stageOutput: options.stageOutput } : undefined) })) return { status: 'termination_incomplete' as const };
                 if (!current.length && await removeUnusedNativeComposeNetworks({ projects: [project],
                     run: args => run(args, options?.signal) }) !== null) return { status: 'termination_incomplete' as const };
                 if ((await readRemoval(options?.signal))?.length !== 0) {

@@ -6,7 +6,7 @@ import { projectLocalServiceProcessFacts } from '@/processes/census/projectLocal
 export type DarwinExecFileBoundary = (
     command: string,
     args: readonly string[],
-    options: Readonly<{ timeout: number; maxBuffer: number; env?: NodeJS.ProcessEnv }>,
+    options: Readonly<{ maxBuffer: number; env?: NodeJS.ProcessEnv }>,
 ) => Promise<Readonly<{ stdout: string | Buffer }>>;
 
 export type DarwinLocalServiceScanResult = Readonly<{
@@ -94,8 +94,7 @@ async function readDarwinTcpListenOutput(
 ): Promise<Readonly<{ output: string; degraded: boolean }>> {
     try {
         const result = await execFile('lsof', ['-nP', '-iTCP', '-F', 'pcfnT'], {
-            timeout: 2_000,
-            maxBuffer: 1024 * 1024,
+            maxBuffer: Number.POSITIVE_INFINITY,
         });
         return { output: stdoutTextFromExecFileResult(result), degraded: false };
     } catch (error) {

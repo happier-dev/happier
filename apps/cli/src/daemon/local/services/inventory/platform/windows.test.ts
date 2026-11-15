@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs/promises';
+import { execFileWithDeadline } from '@happier-dev/cli-common/process';
 import { installLocalServiceCensusFixture } from './censusFixture.testkit';
 import { parseWindowsNetstatTcpListeners, readWindowsLocalServiceListeners } from './windows';
 
@@ -65,6 +66,28 @@ describe('parseWindowsNetstatTcpListeners', () => {
 
 
 describe('Windows local services census projection', () => {
+    it('retains complete listener output beyond the former scan time and output ceilings', async () => {
+        const result = await readWindowsLocalServiceListeners({
+            // Replace only the unavailable OS command; retain the real process/output boundary.
+            execFile: async (_command, _args, options) => execFileWithDeadline(process.execPath, ['-e',
+                "const sockets = Array.from({ length: 25_000 }, (_, i) => 'TCP 127.0.0.1:5174 127.0.0.1:' + (i + 10_000) + ' ESTABLISHED 1234\\n').join(''); setTimeout(() => process.stdout.write(sockets + 'TCP 127.0.0.1:5173 0.0.0.0:0 LISTENING 1234'), 2100)",
+            ], options),
+            includeProcessFacts: false,
+        });
+        expect(result.listeners).toEqual([expect.objectContaining({ pid: 1234, port: 5173 })]);
+        expect(result.diagnostics).toEqual([]);
+    });
+    it('retains partial listeners while refusing a false zero client count on command failure', async () => {
+        const result = await readWindowsLocalServiceListeners({
+            execFile: async () => { throw Object.assign(new Error('private secret'), {
+                stdout: Buffer.from('TCP 127.0.0.1:5173 0.0.0.0:0 LISTENING 1234'),
+            }); },
+            includeProcessFacts: false,
+        });
+        expect(result.listeners).toEqual([expect.objectContaining({ pid: 1234, port: 5173, establishedConnections: null })]);
+        expect(result.diagnostics.map(item => item.code)).toEqual(['windows_netstat_scan_partial']);
+        expect(JSON.stringify(result.diagnostics)).not.toContain('private secret');
+    });
     it('defers process census for listener-only demand without losing its later detailed observation', async () => {
         const opened = vi.spyOn(fs, 'open');
         const result = await readWindowsLocalServiceListeners({ execFile: async () => ({

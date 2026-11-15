@@ -153,15 +153,14 @@ pub(crate) const CONSUMER_CHANNEL_CAPACITY: usize = 16;
 pub(crate) const MAX_PENDING_HANDSHAKES: usize = CONSUMER_CHANNEL_CAPACITY * ALPN_SLOT_COUNT;
 
 /// The bounded window in which an incoming connection must stop being
-/// pre-application work: it must complete its handshake, reach its consumer, and
-/// open its first application stream within it.
+/// pre-application work: handshake/consumer hand-over and first-stream arrival
+/// each use this duration for their own phase.
 ///
-/// It is the connection-level counterpart of the control budget the stream
-/// boundary already applies (`PREAMBLE_READ_TIMEOUT`, `MACHINE_CONTROL_TIMEOUT`)
-/// and exists because the transport layer will not do this for us: the
-/// `HomeInteractive` profile deliberately disables the QUIC idle timeout so
-/// long-lived Socket.IO owns its own liveness, which also means a connection
-/// that never does application work is never reclaimed by an idle timer.
+/// It is separate from the control budget the stream boundary applies
+/// (`PREAMBLE_READ_TIMEOUT`, `MACHINE_CONTROL_TIMEOUT`). Both transport profiles
+/// retain upstream QUIC keepalive and idle detection. A live peer can keep its
+/// transport active without opening an application stream, so transport idle
+/// detection does not replace this pre-application custody boundary.
 ///
 /// The Home supervisor probes its loopback origin before publication. Machine
 /// listeners may outlive an unused connection: their initiator replaces a closed
@@ -883,9 +882,9 @@ fn spawn_incoming_dispatcher(endpoint: iroh::Endpoint, state: Arc<DispatcherStat
 ///
 /// The phase runs inside [`PRE_APPLICATION_CUSTODY_TIMEOUT`], so a peer that
 /// stalls its handshake releases its place instead of holding it indefinitely.
-/// The transport layer cannot do this: the `HomeInteractive` profile disables
-/// the QUIC idle timeout, and a peer's idle timeout is only negotiated once the
-/// handshake it is stalling has delivered its transport parameters.
+/// The same phase also includes a potentially stalled consumer hand-over;
+/// transport idle detection does not measure whether the application consumer
+/// has accepted the connection.
 #[cfg(not(target_arch = "wasm32"))]
 async fn dispatch_handshake(
     accepting: iroh::endpoint::Accepting,
@@ -945,8 +944,9 @@ async fn dispatch_handshake(
 ///
 /// This bounds only the *arrival* of the first stream. Whether that stream is
 /// valid stays with the per-stream preamble/control owners, and once it exists
-/// the connection keeps its existing long-lived semantics: there is deliberately
-/// no connection-wide idle timeout for Socket.IO and Mutagen to trip over.
+/// the connection keeps its existing long-lived semantics. This application
+/// deadline no longer applies; upstream QUIC keepalive and idle detection remain
+/// active.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) async fn accept_first_application_stream(
     connection: &iroh::endpoint::Connection,

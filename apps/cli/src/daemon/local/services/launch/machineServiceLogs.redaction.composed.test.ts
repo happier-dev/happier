@@ -77,7 +77,12 @@ it.each([
         const native = createNativeComposeLifecycle({ args: ['compose', '--project-name', 'restored'], engineId: 'restored-engine',
             environment: { composeService: 'web', containerIds: [id] }, io: {
             async events() { return { async dispose() {} }; }, async run(request) {
-                if (request.args.includes('logs')) { nativeLogReads++; return { exitCode: 0, stdout: 'synthetic-private-log-value\n' }; }
+                if (request.args.includes('logs')) {
+                    nativeLogReads++;
+                    const text = 'synthetic-private-log-value\n';
+                    request.output?.onChunk('stdout', Buffer.from(request.output.redaction.redact(text)));
+                    return { exitCode: 0, stdout: request.output ? '' : text };
+                }
                 if (request.args.includes('info')) return { exitCode: 0, stdout: JSON.stringify({ ID: 'restored-engine' }) };
                 return { exitCode: 0, stdout: request.args.includes('ps') ? id
                     : JSON.stringify([{ Id: id, State: { Status: 'running' }, Config: { Labels: {

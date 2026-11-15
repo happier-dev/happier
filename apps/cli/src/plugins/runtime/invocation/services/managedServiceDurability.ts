@@ -36,9 +36,6 @@ import {
     resolveProcessCustodyRuntimeExecutable,
 } from '@/subprocess/supervision/processCustody';
 import {
-    MANAGED_SERVICE_NUMERIC_CONTRACT,
-} from './managedServiceSpecNormalization';
-import {
     ensureProtectedLocalStateDirectory,
 } from '@/utils/fs/protectedLocalState';
 import { probeProcessLiveness } from '@happier-dev/cli-common/process';
@@ -590,13 +587,10 @@ export function createManagedServiceDurabilityOwner(params: Readonly<{
         if (
             !Number.isSafeInteger(keepCount)
             || keepCount < 1
-            || keepCount
-                > MANAGED_SERVICE_NUMERIC_CONTRACT
-                    .durableLogKeepCount.maximum
         ) {
             return fail(
                 'plugin_managed_server_log_keep_count_invalid',
-                'Managed server durable-log keep count must be between 1 and 50',
+                'Managed server durable-log keep count must be a positive safe integer',
             );
         }
         let truncationReported = false;

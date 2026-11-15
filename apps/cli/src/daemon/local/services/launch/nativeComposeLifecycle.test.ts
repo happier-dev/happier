@@ -17,6 +17,13 @@ import { createProviderRedactionLease } from '@/providers/spawn/redaction';
 import { canReadIncompleteSecretMaskingForHost } from '@/plugins/runtime/invocation/services/managedServiceNativeLogs';
 import type { ProjectNativeToolchainIo } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
 
+// Mirror the genuine process boundary: streamed output is sanitized before
+// reaching its sink and is independent of the optional process result buffer.
+function dockerLogOutput(request: Parameters<ProjectNativeToolchainIo['run']>[0], text: string) {
+    request.output?.onChunk('stdout', Buffer.from(request.output.redaction.redact(text)));
+    return { exitCode: 0, stdout: request.output ? '' : text };
+}
+
 describe('Compose exact native resource lifetime', () => {
     afterEach(() => vi.useRealTimers());
 
@@ -706,6 +713,7 @@ describe('Compose exact native resource lifetime', () => {
         const args = ['compose', '--project-name', 'happier-test', '--file', '/release/compose.yaml'];
         const control = createNativeComposeLifecycle({ args, environment: { composeService: 'worker', containerIds: ['a'.repeat(64)] }, io: { async run(request) {
             requests.push([...request.args]);
+            if (request.args.includes('logs')) return dockerLogOutput(request, 'ééééé');
             return { exitCode: 0, stdout: request.args.includes('ps') ? id.repeat(64)
                 : request.args.includes('inspect') ? JSON.stringify([container(id, 'running')]) : 'ééééé' };
         } } });
@@ -731,10 +739,40 @@ describe('Compose exact native resource lifetime', () => {
         await watch.dispose();
     });
 
+    it('projects one log page while Docker streams long lines from every admitted container', async () => {
+        const ids = ['a'.repeat(64), 'b'.repeat(64)];
+        const args = ['compose', '--project-name', 'happier-test', '--file', '/release/compose.yaml'];
+        const reads: Parameters<ProjectNativeToolchainIo['run']>[0][] = [];
+        const control = createNativeComposeLifecycle({ args,
+            environment: { composeService: 'worker', containerIds: ids }, io: { async run(request) {
+                reads.push(request);
+                // Docker process output is the boundary. A line has no byte-size
+                // ceiling, so a line count cannot bound this diagnostic page.
+                for (let index = 0; index < 32; index++) {
+                    request.output?.onChunk(index % 2 ? 'stderr' : 'stdout', Buffer.from('useful '.repeat(1024)));
+                }
+                return { exitCode: 0, stdout: '', stderr: '' };
+            } } });
+        const lease = createProviderRedactionLease({ values: [] });
+        control.bindLaunch({ command: '/docker', args, cwd: '/release', env: {}, secretRedactionLease: lease, release() {} });
+        try {
+            const result = await control.lifecycle.logs?.({ kind: 'read', maxBytes: 8192 });
+            expect(result).toMatchObject({ kind: 'page', page: { truncated: true, nextCursor: null } });
+            if (!result || !('kind' in result) || result.kind !== 'page') throw new Error('Expected a native log page');
+            expect(result.page.text).toHaveLength(8192);
+            expect(result.page.text).toBe(('useful '.repeat(2048)).slice(0, 8192));
+            expect(reads).toHaveLength(ids.length);
+            for (const request of reads) expect(request).toMatchObject({
+                maxStdoutBytes: 0, maxStderrBytes: 0, allowTruncatedStdout: true,
+            });
+        } finally { lease.close(); }
+    });
+
     it('redacts only delivered secret material in post-detach generation logs', async () => {
         const secretRedactionLease = createProviderRedactionLease({ values: ['s0-secret-sentinel'] });
         const args = ['compose', '--project-name', 'happier-test', '--file', '/release/compose.yaml', 'up', '--detach', 'worker'];
         const control = createNativeComposeLifecycle({ args, io: { async run(request) {
+            if (request.args.includes('logs')) return dockerLogOutput(request, 'after-detach s0-secret-sentinel PORT=3000 COMMIT=abc123');
             return { exitCode: 0, stdout: request.args.includes('ps') ? 'a'.repeat(64)
                 : request.args.includes('inspect') ? JSON.stringify([container('a', 'running')])
                     : 'after-detach s0-secret-sentinel PORT=3000 COMMIT=abc123' };
@@ -757,6 +795,7 @@ describe('Compose exact native resource lifetime', () => {
         let diagnostic = 'retired-secret-sentinel PORT=3000';
         const io: Pick<ProjectNativeToolchainIo, 'run'> = { async run(request) {
             requests.push([...request.args]);
+            if (request.args.includes('logs')) return dockerLogOutput(request, diagnostic);
             return { exitCode: 0, stdout: request.args.includes('ps') ? 'a'.repeat(64)
                 : request.args.includes('inspect') ? JSON.stringify([container('a', 'running')])
                     : diagnostic };
@@ -822,6 +861,7 @@ describe('Compose exact native resource lifetime', () => {
             if (args.includes('compose')) return { exitCode: 1, stdout: '', stderr: 'SECRET is required' };
             if (args.includes('stop')) dbState = 'exited';
             if (args.includes('start') || args.includes('restart')) { dbState = 'running'; dbHealth = 'healthy'; }
+            if (args.includes('logs')) return dockerLogOutput(request, args.includes('b'.repeat(64)) ? 'db diagnostic' : 'web diagnostic');
             return { exitCode: 0, stdout: args.includes('ps') ? rows.map(row => row.Id).join('\n')
                 : args.includes('inspect') ? JSON.stringify([web, db()].filter(row => args.includes(row.Id)))
                     : args.includes('logs') ? args.includes('b'.repeat(64)) ? 'db diagnostic' : 'web diagnostic' : '' };
@@ -881,6 +921,7 @@ describe('Compose exact native resource lifetime', () => {
         // Docker process IO is the system boundary; codec and native decisions remain real.
         const io: Pick<ProjectNativeToolchainIo, 'run'> = { async run(request) {
             requests.push([...request.args]);
+            if (request.args.includes('logs')) return dockerLogOutput(request, 'native output');
             return { exitCode: code, stdout: request.args.includes('ps') ? Array.isArray(rows) ? rows.map(row => row.Id).join('\n') : ''
                 : request.args.includes('inspect') ? JSON.stringify(rows) : 'native output' };
         } };

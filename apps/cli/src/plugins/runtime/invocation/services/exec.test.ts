@@ -7,6 +7,7 @@ import { WebSocketServer } from 'ws';
 import { CODEX_RAW_PROXY_FIXTURE_SCRIPT, createCodexControlSocketFixture } from '../../../../../../../packages/plugins/codex/src/agent/runtime/appServer/client.test-support';
 
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { createProviderRedactionLease } from '@/providers/spawn/redaction';
 import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 
@@ -700,6 +701,24 @@ describe('createStablePluginExecService', () => {
         expect(result.rows.length).toBeGreaterThan(0);
         expect(result.rows.length).toBeLessThan(9 * 1024);
         expect(result.rows.every(row => row.length === 1 && row[0] === 'q'.repeat(1023))).toBe(true);
+    });
+
+    it('streams native diagnostics without retaining a second result buffer when the reader owns projection', async () => {
+        await withTempDir('happier-native-stream-projection-', async cwd => {
+            const io = createProjectNativeToolchainIoForHost({ resolveTool: async () => null });
+            const redaction = createProviderRedactionLease({ values: [] });
+            let observedBytes = 0;
+            const request = { command: process.execPath, cwd, env: {}, args: ['-e',
+                'process.stdout.write("a".repeat(16384));process.stderr.write("b".repeat(16384))'],
+                allowTruncatedStdout: true as const, maxStdoutBytes: 0, maxStderrBytes: 0,
+                output: { redaction, onChunk(_stream: 'stdout' | 'stderr', chunk: Uint8Array) { observedBytes += chunk.byteLength; } },
+            };
+            try {
+                const result = await io.run(request);
+                expect(observedBytes).toBe(32768);
+                expect(result).toMatchObject({ exitCode: 0, stdout: '', stderr: '', stdoutTruncated: true });
+            } finally { redaction.close(); }
+        });
     });
 
     it('preserves cancellation after actual native stdout has truncated with partial-output opt-in', async () => {
@@ -2225,6 +2244,24 @@ describe('createStablePluginExecService', () => {
         await framed.client.writeFrame(new Uint8Array([0, 255, 4]));
         await expect.poll(() => frames).toEqual([[0, 255, 4]]);
         await framed.dispose();
+    });
+
+    it.each(['jsonStream', 'jsonRpc'] as const)('retains none of the stdout a %s client reads (a long-lived Agent buffered every turn)', async (kind) => {
+        const service = createService();
+        const records = 50;
+        const script = `for (let i = 0; i < ${records}; i++) process.stdout.write(JSON.stringify(${kind === 'jsonRpc' ? "{ jsonrpc: '2.0', method: 'n', params: { i } }" : '{ i }'}) + '\\n');`;
+        let received = 0;
+        const handle = kind === 'jsonStream'
+            ? await service.clients.spawn({ kind, launch: { executable, args: ['-e', script] }, maxFrameBytes: 4096 })
+            : await service.clients.spawn({ kind, framing: 'jsonLines', launch: { executable, args: ['-e', script] }, maxFrameBytes: 4096 });
+        if ('subscribe' in handle.client) handle.client.subscribe(() => { received += 1; });
+        try {
+            const result = await handle.wait();
+            if (kind === 'jsonStream') await expect.poll(() => received).toBe(records);
+            expect({ retainedStdoutBytes: result.stdout.byteLength }).toEqual({ retainedStdoutBytes: 0 });
+        } finally {
+            await handle.dispose();
+        }
     });
 
     it('preserves public JSON-stream write rejection while carrying the private write phase', async () => {

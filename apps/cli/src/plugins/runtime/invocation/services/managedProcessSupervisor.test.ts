@@ -1528,6 +1528,29 @@ describe('createManagedServiceProcessSupervisorHost', () => {
         });
     });
 
+    it('launches with authored durable-log retention beyond the former fifty-log ceiling', async () => {
+        await withTempDir('managed-authored-log-retention-', async rootDir => {
+            const spec = normalizeManagedServiceSpec({
+                id: 'logged',
+                mode: { kind: 'spawn', launch: { executable: { kind: 'systemTool', id: 'fixture.server' } }, endpoint: { kind: 'none' } },
+                durableLog: { enabled: true, keepCount: 51 },
+            });
+            const host = createManagedServiceProcessSupervisorHost({
+                durability: createManagedServiceDurabilityOwner({ rootDir }),
+                captureProcessStartIdentity: async pid => `${pid}:1000`,
+            });
+            const services = host.bind({ occurrenceId: 'authored-logs', pluginId: 'fixture.plugin', contributionId: 'fixture.agent',
+                sessionId: 'session-logs', sourceCustody: { kind: 'development', registeredRootId: 'fixture-root' },
+                isOccurrenceCurrent: () => true, exec: createExec() });
+            const handle = await services.supervise(managedSpec(spec.id, { durableLog: spec.durableLog }));
+            try {
+                expect(handle.snapshot().state).toBe('healthy');
+                const logs = await filesystemBoundary.readdir(join(rootDir, 'logs'));
+                expect(logs.filter(name => name.endsWith('.log'))).toHaveLength(1);
+            } finally { await handle.dispose(); }
+        });
+    });
+
     it('exposes its immutable custody owner', () => {
         const daemon = createManagedServiceProcessSupervisorHost({});
         const sessionRunner = createManagedServiceProcessSupervisorHost({
@@ -2727,7 +2750,7 @@ describe('createManagedServiceProcessSupervisorHost', () => {
             watchdog: { intervalMs: 250, missedIntervals: 0 },
         }, 'plugin_managed_server_watchdog_invalid'],
         ['durable-log keep count', {
-            durableLog: { enabled: true, keepCount: 51 },
+            durableLog: { enabled: true, keepCount: 0 },
         }, 'plugin_managed_server_timeout_invalid'],
     ] as const)('rejects invalid %s bounds before launch', async (_label, overrides, code) => {
         const { exec, servers } = createHarness();

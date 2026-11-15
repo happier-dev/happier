@@ -20,7 +20,7 @@ export type MachineNativeEffectLogTarget = Readonly<{
     projectName: string; sourcePath: string; composeService: string; containerIds: readonly string[];
 }>;
 export type MachineNativeEffectLogMasking = Readonly<{
-    lease: Pick<ProviderRedactionLease, 'isActive' | 'redact'> | undefined;
+    lease: ProviderRedactionLease | undefined;
     /** Native generation proof, independent of having known launch values. */
     complete: boolean;
 }>;

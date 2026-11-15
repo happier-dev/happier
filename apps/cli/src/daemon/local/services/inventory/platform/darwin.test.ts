@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs/promises';
+import { execFileWithDeadline } from '@happier-dev/cli-common/process';
 import { installLocalServiceCensusFixture } from './censusFixture.testkit';
 import { normalizeLocalServiceScan } from '../scanner';
 import { parseDarwinLsofTcpListenOutput, readDarwinLocalServiceListeners } from './darwin';
@@ -15,6 +16,18 @@ beforeEach(() => installLocalServiceCensusFixture([
 const listenOutput = 'p123\ncnode\nf3\nn127.0.0.1:5173\n';
 
 describe('Darwin local services', () => {
+    it('retains complete listener output beyond the former scan time and output ceilings', async () => {
+        const result = await readDarwinLocalServiceListeners({
+            // Replace only the unavailable OS command; retain the real process/output boundary.
+            execFile: async (_command, _args, options) => execFileWithDeadline(process.execPath, ['-e',
+                `const sockets = Array.from({ length: 25_000 }, (_, i) => 'f' + (i + 4) + '\\nn127.0.0.1:5174->127.0.0.1:' + (i + 10_000) + '\\nTST=ESTABLISHED\\n').join('');
+                setTimeout(() => process.stdout.write('p123\\ncnode\\n' + sockets + ${JSON.stringify(listenOutput)}), 2100)`,
+            ], options),
+            includeProcessFacts: false,
+        });
+        expect(result.listeners).toEqual([expect.objectContaining({ pid: 123, port: 5173 })]);
+        expect(result.diagnostics).toEqual([]);
+    });
     it('defers process census for listener-only demand without losing its later detailed observation', async () => {
         const opened = vi.spyOn(fs, 'open');
         const result = await readDarwinLocalServiceListeners({ execFile: async () => ({ stdout: listenOutput }), includeProcessFacts: false });

@@ -7,6 +7,7 @@ import * as processBoundary from '@happier-dev/cli-common/process';
 import { readProcessIdentityByPid } from '@/daemon/processIdentity';
 import { createStorageCategoryCatalog } from '@/storage/categoryCatalog';
 import { storageLogRoots } from '@/utils/logs/logRetention';
+import { normalizeManagedServiceSpec } from './managedServiceSpecNormalization';
 
 import type {
     ManagedServiceEndpointProjectionInputV1,
@@ -248,6 +249,30 @@ describe('managed server durability owner', () => {
             code: 'plugin_managed_server_log_keep_count_invalid',
         });
         expect(await readdir(join(root, 'logs'))).toEqual([]);
+    });
+
+    it('retains the authored number of durable logs beyond the former fifty-log ceiling', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-managed-log-retention-'));
+        const owner = createManagedServiceDurabilityOwner({ rootDir: root });
+        const spec = normalizeManagedServiceSpec({
+            id: 'logged',
+            mode: { kind: 'spawn', launch: { executable: { kind: 'systemTool', id: 'fixture.server' } }, endpoint: { kind: 'none' } },
+            durableLog: { enabled: true, keepCount: 51 },
+        });
+        try {
+            for (let index = 0; index < 52; index += 1) {
+                const capture = await owner.openLog({
+                    instanceId: `instance-${index}`, serverId: spec.id,
+                    keepCount: spec.durableLog!.keepCount, secretValues: [], nowMs: 1_000 + index,
+                });
+                capture.write('stdout', `useful-log-${index}\n`);
+                await capture.close();
+            }
+            const logs = (await readdir(join(root, 'logs'))).filter(name => name.endsWith('.log')).sort();
+            expect(logs).toHaveLength(51);
+            expect(await readFile(join(root, 'logs', logs[0]!), 'utf8')).toContain('useful-log-1');
+            expect(await readFile(join(root, 'logs', logs.at(-1)!), 'utf8')).toContain('useful-log-51');
+        } finally { await rm(root, { recursive: true, force: true }); }
     });
 
     it('exempts only open captures and protected current managed-instance logs across durability owners', async () => {

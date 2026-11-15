@@ -26,7 +26,6 @@ export const MANAGED_SERVICE_NUMERIC_CONTRACT = Object.freeze({
     durableLogKeepCount: Object.freeze({
         defaultValue: 50,
         minimum: 1,
-        maximum: 50,
     }),
 });
 
@@ -100,12 +99,11 @@ function specInvalid(message: string): never {
     });
 }
 
-function validatedBoundedInteger(
+function validatedPositiveInteger(
     value: number | undefined,
     fallback: number,
     bounds: Readonly<{
         minimum: number;
-        maximum?: number;
     }>,
     label: string,
 ): number {
@@ -113,13 +111,8 @@ function validatedBoundedInteger(
     if (
         !Number.isSafeInteger(resolved)
         || resolved < bounds.minimum
-        || (bounds.maximum !== undefined && resolved > bounds.maximum)
     ) {
-        return specInvalid(
-            bounds.maximum === undefined
-                ? `${label} must be a positive safe integer`
-                : `${label} must be an integer between ${bounds.minimum} and ${bounds.maximum}`,
-        );
+        return specInvalid(`${label} must be a positive safe integer`);
     }
     return resolved;
 }
@@ -258,13 +251,13 @@ export function normalizeManagedServiceSpec(
         'Managed-service startup timeout',
     );
     const healthPolicy = Object.freeze({
-        intervalMs: validatedBoundedInteger(
+        intervalMs: validatedPositiveInteger(
             spec.healthPolicy?.intervalMs,
             MANAGED_SERVICE_NUMERIC_CONTRACT.healthIntervalMs.defaultValue,
             MANAGED_SERVICE_NUMERIC_CONTRACT.healthIntervalMs,
             'Managed-service health interval',
         ),
-        consecutiveFailures: validatedBoundedInteger(
+        consecutiveFailures: validatedPositiveInteger(
             spec.healthPolicy?.consecutiveFailures,
             MANAGED_SERVICE_NUMERIC_CONTRACT.consecutiveFailures.defaultValue,
             MANAGED_SERVICE_NUMERIC_CONTRACT.consecutiveFailures,
@@ -292,7 +285,7 @@ export function normalizeManagedServiceSpec(
                     ),
                 }
                 : {}),
-            timeoutMs: validatedBoundedInteger(
+            timeoutMs: validatedPositiveInteger(
                 spec.healthCheck.timeoutMs,
                 MANAGED_SERVICE_NUMERIC_CONTRACT.healthTimeoutMs.defaultValue,
                 MANAGED_SERVICE_NUMERIC_CONTRACT.healthTimeoutMs,
@@ -325,7 +318,7 @@ export function normalizeManagedServiceSpec(
     const durableLog = spec.durableLog
         ? Object.freeze({
             ...spec.durableLog,
-            keepCount: validatedBoundedInteger(
+            keepCount: validatedPositiveInteger(
                 spec.durableLog.keepCount,
                 MANAGED_SERVICE_NUMERIC_CONTRACT
                     .durableLogKeepCount.defaultValue,

@@ -194,7 +194,7 @@ export type ProjectBuiltinNativeLifecycle = Readonly<{
     inspectRemoval?(options?: Readonly<{ signal?: AbortSignal }>): Promise<'present' | 'absent' | 'unknown'>;
     logs?(options: ManagedServiceNativeLogReadForHost | ManagedServiceNativeLogWatchV1): Promise<ManagedServiceNativeLogResultV1 | import('@happier-dev/plugin-sdk').Disposable>;
     /** Borrow the original generation's sanitizer without transferring its custody. */
-    readLogRedactionLease?(containerIds: readonly string[]): Pick<ProviderRedactionLease, 'isActive' | 'redact'> | undefined;
+    readLogRedactionLease?(containerIds: readonly string[]): ProviderRedactionLease | undefined;
     prepareStart?(options?: Readonly<{ signal?: AbortSignal }>): Promise<void>;
     /** Builtin native codecs retain uncertainty once their starter can create resources. */
     markStarted?(): void;
@@ -796,12 +796,10 @@ function canonicalSpecFacts(spec: ManagedServiceProcessSpec): unknown {
         !Number.isSafeInteger(spec.durableLog.keepCount)
         || spec.durableLog.keepCount
             < MANAGED_SERVICE_NUMERIC_CONTRACT.durableLogKeepCount.minimum
-        || spec.durableLog.keepCount
-            > MANAGED_SERVICE_NUMERIC_CONTRACT.durableLogKeepCount.maximum
     )) {
         return fail(
             'plugin_managed_server_timeout_invalid',
-            'Managed server durable-log keep count must be between 1 and 50',
+            'Managed server durable-log keep count must be a positive safe integer',
         );
     }
     if (spec.mode.kind === 'externalAttach') {

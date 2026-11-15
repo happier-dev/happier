@@ -5,7 +5,7 @@ import { projectLocalServiceProcessFacts } from '@/processes/census/projectLocal
 export type WindowsExecFileBoundary = (
     command: string,
     args: readonly string[],
-    options: Readonly<{ timeout: number; maxBuffer: number }>,
+    options: Readonly<{ maxBuffer: number }>,
 ) => Promise<Readonly<{ stdout: string | Buffer }>>;
 
 export type WindowsLocalServiceScanResult = Readonly<{
@@ -116,22 +116,33 @@ export async function readWindowsLocalServiceListeners(input: Readonly<{
     includeProcessFacts?: boolean;
 }>): Promise<WindowsLocalServiceScanResult> {
     let listeners: readonly LocalServiceListenerFact[];
+    const diagnostics: LocalServiceInventoryDiagnostic[] = [];
     try {
         const result = await input.execFile('netstat.exe', ['-ano', '-p', 'tcp'], {
-            timeout: 2_000,
-            maxBuffer: 1024 * 1024,
+            maxBuffer: Number.POSITIVE_INFINITY,
         });
         listeners = parseWindowsNetstatTcpListeners(stdoutToString(result.stdout));
-    } catch {
-        return {
-            listeners: [],
-            processes: new Map(),
-            diagnostics: [{
-                code: 'windows_netstat_scan_failed',
-                severity: 'warning',
-                message: 'Windows local-service listener scan failed.',
-            }],
-        };
+    } catch (error) {
+        const stdout: unknown = typeof error === 'object' && error !== null ? Reflect.get(error, 'stdout') : undefined;
+        listeners = typeof stdout === 'string' || Buffer.isBuffer(stdout)
+            ? parseWindowsNetstatTcpListeners(stdoutToString(stdout)).map(listener => ({ ...listener, establishedConnections: null }))
+            : [];
+        if (listeners.length === 0) {
+            return {
+                listeners: [],
+                processes: new Map(),
+                diagnostics: [{
+                    code: 'windows_netstat_scan_failed',
+                    severity: 'warning',
+                    message: 'Windows local-service listener scan failed.',
+                }],
+            };
+        }
+        diagnostics.push({
+            code: 'windows_netstat_scan_partial',
+            severity: 'warning',
+            message: 'Windows local-service listener scan was incomplete; recovered partial output.',
+        });
     }
 
     const pids = [...new Set(listeners
@@ -141,11 +152,10 @@ export async function readWindowsLocalServiceListeners(input: Readonly<{
         return {
             listeners,
             processes: new Map(),
-            diagnostics: [],
+            diagnostics,
         };
     }
 
-    const diagnostics: LocalServiceInventoryDiagnostic[] = [];
     const readProcessFacts = async () => await projectLocalServiceProcessFacts({
         seedPids: pids,
         onReadFailure: () => {

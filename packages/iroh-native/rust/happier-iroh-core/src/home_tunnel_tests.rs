@@ -1374,9 +1374,9 @@ async fn duplicate_registration_fails_typed_and_stop_releases_for_restart() {
 ///    before the dial, bounded so an unreachable relay fails with a stable
 ///    diagnostic instead of hanging the binary.
 /// 3. Tunnel connect, each byte exchange, and shutdown are individually
-///    bounded: iroh imposes no connect timeout and the home_interactive cap
-///    profile has no transport idle timeout, so an unbounded await here can
-///    stall forever exactly when the relay path regresses.
+///    bounded so a relay-path regression identifies the fixture phase that
+///    stalled. The transport profiles retain upstream keepalive and idle
+///    detection; those do not measure completion of an application exchange.
 #[cfg(all(test, feature = "test-relay-fixture"))]
 mod relay_fixture {
     use super::*;
@@ -1488,8 +1488,8 @@ mod relay_fixture {
         })
         .expect("tunnel connects through the forced-relay topology");
 
-        // Each exchange is bounded: with no transport idle timeout a dead
-        // relayed connection would otherwise hang the response read forever.
+        // Bound each application exchange separately from transport liveness
+        // so a stalled relay echo has a phase-specific fixture failure.
         for payload in [b"over-relay".as_slice(), b"second-relay-stream".as_slice()] {
             tokio::time::timeout(
                 ECHO_EXCHANGE_TIMEOUT,

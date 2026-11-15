@@ -581,7 +581,10 @@ describe('deployment opaque environment through source, installation grants and 
             // Only native Docker output is substituted; the original grant,
             // attachment, detached lease and native page reader stay real.
             const read = () => readNativeComposeLogsForHost({ containerIds: ['a'.repeat(64)],
-                environment: true, redactionLease, async run() { return { exitCode: 0, stdout: diagnostic }; },
+                environment: true, redactionLease, async run(_args, _signal, capture) {
+                    capture?.output?.onChunk('stdout', Buffer.from(capture.output.redaction.redact(diagnostic)));
+                    return { exitCode: 0 };
+                },
             }, { kind: 'read', maxBytes: MANAGED_SERVICE_NATIVE_LOG_PAGE_BYTES });
             try {
                 expect(await read()).toMatchObject({ kind: 'page', page: { text: 'raw [REDACTED] PORT=3000' } });
