@@ -21,7 +21,6 @@ function createPolicy(): RetentionPolicy {
             providerAccountUsageHistory: { mode: 'keep_forever' },
             voiceSessionLeases: { mode: "delete_older_than", days: 1 },
             userFeedItems: keepForever,
-            sessionShareAccessLogs: keepForever,
             publicShareAccessLogs: keepForever,
             terminalAuthRequests: keepForever,
             accountAuthRequests: keepForever,

@@ -13,7 +13,6 @@ const provider = getDbProviderFromEnv(process.env, 'postgres');
 
 describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('Username claim contention on a real provider', () => {
     const accountIds: string[] = [];
-    const usernames: string[] = [];
     let connected = false;
 
     beforeAll(async () => {
@@ -30,15 +29,12 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('Username claim
 
     afterAll(async () => {
         if (!connected) return;
-        await db.releasedUsername.deleteMany({ where: { username: { in: usernames } } });
         await db.account.deleteMany({ where: { id: { in: accountIds } } });
         await db.$disconnect();
     });
 
     function freshUsername() {
-        const username = `race_${randomUUID().replaceAll('-', '').slice(0, 20)}`;
-        usernames.push(username);
-        return username;
+        return `race_${randomUUID().replaceAll('-', '').slice(0, 20)}`;
     }
 
     async function account(username?: string) {
@@ -117,12 +113,10 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('Username claim
             const result = await acrossAccountCursorCommit(holder.id, () => usernameRelease(Context.create(holder.id)));
             expect(result).toMatchObject({ username: null, released: true });
             expect(result.reservedUntilMs).toBeNull();
-            expect(await db.releasedUsername.findUnique({ where: { username } })).toBeNull();
             expect(await db.account.findUniqueOrThrow({ where: { id: holder.id } }))
                 .toMatchObject({ username: null, usernameAutoFillEnabled: false, seq: holder.seq + 2 });
             expect(await usernameRelease(Context.create(holder.id)))
                 .toEqual({ username: null, released: false, reservedUntilMs: null });
-            expect(await db.releasedUsername.findUnique({ where: { username } })).toBeNull();
         } finally {
             vi.unstubAllEnvs();
         }

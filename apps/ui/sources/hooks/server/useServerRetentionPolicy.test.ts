@@ -47,7 +47,6 @@ async function setUpHome(answer: { current: RetentionAnswer }) {
             usageEvents: keep,
             voiceSessionLeases: keep,
             userFeedItems: keep,
-            sessionShareAccessLogs: keep,
             publicShareAccessLogs: keep,
             terminalAuthRequests: keep,
             accountAuthRequests: keep,

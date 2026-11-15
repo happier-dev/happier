@@ -16,7 +16,6 @@ describe('retention/createRetentionRuleRegistry', () => {
             'providerAccountUsageHistory',
             'voiceSessionLeases',
             'userFeedItems',
-            'sessionShareAccessLogs',
             'publicShareAccessLogs',
             'terminalAuthRequests',
             'accountAuthRequests',

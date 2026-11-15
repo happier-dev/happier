@@ -22,7 +22,6 @@ describe('fresh Account verified mailbox admission', () => {
     }, 120_000);
     afterEach(async () => {
         vi.unstubAllGlobals();
-        await db.releasedUsername.deleteMany();
         await db.uploadedFile.deleteMany();
         await db.account.deleteMany();
     });
@@ -77,22 +76,6 @@ describe('fresh Account verified mailbox admission', () => {
         await inTx(identityConnection.connectInTx, { isolationLevel: 'Serializable' });
         expect((await db.account.findUniqueOrThrow({ where: { id: account.id } })).username).toBeNull();
         expect(await db.accountIdentity.count({ where: { accountId: account.id } })).toBe(1);
-    });
-
-    it('admits a fresh provider presentation while preserving an obsolete release record', async () => {
-        const retained = await db.releasedUsername.create({ data: { username: 'held-name', expiresAt: new Date(Date.now() + 86_400_000) } });
-        const accountId = randomUUID();
-        const identityConnection = await prepareIdentityLink({
-            accountId, provider: 'github', providerUserId: 'held-fill', providerLogin: 'held-name',
-            profile: { login: 'held-name' }, presentation: { username: 'held-name' },
-        });
-        const account = await inTx(tx => provisionFreshAccountInTx(tx, {
-            insertSemantics: { kind: 'must_create', accountId }, publicKey: null, encryptionMode: 'plain',
-            usernameChange: { kind: 'identity_fill', suggestion: 'held-name' }, identityConnection,
-        }), { isolationLevel: 'Serializable' });
-        expect(account.username).toBe('held-name');
-        expect(await db.releasedUsername.findUniqueOrThrow({ where: { username: 'held-name' } })).toEqual(retained);
-        expect(await db.accountIdentity.count({ where: { accountId } })).toBe(1);
     });
 
     it('preserves a prepared provider avatar when its Account does not exist until admission', async () => {

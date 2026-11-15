@@ -42,7 +42,6 @@ export function buildDemoServerFeatures(): FeaturesResponse {
                     accountChanges: KEEP_FOREVER_POLICY,
                     voiceSessionLeases: KEEP_FOREVER_POLICY,
                     userFeedItems: KEEP_FOREVER_POLICY,
-                    sessionShareAccessLogs: KEEP_FOREVER_POLICY,
                     publicShareAccessLogs: KEEP_FOREVER_POLICY,
                     terminalAuthRequests: KEEP_FOREVER_POLICY,
                     accountAuthRequests: KEEP_FOREVER_POLICY,

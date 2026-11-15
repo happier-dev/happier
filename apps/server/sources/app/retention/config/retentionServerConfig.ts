@@ -103,7 +103,6 @@ const RETENTION_DOMAIN_COPY = {
     userFeedItems: { group: 'user', what: 'activity feed items' },
     accountChanges: { group: 'system', what: 'account change records used for sync' },
     voiceSessionLeases: { group: 'system', what: 'voice session leases' },
-    sessionShareAccessLogs: { group: 'system', what: 'session share access logs' },
     publicShareAccessLogs: { group: 'system', what: 'public share access logs' },
     terminalAuthRequests: { group: 'system', what: 'terminal sign-in requests' },
     accountAuthRequests: { group: 'system', what: 'account sign-in requests' },

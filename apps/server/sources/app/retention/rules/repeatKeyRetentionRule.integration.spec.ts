@@ -29,7 +29,6 @@ function createPolicy(input: Readonly<{
             providerAccountUsageHistory: { mode: 'keep_forever' },
             voiceSessionLeases: keepForever,
             userFeedItems: keepForever,
-            sessionShareAccessLogs: keepForever,
             publicShareAccessLogs: keepForever,
             terminalAuthRequests: keepForever,
             accountAuthRequests: keepForever,

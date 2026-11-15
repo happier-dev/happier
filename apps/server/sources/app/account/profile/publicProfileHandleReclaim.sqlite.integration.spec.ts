@@ -90,7 +90,6 @@ describe('Home public-profile handle reclaim', () => {
         const retained = await db.accountPublicProfile.findUniqueOrThrow({ where: { accountId: account.id } });
         expect(retained).toMatchObject({ state: 'draft', removedAt, removedByAccountId: owner.id,
             removalReason: 'Independent content restriction', policyJson: null, snapshotJson: null, layoutJson: null, appearanceJson: null });
-        expect(await db.releasedUsername.findUnique({ where: { username: 'reviewed_new' } })).toBeNull();
         expect((await db.userFeedItem.findMany({ where: { userId: account.id } })).map(item => item.body)).toEqual([
             { kind: 'text', text: 'Your username was reclaimed. Contact this Home operator to appeal.' },
         ]);

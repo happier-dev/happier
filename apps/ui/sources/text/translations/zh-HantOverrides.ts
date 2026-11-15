@@ -7704,7 +7704,6 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             accountChanges: '帳戶變更',
             voiceSessionLeases: '語音工作階段租約',
             feedItems: '動態項目',
-            sessionShareAccessLogs: '工作階段分享存取紀錄',
             publicShareAccessLogs: '公開分享存取紀錄',
             terminalAuthRequests: '終端機驗證請求',
             accountAuthRequests: '帳戶驗證請求',

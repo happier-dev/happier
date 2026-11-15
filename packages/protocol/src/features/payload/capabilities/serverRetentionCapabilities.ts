@@ -35,7 +35,6 @@ export const ServerRetentionCapabilitiesSchema = lazyZodSchema(() => z.object({
   usageEvents: z.optional(AgeBasedRetentionPolicySchema),
   voiceSessionLeases: AgeBasedRetentionPolicySchema,
   userFeedItems: AgeBasedRetentionPolicySchema,
-  sessionShareAccessLogs: AgeBasedRetentionPolicySchema,
   publicShareAccessLogs: AgeBasedRetentionPolicySchema,
   terminalAuthRequests: AgeBasedRetentionPolicySchema,
   accountAuthRequests: AgeBasedRetentionPolicySchema,

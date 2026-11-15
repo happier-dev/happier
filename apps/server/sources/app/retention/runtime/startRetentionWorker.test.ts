@@ -59,7 +59,6 @@ function createPolicy(intervalMs: number) {
             providerAccountUsageHistory: { mode: 'keep_forever' },
             voiceSessionLeases: { mode: 'delete_older_than', days: 7 },
             userFeedItems: { mode: 'keep_forever' },
-            sessionShareAccessLogs: { mode: 'keep_forever' },
             publicShareAccessLogs: { mode: 'keep_forever' },
             terminalAuthRequests: { mode: 'keep_forever' },
             accountAuthRequests: { mode: 'keep_forever' },

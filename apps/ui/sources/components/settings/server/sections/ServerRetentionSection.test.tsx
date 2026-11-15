@@ -31,7 +31,6 @@ const LEGACY_KEEP_ALL = {
     accountChanges: { mode: 'keep_forever' },
     voiceSessionLeases: { mode: 'keep_forever' },
     userFeedItems: { mode: 'keep_forever' },
-    sessionShareAccessLogs: { mode: 'keep_forever' },
     publicShareAccessLogs: { mode: 'keep_forever' },
     terminalAuthRequests: { mode: 'keep_forever' },
     accountAuthRequests: { mode: 'keep_forever' },

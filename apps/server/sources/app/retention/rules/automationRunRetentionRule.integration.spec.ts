@@ -30,7 +30,6 @@ function createPolicy(automationRunDays = 1): RetentionPolicy {
             providerAccountUsageHistory: { mode: 'keep_forever' },
             voiceSessionLeases: keepForever,
             userFeedItems: keepForever,
-            sessionShareAccessLogs: keepForever,
             publicShareAccessLogs: keepForever,
             terminalAuthRequests: keepForever,
             accountAuthRequests: keepForever,

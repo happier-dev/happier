@@ -69,7 +69,6 @@ describe("authRoutes (Account erasure) (integration)", () => {
     afterEach(async () => {
         harness.resetEnv();
         await harness.resetDbTables([
-            () => db.sessionShareAccessLog.deleteMany(),
             () => db.publicShareAccessLog.deleteMany(),
             () => db.sessionDataKeyEnvelope.deleteMany(),
             () => db.sessionGrant.deleteMany({ where: { principalKind: 'account' } }),
@@ -135,8 +134,6 @@ describe("authRoutes (Account erasure) (integration)", () => {
             { teamId: team.id, accountId: author.id, role: "member" },
         ] });
         await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: owned.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date() } });
-        const retainedLog = await db.sessionShareAccessLog.create({ data: { sessionShareId: authored.id, userId: recipient.id } });
-        await db.sessionShareAccessLog.create({ data: { sessionShareId: authored.id, userId: author.id } });
         const publicShare = await db.publicSessionShare.create({ data: {
             sessionId: surviving.id, createdByUserId: owner.id, tokenHash: new Uint8Array(32),
         } });
@@ -201,7 +198,6 @@ describe("authRoutes (Account erasure) (integration)", () => {
         await expect(db.discussionReadState.count({
             where: { discussionId: retainedDiscussion.id, accountId: author.id },
         })).resolves.toBe(0);
-        await expect.soft(db.sessionShareAccessLog.findMany({ select: { id: true } })).resolves.toEqual([{ id: retainedLog.id }]);
         await expect(db.publicShareAccessLog.findMany({ select: { id: true } })).resolves.toEqual([{ id: retainedPublicLog.id }]);
         await expect(db.accountChange.findFirst({ where: { accountId: recipient.id, kind: "session", entityId: owned.id } })).resolves.toMatchObject({
             hint: { v: 1, lifecycle: "deleted" },

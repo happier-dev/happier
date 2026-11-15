@@ -30,7 +30,6 @@ export function retentionPolicyToCapabilities(policy: RetentionPolicy): ServerRe
         accountChanges: toAgePolicyCapability(domains.accountChanges),
         voiceSessionLeases: toAgePolicyCapability(domains.voiceSessionLeases),
         userFeedItems: toAgePolicyCapability(domains.userFeedItems),
-        sessionShareAccessLogs: toAgePolicyCapability(domains.sessionShareAccessLogs),
         publicShareAccessLogs: toAgePolicyCapability(domains.publicShareAccessLogs),
         terminalAuthRequests: toAgePolicyCapability(domains.terminalAuthRequests),
         accountAuthRequests: toAgePolicyCapability(domains.accountAuthRequests),

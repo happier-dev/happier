@@ -11136,7 +11136,6 @@ const enServer = {
     accountChanges: 'Account changes',
     voiceSessionLeases: 'Voice session leases',
     feedItems: 'Feed items',
-    sessionShareAccessLogs: 'Session share access logs',
     publicShareAccessLogs: 'Public share access logs',
     terminalAuthRequests: 'Terminal auth requests',
     accountAuthRequests: 'Account auth requests',

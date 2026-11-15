@@ -47,7 +47,6 @@ function createValidFeaturesResponse() {
                     accountChanges: { mode: 'delete_older_than', days: 30 },
                     voiceSessionLeases: { mode: 'keep_forever' },
                     userFeedItems: { mode: 'delete_older_than', days: 90 },
-                    sessionShareAccessLogs: { mode: 'delete_older_than', days: 30 },
                     publicShareAccessLogs: { mode: 'delete_older_than', days: 30 },
                     terminalAuthRequests: { mode: 'delete_older_than', days: 7 },
                     accountAuthRequests: { mode: 'delete_older_than', days: 7 },

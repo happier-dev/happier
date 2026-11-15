@@ -37,7 +37,6 @@ describe('sessionRetentionRule', () => {
         await harness.resetDbTables([
             () => db.publicShareAccessLog.deleteMany(),
             () => db.publicSessionShare.deleteMany(),
-            () => db.sessionShareAccessLog.deleteMany(),
             () => db.sessionGrant.deleteMany({ where: { principalKind: 'account' } }),
             () => db.accountChange.deleteMany(),
             () => db.usageReport.deleteMany(),

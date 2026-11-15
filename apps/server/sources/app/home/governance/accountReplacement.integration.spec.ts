@@ -89,7 +89,6 @@ describe("Provider-reset Account replacement", () => {
     }, 120_000);
     afterAll(async () => await harness?.close());
     afterEach(async () => {
-        await db.releasedUsername.deleteMany({});
         await db.session.deleteMany({});
         await db.teamGroupMembershipExternalContribution.deleteMany({});
         await db.teamExternalGroupBinding.deleteMany({});
@@ -131,7 +130,6 @@ describe("Provider-reset Account replacement", () => {
             select: { username: true, usernameAutoFillEnabled: true } }))
             .toEqual({ username: 'admin', usernameAutoFillEnabled: false });
         expect((await db.account.findUniqueOrThrow({ where: { id: oldAccountId } })).username).toBeNull();
-        expect(await db.releasedUsername.count()).toBe(0);
     });
 
     it('rolls back replacement and membership transfer when a different desired username is held', async () => {

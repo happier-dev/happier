@@ -23,7 +23,6 @@ export type RetentionDomainPolicies = Readonly<{
     providerAccountUsageHistory: RetentionAgePolicy;
     voiceSessionLeases: RetentionAgePolicy;
     userFeedItems: RetentionAgePolicy;
-    sessionShareAccessLogs: RetentionAgePolicy;
     publicShareAccessLogs: RetentionAgePolicy;
     terminalAuthRequests: RetentionAgePolicy;
     accountAuthRequests: RetentionAgePolicy;

@@ -9799,7 +9799,6 @@ localTailscale: {
       accountChanges: "アカウント変更",
       voiceSessionLeases: "音声セッションのリース",
       feedItems: "フィード項目",
-      sessionShareAccessLogs: "共有セッションのアクセスログ",
       publicShareAccessLogs: "公開共有のアクセスログ",
       terminalAuthRequests: "ターミナル認証リクエスト",
       accountAuthRequests: "アカウント認証リクエスト",

@@ -7906,7 +7906,6 @@ export const ru: TranslationStructure = {
         accountChanges: "Изменения аккаунта",
         voiceSessionLeases: "Аренды голосовых сессий",
         feedItems: "Элементы ленты",
-        sessionShareAccessLogs: "Журналы доступа к общим сессиям",
         publicShareAccessLogs: "Журналы доступа к публичным ссылкам",
         terminalAuthRequests: "Запросы авторизации терминала",
         accountAuthRequests: "Запросы авторизации аккаунта",

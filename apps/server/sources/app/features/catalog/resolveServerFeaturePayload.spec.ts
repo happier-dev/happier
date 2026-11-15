@@ -748,7 +748,6 @@ describe("resolveServerFeaturePayload", () => {
                                 usageEvents: { mode: "keep_forever" },
                                 voiceSessionLeases: { mode: "keep_forever" },
                                 userFeedItems: { mode: "delete_older_than", days: 30 },
-                                sessionShareAccessLogs: { mode: "delete_older_than", days: 30 },
                                 publicShareAccessLogs: { mode: "delete_older_than", days: 30 },
                                 terminalAuthRequests: { mode: "delete_older_than", days: 7 },
                                 accountAuthRequests: { mode: "delete_older_than", days: 7 },

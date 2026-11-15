@@ -3,30 +3,6 @@ import { db } from "@/storage/db";
 type PublicShareAccessLogWriter = Pick<typeof db, "publicShareAccessLog">;
 
 /**
- * Log access to a direct session share
- *
- * @param sessionShareId - Session share ID
- * @param userId - User ID who accessed
- * @param ipAddress - IP address (optional)
- * @param userAgent - User agent (optional)
- */
-export async function logSessionShareAccess(
-    sessionShareId: string,
-    userId: string,
-    ipAddress?: string,
-    userAgent?: string
-): Promise<void> {
-    await db.sessionShareAccessLog.create({
-        data: {
-            sessionShareId,
-            userId,
-            ipAddress: ipAddress ?? null,
-            userAgent: userAgent ?? null
-        }
-    });
-}
-
-/**
  * Log access to a public session share
  *
  * @param publicShareId - Public share ID

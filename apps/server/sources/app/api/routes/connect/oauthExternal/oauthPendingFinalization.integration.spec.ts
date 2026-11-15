@@ -42,7 +42,6 @@ describe("OAuth pending finalization mutation boundary", () => {
         await db.identityProviderInstance.deleteMany();
         await db.team.deleteMany();
         await db.repeatKey.deleteMany();
-        await db.releasedUsername.deleteMany();
         await db.account.deleteMany();
     });
     afterAll(async () => { await harness?.close(); });
@@ -241,18 +240,6 @@ describe("OAuth pending finalization mutation boundary", () => {
             const response = await submit();
             expect(response.statusCode).toBe(400);
             expect(response.json()).toEqual({ error: 'invalid-username' });
-            expect(await db.repeatKey.findUnique({ where: { key: pending } })).not.toBeNull();
-            expect((await db.account.findUniqueOrThrow({ where: { id: account.id } })).username).toBeNull();
-        },
-    );
-
-    it.each(['connect', 'keyed', 'keyless'] as const)(
-        'refuses a held username during %s finalization before consuming the continuation', async mode => {
-            const { account, pending, submit } = await fixture(mode, { username: 'held-name', freshKeyless: true });
-            await db.releasedUsername.create({ data: { username: 'held-name', expiresAt: new Date(Date.now() + 86_400_000) } });
-            const response = await submit();
-            expect(response.statusCode).toBe(409);
-            expect(response.json()).toEqual({ error: 'username-taken' });
             expect(await db.repeatKey.findUnique({ where: { key: pending } })).not.toBeNull();
             expect((await db.account.findUniqueOrThrow({ where: { id: account.id } })).username).toBeNull();
         },

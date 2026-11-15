@@ -161,7 +161,6 @@ model Account {
     SharedBySessions       SessionGrant[]             @relation("SharedBySessions")
     SharedWithSessions     SessionGrant[]             @relation("SharedWithSessions")
     sessionDataKeyEnvelopes SessionDataKeyEnvelope[]
-    SessionShareAccessLogs SessionShareAccessLog[]    @relation("SessionShareAccessLogs")
     PublicSessionShares    PublicSessionShare[]       @relation("PublicSessionShares")
     artifactSignedInLinks  ArtifactSignedInLink[]     @relation("ArtifactSignedInLinks")
     templateAcceptedVersions ArtifactTemplateAcceptedVersion[]
@@ -994,11 +993,6 @@ model AccountPublicProfile {
     removedAt DateTime?
     removedByAccountId String?
     removalReason String? @db.Text
-}
-
-model ReleasedUsername {
-    username String @id
-    expiresAt DateTime
 }
 
 model AccountHomeDirectoryEntry {
@@ -4840,7 +4834,7 @@ enum ShareAccessLevel {
     admin
 }
 
-/// Session grants keep the released direct-share identity and access-log FK.
+/// Session grants keep the released direct-share identity.
 model SessionGrant {
     id                    String @id @default(cuid())
     sessionId             String
@@ -4862,7 +4856,6 @@ model SessionGrant {
     createdBy Account? @relation("SharedBySessions", fields: [createdByAccountId], references: [id], onDelete: Restrict)
     team      Team? @relation(fields: [teamId], references: [id], onDelete: Cascade)
     teamGroup TeamGroup? @relation(fields: [teamGroupId], references: [id], onDelete: Cascade)
-    accessLogs SessionShareAccessLog[]
 
     @@unique([sessionId, accountId], map: "SessionShare_sessionId_sharedWithUserId_key")
     @@unique([sessionId, teamId], map: "SessionShare_sessionId_teamId_key")
@@ -4876,22 +4869,6 @@ model SessionGrant {
 }
 
 
-
-/// Access log for direct session shares
-model SessionShareAccessLog {
-    id             String       @id @default(cuid())
-    sessionShareId String
-    sessionShare   SessionGrant @relation(fields: [sessionShareId], references: [id], onDelete: Cascade)
-    userId         String
-    user           Account      @relation("SessionShareAccessLogs", fields: [userId], references: [id])
-    accessedAt     DateTime     @default(now())
-    ipAddress      String?
-    userAgent      String?
-
-    @@index([sessionShareId])
-    @@index([userId])
-    @@index([accessedAt])
-}
 
 /// Public stored-content share; the physical name preserves released Session rows.
 model PublicSessionShare {

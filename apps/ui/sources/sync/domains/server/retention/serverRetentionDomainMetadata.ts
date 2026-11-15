@@ -25,7 +25,6 @@ export const SERVER_RETENTION_DOMAIN_METADATA: readonly ServerRetentionDomainMet
     { key: 'homeAdministrationEvents', titleKey: 'server.retention.homeAdministrationEvents' },
     { key: 'accountChanges', titleKey: 'server.retention.accountChanges' },
     { key: 'voiceSessionLeases', titleKey: 'server.retention.voiceSessionLeases' },
-    { key: 'sessionShareAccessLogs', titleKey: 'server.retention.sessionShareAccessLogs' },
     { key: 'publicShareAccessLogs', titleKey: 'server.retention.publicShareAccessLogs', runsWhenDeletionOff: true },
     { key: 'terminalAuthRequests', titleKey: 'server.retention.terminalAuthRequests' },
     { key: 'accountAuthRequests', titleKey: 'server.retention.accountAuthRequests' },

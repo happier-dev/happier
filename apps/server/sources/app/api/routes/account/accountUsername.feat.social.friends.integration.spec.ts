@@ -34,7 +34,6 @@ describe("Account username update (integration)", () => {
         harness.resetEnv();
         vi.unstubAllGlobals();
         await harness.resetDbTables([
-            () => db.releasedUsername.deleteMany(),
             () => db.repeatKey.deleteMany(),
             () => db.accountIdentity.deleteMany(),
             () => db.account.deleteMany(),
@@ -72,7 +71,6 @@ describe("Account username update (integration)", () => {
             expect(released.statusCode).toBe(200);
             expect(released.json()).toMatchObject({ username: null, released: true });
             expect(released.json().reservedUntilMs).toBeNull();
-            expect(await db.releasedUsername.findUnique({ where: { username: "profile-changed" } })).toBeNull();
             expect(await db.account.findUniqueOrThrow({ where: { id: owner.id } })).toMatchObject({ username: null, usernameAutoFillEnabled: false });
             expect(await db.accountIdentity.count({ where: { accountId: owner.id } })).toBe(0);
             expect((await claim("profile-changed")).statusCode).toBe(200);
@@ -94,7 +92,6 @@ describe("Account username update (integration)", () => {
                 expect(response.json()).toEqual({ error: "friends-disabled" });
             }
             expect((await db.account.findUniqueOrThrow({ where: { id: owner.id } })).username).toBe("retained_name");
-            expect(await db.releasedUsername.count()).toBe(0);
         });
     });
 
@@ -132,7 +129,6 @@ describe("Account username update (integration)", () => {
             const claim = await app.inject({ method: "POST", url: "/v1/account/username", headers: { "x-test-user-id": other.id }, payload: { username: "release_me" } });
             expect(claim.statusCode).toBe(200);
             expect(claim.json()).toEqual({ username: "release_me" });
-            expect(await db.releasedUsername.findUnique({ where: { username: "release_me" } })).toBeNull();
             expect((await db.account.findUniqueOrThrow({ where: { id: owner.id } })).username).toBeNull();
         });
     });
@@ -163,20 +159,6 @@ describe("Account username update (integration)", () => {
         });
     });
 
-    it("preserves retained release records without treating them as a current hold and never holds a rename", async () => {
-        applyAccountUsernameFriendsEnv(harness);
-        await withAuthenticatedTestApp(accountRoutes, async app => {
-            const owner = await db.account.create({ data: { publicKey: "pk-username-expiry", username: "before_rename" } });
-            const expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000;
-            await db.releasedUsername.create({ data: { username: "expired_name", expiresAt: new Date(expiresAt) } });
-            const claim = () => app.inject({ method: "POST", url: "/v1/account/username", headers: { "x-test-user-id": owner.id }, payload: { username: "expired_name" } });
-            expect((await claim()).statusCode).toBe(200);
-            expect((await db.releasedUsername.findUniqueOrThrow({ where: { username: "expired_name" } })).expiresAt.getTime()).toBe(expiresAt);
-            expect(await db.releasedUsername.findUnique({ where: { username: "before_rename" } })).toBeNull();
-            expect(await db.account.findUniqueOrThrow({ where: { id: owner.id } })).toMatchObject({ username: "expired_name", usernameAutoFillEnabled: false });
-        });
-    });
-
     it("rejects caller-supplied identity authority on check and release", async () => {
         applyAccountUsernameFriendsEnv(harness);
         await withAuthenticatedTestApp(accountRoutes, async app => {
@@ -189,7 +171,6 @@ describe("Account username update (integration)", () => {
                 expect(response.statusCode).toBe(400);
             }
             expect((await db.account.findUniqueOrThrow({ where: { id: owner.id } })).username).toBe("authority_name");
-            expect(await db.releasedUsername.count()).toBe(0);
         });
     });
 

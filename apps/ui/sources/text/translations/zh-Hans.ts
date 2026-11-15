@@ -9166,7 +9166,6 @@ export const zhHans: TranslationStructure = {
         accountChanges: "账户变更",
         voiceSessionLeases: "语音会话租约",
         feedItems: "动态条目",
-        sessionShareAccessLogs: "会话共享访问日志",
         publicShareAccessLogs: "公开共享访问日志",
         terminalAuthRequests: "终端认证请求",
         accountAuthRequests: "账户认证请求",

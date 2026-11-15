@@ -936,7 +936,6 @@ export async function deleteAccountForErasure(input: Readonly<{
             }),
         })));
         const sessions = await tx.session.findMany({ where: { accountId: input.accountId }, select: { id: true }, orderBy: { id: "asc" } });
-        await tx.sessionShareAccessLog.deleteMany({ where: { userId: input.accountId } });
         await tx.publicShareAccessLog.deleteMany({ where: { userId: input.accountId } });
         await eraseSessionAccessGrantsForAccountInTx(tx, { accountId: input.accountId });
         await eraseDiscussionAccessGrantsForAccountInTx(tx, { accountId: input.accountId });

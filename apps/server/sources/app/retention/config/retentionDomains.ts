@@ -51,7 +51,6 @@ const RETENTION_DOMAIN_DEFINITIONS = Object.freeze({
     },
     voiceSessionLeases: { id: 'voiceSessionLeases', policyConfig: ageConfig('VOICE_SESSION_LEASES') },
     userFeedItems: { id: 'userFeedItems', policyConfig: ageConfig('USER_FEED_ITEMS') },
-    sessionShareAccessLogs: { id: 'sessionShareAccessLogs', policyConfig: ageConfig('SESSION_SHARE_ACCESS_LOGS') },
     // Owner ruling 2026-11-15 (Growth decisions final): access logs keep 90 days by default,
     // whether or not the operator turned on automatic deletion for the other domains.
     publicShareAccessLogs: {

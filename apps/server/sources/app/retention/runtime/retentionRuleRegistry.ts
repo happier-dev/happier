@@ -14,7 +14,6 @@ import {
     runSessionSidechainMessageRetentionRule,
     type SidechainRetentionCursor,
 } from '@/app/retention/rules/sessionSidechainMessageRetentionRule';
-import { createSessionShareAccessLogRetentionRule } from '@/app/retention/rules/sessionShareAccessLogRetentionRule';
 import { runSessionRetentionRule } from '@/app/retention/rules/sessionRetentionRule';
 import { createTerminalAuthRequestRetentionRule } from '@/app/retention/rules/terminalAuthRequestRetentionRule';
 import { createAccountAuthRequestRetentionRule } from '@/app/retention/rules/accountAuthRequestRetentionRule';
@@ -109,7 +108,6 @@ const RETENTION_RULE_FACTORIES = Object.freeze({
     providerAccountUsageHistory: createProviderAccountUsageHistoryRetentionRule,
     voiceSessionLeases: createVoiceSessionLeaseRetentionRule,
     userFeedItems: createUserFeedItemRetentionRule,
-    sessionShareAccessLogs: createSessionShareAccessLogRetentionRule,
     publicShareAccessLogs: createPublicShareAccessLogRetentionRule,
     terminalAuthRequests: createTerminalAuthRequestRetentionRule,
     accountAuthRequests: createAccountAuthRequestRetentionRule,
