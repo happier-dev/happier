@@ -46,14 +46,17 @@ import {
 } from '@happier-dev/protocol';
 
 import { upsertEncryptedAccountSettingsV2 } from './accountSettings';
-import { createTestAuth, type TestAuth } from './auth';
+import { createTestAuth, createTestTerminalAuth, type TestAuth } from './auth';
 import { seedCliAuthForTestAccount } from './cliAuth';
 import { daemonControlPostJson } from './daemon/controlServerClient';
 import { fetchJson } from './http';
 import { writeTestManifestForServer } from './manifestForServer';
-import { ensureCliSharedDepsBuilt } from './process/cliDist';
+import { ensureCliSharedDepsBuilt, ensureCliSourceDevSharedDepsCurrent } from './process/cliDist';
+import { shouldUseCliSourceEntrypoint } from './process/cliLaunchSpec';
 import { startServerLight, type StartedServer } from './process/serverLight';
 import { startTestDaemon, type StartedDaemon } from './daemon/daemon';
+import { startHttpRequestRecordingProxy, type HttpRequestRecordingProxy } from './httpRequestRecordingProxy';
+import { reserveAvailablePort } from './network/reserveAvailablePort';
 import type { StartedConnectedServicesCodexDaemonFixture } from './connectedServicesCodexDaemon';
 
 export type RecoveryProxyGroupFailureMode = 'http_503' | 'socket_hangup' | 'connection_refused';
@@ -740,6 +743,7 @@ export type StartedConnectedServicesClaudeDaemonFixture = Readonly<{
   controlToken: string | undefined;
   fakeClaudeLogPath: string;
   fakeClaudeScenario: string | null;
+  homeRequests?: HttpRequestRecordingProxy;
 }>;
 
 export async function startConnectedServicesClaudeDaemon(params: Readonly<{
@@ -752,33 +756,45 @@ export async function startConnectedServicesClaudeDaemon(params: Readonly<{
   accountSettings?: Record<string, unknown>;
   serverExtraEnv?: Record<string, string>;
   extraEnv?: Record<string, string>;
+  /** Observe actual Home admission without substituting its responses. */
+  recordHomeRequests?: true;
+  /** Exercise the current terminal sign-in boundary for daemon disk credentials. */
+  terminalCredential?: true;
 }>): Promise<StartedConnectedServicesClaudeDaemonFixture> {
   const startedAt = new Date().toISOString();
+  const serverPort = params.terminalCredential ? await reserveAvailablePort() : undefined;
   const server = await startServerLight({
     testDir: params.testDir,
     dbProvider: 'sqlite',
+    port: serverPort,
     extraEnv: {
+      ...(serverPort ? { HAPPIER_CANONICAL_SERVER_URL: `http://127.0.0.1:${serverPort}` } : {}),
       HAPPIER_FEATURE_CONNECTED_SERVICES_ACCOUNT_GROUPS__ENABLED: '1',
       HAPPIER_FEATURE_CONNECTED_SERVICES_ACCOUNT_FALLBACK__ENABLED: '1',
       ...(params.serverExtraEnv ?? {}),
     },
   });
-  const auth = await createTestAuth(server.baseUrl);
+  const homeRequests = params.recordHomeRequests
+    ? await startHttpRequestRecordingProxy({ targetBaseUrl: server.baseUrl, captureRequestBody: true })
+    : undefined;
+  const serverBaseUrl = homeRequests?.baseUrl ?? server.baseUrl;
+  const auth = await createTestAuth(serverBaseUrl);
   const daemonHomeDir = resolve(join(params.testDir, 'daemon-home'));
   const workspaceDir = resolve(join(params.testDir, 'workspace'));
   await mkdir(daemonHomeDir, { recursive: true });
   await mkdir(workspaceDir, { recursive: true });
 
   const secret = auth.accountSigningSeed;
+  const daemonAuth = params.terminalCredential ? await createTestTerminalAuth(serverBaseUrl, auth) : auth;
   const { serverId } = await seedCliAuthForTestAccount({
     cliHome: daemonHomeDir,
-    serverUrl: server.baseUrl,
-    auth,
+    serverUrl: serverBaseUrl,
+    auth: daemonAuth,
     mode: 'legacy',
   });
 
   await upsertEncryptedAccountSettingsV2({
-    baseUrl: server.baseUrl,
+    baseUrl: serverBaseUrl,
     token: auth.token,
     secret,
     settings: {
@@ -800,8 +816,8 @@ export async function startConnectedServicesClaudeDaemon(params: Readonly<{
     env: {
       CI: process.env.CI,
       HAPPIER_HOME_DIR: daemonHomeDir,
-      HAPPIER_SERVER_URL: server.baseUrl,
-      HAPPIER_WEBAPP_URL: server.baseUrl,
+      HAPPIER_SERVER_URL: serverBaseUrl,
+      HAPPIER_WEBAPP_URL: serverBaseUrl,
     },
   });
 
@@ -811,8 +827,8 @@ export async function startConnectedServicesClaudeDaemon(params: Readonly<{
     HAPPIER_VARIANT: 'dev',
     HAPPIER_DISABLE_CAFFEINATE: '1',
     HAPPIER_HOME_DIR: daemonHomeDir,
-    HAPPIER_SERVER_URL: server.baseUrl,
-    HAPPIER_WEBAPP_URL: server.baseUrl,
+    HAPPIER_SERVER_URL: serverBaseUrl,
+    HAPPIER_WEBAPP_URL: serverBaseUrl,
     HAPPIER_CLAUDE_PATH: params.fakeClaudePath,
     HAPPIER_E2E_FAKE_CLAUDE_LOG: params.fakeClaudeLogPath,
     HAPPIER_E2E_FAKE_CLAUDE_REQUIRE_NATIVE_OAUTH: '1',
@@ -826,6 +842,11 @@ export async function startConnectedServicesClaudeDaemon(params: Readonly<{
     ...(params.extraEnv ?? {}),
   };
 
+  if (shouldUseCliSourceEntrypoint(daemonEnv)) {
+    // Prepare before daemon startup and the bounded spawn request, including
+    // when build-skip flags assume the shared publisher already ran.
+    await ensureCliSourceDevSharedDepsCurrent({ testDir: params.testDir, env: daemonEnv }, { prepare: true });
+  }
   await ensureCliSharedDepsBuilt({ testDir: params.testDir, env: daemonEnv });
   const daemon = await startTestDaemon({
     testDir: params.testDir,
@@ -840,7 +861,7 @@ export async function startConnectedServicesClaudeDaemon(params: Readonly<{
 
   return {
     server,
-    serverBaseUrl: server.baseUrl,
+    serverBaseUrl,
     auth,
     accountSecret: secret,
     daemon,
@@ -851,6 +872,7 @@ export async function startConnectedServicesClaudeDaemon(params: Readonly<{
     controlToken: daemon.state.controlToken,
     fakeClaudeLogPath: params.fakeClaudeLogPath,
     fakeClaudeScenario: params.fakeClaudeScenario ?? null,
+    ...(homeRequests ? { homeRequests } : {}),
   };
 }
 

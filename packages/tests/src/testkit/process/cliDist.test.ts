@@ -118,6 +118,26 @@ describe('ensureCliDistBuilt', () => {
     }
   });
 
+  it('prepares source dependencies through the publisher before checking readiness when build skips are enabled', async () => {
+    const repoRoot = await createRepoRoot();
+    const scripts = join(repoRoot, 'apps', 'cli', 'scripts');
+    await mkdir(scripts, { recursive: true });
+    const marker = join(repoRoot, 'source-ready');
+    await writeFile(join(scripts, 'syncSharedDepsForDev.mjs'), `
+      import { existsSync, writeFileSync } from 'node:fs';
+      const marker = ${JSON.stringify(marker)};
+      if (process.argv.includes('--check')) {
+        if (!existsSync(marker)) throw new Error('source dependencies were never prepared');
+      } else writeFileSync(marker, 'ready');
+    `);
+    const params = { testDir: join(repoRoot, '.project'), env: {
+      ...process.env, HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1',
+    } };
+    await ensureCliSourceDevSharedDepsCurrent(params, { repoRoot, prepare: true });
+    await ensureCliSourceDevSharedDepsCurrent(params, { repoRoot });
+    expect(await readFile(marker, 'utf8')).toBe('ready');
+  });
+
   it('uses the canonical source-dev read-only check without starting a local build', async () => {
     const repoRoot = await createRepoRoot();
     const invocations: Array<{

@@ -123,6 +123,9 @@ const appSourceAliasesPlugin: Plugin = {
     if (id === '@happier-tests/ui-machine-carrier') {
       return uiSource('dev/testkit/machineCarrierHttpIntegrationTestkit.ts');
     }
+    if (id === '@happier-tests/ui-action-client') {
+      return uiSource('dev/testkit/actionClientIntegrationTestkit.ts');
+    }
     if (id === '@happier-tests/ui-scm-refine-admission') {
       return uiSource('dev/testkit/scmRefineAdmissionIntegrationTestkit.ts');
     }
@@ -133,6 +136,8 @@ const appSourceAliasesPlugin: Plugin = {
     if (id === '@/platform/hmacSha512') return uiSource('platform/hmacSha512.node.ts');
     if (id === '@/platform/randomUUID') return uiSource('platform/randomUUID.node.ts');
     if (id === '@/platform/digest') return uiSource('platform/digest.node.ts');
+    // Resolve the real renderer as Metro does, without its call-time CJS loader.
+    if (id === '@/components/ui/code/editor/CodeEditor') return uiSource('components/ui/code/editor/CodeEditor.native.tsx');
     if (!id.startsWith('@/')) return null;
 
     return resolveSourceFile(resolveAppSourceRoot(importer), id.slice(2));
@@ -167,7 +172,9 @@ export function createUiProductionHooksVitestConfig(): UserConfig {
         deps: {
           // Production UI modules can reach React Navigation and Legend's React Native
           // entrypoints. Inline them so the node-safe aliases above see their Flow sources.
-          inline: [/@react-navigation\/native/, /@react-navigation\/elements/, /@legendapp\/list/, /react-native-svg/],
+          inline: [/@react-navigation\/native/, /@react-navigation\/elements/, /@react-navigation\/bottom-tabs/,
+            /@legendapp\/list/, /react-native-svg/, /react-native-enriched-markdown/,
+            /expo-secure-store/, /expo-crypto/, /react-native-quick-base64/],
         },
       },
       env: {
@@ -178,6 +185,12 @@ export function createUiProductionHooksVitestConfig(): UserConfig {
     resolve: {
       dedupe: ['react', 'react-dom'],
       alias: [
+        // This source-driven test app has no Metro-packaged Plugin UI assets.
+        // Reuse the UI harness's package boundary; all artifact owners stay real.
+        {
+          find: /^(?:\.\/|.*[\\/]sync[\\/]domains[\\/]plugins[\\/]availability[\\/])generatedBundledPluginUiArtifacts(?:\.js)?$/,
+          replacement: uiDev('testkit/mocks/bundledPluginUiAssets.ts'),
+        },
         {
           find: /^react(\/.*)?$/,
           replacement: `${dirname(requireUiDependency.resolve('react/package.json'))}$1`,
@@ -194,6 +207,8 @@ export function createUiProductionHooksVitestConfig(): UserConfig {
         { find: /(?:^|[\\/])node_modules[\\/]react-native-reanimated[\\/].*$/, replacement: uiDev('reactNativeReanimatedStub.ts') },
         { find: /^react-native-keyboard-controller(?:\/.*)?$/, replacement: uiDev('reactNativeKeyboardControllerStub.ts') },
         { find: /(?:^|[\\/])node_modules[\\/]react-native-keyboard-controller[\\/].*$/, replacement: uiDev('reactNativeKeyboardControllerStub.ts') },
+        { find: /^@react-native-masked-view\/masked-view(?:\/.*)?$/, replacement: uiDev('reactNativeMaskedViewStub.tsx') },
+        { find: /(?:^|[\\/])node_modules[\\/]@react-native-masked-view[\\/]masked-view[\\/].*$/, replacement: uiDev('reactNativeMaskedViewStub.tsx') },
         { find: /^react-native\//, replacement: uiDev('reactNativeInternalStub.ts') },
         { find: /^react-native$/, replacement: uiDev('reactNativeStub.ts') },
         { find: /^react-native-svg$/, replacement: uiDev('testkit/mocks/reactNativeSvg.ts') },

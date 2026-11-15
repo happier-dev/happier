@@ -918,19 +918,21 @@ export async function ensureCliSharedDepsBuilt(
 
 export async function ensureCliSourceDevSharedDepsCurrent(
   params: { testDir: string; env: NodeJS.ProcessEnv },
-  options: Pick<EnsureCliSharedDepsBuiltOptions, 'repoRoot' | 'runCommand' | 'buildTimeoutMs'> = {},
+  options: Pick<EnsureCliSharedDepsBuiltOptions, 'repoRoot' | 'runCommand' | 'buildTimeoutMs'> & { prepare?: true } = {},
 ): Promise<void> {
   mkdirSync(params.testDir, { recursive: true });
   const rootDir = options.repoRoot ?? repoRootDir();
   const runCommand = options.runCommand ?? runLoggedCommand;
   await runCommand({
     command: process.execPath,
-    args: [resolve(rootDir, 'apps', 'cli', 'scripts', 'syncSharedDepsForDev.mjs'), '--check'],
+    args: [resolve(rootDir, 'apps', 'cli', 'scripts', 'syncSharedDepsForDev.mjs'),
+      ...(options.prepare ? [] : ['--check'])],
     cwd: resolve(rootDir, 'apps', 'cli'),
     env: { ...process.env, ...params.env, CI: '1' },
     stdoutPath: resolve(params.testDir, 'cli.sourceDevSharedDepsCheck.stdout.log'),
     stderrPath: resolve(params.testDir, 'cli.sourceDevSharedDepsCheck.stderr.log'),
-    timeoutMs: options.buildTimeoutMs ?? DEFAULT_CLI_DIST_BUILD_TIMEOUT_MS,
+    // Publication owns completion, including time spent queued for resources.
+    timeoutMs: options.prepare ? null : options.buildTimeoutMs ?? DEFAULT_CLI_DIST_BUILD_TIMEOUT_MS,
   });
 }
 

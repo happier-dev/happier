@@ -28,6 +28,18 @@ const {
 } = require('./fake-claude-code-cli.helpers.cjs');
 
 const argv = process.argv.slice(2);
+// Model the vendor's installed-but-signed-out native CLI independently of the
+// connected profile Happier selects for a particular launch.
+if (process.env.HAPPIER_E2E_FAKE_CLAUDE_NATIVE_SIGNED_OUT === '1') {
+  if (argv.includes('--version')) {
+    process.stdout.write('2.1.292 (Claude Code)\n');
+    process.exit(0);
+  }
+  if (argv[0] === 'auth' && argv[1] === 'status') {
+    process.stdout.write(JSON.stringify({ loggedIn: false }));
+    process.exit(1);
+  }
+}
 if (argv.includes('--help') || argv.includes('-h')) {
   process.stdout.write([
     'Usage: claude [options] [prompt]',
@@ -165,6 +177,8 @@ safeAppendJsonl(logPath, {
   claudeConfigDir: resolveClaudeConfigDir(),
   mcpConfigs,
   mergedMcpServers,
+  // The fake vendor uses the Session-issued MCP transport, never a synthetic admission.
+  sessionMcpContextFile: process.env.HAPPIER_SESSION_MCP_CONTEXT_FILE,
   environmentAttestation: captureEnvironmentAttestation(),
 });
 
