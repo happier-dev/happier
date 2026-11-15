@@ -1,3 +1,4 @@
+import { createSessionLiveWorkProducer } from '@/daemon/lifecycle/sessionLiveWorkProducer';
 import { describe, expect, it, vi } from 'vitest';
 import { createServer } from 'node:http';
 import { ChildProcess, spawn } from 'node:child_process';
@@ -27,6 +28,11 @@ import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/erro
 import { createExternalContributionFixtures, createLease, createNativeAgentRuntimeSessionPlanFixture, createNativeSessionClientTestPort, createSessionHostServiceOwners } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession.testkit';
 import { buildPluginSessionBindingInput } from '@/plugins/runtime/runtimeCore/plugin/sessionLaunch';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+
+const sessionChanges = createSessionLiveWorkProducer({
+  readSessions: () => [],
+  readActivity: async () => ({ session: 'unknown', input: 'unknown' }),
+});
 
 describe('Session startup operation custody', () => {
   it.each([
@@ -95,7 +101,7 @@ describe('Session startup operation custody', () => {
       stopSession: createStopSession({ trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
         areTrackedRunnersExited: async () => true, waitForTrackedRunnersExit: async () => true,
         readHostAttachmentState: async () => ({ status: 'absent' }), readTerminalAttachmentInfo: async () => null }),
-    }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ ...input,
+    }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener), ...input,
       getTrackedSessions: () => [tracked], timeoutMs: 0 }) });
     const operations = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'account',
       generateOperationId: () => 'construction-failed' });
@@ -132,7 +138,7 @@ describe('Session startup operation custody', () => {
     const handler = createMachineSessionSpawnRpcHandler({ handlers: {
       spawnSession: async () => ({ type: 'success', sessionId: tracked.happySessionId! }),
       stopSession: async () => ({ status: 'stopped' }),
-    }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ ...input,
+    }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener), ...input,
       getTrackedSessions: () => [tracked], readStartupFailure: async () => issue, timeoutMs: null }) });
     const operations = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'account',
       generateOperationId: () => 'environment-startup', supportsCoreCancellation: () => true });
@@ -173,7 +179,7 @@ describe('Session startup operation custody', () => {
     const handler = createMachineSessionSpawnRpcHandler({ handlers: {
       spawnSession: async () => ({ type: 'success', sessionId }),
       stopSession: async () => { throw new Error('An observation timeout must not stop admitted native startup'); },
-    }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ ...input, getTrackedSessions: () => [tracked] }) });
+    }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener), ...input, getTrackedSessions: () => [tracked] }) });
     let result: unknown;
     const response = operations.observeExecution({ actionId: 'session.spawn_new', input: { creationKey: 'voice-home' },
       execute: async operation => ({ ok: true, result: await handler({ directory: '/project',
@@ -252,7 +258,7 @@ describe('Session startup operation custody', () => {
       stopSession: scenario === 'stop-throws' ? async () => { throw new Error('OS Stop failed'); }
         : scenario === 'stop-incomplete' ? async () => ({ status: 'incomplete', reason: 'runner_signal_incomplete' })
         : physical,
-    }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ ...input, getTrackedSessions: () => {
+    }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener), ...input, getTrackedSessions: () => {
       const rows = [...tracked.values()];
       // Replacement registration or a mis-bound mutable birth occurs after observation, before Stop selection.
       if (scenario === 'replacement') queueMicrotask(() => { tracked.clear(); tracked.set(replacement.trackingKey, replacement); });
@@ -295,7 +301,7 @@ describe('Session startup operation custody', () => {
         expect(sessionId).toBe('refused-child'); stopEntered(); await stopped;
         return { status: 'stopped' };
       },
-    }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ getTrackedSessions: () => [tracked], ...input }) });
+    }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener), getTrackedSessions: () => [tracked], ...input }) });
     const scope = { accountId: 'account', machineId: 'machine' };
     const response = operations.observeExecution({ actionId: 'session.spawn_new', input: { creationKey: 'refused' },
       execute: async operation => ({ ok: true, result: await handler({ directory: '/project',
@@ -388,7 +394,7 @@ describe('Session startup operation custody', () => {
                     updateMarker: async () => true })).not.toBeNull();
                   return { type: 'success', sessionId };
                 },
-                awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ ...input, getTrackedSessions: () => [...tracked.values()] }),
+                awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener), ...input, getTrackedSessions: () => [...tracked.values()] }),
                 refused: () => ({ ok: false as const, errorCode: 'requester_unavailable', errorMessage: 'unavailable' }),
                 run: ({ spawnSession }) => attemptNativeForkOpen({ credentials: { token: 'test-token', encryption: null },
                   parentSessionId: 'parent', parentMetadata, directory: '/project', forkPoint: { type: 'latest' },
@@ -397,7 +403,7 @@ describe('Session startup operation custody', () => {
                     backendTargetV2: { kind: 'backend', backendId: 'acme-agent' },
                     backendTarget: { kind: 'configuredAcpBackend', backendId: 'acme-agent' }, replayFlavor: 'acme-agent', metadataOverlay: {} },
                   inheritedForkOverrides: { spawn: {}, metadata: {} }, spawnSession, stopSession,
-                  awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ ...input, getTrackedSessions: () => {
+                  awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener), ...input, getTrackedSessions: () => {
                     const observed = [...tracked.values()];
                     if (scenario === 'replacement') queueMicrotask(() => { tracked.clear(); tracked.set(replacement.trackingKey, replacement); });
                     if (scenario === 'changed-birth') queueMicrotask(() => { refused.processStartTimeMs = 2000; });
@@ -469,7 +475,7 @@ describe('Session startup operation custody', () => {
                 tracked.childProcess = Object.assign(new (await import('node:child_process')).ChildProcess(), { exitCode: 1 });
                 return { type: 'success', sessionId: 'native-fork-child' };
               },
-              awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ getTrackedSessions: () => [tracked], ...input }),
+              awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener), getTrackedSessions: () => [tracked], ...input }),
               stopSession: async () => { throw new Error('Native fork owns its own retirement'); },
               refused: () => ({ ok: false as const, errorCode: 'requester_unavailable', errorMessage: 'unavailable' }),
               run: ({ spawnSession }) => attemptNativeForkOpen({ credentials: { token: 'test-token', encryption: null },
@@ -480,7 +486,7 @@ describe('Session startup operation custody', () => {
                   backendTarget: { kind: 'configuredAcpBackend', backendId: 'acme-agent' }, replayFlavor: 'acme-agent', metadataOverlay: {} },
                 inheritedForkOverrides: { spawn: {}, metadata: {} }, spawnSession,
                 stopSession: async sessionId => { expect(sessionId).toBe('native-fork-child'); stopped = true; return true; },
-                awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ getTrackedSessions: () => [tracked], ...input }),
+                awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener), getTrackedSessions: () => [tracked], ...input }),
               }),
             });
             if (!result) throw new Error('Native fork did not select an open strategy');
@@ -509,7 +515,7 @@ describe('Session startup operation custody', () => {
       execute: async operation => ({ ok: true, result: await runRequesterSessionLifecycle({ sessionId: 'parent',
         context: { signal: operation.signal, localActionContext: operation },
         spawnSession: async options => { captured = options; return { type: 'success', sessionId: 'fork-child' }; },
-        awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ getTrackedSessions: () => [tracked], ...input }),
+        awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener), getTrackedSessions: () => [tracked], ...input }),
         stopSession: async () => { throw new Error('Successful startup must not retire its runner'); },
         refused: (): SpawnSessionResult => ({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE, errorMessage: 'unavailable' }),
         run: ({ spawnSession }) => spawnSession({ directory: '/project' }),
@@ -520,6 +526,7 @@ describe('Session startup operation custody', () => {
       expect(operations.store.get({ accountId: 'account', machineId: 'machine' }, 'fork-startup')).toMatchObject({ state: 'running' });
       tracked.agentRuntimeDaemonServiceSessionOpenAttestation = { request: { kind: 'create', sessionId: 'fork-child', cwd: '/project' },
         providerSessionId: 'native-fork' };
+      sessionChanges.notifyChanged();
       expect(await response).toMatchObject({ ok: true, result: { type: 'success', sessionId: 'fork-child' } });
     } finally { operations.runner.cancel({ accountId: 'account', machineId: 'machine' }, 'fork-startup'); await response.catch(() => undefined); }
   });
@@ -544,7 +551,7 @@ describe('Session startup operation custody', () => {
       tracked.spawnOptions = options;
       return { type: 'success', sessionId: 'session-child' };
     }, stopSession: async () => { throw new Error('Open, cancellation and observed exit do not retire a refused runner'); },
-    awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({
+    awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener),
       getTrackedSessions: () => trackedSessions, ...input,
     }) });
     try {
@@ -585,6 +592,7 @@ describe('Session startup operation custody', () => {
         recovery.handleUnexpectedExit(tracked, { reason: 'process-exit', code: 143, signal: 'SIGTERM' },
           { forceRestart: true, restartReason: 'account_changed' });
         trackedSessions.length = 0;
+        sessionChanges.notifyChanged();
         await vi.advanceTimersByTimeAsync(1_000);
         expect(successors).toEqual([]);
         expect(recovery.hasPendingIntendedRestarts('session-child')).toBe(false);
@@ -592,6 +600,7 @@ describe('Session startup operation custody', () => {
         tracked.agentRuntimeDaemonServiceSessionOpenAttestation = {
           request: { kind: 'create', sessionId: 'session-child', cwd: '/project' }, providerSessionId: 'native-child',
         };
+        sessionChanges.notifyChanged();
         await vi.advanceTimersByTimeAsync(25);
       }
       await vi.waitFor(() => expect(operations.store.get(scope, 'original-startup')).toMatchObject({

@@ -155,6 +155,8 @@ import { resolveRunnerSkills, type RunnerSkillsResult } from '@/prompts/skills/r
 import { readAppliedSessionSkillDelivery } from '@/prompts/skills/runtime/reapplySessionSkills';
 import { resolveCapabilityApplyAgentFacts } from '@/session/runtime/capabilityApplyFacts';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import type { ResolvedAgentContribution } from '@/plugins/projection/registry/types';
 import { publishRunnerSkillNotice } from '@/prompts/skills/runtime/publishRunnerSkillNotice';
 import { readPromptLibraryCatalogRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 import { applyRunnerMcpSessionContext } from '@/mcp/runtime/applyRunnerMcpSessionContext';
@@ -915,8 +917,8 @@ export type HostSessionRuntimeConfig = {
   /** Exact caller-owned executable registry for daemonless scoped runtimes. */
   pluginRuntimeRegistryLease?: PluginRuntimeRegistryLease;
   pluginMcpRuntimeRegistry?: PluginRuntimeRegistryLease['registry'];
-  /** Reads the exact Agent catalog after retained native-source preparation. */
-  readSessionAgentCatalogEntry?: () => AgentCatalogEntry | null;
+  /** Reads the Session's exact admitted Agent (after retained native-source preparation). */
+  readSessionAgent?: () => ResolvedAgentContribution;
   /** Reviewed activation-local MCP material already resolved by the canonical owner. */
   resolvedMcpServers?: Record<string, McpServerConfig>;
   /** Explicit host Action/MCP authority; absent for ordinary Account runtimes. */
@@ -1395,6 +1397,7 @@ async function runHostedSessionRuntime(
       ? applySessionProviderBindingMetadataV1(augmented, providerBindingMetadataUpdate) as Metadata
       : augmented;
   };
+  let bindProviderInputReadiness: ((client: ApiSessionClient) => void) | null = null;
   const applySessionSwap = async (newSession: ApiSessionClient): Promise<void> => {
     const previousSession = typeof session === 'undefined' ? null : session;
     const roleContext = (previousSession as import('@/mcp/runtime/applyRunnerMcpSessionContext').RunnerMcpSessionWithContext<ApiSessionClient> | null)
@@ -1495,6 +1498,7 @@ async function runHostedSessionRuntime(
       modelMutationScope = { ...modelMutationScope, sessionId: newSession.sessionId };
     }
     currentControlRpcRegistrar?.rebindTo(newSession.rpcHandlerManager);
+    bindProviderInputReadiness?.(newSession);
     permissionHandler?.updateSession(newSession);
     if (rebindPermissionModeQueueSession) {
       rebindPermissionModeQueueSession(newSession);
@@ -1523,7 +1527,11 @@ async function runHostedSessionRuntime(
     runtimeSelection: runtimeOpts.modelSelection,
     lifecycleSelection: initialModelSelection ?? undefined,
   });
-  const permissionAgent = (config.pluginRuntimeRegistryLease?.registry.contributes ?? readAgentCatalogSnapshot())
+  // The Session's Agent facts come from its lease or its exact admitted Agent. Only a
+  // runtime with neither reads the current catalog (a full built-in registry build).
+  const sessionAgentCatalog = config.pluginRuntimeRegistryLease?.registry.contributes
+    ?? (config.readSessionAgent ? createResolvedContributionRegistry({ agents: [config.readSessionAgent()] }) : undefined);
+  const permissionAgent = (sessionAgentCatalog ?? readAgentCatalogSnapshot())
     .agentDefinitionsById.get(policyAgentId);
   const permissionModeSeed = resolvePermissionModeSeedForAgentStart({
     agentId: policyAgentId,
@@ -2638,12 +2646,32 @@ async function runHostedSessionRuntime(
     serviceId: string;
     groupId: string;
   }>) => Promise<void>) | null = null;
-  const unsubscribeSessionLiveWork = inputConsumer.subscribeLiveWork(() => {
+  const unsubscribeLiveWork = inputConsumer.subscribeLiveWork(() => {
     void notifyDaemonSessionActivityChanged(currentLifecycleSession.sessionId).catch(() => {
       logger.debug('[HOST RUNTIME] Session activity invalidation could not reach daemon');
     });
   });
+  let unsubscribeProviderInputReadiness: (() => void) | undefined;
+  bindProviderInputReadiness = client => {
+    unsubscribeProviderInputReadiness?.();
+    const publish = () => {
+      const ready = client.readRpcHandlerAvailability?.(SESSION_RPC_METHODS.SESSION_PROVIDER_INPUT_ADMISSION);
+      if (ready === undefined) return;
+      void notifyDaemonSessionActivityChanged(client.sessionId, undefined, undefined, ready).catch(() => {
+        logger.debug('[HOST RUNTIME] Provider input availability could not reach daemon');
+      });
+    };
+    unsubscribeProviderInputReadiness = client.subscribeToRpcHandlerAvailability?.(SESSION_RPC_METHODS.SESSION_PROVIDER_INPUT_ADMISSION, publish);
+    // The subscription catches up ready; the owner also publishes actual pending.
+    if (client.readRpcHandlerAvailability?.(SESSION_RPC_METHODS.SESSION_PROVIDER_INPUT_ADMISSION) === false) publish();
+  };
+  const unsubscribeSessionLiveWork = () => {
+    unsubscribeLiveWork();
+    unsubscribeProviderInputReadiness?.();
+    bindProviderInputReadiness = null;
+  };
   unsubscribeSessionLiveWorkForConstructionCleanup = unsubscribeSessionLiveWork;
+  bindProviderInputReadiness(session);
   const guardNotice: SessionGuardNoticeOwner = {
     get session() { return currentLifecycleSession; },
     machineId,
@@ -2692,7 +2720,7 @@ async function runHostedSessionRuntime(
     unsubscribePendingQueueDeliveryTiming;
   const agentToolsDelivery = resolveAgentToolsDelivery(
     policyAgentId,
-    config.pluginRuntimeRegistryLease?.registry.contributes,
+    sessionAgentCatalog,
   );
   const receivesUserMcpServers = agentReceivesUserMcpServersV1(agentToolsDelivery);
   const managedMcpExplicitlyEmpty = Object.keys(config.resolvedMcpServers ?? {}).length === 0
@@ -2735,7 +2763,7 @@ async function runHostedSessionRuntime(
   const effectiveRunnerMcpAccountSettings = runtimeAuthority.accountCredentials
     ? runnerMcpAccountSettings
     : null;
-  const agentToolCapabilities = (config.pluginRuntimeRegistryLease?.registry.contributes ?? readAgentCatalogSnapshot()).catalogEntriesById[policyAgentId];
+  const agentToolCapabilities = (sessionAgentCatalog ?? readAgentCatalogSnapshot()).catalogEntriesById[policyAgentId];
   const mcpToolControl = agentToolCapabilities?.mcpToolControl;
   const mcpAccountLifetimeToken = sessionOpenContext.lifetimeToken;
   const mcpAccountScopeKey = sessionOpenContext.scopeKey;
@@ -2918,7 +2946,7 @@ async function runHostedSessionRuntime(
       credentials: runtimeAuthority.accountCredentials,
       accountSnapshot: accountSnapshot?.scopeKey === mcpAccountScopeKey ? accountSnapshot : null,
       operationContext: readSessionOpenAccountOperation(),
-      contributes: config.pluginRuntimeRegistryLease?.registry.contributes,
+      contributes: sessionAgentCatalog,
       agentHasActionChannel: agentToolsDelivery !== 'unsupported',
       isCurrent: () => getActiveAccountSettingsSnapshot()?.scopeKey === mcpAccountScopeKey
         && getActiveAccountSettingsSnapshotLifetimeToken() === mcpAccountLifetimeToken,
@@ -3100,6 +3128,7 @@ async function runHostedSessionRuntime(
   }
   resolveFreshSessionSystemPrompt = createSessionPromptPlanResolver({
     opts: runtimeOpts, session: currentLifecycleSession, agentId: policyAgentId,
+    ...(sessionAgentCatalog ? { agentCatalog: sessionAgentCatalog } : {}),
     serverId: sessionOpenContext.home.serverId,
     machineId, directory: runtimeDirectory, memoryRecallGuidanceEnabled,
     readNativeSessionId: () => runtimeForInFlightSteer?.readSessionIdentity().sessionId ?? null,
@@ -3888,7 +3917,7 @@ async function runHostedSessionRuntime(
   runtimeForSessionRollback = nativeRuntime;
   const capabilitySelectionAgentFacts = await resolveCapabilityApplyAgentFacts({ agentId: policyAgentId,
     registry: config.pluginRuntimeRegistryLease?.registry,
-    ...(config.readSessionAgentCatalogEntry ? { catalogEntry: config.readSessionAgentCatalogEntry() } : {}),
+    ...(config.readSessionAgent ? { catalogEntry: config.readSessionAgent().catalogEntry ?? null } : {}),
     metadata: { runtimeDescriptorV1: openedRuntimeDescriptor ?? runtimeOpts.runtimeDescriptorV1 }, sessionRunning: true });
   const unsubscribeRuntimePublication = subscribeSessionRuntimePublicationToMetadata({
     session: currentLifecycleSession,
@@ -3899,7 +3928,7 @@ async function runHostedSessionRuntime(
     capabilitySelection: capabilitySelectionAgentFacts,
     resolveCapabilitySelectionForDescriptor: descriptor => resolveCapabilityApplyAgentFacts({ agentId: policyAgentId,
       registry: config.pluginRuntimeRegistryLease?.registry,
-      ...(config.readSessionAgentCatalogEntry ? { catalogEntry: config.readSessionAgentCatalogEntry() } : {}),
+      ...(config.readSessionAgent ? { catalogEntry: config.readSessionAgent().catalogEntry ?? null } : {}),
       metadata: { runtimeDescriptorV1: descriptor }, sessionRunning: true }),
   });
   runtimePublicationMetadata = unsubscribeRuntimePublication;
@@ -4184,7 +4213,7 @@ async function runHostedSessionRuntime(
             sessionMetadata: currentLifecycleSession.getMetadataSnapshot(), credentials: runtimeAuthority.accountCredentials,
             accountSnapshot: readSessionOpenAccountOperation()?.readSnapshot() ?? null,
             operationContext: readSessionOpenAccountOperation(),
-            contributes: config.pluginRuntimeRegistryLease?.registry.contributes, agentHasActionChannel: agentToolsDelivery !== 'unsupported',
+            contributes: sessionAgentCatalog, agentHasActionChannel: agentToolsDelivery !== 'unsupported',
             isCurrent: () => getActiveAccountSettingsSnapshot()?.scopeKey === mcpAccountScopeKey
               && getActiveAccountSettingsSnapshotLifetimeToken() === mcpAccountLifetimeToken,
           }),
@@ -4205,6 +4234,7 @@ async function runHostedSessionRuntime(
       machineId,
       memoryRecallGuidanceEnabled,
       policyAgentId,
+      ...(sessionAgentCatalog ? { sessionAgentCatalog } : {}),
       setActiveAgentCompositionToolSelection: (selection) => {
         activeAgentCompositionToolSelection = selection;
       },

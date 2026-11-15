@@ -8658,6 +8658,22 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 runner activity notifications add
+optional `providerInputAdmissionReady`, decided by the Session client's installed
+handler and usable local publication or Home registration receipt. Matching CLI,
+daemon and runner source consume this notification; older strict development
+daemons reject the added private field as a best-effort activity publication
+failure. Foreground environment claims keep their existing strict contract. A
+retained older runner or attached Session target without this private capability
+may omit the notification: the daemon attempts
+the existing RPC once and preserves its typed unavailable result, with visible
+retry, rather than waiting for an absent producer. A delayed pending notification
+also cannot block an RPC that already works. Early credential-target publication
+is unchanged. No SDK version, persisted format, timer, retry budget or readiness
+registry is introduced. The inspected `../0.2` frontier
+`eca066a11edbc6091f214e29da24d60ae4a7d5ac` has no counterpart to this provider-input
+RPC owner.
+
 Unreleased 0.3 Library cleanup uses `workflow.trigger.list` scope
 `account_source_unavailable`. The existing Automation definition list accepts
 `account_saved` scope, optionally narrowed by Workflow references, to select
@@ -11897,9 +11913,12 @@ or null and makes a wake claim only while the owner enables accepted-input
 wake. Optional `acceptedInputWakeOwner: 'home'` identifies Home Pending wake for
 existing Session input, including a controllerless resource served by a running
 custodian Account daemon. Optional `newSessionWake` is `{ kind: 'available' }` or
-`{ kind: 'unavailable', reason: 'no_controller' }`, projected from
-`resolveManagedFiniteWakeControllerV1`, which also owns finite wake custody and
-preparation. New Session start-on-send requires both an owner-enabled `wakeState`
+`{ kind: 'unavailable', reason: 'no_controller' | 'controller_unavailable' }`, projected from
+`resolveManagedWakeAvailabilityV1` using the assigned controller's exact installed,
+online, unrevoked and unreplaced Machine. It exposes no controller identity.
+The additional unavailable cause is an unreleased 0.3 direct cut: matching Home,
+Protocol and UI reload together; it changes no retained data or 0.2 contract.
+New Session start-on-send requires both an owner-enabled `wakeState`
 and `newSessionWake.kind === 'available'`; a missing support fact makes no claim.
 Controllerless pre-Session wake remains unsupported and requires starting the
 Machine before sending. Optional `state` reports the current native transition (`starting` or

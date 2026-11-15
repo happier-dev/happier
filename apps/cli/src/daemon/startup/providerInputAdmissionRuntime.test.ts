@@ -4,13 +4,13 @@ import axios from 'axios';
 import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { createSessionLiveWorkProducer } from '@/daemon/lifecycle/sessionLiveWorkProducer';
 import {
   callSessionProviderInputAdmission,
   clearProviderInputAdmissionAfterDurableAdoption,
   continueProviderInputAdmissionReconciliationAfterLifecycleFence,
   createProviderInputAdmissionRecordTracker,
-  requestProviderInputAdmissionWithBoundedRetry,
-  waitForProviderInputAdmissionGrace,
+  requestProviderInputAdmissionWhenReady,
 } from './providerInputAdmissionRuntime';
 
 const io = vi.hoisted(() => vi.fn());
@@ -37,6 +37,36 @@ function serveSession(mode: 'plain' | 'e2ee') {
 }
 
 describe('provider input admission daemon composition', () => {
+  it('keeps fresh input admission pending beyond the removed five-second grace until actual readiness', async () => {
+    vi.useFakeTimers();
+    const changes = createSessionLiveWorkProducer({ readSessions: () => [],
+      readActivity: async () => ({ session: 'unknown', input: 'unknown' }) });
+    let ready = false;
+    const unavailable = new Error('RPC method not available');
+    const requestAdmission = vi.fn(async () => { if (!ready) throw unavailable; return { status: 'enforced' as const }; });
+    const admission = requestProviderInputAdmissionWhenReady({
+      requestAdmission, isMethodUnavailable: error => error === unavailable,
+      readiness: { read: () => ready, subscribeChanges: listener => changes.subscribe(listener, 'pending') },
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(requestAdmission).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+      ready = true;
+      changes.notifySessionChanged('pending');
+      await expect(admission).resolves.toEqual({ status: 'admitted', value: { status: 'enforced' } });
+      expect(requestAdmission).toHaveBeenCalledTimes(2);
+    } finally { ready = true; changes.notifySessionChanged('pending'); await admission; vi.useRealTimers(); }
+  });
+  it('admits an already callable runner once despite a stale pending notification', async () => {
+    const changes = createSessionLiveWorkProducer({ readSessions: () => [],
+      readActivity: async () => ({ session: 'unknown', input: 'unknown' }) });
+    const requestAdmission = vi.fn(async () => ({ status: 'enforced' as const }));
+    await expect(requestProviderInputAdmissionWhenReady({ requestAdmission, isMethodUnavailable: () => false,
+      readiness: { read: () => false, subscribeChanges: listener => changes.subscribe(listener, 'pending') },
+    })).resolves.toEqual({ status: 'admitted', value: { status: 'enforced' } });
+    expect(requestAdmission).toHaveBeenCalledOnce();
+  });
   beforeEach(() => {
     vi.restoreAllMocks();
     io.mockReset();
@@ -128,94 +158,48 @@ describe('provider input admission daemon composition', () => {
   it('returns the method-unavailable failure when no registration grace is configured', async () => {
     const unavailable = new Error('RPC method not available');
 
-    await expect(requestProviderInputAdmissionWithBoundedRetry({
+    await expect(requestProviderInputAdmissionWhenReady({
       requestAdmission: vi.fn(async () => { throw unavailable; }),
       isMethodUnavailable: (error) => error === unavailable,
     })).rejects.toBe(unavailable);
   });
 
-  it('waits for a fresh runner to register provider-input admission within the bounded grace', async () => {
-    const unavailable = new Error('RPC method not available');
-    let requests = 0;
-    const requestAdmission = vi.fn(async () => {
-      requests += 1;
-      if (requests < 3) throw unavailable;
-    });
-    const waitBeforeRetry = vi.fn(async () => 'continue' as const);
-
-    await expect(requestProviderInputAdmissionWithBoundedRetry({
-      requestAdmission,
-      isMethodUnavailable: (error) => error === unavailable,
-      methodUnavailableRetry: {
-        maxAttempts: 2,
-        waitBeforeRetry,
-      },
-    })).resolves.toEqual({ status: 'admitted', value: undefined });
-    expect(requestAdmission).toHaveBeenCalledTimes(3);
-    expect(waitBeforeRetry).toHaveBeenCalledTimes(2);
-  });
-
-  it('returns method-unavailable after bounded registration grace is exhausted', async () => {
-    const unavailable = new Error('RPC method not available');
+  it.each([undefined, true])('makes one probe and preserves unavailable when readiness is %s', async ready => {
+    const unavailable = Object.assign(new Error('RPC method not available'), { code: 'RPC_METHOD_NOT_AVAILABLE' });
     const requestAdmission = vi.fn(async () => { throw unavailable; });
-    const waitBeforeRetry = vi.fn(async () => 'continue' as const);
-
-    await expect(requestProviderInputAdmissionWithBoundedRetry({
-      requestAdmission,
-      isMethodUnavailable: (error) => error === unavailable,
-      methodUnavailableRetry: {
-        maxAttempts: 2,
-        waitBeforeRetry,
-      },
+    const changes = createSessionLiveWorkProducer({ readSessions: () => [],
+      readActivity: async () => ({ session: 'unknown', input: 'unknown' }) });
+    await expect(requestProviderInputAdmissionWhenReady({
+      requestAdmission, isMethodUnavailable: error => error === unavailable,
+      readiness: { read: () => ready, subscribeChanges: listener => changes.subscribe(listener, 'retained') },
     })).rejects.toBe(unavailable);
-    expect(requestAdmission).toHaveBeenCalledTimes(3);
-    expect(waitBeforeRetry).toHaveBeenCalledTimes(2);
+    expect(requestAdmission).toHaveBeenCalledOnce();
   });
 
-  it('fails fast without waiting for a non-method admission error', async () => {
-    const transportFailure = new Error('session_provider_input_admission_transport_unavailable');
-    const waitBeforeRetry = vi.fn(async () => 'continue' as const);
-
-    await expect(requestProviderInputAdmissionWithBoundedRetry({
-      requestAdmission: vi.fn(async () => { throw transportFailure; }),
-      isMethodUnavailable: () => false,
-      methodUnavailableRetry: {
-        maxAttempts: 2,
-        waitBeforeRetry,
-      },
-    })).rejects.toBe(transportFailure);
-
-    expect(waitBeforeRetry).not.toHaveBeenCalled();
-  });
-
-  it('rechecks exact target identity before retrying admission against a replacement runner', async () => {
-    const unavailable = new Error('RPC method not available');
+  it.each(['replacement', 'mutation'] as const)('refuses a target %s while parked for provider readiness', async replacement => {
     const released = new Error('provider_input_admission_target_released');
-    const targetA = { runtimeIdentityKey: 'runtime-a', revision: 7 };
-    let currentTarget: typeof targetA | null = targetA;
+    const target = { runtimeIdentityKey: 'runtime-a', revision: 7 };
+    let currentTarget = target;
+    const changes = createSessionLiveWorkProducer({ readSessions: () => [],
+      readActivity: async () => ({ session: 'unknown', input: 'unknown' }) });
+    const unavailable = new Error('RPC method not available');
     const requestAdmission = vi.fn(async () => { throw unavailable; });
-
-    await expect(requestProviderInputAdmissionWithBoundedRetry({
+    const admission = requestProviderInputAdmissionWhenReady({
       targetFence: {
-        expected: Object.freeze({
-          targetReference: targetA,
-          runtimeIdentityKey: targetA.runtimeIdentityKey,
-          revision: targetA.revision,
-        }),
+        expected: Object.freeze({ targetReference: target, runtimeIdentityKey: target.runtimeIdentityKey, revision: target.revision }),
         resolveCurrentTarget: () => currentTarget,
         createSupersededError: () => released,
       },
-      requestAdmission,
-      isMethodUnavailable: (error) => error === unavailable,
-      methodUnavailableRetry: {
-        maxAttempts: 2,
-        waitBeforeRetry: async () => {
-          currentTarget = { runtimeIdentityKey: 'runtime-a', revision: 7 };
-          return 'continue';
-        },
-      },
-    })).rejects.toBe(released);
-    expect(requestAdmission).toHaveBeenCalledTimes(1);
+      requestAdmission, isMethodUnavailable: error => error === unavailable,
+      readiness: { read: () => false, subscribeChanges: listener => changes.subscribe(listener, 'pending') },
+    });
+    const settled = expect(admission).rejects.toBe(released);
+    await Promise.resolve();
+    if (replacement === 'replacement') currentTarget = { ...target };
+    else target.runtimeIdentityKey = 'runtime-b';
+    changes.notifySessionChanged('pending');
+    await settled;
+    expect(requestAdmission).toHaveBeenCalledOnce();
   });
 
   it('rejects a final failed admission when the target changes during the request', async () => {
@@ -224,7 +208,7 @@ describe('provider input admission daemon composition', () => {
     const targetA = { runtimeIdentityKey: 'runtime-a', revision: 7 };
     let currentTarget: typeof targetA | null = targetA;
 
-    await expect(requestProviderInputAdmissionWithBoundedRetry({
+    await expect(requestProviderInputAdmissionWhenReady({
       targetFence: {
         expected: Object.freeze({
           targetReference: targetA,
@@ -247,7 +231,7 @@ describe('provider input admission daemon composition', () => {
     const targetA = { runtimeIdentityKey: 'runtime-a', revision: 7 };
     let currentTarget: typeof targetA | null = targetA;
 
-    await expect(requestProviderInputAdmissionWithBoundedRetry({
+    await expect(requestProviderInputAdmissionWhenReady({
       targetFence: {
         expected: Object.freeze({
           targetReference: targetA,
@@ -265,61 +249,27 @@ describe('provider input admission daemon composition', () => {
     })).rejects.toBe(released);
   });
 
-  it('does not retry when the same target object mutates its captured runtime key during grace', async () => {
+  it('settles a parked readiness observer when shutdown aborts', async () => {
+    const controller = new AbortController();
+    const changes = createSessionLiveWorkProducer({ readSessions: () => [],
+      readActivity: async () => ({ session: 'unknown', input: 'unknown' }) });
     const unavailable = new Error('RPC method not available');
-    const released = new Error('provider_input_admission_target_released');
-    const target = { runtimeIdentityKey: 'runtime-a', revision: 7 };
     const requestAdmission = vi.fn(async () => { throw unavailable; });
-
-    await expect(requestProviderInputAdmissionWithBoundedRetry({
-      targetFence: {
-        expected: Object.freeze({
-          targetReference: target,
-          runtimeIdentityKey: target.runtimeIdentityKey,
-          revision: target.revision,
-        }),
-        resolveCurrentTarget: () => target,
-        createSupersededError: () => released,
-      },
-      requestAdmission,
-      isMethodUnavailable: (error) => error === unavailable,
-      methodUnavailableRetry: {
-        maxAttempts: 1,
-        waitBeforeRetry: async () => {
-          target.runtimeIdentityKey = 'runtime-mutated';
-          return 'continue';
-        },
-      },
-    })).rejects.toBe(released);
-
-    expect(requestAdmission).toHaveBeenCalledTimes(1);
-  });
-
-  it('settles without retry when shutdown aborts the grace wait', async () => {
-    const unavailable = new Error('RPC method not available');
-    const abortController = new AbortController();
-    const requestAdmission = vi.fn(async () => { throw unavailable; });
-
-    const reconciliation = requestProviderInputAdmissionWithBoundedRetry({
-      isCancelled: () => abortController.signal.aborted,
-      requestAdmission,
-      isMethodUnavailable: (error) => error === unavailable,
-      methodUnavailableRetry: {
-        maxAttempts: 1,
-        waitBeforeRetry: async () => await waitForProviderInputAdmissionGrace(60_000, abortController.signal),
-      },
+    const admission = requestProviderInputAdmissionWhenReady({
+      isCancelled: () => controller.signal.aborted,
+      requestAdmission, isMethodUnavailable: error => error === unavailable,
+      readiness: { read: () => false, subscribeChanges: listener => changes.subscribe(listener, 'pending'), signal: controller.signal },
     });
     await Promise.resolve();
-    abortController.abort();
-
-    await expect(reconciliation).resolves.toEqual({ status: 'cancelled' });
-    expect(requestAdmission).toHaveBeenCalledTimes(1);
+    controller.abort();
+    await expect(admission).resolves.toEqual({ status: 'cancelled' });
+    expect(requestAdmission).toHaveBeenCalledOnce();
   });
 
   it('does no admission work when shutdown was already aborted', async () => {
     const requestAdmission = vi.fn(async () => undefined);
 
-    await expect(requestProviderInputAdmissionWithBoundedRetry({
+    await expect(requestProviderInputAdmissionWhenReady({
       isCancelled: () => true,
       requestAdmission,
       isMethodUnavailable: () => false,

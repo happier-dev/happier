@@ -1,3 +1,4 @@
+import { createSessionLiveWorkProducer } from '@/daemon/lifecycle/sessionLiveWorkProducer';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -38,6 +39,11 @@ import {
   resolveCurrentAgentRuntimeDaemonTurnContributions,
 } from './agentRuntimeDaemonServiceAuthorityClient';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+
+const sessionChanges = createSessionLiveWorkProducer({
+  readSessions: () => [],
+  readActivity: async () => ({ session: 'unknown', input: 'unknown' }),
+});
 
 const roots: string[] = [];
 const processIdentityMock = vi.hoisted(() => vi.fn());
@@ -108,9 +114,10 @@ describe('current Agent runtime daemon service authority client', () => {
     const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(runner.pid), startedBy: 'daemon', pid: runner.pid, happySessionId: authority.sessionId,
       runnerProcessIdentity: runner, processStartTimeMs: runner.processStartTimeMs,
       processCommandHash: runner.processCommandHash, childProcess };
-    const observed = await awaitTrackedRunnerAgentSessionOpen({ sessionId: authority.sessionId,
+    const observed = await awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener), sessionId: authority.sessionId,
       getTrackedSessions: () => [tracked], readStartupFailure: async () => issue, timeoutMs: null });
-    expect(observed).toEqual({ status: 'runner_exited', code });
+    expect(observed).toEqual({ status: 'runner_exited', code,
+      ...(issue?.failureCause ? { failureCause: issue.failureCause } : {}) });
     if (observed.status !== 'runner_exited' || !observed.code) throw new Error('Missing native refusal attribution');
     if (code === 'connected_service_credential_reconnect_required' || code === 'provider_compatibility_unverified') {
       expect(projectSessionSpawnFailure({ errorCode: 'SPAWN_FAILED', errorMessage: 'Native startup refused',

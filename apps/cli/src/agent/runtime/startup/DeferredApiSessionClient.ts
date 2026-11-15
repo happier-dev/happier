@@ -36,6 +36,8 @@ export type DeferredApiSessionTarget = Readonly<{
     listener: (activeCount: number) => void,
   ) => () => void;
   subscribeToSessionConnectionState?: ApiSessionClient['subscribeToSessionConnectionState'];
+  readRpcHandlerAvailability?: ApiSessionClient['readRpcHandlerAvailability'];
+  subscribeToRpcHandlerAvailability?: ApiSessionClient['subscribeToRpcHandlerAvailability'];
   enqueueRegisteredSessionStateFieldMutation?: (
     mutation: RegisteredSessionStateFieldMutationV1,
   ) => void | Promise<void>;
@@ -53,7 +55,7 @@ export type DeferredApiSessionTarget = Readonly<{
   waitForMetadataUpdate: (abortSignal?: AbortSignal) => Promise<boolean>;
   popPendingMessage: () => Promise<boolean>;
   shouldAttemptPendingMaterialization?: () => boolean;
-  reconcilePendingProviderInputCustodyBeforeMaterialization?: () => Promise<boolean>;
+  reconcilePendingProviderInputCustodyBeforeMaterialization?: (opts?: Readonly<{ beforeClaim?: boolean }>) => Promise<boolean>;
   readDurableProviderInputAcceptanceV1?: (
     localId: string,
   ) => Promise<DurableProviderInputAcceptanceV1>;
@@ -94,7 +96,7 @@ export class DeferredApiSessionClient {
   private readonly boundMetadataUpdatedHandlers = new Set<() => void>();
   private readonly executionRunActivitySubscriptions =
     new Set<DeferredExecutionRunActivitySubscription>();
-  private readonly connectionStateSubscriptions = new Map<Parameters<ApiSessionClient['subscribeToSessionConnectionState']>[0], (() => void) | null>();
+  private readonly transportSubscriptions = new Map<(target: DeferredApiSessionTarget) => (() => void) | null, (() => void) | null>();
   private target: DeferredApiSessionTarget | null = null;
   private attachPromise: Promise<void> | null = null;
   private flushInFlight: Promise<void> | null = null;
@@ -321,11 +323,31 @@ export class DeferredApiSessionClient {
   }
 
   subscribeToSessionConnectionState(listener: Parameters<ApiSessionClient['subscribeToSessionConnectionState']>[0]): () => void {
-    this.connectionStateSubscriptions.set(listener, this.target?.subscribeToSessionConnectionState?.(listener) ?? null);
+    return this.subscribeToTransport(target => target.subscribeToSessionConnectionState?.(listener) ?? null);
+  }
+
+  readRpcHandlerAvailability(method: string): boolean | undefined {
+    return this.target ? this.target.readRpcHandlerAvailability?.(method) : false;
+  }
+
+  subscribeToRpcHandlerAvailability(method: string, listener: () => void): () => void {
+    return this.subscribeToTransport(target => target.subscribeToRpcHandlerAvailability?.(method, listener) ?? null);
+  }
+
+  private subscribeToTransport(bind: (target: DeferredApiSessionTarget) => (() => void) | null): () => void {
+    if (this.cancelled) return () => {};
+    this.transportSubscriptions.set(bind, null);
+    if (this.target) this.bindTransportSubscription(this.target, bind);
     return () => {
-      this.connectionStateSubscriptions.get(listener)?.();
-      this.connectionStateSubscriptions.delete(listener);
+      this.transportSubscriptions.get(bind)?.();
+      this.transportSubscriptions.delete(bind);
     };
+  }
+
+  private bindTransportSubscription(target: DeferredApiSessionTarget, bind: (target: DeferredApiSessionTarget) => (() => void) | null): void {
+    const unsubscribe = bind(target);
+    if (this.transportSubscriptions.has(bind)) this.transportSubscriptions.set(bind, unsubscribe);
+    else unsubscribe?.();
   }
 
   async enqueueRegisteredSessionStateFieldMutation(
@@ -554,9 +576,9 @@ export class DeferredApiSessionClient {
     return this.target?.shouldAttemptPendingMaterialization?.() ?? true;
   }
 
-  async reconcilePendingProviderInputCustodyBeforeMaterialization(): Promise<boolean> {
+  async reconcilePendingProviderInputCustodyBeforeMaterialization(opts?: Readonly<{ beforeClaim?: boolean }>): Promise<boolean> {
     return await this.withAttachedTarget(
-      (target) => target.reconcilePendingProviderInputCustodyBeforeMaterialization?.() ?? Promise.resolve(true),
+      (target) => target.reconcilePendingProviderInputCustodyBeforeMaterialization?.(opts) ?? Promise.resolve(true),
       true,
     );
   }
@@ -746,7 +768,7 @@ export class DeferredApiSessionClient {
     if (target) {
       this.detachRetainedTargetObservers(target);
     }
-    this.connectionStateSubscriptions.clear();
+    this.transportSubscriptions.clear();
 
     const entries = this.buffer;
     this.buffer = [];
@@ -806,8 +828,8 @@ export class DeferredApiSessionClient {
     for (const subscription of this.executionRunActivitySubscriptions) {
       this.bindExecutionRunActivitySubscription(target, subscription);
     }
-    for (const [listener, unsubscribe] of this.connectionStateSubscriptions) {
-      if (!unsubscribe) this.connectionStateSubscriptions.set(listener, target.subscribeToSessionConnectionState?.(listener) ?? null);
+    for (const [bind, unsubscribe] of this.transportSubscriptions) {
+      if (!unsubscribe) this.bindTransportSubscription(target, bind);
     }
   }
 
@@ -883,10 +905,10 @@ export class DeferredApiSessionClient {
   }
 
   private detachRetainedTargetObservers(target: DeferredApiSessionTarget): void {
-    for (const [listener, unsubscribe] of this.connectionStateSubscriptions) {
+    for (const [bind, unsubscribe] of this.transportSubscriptions) {
       unsubscribe?.();
       // Attachment can be retried; only retire the target binding here.
-      this.connectionStateSubscriptions.set(listener, null);
+      this.transportSubscriptions.set(bind, null);
     }
     for (const listener of this.boundMetadataUpdatedHandlers) {
       target.off?.('metadata-updated', listener);

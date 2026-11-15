@@ -1,3 +1,4 @@
+import { createSessionLiveWorkProducer } from '@/daemon/lifecycle/sessionLiveWorkProducer';
 import { ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import axios from 'axios';
@@ -14,6 +15,11 @@ import type { TrackedSession } from '@/daemon/types';
 import { attemptNativeForkOpen } from './attemptNativeForkOpen';
 import type { ForkBackendResolution, ForkSpawnSession } from './forkLifecycleTypes';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+
+const sessionChanges = createSessionLiveWorkProducer({
+  readSessions: () => [],
+  readActivity: async () => ({ session: 'unknown', input: 'unknown' }),
+});
 
 const boundary = vi.hoisted(() => ({ create: vi.fn() }));
 // The Session socket is a network boundary; fork recovery and observation stay real.
@@ -65,7 +71,7 @@ it.each([
         parentSessionId: 'parent', parentMetadata, directory: '/repo', forkPoint: { type: 'latest' },
         targetSeqInclusive: 9, effectiveCutoffSeqInclusive: 9, spawnNonce: 'member-fork',
         forkBackendResolution: backend, inheritedForkOverrides: { spawn: {}, metadata: {} }, spawnSession, stopSession,
-        awaitAgentSessionOpen: params => awaitTrackedRunnerAgentSessionOpen({ ...params,
+        awaitAgentSessionOpen: params => awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener), ...params,
             getTrackedSessions: () => [tracked], readStartupFailure: async () => issue }),
     });
     expect(result).toMatchObject({ ok: false, errorCode: code });

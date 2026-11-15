@@ -29,29 +29,9 @@ import {
 import type {
   AgentRuntimeDaemonServiceAuthorityRunnerIdentity,
 } from './sessionBridgeAuthorization';
+import { waitForChangeOrDeadline } from '@/daemon/lifecycle/waitForChangeOrDeadline';
 
 const DEFAULT_OPEN_ATTESTATION_TIMEOUT_MS = 15_000;
-const OPEN_ATTESTATION_POLL_MS = 25;
-
-function waitForOpenAttestationPoll(ms: number, signal?: AbortSignal): Promise<void> {
-  signal?.throwIfAborted();
-  if (!signal) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-  return new Promise<void>((resolve, reject) => {
-    const onAbort = () => {
-      clearTimeout(timer);
-      signal.removeEventListener('abort', onAbort);
-      reject(signal.reason);
-    };
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    signal.addEventListener('abort', onAbort, { once: true });
-    if (signal.aborted) onAbort();
-  });
-}
 
 function hasObservedRunnerExited(tracked: TrackedSession): boolean {
   const exitCode = tracked.childProcess?.exitCode;
@@ -75,6 +55,7 @@ export async function recordTrackedRunnerAgentSessionOpenAttestation(
     providerSessionId: string | null;
     updateMarker?:
       typeof updateSessionMarkerAgentRuntimeSessionOpenAttestation;
+    onRecorded?: () => void;
   }>,
 ): Promise<AgentRuntimeDaemonServiceSessionOpenAttestationV1 | null> {
   const request =
@@ -133,12 +114,14 @@ export async function recordTrackedRunnerAgentSessionOpenAttestation(
     .agentRuntimeDaemonServiceSessionOpenAttestation =
       attestation;
   delete input.tracked.projectSetupOperation;
+  input.onRecorded?.();
   return attestation;
 }
 
 export async function awaitTrackedRunnerAgentSessionOpen(
   input: Readonly<{
     getTrackedSessions(): readonly TrackedSession[];
+    subscribeChanges(listener: () => void): () => void;
     readStartupFailure?: (tracked: TrackedSession) => Promise<SessionRuntimeIssueV1 | null>;
     sessionId: string;
     /** `null` retains provider-owned completion custody without a generic deadline. */
@@ -211,61 +194,76 @@ export async function awaitTrackedRunnerAgentSessionOpen(
     }
     return Object.freeze({ status: 'runner_exited' as const });
   };
-  while (sessionId) {
-    input.signal?.throwIfAborted();
-    const matches = input.getTrackedSessions().filter(
-      (tracked) => tracked.happySessionId === sessionId,
-    );
-    if (matches.length === 1) {
-      const tracked = matches[0]!;
-      observedTrackedSession = tracked;
-      const attestation =
-        tracked.agentRuntimeDaemonServiceSessionOpenAttestation;
-      if (
-        attestation
-        && attestation.request.sessionId === sessionId
-        && Boolean(
-          tracked.agentRuntimeDaemonServiceAuthorityFilePath,
-        )
+  // Subscribe before reading custody: a commit between subscription and the
+  // first observation must not leave an unbounded native Fork waiting forever.
+  let changed = false;
+  let wake: (() => void) | undefined;
+  const unsubscribe = input.subscribeChanges(() => { changed = true; wake?.(); });
+  try {
+    while (sessionId) {
+      input.signal?.throwIfAborted();
+      changed = false;
+      const matches = input.getTrackedSessions().filter(
+        (tracked) => tracked.happySessionId === sessionId,
+      );
+      if (matches.length === 1) {
+        const tracked = matches[0]!;
+        observedTrackedSession = tracked;
+        const attestation =
+          tracked.agentRuntimeDaemonServiceSessionOpenAttestation;
+        if (
+          attestation
+          && attestation.request.sessionId === sessionId
+          && Boolean(
+            tracked.agentRuntimeDaemonServiceAuthorityFilePath,
+          )
+        ) {
+          // Keep the observed generation, including copied birth identity. The
+          // tracked object can be replaced or rebound before Stop selects it.
+          const expectedTrackedRunner = Object.freeze({
+            tracked,
+            sessionRunnerPid: tracked.sessionRunnerPid,
+            processStartTimeMs: tracked.processStartTimeMs,
+            processCommandHash: tracked.processCommandHash,
+          });
+          if (attestation.failure) return Object.freeze({
+            status: 'construction_failed' as const, failure: attestation.failure, expectedTrackedRunner,
+          });
+          if (attestation.refusal) return Object.freeze({
+            status: 'refused' as const, code: attestation.refusal.code, expectedTrackedRunner,
+          });
+          return Object.freeze({
+            status: 'opened' as const,
+            request: attestation.request,
+          });
+        }
+        if (hasObservedRunnerExited(tracked)) {
+          return await exited();
+        }
+      } else if (
+        observedTrackedSession
+        && matches.length === 0
       ) {
-        // Keep the observed generation, including copied birth identity. The
-        // tracked object can be replaced or rebound before Stop selects it.
-        const expectedTrackedRunner = Object.freeze({
-          tracked,
-          sessionRunnerPid: tracked.sessionRunnerPid,
-          processStartTimeMs: tracked.processStartTimeMs,
-          processCommandHash: tracked.processCommandHash,
-        });
-        if (attestation.failure) return Object.freeze({
-          status: 'construction_failed' as const, failure: attestation.failure, expectedTrackedRunner,
-        });
-        if (attestation.refusal) return Object.freeze({
-          status: 'refused' as const, code: attestation.refusal.code, expectedTrackedRunner,
-        });
-        return Object.freeze({
-          status: 'opened' as const,
-          request: attestation.request,
-        });
-      }
-      if (hasObservedRunnerExited(tracked)) {
+        // The daemon removes a tracked runner only after its child-exit owner has
+        // observed a terminal exit. This is terminal evidence, not a clock.
         return await exited();
       }
-    } else if (
-      observedTrackedSession
-      && matches.length === 0
-    ) {
-      // The daemon removes a tracked runner only after its child-exit owner has
-      // observed a terminal exit. This is terminal evidence, not a clock.
-      return await exited();
+      const remainingMs = deadlineMs === null ? null : deadlineMs - Date.now();
+      if (remainingMs !== null && remainingMs <= 0) break;
+      if (changed) continue;
+      await waitForChangeOrDeadline({
+        signal: input.signal,
+        ...(remainingMs === null ? {} : { remainingMs }),
+        waitForChange: signal => new Promise<void>(resolve => {
+          const settle = () => { wake = undefined; signal.removeEventListener('abort', settle); resolve(); };
+          wake = settle;
+          signal.addEventListener('abort', settle, { once: true });
+          if (changed || signal.aborted) settle();
+        }),
+      });
     }
-    const remainingMs = deadlineMs === null ? null : deadlineMs - Date.now();
-    if (remainingMs !== null && remainingMs <= 0) break;
-    await waitForOpenAttestationPoll(
-      remainingMs === null
-        ? OPEN_ATTESTATION_POLL_MS
-        : Math.min(OPEN_ATTESTATION_POLL_MS, remainingMs),
-      input.signal,
-    );
+    return Object.freeze({ status: 'timeout' as const });
+  } finally {
+    unsubscribe();
   }
-  return Object.freeze({ status: 'timeout' as const });
 }

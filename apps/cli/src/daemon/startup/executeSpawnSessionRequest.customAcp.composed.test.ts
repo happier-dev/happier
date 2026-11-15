@@ -1,3 +1,4 @@
+import { createSessionLiveWorkProducer } from '@/daemon/lifecycle/sessionLiveWorkProducer';
 import { SessionTurnMutationV1Schema, type SessionTurnMutationV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
 import { createProviderAccountUsageStore } from '@/daemon/connectedServices/accountUsage/store';
 import { activateSessionsRoleForMachineClient } from '@/daemon/testkit/sessionsRole.testkit';
@@ -144,6 +145,11 @@ import { runMemberAgentInstallEffect } from '@/capabilities/installJobs/memberIn
 import { resolveMemberAgentInstallCli } from '@/capabilities/installJobs/memberResolveEffect';
 import { NativeSessionDirectoryCommandSchema, executeNativeSessionDirectoryPreparation } from '@/rpc/handlers/fileSystem/sessionDirectoryEffect';
 import { legacyPidSessionTrackingKey, trackedSessionForSingleSessionProcess, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+
+const sessionChanges = createSessionLiveWorkProducer({
+  readSessions: () => [],
+  readActivity: async () => ({ session: 'unknown', input: 'unknown' }),
+});
 
 const preflightHome = vi.hoisted(() => ({ database: null as ReturnType<typeof createInstalledMachineRpcDatabaseBoundary> | null }));
 // Only persistence is substituted. The UI CALL handler produces admission
@@ -954,7 +960,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
         beforeSessionRunnerLaunch: input.options.beforeSessionRunnerLaunch } });
     }, stopSession: async () => true, requestShutdown() {} }, {
       // Real startup registration supplies this observer even when launch refuses.
-      awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ ...input, getTrackedSessions: () => [] }),
+      awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener), ...input, getTrackedSessions: () => [] }),
     }));
     const manager: unknown = Reflect.get(machine, 'rpcHandlerManager');
     if (!(manager instanceof RpcHandlerManager)) throw new Error('Missing installed Session receiver');

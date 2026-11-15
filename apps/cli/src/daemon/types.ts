@@ -103,6 +103,8 @@ export interface TrackedSession {
   sessionCreationOutcome?: SessionCreationOutcome;
   /** Spawn options used to start the current runner process (in-memory only). */
   spawnOptions?: SpawnSessionOptions;
+  /** Current runner's exact provider-input transport availability; absent on retained older runners. */
+  providerInputAdmissionReady?: boolean;
   /**
    * Secret-free startup identity required by this session. It is persisted
    * before runtime open and does not prove that the runtime applied the raw

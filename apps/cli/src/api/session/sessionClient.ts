@@ -140,7 +140,7 @@ import {
     createSessionClientRecoveryRuntime,
     type SessionClientRecoveryRuntime,
 } from './client/lifecycle/createSessionClientRecoveryRuntime';
-import type { SessionCatchUpRequest } from './sessionChangesSyncOnConnect';
+import { accountWakeNeedsSessionChangesRead, type SessionCatchUpRequest } from './sessionChangesSyncOnConnect';
 import { createSessionClientMaterializationRuntime } from './client/lifecycle/createSessionClientMaterializationRuntime';
 import { buildOutboundSessionMessagePayload } from './client/transport/outboundSessionMessagePayload';
 import { redactTranscriptSecrets } from './client/transport/transcriptSecretRedaction';
@@ -254,6 +254,7 @@ import type {
 import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
 import { readSessionMetadataLayoutVersion } from '@/session/metadata/sessionMetadataLayout';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
+import { holdSessionProjectAccountRows, isProjectAccountRowsAccountWake, type SessionProjectAccountRowsHold } from '@/workspaces/projectAccountRows';
 import { createCredentialAccountEncryptionCurrentness, readAccountEncryptionCurrentnessForRead,
     type CredentialAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { holdSessionNotificationFacts, isNotificationFactsAccountWake,
@@ -273,7 +274,7 @@ import { SESSION_MESSAGE_REPLY_MUTATE_EVENT_V1, SessionMessageReplyMutationV1Sch
 import { readSessionMessageReply, readSessionMessageReplyCapability } from '@/session/services/sessionMessageReply';
 import { openSessionMessageContent } from '@/session/transport/encryption/sessionEncryptionContext';
 import { extractAssistantTextSnapshotFromSessionContent } from './turns/extractAssistantTextSnapshot';
-import { isPendingDeliveryArchivedUncertaintyReasonV1, isPendingDeliveryProviderEffectPossibleV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
+import { isPendingDeliveryArchivedUncertaintyReasonV1, isPendingDeliveryProviderEffectPossibleV1, type PendingDeliveryStatusV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
 import type { SessionTurnsProjectionV1 } from '@happier-dev/protocol';
 import {
     fetchSessionSystemRecord as fetchSessionSystemRecordHttp,
@@ -597,6 +598,7 @@ export class ApiSessionClient extends EventEmitter {
     /** Owner Account currentness held on this client's Account update socket (read-only reuse). */
     private heldAccountEncryptionCurrentness: CredentialAccountEncryptionCurrentness | null = null;
     private notificationFactsHold: SessionNotificationFactsHold | null = null;
+    private projectAccountRowsHold: SessionProjectAccountRowsHold | null = null;
     private agentState: AgentState | null;
     private agentStateRequestStore: AgentStateRequestStore | null = null;
     private questionAnswerDeliveryRegistered = false;
@@ -642,6 +644,7 @@ export class ApiSessionClient extends EventEmitter {
     private presenceStopped = false;
     private closed = false;
     private localSessionRpcRetirement: Promise<(() => Promise<void>) | null> | null = null;
+    private isLocalRpcMethodAvailable: ((method: string) => boolean) | null = null;
     private pendingWakeSeq = 0;
     private accountSettingsSyncBarrier: Promise<boolean> | null = null;
     private accountSettingsEventRevision = 0;
@@ -840,6 +843,22 @@ export class ApiSessionClient extends EventEmitter {
     subscribeToSessionConnectionState(listener: (state: Readonly<{ phase: string }>) => void): () => void {
         this.on(SESSION_CONNECTION_STATE_EVENT, listener);
         return () => { this.off(SESSION_CONNECTION_STATE_EVENT, listener); };
+    }
+
+    /** Transport availability belongs here: local publication and Home receipts share this owner. */
+    readRpcHandlerAvailability(method: string): boolean {
+        return !this.closed && this.rpcHandlerManager.hasHandler(method)
+            && (this.isLocalRpcMethodAvailable?.(method) === true
+                || this.rpcHandlerManager.isHandlerRegistrationAcknowledged(method));
+    }
+
+    subscribeToRpcHandlerAvailability(method: string, onAvailable: () => void): () => void {
+        const listener = (changedMethod?: string) => {
+            if ((changedMethod === undefined || changedMethod === method) && this.readRpcHandlerAvailability(method)) onAvailable();
+        };
+        this.on('rpc-handler-availability', listener);
+        listener();
+        return () => { this.off('rpc-handler-availability', listener); };
     }
 
     async confirmSessionAction(
@@ -1227,12 +1246,13 @@ export class ApiSessionClient extends EventEmitter {
                         readCredentials: () => this.readCurrentOwnerCredentials(),
                     },
                 } : {}),
-                getSocket: () => ({
-                    connected: this.socket?.connected ?? false,
-                    emit: (event, report) => {
-                        this.socket?.emit?.(event, report as never);
-                    },
-                }),
+                emitUsageEvent: (request, signal) => {
+                    const socket = this.socket;
+                    if (socket?.connected !== true) return null;
+                    return emitSocketWithAck({ socket, event: 'usage-event', payload: request,
+                        signal: signal ? AbortSignal.any([signal, this.socketAckAbortController.signal])
+                            : this.socketAckAbortController.signal });
+                },
             });
             this.executionRuns = createSessionClientExecutionRunService({
             serverUrl: this.transport.serverUrl,
@@ -1376,6 +1396,8 @@ export class ApiSessionClient extends EventEmitter {
                 // SDK writes and runtime projection share the same actual Home
                 // custody, including commits that race an in-flight baseline read.
                 getSessionCommittedTranscriptLocalIds(this).add(mutation.localId);
+                // Home's ack carries the row's seq: this client never re-reads its own write.
+                this.updateRuntime.observeCommittedAck({ seq, localId: mutation.localId });
                 // Only host-produced agent/event originals carry this reserved
                 // evidence. User metadata and Run sidechains cannot assert a
                 // parent Session occurrence. Producers strip authored evidence
@@ -1728,6 +1750,7 @@ export class ApiSessionClient extends EventEmitter {
                 encryptionVariant: this.storedContentCrypto.ctx.encryptionVariant,
             };
         this.rpcHandlerManager = new RpcHandlerManager({
+            onHandlerAvailabilityChanged: method => this.emit('rpc-handler-availability', method),
             scopePrefix: this.sessionId,
             scopeKind: 'session',
             localMachineId: options.localMachineId,
@@ -1881,6 +1904,10 @@ export class ApiSessionClient extends EventEmitter {
             cancelRequest: requestId => this.rpcHandlerManager.cancelTransportRequest(requestId),
             // The daemon that spawned or adopted this runner publishes its process birth in its own state.
             readTrustedCaller: readPublishedDaemonProcessBirth,
+            onPublished: isMethodAvailable => {
+                this.isLocalRpcMethodAvailable = isMethodAvailable;
+                this.emit('rpc-handler-availability');
+            },
         }).catch((error: unknown) => {
             logger.warn('[API] Local Session RPC channel unavailable; same-machine calls use the server', {
                 error: error instanceof Error ? error.message : String(error),
@@ -1932,6 +1959,9 @@ export class ApiSessionClient extends EventEmitter {
                 : null,
             getPendingWakeSeq: () => this.updateRuntime.getPendingWakeSeq() + this.pendingWakeSeq,
             getProviderInputBacklog: () => this.providerInputBacklog,
+            readPendingCustodyLocalIdsForClaim: () => this.readPendingProviderInputCustodyLocalIds(),
+            applyPendingCustodyDeliveryStatuses: (localIds, statuses) => this.applyPendingProviderInputCustodyStatuses(
+                localIds, new Map(statuses.map(entry => [entry.localId, entry.deliveryStatus]))),
             readRetainedContextLocalIds: () => (this.providerInputConsumer?.readRetainedContextLocalIds?.() ?? [])
                 .filter(localId => this.materializationRuntime.hasPendingQueueMaterializedLocalId(localId)),
             setProviderInputConsumer: (callback) => {
@@ -2020,8 +2050,13 @@ export class ApiSessionClient extends EventEmitter {
             rpcHandlerManager: this.rpcHandlerManager,
             handleUserScopedUpdate: (data, socket) => this.handleUserScopedUpdate(data, socket),
             // A content-free wake can describe any Session's activity. The
-            // existing changes cursor decides whether catalogs actually changed.
-            onAccountCatalogInvalidated: () => this.recoveryRuntime.syncChangesOnConnect({ reason: 'live' }),
+            // existing changes cursor decides whether catalogs actually changed;
+            // the wake's routing skips reads this client has no consumer for.
+            onAccountCatalogInvalidated: async (wake) => {
+                if (!accountWakeNeedsSessionChangesRead({ wake, sessionId: this.sessionId,
+                    sessionPushesCurrent: this.isSnapshotCurrentOnThisConnection() })) return;
+                await this.recoveryRuntime.syncChangesOnConnect({ reason: 'live' });
+            },
             installSessionSocketEventHandlers: (socket) => this.interactionApi.installSessionSocketEventHandlers(socket),
             classifyTransportErrorToProbeResult,
             onStateChange: (state) => {
@@ -2160,6 +2195,29 @@ export class ApiSessionClient extends EventEmitter {
         if (userSocket.connected) held.connected({ refresh: false });
         this.heldAccountEncryptionCurrentness = held;
         this.holdNotificationFacts(userSocket);
+        this.holdProjectAccountRows(userSocket, serverBaseUrl, accountId);
+    }
+
+    /**
+     * Private project-row reads (Turn prompt stack, usage attribution) are held only while this
+     * owner receives the Account wakes that announce project-row changes on its Account socket.
+     */
+    private holdProjectAccountRows(userSocket: AccountUpdatesSocket, serverHttpBaseUrl: string, accountId: string): void {
+        if (!this.hasOwnerMetadataAuthority()) return;
+        const attach = () => {
+            if (this.closed || this.projectAccountRowsHold) return;
+            this.projectAccountRowsHold = holdSessionProjectAccountRows({ serverHttpBaseUrl, accountId });
+        };
+        const detach = () => {
+            this.projectAccountRowsHold?.release();
+            this.projectAccountRowsHold = null;
+        };
+        userSocket.on('connect', attach);
+        userSocket.on('disconnect', detach);
+        userSocket.on('update', (data: Update) => {
+            if (isProjectAccountRowsAccountWake(data.body)) this.projectAccountRowsHold?.invalidate();
+        });
+        if (userSocket.connected) attach();
     }
 
     /**
@@ -5024,6 +5082,8 @@ export class ApiSessionClient extends EventEmitter {
         this.heldAccountEncryptionCurrentness?.dispose();
         this.notificationFactsHold?.release();
         this.notificationFactsHold = null;
+        this.projectAccountRowsHold?.release();
+        this.projectAccountRowsHold = null;
         const closingSocket = this.socket;
         this.prepareForClose();
         try {
@@ -5320,18 +5380,30 @@ export class ApiSessionClient extends EventEmitter {
         }
     }
 
-    async reconcilePendingProviderInputCustodyBeforeMaterialization(): Promise<boolean> {
+    /** Main-route provider-input custody whose Pending delivery status this host reconciles. */
+    private readPendingProviderInputCustodyLocalIds(): string[] {
+        return [...this.materializationRuntime.pendingQueueMaterializedLocalIds]
+            .filter((localId) => !this.executionRunPendingCustody.has(localId));
+    }
+
+    /**
+     * Before a claim (`beforeClaim`), settled custody needs no separate list read: the claim
+     * request carries these localIds and its reply returns their statuses
+     * (`applyPendingProviderInputCustodyStatuses`). Unsettled custody still reads the list,
+     * because only that read can release it for this claim.
+     */
+    async reconcilePendingProviderInputCustodyBeforeMaterialization(
+        opts?: Readonly<{ beforeClaim?: boolean }>,
+    ): Promise<boolean> {
         if (this.closed) return false;
         // Rejoin witnessed acceptance before interpreting a Pending snapshot.
         // The server may have committed after a lost reply, or still need the
         // same idempotent settlement. Neither permits provider redelivery.
         await this.reofferPendingProviderInputSettlements(null);
         if (this.closed) return false;
-        const localIds = [...this.materializationRuntime.pendingQueueMaterializedLocalIds]
-            .filter((localId) => (
-                !this.executionRunPendingCustody.has(localId)
-            ));
+        const localIds = this.readPendingProviderInputCustodyLocalIds();
         if (localIds.length === 0) return true;
+        if (opts?.beforeClaim === true && !this.hasUnsettledPendingProviderInputCustody()) return true;
 
         try {
             const statuses = await this.runSessionRequest(async () => listPendingQueueV2DeliveryStatusesFromServer({
@@ -5339,7 +5411,25 @@ export class ApiSessionClient extends EventEmitter {
                 sessionId: this.sessionId,
                 includeDiscarded: true,
             }));
-            const statusByLocalId = new Map(statuses.map((entry) => [entry.localId, entry.deliveryStatus]));
+            await this.applyPendingProviderInputCustodyStatuses(localIds,
+                new Map(statuses.map((entry) => [entry.localId, entry.deliveryStatus])));
+        } catch (error) {
+            logger.debug('[pendingQueue] exact local provider custody reconciliation failed closed', {
+                sessionId: this.sessionId,
+                localIds,
+                error: serializeAxiosErrorForLog(error),
+            });
+        }
+
+        return !this.hasUnsettledPendingProviderInputCustody();
+    }
+
+    /** Applies exact server delivery statuses (from the Pending list or a claim reply) to held custody. */
+    private async applyPendingProviderInputCustodyStatuses(
+        localIds: readonly string[],
+        statusByLocalId: ReadonlyMap<string, PendingDeliveryStatusV1>,
+    ): Promise<void> {
+        try {
             for (const localId of localIds) {
                 const status = statusByLocalId.get(localId);
                 if (
@@ -5387,8 +5477,6 @@ export class ApiSessionClient extends EventEmitter {
                 error: serializeAxiosErrorForLog(error),
             });
         }
-
-        return !this.hasUnsettledPendingProviderInputCustody();
     }
 
     /** Session-owned provider input still awaiting acceptance or settlement (local facts only). */

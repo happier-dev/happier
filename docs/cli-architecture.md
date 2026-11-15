@@ -6525,7 +6525,12 @@ staging directory without the cancelled install signal; unreachable cleanup pres
 failure. Promotion and self-download retain their remote shell cleanup traps.
 
 In current development source, admitted post-update service repair runs through the activated
-managed CLI. A successful update ends the invoking guided repair walk, discarding its remaining
+managed CLI. It also runs when the canonical doctor inventory finds an installed local relay,
+even if services need no repair. Repair displays relay versions and asks before updating a stale
+relay on the current channel. The action and printed retry command preserve the installed
+user/system scope and active relay profile. The diagnostic snapshot carries optional relay
+`scope` from inventory through the repair report; snapshots without it retain their user-scope
+default. A successful update ends the invoking guided repair walk, discarding its remaining
 stale findings and pending plan and directing the user to rerun repair against the updated CLI. The service row
 displays the same inventory version used by the report's findings; it does not override that value
 with the independently gathered daemon snapshot.
@@ -6576,6 +6581,13 @@ Windows user tasks use the invoking user's SID in both the principal and the log
 `InteractiveToken` and `LeastPrivilege`; registration needs no password or all-users logon trigger.
 On-demand tasks register no trigger and omit missed-start catch-up. The existing task namespace,
 hidden PowerShell wrapper, service policy, and explicit Run lifecycle remain the same.
+
+Status and start/restart resolve their expected launcher through the installer's canonical
+`resolveDaemonServiceInstallRuntimeTarget` policy without acquiring a JavaScript runtime. Once
+a managed shim is available, start/restart refresh an older version-pinned managed bootstrap
+launcher to that shim. With no stable launcher available they retain the already-resolved runtime
+target. Installed autostart, desktop attribution, relay configuration and Home carrier policy
+continue through their existing preservation owners.
 
 The desktop status task publishes `serviceAutostart` from one common-mode fact:
 every desktop-managed service in this Happier home and ring, independent of the requested Home.
@@ -6632,9 +6644,19 @@ are stripped before launching daemon and session children. Desktop setup forward
 live platform checks are separate integration gates; this CLI contract does not assert they ran.
 
 **Windows.** `happier self update` stops the payload's processes before activation
-(`quiesceInstalledCliWindowsPayloadOwners` — running sessions are ended), as the installer does. The
+(`quiesceInstalledCliWindowsPayloadOwners`). Its daemon stop omits `--kill-sessions` and its
+force-stop omits `/T` to preserve runners. Windows service/task shutdown can still terminate
+descendants; this is not a guarantee of session survival. The
 desktop's `cli.update.v1` relies on the launcher move-aside and does not end sessions; it is
 unverified on a real Windows host. Remote update is disabled on Windows (below).
+
+In current development source (not yet released), self-update and direct `self __install-payload` CLI promotion reject
+invocations below a Happier daemon or daemon-started session before downloads, locks, launcher
+capture or service shutdown. The update owner uses the daemon's process census and ancestor traversal and
+shared session-command classification to walk the calling process's ancestors. Run the update
+from an independent terminal after saving work. Failure to inspect ancestry also refuses the
+update without modifying the installation. `self update --help` and `-h` print help before update
+dispatch. This prevents self-termination during quiescing; the recovery limits above still apply.
 
 **K5 — per-machine update facts.** `readCliUpdateFacts` (`apps/cli/src/cli/runtime/update/cliUpdateFacts.ts`,
 schema `CliUpdateFactsSchema` in `@happier-dev/protocol`, the same wire shape the 0.2 line publishes)
@@ -9908,6 +9930,18 @@ Session marker removal (the daemon's runner-liveness owner) calls `retireGoneLoc
 
 Pre-existing, not changed here: the runner→daemon control path is loopback TCP authenticated by the `controlToken` in the daemon state file. A same-user process that can read `~/.happier` and reach loopback can call it. The proposed fix is to move it to the same owner-only unix socket with peer-identity admission.
 
+Provider-input startup readiness uses the Session client's exact handler availability:
+the handler must be installed and either eligible on its published local target or
+acknowledged by Home. The existing activity webhook carries that owner's current
+Boolean, including catch-up and reconnect publication; foreground environment claims
+keep their existing contract. Credential-target registration still happens early.
+Admission first tries the canonical RPC, so a delayed pending notification cannot
+block an already callable runner. Only a typed missing-method result together with
+an explicitly pending producer waits for the ready notification, without a timer.
+Retained runners without this producer receive one RPC attempt and a visible typed
+unavailable result when unsupported; the person can retry. The short window before
+the first readiness notification has the same recoverable outcome.
+
 ### Session-log RPC scopes (0.3 development)
 
 Protocol's `rpc/methods.ts` declares method names and `rpc/socket.ts` owns Session
@@ -9947,9 +9981,9 @@ immutable runtime artifacts retain their existing artifact admission. A failed
 source admission settles that demand; a later demand may retry through the same
 activation owner. Native daemon
 construction uses the same CLI/plugin/Agent entry authority and one esbuild graph,
-with shared physical ESM chunks. Bun compiles a launcher that loads
-`package-dist/index.mjs` beside its executable, preserving the host/plugin shared
-module graph. It does not prepare a CLI dist snapshot or run
+with shared physical ESM chunks. The executable is the bundled Node runtime
+(`docs/binary-runtime.md`, "Bundled Node runtime"), whose embedded main loads
+`package-dist/index.mjs` beside it, preserving the host/plugin shared module graph. It does not prepare a CLI dist snapshot or run
 pkgroll first. First-party JavaScript, JavaScript sidecars and plugin resources/UI
 package files belong to code. Target-native external dependencies, tools and Go
 payloads remain independently reusable daemon support. JavaScript sidecars and

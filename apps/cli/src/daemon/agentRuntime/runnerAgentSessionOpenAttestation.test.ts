@@ -13,6 +13,7 @@ import {
   recordTrackedRunnerAgentSessionOpenAttestation,
 } from './runnerAgentSessionOpenAttestation';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+import { createSessionLiveWorkProducer } from '@/daemon/lifecycle/sessionLiveWorkProducer';
 
 function createFixture() {
   const runner = {
@@ -50,12 +51,40 @@ function createFixture() {
     agentRuntimeDaemonServiceAuthorityFilePath:
       '/private/current-authority.json',
   };
-  return { runner, binding, tracked };
+  const changes = createSessionLiveWorkProducer({ readSessions: () => [tracked],
+    readActivity: async () => ({ session: 'unknown', input: 'unknown' }) });
+  return { runner, binding, tracked, changes,
+    subscribeChanges: (listener: () => void) => changes.subscribe(listener, 'session-child') };
 }
 
 describe('runner-owned Agent session-open attestation', () => {
+  it('observes a committed native open without recurring inventory reads while the provider is pending', async () => {
+    vi.useFakeTimers();
+    try {
+      const { tracked, runner, binding } = createFixture();
+      const source = createSessionLiveWorkProducer({ readSessions: () => [tracked],
+        readActivity: async () => ({ session: 'unknown', input: 'unknown' }) });
+      const getTrackedSessions = vi.fn(() => [tracked]);
+      const request = { kind: 'create' as const, sessionId: 'session-child', cwd: '/child' };
+      const opened = awaitTrackedRunnerAgentSessionOpen({ getTrackedSessions,
+        subscribeChanges: listener => source.subscribe(listener, 'session-child'), sessionId: 'session-child', timeoutMs: null });
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(getTrackedSessions).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+      for (let index = 0; index < 20; index += 1) source.notifySessionChanged(`unrelated-${index}`);
+      await Promise.resolve();
+      expect(getTrackedSessions).toHaveBeenCalledTimes(1);
+      await recordTrackedRunnerAgentSessionOpenAttestation({ tracked, runner, retainedAgent: binding,
+        request, providerSessionId: 'provider-child', updateMarker: async () => true,
+        onRecorded: () => source.notifySessionChanged('session-child') });
+      await expect(opened).resolves.toEqual({ status: 'opened', request });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it.each(['current', 'predecessor', 'malformed'] as const)('retains only the %s runner startup cause', async kind => {
-    const { tracked, runner } = createFixture();
+    const { tracked, runner, subscribeChanges } = createFixture();
     tracked.childProcess = new ChildProcess();
     Object.defineProperty(tracked.childProcess, 'exitCode', { value: 1 });
     const failureCause = { code: 'agent_startup_failed', phase: 'client_start', failureReason: 'unclassified_provider_error' } as const;
@@ -64,7 +93,7 @@ describe('runner-owned Agent session-open attestation', () => {
         failureCause: kind === 'malformed' ? { ...failureCause, path: '/PRIVATE_NATIVE_HOME' } : failureCause,
       } }), occurredAt: runner.processStartTimeMs + (kind === 'predecessor' ? -1 : 1) });
     const result = await awaitTrackedRunnerAgentSessionOpen({ sessionId: 'session-child',
-      getTrackedSessions: () => [tracked], readStartupFailure: async () => issue, timeoutMs: null,
+      getTrackedSessions: () => [tracked], subscribeChanges, readStartupFailure: async () => issue, timeoutMs: null,
     });
     expect(result).toEqual(kind === 'predecessor' ? { status: 'runner_exited' }
       : { status: 'runner_exited', code: 'agent_startup_failed', ...(kind === 'current' ? { failureCause } : {}) });
@@ -82,7 +111,7 @@ describe('runner-owned Agent session-open attestation', () => {
     ['agent_startup_transport_failed', 'current'],
     ['agent_isolation_unavailable', 'current'], ['agent_isolation_unavailable', 'predecessor'],
   ] as const)('attributes %s only to its %s runner birth', async (code, age) => {
-    const { tracked, runner } = createFixture();
+    const { tracked, runner, subscribeChanges } = createFixture();
     tracked.pid = runner.pid - 1;
     tracked.sessionRunnerPid = runner.pid;
     tracked.processStartTimeMs = runner.processStartTimeMs - 100;
@@ -95,8 +124,9 @@ describe('runner-owned Agent session-open attestation', () => {
         ? { code } : new SessionTeamCredentialLaunchUnavailableError(code),
       occurredAt: runner.processStartTimeMs + (age === 'current' ? 1 : -1) });
     expect(await awaitTrackedRunnerAgentSessionOpen({ sessionId: 'session-child',
-      getTrackedSessions: () => [tracked], readStartupFailure: async () => issue, timeoutMs: null,
-    })).toEqual(age === 'current' ? { status: 'runner_exited', code } : { status: 'runner_exited' });
+      getTrackedSessions: () => [tracked], subscribeChanges, readStartupFailure: async () => issue, timeoutMs: null,
+    })).toEqual(age === 'current' ? { status: 'runner_exited', code,
+      ...(issue?.failureCause ? { failureCause: issue.failureCause } : {}) } : { status: 'runner_exited' });
   });
 
   it.each([
@@ -108,7 +138,7 @@ describe('runner-owned Agent session-open attestation', () => {
     ['agent_startup_transport_failed', 'team_credential'],
     ['agent_isolation_unavailable', 'team_credential'],
   ] as const)('does not attribute %s from foreign source %s to runner startup', async (code, source) => {
-    const { tracked, runner } = createFixture();
+    const { tracked, runner, subscribeChanges } = createFixture();
     tracked.childProcess = new ChildProcess();
     Object.defineProperty(tracked.childProcess, 'exitCode', { value: 1 });
     const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error',
@@ -116,12 +146,12 @@ describe('runner-owned Agent session-open attestation', () => {
       occurredAt: runner.processStartTimeMs + 1 });
     expect(issue).toMatchObject({ code });
     expect(await awaitTrackedRunnerAgentSessionOpen({ sessionId: 'session-child',
-      getTrackedSessions: () => [tracked], readStartupFailure: async () => ({ ...issue, source }), timeoutMs: null,
+      getTrackedSessions: () => [tracked], subscribeChanges, readStartupFailure: async () => ({ ...issue, source }), timeoutMs: null,
     })).toEqual({ status: 'runner_exited' });
   });
 
   it.each(['current', 'predecessor'] as const)('attributes a legitimate Provider reconnect only to its %s runner birth', async age => {
-    const { tracked, runner } = createFixture();
+    const { tracked, runner, subscribeChanges } = createFixture();
     tracked.childProcess = new ChildProcess();
     Object.defineProperty(tracked.childProcess, 'exitCode', { value: 1 });
     const code = 'connected_service_credential_reconnect_required';
@@ -130,19 +160,19 @@ describe('runner-owned Agent session-open attestation', () => {
       occurredAt: runner.processStartTimeMs + (age === 'current' ? 1 : -1) });
     expect(issue).toMatchObject({ code, source: 'agent_session_error' });
     expect(await awaitTrackedRunnerAgentSessionOpen({ sessionId: 'session-child',
-      getTrackedSessions: () => [tracked], readStartupFailure: async () => issue, timeoutMs: null,
+      getTrackedSessions: () => [tracked], subscribeChanges, readStartupFailure: async () => issue, timeoutMs: null,
     })).toEqual(age === 'current' ? { status: 'runner_exited', code } : { status: 'runner_exited' });
   });
 
   it('does not attribute a failure after the tracked runner is rebound to a foreign Session', async () => {
-    const { tracked, runner } = createFixture();
+    const { tracked, runner, subscribeChanges } = createFixture();
     tracked.childProcess = new ChildProcess();
     Object.defineProperty(tracked.childProcess, 'exitCode', { value: 1 });
     const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error',
       error: new SessionTeamCredentialLaunchUnavailableError('connected_service_credential_reconnect_required'),
       occurredAt: runner.processStartTimeMs + 1 });
     expect(await awaitTrackedRunnerAgentSessionOpen({ sessionId: 'session-child',
-      getTrackedSessions: () => [tracked], readStartupFailure: async () => {
+      getTrackedSessions: () => [tracked], subscribeChanges, readStartupFailure: async () => {
         tracked.happySessionId = 'session-foreign';
         return issue;
       }, timeoutMs: null,
@@ -152,7 +182,7 @@ describe('runner-owned Agent session-open attestation', () => {
   it('keeps a native fork attestation owned until a slow provider lifecycle commits it', async () => {
     vi.useFakeTimers();
     try {
-      const { tracked } = createFixture();
+      const { tracked, subscribeChanges, changes } = createFixture();
       const request = {
         kind: 'fork' as const,
         sessionId: 'session-child',
@@ -164,7 +194,7 @@ describe('runner-owned Agent session-open attestation', () => {
         },
       };
       const opened = awaitTrackedRunnerAgentSessionOpen({
-        getTrackedSessions: () => [tracked],
+        getTrackedSessions: () => [tracked], subscribeChanges,
         sessionId: 'session-child',
         // Native fork completion belongs to the provider-owned lifecycle. It
         // must not inherit the generic outer attestation deadline.
@@ -176,6 +206,7 @@ describe('runner-owned Agent session-open attestation', () => {
           request,
           providerSessionId: 'provider-child',
         };
+        changes.notifySessionChanged('session-child');
       }, 15_050);
 
       await vi.advanceTimersByTimeAsync(15_100);
@@ -189,11 +220,11 @@ describe('runner-owned Agent session-open attestation', () => {
   it('settles an unbounded native-fork waiter when its previously tracked runner exits before attesting', async () => {
     vi.useFakeTimers();
     try {
-      const { tracked } = createFixture();
+      const { tracked, subscribeChanges, changes } = createFixture();
       let trackedSessions: readonly TrackedSession[] = [tracked];
       let settled: unknown;
       void awaitTrackedRunnerAgentSessionOpen({
-        getTrackedSessions: () => trackedSessions,
+        getTrackedSessions: () => trackedSessions, subscribeChanges,
         sessionId: 'session-child',
         timeoutMs: null,
       }).then((result) => {
@@ -202,7 +233,8 @@ describe('runner-owned Agent session-open attestation', () => {
 
       await vi.advanceTimersByTimeAsync(25);
       trackedSessions = [];
-      await vi.advanceTimersByTimeAsync(25);
+      changes.notifyChanged();
+      await vi.advanceTimersByTimeAsync(0);
 
       expect(settled).toEqual({ status: 'runner_exited' });
     } finally {
@@ -213,14 +245,14 @@ describe('runner-owned Agent session-open attestation', () => {
   it('settles an unbounded native-fork waiter with the operation abort reason without stopping the runner', async () => {
     vi.useFakeTimers();
     try {
-      const { tracked } = createFixture();
+      const { tracked, subscribeChanges } = createFixture();
       const controller = new AbortController();
       const abortError = Object.assign(new Error('Action operation cancelled'), {
         name: 'AbortError',
       });
       let outcome: unknown = 'pending';
       void awaitTrackedRunnerAgentSessionOpen({
-        getTrackedSessions: () => [tracked],
+        getTrackedSessions: () => [tracked], subscribeChanges,
         sessionId: 'session-child',
         timeoutMs: null,
         signal: controller.signal,
@@ -240,7 +272,7 @@ describe('runner-owned Agent session-open attestation', () => {
   });
 
   it('keeps a captured runner behind its wrapper out of opened currentness until commit', async () => {
-    const { runner, binding, tracked } = createFixture();
+    const { runner, binding, tracked, subscribeChanges } = createFixture();
     tracked.pid = runner.pid - 1;
     tracked.sessionRunnerPid = runner.pid;
     tracked.processStartTimeMs = runner.processStartTimeMs - 1;
@@ -267,7 +299,7 @@ describe('runner-owned Agent session-open attestation', () => {
     });
     expect(updateMarker).not.toHaveBeenCalled();
     await expect(awaitTrackedRunnerAgentSessionOpen({
-      getTrackedSessions: () => [tracked],
+      getTrackedSessions: () => [tracked], subscribeChanges,
       sessionId: 'session-child',
       timeoutMs: 0,
     })).resolves.toEqual({ status: 'timeout' });
@@ -287,7 +319,7 @@ describe('runner-owned Agent session-open attestation', () => {
     expect(updateMarker).toHaveBeenCalledOnce();
     expect(updateMarker).toHaveBeenCalledWith(expect.objectContaining({ trackingKey: tracked.trackingKey }));
     await expect(awaitTrackedRunnerAgentSessionOpen({
-      getTrackedSessions: () => [tracked],
+      getTrackedSessions: () => [tracked], subscribeChanges,
       sessionId: 'session-child',
       timeoutMs: 0,
     })).resolves.toEqual({
@@ -297,7 +329,7 @@ describe('runner-owned Agent session-open attestation', () => {
   });
 
   it('records and returns only the exact completed open under current runner/retained-Agent custody', async () => {
-    const { runner, binding, tracked } = createFixture();
+    const { runner, binding, tracked, subscribeChanges } = createFixture();
     const updateMarker = vi.fn(async () => true);
     const request = {
       kind: 'fork' as const,
@@ -338,7 +370,7 @@ describe('runner-owned Agent session-open attestation', () => {
       attestation,
     });
     await expect(awaitTrackedRunnerAgentSessionOpen({
-      getTrackedSessions: () => [tracked],
+      getTrackedSessions: () => [tracked], subscribeChanges,
       sessionId: 'session-child',
       timeoutMs: 0,
     })).resolves.toEqual({
@@ -348,7 +380,7 @@ describe('runner-owned Agent session-open attestation', () => {
   });
 
   it('projects transient open fields away while retaining state-sharing policy in durable marker custody', async () => {
-    const { runner, binding, tracked } = createFixture();
+    const { runner, binding, tracked, subscribeChanges } = createFixture();
     const updateMarker = vi.fn(async () => true);
     const request = {
       kind: 'resume' as const,
@@ -405,7 +437,7 @@ describe('runner-owned Agent session-open attestation', () => {
 
   it.each(['current', 'foreign-runner', 'foreign-source', 'marker-refused'] as const)(
     'observes a refused native open only after exact runner custody is recorded (%s)', async mode => {
-    const { runner, binding, tracked } = createFixture();
+    const { runner, binding, tracked, subscribeChanges } = createFixture();
     const updateMarker = vi.fn(async () => mode !== 'marker-refused');
     const request = { kind: 'create' as const, sessionId: 'session-child', cwd: '/child' };
     if (mode === 'foreign-source') tracked.runnerAgentSourceCustodyV1 = {
@@ -415,7 +447,7 @@ describe('runner-owned Agent session-open attestation', () => {
       phase: 'refused', request, providerSessionId: null, updateMarker });
     expect(recorded).toEqual(mode === 'current' ? { request, providerSessionId: null,
       refusal: { code: 'native_agent_session_mode_unavailable' } } : null);
-    expect(await awaitTrackedRunnerAgentSessionOpen({ getTrackedSessions: () => [tracked],
+    expect(await awaitTrackedRunnerAgentSessionOpen({ getTrackedSessions: () => [tracked], subscribeChanges,
       sessionId: 'session-child', timeoutMs: 0 })).toEqual(mode === 'current'
       ? { status: 'refused', code: 'native_agent_session_mode_unavailable', expectedTrackedRunner: {
           tracked, sessionRunnerPid: tracked.sessionRunnerPid,
@@ -424,7 +456,7 @@ describe('runner-owned Agent session-open attestation', () => {
   });
 
   it('fails closed before marker mutation on session or resume-provider mismatch', async () => {
-    const { runner, binding, tracked } = createFixture();
+    const { runner, binding, tracked, subscribeChanges } = createFixture();
     const updateMarker = vi.fn(async () => true);
     await expect(
       recordTrackedRunnerAgentSessionOpenAttestation({

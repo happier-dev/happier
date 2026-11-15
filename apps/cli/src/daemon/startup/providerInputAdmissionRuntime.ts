@@ -1,9 +1,9 @@
-import { setTimeout as setTimeoutPromise } from 'node:timers/promises';
+import { waitForChangeOrDeadline } from '@/daemon/lifecycle/waitForChangeOrDeadline';
 
 import { AccountEncryptionMaterialUnavailableError } from '@/api/client/encryptionKey';
 import type { StoredCredentials } from '@/persistence';
 import { requestSessionProviderInputAdmission } from '@/agent/runtime/session/input/sessionProviderInputAdmissionRpc';
-import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
+import { deferSessionRpcEncryption, type resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
 
 export type ProviderInputAdmissionRequest = Readonly<{
@@ -26,59 +26,27 @@ export async function callSessionProviderInputAdmission(params: Readonly<{
   externalAction?: Parameters<typeof callSessionRpc>[0]['externalAction'];
   resolveAuthorizationHeaders?: Parameters<typeof resolveSessionTransportContext>[0]['resolveAuthorizationHeaders'];
 }> & ProviderInputAdmissionRequest): Promise<Readonly<{ status: 'enforced' | 'cleared' | 'not_matched' }>> {
-  const transport = await resolveSessionTransportContext({ reason: 'session-control',
+  const encryption = deferSessionRpcEncryption({ reason: 'session-control',
     credentials: params.credentials,
     idOrPrefix: params.sessionId,
     ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
     ...(params.externalAction?.context.signal ? { signal: params.externalAction.context.signal } : {}),
+    unavailable: result => result?.code === 'encryption_material_unavailable'
+      ? new AccountEncryptionMaterialUnavailableError()
+      : new Error('session_provider_input_admission_transport_unavailable'),
   });
-  if (!transport.ok) {
-    if (transport.code === 'encryption_material_unavailable') {
-      throw new AccountEncryptionMaterialUnavailableError();
-    }
-    throw new Error('session_provider_input_admission_transport_unavailable');
-  }
   return await requestSessionProviderInputAdmission({
     ...params,
-    callRpc: async (method, request) => transport.mode === 'plain'
-      ? await callSessionRpc({
-          token: params.credentials.token,
-          sessionId: transport.sessionId,
-          ctx: transport.ctx,
-          mode: transport.mode,
-          method: `${transport.sessionId}:${method}`,
-          request,
-          ...(params.externalAction ? { externalAction: params.externalAction } : {}),
-          ...(params.externalAction?.context.signal ? { signal: params.externalAction.context.signal } : {}),
-        })
-      : await callSessionRpc({
-          token: params.credentials.token,
-          sessionId: transport.sessionId,
-          ctx: transport.ctx,
-          mode: transport.mode,
-          method: `${transport.sessionId}:${method}`,
-          request,
-          ...(params.externalAction ? { externalAction: params.externalAction } : {}),
-          ...(params.externalAction?.context.signal ? { signal: params.externalAction.context.signal } : {}),
-        }),
+    callRpc: async (method, request) => await callSessionRpc({
+      token: params.credentials.token,
+      sessionId: params.sessionId,
+      ...encryption,
+      method: `${params.sessionId}:${method}`,
+      request,
+      ...(params.externalAction ? { externalAction: params.externalAction } : {}),
+      ...(params.externalAction?.context.signal ? { signal: params.externalAction.context.signal } : {}),
+    }),
   });
-}
-
-export async function waitForProviderInputAdmissionGrace(
-  delayMs: number,
-  abortSignal: AbortSignal,
-): Promise<'continue' | 'cancelled'> {
-  if (abortSignal.aborted) return 'cancelled';
-  try {
-    await setTimeoutPromise(Math.max(0, delayMs), undefined, {
-      signal: abortSignal,
-      ref: false,
-    });
-    return abortSignal.aborted ? 'cancelled' : 'continue';
-  } catch (error) {
-    if (abortSignal.aborted) return 'cancelled';
-    throw error;
-  }
 }
 
 export type ProviderInputAdmissionRequestOutcome<T> =
@@ -138,19 +106,23 @@ function readProviderInputAdmissionLifecycleStatus(
   return isCancelled?.() ? 'cancelled' : 'active';
 }
 
-export async function requestProviderInputAdmissionWithBoundedRetry<T>(params: Readonly<{
+export async function requestProviderInputAdmissionWhenReady<T>(params: Readonly<{
   targetFence?: ProviderInputAdmissionTargetFence;
   isCancelled?: () => boolean;
   requestAdmission: () => Promise<T>;
   isMethodUnavailable: (error: unknown) => boolean;
-  methodUnavailableRetry?: Readonly<{
-    maxAttempts: number;
-    waitBeforeRetry: () => Promise<'continue' | 'cancelled'>;
+  readiness?: Readonly<{
+    read: () => boolean | undefined;
+    subscribeChanges: (listener: () => void) => () => void;
+    signal?: AbortSignal;
   }>;
 }>): Promise<ProviderInputAdmissionRequestOutcome<T>> {
-  let retryAttempts = 0;
-  while (true) {
-    if (readProviderInputAdmissionLifecycleStatus(params.isCancelled) === 'cancelled') return { status: 'cancelled' };
+  const readiness = params.readiness;
+  let changed = false;
+  let wake: (() => void) | undefined;
+  const unsubscribe = readiness?.subscribeChanges(() => { changed = true; wake?.(); });
+  const request = async (): Promise<ProviderInputAdmissionRequestOutcome<T>> => {
+    if (readiness?.signal?.aborted || readProviderInputAdmissionLifecycleStatus(params.isCancelled) === 'cancelled') return { status: 'cancelled' };
     assertProviderInputAdmissionTargetFence(params.targetFence);
     try {
       const value = await params.requestAdmission();
@@ -158,16 +130,36 @@ export async function requestProviderInputAdmissionWithBoundedRetry<T>(params: R
       return { status: 'admitted', value };
     } catch (error) {
       assertProviderInputAdmissionTargetFence(params.targetFence);
-      if (!params.isMethodUnavailable(error)) throw error;
-      const retry = params.methodUnavailableRetry;
-      if (retry && retryAttempts < retry.maxAttempts) {
-        if (readProviderInputAdmissionLifecycleStatus(params.isCancelled) === 'cancelled') return { status: 'cancelled' };
-        retryAttempts += 1;
-        if (await retry.waitBeforeRetry() === 'cancelled') return { status: 'cancelled' };
-        continue;
-      }
       throw error;
     }
+  };
+  try {
+    try {
+      // The effect owner is authoritative even if a delayed notification says pending.
+      return await request();
+    } catch (error) {
+      if (!params.isMethodUnavailable(error) || readiness?.read() !== false) throw error;
+    }
+    while (true) {
+      changed = false;
+      if (readiness?.signal?.aborted || readProviderInputAdmissionLifecycleStatus(params.isCancelled) === 'cancelled') return { status: 'cancelled' };
+      assertProviderInputAdmissionTargetFence(params.targetFence);
+      // Only an actual producer's pending fact parks after a no-effect refusal.
+      // Older runners retain the first RPC's visible, typed unavailable result.
+      if (readiness?.read() !== false) break;
+      if (changed) continue;
+      await waitForChangeOrDeadline({ signal: readiness.signal,
+        waitForChange: signal => new Promise<void>(resolve => {
+          const settle = () => { wake = undefined; signal.removeEventListener('abort', settle); resolve(); };
+          wake = settle;
+          signal.addEventListener('abort', settle, { once: true });
+          if (changed || signal.aborted) settle();
+        }),
+      });
+    }
+    return await request();
+  } finally {
+    unsubscribe?.();
   }
 }
 

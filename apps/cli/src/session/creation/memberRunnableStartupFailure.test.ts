@@ -1,3 +1,4 @@
+import { createSessionLiveWorkProducer } from '@/daemon/lifecycle/sessionLiveWorkProducer';
 import { ChildProcess } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import { PluginError } from '@happier-dev/plugin-sdk';
@@ -9,6 +10,11 @@ import { awaitTrackedRunnerAgentSessionOpen } from '@/daemon/agentRuntime/runner
 import type { TrackedSession } from '@/daemon/types';
 import { projectSessionSpawnFailure } from './projectSessionSpawnFailure';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+
+const sessionChanges = createSessionLiveWorkProducer({
+  readSessions: () => [],
+  readActivity: async () => ({ session: 'unknown', input: 'unknown' }),
+});
 
 describe('member-runnable Agent startup refusal', () => {
   it.each(['preflight', 'native'] as const)('keeps the trusted Agent identity through %s nonce settlement', phase => {
@@ -47,7 +53,7 @@ describe('member-runnable Agent startup refusal', () => {
         processStartTimeMs: 100, processCommandHash: 'a'.repeat(64), childProcess };
       const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'codex',
         error: { code: 'agent_cli_not_runnable' }, occurredAt: age === 'predecessor' ? 99 : 101 });
-      const observed = await awaitTrackedRunnerAgentSessionOpen({ sessionId: 'member-session',
+      const observed = await awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener), sessionId: 'member-session',
         getTrackedSessions: () => [tracked], readStartupFailure: async () => age === 'foreign-source'
           ? { ...issue, source: 'auth_error' } : issue, timeoutMs: null });
       expect(observed).toEqual(age === 'current' ? { status: 'runner_exited', code: 'agent_cli_not_runnable' }

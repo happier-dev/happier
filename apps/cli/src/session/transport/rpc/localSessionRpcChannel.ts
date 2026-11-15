@@ -75,6 +75,8 @@ export type LocalSessionRpcTarget = Readonly<{
    * state). Only a connection whose kernel-proven peer is that process, under this OS user, may call.
    */
   readTrustedCaller(): Promise<ProcessBirthWitness | null>;
+  /** Called only after the eligible local target is published; retirement invalidates the predicate. */
+  onPublished?: (isMethodAvailable: (method: string) => boolean) => void;
 }>;
 
 type RegisteredTarget = Readonly<{
@@ -359,6 +361,8 @@ export async function registerLocalSessionRpcTarget(target: LocalSessionRpcTarge
     if (current.targets.get(target.sessionId) === registered) current.targets.delete(target.sessionId);
     throw error;
   }
+  target.onPublished?.(method => current.targets.get(target.sessionId) === registered
+    && resolveSocketRpcSameAccountSessionAuthorizationV1(method, target.sessionId) !== null);
   let retired = false;
   return async () => {
     if (retired) return;

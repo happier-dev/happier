@@ -1,3 +1,4 @@
+import { createSessionLiveWorkProducer } from '@/daemon/lifecycle/sessionLiveWorkProducer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi, type TestContext } from 'vitest';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
@@ -89,6 +90,11 @@ import { awaitTrackedRunnerAgentSessionOpen, recordTrackedRunnerAgentSessionOpen
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { trackedSessionForSingleSessionProcess, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+
+const sessionChanges = createSessionLiveWorkProducer({
+  readSessions: () => [],
+  readActivity: async () => ({ session: 'unknown', input: 'unknown' }),
+});
 
 // Only process creation is replaced. Production daemon preparation creates
 // the bootstrap/attach files; the admitted external Agent runs in this worker.
@@ -1074,7 +1080,7 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
               await expect(runner).resolves.toBeUndefined();
               // Observe native-open independently; public Resume's acknowledgment
               // does not promise that the provider conversation has opened yet.
-              expect(await awaitTrackedRunnerAgentSessionOpen({ sessionId, timeoutMs: null, signal: lifetime.signal,
+              expect(await awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener), sessionId, timeoutMs: null, signal: lifetime.signal,
                 getTrackedSessions: () => [...tracked.values()] })).toMatchObject({ status: 'opened' });
               expect(startupFailures).toHaveLength(2);
               const reopened = await app.inject({ method: 'POST', url: PROVIDER_BROKER_OPEN_HTTP_PATH_V1, payload: {

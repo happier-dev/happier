@@ -1,3 +1,4 @@
+import { createSessionLiveWorkProducer } from '@/daemon/lifecycle/sessionLiveWorkProducer';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import axios from 'axios';
@@ -36,6 +37,11 @@ import { SessionTeamCredentialLaunchUnavailableError } from './sessionTeamCreden
 import { buildSessionSpawnInitialInputLocalIdV1 } from '@happier-dev/protocol/sessions/messages/spawnedFirstTurn';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+
+const sessionChanges = createSessionLiveWorkProducer({
+  readSessions: () => [],
+  readActivity: async () => ({ session: 'unknown', input: 'unknown' }),
+});
 
 // Socket.IO is a network boundary. Keep its ordinary implementation outside
 // this fixture so sibling composed paths retain their own transport behavior.
@@ -163,7 +169,7 @@ export async function assertStartupFailureThroughCli(input: Readonly<{
             } } : {}) };
         },
         stopSession: async () => ({ status: 'not_found' }),
-    }, awaitAgentSessionOpen: openInput => awaitTrackedRunnerAgentSessionOpen({ ...openInput, getTrackedSessions: () => [...tracked.values()],
+    }, awaitAgentSessionOpen: openInput => awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener), ...openInput, getTrackedSessions: () => [...tracked.values()],
         readStartupFailure: async () => input.publishFailure ? row?.lastRuntimeIssue ?? null : preparationCode && preparationCode !== 'opened' ? classifyPrimarySessionRuntimeIssue({
             cause: 'session_error', ...(preparationCode === 'agent_cli_not_runnable' ? { provider: 'codex' } : {}), error: preparationCode === 'broker_unavailable'
                 || preparationCode === 'connected_service_credential_reconnect_required'

@@ -35,6 +35,7 @@ export type RpcLocalActionContext = Readonly<Partial<Pick<
     ActionExecutorContext,
     'surface' | 'authority' | 'callerPermissionMode' | 'causalPermissionAuthority' | 'callerInputConstraints' | 'actionRequestId' | 'actionCaller'
     | 'externalActionExecutionAuthorization' | 'approvalOrigin' | 'approvedActionReplay' | 'presentUserConfirmation'
+    | 'presentUserApproval' | 'handoffTargetReplacementApproval'
     | 'originalActionEnvelope' | 'signExternalActionApprovalInput' | 'externalActionTarget' | 'runtimeAccountId' | 'serverId'
     | 'agentStartContext' | 'agentStartWorkDepth' | 'agentStartWorkspaceWrites' | 'sessionAgentSpawnPolicyV1'
 >> & {
@@ -247,6 +248,8 @@ type RpcHandlerCommonConfig = {
     logger?: (message: string, data?: unknown) => void;
     onRegistrationError?: (error: unknown) => void;
     onRegistrationAcknowledged?: (method: string) => void;
+    /** Unprefixed handler identity, after installation or an active transport receipt. */
+    onHandlerAvailabilityChanged?: (method: string) => void;
     nowMs?: () => number;
 };
 

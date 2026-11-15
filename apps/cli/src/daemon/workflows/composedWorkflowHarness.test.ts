@@ -1,3 +1,4 @@
+import { createSessionLiveWorkProducer } from '@/daemon/lifecycle/sessionLiveWorkProducer';
 import { createTestWorkflowCoordinator as createWorkflowCoordinator } from './workflowCoordinator.testkit';
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -229,6 +230,11 @@ import {
   resolveWorkflowWorkspace,
 } from './resolveWorkflowWorkspace';
 import { legacyPidSessionTrackingKey, trackedSessionsForProcess } from '@/daemon/sessions/sessionTrackingKey';
+
+const sessionChanges = createSessionLiveWorkProducer({
+  readSessions: () => [],
+  readActivity: async () => ({ session: 'unknown', input: 'unknown' }),
+});
 
 function unexpectedWorkflowDefinitions() {
   const unexpected = (): never => { throw new Error('unexpected_definition_effect'); };
@@ -676,7 +682,7 @@ it.each(['ordinary', 'claim-lost-during-startup'] as const)('delivers a saved th
         runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} } }), origin: { kind: 'run_step', runId }, workDepth: 1 }));
     return { type: 'success', sessionId: childId, sessionCreationOutcome: {
       disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] } } };
-  } }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ ...input, getTrackedSessions: () => [{
+  } }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener), ...input, getTrackedSessions: () => [{
     trackingKey: legacyPidSessionTrackingKey(101), pid: 101, startedBy: 'daemon', happySessionId: childId,
     agentRuntimeDaemonServiceAuthorityFilePath: '/private/authority.json',
     agentRuntimeDaemonServiceSessionOpenAttestation: {
@@ -862,7 +868,7 @@ it.each(['success', 'failure', 'already-stopped', 'foreign-session', 'success-du
     authorizedConversations.set('late-child', directory);
     return { type: 'success', sessionId: 'late-child', sessionCreationOutcome: {
       disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] } } };
-  } }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ getTrackedSessions: () => [{
+  } }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener), getTrackedSessions: () => [{
     trackingKey: legacyPidSessionTrackingKey(101), pid: 101, startedBy: 'daemon', happySessionId: 'late-child',
     agentRuntimeDaemonServiceAuthorityFilePath: '/private/authority.json',
     agentRuntimeDaemonServiceSessionOpenAttestation: {
@@ -1317,7 +1323,7 @@ it('retains the original cold Session setup operation in durable Workflow progre
       disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] },
     } };
   }, stopSession: async () => { throw new Error('Setup success must not retire its runner'); }
-  }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ getTrackedSessions: () => [tracked], ...input }) });
+  }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener), getTrackedSessions: () => [tracked], ...input }) });
   let notifyHeld!: () => void;
   const heldReady = new Promise<void>(resolve => { notifyHeld = resolve; });
   const sessionStartup: WorkflowSessionStartup = input => runObservedWorkflowSessionStartup({ ...input,
@@ -1415,7 +1421,7 @@ it.each(['unavailable', 'missing-inventory', 'valid'] as const)(
       attestationPhases.push(request.operation.phase);
       const recorded = await recordTrackedRunnerAgentSessionOpenAttestation({ tracked, retainedAgent: binding,
         runner: { ...runner, snapshotIdentity: 'fixture-runner' },
-        ...request.operation, updateMarker: async () => true });
+        ...request.operation, updateMarker: async () => true, onRecorded: () => sessionChanges.notifyChanged() });
       if (!recorded) throw new Error('native_mode_attestation_refused');
     },
     runtime: { sessions: { open: async (_request, context) => {
@@ -1454,7 +1460,7 @@ it.each(['unavailable', 'missing-inventory', 'valid'] as const)(
     retiredSessions.push(sessionId);
     tracked.childProcess = Object.assign(new (await import('node:child_process')).ChildProcess(), { exitCode: 0 });
     return { status: 'stopped' };
-  } }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ getTrackedSessions: () => [tracked], ...input }) });
+  } }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener), getTrackedSessions: () => [tracked], ...input }) });
   const sessionStartup: WorkflowSessionStartup = input => runObservedWorkflowSessionStartup(input, {
     serverId: 'server-1', machineId, observeExecution: operations.observeExecution, rpcContext: {},
     transport: operation => ({ spawn: (request, options) => handler(request, { ...options, localActionContext: operation }),
@@ -3095,7 +3101,7 @@ describe('composed Automation workflow claim and optional receipt', () => {
     const handler = createMachineSessionSpawnRpcHandler({ handlers: {
       spawnSession: async options => spawnSession(options),
       stopSession: async () => { throw new Error('Successful startup must not retire its runner'); },
-    }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ ...input, getTrackedSessions: () => [{
+    }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener), ...input, getTrackedSessions: () => [{
       trackingKey: legacyPidSessionTrackingKey(101), pid: 101, startedBy: 'daemon', happySessionId: 'connected-child',
       agentRuntimeDaemonServiceAuthorityFilePath: '/private/authority.json',
       agentRuntimeDaemonServiceSessionOpenAttestation: {

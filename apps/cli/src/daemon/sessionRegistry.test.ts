@@ -1,3 +1,4 @@
+import { createSessionLiveWorkProducer } from '@/daemon/lifecycle/sessionLiveWorkProducer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { once } from 'node:events';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -5,6 +6,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DeviceLocalSecretStorage } from './deviceLocalSecretStorage';
 import { legacyPidSessionTrackingKey } from './sessions/sessionTrackingKey';
+
+const sessionChanges = createSessionLiveWorkProducer({
+  readSessions: () => [],
+  readActivity: async () => ({ session: 'unknown', input: 'unknown' }),
+});
 
 const testDeviceLocalSecretStorage: DeviceLocalSecretStorage = {
   sealJson: ({ value }) => `test.${Buffer.from(JSON.stringify(value), 'utf8').toString('base64url')}`,
@@ -213,7 +219,7 @@ describe('sessionRegistry', () => {
     tracked.agentRuntimeDaemonServiceAuthorityFilePath = join(happyHomeDir, 'foreign-authority.json');
     await expect(recordTrackedRunnerAgentSessionOpenAttestation({ tracked, runner: attestedRunner, retainedAgent: binding,
       phase, request, providerSessionId: null })).resolves.toBeNull();
-    await expect(awaitTrackedRunnerAgentSessionOpen({ getTrackedSessions: () => [tracked],
+    await expect(awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener), getTrackedSessions: () => [tracked],
       sessionId: request.sessionId, timeoutMs: 0 })).resolves.toEqual({ status: 'timeout' });
     tracked.agentRuntimeDaemonServiceAuthorityFilePath = canonicalAuthority;
     const recorded = await recordTrackedRunnerAgentSessionOpenAttestation({ tracked, runner: attestedRunner, retainedAgent: binding,
@@ -234,7 +240,7 @@ describe('sessionRegistry', () => {
     expect((await listSessionMarkers())[0]?.agentRuntimeDaemonServiceSessionOpenAttestation).toEqual(recorded);
     if (!restored) throw new Error('Recorded native-open marker was lost');
     const reattached = buildTrackedSessionFromMarker({ marker: restored, startedByFallback: 'daemon', reattachedFromDiskMarker: true });
-    await expect(awaitTrackedRunnerAgentSessionOpen({ getTrackedSessions: () => [reattached],
+    await expect(awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener), getTrackedSessions: () => [reattached],
       sessionId: request.sessionId, timeoutMs: 0 })).resolves.toEqual(phase === 'refused'
       ? { status: 'refused', code: 'native_agent_session_mode_unavailable', expectedTrackedRunner: {
           tracked: reattached, sessionRunnerPid: reattached.sessionRunnerPid,

@@ -807,7 +807,7 @@ export function createDaemonControlApp({
     sessionCreationOutcome?: SessionCreationOutcome,
     reportedTrackingKey?: SessionTrackingKey | null,
   ) => void | Promise<void>;
-  onSessionActivityChanged?: (sessionId: string | null, followOccurrence?: SessionFollowOccurrenceNotification, executionRunId?: string) => void | SessionActivityChangedResult | Promise<void | SessionActivityChangedResult>;
+  onSessionActivityChanged?: (sessionId: string | null, followOccurrence?: SessionFollowOccurrenceNotification, executionRunId?: string, providerInputAdmissionReady?: boolean) => void | SessionActivityChangedResult | Promise<void | SessionActivityChangedResult>;
   onScmDiffSummaryResultUpdated?: (change: ScmDiffSummaryResultRevisionHint) => void;
   /**
    * Settles the existing PID-correlated spawn waiter for a strict terminal
@@ -2049,7 +2049,8 @@ export function createDaemonControlApp({
   typed.post('/session-activity-changed', {
     schema: {
       body: z.strictObject({ sessionId: z.nullable(z.string().check(z.minLength(1))), followOccurrence: z.optional(SessionFollowOccurrenceNotificationSchema),
-        executionRunId: z.optional(z.string().check(z.minLength(1))) }),
+        executionRunId: z.optional(z.string().check(z.minLength(1))),
+        providerInputAdmissionReady: z.optional(z.boolean()) }),
       response: { 200: SessionActivityChangedResponseSchema, 401: authSchema401,
         503: daemonAdmissionRefusedRouteResponseSchema },
     },
@@ -2083,7 +2084,9 @@ export function createDaemonControlApp({
         : !occurrence || 'sourceSessionId' in occurrence && occurrence.sourceSessionId === request.body.sessionId) {
         diagnose('started');
         let result: void | SessionActivityChangedResult;
-        try { result = await onSessionActivityChanged?.(request.body.sessionId, request.body.followOccurrence, request.body.executionRunId); }
+        try { result = request.body.providerInputAdmissionReady !== undefined
+          ? await onSessionActivityChanged?.(request.body.sessionId, request.body.followOccurrence, request.body.executionRunId, request.body.providerInputAdmissionReady)
+          : await onSessionActivityChanged?.(request.body.sessionId, request.body.followOccurrence, request.body.executionRunId); }
         catch (error) { diagnose('failed', error); throw error; }
         diagnose('completed');
         if (result?.personalFollow?.sourceSessionId === request.body.sessionId) {
@@ -4629,7 +4632,7 @@ export function startDaemonControlServer({
     sessionCreationOutcome?: SessionCreationOutcome,
     reportedTrackingKey?: SessionTrackingKey | null,
   ) => void | Promise<void>;
-  onSessionActivityChanged?: (sessionId: string | null, followOccurrence?: SessionFollowOccurrenceNotification, executionRunId?: string) => void | SessionActivityChangedResult | Promise<void | SessionActivityChangedResult>;
+  onSessionActivityChanged?: (sessionId: string | null, followOccurrence?: SessionFollowOccurrenceNotification, executionRunId?: string, providerInputAdmissionReady?: boolean) => void | SessionActivityChangedResult | Promise<void | SessionActivityChangedResult>;
   onScmDiffSummaryResultUpdated?: (change: ScmDiffSummaryResultRevisionHint) => void;
   onSessionStartupFailure?: (input: Readonly<{
     spawnNonce: string;

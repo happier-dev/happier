@@ -664,8 +664,7 @@ import {
   clearProviderInputAdmissionAfterDurableAdoption,
   continueProviderInputAdmissionReconciliationAfterLifecycleFence,
   createProviderInputAdmissionRecordTracker,
-  requestProviderInputAdmissionWithBoundedRetry,
-  waitForProviderInputAdmissionGrace,
+  requestProviderInputAdmissionWhenReady,
   type ProviderInputAdmissionRequest,
 } from './providerInputAdmissionRuntime';
 import {
@@ -5774,7 +5773,7 @@ export async function startDaemonSessionControlRuntime(
     ) {
       throw new Error('provider_input_admission_target_released');
     }
-    const outcome = await requestProviderInputAdmissionWithBoundedRetry({
+    const outcome = await requestProviderInputAdmissionWhenReady({
       targetFence: {
         expected: targetWitness,
         resolveCurrentTarget: () =>
@@ -5797,18 +5796,25 @@ export async function startDaemonSessionControlRuntime(
           ),
         );
       },
-      isMethodUnavailable: isRpcMethodNotAvailableError,
-      // A fresh current runner can publish its runtime target just before its
-      // provider-input RPC is registered. Give that startup window a bounded
-      // grace; an old/incompatible runner remains a typed admission failure.
-      methodUnavailableRetry: {
-        maxAttempts: 50,
-        waitBeforeRetry: async () =>
-          await waitForProviderInputAdmissionGrace(
-            100,
-            shutdownCancellationDomains.daemonWorkSignal,
-          ),
+      readiness: {
+        signal: shutdownCancellationDomains.daemonWorkSignal,
+        read: () => {
+          const tracked = findTrackedSessionByHappySessionId(params.trackedSessionsByKey.values(), sessionId);
+          if (tracked?.reportMarkerCustody?.retiring === true) {
+            throw new Error('provider_input_admission_target_released');
+          }
+          return tracked?.providerInputAdmissionReady;
+        },
+        subscribeChanges: listener => {
+          const unsubscribeSession = sessionLiveWorkProducer.subscribe(listener, sessionId);
+          const unsubscribeDrain = params.admissionDrain?.subscribe(listener);
+          const unsubscribeTarget = connectedServiceRuntimeRegistry.subscribeTargetRegistrations(target => {
+            if (target.sessionId === sessionId) listener();
+          });
+          return () => { unsubscribeSession(); unsubscribeDrain?.(); unsubscribeTarget(); };
+        },
       },
+      isMethodUnavailable: isRpcMethodNotAvailableError,
     });
     return outcome;
   };
@@ -7320,6 +7326,7 @@ export async function startDaemonSessionControlRuntime(
     skillStore: params.skillStore,
     observeSessionScopeExit: async tracked => {
       const sessionId = normalizeOptionalString(tracked.happySessionId);
+      sessionLiveWorkProducer.notifySessionChanged(sessionId);
       const runner = resolveTrackedSessionRunnerIdentity(tracked);
       // Explicit Stop retains the runner tuple until its attachment-fenced
       // control retirement publishes `stopped`. Unexpected exits, including
@@ -12365,7 +12372,11 @@ export async function startDaemonSessionControlRuntime(
       skillStore: params.skillStore,
       skillUsageRecorder: params.skillUsageRecorder,
       onScmDiffSummaryResultUpdated: change => params.getApiMachineForSessions()?.emitScmDiffSummaryResultUpdated(change),
-      onSessionActivityChanged: async (sessionId, occurrence, executionRunId) => {
+      onSessionActivityChanged: async (sessionId, occurrence, executionRunId, providerInputAdmissionReady) => {
+        if (sessionId && providerInputAdmissionReady !== undefined) {
+          const tracked = findTrackedSessionByHappySessionId(params.trackedSessionsByKey.values(), sessionId);
+          if (tracked) tracked.providerInputAdmissionReady = providerInputAdmissionReady;
+        }
         // The runner names its own Session; only that runner's live work is reread.
         sessionLiveWorkProducer.notifySessionChanged(sessionId);
         if (executionRunId && sessionId === null) params.getApiMachineForSessions()?.emitExecutionRunSourceUpdated(executionRunId);
@@ -12870,6 +12881,7 @@ export async function startDaemonSessionControlRuntime(
                 ...(request.operation.failure ? { failure: request.operation.failure } : {}),
                 request: request.operation.request,
                 providerSessionId: request.operation.providerSessionId,
+                onRecorded: () => sessionLiveWorkProducer.notifySessionChanged(sessionId),
               });
             return attestation
               ? {
@@ -15791,6 +15803,7 @@ export async function startDaemonSessionControlRuntime(
       await awaitTrackedRunnerAgentSessionOpen({
         getTrackedSessions: () =>
           Array.from(params.trackedSessionsByKey.values()),
+        subscribeChanges: listener => sessionLiveWorkProducer.subscribe(listener, input.sessionId),
         ...input,
         readStartupFailure: trackedSession => readStartupFailure({ sessionId: input.sessionId, trackedSession }),
       }),

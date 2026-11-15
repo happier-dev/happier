@@ -228,6 +228,7 @@ export class RpcHandlerManager {
     private readonly onRegistrationError: RpcHandlerConfig['onRegistrationError'];
     private readonly onRegistrationAcknowledged:
         RpcHandlerConfig['onRegistrationAcknowledged'];
+    private readonly onHandlerAvailabilityChanged: RpcHandlerConfig['onHandlerAvailabilityChanged'];
     private readonly nowMs: () => number;
     private socket: Socket | null = null;
     private readonly observedSockets = new WeakSet<Socket>();
@@ -278,6 +279,7 @@ export class RpcHandlerManager {
         this.completionLogger = config.logger ?? ((msg, data) => defaultLogger.infoFile(msg, data));
         this.onRegistrationError = config.onRegistrationError;
         this.onRegistrationAcknowledged = config.onRegistrationAcknowledged;
+        this.onHandlerAvailabilityChanged = config.onHandlerAvailabilityChanged;
         this.nowMs = config.nowMs ?? (() => performance.now());
     }
 
@@ -327,6 +329,7 @@ export class RpcHandlerManager {
         if (!alreadyRegistered && this.socket) {
             this.publishHandlerRegistration(prefixedMethod);
         }
+        if (!alreadyRegistered) this.onHandlerAvailabilityChanged?.(method);
     }
 
     private publishHandlerRegistration(prefixedMethod: string): boolean {
@@ -1520,10 +1523,12 @@ export class RpcHandlerManager {
                 if (typeof method !== 'string' || !this.handlers.has(method)) {
                     return;
                 }
+                const wasAcknowledged = this.acknowledgedRegistrationMethods.has(method);
                 this.acknowledgedRegistrationMethods.add(method);
                 this.permanentlyRejectedRegistrationMethods.delete(method);
                 this.settleReadyRegistrationWaiters();
                 this.onRegistrationAcknowledged?.(method);
+                if (!wasAcknowledged) this.onHandlerAvailabilityChanged?.(this.readUnprefixedMethod(method));
             });
             socket.on(SOCKET_RPC_EVENTS.CANCEL, (payload: unknown) => {
                 if (this.socket !== socket) {

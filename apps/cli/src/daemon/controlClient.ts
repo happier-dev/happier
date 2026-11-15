@@ -906,11 +906,11 @@ export async function notifyDaemonSessionHolder(body: Readonly<{
   return typeof response === 'object' && response !== null && (response as { ok?: unknown }).ok === true;
 }
 
-/** Invalidation only: the daemon re-reads the current host and never trusts a reported idle Boolean. */
+/** Activity invalidation with the runner transport owner's optional provider-input availability fact. */
 export async function notifyDaemonSessionActivityChanged(sessionId: string | null, followOccurrence?: SessionFollowOccurrenceNotification,
-  executionRunId?: string): Promise<SessionActivityChangedResult> {
+  executionRunId?: string, providerInputAdmissionReady?: boolean): Promise<SessionActivityChangedResult> {
   const response: unknown = await daemonPost('/session-activity-changed', { sessionId, ...(followOccurrence ? { followOccurrence } : {}),
-    ...(executionRunId ? { executionRunId } : {}) });
+    ...(executionRunId ? { executionRunId } : {}), ...(providerInputAdmissionReady === undefined ? {} : { providerInputAdmissionReady }) });
   const parsed = SessionActivityChangedResponseSchema.safeParse(response);
   if (!parsed.success || (parsed.data.personalFollow && parsed.data.personalFollow.sourceSessionId !== sessionId)) {
     throw new Error('session_activity_notification_unavailable');

@@ -1,3 +1,4 @@
+import { createSessionLiveWorkProducer } from '@/daemon/lifecycle/sessionLiveWorkProducer';
 import { artifactKindListResponse, artifactReadResponse } from '@/testkit/http/artifactHome';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { HomeSessionDefaultsProjectionV1Schema } from '@happier-dev/protocol/home/governance/projection';
@@ -139,6 +140,11 @@ import {
 } from './sessionStepExecutor';
 import { createAdmittedFreshWorkflowSessionConversation as createProductionFreshWorkflowSessionConversation } from './workflowSessionStartup.testkit';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+
+const sessionChanges = createSessionLiveWorkProducer({
+  readSessions: () => [],
+  readActivity: async () => ({ session: 'unknown', input: 'unknown' }),
+});
 
 it('reuses a frozen full workflow prompt without duplicating role or result instructions', () => {
   const frozen = 'Original role\n\nAuthored work\n\n<happier_forge_evidence v="1">external comment</happier_forge_evidence>\n\nOriginal result contract';
@@ -1090,11 +1096,12 @@ describe('workflow Session step executor', () => {
       setImmediate(() => {
         Object.defineProperty(child, 'exitCode', { value: 1 });
         exit = onChildExited(tracked.pid, { reason: 'process-exited', code: 1, signal: null,
-          failureCause: readSessionRunnerFailureCause(formatSessionRunnerFailureCause(failureCause)) });
+          failureCause: readSessionRunnerFailureCause(formatSessionRunnerFailureCause(failureCause)) })
+          .then(() => sessionChanges.notifyChanged());
       });
       return { type: 'success', sessionId: tracked.happySessionId! };
     }, stopSession: async () => { throw new Error('Exited runner does not need Stop'); } },
-      awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ ...input,
+      awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener), ...input,
         getTrackedSessions: () => [...sessions.values()],
         readStartupFailure: async () => { throw new Error('Home unavailable'); } }) });
     const startup = runObservedWorkflowSessionStartup({ creationKey: 'workflow:runner-refusal',
@@ -1136,7 +1143,7 @@ describe('workflow Session step executor', () => {
         disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] },
       } };
     }, stopSession: async () => { throw new Error('No refused runner'); } },
-      awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ getTrackedSessions: () => [tracked], ...input }) });
+      awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener), getTrackedSessions: () => [tracked], ...input }) });
     const startup: WorkflowSessionStartup = input => runObservedWorkflowSessionStartup(input, {
       serverId: 'server-1', machineId: scope.machineId, observeExecution: async request => {
         const response = await operations.observeExecution(request);
@@ -1184,6 +1191,7 @@ describe('workflow Session step executor', () => {
       tracked.agentRuntimeDaemonServiceSessionOpenAttestation = {
         request: { kind: 'create', sessionId: 'lazy-session', cwd: '/repo' }, providerSessionId: 'native',
       };
+      sessionChanges.notifyChanged();
       await expect(operations.handlers.getV2({ operationId: 'lazy-start', waitForTerminal: true })).resolves.toMatchObject({
         kind: 'found', operation: { state: 'succeeded' },
       });
@@ -1234,7 +1242,7 @@ describe('workflow Session step executor', () => {
         disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] },
       } };
     }, stopSession: async () => { throw new Error('Setup review does not refuse a native child'); } },
-      awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ getTrackedSessions: () => [tracked], ...input }) });
+      awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener), getTrackedSessions: () => [tracked], ...input }) });
     let miswireObservation = false;
     const startup: WorkflowSessionStartup = input => runObservedWorkflowSessionStartup(input, { serverId: 'server-1', machineId: scope.machineId,
         observeExecution: operations.observeExecution, rpcContext: {},

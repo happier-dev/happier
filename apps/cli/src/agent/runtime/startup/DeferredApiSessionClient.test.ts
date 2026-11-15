@@ -116,7 +116,10 @@ describe('DeferredApiSessionClient', () => {
     } satisfies SessionRuntimeControls;
     deferred.setSessionRuntimeControls(initialControls);
 
+    expect(deferred.readRpcHandlerAvailability('example')).toBe(false);
     await deferred.attach(real);
+    // Existing SDK targets may omit this private capability; no producer means unknown.
+    expect(deferred.readRpcHandlerAvailability('example')).toBeUndefined();
 
     expect(real.setSessionRuntimeControls).toHaveBeenCalledWith(initialControls);
 

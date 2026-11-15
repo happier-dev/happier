@@ -11,8 +11,12 @@ export function createSessionLiveWorkProducer(params: Readonly<{
   /** The daemon composition owns exact current requester-safe Session transport. */
   readActivity: (tracked: TrackedSession) => Promise<SessionInputLiveWork>;
   startup?: Pick<ReturnType<typeof createSpawnRequestCoalescer>, 'readInFlightRequests' | 'subscribeChanges'>;
-}>): LiveWorkProducerV1 & Readonly<{ notifyChanged: LiveWorkListenerV1; notifySessionChanged(sessionId: string | null): void }> {
-  const listeners = new Set<LiveWorkListenerV1>();
+}>): LiveWorkProducerV1 & Readonly<{
+  notifyChanged: LiveWorkListenerV1;
+  notifySessionChanged(sessionId: string | null): void;
+  subscribe(listener: LiveWorkListenerV1, sessionId?: string): () => void;
+}> {
+  const listeners = new Set<Readonly<{ listener: LiveWorkListenerV1; sessionId?: string }>>();
   // Runners push an invalidation naming their own Session after every live-work change
   // (`subscribeLiveWork` → `/session-activity-changed`). A passive refresh therefore rereads
   // only invalidated runners; failed/unknown observations are never retained.
@@ -22,7 +26,11 @@ export function createSessionLiveWorkProducer(params: Readonly<{
   const invalidate = (sessionId: string | null) => {
     if (sessionId === null) invalidatedAll = true;
     else invalidatedSessionIds.add(sessionId);
-    for (const listener of listeners) listener();
+    for (const subscription of listeners) {
+      if (sessionId === null || subscription.sessionId === undefined || subscription.sessionId === sessionId) {
+        subscription.listener();
+      }
+    }
   };
   return {
     async read(scope) {
@@ -75,15 +83,16 @@ export function createSessionLiveWorkProducer(params: Readonly<{
       ];
       return { items, coverage: items.some(item => item.state === 'unknown') ? 'unknown' as const : 'complete' as const };
     },
-    subscribe(listener) {
-      listeners.add(listener);
+    subscribe(listener, sessionId?: string) {
+      const subscription = { listener, sessionId };
+      listeners.add(subscription);
       const unsubscribeStartup = params.startup?.subscribeChanges(listener);
-      return () => { listeners.delete(listener); unsubscribeStartup?.(); };
+      return () => { listeners.delete(subscription); unsubscribeStartup?.(); };
     },
     /** Unattributed edges (process set, transport) reread every runner. */
     notifyChanged(change) {
       invalidatedAll = true;
-      for (const listener of listeners) listener(change);
+      for (const { listener } of listeners) listener(change);
     },
     notifySessionChanged: invalidate,
   };
