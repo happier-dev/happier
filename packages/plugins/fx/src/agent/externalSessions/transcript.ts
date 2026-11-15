@@ -7,7 +7,7 @@ import type { AgentExternalSessionTranscriptItem } from '@happier-dev/plugin-sdk
 import { fxFile, fxSessionDir, FxSourceError, isFxRecord as isRecord, readFxMetadata } from './source.js';
 import { fxImageUnavailable, readFxImageSourceWitness, readFxToolImages, readFxUserImages } from './images.js';
 
-export type FxTranscriptRow = Readonly<{ item: AgentExternalSessionTranscriptItem; text?: string; unsupported?: true;
+export type FxTranscriptRow = Readonly<{ item: AgentExternalSessionTranscriptItem & Readonly<{ createdAtMs: number }>; text?: string; unsupported?: true;
   images?: unknown; imageWitness?: string; partial?: boolean; imageUnavailableItem?: AgentExternalSessionTranscriptItem;
   result?: Readonly<{ handle: string; callId: string; failed: boolean; imageHandle?: unknown }> }>;
 
