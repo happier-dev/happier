@@ -2256,6 +2256,36 @@ writes run as that member. Arbitrary Machine paths, replacing a non-empty
 folder, relationship replacement and worker clean copies still need Manage.
 Add Machine shows `machine_manage_required` for the last two instead of
 offering them.
+Session handoff with a workspace copy or new Sync link uses the same capture
+owner (owner ruling 2026-11-15). Before any workspace effect, the SOURCE
+coordinator calls `daemon.sessionHandoff.workspaceCapture.v3` on the TARGET.
+That is the one TARGET-only phase of the Home-admitted `handoffPreflight`
+family, and it carries the sealed requester bootstrap. The TARGET decides once
+with `requiresRequesterWorkspaceCapture` from its admission. The custodian and
+Manage grantees get `not_required` and keep native placement. Anyone else gets a
+member capture in their own folder, created by the Project Open capture owner
+(`preparePrivateProjectOpenCheckout` and `retainPrivateSyncCapture`). That
+capture writes both endpoint WorkspaceRefs with the requester's own credentials
+and returns their ids, which the SOURCE uses for its Sync phases. Any other path
+gets the checkout owner's one refusal, `workspace_private_checkout_review_required`
+(the same code Project Open uses), before anything is written. Ingress and the
+same-Machine in-process entry refuse a SOURCE-writer preflight or prepare that
+does not reach a matched capture with `machine_manage_required`, using the same
+predicate. The SOURCE's terminal call (`release: true`) releases the capture
+unless a link it created now owns it. A newer capture of the same Session by the same person replaces an
+abandoned capture, and a daemon restart drops it.
+For the same requester on a separate-users Machine, the handoff's Session import
+and its working-directory creation run as the member. When the TARGET admits
+PREPARE_TARGET_V3, it prepares `prepareMemberSessionHandoffImport`
+(`apps/cli/src/session/handoff/agentBundle/memberImport.ts`). That decision uses
+the same capture predicate. The job then launches `happier handoff-import-effect`
+through the existing exec launch owner, with the member's HOME. The child loads
+only the admitted Agent plugin, creates the contained cwd, runs the Agent's
+`importBundle` and returns its native result, which the host projects once. A
+target outside the member's folder gets the checkout owner's
+`workspace_private_checkout_review_required` before any job starts. Host plugin
+services are not bridged into the child, so an Agent whose import needs them
+fails with a typed error.
 Machine-level shell, setup scripts, package installs,
 service execution/control, reboot, elevation and firewall configuration require
 Manage. Home decides the role once; the terminal intent/custody owner consumes
@@ -8761,8 +8791,10 @@ older immutable runner snapshot. Matching lifecycle scope, structured lock,
 OS process birth and the final process-identity recheck remain required.
 Publication presence shares authenticated control probing for PIDs hidden from the caller.
 Transient control failures remain unverified. After observing a hidden owner through
-authenticated ping or accepted authenticated stop, stop confirmation requires release of its previously captured lifecycle-lock snapshot, because control closes
-before shutdown cleanup completes. Ordinary exited publications remain absent when no hidden
+authenticated ping, or after accepted authenticated stop for either a visible or hidden PID,
+stop confirmation requires process-exit proof or release of its previously captured
+lifecycle-lock snapshot, because control closes before shutdown cleanup completes.
+An unobservable PID requires the lock-release proof. Ordinary exited publications remain absent when no hidden
 owner was observed. Stop asks persistence to reclaim their unchanged state and matching lock,
 using its exact-owner file primitive. Reclamation requires proven process absence and captured
 lock bytes, accepts structured and predecessor PID-only locks through the canonical parser, and
@@ -8773,6 +8805,13 @@ remain outside this namespace proof. Status output preserves unverified publicat
 `persistence.inspectDaemonLockOwner` classifies startup locks through the same lifecycle
 incarnation classifier, including lock paths supplied by stop-all; it does not acquire or
 remove another owner's lock.
+
+Single-daemon Stop waits for accepted shutdown to finish under caller cancellation or an
+explicit stop deadline; the generic HTTP timeout and a guessed drain duration do not prove exit.
+`restartDaemonAndWait` launches its replacement only after that Stop completes. An incomplete
+Stop returns the existing stop-phase failure without launching a competing daemon. Managed
+process enrollment and retained Update use this same CLI restart command, whose outer executor
+also follows the operation lifetime rather than the generic command timeout.
 
 `multiDaemon.stopAllDaemonsBestEffort` uses its durable servers-directory publication inventory,
 including removed profiles and every release-ring filename. Stop-all opts into startup-only
@@ -9971,11 +10010,14 @@ This mechanism allows the server and mobile clients to drive local actions witho
 
 `callSessionRpc` (`src/session/transport/rpc/sessionRpc.ts`) is the one router for Session RPCs, with about 25 production callers. Only the **daemon** process takes the same-machine local channel (`enableLocalSessionRpcCalls()` at daemon start), and only when all of these hold:
 - the platform is not Windows;
-- the method's Session context is mintable from the Session id alone (`resolveSocketRpcSameAccountSessionAuthorizationV1`);
+- the method's Session context is mintable through `resolveSocketRpcSameAccountSessionAuthorizationV1`; Agent starts additionally require the daemon's admitted private context and a receiver that supports it;
 - the caller's credential kind is `account`, `account_directory` or `terminal` (a routing filter for honest callers, not a security control);
 - an owner-only descriptor for the sessionId names the caller's Account and an owner-only endpoint directory whose parent is owner-only (a shared world-writable directory, sticky or not, is refused).
 
-Every other caller, and every other case, uses the server path.
+Ordinary requests outside these conditions use the server path. An already-admitted
+Agent start with private depth, selection context or workspace-write policy requires
+the trusted local route; an unavailable route returns a typed failure before Resume
+or Start instead of dropping those facts on the relay.
 
 **The security boundary is on the host side.** A Session host (`ApiSessionClient` with owner authority and a full Account/terminal credential, via `registerLocalSessionRpcTarget`) admits a connection only if the kernel-proven peer is the daemon that spawned or adopted it, under the same OS user. The peer comes from SO_PEERCRED on Linux and LOCAL_PEERPID+LOCAL_PEERCRED on macOS, read through the shipped `happier-process-custody peer-identity` helper once per connection. The daemon is identified by its process generation in the daemon's own published state (`processBirth`: pid plus native start identity, stamped by the lifecycle-lock owner on every publication), re-read per request, which also covers a daemon restart or adoption. The host reads the peer pid's birth once per connection; a pid recycled after an unclean daemon exit carries another birth and is refused.
 
@@ -9986,6 +10028,14 @@ Endpoint: a 0600 unix socket in a 0700 directory under this user's owner-only so
 The local hop carries the plain codec. Both ends hold the Session key, the hop never leaves the machine, and only the daemon is admitted. Callers therefore read no Session record (`{ mode: 'deferred' }` via `deferSessionRpcEncryption` / `withTrackedSessionRpcContext`). Server-path packets stay sealed.
 
 The host re-mints the Session context, stamps `callerAuthority` = min(host credential, caller), refuses server-only fields and enforces the relay's packet budget (413). Handlers keep the Session's real content mode.
+
+For Session-scoped Workflow review starts, the daemon carries its admitted Agent
+context separately from the public RPC packet. Only the existing peer-authenticated
+local ingress supplies it to the Session's host-private Action context. The Run stays
+attached to the selected Session, and its depth and workspace-write ceiling come
+from the Workflow admission rather than the Session's active Turn. This local
+extension does not make private context available over the server transport or on
+Windows, where the local caller route is currently disabled.
 
 Session marker removal (the daemon's runner-liveness owner) calls `retireGoneLocalSessionRpcHost`. It deletes the descriptor only if it still names that runner's pid, and ends this process's in-flight calls to that pid.
 

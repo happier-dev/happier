@@ -860,13 +860,18 @@ export function resolveSocketRpcSessionAuthorization(
  * alone qualify. Rows needing a server-proven actor or connection (permission decisions, current
  * presentation), a fresh Machine-access check (`startsAgentWork`) or a second Session's access
  * (`sessionIdParam`, optional Session scope) stay on the server path and return null.
+ * A trusted host may retain an Execution Run start it already admitted; this
+ * argument is host context, never a public packet field or client admission claim.
  */
 export function resolveSocketRpcSameAccountSessionAuthorizationV1(
   method: string,
   sessionId: string,
+  admission?: Readonly<{ admittedAgentStart: boolean }>,
 ): SocketRpcSessionReadAuthorizationContext | SocketRpcSessionWriteAuthorizationContext | null {
   const rule = resolveSocketRpcSessionAuthorization(method);
-  if (!rule || !sessionId || rule.startsAgentWork || rule.optionalSessionScope || rule.sessionIdParam) return null;
+  if (!rule || !sessionId || rule.optionalSessionScope || rule.sessionIdParam) return null;
+  if (rule.startsAgentWork && !(admission?.admittedAgentStart === true
+    && rule.method === SESSION_RPC_METHODS.EXECUTION_RUN_START)) return null;
   if (rule.serverMintedContext === 'session.read') return { kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_READ, sessionId };
   if (rule.serverMintedContext !== undefined) return null;
   return { kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE, sessionId };

@@ -1,6 +1,7 @@
 import type { ExecutionRunActionTransportOptions } from './types';
 import type { CliActionDepsParams, CurrentMachineControlIdentity, ExecutionRunProtocolV2Requirement, ResolvedSessionTransport } from './types';
 import { executionRunAuthorityCeiling } from './machineTransport';
+import { resolveLocalSessionRpcRoute, type LocalSessionRpcActionContext } from '@/session/transport/rpc/localSessionRpcChannel';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { randomUUID } from 'node:crypto';
 import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol';
@@ -139,6 +140,31 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
       || opts?.requesterWorkAttributionV1 !== undefined || opts?.causalPermissionAuthority !== undefined
       || opts?.effectiveCallerPermissionMode !== undefined;
 
+  const admittedExecutionRunContext = (opts?: ExecutionRunActionTransportOptions): LocalSessionRpcActionContext => ({
+    ...(opts?.surface ? { surface: opts.surface } : {}),
+    ...(opts?.authority ? { authority: opts.authority } : {}),
+    ...(opts?.actionCaller ? { actionCaller: opts.actionCaller } : {}),
+    ...(opts?.actionRequestId ? { actionRequestId: opts.actionRequestId } : {}),
+    ...(opts?.workDepth === undefined ? {} : {
+      surface: 'agent' as const,
+      authority: 'account_automation' as const,
+      agentStartWorkDepth: opts.workDepth,
+      agentStartContext: opts.agentStartContext,
+      sessionAgentSpawnPolicyV1: opts.sessionAgentSpawnPolicyV1,
+      callerPermissionMode: opts.agentStartContext?.callerPermissionCeiling,
+    }),
+    // Retained sends have no start depth, but still carry their
+    // admitted authority and current narrowed permission mode.
+    ...(opts?.workDepth !== undefined || opts?.causalPermissionAuthority !== undefined
+      ? { causalPermissionAuthority: opts.causalPermissionAuthority } : {}),
+    ...(opts?.effectiveCallerPermissionMode !== undefined
+      ? { callerPermissionMode: opts.effectiveCallerPermissionMode } : {}),
+    ...(opts?.workspaceWrites === undefined ? {} : { agentStartWorkspaceWrites: opts.workspaceWrites }),
+    ...(opts?.workflowRunId ? { executionRunWorkflowRunId: opts.workflowRunId } : {}),
+    ...(opts?.workflowScope ? { executionRunWorkflowScope: opts.workflowScope } : {}),
+    ...(opts?.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: opts.requesterWorkAttributionV1 } : {}),
+  });
+
   const callDetachedExecutionRunRpc = async (
     sessionId: string | null,
     method: string,
@@ -172,30 +198,9 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
             ? { rpcContext: { requesterSessionBootstrap: params.requesterSessionBootstrap } }
             : {}),
           localActionContext: {
-            ...(opts?.surface ? { surface: opts.surface } : {}),
-            ...(opts?.authority ? { authority: opts.authority } : {}),
-            ...(opts?.actionCaller ? { actionCaller: opts.actionCaller } : {}),
-            ...(opts?.actionRequestId ? { actionRequestId: opts.actionRequestId } : {}),
-            ...(opts?.workDepth === undefined ? {} : {
-              surface: 'agent' as const,
-              authority: 'account_automation' as const,
-              agentStartWorkDepth: opts.workDepth,
-              agentStartContext: opts.agentStartContext,
-              sessionAgentSpawnPolicyV1: opts.sessionAgentSpawnPolicyV1,
-              callerPermissionMode: opts.agentStartContext?.callerPermissionCeiling,
-            }),
-            // Retained sends have no start depth, but still carry their
-            // admitted authority and current narrowed permission mode.
-            ...(opts?.workDepth !== undefined || opts?.causalPermissionAuthority !== undefined
-              ? { causalPermissionAuthority: opts.causalPermissionAuthority } : {}),
-            ...(opts?.effectiveCallerPermissionMode !== undefined
-              ? { callerPermissionMode: opts.effectiveCallerPermissionMode } : {}),
-            ...(opts?.workspaceWrites === undefined ? {} : { agentStartWorkspaceWrites: opts.workspaceWrites }),
+            ...admittedExecutionRunContext(opts),
             ...(opts?.permissionRequestStore === undefined ? {} : { executionRunPermissionRequestStore: opts.permissionRequestStore }),
             ...(opts?.workflowObservationSink === undefined ? {} : { executionRunWorkflowObservationSink: opts.workflowObservationSink }),
-            ...(opts?.workflowRunId ? { executionRunWorkflowRunId: opts.workflowRunId } : {}),
-            ...(opts?.workflowScope ? { executionRunWorkflowScope: opts.workflowScope } : {}),
-            ...(opts?.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: opts.requesterWorkAttributionV1 } : {}),
           },
           ...(opts?.permissionRequestStore === undefined
             ? {}
@@ -300,13 +305,16 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
           opts,
         );
       }
-      const rpcAuthority = sessionRpcAuthority('execution.run.start', opts);
-      // Public Session RPC cannot authenticate a host-private admission stamp.
-      // Refuse before resuming/sending instead of losing the admitted ceiling.
-      if (opts?.workDepth !== undefined || opts?.workspaceWrites !== undefined) {
-        return { ok: false, code: 'execution_run_target_unavailable',
-          details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated') };
-      }
+      const localActionContext = requiresDirectExecutionRunTransport(opts) ? admittedExecutionRunContext(opts) : undefined;
+      const unavailable = () => ({ ok: false as const, code: 'execution_run_target_unavailable',
+        details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated') });
+      // Only the exact local daemon can carry an already-admitted start. Check its
+      // receiver capability before Resume; public Session RPC cannot retain these facts.
+      if (localActionContext && (!params.machineActionDirectTargetTransport
+        || opts?.permissionRequestStore !== undefined || opts?.workflowObservationSink !== undefined
+        || !resolveLocalSessionRpcRoute({ sessionId, method: SESSION_RPC_METHODS.EXECUTION_RUN_START,
+          token: params.token, ...executionRunAuthorityCeiling(opts), localActionContext }))) return unavailable();
+      const rpcAuthority = localActionContext ? executionRunAuthorityCeiling(opts) : sessionRpcAuthority('execution.run.start', opts);
       let transport: Awaited<ReturnType<typeof resolveTransportForSession>>;
       try {
         transport = await resolveTransportForSession(sessionId, opts?.signal);
@@ -324,6 +332,9 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
           ...(transport.candidates ? { candidates: transport.candidates } : {}),
           details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated'),
         };
+      }
+      if (localActionContext && readExecutionRunTransportMachineId(transport) !== params.machineActionDirectTargetTransport?.machineId) {
+        return unavailable();
       }
       const admittedMachineId = normalizeStringValue(opts?.exactMachineId);
       if (
@@ -358,6 +369,7 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
         token: params.token,
         sessionId: transport.sessionId,
         ...rpcAuthority,
+        ...(localActionContext ? { localActionContext } : {}),
         request,
         ...(opts?.signal ? { signal: opts.signal } : {}),
       });

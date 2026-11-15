@@ -3,6 +3,16 @@ import * as socketProtocol from './socket.js';
 import { RPC_METHODS, SESSION_RPC_METHODS } from './methods.js';
 import { resolveMachineRpcRoutePolicy } from '../machines/peer/mediation/rpc/routePolicyV1.js';
 
+it('retains Home admission for fresh starts while a trusted admitted start receives Session scope', () => {
+  const method = SESSION_RPC_METHODS.EXECUTION_RUN_START;
+  expect(socketProtocol.resolveSocketRpcSameAccountSessionAuthorizationV1(method, 'session-a')).toBeNull();
+  expect(socketProtocol.resolveSocketRpcSameAccountSessionAuthorizationV1(method, 'session-a', { admittedAgentStart: true }))
+    .toEqual({ kind: 'session.write', sessionId: 'session-a' });
+  // Admission of a start supplies neither a permission actor nor another Session's access.
+  expect(socketProtocol.resolveSocketRpcSameAccountSessionAuthorizationV1(RPC_METHODS.SESSION_PERMISSION_RESPOND,
+    'session-a', { admittedAgentStart: true })).toBeNull();
+});
+
 it('keeps the native applied-selection read on the exact Session owner', () => {
   expect(socketProtocol.resolveSocketRpcSessionAuthorization('session.agentStart.selection.read.v1'))
     .toMatchObject({ authority: 'sessionOwner', routeToSessionOwnerDaemon: true });

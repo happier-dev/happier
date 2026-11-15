@@ -35,6 +35,7 @@ import { resolveAgentRequestKind } from '@happier-dev/protocol/activity/agentReq
 import { isAgentStateRequestCoveredByCompletedRequests } from '@happier-dev/agents';
 import { SESSION_FOLLOW_RULE_EVIDENCE_META_KEY_V1, projectSessionFollowRuleSharedSourceEvidenceV1, readSessionFollowTerminalSourceTurnV1, SessionFollowRuleSourceEvidenceV1Schema, type SessionFollowRuleSourceEvidenceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleOccurrenceV1';
 import type { SessionFollowTerminalTurnV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowFrontierV1';
+import type { SessionFollowTerminalAckFactsV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
 import type { QuestionSessionSnapshot } from '@/agent/permissions/sessionQuestionManager';
 import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
 import { readSessionAnswersWorkerQuestionsV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
@@ -140,7 +141,7 @@ import {
     createSessionClientRecoveryRuntime,
     type SessionClientRecoveryRuntime,
 } from './client/lifecycle/createSessionClientRecoveryRuntime';
-import { accountWakeNeedsSessionChangesRead, type SessionCatchUpRequest } from './sessionChangesSyncOnConnect';
+import { accountWakeNeedsHostChangesRead, registerAccountWakeConsumer, type SessionCatchUpRequest } from './sessionChangesSyncOnConnect';
 import { createSessionClientMaterializationRuntime } from './client/lifecycle/createSessionClientMaterializationRuntime';
 import { buildOutboundSessionMessagePayload } from './client/transport/outboundSessionMessagePayload';
 import { redactTranscriptSecrets } from './client/transport/transcriptSecretRedaction';
@@ -620,7 +621,6 @@ export class ApiSessionClient extends EventEmitter {
         contract: SessionSyncPendingInputServerContractResult;
         precondition: SessionMetadataPublisherPreconditionV1;
     }> | null = null;
-    private ownerActivityDelivery: 'rich_sender' | 'home_required' = 'home_required';
     private socket!: Socket<ServerToClientEvents, ClientToServerEvents>;
     private userSocket: AccountUpdatesSocket | null;
     private providerInputBacklog: UserMessage[] = [];
@@ -723,6 +723,7 @@ export class ApiSessionClient extends EventEmitter {
     private sessionActionConfirmationRecovery: Promise<void> | null = null;
     private archivedAt: number | null | undefined;
     private disposeSessionFollowWakeReceiver: (() => void) | null = null;
+    private releaseAccountWakeConsumer: (() => void) | null = null;
     private readonly sessionHandlersRegistration: ReturnType<typeof registerSessionClientRuntimeHandlers>;
     private sessionAttachmentNativeRuntime: import('@/rpc/handlers/fileSystem/sessionAttachmentIntake').SessionAttachmentNativeRuntime | null = null;
     readonly subscribeDaemonPluginCatalogChanges: ReturnType<typeof registerPluginCatalogSignal>;
@@ -1321,7 +1322,7 @@ export class ApiSessionClient extends EventEmitter {
                     pendingVersion: state.pendingVersion,
                 });
                 if (!recipient) {
-                    void this.reconcilePendingProviderInputCustodyBeforeMaterialization();
+                    void this.reconcilePendingProviderInputCustodyBeforeMaterialization({ pushedPendingVersion: state.pendingVersion });
                     return;
                 }
                 void this.notifyExecutionRunPendingTarget(recipient.runId).catch((error) => {
@@ -1758,8 +1759,7 @@ export class ApiSessionClient extends EventEmitter {
             authorizeRequest: createSessionRpcAuthorization({ sessionId: this.sessionId, localMachineId: options.localMachineId,
                 serverUrl: this.serverBinding.serverUrl, isClosed: () => this.closed,
                 readHomeServerIdentityId: () => this.getServerIdentityId(),
-                readSessionAttachmentRequester: method => this.sessionHandlersRegistration?.readSessionAttachmentRequester(method),
-                readOwnerCredentials: () => this.readCurrentOwnerCredentials() }),
+                readSessionAttachmentRequester: method => this.sessionHandlersRegistration?.readSessionAttachmentRequester(method) }),
             prepareRequesterAccountContext: async ({ authorization, purpose, signal }) => {
                 if (this.closed || !options.localMachineId || !purpose) return null;
                 const ownCredentials = await this.readCurrentOwnerCredentials();
@@ -1898,9 +1898,9 @@ export class ApiSessionClient extends EventEmitter {
         this.localSessionRpcRetirement = options.localMachineId && this.metadataAuthorityKind === 'owner' ? registerLocalSessionRpcTarget({
             sessionId: this.sessionId,
             credentialToken: this.token,
-            handleRequest: async request => this.closed
+            handleRequest: async (request, localActionContext) => this.closed
                 ? { error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE }
-                : await runWithServerHttpBaseUrl(this.transport.serverUrl, () => this.rpcHandlerManager.handleRequest(request, undefined, 'local_session_channel')),
+                : await runWithServerHttpBaseUrl(this.transport.serverUrl, () => this.rpcHandlerManager.handleRequest(request, undefined, 'local_session_channel', localActionContext)),
             cancelRequest: requestId => this.rpcHandlerManager.cancelTransportRequest(requestId),
             // The daemon that spawned or adopted this runner publishes its process birth in its own state.
             readTrustedCaller: readPublishedDaemonProcessBirth,
@@ -1962,6 +1962,7 @@ export class ApiSessionClient extends EventEmitter {
             readPendingCustodyLocalIdsForClaim: () => this.readPendingProviderInputCustodyLocalIds(),
             applyPendingCustodyDeliveryStatuses: (localIds, statuses) => this.applyPendingProviderInputCustodyStatuses(
                 localIds, new Map(statuses.map(entry => [entry.localId, entry.deliveryStatus]))),
+            observePendingCustodyStatusesCurrentAt: (pendingVersion, localIds) => this.observePendingCustodyStatusesCurrentAt(pendingVersion, localIds),
             readRetainedContextLocalIds: () => (this.providerInputConsumer?.readRetainedContextLocalIds?.() ?? [])
                 .filter(localId => this.materializationRuntime.hasPendingQueueMaterializedLocalId(localId)),
             setProviderInputConsumer: (callback) => {
@@ -2053,8 +2054,7 @@ export class ApiSessionClient extends EventEmitter {
             // existing changes cursor decides whether catalogs actually changed;
             // the wake's routing skips reads this client has no consumer for.
             onAccountCatalogInvalidated: async (wake) => {
-                if (!accountWakeNeedsSessionChangesRead({ wake, sessionId: this.sessionId,
-                    sessionPushesCurrent: this.isSnapshotCurrentOnThisConnection() })) return;
+                if (!accountWakeNeedsHostChangesRead({ wake, token: this.token })) return;
                 await this.recoveryRuntime.syncChangesOnConnect({ reason: 'live' });
             },
             installSessionSocketEventHandlers: (socket) => this.interactionApi.installSessionSocketEventHandlers(socket),
@@ -2162,6 +2162,13 @@ export class ApiSessionClient extends EventEmitter {
                 ? () => options.onSessionFollowInvalidated!(this.sessionId) : undefined,
         });
         this.userSocket = userSocket;
+        if (userSocket) {
+            this.releaseAccountWakeConsumer = registerAccountWakeConsumer(this.token, {
+                sessionId: this.sessionId,
+                receivesWakes: () => !this.closed && this.userSocket === userSocket && userSocket.connected,
+                sessionPushesCurrent: () => this.isSnapshotCurrentOnThisConnection(),
+            });
+        }
         this.holdAccountEncryptionCurrentness(userSocket, options.transport.serverUrl);
         this.sessionConnectionSupervisor = sessionConnectionSupervisor;
         this.readServerFeaturesSnapshot = options.getServerFeaturesSnapshot ?? getServerFeaturesSnapshot;
@@ -3027,6 +3034,8 @@ export class ApiSessionClient extends EventEmitter {
         sourceTurn?: SessionFollowTerminalTurnV1 | null;
         /** Host-private author from the verified original admission receipt. */
         authorAccountId?: string;
+        /** Home's facts from this original's write ack, for the source evaluator in place of its route read. */
+        followRoutes?: SessionFollowTerminalAckFactsV1;
     }>): Promise<SessionActivityChangedResult | void> {
         if (this.closed || this.metadataAuthorityKind !== 'owner' || input.evidence.ownerAccountId !== readAccountIdFromToken(this.token)) return;
         const sourcePublisher = await this.readCurrentPublisherPrecondition();
@@ -3047,6 +3056,7 @@ export class ApiSessionClient extends EventEmitter {
                 sourceSessionId: this.sessionId, sourcePublisher,
                 sourceMessage: { localId: input.localId, seq: input.seq },
                 ...(input.sourceTurn ? { hostTurn: input.sourceTurn } : {}), evidence: input.evidence,
+                ...(input.followRoutes ? { followRoutes: input.followRoutes } : {}),
             });
         } catch (error) {
             logger.debug('[API] Follow source unavailable; original personal notification retained', serializeAxiosErrorForLog(error));
@@ -3254,20 +3264,18 @@ export class ApiSessionClient extends EventEmitter {
         sourceTurn: SessionFollowTerminalTurnV1 | null,
     ): Promise<SessionPersonalFollowCommit | null> {
         if (!commit || this.closed || this.metadataAuthorityKind !== 'owner') return null;
-        if (evidence.event.kind === 'failed_or_stopped') return commit;
+        const { followRoutes, ...original } = commit;
+        if (evidence.event.kind === 'failed_or_stopped') return original;
         let result: SessionActivityChangedResult | void = undefined;
         try {
             result = await this.notifySessionFollowRuleMessageCommitted({
                 localId: commit.localId, seq: commit.committedSequence, evidence, sourceTurn,
+                ...(followRoutes ? { followRoutes } : {}),
             });
         } catch (error) {
             logger.debug('[API] Follow source unavailable; original personal notification retained', error);
         }
-        return this.closed ? null : { ...commit, ...(result?.personalFollow ? { personalFollow: result.personalFollow } : {}) };
-    }
-
-    setOwnerActivityDelivery(delivery: 'rich_sender' | 'home_required'): void {
-        this.ownerActivityDelivery = delivery;
+        return this.closed ? null : { ...original, ...(result?.personalFollow ? { personalFollow: result.personalFollow } : {}) };
     }
 
     enqueueVoiceAgentTranscriptTurnCommitted(
@@ -5084,6 +5092,8 @@ export class ApiSessionClient extends EventEmitter {
         this.notificationFactsHold = null;
         this.projectAccountRowsHold?.release();
         this.projectAccountRowsHold = null;
+        this.releaseAccountWakeConsumer?.();
+        this.releaseAccountWakeConsumer = null;
         const closingSocket = this.socket;
         this.prepareForClose();
         try {
@@ -5393,7 +5403,7 @@ export class ApiSessionClient extends EventEmitter {
      * because only that read can release it for this claim.
      */
     async reconcilePendingProviderInputCustodyBeforeMaterialization(
-        opts?: Readonly<{ beforeClaim?: boolean }>,
+        opts?: Readonly<{ beforeClaim?: boolean; pushedPendingVersion?: number }>,
     ): Promise<boolean> {
         if (this.closed) return false;
         // Rejoin witnessed acceptance before interpreting a Pending snapshot.
@@ -5404,12 +5414,20 @@ export class ApiSessionClient extends EventEmitter {
         const localIds = this.readPendingProviderInputCustodyLocalIds();
         if (localIds.length === 0) return true;
         if (opts?.beforeClaim === true && !this.hasUnsettledPendingProviderInputCustody()) return true;
+        // Every delivery-status writer bumps `pendingVersion` (P03 T5): a push at or below the version
+        // the held statuses are current at carries no status change. Any newer version reads.
+        const currentAt = this.pendingCustodyStatusesCurrentAt;
+        if (opts?.pushedPendingVersion !== undefined && currentAt !== null && opts.pushedPendingVersion <= currentAt.pendingVersion
+            && localIds.every(localId => currentAt.localIds.has(localId))) {
+            return !this.hasUnsettledPendingProviderInputCustody();
+        }
 
         try {
             const statuses = await this.runSessionRequest(async () => listPendingQueueV2DeliveryStatusesFromServer({
                 token: this.token,
                 sessionId: this.sessionId,
                 includeDiscarded: true,
+                observePendingVersion: (version) => { this.observePendingCustodyStatusesCurrentAt(version, localIds); },
             }));
             await this.applyPendingProviderInputCustodyStatuses(localIds,
                 new Map(statuses.map((entry) => [entry.localId, entry.deliveryStatus])));
@@ -5422,6 +5440,18 @@ export class ApiSessionClient extends EventEmitter {
         }
 
         return !this.hasUnsettledPendingProviderInputCustody();
+    }
+
+    /**
+     * The Pending version through which the statuses of exactly these held localIds are known (from a
+     * list read or this host's own claim reply). Custody held outside that set always reads.
+     */
+    private pendingCustodyStatusesCurrentAt: Readonly<{ pendingVersion: number; localIds: ReadonlySet<string> }> | null = null;
+
+    private observePendingCustodyStatusesCurrentAt(pendingVersion: number, localIds: readonly string[]): void {
+        const current = this.pendingCustodyStatusesCurrentAt;
+        if (current !== null && pendingVersion < current.pendingVersion) return;
+        this.pendingCustodyStatusesCurrentAt = { pendingVersion, localIds: new Set(localIds) };
     }
 
     /** Applies exact server delivery statuses (from the Pending list or a claim reply) to held custody. */

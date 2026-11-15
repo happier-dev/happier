@@ -341,6 +341,27 @@ export const SessionFollowDefaultRelationshipsV1Schema = lazyZodSchema(() => z.s
 }));
 export type SessionFollowDefaultRelationshipsV1 = z.infer<typeof SessionFollowDefaultRelationshipsV1Schema>;
 
+/** The current Account's own follow facts about one Session it may read; private to that Account's evaluation. */
+export const SessionFollowCurrentAccountFactsV1Schema = lazyZodSchema(() => z.strictObject({
+  defaultRelationships: SessionFollowDefaultRelationshipsV1Schema,
+  personalFollowSuppressed: z.boolean(),
+  hasPersistentFollow: z.optional(z.boolean()),
+}));
+export type SessionFollowCurrentAccountFactsV1 = z.infer<typeof SessionFollowCurrentAccountFactsV1Schema>;
+
+/**
+ * What the source-publisher route read would answer for a terminal original, returned to the
+ * Session's own admitted publisher in its write ack. `edges` says only whether an authorized
+ * follower/manager edge exists (no identities): with `none` the source evaluator needs no route
+ * read; with `present` it reads the routes.
+ */
+export const SessionFollowTerminalAckFactsV1Schema = lazyZodSchema(() => z.strictObject({
+  edges: z.enum(['none', 'present']),
+  originalCreatedAt: z.number().check(z.int(), z.gte(0)),
+  currentAccountFacts: SessionFollowCurrentAccountFactsV1Schema,
+}));
+export type SessionFollowTerminalAckFactsV1 = z.infer<typeof SessionFollowTerminalAckFactsV1Schema>;
+
 /** Reuses the access owner's complete applicable grants, not its bounded display explanations. */
 export function projectSessionFollowDefaultRelationshipsV1(input: Readonly<{
   responsibleForMe: boolean; relationshipKinds: readonly ('direct' | 'team' | 'group')[];

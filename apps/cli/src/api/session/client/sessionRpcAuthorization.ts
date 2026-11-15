@@ -1,10 +1,8 @@
 import type { RpcHandlerConfig } from '@/api/rpc/types';
-import type { StoredCredentials } from '@/persistence';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { isHostRequesterUnrestrictedOwner, selectHostRequesterExecutionIdentity, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { createCurrentMachineExecutionOriginContextResolver, type CurrentMachineExecutionOriginContext } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
-import { verifyMachineRpcAdmissionCurrent } from '@/api/machine/machineRpcAuthorization';
 import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
 import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { SessionAttachmentRequester } from '@/rpc/handlers/fileSystem/sessionAttachmentIntake';
@@ -15,7 +13,7 @@ type SessionRpcAuthorizationRefusal = 'closed' | 'aborted' | 'installation_missi
 type SessionRpcExecutionUnavailableReason = SessionRpcAuthorizationRefusal
     | Extract<HostRequesterExecutionIdentity, { kind: 'unknown' }>['reason']
     | 'unrestricted_owner_required' | 'home_unavailable' | 'home_changed' | 'machine_missing'
-    | 'owner_credentials_missing' | 'installation_changed' | 'requester_execution_unavailable';
+    | 'requester_execution_unavailable';
 
 function forbidden(reason: SessionRpcAuthorizationRefusal) {
     const failureCause: ActionFailureCauseV1 = { phase: `session.rpc.authorization.${reason}`,
@@ -30,14 +28,17 @@ function executionUnavailable(reason: SessionRpcExecutionUnavailableReason, fail
 }
 
 /** The Session transport owns its receiver. Incoming actor authority comes only
- * from Home's exact physical receipt, never from the runner's own Account. */
+ * from Home's exact physical receipt, never from the runner's own Account. Home
+ * mints that receipt per relayed RPC immediately after its own Machine admission
+ * (`protectedRawSessionTargetGuard`), and it reaches this receiver only over the
+ * authenticated Home socket or the daemon's peer-admitted local channel, so the
+ * receiver checks the receipt against its own binding and never re-proves it. */
 export function createSessionRpcAuthorization(input: Readonly<{
     sessionId: string;
     localMachineId?: string | null;
     serverUrl: string;
     isClosed(): boolean;
     readHomeServerIdentityId(): string | null | undefined;
-    readOwnerCredentials(): Promise<StoredCredentials | null>;
     /** Native attachment custody survives release of the launching runtime. */
     readSessionAttachmentRequester?(method: string): SessionAttachmentRequester | null | undefined;
 }>): NonNullable<RpcHandlerConfig['authorizeRequest']> {
@@ -69,17 +70,6 @@ export function createSessionRpcAuthorization(input: Readonly<{
                     const installation = readInstallationIdentityIfExistsSync();
                     if (!installation) return refuseCurrent('installation_missing');
                     if (installation.installationId !== receipt.installationId) return refuseCurrent('installation_mismatch');
-                    const credentials = await input.readOwnerCredentials();
-                    if (!credentials) return refuseCurrent('owner_credentials_missing');
-                    if (!currentBinding()) return false;
-                    const current = await verifyMachineRpcAdmissionCurrent({ context: receipt,
-                        purpose: { kind: 'requester_session_currentness', sessionId: input.sessionId },
-                        privateKey: installation.privateKey, daemonToken: credentials.token,
-                        serverHttpBaseUrl: input.serverUrl, ...(signal ? { signal } : {}) });
-                    if (!current) return refuseCurrent('currentness_rejected');
-                    if (!currentBinding()) return false;
-                    if (readInstallationIdentityIfExistsSync()?.installationId !== installation.installationId)
-                        return refuseCurrent('installation_changed');
                     return true;
                 };
                 const attachmentRequester = source === 'authenticated_home_socket' && request.method.startsWith(prefix)

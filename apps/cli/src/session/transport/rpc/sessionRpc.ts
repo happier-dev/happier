@@ -14,7 +14,7 @@ import { decodeBase64, decrypt, encodeBase64, encrypt } from '@/api/encryption';
 import type { SessionEncryptionContext } from '@/session/transport/encryption/sessionEncryptionContext';
 import { resolveSessionControlSocketConnectTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
 import { readRpcObservation, withUserScopedRpcSocket, type RpcObservationOptions } from './withUserScopedRpcSocket';
-import { LocalSessionRpcUnavailableError, resolveLocalSessionRpcRoute } from './localSessionRpcChannel';
+import { LocalSessionRpcUnavailableError, resolveLocalSessionRpcRoute, type LocalSessionRpcActionContext } from './localSessionRpcChannel';
 import { logger } from '@/ui/logger';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import { createExternalActionMachineRpcExecution, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
@@ -42,6 +42,7 @@ type CallSessionRpcParams = Readonly<{
   token: string;
   sessionId: string;
   authorityCeiling?: 'account_automation';
+  localActionContext?: LocalSessionRpcActionContext;
   method: string;
   request: unknown;
   /** Null delegates acknowledgement lifetime to the caller signal/server lifecycle. */
@@ -120,14 +121,19 @@ export async function callSessionRpc(params: CallSessionRpcParams): Promise<unkn
     // Same machine, same OS user, same Account: the Session's own host serves the packet on its
     // owner-only local channel, with no server hop and no Session record read. Signed external
     // Actions keep the server's verification.
+    const unavailable = () => Object.assign(new Error('Admitted Run context requires its local Session host'),
+      { code: 'execution_run_target_unavailable' });
     const local = params.externalAction ? null : resolveLocalSessionRpcRoute({ sessionId: params.sessionId, method,
-      token: params.token, ...(params.authorityCeiling ? { authorityCeiling: params.authorityCeiling } : {}) });
+      token: params.token, ...(params.authorityCeiling ? { authorityCeiling: params.authorityCeiling } : {}),
+      ...(params.localActionContext ? { localActionContext: params.localActionContext } : {}) });
+    if (params.localActionContext && !local) throw unavailable();
     if (local) {
       try {
         return await issue(local.socket, params.signal, null);
       } catch (error) {
         // Not dispatched (no live host for this descriptor): the Session is served elsewhere.
         if (!(error instanceof LocalSessionRpcUnavailableError)) throw error;
+        if (params.localActionContext) throw unavailable();
         logger.warnLocalFile('[SESSION RPC] Local Session host unavailable; routing through the server', { method });
       }
     }

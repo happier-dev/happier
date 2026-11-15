@@ -55,20 +55,77 @@ export function accountWakeNeedsSessionChangesRead(params: Readonly<{
     if (!routing.entityIds.includes(params.sessionId)) return false;
     return !(params.sessionPushesCurrent && routing.rowFactsPushedSessionId === params.sessionId);
 }
+
+export type AccountWakeConsumer = Readonly<{
+    sessionId: string;
+    /** This client currently receives its Account stream's wakes (its Account update view is attached). */
+    receivesWakes: () => boolean;
+    sessionPushesCurrent: () => boolean;
+}>;
+
+/**
+ * Per Account stream (credential) in this process: its live Session clients, and the last wake it
+ * delivered with the feed pages read for that wake. A session host fans one wake object out to every
+ * Session client of the stream (`sharedAccountUpdatesSocket`), so the wake object identifies the wake.
+ */
+type AccountWakeStream = { consumers: Set<AccountWakeConsumer>; wake: object | null; pages: Map<string, Promise<ChangesPage>> };
+const accountWakeStreams = new Map<string, AccountWakeStream>();
+
+/** One Session client consumes its Account stream's wakes in this process until the returned release. */
+export function registerAccountWakeConsumer(token: string, consumer: AccountWakeConsumer): () => void {
+    let stream = accountWakeStreams.get(token);
+    if (!stream) accountWakeStreams.set(token, stream = { consumers: new Set(), wake: null, pages: new Map() });
+    const registered = stream;
+    registered.consumers.add(consumer);
+    return () => {
+        registered.consumers.delete(consumer);
+        if (registered.consumers.size === 0 && accountWakeStreams.get(token) === registered) accountWakeStreams.delete(token);
+    };
+}
+
+/**
+ * Whether a live Account wake needs a changes read by this process's Session clients of that Account
+ * stream. A session host reads each Account's feed once per wake: when any of its Sessions needs the
+ * wake (`accountWakeNeedsSessionChangesRead`), every Session client receiving it reads and clients at
+ * the same cursor get the one page read for this wake (`fetchSessionChangesPage`), so their cursors
+ * stay together and the next wake is again one read. When none needs it, none reads. A process with
+ * one Session client (a runner) decides exactly as that client alone.
+ */
+export function accountWakeNeedsHostChangesRead(params: Readonly<{ wake: unknown; token: string }>): boolean {
+    const stream = accountWakeStreams.get(params.token);
+    if (!stream) return false;
+    if (params.wake && typeof params.wake === 'object' && stream.wake !== params.wake) {
+        // A new wake: pages read for the previous one no longer cover what this wake announces.
+        stream.wake = params.wake;
+        stream.pages = new Map();
+    }
+    for (const consumer of stream.consumers) {
+        if (consumer.receivesWakes() && accountWakeNeedsSessionChangesRead({ wake: params.wake,
+            sessionId: consumer.sessionId, sessionPushesCurrent: consumer.sessionPushesCurrent() })) return true;
+    }
+    return false;
+}
 const inFlightChangesPages = new Map<string, Promise<ChangesPage>>();
 
 /**
- * One Account wake reaches every Session client of a session host at once (one shared Account
- * update connection). Clients at the same cursor share the one in-flight page read; each still
- * applies the page to its own Session and cursor. Only in-flight reads are shared (no cache), and
- * a read settles on its own request timeout.
+ * Clients at the same cursor share one page read. Connect and reconnect reads share only an in-flight
+ * read (a missed wake must never be covered by an older page). A live read shares the page already
+ * read for the stream's current wake: it covers every change that wake announced, and any later
+ * change arrives with a new wake, which starts a fresh read. A failed read is never shared after it
+ * settles; every read settles on its own request timeout.
  */
-function fetchSessionChangesPage(request: Readonly<{ token: string; after: number; limit: number }>): Promise<ChangesPage> {
+function fetchSessionChangesPage(request: Readonly<{ token: string; after: number; limit: number; live: boolean }>): Promise<ChangesPage> {
     const key = `${resolveServerHttpBaseUrl()}\n${request.token}\n${request.after}\n${request.limit}`;
-    const existing = inFlightChangesPages.get(key);
+    const wakePages = request.live ? accountWakeStreams.get(request.token)?.pages : undefined;
+    const existing = wakePages?.get(key) ?? inFlightChangesPages.get(key);
     if (existing) return existing;
-    const read = fetchChanges(request).finally(() => { inFlightChangesPages.delete(key); });
+    const read = fetchChanges({ token: request.token, after: request.after, limit: request.limit })
+        .finally(() => { inFlightChangesPages.delete(key); });
     inFlightChangesPages.set(key, read);
+    if (wakePages) {
+        wakePages.set(key, read);
+        void read.then(page => { if (page.status !== 'ok') wakePages.delete(key); }, () => { wakePages.delete(key); });
+    }
     return read;
 }
 
@@ -103,7 +160,8 @@ export async function runSessionChangesSyncOnConnect(params: {
 
     const CHANGES_PAGE_LIMIT = 200;
     const after = await params.readChangesCursor(accountId);
-    const result = await fetchSessionChangesPage({ token: params.token, after, limit: CHANGES_PAGE_LIMIT });
+    const result = await fetchSessionChangesPage({ token: params.token, after, limit: CHANGES_PAGE_LIMIT,
+        live: params.reason === 'live' });
     if (result.status === 'cursor-gone') {
         params.onSessionFollowInvalidated?.();
         let transcriptCatchUpSucceeded = true;

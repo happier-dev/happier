@@ -23,6 +23,9 @@ import { createOwnerOnlyLocalEndpoint, isOwnerOnlyPath, resolveOwnerOnlySocketRo
 import { observeLocalIpcPeerIdentity, resolveProcessCustodyPeerIdentityExecutable,
   type ProcessCustodyPeerIdentity } from '@/subprocess/supervision/processCustody';
 import type { ProcessBirthWitness } from '@/daemon/processIdentity';
+import type { RpcLocalActionContext } from '@/api/rpc/types';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { AgentRuntimeRunnerBootstrapV1Schema, type AgentRuntimeRunnerBootstrapV1 } from '@/agent/runtime/session/process/agentRuntimeRunnerProtocol';
 
 /**
  * Same-machine Session RPC channel.
@@ -54,6 +57,11 @@ const LOCAL_PACKET_FIELDS: ReadonlySet<string> = new Set([
 ]);
 
 type LocalCallerAuthority = 'present_user' | 'account_automation';
+/** Admitted facts only: Account credential material and callable services are not transport fields. */
+export type LocalSessionRpcActionContext = Readonly<Pick<RpcLocalActionContext,
+  'surface' | 'authority' | 'actionCaller' | 'actionRequestId' | 'callerPermissionMode' | 'causalPermissionAuthority'
+  | 'agentStartContext' | 'agentStartWorkDepth' | 'agentStartWorkspaceWrites' | 'sessionAgentSpawnPolicyV1'
+  | 'executionRunWorkflowRunId' | 'executionRunWorkflowScope' | 'requesterWorkAttributionV1'>>;
 const LOCAL_ROUTE_CREDENTIAL_KINDS: ReadonlySet<AuthTokenKind> = new Set(['account', 'account_directory', 'terminal']);
 
 type LocalSessionRpcDescriptorV1 = Readonly<{
@@ -62,6 +70,7 @@ type LocalSessionRpcDescriptorV1 = Readonly<{
   accountId: string;
   endpoint: Readonly<{ kind: 'unix' | 'named_pipe'; path: string }>;
   pid: number;
+  admittedStartContextVersion?: 1;
 }>;
 
 export type LocalSessionRpcTarget = Readonly<{
@@ -69,7 +78,7 @@ export type LocalSessionRpcTarget = Readonly<{
   /** The Session's own credential: its Account and authority bound what local callers receive. */
   credentialToken: string;
   /** The Session's existing RPC admission and handlers (`RpcHandlerManager.handleRequest` with source `local_session_channel`). */
-  handleRequest(request: SocketRpcRequestPayload): Promise<unknown>;
+  handleRequest(request: SocketRpcRequestPayload, localActionContext?: LocalSessionRpcActionContext): Promise<unknown>;
   cancelRequest(requestId: string): void;
   /**
    * The process generation of the daemon that spawned or adopted this host (its current published
@@ -199,7 +208,9 @@ function admitLocalPacket(current: Ingress, body: unknown): Readonly<{ registere
   | Readonly<{ status: number; error: string; errorCode: string }> {
   const forbidden = { status: 403, error: 'Forbidden', errorCode: 'RPC_FORBIDDEN' } as const;
   if (!body || typeof body !== 'object' || Array.isArray(body)) return forbidden;
-  const { packet, callerAuthority } = body as { packet?: unknown; callerAuthority?: unknown };
+  const { packet, callerAuthority, localActionContext } = body as {
+    packet?: unknown; callerAuthority?: unknown; localActionContext?: LocalSessionRpcActionContext;
+  };
   if (!packet || typeof packet !== 'object' || Array.isArray(packet)) return forbidden;
   if (callerAuthority !== 'present_user' && callerAuthority !== 'account_automation') return forbidden;
   const fields = packet as Record<string, unknown>;
@@ -210,7 +221,8 @@ function admitLocalPacket(current: Ingress, body: unknown): Readonly<{ registere
   const sessionId = separator > 0 ? method.slice(0, separator) : '';
   const registered = current.targets.get(sessionId);
   if (!registered) return { status: 404, error: 'Session is not hosted on this local channel', errorCode: 'local_session_unavailable' };
-  const authorization = resolveSocketRpcSameAccountSessionAuthorizationV1(method.slice(separator + 1), sessionId);
+  const authorization = resolveSocketRpcSameAccountSessionAuthorizationV1(method.slice(separator + 1), sessionId,
+    { admittedAgentStart: localActionContext?.agentStartWorkDepth !== undefined });
   if (!authorization) return forbidden;
   const request: SocketRpcRequestPayload = {
     method,
@@ -263,13 +275,26 @@ async function handleIngressRequest(current: Ingress, request: IncomingMessage, 
     reply(response, 403, { error: 'Only the daemon of this host may call it', errorCode: LOCAL_SESSION_PEER_REFUSED });
     return;
   }
+  // This outer body belongs to the peer-admitted daemon, never the public RPC packet.
+  const admittedContext = (body as { localActionContext?: unknown }).localActionContext;
+  if (admittedContext !== undefined && (packet.method !== `${registered.target.sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_START}`
+    || !admittedContext || typeof admittedContext !== 'object' || Array.isArray(admittedContext))) {
+    reply(response, 403, { error: 'Invalid local Action context', errorCode: 'RPC_FORBIDDEN' });
+    return;
+  }
+  const localActionContext = admittedContext === undefined ? undefined : {
+    ...admittedContext as LocalSessionRpcActionContext,
+    authority: minAuthority(packet.callerAuthority === 'present_user' ? 'present_user' : 'account_automation',
+      (admittedContext as LocalSessionRpcActionContext).authority === 'present_user' ? 'present_user' : 'account_automation'),
+  };
   // A caller that disconnects before the reply has the same meaning as a Socket.IO caller cancel.
   const onClose = () => {
     if (!response.writableEnded && typeof packet.requestId === 'string') registered.target.cancelRequest(packet.requestId);
   };
   response.once('close', onClose);
   try {
-    const result = await registered.target.handleRequest(packet);
+    const result = await registered.target.handleRequest(localActionContext
+      ? { ...packet, callerAuthority: localActionContext.authority } : packet, localActionContext);
     reply(response, 200, projectSocketRpcTargetAcknowledgementV1(result));
   } catch (error) {
     reply(response, 200, { ok: false, error: error instanceof Error ? error.message : 'RPC call failed' });
@@ -356,6 +381,7 @@ export async function registerLocalSessionRpcTarget(target: LocalSessionRpcTarge
   try {
     await writeDescriptor(descriptorPath, {
       v: DESCRIPTOR_VERSION, sessionId: target.sessionId, accountId,
+      admittedStartContextVersion: 1,
       endpoint: { kind: current.endpoint.kind, path: current.endpoint.endpointPath }, pid: process.pid,
     });
   } catch (error) {
@@ -505,18 +531,22 @@ export function resolveLocalSessionRpcRoute(input: Readonly<{
   method: string;
   token: string;
   authorityCeiling?: 'account_automation';
+  localActionContext?: LocalSessionRpcActionContext;
 }>): LocalSessionRpcRoute | null {
   // Windows: callers cannot yet verify the pipe server's user SID (relay follow-up), so never local.
   if (process.platform === 'win32') return null;
   // Hosts admit only their daemon (kernel peer identity); other processes keep the server path.
   if (!localSessionRpcCallerEnabled) return null;
-  if (!resolveSocketRpcSameAccountSessionAuthorizationV1(input.method, input.sessionId)) return null;
+  if (!resolveSocketRpcSameAccountSessionAuthorizationV1(input.method, input.sessionId,
+    { admittedAgentStart: input.localActionContext?.agentStartWorkDepth !== undefined })) return null;
   // Only credentials whose server admission is exactly "Account + Session access" go local. Restricted
   // kinds (ephemeral Session runners, API tokens) keep the server's extra principal checks.
   const credentialKind = readCredentialKind(input.token);
   if (!credentialKind || !LOCAL_ROUTE_CREDENTIAL_KINDS.has(credentialKind)) return null;
   const descriptor = readDescriptor(input.sessionId);
   if (!descriptor || descriptor.accountId !== readAccountIdFromToken(input.token)) return null;
+  if (input.localActionContext && (descriptor.admittedStartContextVersion !== 1
+    || input.method !== SESSION_RPC_METHODS.EXECUTION_RUN_START)) return null;
   const callerAuthority = resolveSocketRpcCallerAuthority({ credentialKind, authorityCeiling: input.authorityCeiling });
   const socket: SocketRpcSocket = {
     emit: (event: string, payload?: unknown) => {
@@ -526,7 +556,8 @@ export function resolveLocalSessionRpcRoute(input: Readonly<{
     },
     emitWithAck: async (event: string, packet?: unknown) => {
       if (event !== SOCKET_RPC_EVENTS.CALL) throw new Error(`Local Session RPC cannot emit ${event}`);
-      const response = await postJson(descriptor, CALL_PATH, { packet, callerAuthority });
+      const response = await postJson(descriptor, CALL_PATH, { packet, callerAuthority,
+        ...(input.localActionContext ? { localActionContext: input.localActionContext } : {}) });
       if (response.status === 200) return response.body;
       if (response.status === 404) throw new LocalSessionRpcUnavailableError('Session is not hosted on this local channel');
       if (response.status === 403 && (response.body as { errorCode?: unknown } | null)?.errorCode === LOCAL_SESSION_PEER_REFUSED) {
@@ -572,7 +603,46 @@ export type SessionHostAddRequest = Readonly<{
   /** The Session's process environment (what a runner would have received). */
   env: Readonly<Record<string, string>>;
   cwd: string;
+  /** The daemon's admitted launch facts for this Session (non-secret; no credential crosses here). */
+  launch?: SessionHostLaunchRecordV1;
 }>;
+
+/**
+ * What the daemon's spawn admission already decided for one hosted Session, so the host does not
+ * re-derive it from disk. `account` names the Machine Account the daemon admitted (absent for
+ * requester-custody and API-token launches, which keep their own per-launch credential read); the
+ * host serves the credential from its own hold keyed by (Home, Account) and re-reads it once when
+ * the held one differs. `runnerBootstrap` is the parsed content of the bootstrap file the Session's
+ * environment names.
+ */
+export type SessionHostLaunchRecordV1 = Readonly<{
+  /** `settingsVersion`: the Account Settings version the daemon admitted with, a floor for the Session (never the settings or their keys). */
+  account?: Readonly<{ accountId: string; credentialEpoch: number; machineId: string; settingsVersion?: number }>;
+  runnerBootstrap?: Readonly<{ path: string; bootstrap: AgentRuntimeRunnerBootstrapV1 }>;
+}>;
+
+function parseSessionHostLaunchRecord(value: unknown): SessionHostLaunchRecordV1 | null {
+  if (value === undefined) return {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const { account, runnerBootstrap, ...rest } = value as Record<string, unknown>;
+  if (Object.keys(rest).length > 0) return null;
+  let parsedAccount: SessionHostLaunchRecordV1['account'];
+  if (account !== undefined) {
+    const { accountId, credentialEpoch, machineId, settingsVersion, ...accountRest } = (account ?? {}) as Record<string, unknown>;
+    const isCount = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+    if (Object.keys(accountRest).length > 0 || typeof accountId !== 'string' || !accountId || typeof machineId !== 'string' || !machineId
+      || !isCount(credentialEpoch) || (settingsVersion !== undefined && !isCount(settingsVersion))) return null;
+    parsedAccount = { accountId, credentialEpoch, machineId, ...(settingsVersion === undefined ? {} : { settingsVersion }) };
+  }
+  let parsedBootstrap: SessionHostLaunchRecordV1['runnerBootstrap'];
+  if (runnerBootstrap !== undefined) {
+    const { path, bootstrap } = (runnerBootstrap ?? {}) as Record<string, unknown>;
+    const parsed = AgentRuntimeRunnerBootstrapV1Schema.safeParse(bootstrap);
+    if (typeof path !== 'string' || !path || !parsed.success) return null;
+    parsedBootstrap = { path, bootstrap: parsed.data };
+  }
+  return { ...(parsedAccount ? { account: parsedAccount } : {}), ...(parsedBootstrap ? { runnerBootstrap: parsedBootstrap } : {}) };
+}
 
 /** The host no longer admits Sessions (it is ending); the daemon starts a new host. */
 export class SessionHostClosingError extends Error {
@@ -612,12 +682,15 @@ function resolveHostDescriptorPath(hostPid: number): string {
 
 function parseSessionHostAddRequest(body: unknown): SessionHostAddRequest | null {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
-  const { trackingKey, argv, env, cwd } = body as Record<string, unknown>;
+  const { trackingKey, argv, env, cwd, launch } = body as Record<string, unknown>;
   if (typeof trackingKey !== 'string' || !trackingKey || typeof cwd !== 'string' || !cwd) return null;
   if (!Array.isArray(argv) || argv.length === 0 || argv.some(arg => typeof arg !== 'string')) return null;
   if (!env || typeof env !== 'object' || Array.isArray(env)
     || Object.values(env).some(value => typeof value !== 'string')) return null;
-  return { trackingKey, argv: argv as string[], env: env as Record<string, string>, cwd };
+  const parsedLaunch = parseSessionHostLaunchRecord(launch);
+  if (!parsedLaunch) return null;
+  return { trackingKey, argv: argv as string[], env: env as Record<string, string>, cwd,
+    ...(launch === undefined ? {} : { launch: parsedLaunch }) };
 }
 
 async function handleSessionHostRequest(current: Ingress, request: IncomingMessage, response: ServerResponse): Promise<void> {

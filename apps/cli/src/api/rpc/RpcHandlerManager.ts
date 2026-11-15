@@ -22,6 +22,7 @@ import type {
     RpcHandlerContext,
     RpcOperationDiagnostics,
     RpcAuthorizationResult,
+    RpcLocalActionContext,
 } from './types';
 import { RPC_ADMISSION_PREDICATES, type RpcAdmissionPredicate } from './types';
 import type { Socket } from 'socket.io-client';
@@ -362,6 +363,7 @@ export class RpcHandlerManager {
         request: RpcRequest,
         callback?: (response: unknown) => void,
         source?: RpcRequestSource,
+        localActionContext?: RpcLocalActionContext,
     ): Promise<any> {
         const requestStartedAtMs = Date.now();
         // Diagnostic correlation never supplies cancellation or admission authority.
@@ -369,7 +371,8 @@ export class RpcHandlerManager {
         const diagnosticId = trace.success ? trace.data : request.requestId;
         const traceRequestId = typeof diagnosticId === 'string' ? diagnosticId.replace(/^rpc_/u, '') : diagnosticId;
         const response = await withWebLatencyTrace(traceRequestId, () => this.observeRequest(request.method, diagnosticId,
-            diagnostic => this.dispatchRequest(request, diagnostic, requestStartedAtMs, trace.success, source)));
+            diagnostic => this.dispatchRequest(request, diagnostic, requestStartedAtMs, trace.success, source,
+                source === 'local_session_channel' ? localActionContext : undefined)));
         // Cancellation signals the handler; its settled result still owns the reply.
         callback?.(response);
         return response;
@@ -473,7 +476,7 @@ export class RpcHandlerManager {
             phaseDurationsMs: { ...diagnostic.failure?.phaseDurationsMs, ...operation.phaseDurationsMs } };
     }
 
-    private async dispatchRequest(request: RpcRequest, diagnostic: RequestDiagnostic, requestStartedAtMs: number, hasDiagnosticTrace: boolean, source?: RpcRequestSource): Promise<unknown> {
+    private async dispatchRequest(request: RpcRequest, diagnostic: RequestDiagnostic, requestStartedAtMs: number, hasDiagnosticTrace: boolean, source?: RpcRequestSource, localActionContext?: RpcLocalActionContext): Promise<unknown> {
         // Admission captures its reply codec; later key adoption only affects new requests.
         const admittedContent = this.rpcContent;
         if (!admittedContent) {
@@ -988,6 +991,7 @@ export class RpcHandlerManager {
             }
 
             const authorizationRequest = Object.freeze({
+                    ...(localActionContext ? { localActionContext } : {}),
                     callerAuthority: request.callerAuthority === 'present_user' ? 'present_user' as const : 'account_automation' as const,
                     ...(sessionActionOrigin?.success ? { sessionActionOrigin: sessionActionOrigin.data } : {}),
                     method: request.method,
@@ -1235,6 +1239,7 @@ export class RpcHandlerManager {
                 this.readUnprefixedMethod(request.method),
             );
             const handlerContext: RpcHandlerContext = Object.freeze({
+                ...(localActionContext ? { localActionContext } : {}),
                 ...(workspaceSyncPrivateExecution ? { workspaceSyncPrivateExecution } : {}),
                 // The same codec choice as encodeResponse for this call, fixed at admission.
                 contentMode: this.isServerOriginRequest(request) || this.isContentFreeManagedActivityRequest(request)

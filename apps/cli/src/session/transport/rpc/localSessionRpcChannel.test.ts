@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { execFileSync, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { lstat, readdir, readFile, rm } from 'node:fs/promises';
+import { lstat, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { SESSION_RPC_METHODS, RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { projectSocketRpcTargetAcknowledgementV1, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
@@ -76,6 +76,8 @@ import { callSessionRpc } from './sessionRpc';
 import { enableLocalSessionRpcCalls, registerLocalSessionRpcTarget, retireGoneLocalSessionRpcHost } from './localSessionRpcChannel';
 import { resolveProcessCustodySupportExecutable } from '@/subprocess/supervision/processCustody';
 import { captureProcessBirthWitness, type ProcessBirthWitness } from '@/daemon/processIdentity';
+import type { RpcLocalActionContext } from '@/api/rpc/types';
+import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
 import { join, resolve as resolvePath } from 'node:path';
 
 // This test process plays the daemon: the only caller its Session hosts admit (its published birth).
@@ -98,9 +100,10 @@ function resolvePeerHelper(): string {
 }
 import { EXTERNAL_ACTION_SOCKET_MIN_BUFFER_BYTES_V2 } from '@happier-dev/protocol/actions/externalActionLimits';
 
-function token(sub: string, kind: 'terminal' | 'api_token' | 'ephemeral_session_runner' = 'terminal'): string {
+function token(sub: string, kind: 'account' | 'terminal' | 'api_token' | 'ephemeral_session_runner' = 'terminal'): string {
   // Canonical kind→authority pairs (AUTH_TOKEN_KIND_AUTHORITIES).
-  const authority = kind === 'ephemeral_session_runner' ? 'session_runtime' : 'account_automation';
+  const authority = kind === 'account' ? 'present_user'
+    : kind === 'ephemeral_session_runner' ? 'session_runtime' : 'account_automation';
   const payload = Buffer.from(JSON.stringify({ sub, extras: { provenance: { v: 1, kind, authority } } })).toString('base64url');
   return `h.${payload}.s`;
 }
@@ -134,7 +137,7 @@ function createHost(sessionId = SESSION) {
 async function host(sessionId = SESSION, credentialToken = OWNER) {
   const created = createHost(sessionId);
   const retire = await registerLocalSessionRpcTarget({ sessionId, credentialToken,
-    handleRequest: request => created.manager.handleRequest(request, undefined, 'local_session_channel'),
+    handleRequest: (request, localActionContext) => created.manager.handleRequest(request, undefined, 'local_session_channel', localActionContext),
     cancelRequest: requestId => created.manager.cancelTransportRequest(requestId),
     readTrustedCaller: async () => { trusted.reads += 1; return trusted.birth; } });
   return { ...created, retire };
@@ -151,6 +154,63 @@ describe('same-machine Session RPC channel (callSessionRpc router)', () => {
     trusted.birth = ownBirth;
   }, 600_000);
   afterEach(() => { trusted.birth = ownBirth; });
+
+  it('retains admitted execution-run facts only on the daemon-authenticated local Session hop', async () => {
+    const person = token('acct-owner', 'account');
+    const live = await host(SESSION, person);
+    const admitted = {
+      surface: 'agent', authority: 'account_automation', actionRequestId: 'workflow/review/0',
+      actionCaller: { kind: 'workflowRun', runId: 'workflow', authorization: {
+        principal: { kind: 'host' }, admittedPermissionCeiling: 'default',
+      } },
+      agentStartWorkDepth: 3, agentStartWorkspaceWrites: 'deny',
+      agentStartContext: { caller: { kind: 'originless', runId: 'workflow', runDepth: 2 },
+        baseline: { machineId: 'machine-1', directory: '/repo' }, ledSubtreeSessionIds: [],
+        workDepthLimit: 4, roles: {}, callerPermissionCeiling: 'default' },
+      causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
+      callerPermissionMode: 'read_only', executionRunWorkflowRunId: 'workflow',
+    } satisfies RpcLocalActionContext;
+    live.manager.registerHandler(SESSION_RPC_METHODS.EXECUTION_RUN_START, async (params, context) => {
+      const action = buildActionExecutorContextForRpc({ ...context, actionId: 'execution.run.start', defaultSessionId: SESSION });
+      return { sessionId: action.defaultSessionId, admitted: context?.localActionContext, input: params,
+        ...(context?.localActionContext ? { effective: { authority: action.authority, depth: action.agentStartWorkDepth,
+          writes: action.agentStartWorkspaceWrites, mode: action.callerPermissionMode,
+          causal: action.causalPermissionAuthority, caller: action.actionCaller, workflowRunId: action.executionRunWorkflowRunId } } : {}) };
+    });
+    try {
+      await expect(call(SESSION_RPC_METHODS.EXECUTION_RUN_START, { instructions: 'Review' }, {
+        token: person, localActionContext: admitted,
+      })).resolves.toEqual({ sessionId: SESSION, admitted, input: { instructions: 'Review' },
+        effective: { authority: 'account_automation', depth: 3, writes: 'deny', mode: 'read_only', causal: admitted.causalPermissionAuthority,
+          caller: admitted.actionCaller, workflowRunId: 'workflow' } });
+      expect(relay.calls).toBe(0);
+      // A public request operand cannot supply the private transport context.
+      await expect(call(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+        instructions: 'Review', localActionContext: admitted,
+      }, { token: person })).resolves.toEqual({ sessionId: SESSION, input: { instructions: 'Review', localActionContext: admitted } });
+      expect(relay.calls).toBe(1);
+    } finally { await live.retire(); }
+    // Losing the private route must not spill or silently drop its admission on Home RPC.
+    await expect(call(SESSION_RPC_METHODS.EXECUTION_RUN_START, { instructions: 'Review' }, {
+      token: person, localActionContext: admitted,
+    })).rejects.toMatchObject({ code: 'execution_run_target_unavailable' });
+    expect(relay.calls).toBe(1);
+  });
+
+  it('refuses an admitted start on a retained host without the private context capability', async () => {
+    const live = await host();
+    try {
+      const [file] = await findDescriptors(`${testHome}/servers`);
+      const descriptor = JSON.parse(await readFile(file!, 'utf8'));
+      delete descriptor.admittedStartContextVersion;
+      await writeFile(file!, JSON.stringify(descriptor));
+      await expect(call(SESSION_RPC_METHODS.EXECUTION_RUN_START, { instructions: 'Review' }, {
+        localActionContext: { agentStartWorkDepth: 3, agentStartWorkspaceWrites: 'deny' },
+      })).rejects.toMatchObject({ code: 'execution_run_target_unavailable' });
+      expect(live.seen).toHaveLength(0);
+      expect(relay.calls).toBe(0);
+    } finally { await live.retire(); }
+  });
 
   it('publishes usable local provider input after late handler installation without a Home registration ACK', async () => {
     const created = createHost();
@@ -181,7 +241,7 @@ describe('same-machine Session RPC channel (callSessionRpc router)', () => {
       const [file] = await findDescriptors(`${testHome}/servers`);
       const socketPath = JSON.parse(await readFile(file!, 'utf8')).endpoint.path;
       const body = JSON.stringify({ packet: { method: `${SESSION}:${SESSION_RPC_METHODS.EXECUTION_RUN_LIST}`, params: {} },
-        callerAuthority: 'present_user' });
+        callerAuthority: 'present_user', localActionContext: { authority: 'present_user', agentStartWorkDepth: 0 } });
       // A separate same-uid process (e.g. a sandboxed agent shell) posting straight to the socket.
       const script = `const r=require('node:http').request({socketPath:process.argv[1],path:'/v1/session-rpc/call',method:'POST',
         headers:{'content-type':'application/json'}},res=>{let b='';res.on('data',c=>b+=c);res.on('end',()=>{process.stdout.write(res.statusCode+' '+b)})});

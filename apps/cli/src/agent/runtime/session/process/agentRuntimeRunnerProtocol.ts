@@ -447,8 +447,9 @@ export const AgentRuntimeRunnerBootstrapV1Schema = lazyZodSchema(() => z.strictO
   })),
 }));
 
+export type AgentRuntimeRunnerBootstrapV1 = z.infer<typeof AgentRuntimeRunnerBootstrapV1Schema>;
 export type AgentRuntimeRunnerBootstrapLaunchV1 =
-  NonNullable<z.infer<typeof AgentRuntimeRunnerBootstrapV1Schema>['launch']>;
+  NonNullable<AgentRuntimeRunnerBootstrapV1['launch']>;
 
 export const AgentRuntimeDaemonProviderConnectionModelRefV1Schema =
   lazyZodSchema(() => z.strictObject({

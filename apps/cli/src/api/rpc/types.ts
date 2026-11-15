@@ -27,15 +27,15 @@ import type {
  * @template TResponse - The response data type
  */
 /**
- * Host-private Action context for an in-process invocation. It never exists
- * on a transported RPC request, so callers cannot supply causal authority in
- * the public request payload.
+ * Host-private Action context. In-process callers retain it directly; the daemon's
+ * peer-admitted local Session channel projects only its serializable start facts.
+ * It never exists in a public RPC request payload.
  */
 export type RpcLocalActionContext = Readonly<Partial<Pick<
     ActionExecutorContext,
     'surface' | 'authority' | 'callerPermissionMode' | 'causalPermissionAuthority' | 'callerInputConstraints' | 'actionRequestId' | 'actionCaller'
     | 'externalActionExecutionAuthorization' | 'approvalOrigin' | 'approvedActionReplay' | 'presentUserConfirmation'
-    | 'presentUserApproval' | 'handoffTargetReplacementApproval'
+    | 'presentUserApproval' | 'actionRequestAttributionV1' | 'handoffTargetReplacementApproval'
     | 'originalActionEnvelope' | 'signExternalActionApprovalInput' | 'externalActionTarget' | 'runtimeAccountId' | 'serverId'
     | 'agentStartContext' | 'agentStartWorkDepth' | 'agentStartWorkspaceWrites' | 'sessionAgentSpawnPolicyV1'
 >> & {

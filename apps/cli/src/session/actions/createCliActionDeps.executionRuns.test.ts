@@ -28,6 +28,7 @@ import { ACP_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/acp/catalog/cat
 import { createCapabilitiesService } from '@/capabilities/service';
 import { executionRunsCapability } from '@/capabilities/registry/toolExecutionRuns';
 import { CHECKLIST_IDS } from '@/capabilities/checklistIds';
+import { enableLocalSessionRpcCalls, registerLocalSessionRpcTarget } from '@/session/transport/rpc/localSessionRpcChannel';
 
 const {
   callMachineRpc,
@@ -46,7 +47,7 @@ vi.mock('@/session/transport/rpc/sessionRpc', () => ({
 }));
 
 vi.mock('@/session/transport/rpc/machineRpc', async (importOriginal) => ({
-  ...await importOriginal<typeof import('@/session/transport/rpc/machineRpc')>(),
+  executionRunAuthorityCeiling: (await importOriginal<typeof import('@/session/transport/rpc/machineRpc')>()).executionRunAuthorityCeiling,
   callMachineRpc,
   callExactMachineRpc: callMachineRpc,
   readMachineRpcRequestDisposition,
@@ -543,6 +544,40 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       { instructions: 'Inspect' },
       expect.objectContaining({ localActionContext: expect.objectContaining({ surface: 'agent', agentStartWorkDepth: 3, agentStartWorkspaceWrites: 'deny' }) }));
     expect(callMachineRpc).not.toHaveBeenCalled();
+  });
+
+  it('starts an attached Run through the exact local Session owner without discarding its admitted ceilings', async () => {
+    await withTempDir('attached-run-admission-', async home => {
+      const env = createEnvKeyScope(['HAPPIER_HOME_DIR']);
+      env.patch({ HAPPIER_HOME_DIR: home });
+      reloadConfiguration();
+      enableLocalSessionRpcCalls();
+      const token = `h.${Buffer.from(JSON.stringify({ sub: 'owner', extras: { provenance: {
+        v: 1, kind: 'terminal', authority: 'account_automation',
+      } } })).toString('base64url')}.s`;
+      const retire = await registerLocalSessionRpcTarget({ sessionId: 'session-1', credentialToken: token,
+        handleRequest: async () => ({}), cancelRequest: () => {}, readTrustedCaller: async () => null });
+      try {
+        serveSessionRecord({ id: 'session-1', active: true, machineId: 'machine-1' });
+        callSessionRpc.mockResolvedValue({ runId: 'attached-run', callId: 'attached-call', sidechainId: 'attached-call' });
+        const invoke = vi.fn();
+        const deps = createCliActionDeps({ token, credentials: { token, encryption: null },
+          sessionId: 'cli-global', mode: 'plain', ctx: null,
+          machineActionDirectTargetTransport: { machineId: 'machine-1', invoke } });
+        const result = await deps.executionRunStart('session-1', { instructions: 'Review' }, {
+          exactMachineId: 'machine-1', workDepth: 3, workspaceWrites: 'deny',
+          effectiveCallerPermissionMode: 'read_only',
+          causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
+        });
+        expect(result).toMatchObject({ ok: true, data: { runId: 'attached-run' } });
+        expect(callSessionRpc).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'session-1',
+          request: { instructions: 'Review' }, localActionContext: expect.objectContaining({
+            agentStartWorkDepth: 3, agentStartWorkspaceWrites: 'deny', callerPermissionMode: 'read_only',
+            causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
+          }) }));
+        expect(invoke).not.toHaveBeenCalled();
+      } finally { await retire(); env.restore(); reloadConfiguration(); }
+    });
   });
 
   it('carries exact Workflow invocation services only through the local detached start', async () => {
@@ -1828,4 +1863,57 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       details: { executionRunStart: { v: 1, runCreation } },
     });
   });
+});
+
+describe('background memory hint Runs', () => {
+  // User decision 2026-11-10: a hint never wakes an inactive Session. The real
+  // memory hint runner, text-prompt adapter, Action executor and CLI Run deps run
+  // here; only Session HTTP, Session RPC and Machine RPC are boundaries.
+  it('starts the hint Run in detached scope and reads, resumes or spawns no Session', () => withTempDir('memory-hint-detached-home-', async home => {
+    const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);
+    try {
+      env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: 'memory-hint-home' });
+      reloadConfiguration();
+      await updateSettings(settings => ({ ...settings, machineIdByServerId: { 'memory-hint-home': 'machine-local' } }));
+      serveSessionRecord({ id: 'inactive-session', active: false, machineId: 'machine-local' });
+      fetchSessionById.mockClear();
+      callSessionRpc.mockReset();
+      callMachineRpc.mockReset().mockImplementation(async ({ method }: Readonly<{ method: string }>) => {
+        if (method === RPC_METHODS.CAPABILITIES_DESCRIBE) {
+          return runProtocolDescribeResponse({ version: 2, features: { detachedScope: true, startAndWait: true } });
+        }
+        if (method === SESSION_RPC_METHODS.EXECUTION_RUN_START) {
+          return { runId: 'run-hint', callId: 'call-hint', sidechainId: 'call-hint' };
+        }
+        if (method === SESSION_RPC_METHODS.EXECUTION_RUN_WAIT) return { ok: false, code: 'execution_run_wait_unavailable' };
+        throw new Error(`Unexpected machine RPC ${method}`);
+      });
+      const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) } };
+      const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null });
+      const executor = createActionExecutor({ ...deps, isActionEnabled: () => true, isActionApprovalRequired: () => false });
+      const { runMemoryHintsExecutionRun } = await import('@/daemon/memory/hints/runMemoryHintsExecutionRun');
+      const { runLlmTaskTextPrompt } = await import('@/agent/executionRuns/tasks/textPromptWithRunnerConfig');
+
+      await runMemoryHintsExecutionRun({
+        sessionId: 'inactive-session', prompt: 'Summarize', credentials, sessionAgentTargetKey: null,
+        choice: { v: 1, modelSelection: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'default' }, permissionMode: 'no_tools' },
+        runTextPrompt: request => runLlmTaskTextPrompt({
+          ...request, executeStart: (input, context) => executor.execute('execution.run.start', input, context),
+        }),
+      }).catch(() => undefined);
+
+      const methods = callMachineRpc.mock.calls.map(([request]) => `${request.machineId}:${request.method}`);
+      // 0 Session reads ⇒ 0 resume decisions ⇒ 0 runner spawns.
+      expect({ sessionReads: fetchSessionById.mock.calls.length, sessionRpcs: callSessionRpc.mock.calls.length })
+        .toEqual({ sessionReads: 0, sessionRpcs: 0 });
+      expect(methods.filter(method => method.endsWith(`:${SESSION_RPC_METHODS.EXECUTION_RUN_START}`)))
+        .toEqual([`machine-local:${SESSION_RPC_METHODS.EXECUTION_RUN_START}`]);
+      expect(methods.filter(method => !method.endsWith(`:${RPC_METHODS.CAPABILITIES_DESCRIBE}`)
+        && !method.endsWith(`:${SESSION_RPC_METHODS.EXECUTION_RUN_START}`)
+        && !method.endsWith(`:${SESSION_RPC_METHODS.EXECUTION_RUN_WAIT}`))).toEqual([]);
+    } finally {
+      env.restore();
+      reloadConfiguration();
+    }
+  }));
 });
