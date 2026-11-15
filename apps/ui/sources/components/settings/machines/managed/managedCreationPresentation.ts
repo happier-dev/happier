@@ -56,6 +56,8 @@ export type ManagedCreationContext = Readonly<{
     operation?: ActionOperationProjection | null;
     /** The controller has a newer guest payload than the enrolled guest reports. */
     guestPayloadStale?: boolean;
+    /** Canonical presence supplied by the enrolled Machine page; null is unanswered. */
+    guestOnline?: boolean | null;
     /** What starts this machine again once asleep (the wake owner's answer), said on its state row. */
     asleepWake?: ManagedAsleepWake;
 }>;
@@ -190,29 +192,41 @@ export function managedReceiptPowerIntents(machine: Pick<ManagedMachineReadSnaps
 }
 
 /** Retained resources whose installation is incomplete remain recoverable when controller history is lost. */
-export function canRetryManagedInstallation(machine: ManagedMachineReadSnapshotV1, operation?: ActionOperationProjection | null,
-    context: Pick<ManagedCreationContext, 'providerAvailable' | 'enrolledMachine' | 'guestPayloadStale'> = {}): boolean {
+export type ManagedInstallationRecoveryKind = 'retryInstallation' | 'update' | 'restartDaemon';
+type InstallationRecoveryContext = Pick<ManagedCreationContext, 'providerAvailable' | 'enrolledMachine' | 'guestPayloadStale' | 'guestOnline'>;
+
+export function resolveManagedInstallationRecovery(machine: ManagedMachineReadSnapshotV1, operation?: ActionOperationProjection | null,
+    context: InstallationRecoveryContext = {}): ManagedInstallationRecoveryKind | null {
     const lifecycle = managedCreationState(machine, { ...context, operation });
     if (context.providerAvailable === false || machine.creationState !== 'active' || machine.archivedAt !== undefined || machine.desired === 'delete'
         || machine.allocation !== 'bound' || !machine.resource || machine.cleanup
         || lifecycle.kind === 'cleanupPending' || lifecycle.kind === 'absent' || lifecycle.kind === 'volumeLost'
-        || lifecycle.kind === 'credentialRefused') return false;
-    const needsInstallation = !machine.enrolledMachineId || isManagedMachineBootstrapIncomplete(machine);
-    if (!operation) return needsInstallation || context.guestPayloadStale === true;
+        || lifecycle.kind === 'credentialRefused') return null;
+    const guestOnline = context.guestOnline ?? context.enrolledMachine?.online;
+    const recovery: ManagedInstallationRecoveryKind | null = !machine.enrolledMachineId || isManagedMachineBootstrapIncomplete(machine)
+        ? 'retryInstallation' : guestOnline === false && machine.observation?.power === 'running' && lifecycle.kind === 'resourceReady'
+            ? 'restartDaemon' : context.guestPayloadStale === true ? 'update' : null;
+    if (!operation) return recovery;
     operation = currentManagedCreationOperation(machine, operation, context);
-    if (!operation) return false;
-    const snapshot = operation?.snapshot;
-    // A refused native credential recovers through Reconnect, whichever operation reported it.
-    if (snapshot.error?.errorCode === 'credential_unavailable') return false;
-    // Power, retention and inspection operations can become the newest visible
-    // receipt after a failed install. They do not enroll the retained resource
-    // and must not erase its same-resource Retry install affordance.
+    if (!operation) return null;
+    const snapshot = operation.snapshot;
+    if (snapshot.error?.errorCode === 'credential_unavailable') return null;
+    // A newer inspect or power receipt must not hide an unfinished installation.
     if (snapshot.actionId !== 'machines.managed.acquire'
-        && snapshot.actionId !== 'machines.managed.bootstrap.retry') return needsInstallation || context.guestPayloadStale === true;
-    return operation?.observation === 'available' && !operation.isUnavailableProjection
-        && (snapshot.state === 'failed' || snapshot.state === 'succeeded' && context.guestPayloadStale === true)
-        && (snapshot.actionId === 'machines.managed.acquire' || snapshot.actionId === 'machines.managed.bootstrap.retry')
-        && snapshot.domainRef?.kind === 'managedMachine' && snapshot.domainRef.id === machine.id;
+        && snapshot.actionId !== 'machines.managed.bootstrap.retry') return recovery;
+    return operation.observation === 'available' && !operation.isUnavailableProjection
+        && (snapshot.state === 'failed' || snapshot.state === 'succeeded' && (context.guestPayloadStale === true || recovery === 'restartDaemon'))
+        && snapshot.domainRef?.kind === 'managedMachine' && snapshot.domainRef.id === machine.id ? recovery : null;
+}
+
+export function canRetryManagedInstallation(machine: ManagedMachineReadSnapshotV1, operation?: ActionOperationProjection | null,
+    context: InstallationRecoveryContext = {}): boolean {
+    return resolveManagedInstallationRecovery(machine, operation, context) !== null;
+}
+
+/** The UI retry, Machine recovery and Updates surfaces share the retained revision operand. */
+export function buildManagedInstallationRetryInput(machine: Pick<ManagedMachineReadSnapshotV1, 'homeId' | 'id' | 'intentRevision'>) {
+    return { homeId: machine.homeId, managedId: machine.id, expectedIntentRevision: machine.intentRevision };
 }
 
 /**

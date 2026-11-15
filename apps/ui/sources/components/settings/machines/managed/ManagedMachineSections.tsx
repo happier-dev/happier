@@ -75,7 +75,7 @@ import { describeManagedActionFailureDiagnostic } from './managedNativeFailurePr
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { describeManagedLifecycleState, resolveManagedNativeEndState } from './managedLifecyclePresentation';
 import { answerManagedCreationEstablish } from './managedCreationPrompt';
-import { managedCreationState, canRetryManagedInstallation, currentManagedCreationOperation, describeManagedCreation, isManagedCreationCanceledBeforeMade, isManagedMachineResourceAbsent, managedCreationSetup, managedReceiptPowerIntents, readManagedInstallationPrompt, isManagedGuestPayloadStale, type ManagedCreationContext } from './managedCreationPresentation';
+import { buildManagedInstallationRetryInput, managedCreationState, canRetryManagedInstallation, currentManagedCreationOperation, describeManagedCreation, isManagedCreationCanceledBeforeMade, isManagedMachineResourceAbsent, managedCreationSetup, managedReceiptPowerIntents, readManagedInstallationPrompt, isManagedGuestPayloadStale, type ManagedCreationContext } from './managedCreationPresentation';
 import { useManagedMachineActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
 import { publishActionOperationObservation, reconcileActionOperationsOnce } from '@/sync/domains/actionOperations/actionOperationRuntime';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
@@ -896,8 +896,7 @@ function ManagedMachineFullSections(props: FullSectionProps) {
                     params: { serverId: props.serverId, ...(machine.controller ? { machineId: machine.controller.machineId } : {}) } }) } : {}),
             } : {}),
             ...(canRecoverCreation && (!machine.controller || currentControllerAvailable || creatorScoped && machine.controllerAccess) && canRetryManagedInstallation(machine, operation, creationContext) ? {
-                reinstall: () => fireAndForget(run('machines.managed.bootstrap.retry', { ...target,
-                    expectedIntentRevision: machine.intentRevision }), { tag: 'ManagedMachineSections.retryInstall' }),
+                reinstall: () => fireAndForget(run('machines.managed.bootstrap.retry', buildManagedInstallationRetryInput(machine)), { tag: 'ManagedMachineSections.retryInstall' }),
             } : {}) }} />
         {/* Ended (lab m-life): the record says what went and what stays; nothing is left to check or read. */}
         {resourceConfirmedAbsent && machine.resource ? <ItemGroup testID="managed-machine.ended-record" surface="none"

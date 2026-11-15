@@ -1,3 +1,4 @@
+import { buildManagedInstallationRetryInput } from '@/components/settings/machines/managed/managedCreationPresentation';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useOptionalScreenIsFocused } from '@/utils/navigation/useOptionalScreenIsFocused';
 import { useInstalledUpdates } from './useInstalledUpdates';
@@ -184,9 +185,7 @@ export function useUpdatesContentModel(options: Readonly<{
             const read = await executeAction('machines.managed.get', managedRef);
             requireActionSuccess(read, 'machines.managed.get');
             const machine = unwrapManagedMachineReadV1(ManagedMachineActionOutputSchemasV1['machines.managed.get'].parse(read.result));
-            const updated = await executeAction('machines.managed.bootstrap.retry', {
-                ...managedRef, expectedIntentRevision: machine.intentRevision,
-            });
+            const updated = await executeAction('machines.managed.bootstrap.retry', buildManagedInstallationRetryInput(machine));
             requireActionSuccess(updated, 'machines.managed.bootstrap.retry');
             return;
         }

@@ -1428,3 +1428,14 @@ describe('managed creation stages', () => {
       .toEqual([['create', 'done', null], ['install', 'done', null], ['join', 'upcoming', 'notJoined']]);
   });
 });
+
+
+it('offers same-resource installation repair when native power is running but its enrolled daemon is offline', () => {
+  const guest = { ...machine, enrolledMachineId: 'guest', observation: ProviderObservationV1Schema.parse({
+    observedAt: 1, availability: 'present', power: 'running', storage: 'retained' }) };
+  const enrolledMachine = { machineId: 'guest', installationId: 'install', online: false, serviceManaged: true };
+  expect(canRetryManagedInstallation(guest, null, { enrolledMachine })).toBe(true);
+  expect(canRetryManagedInstallation(guest, null, { enrolledMachine: { ...enrolledMachine, online: true } })).toBe(false);
+  expect(canRetryManagedInstallation({ ...guest, observation: { ...guest.observation, power: 'stopped' } }, null,
+    { enrolledMachine })).toBe(false);
+});
