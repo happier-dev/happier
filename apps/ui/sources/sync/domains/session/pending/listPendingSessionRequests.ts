@@ -1,5 +1,5 @@
 import type { Message } from '@happier-dev/session-core/messages';
-import { readStoredSessionMessages } from '@happier-dev/session-core/messages';
+import { readStoredSessionMessagesFromStateLike } from '@happier-dev/session-core/messages';
 import type { AgentState } from '@happier-dev/session-core/state';
 import { readAccountNameFromLegacyProfileV1, resolveAccountDisplayLabelV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -8,6 +8,10 @@ import { readRegisteredStorageState } from '@/sync/domains/state/storageStateRea
 import { buildStableJsonSignature } from '@/sync/domains/session/metadata/sessionMetadataStability';
 import { readSessionPresentationCompletedRequests } from '@/sync/domains/session/presentation/readSessionPresentationCompletedRequests';
 import { readSessionRequestCoverage } from './readSessionRequestCoverage';
+import {
+    canReuseTranscriptRenderableAggregateRequestStates,
+    isTranscriptRenderableAggregate,
+} from '@/sync/domains/session/listing/transcriptRenderableAggregateReuse';
 import {
     derivePendingRequestFlags,
     deriveLatestPendingRequestObservedAt,
@@ -19,10 +23,12 @@ import {
     shouldReadTranscriptForPendingRequests,
     shouldReadTranscriptForPendingRequestList,
     readSharedMetadataActionConfirmationState,
+    collectTranscriptRequestStates,
     type PendingRequestFacts,
     type PendingRequestFlags,
     type SessionPendingRequest,
     type SessionPendingRequestLists,
+    type TranscriptRequestState,
     type TranscriptRequestStatesCache,
 } from '@happier-dev/session-core/pending';
 
@@ -61,14 +67,45 @@ export function readPendingRequestFactsFromSession(session: Omit<Session, 'prese
     };
 }
 
-function readTranscriptMessages(
+type StoredSessionMessagesForRequestStates = Parameters<typeof readStoredSessionMessagesFromStateLike>[0];
+
+/**
+ * Request states of a Session's stored transcript. The messages domain keeps them in the Session's
+ * renderable aggregate, updated per changed message on every apply; reading it keeps per-arrival
+ * consumers (favicon, attention, observed-at, Session header) O(requests) instead of walking the
+ * whole transcript, which grows with the Session. Falls back to one walk when the aggregate is
+ * absent or was folded against different completions or coverage. Callers only read the map.
+ */
+export function readStoredTranscriptRequestStatesCache(
+    sessionMessages: StoredSessionMessagesForRequestStates | null | undefined,
+    session: Omit<Session, 'presence'>,
+): TranscriptRequestStatesCache {
+    const completedRequests = readSessionPresentationCompletedRequests(session);
+    const requestCoverage = readSessionRequestCoverage(session);
+    const aggregate = (sessionMessages as { renderableAggregate?: unknown } | null | undefined)?.renderableAggregate;
+    if (
+        isTranscriptRenderableAggregate(aggregate)
+        && canReuseTranscriptRenderableAggregateRequestStates(aggregate, completedRequests, requestCoverage)
+    ) {
+        return { states: aggregate.requestStates };
+    }
+    const states = new Map<string, TranscriptRequestState>();
+    collectTranscriptRequestStates(readStoredSessionMessagesFromStateLike(sessionMessages), completedRequests, states, requestCoverage);
+    return { states };
+}
+
+/** Without caller messages, transcript request states come from the registered Store. */
+function readTranscriptRequestStates(
     session: Session,
     messages?: ReadonlyArray<Message>,
     statesCache?: TranscriptRequestStatesCache,
-): ReadonlyArray<Message> | undefined {
-    if (messages || statesCache?.states) return messages;
-    const storageState = readRegisteredStorageState();
-    return storageState ? readStoredSessionMessages(storageState, session.id) ?? [] : [];
+): TranscriptRequestStatesCache | undefined {
+    if (messages || statesCache?.states) return statesCache;
+    const sessionId = typeof session.id === 'string' ? session.id.trim() : '';
+    const { states } = readStoredTranscriptRequestStatesCache(readRegisteredStorageState()?.sessionMessages?.[sessionId], session);
+    if (!statesCache) return { states };
+    statesCache.states = states;
+    return statesCache;
 }
 
 export function shouldReadTranscriptForPendingSessionRequests(session: Session): boolean {
@@ -82,27 +119,27 @@ export function listPendingSessionRequests(
 ): SessionPendingRequest[] {
     const facts = readPendingRequestFactsFromSession(session);
     const readTranscript = shouldReadTranscriptForPendingRequestList(facts);
-    return listPendingRequests(facts, readTranscript ? readTranscriptMessages(session, messages, statesCache) : messages, statesCache);
+    return listPendingRequests(facts, messages, readTranscript ? readTranscriptRequestStates(session, messages, statesCache) : statesCache);
 }
 
 export function listPendingTranscriptRequests(session: Session, messages?: ReadonlyArray<Message>): SessionPendingRequest[] {
-    return listCorePendingTranscriptRequests(readPendingRequestFactsFromSession(session), readTranscriptMessages(session, messages));
+    return listCorePendingTranscriptRequests(readPendingRequestFactsFromSession(session), messages, readTranscriptRequestStates(session, messages));
 }
 
 export function listPendingPermissionRequestsFromSession(session: Session, messages?: ReadonlyArray<Message>): SessionPendingRequest[] {
     const facts = readPendingRequestFactsFromSession(session);
-    return listPendingPermissionRequests(facts, shouldReadTranscriptForPendingRequestList(facts) ? readTranscriptMessages(session, messages) : messages);
+    return listPendingPermissionRequests(facts, messages, shouldReadTranscriptForPendingRequestList(facts) ? readTranscriptRequestStates(session, messages) : undefined);
 }
 
 export function listPendingUserActionRequestsFromSession(session: Session, messages?: ReadonlyArray<Message>): SessionPendingRequest[] {
     const facts = readPendingRequestFactsFromSession(session);
-    return listPendingUserActionRequests(facts, shouldReadTranscriptForPendingRequestList(facts) ? readTranscriptMessages(session, messages) : messages);
+    return listPendingUserActionRequests(facts, messages, shouldReadTranscriptForPendingRequestList(facts) ? readTranscriptRequestStates(session, messages) : undefined);
 }
 
 export function listPendingRequestListsFromSession(session: Session, messages?: ReadonlyArray<Message>): SessionPendingRequestLists {
     const facts = readPendingRequestFactsFromSession(session);
     const readTranscript = shouldReadTranscriptForPendingRequestList(facts);
-    return listPendingRequestLists(facts, readTranscript ? readTranscriptMessages(session, messages) : messages);
+    return listPendingRequestLists(facts, messages, readTranscript ? readTranscriptRequestStates(session, messages) : undefined);
 }
 
 export function derivePendingRequestFlagsFromSession(
@@ -110,7 +147,7 @@ export function derivePendingRequestFlagsFromSession(
     messages?: ReadonlyArray<Message>,
     statesCache?: TranscriptRequestStatesCache,
 ): PendingRequestFlags {
-    return derivePendingRequestFlags(readPendingRequestFactsFromSession(session), session.active ? readTranscriptMessages(session, messages, statesCache) : messages, statesCache);
+    return derivePendingRequestFlags(readPendingRequestFactsFromSession(session), messages, session.active ? readTranscriptRequestStates(session, messages, statesCache) : statesCache);
 }
 
 export function deriveLatestPendingRequestObservedAtFromSession(
@@ -118,7 +155,7 @@ export function deriveLatestPendingRequestObservedAtFromSession(
     messages?: ReadonlyArray<Message>,
     statesCache?: TranscriptRequestStatesCache,
 ): number | null {
-    return deriveLatestPendingRequestObservedAt(readPendingRequestFactsFromSession(session), session.active ? readTranscriptMessages(session, messages, statesCache) : messages, statesCache);
+    return deriveLatestPendingRequestObservedAt(readPendingRequestFactsFromSession(session), messages, session.active ? readTranscriptRequestStates(session, messages, statesCache) : statesCache);
 }
 
 function readProjectedPendingRequestObservedAt(session: Session): number | null {

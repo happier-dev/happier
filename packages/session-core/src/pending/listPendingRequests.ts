@@ -373,8 +373,9 @@ function getTranscriptRequestStates(
 export function listPendingTranscriptRequests(
     facts: PendingRequestFacts,
     messages?: ReadonlyArray<Message>,
+    statesCache?: TranscriptRequestStatesCache,
 ): SessionPendingRequest[] {
-    return Array.from(getTranscriptRequestStates(facts, messages).values())
+    return Array.from(getTranscriptRequestStates(facts, messages, statesCache).values())
         .flatMap((state) => (state.status === 'pending' ? [projectNativeChoiceAvailability(state.request, facts)] : []));
 }
 
@@ -625,8 +626,9 @@ function hasUnprojectedAgentPermissionRequest(facts: PendingRequestFacts, transc
 export function listPendingPermissionRequests(
     facts: PendingRequestFacts,
     messages?: ReadonlyArray<Message>,
+    statesCache?: TranscriptRequestStatesCache,
 ): SessionPendingRequest[] {
-    return listPendingRequests(facts, messages).filter((request) =>
+    return listPendingRequests(facts, messages, statesCache).filter((request) =>
         resolveAgentRequestKind({ toolName: request.tool, requestKind: request.kind }) !== 'user_action'
     );
 }
@@ -634,8 +636,9 @@ export function listPendingPermissionRequests(
 export function listPendingUserActionRequests(
     facts: PendingRequestFacts,
     messages?: ReadonlyArray<Message>,
+    statesCache?: TranscriptRequestStatesCache,
 ): SessionPendingRequest[] {
-    return listPendingRequests(facts, messages).filter((request) => request.kind === 'user_action');
+    return listPendingRequests(facts, messages, statesCache).filter((request) => request.kind === 'user_action');
 }
 
 function latestPendingRequestCreatedAt(requests: readonly SessionPendingRequest[]): number | null {
@@ -678,8 +681,9 @@ export function deriveLatestPendingRequestObservedAt(
 export function listPendingRequestLists(
     facts: PendingRequestFacts,
     messages?: ReadonlyArray<Message>,
+    statesCache?: TranscriptRequestStatesCache,
 ): SessionPendingRequestLists {
-    const requests = listPendingRequests(facts, messages);
+    const requests = listPendingRequests(facts, messages, statesCache);
     if (requests.length === 0) {
         return {
             permissionRequests: [],

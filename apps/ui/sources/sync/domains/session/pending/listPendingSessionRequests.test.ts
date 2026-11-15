@@ -3,7 +3,13 @@ import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import type { Message } from '@happier-dev/session-core/messages';
 import type { Metadata } from '@happier-dev/session-core/state';
 import { readSessionPresentationCompletedRequests } from '@/sync/domains/session/presentation/readSessionPresentationCompletedRequests';
-import { derivePendingRequestFlagsFromSession, listPendingSessionRequests } from './listPendingSessionRequests';
+import { storage } from '@/sync/domains/state/storageStore';
+import { buildTranscriptRenderableAggregate } from '@/sync/domains/session/listing/transcriptRenderableAggregate';
+import {
+    deriveLatestPendingRequestObservedAtFromSession,
+    derivePendingRequestFlagsFromSession,
+    listPendingSessionRequests,
+} from './listPendingSessionRequests';
 import { sessionRuntimeObservations } from '../sessionRuntimeObservation';
 
 afterEach(() => sessionRuntimeObservations.clear());
@@ -125,4 +131,56 @@ describe('pending request facts adapter', () => {
         ]);
     });
 
+    describe('stored transcript request states', () => {
+        const initialStorageState = storage.getState();
+        afterEach(() => { storage.setState(initialStorageState, true); });
+
+        function createPendingPermissionMessage(): Message {
+            return { id: 'stored-permission', kind: 'tool-call', localId: null, createdAt: 1_000, children: [],
+                tool: { id: 'stored-tool', name: 'Bash', state: 'running', input: {}, createdAt: 1_000,
+                    startedAt: 1_000, completedAt: null, description: null,
+                    permission: { id: 'stored-permission', status: 'pending' } } };
+        }
+
+        function storeTranscript(sessionId: string, message: Message, aggregateCompletedRequests: Record<string, unknown> | null, onRead: () => void) {
+            const messagesById: Record<string, Message> = {};
+            Object.defineProperty(messagesById, message.id, { enumerable: true, get: () => { onRead(); return message; } });
+            storage.setState({
+                ...initialStorageState,
+                sessionMessages: {
+                    [sessionId]: {
+                        ...initialStorageState.sessionMessages[sessionId],
+                        messageIdsOldestFirst: [message.id],
+                        messagesById,
+                        messagesMap: messagesById,
+                        messagesVersion: 2,
+                        isLoaded: true,
+                        renderableAggregate: buildTranscriptRenderableAggregate({ messages: [message], completedRequests: aggregateCompletedRequests }),
+                    } as never,
+                },
+            }, true);
+        }
+
+        it('serves callers without messages from the store aggregate instead of walking the transcript', () => {
+            const session = createSessionFixture({ id: 'stored-aggregate', active: true, metadata: null, agentState: null });
+            let messageReads = 0;
+            storeTranscript(session.id, createPendingPermissionMessage(), null, () => { messageReads += 1; });
+
+            expect(derivePendingRequestFlagsFromSession(session).hasPendingPermissionRequests).toBe(true);
+            expect(deriveLatestPendingRequestObservedAtFromSession(session)).toBe(1_000);
+            expect(listPendingSessionRequests(session).map((request) => request.id)).toEqual(['stored-permission']);
+            expect(messageReads).toBe(0);
+        });
+
+        it('walks the stored transcript once when the aggregate was folded against other completions', () => {
+            const completedRequests = { 'stored-permission': { tool: 'Bash', kind: 'permission', createdAt: 1_000, completedAt: 1_100, status: 'approved' } };
+            const session = createSessionFixture({ id: 'stored-stale-aggregate', active: true, metadata: null,
+                agentState: { controlledByUser: null, requests: null, completedRequests } as never });
+            let messageReads = 0;
+            storeTranscript(session.id, createPendingPermissionMessage(), null, () => { messageReads += 1; });
+
+            expect(derivePendingRequestFlagsFromSession(session).hasPendingPermissionRequests).toBe(false);
+            expect(messageReads).toBe(1);
+        });
+    });
 });

@@ -3,12 +3,12 @@ import {
     derivePendingRequestFlagsFromSession,
     readPendingAgentStateCompletedRequestSignature,
     readPendingAgentStateRequestSignature,
+    readStoredTranscriptRequestStatesCache,
 } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import {
     projectUiSessionRuntimeAwareness,
     readSessionRuntimePresentationFreshnessExpirations,
 } from '@/sync/domains/session/attention/runtimePresentation';
-import { readStoredSessionMessages } from "@happier-dev/session-core/messages";
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { StorageState } from '@/sync/store/types';
 import { readSessionViewerAttentionSignature, resolveSessionPersonalAttentionForViewer } from '@/sync/domains/session/readState/sessionViewerAttention';
@@ -84,15 +84,17 @@ function deriveFaviconPermissionSnapshotFromSessions(
     for (const sessionId of sessionIds) {
         const session = state.sessions[sessionId];
         if (!session || !isSessionAdmittedToPersonalActivity(session)) continue;
-        const messages = readStoredSessionMessages(state, session.id);
-        const personal = resolveSessionPersonalAttentionForViewer(session, nowMs, messages);
+        // Every streamed apply re-derives this for all Sessions: read the Store's incrementally
+        // maintained request states, never a transcript walk.
+        const statesCache = readStoredTranscriptRequestStatesCache(state.sessionMessages?.[session.id], session);
+        const personal = resolveSessionPersonalAttentionForViewer(session, nowMs, undefined, undefined, undefined, undefined, statesCache);
         if (!personal.reasons.includes('permission_required')) continue;
         if (session.viewer !== undefined) {
             hasFreshPermission = true;
             continue;
         }
-        const pendingFlags = derivePendingRequestFlagsFromSession(session, messages);
-        const pendingRequestObservedAt = deriveLatestPendingRequestObservedAtFromSession(session, messages);
+        const pendingFlags = derivePendingRequestFlagsFromSession(session, undefined, statesCache);
+        const pendingRequestObservedAt = deriveLatestPendingRequestObservedAtFromSession(session, undefined, statesCache);
         const runtimeInput = {
             id: session.id,
             serverId: session.serverId,
