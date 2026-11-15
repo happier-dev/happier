@@ -3,6 +3,15 @@ import { describe, expect, it } from 'vitest';
 import { MetadataSchema } from './metadata.js';
 
 describe('stored Session metadata', () => {
+    it('retains canonical approval profiles and drops malformed optional profile identities', () => {
+        expect(MetadataSchema.parse({ path: '/repo', host: 'work', approvalProfileId: 'profile-review' })
+            .approvalProfileId).toBe('profile-review');
+        expect(MetadataSchema.parse({ path: '/repo', host: 'work', approvalProfileId: null })
+            .approvalProfileId).toBeNull();
+        expect(MetadataSchema.parse({ path: '/repo', host: 'work' }).approvalProfileId).toBeUndefined();
+        expect(MetadataSchema.parse({ path: '/repo', host: 'work', approvalProfileId: 42 })
+            .approvalProfileId).toBeUndefined();
+    });
     it('retains native categories and grouped choices in both config and model catalogs', () => {
         const option = { id: ' opaque/control= ', name: ' Native name ', description: ' Native description ', category: 'thought_level', type: 'select', currentValue: 'high',
             options: [{ value: 'high', name: ' High ' }], groups: [{ id: ' group/+ ', name: ' Group ', options: [{ value: 'high', name: ' High ' }] }] };

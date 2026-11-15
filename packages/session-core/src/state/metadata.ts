@@ -4,7 +4,7 @@ import { z } from "zod/mini";
 import * as zMini from 'zod/mini';
 import { applyRuntimeDescriptorSessionMetadata, normalizeLegacyAgentVocabularySessionMetadata } from "@happier-dev/agents/session/state/metadataWriters";
 import { AgentModelOptionOverrideRuleReadSchema } from '@happier-dev/protocol/models/descriptor';
-import { SessionOwnerModeCatalogV2Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { SessionOwnerCompatibilityViewV1Schema, SessionOwnerModeCatalogV2Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { SessionWorkspaceLocationV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
 import { SessionForkFilesNotCopiedV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { SessionForkVisualCopyV1Schema, SessionForkVisualsV1Schema } from '@happier-dev/protocol/sessions/board/forkVisualCopies';
@@ -65,6 +65,7 @@ const MetadataObjectSchema = lazyZodSchema(() => z.looseObject({
     name: z.optional(z.string()),
     os: z.optional(z.string()),
     profileId: z.optional(z.nullable(z.string())), // Session-scoped profile identity (non-secret)
+    approvalProfileId: z.catch(createStoredReadSchema(SessionOwnerCompatibilityViewV1Schema.shape.approvalProfileId), undefined),
     approvalReviewerEnabled: z.optional(z.boolean()),
     summary: z.optional(z.object({
         text: z.string(),
