@@ -14900,6 +14900,7 @@ settingsSession: {
         provider_error: "音声プロバイダーでエラーが発生しました。",
         provider_response_invalid: "音声プロバイダーがこのターンのエラーを報告しました。",
         provider_auth_invalid: "選択した音声プロバイダーの API キーを追加または更新してください。",
+        audio_user_gesture_required: "「再試行」を選択して、このブラウザーで音声を開始してください。",
         audio_context_suspended: "音声出力が一時停止されています。",
         stt_timeout: "聞き取り開始がタイムアウトしました。",
         tts_failed: "音声合成に失敗しました。",

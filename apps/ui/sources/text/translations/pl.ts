@@ -14449,6 +14449,7 @@ settingsSession: {
         provider_error: "Usługa głosowa zakończyła się błędem.",
         provider_response_invalid: "Dostawca głosu zgłosił błąd w tej turze.",
         provider_auth_invalid: "Dodaj lub zaktualizuj klucz API wybranego dostawcy głosu.",
+        audio_user_gesture_required: "Wybierz Spróbuj ponownie, aby uruchomić dźwięk w tej przeglądarce.",
         audio_context_suspended: "Wyjście audio zostało wstrzymane.",
         stt_timeout: "Przekroczono limit czasu uruchamiania nasłuchu.",
         tts_failed: "Nie udało się wygenerować mowy.",

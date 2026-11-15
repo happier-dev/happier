@@ -11805,6 +11805,7 @@ settingsSession: {
         provider_error: "語音提供者發生錯誤。",
         provider_response_invalid: "語音提供者回報了這一輪對話的錯誤。",
         provider_auth_invalid: "請新增或更新所選語音提供者的 API 金鑰。",
+        audio_user_gesture_required: "選擇「重試」以在此瀏覽器中啟動音訊。",
         audio_context_suspended: "音訊輸出已暫停。",
         stt_timeout: "開始聆聽已逾時。",
         tts_failed: "語音合成失敗。",

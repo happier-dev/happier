@@ -17457,6 +17457,7 @@ const enSettingsVoice = {
       provider_response_invalid: "The Voice provider reported an error for this turn.",
       provider_auth_invalid:
         'Add or update the selected voice provider API key.',
+      audio_user_gesture_required: "Select Retry to start audio in this browser.",
       audio_context_suspended: 'Audio output is suspended.',
       stt_timeout: 'Listening start timed out.',
       tts_failed: 'Speech synthesis failed.',

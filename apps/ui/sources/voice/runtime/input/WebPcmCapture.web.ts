@@ -70,6 +70,7 @@ type AudioTrackLike = Readonly<{
 }>;
 
 export type WebPcmCaptureError =
+  | 'audio_user_gesture_required'
   | 'pcm_capture_backpressure'
   | 'pcm_capture_chunk_failed'
   | 'pcm_capture_device_lost'
@@ -619,6 +620,13 @@ export function createWebPcmCapture(options: WebPcmCaptureOptions): WebPcmCaptur
     const context = options.mic.getAudioContext?.() as AudioContextLike | null | undefined;
     if (!stream || !context) {
       fail('pcm_capture_mic_state_unavailable');
+      return;
+    }
+    // Autoplay-blocked resume promises stay pending until a person interacts.
+    // Keep a fresh programmatic Start retryable instead of holding Connecting.
+    if (context.state === 'suspended' && typeof navigator !== 'undefined'
+      && navigator.userActivation?.hasBeenActive === false) {
+      fail('audio_user_gesture_required');
       return;
     }
     try {

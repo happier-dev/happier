@@ -78,6 +78,7 @@ export function isVoiceMachineErrorKind(value: unknown): value is VoiceMachineEr
 
 /** Shared typed-refusal and retained reason classification for Local Voice and unknown-error ingress. */
 export function resolveVoiceMachineErrorKind(reason: string, preferredKind?: VoiceMachineErrorKind): VoiceMachineErrorKind {
+    if (reason === 'audio_user_gesture_required') return 'service_temporarily_unavailable';
     if (reason === 'agent_signed_out') return 'authentication_required';
     if (reason === 'held_by_person' || reason === 'VOICE_AGENT_TARGET_SESSION_INACTIVE'
         || reason === 'VOICE_AGENT_TARGET_SESSION_OFFLINE') return 'session_unavailable';

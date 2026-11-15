@@ -14835,6 +14835,7 @@ settingsSession: {
         provider_error: "Il provider vocale ha restituito un errore.",
         provider_response_invalid: "Il fornitore vocale ha segnalato un errore per questo turno.",
         provider_auth_invalid: "Aggiungi o aggiorna la chiave API del provider vocale selezionato.",
+        audio_user_gesture_required: "Seleziona Riprova per avviare l’audio in questo browser.",
         audio_context_suspended: "L'uscita audio è sospesa.",
         stt_timeout: "Tempo scaduto per l'avvio dell'ascolto.",
         tts_failed: "La sintesi vocale non è riuscita.",

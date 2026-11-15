@@ -31,6 +31,8 @@ const FRAME_MS = 20;
 
 function mapCaptureError(error: WebPcmCaptureError): string {
   switch (error) {
+    case 'audio_user_gesture_required':
+      return error;
     case 'pcm_capture_backpressure':
       return 'daemon_streaming_stt_pcm_backpressure';
     case 'pcm_capture_chunk_failed':
@@ -78,8 +80,9 @@ export function createWebDaemonSpeechPcmCapture(
       await options.onChunk(bytes);
     },
     onError(error, cause) {
-      options.onError?.(classifyVoiceMachineError(cause, {
-        reason: mapCaptureError(error),
+      const reason = mapCaptureError(error);
+      options.onError?.(classifyVoiceMachineError(cause ?? { code: reason }, {
+        reason,
       }));
     },
   });

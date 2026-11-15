@@ -14676,6 +14676,7 @@ settingsSession: {
                 provider_error: 'Der Voice-Provider ist fehlgeschlagen.',
                 provider_response_invalid: "Der Voice-Anbieter hat für diesen Gesprächsschritt einen Fehler gemeldet.",
                 provider_auth_invalid: 'Füg den API-Key des gewählten Voice-Providers hinzu oder aktualisiere ihn.',
+                audio_user_gesture_required: "Wähle Erneut versuchen, um Audio in diesem Browser zu starten.",
                 audio_context_suspended: 'Die Audioausgabe ist pausiert.',
                 stt_timeout: 'Der Start des Zuhörens hat zu lange gedauert.',
                 tts_failed: 'Die Sprachausgabe ist fehlgeschlagen.',

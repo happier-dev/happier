@@ -14135,6 +14135,7 @@ settingsSession: {
         provider_error: "语音提供方出错。",
         provider_response_invalid: "语音提供方报告了此轮对话的错误。",
         provider_auth_invalid: "请添加或更新所选语音提供方的 API 密钥。",
+        audio_user_gesture_required: "选择“重试”以在此浏览器中启动音频。",
         audio_context_suspended: "音频输出已暂停。",
         stt_timeout: "开始收听已超时。",
         tts_failed: "语音合成失败。",

@@ -53,6 +53,7 @@ export const VOICE_MACHINE_ERROR_TRANSLATION_KEYS = {
  * raw reason code or transport text is never shown.
  */
 export const VOICE_MACHINE_ERROR_REASON_TRANSLATION_KEYS = {
+    audio_user_gesture_required: 'settingsVoice.local.machineErrors.audio_user_gesture_required',
     voice_agent_target_session_inactive: 'settingsVoice.local.machineErrors.target_session_inactive',
     voice_agent_target_session_offline: 'settingsVoice.local.machineErrors.target_session_offline',
     voice_agent_target_machine_offline: 'voice.readiness.execution_machine_incompatible',

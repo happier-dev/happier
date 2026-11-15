@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createWebDaemonSpeechPcmCapture } from './WebDaemonSpeechPcmCapture.web';
+import { createDeferred } from '@/dev/testkit';
 const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
 await loadSyncSingletonForTests();
 const { installVoiceWebRtcBrowserBoundary } = await import('@/dev/testkit/harness/voiceWebRtcHarness');
@@ -167,6 +168,42 @@ describe('createWebDaemonSpeechPcmCapture', () => {
       browser.restore();
     }
     vi.unstubAllGlobals();
+  });
+
+  it('refuses autoplay-blocked capture with a visible retry instead of awaiting a gesture forever', async () => {
+    const { audioContext } = createAudioContext();
+    const micSession = createMicSession({ audioContext });
+    await micSession.ensureActive();
+    const activation = { hasBeenActive: false };
+    vi.stubGlobal('navigator', Object.assign(Object.create(navigator), { userActivation: activation }));
+    audioContext.state = 'suspended';
+    const resume = createDeferred<void>();
+    audioContext.resume.mockImplementation(async () => { await resume.promise; audioContext.state = 'running'; });
+    const onError = vi.fn();
+    const capture = createWebDaemonSpeechPcmCapture({ micSession, onAudioStarted: vi.fn(), onChunk: vi.fn(), onError });
+    const start = capture.start();
+    try {
+      await vi.waitFor(() => expect(onError).toHaveBeenCalledWith(expect.objectContaining({
+        kind: 'service_temporarily_unavailable', reason: 'audio_user_gesture_required',
+        recoveryAction: 'retry', presentation: 'error',
+      })));
+      await start;
+      expect(capture.isActive()).toBe(false);
+    } finally {
+      resume.resolve();
+      await start;
+      await capture.stop();
+    }
+    activation.hasBeenActive = true;
+    audioContext.state = 'suspended';
+    await capture.start();
+    expect(capture.isActive()).toBe(true);
+    await capture.stop();
+    // Browsers that already allow autoplay need no gesture even on a fresh page.
+    activation.hasBeenActive = false;
+    await capture.start();
+    expect(capture.isActive()).toBe(true);
+    await capture.stop();
   });
 
   it.each([

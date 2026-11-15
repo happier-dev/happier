@@ -14493,6 +14493,7 @@ settingsSession: {
         provider_error: "Le provider vocal a échoué.",
         provider_response_invalid: "Le fournisseur vocal a signalé une erreur pour ce tour.",
         provider_auth_invalid: "Ajoute ou mets à jour la clé API du provider vocal sélectionné.",
+        audio_user_gesture_required: "Sélectionnez Réessayer pour démarrer l’audio dans ce navigateur.",
         audio_context_suspended: "La sortie audio est suspendue.",
         stt_timeout: "Le démarrage de l’écoute a expiré.",
         tts_failed: "La synthèse vocale a échoué.",

@@ -14619,6 +14619,7 @@ settingsSession: {
         provider_error: "El proveedor de voz falló.",
         provider_response_invalid: "El proveedor de voz ha notificado un error en este turno.",
         provider_auth_invalid: "Añade o actualiza la clave API del proveedor de voz seleccionado.",
+        audio_user_gesture_required: "Selecciona Reintentar para iniciar el audio en este navegador.",
         audio_context_suspended: "La salida de audio está suspendida.",
         stt_timeout: "Se agotó el tiempo para iniciar la escucha.",
         tts_failed: "La síntesis de voz falló.",

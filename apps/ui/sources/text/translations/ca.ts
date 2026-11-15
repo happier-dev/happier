@@ -13688,6 +13688,7 @@ settingsSession: {
                 provider_error: 'El proveïdor de veu ha fallat.',
                 provider_response_invalid: "El proveïdor de veu ha notificat un error en aquest torn.",
                 provider_auth_invalid: 'Afegeix o actualitza la clau API del proveïdor de veu seleccionat.',
+                audio_user_gesture_required: "Selecciona Torna-ho a provar per iniciar l’àudio en aquest navegador.",
                 audio_context_suspended: 'La sortida d’àudio està suspesa.',
                 stt_timeout: 'S’ha esgotat el temps per iniciar l’escolta.',
                 tts_failed: 'La síntesi de veu ha fallat.',
