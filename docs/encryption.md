@@ -1586,6 +1586,18 @@ that repair runs. Recipient-only repair retains the existing ciphertext and data
 key. A newly sealed content revision uses a fresh key that
 excludes former members; removing access cannot recall prior content.
 
+The development preparation schema keeps the author's opt-in in
+`content.preparation.enabled` and operational build state in `content.prepared`.
+The latter binds the exact preset revision, authored configuration, actual CLI
+payload/release identity and selected credential identity to qualified native
+artifact/build references. It stays inside the same Plain/E2EE content envelope;
+fresh author sealing and per-acquire name overrides cannot forge it. Operational
+replacement retains the existing data key and compares the incumbent build's
+operation id; persistence still requires the preset owner's revision CAS.
+`bakedSetup` records only setup actually completed by the clean build, so a
+CLI-only image does not imply that credential-dependent setup has run. These
+schema fields alone do not establish an executable Prepare or cleanup path.
+
 The Home retains structural ownership, Team and controller/pool routing, one
 grant admission and revision/CAS. The server-readable operational policy fields
 are `simultaneousLimit.maximum`, which the preset admission owner uses to count

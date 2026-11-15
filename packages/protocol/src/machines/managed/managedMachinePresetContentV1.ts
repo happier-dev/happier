@@ -25,6 +25,8 @@ import { AcquireResultV1Schema, ProviderObservationV1Schema, MachineProvisionerS
   type AcquireResultV1, type MachineProvisionerSizeV1, type ProviderObservationV1 } from './providerFactsV1.js';
 import { ManagedMachineEnrollmentIdentityV1Schema, type ManagedMachineEnrollmentIdentityV1 } from './enrollmentIdentityV1.js';
 import { MachineSetupV1Schema, type MachineSetupV1 } from './machineSetupV1.js';
+import { ManagedMachinePresetPreparationV1Schema, ManagedMachinePresetPreparedV1Schema,
+  type ManagedMachinePresetPreparedV1 } from './managedMachinePresetPreparationV1.js';
 import { PluginJsonValueV2Schema } from '../../plugins/contributions/jsonSchema.js';
 import { MachineProvisionerDestroyResultV1Schema, MachineProvisionerPowerResultV1Schema,
   MachineProvisionerRebuildResultV1Schema, MachineProvisionerResizeResultV1Schema } from '../../plugins/contributions/machineProvisioners.js';
@@ -110,6 +112,9 @@ export function createManagedMachinePresetContentV1Schema<Choices extends z.core
     launch: z.optional(createValidatedLaunchSnapshotV1Schema(choices)),
     setup: z.optional(MachineSetupV1Schema),
     controllerDisplayName: z.optional(id()),
+    preparation: z.optional(ManagedMachinePresetPreparationV1Schema),
+    /** Provider-owned build/artifact identity; never an author or per-acquire override. */
+    prepared: z.optional(ManagedMachinePresetPreparedV1Schema),
     /** Private admission identity; an acquire override, not a reusable author declaration. */
     enrollmentIdentity: z.optional(ManagedMachineEnrollmentIdentityV1Schema),
     /** Daemon-captured immutable admission review; author writes are rejected by the fresh-seal owner. */
@@ -594,6 +599,32 @@ function replaceManagedMachinePresetExistingContentV1(
     : sealEncryptedPresetContent(presetId, content, opened.dataKey, params.randomBytes);
 }
 
+export type ManagedMachinePresetPreparationReplacementParamsV1 = (
+  | Omit<Extract<ManagedMachinePresetExistingContentReplacementV1, { mode: 'plain' }>, 'replace'>
+  | Omit<Extract<ManagedMachinePresetExistingContentReplacementV1, { mode: 'e2ee' }>, 'replace'>
+) & Readonly<{
+  /** The existing operation owner supplies its incumbent identity; row CAS remains at persistence. */
+  expectedOperationId: string | null;
+  prepared: ManagedMachinePresetPreparedV1;
+}>;
+
+/** Private same-key operational write. An earlier build cannot replace a newer admitted operation. */
+export function replaceManagedMachinePresetPreparationV1(
+  params: ManagedMachinePresetPreparationReplacementParamsV1,
+): ManagedMachinePresetStoredContentV1 | null {
+  try {
+    const prepared = ManagedMachinePresetPreparedV1Schema.safeParse(params.prepared);
+    if (!prepared.success) return null;
+    return replaceManagedMachinePresetExistingContentV1({ ...params, replace: content => {
+      if ((content.prepared?.operationId ?? null) !== params.expectedOperationId) return null;
+      const next = ManagedMachinePresetContentV1Schema.safeParse({ ...content, prepared: prepared.data });
+      return next.success ? next.data : null;
+    } });
+  } catch {
+    return null;
+  }
+}
+
 export type ManagedMachinePresetSavedSecretReferenceRewriteCreateParamsV1 =
   | Readonly<{
       presetId: string;
@@ -743,6 +774,7 @@ export function sealManagedMachinePresetContentV1(
   if (content.resize !== undefined) throw new Error('managed_preset_author_resize_forbidden');
   if (content.enrollmentIdentity !== undefined) throw new Error('managed_preset_author_enrollment_identity_forbidden');
   if (content.reviewedFacts !== undefined) throw new Error('managed_preset_author_reviewed_facts_forbidden');
+  if (content.prepared !== undefined) throw new Error('managed_preset_author_prepared_forbidden');
   if (params.mode === 'plain') {
     return { content: { t: 'plain', v: content }, recipients: [] };
   }

@@ -1,6 +1,7 @@
 export * from './controllerErrors.js';
 export * from './presetOrigination.js';
 export * from './presetAcquire.js';
+export * from './presetPreparation.js';
 export * from './opaquePresetReviewedChild.js';
 export * from './provisioners.js';
 export * from './bootstrapCredential.js';
