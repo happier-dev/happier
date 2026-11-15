@@ -2,7 +2,6 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createAccountKvHttpFixture } from '@/dev/testkit/fixtures/accountKvHttpFixture';
@@ -17,6 +16,8 @@ const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
 const { useTabState } = await import('./useTabState');
+const { getStorage } = await import('@/sync/domains/state/storage');
+const { clearPersistenceStorage, getPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
 
 const kv = createAccountKvHttpFixture();
 const serverUrl = 'https://tab-state.example.test';
@@ -27,6 +28,7 @@ let beforeMutation: (() => Promise<void>) | null = null;
 beforeEach(async () => {
   await home.reset();
   kv.reset();
+  clearPersistenceStorage();
   beforeMutation = null;
   serverId = await home.addHome({ name: 'Tab state', serverUrl, accountId: 'tab-account', currentAccount: true });
   const credentials = await TokenStorage.getCredentialsForServerUrl(serverUrl, { serverId });
@@ -53,6 +55,7 @@ afterEach(async () => {
   beforeMutation = null;
   await home.reset();
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 async function seedTab(value: string, version = 3) {
@@ -74,66 +77,63 @@ async function renderTabState() {
 }
 
 describe('useTabState', () => {
-  it('loads the active tab from account KV on mount', async () => {
+  // Owner ruling 2026-11-15: the phone's last-selected tab is device-local. A tab tap wrote
+  // `ui:active-tab` to Account KV and woke the app, the daemon and the session host.
+  it('keeps a tab tap on this device: zero server requests, restored on the next mount', async () => {
+    const hook = await renderTabState();
+    const requestsBefore = kv.readRequests().length;
+    const writes = vi.spyOn(getPersistenceStorage(), 'set');
+    const settingsMutation = vi.spyOn(getStorage().getState(), 'applyLocalSettings');
+
+    await act(async () => { await hook.getCurrent().setActiveTab('inbox'); });
+    await act(async () => { await hook.getCurrent().setActiveTab('projects'); });
+
+    expect(hook.getCurrent()).toMatchObject({ activeTab: 'projects' });
+    expect(kv.readRequests().slice(requestsBefore)).toEqual([]);
+    expect(kv.read(tabKey)).toBeUndefined();
+    expect(writes.mock.calls.filter(([key]) => key === 'settings' || key === 'local-settings')).toEqual([]);
+    expect(settingsMutation).not.toHaveBeenCalled();
+    expect(getPersistenceStorage().getString('ui-state:main-app-tab-v1:active')).toBe('"projects"');
+
+    await hook.unmount();
+    const remounted = await renderTabState();
+    expect(remounted.getCurrent()).toMatchObject({ activeTab: 'projects' });
+    expect(kv.readRequests().slice(requestsBefore)).toEqual([]);
+  });
+
+  it('leaves a 0.2 Account value in place and never reads it', async () => {
     await seedTab('inbox');
+    const requestsBefore = kv.readRequests().length;
     const hook = await renderTabState();
 
-    expect(hook.getCurrent()).toMatchObject({ activeTab: 'inbox', isLoading: false });
+    expect(hook.getCurrent()).toMatchObject({ activeTab: 'sessions' });
+    expect(kv.readRequests().slice(requestsBefore)).toEqual([]);
     expect(kv.read(tabKey)).toEqual({ key: tabKey, value: 'inbox', version: 3 });
   });
 
-  it('keeps the dev projects tab as a first-class stored tab', async () => {
-    await seedTab('projects');
+  it('keeps Inbox selected while unavailable and restores it when its feature becomes available', async () => {
+    vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY', 'inbox.global');
     const hook = await renderTabState();
-
-    expect(hook.getCurrent()).toMatchObject({ activeTab: 'projects', isLoading: false });
-  });
-
-  it('normalizes stale route-owned settings tab state back to sessions', async () => {
-    await seedTab('settings');
-    const hook = await renderTabState();
-
-    expect(hook.getCurrent()).toMatchObject({ activeTab: 'sessions', isLoading: false });
-  });
-
-  it('persists changes back to KV with optimistic UI update', async () => {
-    const hook = await renderTabState();
-    const entered = createDeferred<void>();
-    const release = createDeferred<void>();
-    beforeMutation = async () => { entered.resolve(); await release.promise; };
-    let pending: Promise<void> | undefined;
-    try {
-      await act(async () => {
-        pending = hook.getCurrent().setActiveTab('inbox');
-        await entered.promise;
-      });
-      expect(hook.getCurrent().activeTab).toBe('inbox');
-      expect(kv.read(tabKey)).toBeUndefined();
-    } finally {
-      release.resolve();
-      await act(async () => { await pending; });
-    }
-
-    expect(kv.read(tabKey)).toEqual({ key: tabKey, value: 'inbox', version: 0 });
+    await act(async () => { hook.getCurrent().setActiveTab('inbox'); });
+    expect(hook.getCurrent().activeTab).toBe('sessions');
+    const writes = vi.spyOn(getPersistenceStorage(), 'set');
+    vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY', '');
+    await act(async () => {
+      // Policy is normally fixed for the loaded build. Refresh its real decision
+      // through a consumed settings change when this environment boundary changes.
+      getStorage().getState().applySettings({ experiments: !getStorage().getState().settings.experiments });
+    });
     expect(hook.getCurrent().activeTab).toBe('inbox');
+    expect(writes.mock.calls.filter(([key]) => key.startsWith('ui-state:main-app-tab-v1:'))).toEqual([]);
   });
 
-  it('retries the requested tab after a recoverable version mismatch', async () => {
+  it('restores Sessions and Projects while Workflows stays route-backed', async () => {
     const hook = await renderTabState();
-    // Another HTTP writer advances the row after this reader saw no key.
-    await seedTab('sessions');
-    const requestsBefore = kv.readRequests().length;
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
-    await act(async () => { await hook.getCurrent().setActiveTab('inbox'); });
-
-    expect(hook.getCurrent().activeTab).toBe('inbox');
-    expect(kv.read(tabKey)).toEqual({ key: tabKey, value: 'inbox', version: 4 });
-    expect(kv.readRequests().slice(requestsBefore)).toEqual([
-      { method: 'POST', path: '/v1/kv' },
-      { method: 'POST', path: '/v1/kv/bulk' },
-      { method: 'POST', path: '/v1/kv' },
-    ]);
-    expect(warn).not.toHaveBeenCalled();
+    await act(async () => { hook.getCurrent().setActiveTab('projects'); });
+    expect(hook.getCurrent().activeTab).toBe('projects');
+    await act(async () => { hook.getCurrent().setActiveTab('sessions'); });
+    expect(hook.getCurrent().activeTab).toBe('sessions');
+    await act(async () => { hook.getCurrent().setActiveTab('workflows'); });
+    expect(hook.getCurrent().activeTab).toBe('sessions');
   });
 });

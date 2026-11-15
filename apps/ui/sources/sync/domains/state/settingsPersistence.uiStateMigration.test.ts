@@ -10,6 +10,45 @@ afterEach(() => { vi.restoreAllMocks(); clearPersistenceStorage(); });
 
 
 describe('retained workspace settings migration', () => {
+    it('imports the retained phone tab once without replacing a newer navigation choice', () => {
+        const device = getPersistenceStorage();
+        const destinationKey = 'ui-state:main-app-tab-v1:active';
+        device.set('local-settings', JSON.stringify({ mainAppTab: 'projects', themePreference: 'dark' }));
+        expect(loadLocalSettings().themePreference).toBe('dark');
+        expect(device.getString(destinationKey)).toBe('"projects"');
+        expect(JSON.parse(device.getString('local-settings')!)).toEqual({ themePreference: 'dark' });
+        device.set('local-settings', JSON.stringify({ mainAppTab: 'inbox' }));
+        loadLocalSettings();
+        expect(device.getString(destinationKey)).toBe('"projects"');
+        expect(loadLocalSettings()).not.toHaveProperty('mainAppTab');
+    });
+
+    it('keeps the phone tab source through a refused import and preference save, then recovers', () => {
+        const device = getPersistenceStorage();
+        const destinationKey = 'ui-state:main-app-tab-v1:active';
+        device.set('local-settings', JSON.stringify({ mainAppTab: 'inbox' }));
+        const write = device.set.bind(device);
+        const refusal = vi.spyOn(device, 'set').mockImplementation((key, value) => {
+            if (key === destinationKey) throw new Error('Device storage refused');
+            write(key, value);
+        });
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        saveLocalSettings({ ...loadLocalSettings(), themePreference: 'dark' });
+        expect(JSON.parse(device.getString('local-settings')!)).toMatchObject({ mainAppTab: 'inbox', themePreference: 'dark' });
+        refusal.mockRestore();
+        loadLocalSettings();
+        expect(device.getString(destinationKey)).toBe('"inbox"');
+        expect(JSON.parse(device.getString('local-settings')!)).not.toHaveProperty('mainAppTab');
+        expect(loadLocalSettings().themePreference).toBe('dark');
+    });
+
+    it.each(['settings', 'friends', 'zen', 'workflows'])('imports the retired %s phone tab as Sessions', tab => {
+        const device = getPersistenceStorage();
+        device.set('local-settings', JSON.stringify({ mainAppTab: tab }));
+        loadLocalSettings();
+        expect(device.getString('ui-state:main-app-tab-v1:active')).toBe('"sessions"');
+    });
+
     it('does not import never-shipped settings history or write UI state while loading it', () => {
         const device = getPersistenceStorage();
         device.set('local-settings', JSON.stringify({

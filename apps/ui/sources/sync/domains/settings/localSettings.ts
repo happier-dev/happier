@@ -46,6 +46,7 @@ export const RETIRED_DESKTOP_OVERLAY_SETTING_KEYS = [
 ] as const;
 
 const deprecatedLocalSettingKeys = [
+    'mainAppTab',
     'workspaceLayoutV1',
     'machineVitalsRangeV1',
     'sessionMruOrderV1',

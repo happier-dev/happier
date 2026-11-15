@@ -9,7 +9,7 @@ import { getPersistenceStorage, getPersistenceStorageWebKey, subscribePersistenc
 import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
 import { migrateDisclosureUiStateFromSettings } from './disclosureUiState';
 import { UiStatePersistenceError } from './persistentUiState';
-import { migrateSessionMobileSurfacesFromSettings } from './navigationUiState';
+import { migrateMainAppTabFromSettings, migrateSessionMobileSurfacesFromSettings } from './navigationUiState';
 import { migrateNewSessionUiState } from './newSessionTargetUiState';
 import { migrateProgressHealthUiState } from './onboardingUiState';
 import { migratePetCompanionPositionFromSettings } from '../pets/companionPosition/companionPosition';
@@ -127,7 +127,7 @@ export function saveSettings(settings: Settings, version: number) {
 function migrateDeviceUiStateFromSettings(input: unknown): unknown {
     let storedValue = input;
     let retainedFailedSource = false;
-    for (const migrate of [migrateSessionMobileSurfacesFromSettings, migrateDisclosureUiStateFromSettings,
+    for (const migrate of [migrateMainAppTabFromSettings, migrateSessionMobileSurfacesFromSettings, migrateDisclosureUiStateFromSettings,
         migrateProgressHealthUiState, migrateSessionMruFromSettings, migrateComposerBannerUiStateFromSettings,
         migratePetCompanionPositionFromSettings]) {
         try { storedValue = migrate(storedValue); }
@@ -234,7 +234,7 @@ export function saveLocalSettingsDelta(delta: Partial<LocalSettings>): Readonly<
 function persistLocalSettings(settings: LocalSettings, storedValue: unknown, previous: LocalSettings): void {
     const mmkv = getPersistenceStorage();
     let retained: unknown = settings;
-    for (const legacyKey of ['sessionMruOrderV1', 'sessionComposerCollapsedBannerKinds',
+    for (const legacyKey of ['mainAppTab', 'sessionMruOrderV1', 'sessionComposerCollapsedBannerKinds',
         'sessionLastMobileSurfaceBySessionId', 'collapsedGroupKeysV1', 'brandHeroSeenAt', 'hasCompletedAuthOnce',
         'acknowledgedCliVersions', 'petsDismissedCompanionTrayItemKeys', 'petsCompanionPosition']) {
         if (storedValue && typeof storedValue === 'object' && Object.hasOwn(storedValue, legacyKey)) {

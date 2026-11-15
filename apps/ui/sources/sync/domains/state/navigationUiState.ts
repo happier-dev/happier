@@ -2,6 +2,26 @@ import { normalizeSessionMobileSurface } from '@/components/workspaceCockpit/ses
 import { normalizeProjectRememberedSelectionId } from '@/components/workspaceCockpit/project/projectCockpitState';
 import { createPersistentUiState } from './persistentUiState';
 import { MachineVitalsHistoryV1Schema } from '@happier-dev/protocol/machines/vitals/machineVitalsHistoryV1';
+import type { TabType } from '@/components/ui/navigation/tabTypes';
+
+// Workflows owns its route; only the shell's retained tab bodies are restored here.
+function parseMainAppTab(value: unknown): Exclude<TabType, 'workflows'> {
+    return value === 'projects' || value === 'inbox' ? value : 'sessions';
+}
+export const MAIN_APP_TAB_UI_KEY = 'active';
+export const mainAppTabState = createPersistentUiState('main-app-tab-v1', parseMainAppTab);
+
+/** Import the previous device carrier at startup; Account KV stays untouched. */
+export function migrateMainAppTabFromSettings(input: unknown): unknown {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
+    const stored = input as Record<string, unknown>;
+    if (!Object.hasOwn(stored, 'mainAppTab')) return input;
+    if (mainAppTabState.readStrict(MAIN_APP_TAB_UI_KEY) === undefined) {
+        mainAppTabState.set(MAIN_APP_TAB_UI_KEY, parseMainAppTab(stored.mainAppTab));
+    }
+    const { mainAppTab: _legacyTab, ...retained } = stored;
+    return retained;
+}
 
 // Navigation observations use the same device KV/lifecycle as panes and drafts.
 // The domain normalizers, not Settings, own the set of admitted surfaces.
