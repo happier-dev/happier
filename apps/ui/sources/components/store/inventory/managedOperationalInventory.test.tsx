@@ -2,7 +2,8 @@ import { afterEach, expect, it, vi } from 'vitest';
 import * as React from 'react';
 import { act, createMachineFixture, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol/automations/automationEventDeclarationV1';
-import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
+import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest/ingest';
+import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { createProviderSettingsAccountHarness, createProviderSettingsHarness,
     installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
@@ -312,9 +313,9 @@ it.each(['plain', 'e2ee'] as const)('reads never-observed Check definition facts
                 ...(mode === 'e2ee' ? { mode, material: { type: 'legacy' as const, secret }, randomBytes: (length: number) => new Uint8Array(length).fill(4) } : { mode }),
                 binding: { v: 1, automationId: row.id, triggerId: trigger.id, triggerRevision: trigger.revision, triggerKind: 'pluginEvent', eventRef,
                     sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(trigger.sourceSelectorId) },
-                definition: { v: 1, sourceInstanceId: `deployment:${row.id}`, displayLabel: 'Deployment failed',
+                definition: PluginJsonValueV2Schema.parse({ v: 1, sourceInstanceId: `deployment:${row.id}`, displayLabel: 'Deployment failed',
                     sourceConfig: DeploymentReceiptEventSourceConfigV1Schema.parse({ v: 1, serverId: scope.serverId, environmentId: 'shop', observingSince: 1 }),
-                    filter: null, maximumObservationAgeMs: null },
+                    filter: null, maximumObservationAgeMs: null }),
             })) }] };
     }));
     account.home.answer(scope.serverId, 'POST /v3/automations/query', { body: { automations: [detail, ...unrelated], nextCursor: null } });
@@ -331,12 +332,12 @@ it.each(['plain', 'e2ee'] as const)('reads never-observed Check definition facts
     const { plugin } = await import('../../../../../../packages/plugins/machine-services/src/manifest');
     const { PluginAccountAvailabilityIntentReadResponseV1Schema, createPackageAssetArchiveV1 } = await import('@happier-dev/protocol/plugins/availability');
     const { replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
-    const parsed = parsePluginManifest(plugin.manifest);
+    const parsed = ingestPluginManifestV2(plugin.manifest);
     if (!parsed.ok) throw new Error('Expected bundled health plugin manifest');
     const manifest = parsed.manifest;
     const archive = createPackageAssetArchiveV1({ manifest,
-        files: manifest.contributes.resources.filter(resource => resource.kind === 'asset')
-            .map(resource => ({ path: resource.path, bytes: new TextEncoder().encode('{}') })) });
+        files: manifest.contributes.resources.flatMap(resource => resource.source !== 'dynamic' && resource.kind === 'asset'
+            ? [{ path: resource.path, bytes: new TextEncoder().encode('{}') }] : []) });
     if (!archive) throw new Error('Expected actual plugin assets to form a release fixture');
     const response = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ availabilityCursor: 1,
         hostingCapability: { enabled: false },

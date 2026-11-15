@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
+import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest/ingest';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
@@ -47,11 +47,15 @@ describe('configured saved health public Action bridge', () => {
         const expected = { status: 'down', observedAt: 1000, latencyMs: 12,
             cause: { kind: 'http', vantage: 'outside', observerMachineId: 'observer', httpStatus: 503, expectStatus: 200 },
             evidence: { v: 1, items: [{ source: { kind: 'alert', label: 'HTTP' }, author: { kind: 'process' }, text: 'HTTP check failed.' }] } } satisfies HealthCheckResultV1;
-        const parsed = parsePluginManifest(plugin.manifest);
+        const parsed = ingestPluginManifestV2(plugin.manifest);
         if (!parsed.ok) throw new Error('Expected bundled health plugin manifest');
         const catalog = parsed.manifest.contributes.healthCheckKinds.map(kind => ({ ...kind, pluginId: plugin.manifest.id }));
         const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services: {
-            healthChecks: { listKinds: async () => catalog, read: async ({ sourceInstanceId, checkIds }) => {
+            healthChecks: { listKinds: async () => catalog,
+                readSource: async () => { throw new Error('Unexpected saved source lookup'); },
+                manageHeartbeat: async () => { throw new Error('Unexpected heartbeat mutation'); },
+                setup: async () => { throw new Error('Unexpected health setup'); },
+                read: async ({ sourceInstanceId, checkIds }) => {
                 expect(sourceInstanceId).toBe(createHealthCheckSourceInstanceIdV1({ kind: 'environment', environmentId: 'production' }));
                 expect(checkIds).toEqual(['site']);
                 probes++;
