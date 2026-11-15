@@ -25,7 +25,7 @@ describe('Grok ACP delivery definition', () => {
     expect(steer?.isAccepted({ status: 'unknown' })).toBe(false);
   });
 
-  it('projects prompt usage with Grok accounting semantics', () => {
+  it('preserves measured Grok prompt usage without inferring an unreported total', () => {
     const definition = buildGrokAcpRuntimeDefinition({});
     const usage = Reflect.get(definition, 'usage') as Readonly<{
       projectPromptUsage?: (input: Readonly<{ usage: unknown; promptResponse: unknown }>) => unknown;
@@ -45,7 +45,6 @@ describe('Grok ACP delivery definition', () => {
       promptResponse: {},
     })).toEqual({
       tokens: {
-        total: 100,
         input: 70,
         output: 30,
         cacheRead: 20,

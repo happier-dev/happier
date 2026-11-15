@@ -21,7 +21,7 @@ export const AGENT_DEFINITION = Object.freeze({
     handoff: { vendorStateTransfer: 'unsupported' },
     tools: { delivery: 'native_mcp', support: 'experimental' },
   },
-  sessionModeDescriptor: { source: 'none', semantics: 'none', runtimeSwitch: 'none' },
+  sessionModeDescriptor: { source: 'none', semantics: 'none', runtimeSwitch: 'none' } as const,
   sessionModesKind: 'none',
   modelConfig: {
     supportsSelection: true,
