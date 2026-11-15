@@ -3031,6 +3031,7 @@ describe('ordinary Account managed Action origination', () => {
         { phase: 'child', mode: 'plain', delegatedMember: true },
         { phase: 'declined', mode: 'plain' },
         { phase: 'wake', mode: 'e2ee' }, { phase: 'activity', mode: 'e2ee' }, { phase: 'control', mode: 'e2ee' },
+        { phase: 'setup', mode: 'plain' }, { phase: 'setup', mode: 'e2ee' },
     ] as const)('consumes sealed enrollment custody for $phase without a public native resource ($mode, delegatedMember=$delegatedMember)', async scenario => {
         const { phase, mode } = scenario;
         const delegatedMember = 'delegatedMember' in scenario && scenario.delegatedMember;
@@ -3195,6 +3196,50 @@ describe('ordinary Account managed Action origination', () => {
                 // authority above was produced by real admission and signing.
                 await db.managedMachine.update({ where: { id: row.id }, data: { creationState: 'canceled' } });
                 expect((await send()).statusCode).not.toBe(200);
+            } else if (phase === 'setup') {
+                // The controller opened the sealed recipe; Home binds only the
+                // exact admitted creation and its sealed preset address.
+                const creation = { preset: { id: presetId, revision: 0, contentEncryptionMode: mode },
+                    setup: { scripts: [{ body: 'echo private-setup' }] } };
+                const target = { homeId, machineId: guestId };
+                const plan = MachineSetupPlanResultV1Schema.parse({ desiredRevision: 0,
+                    sources: projectManagedOpaqueSetupSourcesV1([{ kind: 'accountPreset', presetId, presetRevision: 0,
+                        contentEncryptionMode: mode, setup: creation.setup }, { kind: 'direct', setup: {} }]),
+                    exclusions: [], support: [], recipePlans: [] });
+                // The guest Plan response is the network boundary; preparation is real.
+                const prepared = await prepareManagedMachineSetupApplyInput({ target, creation, readPlan: async () => ({ ok: true, result: plan }) });
+                if ('ok' in prepared) throw new Error(`Setup preparation failed: ${prepared.errorCode}`);
+                const sources = prepared.targets[0]!.sources;
+                type SetupChild = 'machines.setup.plan' | 'machines.setup.apply';
+                const mint = (actionId: SetupChild, input: unknown, creationRequestId: string = selected.requestId) => {
+                    const path = bindExternalActionExecutionAuthorizationHttpPathV1(actionId);
+                    const body = { v: 1, machineId: guestId, envelope: seal(actionId, guestId, input, `creation-${actionId}`),
+                        managedContinuation: { managedId: row.id, creationRequestId, expectedIntentRevision: 0 } };
+                    return instance.inject({ method: 'POST', url: path, payload: body,
+                        headers: createExternalActionAuthorizedRequestHeaders({ authorization: root, effectActionId: root.binding.actionId,
+                            target: root.binding.target, installationId: selected.controller.installationId,
+                            privateKey: selected.keys.secretKey, method: 'POST', path, body }) });
+                };
+                const current = await mint('machines.setup.plan', target);
+                expect(current.statusCode, current.body).toBe(200);
+                const effects = await mint('machines.setup.plan', { ...target, sources, mode: 'effects' });
+                expect(effects.statusCode, effects.body).toBe(200);
+                const applied = await mint('machines.setup.apply', prepared);
+                expect(applied.statusCode, applied.body).toBe(200);
+                const child = ExternalActionExecutionAuthorizationV1Schema.parse(applied.json());
+                expect(child.binding).toMatchObject({ actionId: 'machines.setup.apply', machineId: guestId,
+                    managedContinuation: { managedId: row.id, acquireRequestEnvelopeDigest: root.binding.requestEnvelopeDigest } });
+                expect(await verifyCurrentExternalActionPrincipal(child.binding)).not.toBeNull();
+                expect(JSON.stringify(await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } }))).not.toContain('echo private-setup');
+                expect((await mint('machines.setup.apply', prepared, 'other-creation')).statusCode).not.toBe(200);
+                if (mode === 'plain') {
+                    const foreign = projectManagedOpaqueSetupSourcesV1([{ kind: 'accountPreset', presetId: crypto.randomUUID(), presetRevision: 0,
+                        contentEncryptionMode: mode, setup: creation.setup }, { kind: 'direct', setup: {} }]);
+                    expect((await mint('machines.setup.plan', { ...target, sources: foreign, mode: 'effects' })).statusCode).not.toBe(200);
+                }
+                // Construct only the settled lifecycle boundary; admission above was real.
+                await db.managedMachine.update({ where: { id: row.id }, data: { machineSetup: { state: 'succeeded' } } });
+                expect((await mint('machines.setup.apply', prepared)).statusCode).not.toBe(200);
             } else if (phase === 'control') {
                 const actionId = 'machines.managed.power.set';
                 const controlInput = { homeId, managedId: row.id, intent: 'stop' as const, when: 'after-idle' as const };

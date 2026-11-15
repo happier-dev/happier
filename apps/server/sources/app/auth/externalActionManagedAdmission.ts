@@ -15,7 +15,7 @@ import type { Tx } from '@/storage/inTx';
 import { resolveSignedManagedAccountExecutorInTx } from '@/app/machines/managed/managedRequestAuthority';
 
 import { MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1, resolveManagedMachineEnrollmentAdminAccessV1, resolveManagedMachineEnrollmentAgentIsolationV1 } from '@happier-dev/protocol/machines/managed/enrollmentIdentityV1';
-import { projectManagedMachine, hasBoundManagedLifecycle, readManagedController, readManagedEnrollmentAccountId, requireCurrentManagedMachineInTx } from '@/app/machines/managed/managedRows';
+import { projectManagedMachine, hasBoundManagedLifecycle, readManagedController, readManagedCreationSetup, readManagedEnrollmentAccountId, requireCurrentManagedMachineInTx } from '@/app/machines/managed/managedRows';
 import { isStoredOpaquePresetMachine } from '@/app/machines/managed/managedMachineProjection';
 import type { ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/enrollmentIdentityV1';
 import { readAdmittedExternalActionMachineInTx } from './externalActionHandoffAdmission';
@@ -67,10 +67,10 @@ export async function readAdmittedManagedCreationChildInTx(reader: Tx, binding: 
         const machine = !policyChild || legacyPolicyChild ? projectManagedMachine(row) : undefined;
         const enrollmentPolicy: ManagedCreationEnrollmentPolicy = isStoredOpaquePresetMachine(row)
             ? { kind: 'sealed' } : { kind: 'readable', enrollmentIdentity: machine?.enrollmentIdentity };
-        const setup = machine?.machineSetup;
+        const setupAction = binding.actionId === 'machines.setup.apply' || binding.actionId === 'machines.setup.plan';
+        const creationSetup = policyChild ? undefined : readManagedCreationSetup(row);
         const digest = policyChild ? continuation.acquireRequestEnvelopeDigest
-            : binding.actionId === 'machines.setup.apply' || binding.actionId === 'machines.setup.plan'
-                ? state.machineSetup?.requestEnvelopeDigest : state.continuation?.requestEnvelopeDigest;
+            : setupAction ? creationSetup?.requestEnvelopeDigest : state.continuation?.requestEnvelopeDigest;
         if (readManagedEnrollmentAccountId(row) !== binding.accountId || binding.custodianAccountId !== binding.accountId
             || row.enrolledMachineId !== binding.machineId || !hasBoundManagedLifecycle(row)
             || row.desired === 'delete' || digest !== continuation.acquireRequestEnvelopeDigest
@@ -79,9 +79,10 @@ export async function readAdmittedManagedCreationChildInTx(reader: Tx, binding: 
             || enrollmentPolicy.kind === 'readable'
                 && (binding.actionId === 'machines.agentIsolation.preview' || binding.actionId === 'machines.agentIsolation.set')
                 && !resolveManagedMachineEnrollmentAgentIsolationV1(enrollmentPolicy.enrollmentIdentity)
-            || binding.actionId === 'machines.setup.apply' && (!setup || setup.state === 'skipped')
-            || binding.actionId === 'machines.setup.plan' && (!setup || ['succeeded', 'skipped'].includes(setup.state))
-            || binding.actionId === 'session.spawn_new' && setup && !['succeeded', 'skipped'].includes(setup.state)) return null;
+            || binding.actionId === 'machines.setup.apply' && (!creationSetup?.runnable && creationSetup?.state !== 'succeeded')
+            || binding.actionId === 'machines.setup.plan' && !creationSetup?.runnable
+            || binding.actionId === 'session.spawn_new' && creationSetup?.state !== undefined
+                && !['succeeded', 'skipped'].includes(creationSetup.state)) return null;
         const machineAdmission = await readAdmittedExternalActionMachineInTx(reader, binding, binding.machineId, binding.installationId);
         return machineAdmission ? { row, machineAdmission, enrollmentPolicy } : null;
     } catch (error) {

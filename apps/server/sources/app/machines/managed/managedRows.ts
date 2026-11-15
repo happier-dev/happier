@@ -621,6 +621,33 @@ export function matchesManagedEnrollmentResource(row: Pick<StoredManagedMachine,
     return isStoredOpaquePresetMachine(row) ? resource === undefined : sameManagedInput(row.resource, resource);
 }
 
+/** The digest of the admitted acquisition; historical rows retained it only under their Setup carrier. */
+export function readManagedAcquisitionDigest(admitted: StoredManagedAdmission): string | undefined {
+    return admitted.requestEnvelopeDigest ?? admitted.machineSetup?.requestEnvelopeDigest;
+}
+
+/**
+ * Creation Setup children bind the exact admitted acquisition. Like enrollment,
+ * an opaque row retains only Setup lifecycle and the sealed preset address:
+ * whether the sealed recipe declares Setup is the keyholder's decision, so an
+ * unrecorded opaque Setup may still run. Readable rows keep their recorded Setup.
+ */
+export function readManagedCreationSetup(row: StoredManagedMachine): Readonly<{
+    requestEnvelopeDigest: string | undefined;
+    state: NonNullable<ManagedMachineV1['machineSetup']>['state'] | undefined;
+    runnable: boolean;
+    preset: Readonly<{ id: string; revision: number; contentEncryptionMode: 'plain' | 'e2ee' }> | undefined;
+}> {
+    const machine = projectManagedMachine(row);
+    const opaque = isStoredOpaquePresetMachine(row);
+    const state = machine.machineSetup?.state;
+    const recorded = opaque || machine.machineSetup !== undefined;
+    const preset = machine.preset && recorded ? { id: machine.preset.id, revision: machine.preset.revision,
+        contentEncryptionMode: machine.preset.contentEncryptionMode } : undefined;
+    return { requestEnvelopeDigest: readManagedAcquisitionDigest(readManagedAdmissionState(row.admittedInput)), state,
+        runnable: recorded && state !== 'succeeded' && state !== 'skipped', preset };
+}
+
 /** The same audience is prepared by enclosing lifecycle mutations before locks. */
 export async function readManagedMachinePolicyPublicationAudienceInTx(tx: Tx, row: StoredManagedMachine,
     admittedInput = row.admittedInput) {

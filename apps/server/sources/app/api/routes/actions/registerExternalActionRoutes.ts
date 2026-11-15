@@ -43,7 +43,6 @@ import { db } from "@/storage/db";
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
 import { MachineSetupApplyInputV1Schema, MachineSetupPlanInputV1Schema, ManagedMachineActionIdV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { projectManagedMachineSetupCreationSourcesV1 } from '@happier-dev/cli-common/machines/managed';
-import { isManagedOpaquePresetMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { computeActionInputApprovalDigestV1, resolveCredentialActionAdmissionV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1 } from '@happier-dev/protocol/server/http/requestBodyBoundsV1';
 import { ActionIdSchema, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
@@ -62,7 +61,7 @@ import { verifyCurrentExternalActionPrincipal, verifyCurrentExternalActionPrinci
     readExternalActionSessionProposalSurface, hasCurrentExternalActionWorkflowOriginInTx,
     verifyWorkflowExternalActionRequesterAuthorization,
     type WorkflowExternalActionAdmission } from '@/app/auth/externalActionExecutionAuthorization';
-import { ManagedMachineError, hasBoundManagedLifecycle, readManagedAdmissionState, readManagedEnrollmentAccountId, projectManagedMachine, requireCurrentManagedMachineInTx, readManagedMachineInTx, sameManagedInput, readManagedController, type StoredManagedMachine } from '@/app/machines/managed/managedRows';
+import { ManagedMachineError, hasBoundManagedLifecycle, readManagedAdmissionState, readManagedEnrollmentAccountId, readManagedCreationSetup, projectManagedMachine, requireCurrentManagedMachineInTx, readManagedMachineInTx, sameManagedInput, readManagedController, type StoredManagedMachine } from '@/app/machines/managed/managedRows';
 import { logUnexpectedRequestError } from '@/app/api/utils/logUnexpectedRequestError';
 import { readDatabaseErrorCode } from '@/storage/transactionErrors';
 import { projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -416,21 +415,21 @@ function requireManagedCreationChild(row: StoredManagedMachine, actionId: string
     }>, enrollmentPolicy?: ManagedCreationEnrollmentPolicy): boolean {
     const acquisition = readManagedAdmissionState(row.admittedInput);
     const policyChild = isManagedEnrollmentPolicyChildActionIdV1(actionId);
-    const machine = policyChild ? undefined : projectManagedMachine(row);
-    const setup = machine?.machineSetup;
-    const readable = machine && !isManagedOpaquePresetMachineV1(machine) ? machine : undefined;
-    const creationSetup = readable?.preset && readable.machineSetup
-        ? { preset: readable.preset, setup: readable.machineSetup.setup } : undefined;
+    const creationSetup = policyChild ? undefined : readManagedCreationSetup(row);
+    // The wire address carries only the admitted preset; the recipe stays with its keyholder.
+    const creationSources = creationSetup?.preset
+        ? projectManagedMachineSetupCreationSourcesV1({ preset: creationSetup.preset, setup: {} }) : undefined;
     const administrator = actionId === MACHINE_ADMIN_ACCESS_SET_ACTION_ID_V1;
     const isolation = actionId === MACHINE_AGENT_ISOLATION_PREVIEW_ACTION_ID_V1 || actionId === MACHINE_AGENT_ISOLATION_SET_ACTION_ID_V1;
     const setupAction = actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1 || actionId === SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.plan.action;
     const digest = policyChild ? parent.requestEnvelopeDigest
-        : setupAction ? acquisition.machineSetup?.requestEnvelopeDigest : acquisition.continuation?.requestEnvelopeDigest;
+        : setupAction ? creationSetup?.requestEnvelopeDigest : acquisition.continuation?.requestEnvelopeDigest;
     if (row.custodianAccountId !== parent.custodianAccountId || readManagedEnrollmentAccountId(row) !== parent.accountId
         || row.enrolledMachineId !== body.machineId || !hasBoundManagedLifecycle(row) || row.desired === 'delete'
         || digest !== parent.requestEnvelopeDigest
-        || actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && setup && !['succeeded', 'skipped'].includes(setup.state)
-        || setupAction && (!setup || ['succeeded', 'skipped'].includes(setup.state))) throw new ManagedMachineError('request_conflict');
+        || actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && creationSetup?.state !== undefined
+            && !['succeeded', 'skipped'].includes(creationSetup.state)
+        || setupAction && !creationSetup?.runnable) throw new ManagedMachineError('request_conflict');
     if ((administrator || isolation) && body.envelope.requestId !== parent.requestId) throw new ManagedMachineError('request_conflict');
     if (administrator && enrollmentPolicy?.kind !== 'sealed') {
         const enrollmentIdentity = enrollmentPolicy?.enrollmentIdentity ?? projectManagedMachine(row).enrollmentIdentity;
@@ -462,7 +461,7 @@ function requireManagedCreationChild(row: StoredManagedMachine, actionId: string
         const input = MachineSetupPlanInputV1Schema.safeParse(body.envelope.input);
         const readsCurrent = input.success && input.data.sources === undefined && input.data.mode === undefined;
         const readsCreationEffects = input.success && input.data.mode === 'effects' && input.data.sources !== undefined
-            && creationSetup && sameManagedInput(input.data.sources, projectManagedMachineSetupCreationSourcesV1(creationSetup));
+            && creationSources && sameManagedInput(input.data.sources, creationSources);
         if (!input.success || input.data.homeId !== row.homeId || input.data.machineId !== row.enrolledMachineId
             || !readsCurrent && !readsCreationEffects) throw new ManagedMachineError('request_conflict');
     }
@@ -470,8 +469,8 @@ function requireManagedCreationChild(row: StoredManagedMachine, actionId: string
         const input = MachineSetupApplyInputV1Schema.safeParse(body.envelope.input);
         const target = input.success && input.data.targets.length === 1 ? input.data.targets[0] : undefined;
         if (!input.success || input.data.homeId !== row.homeId || input.data.machineId !== row.enrolledMachineId
-            || !target || target.homeId !== row.homeId || target.machineId !== row.enrolledMachineId || !creationSetup
-            || !sameManagedInput(target.sources, projectManagedMachineSetupCreationSourcesV1(creationSetup))) throw new ManagedMachineError('request_conflict');
+            || !target || target.homeId !== row.homeId || target.machineId !== row.enrolledMachineId || !creationSources
+            || !sameManagedInput(target.sources, creationSources)) throw new ManagedMachineError('request_conflict');
     }
     return true;
 }

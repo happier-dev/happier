@@ -15,6 +15,7 @@ import {
     projectManagedAcquisitionComputeInput,
     readManagedEnrollmentAccountId,
     readManagedAdmissionState,
+    readManagedAcquisitionDigest,
     readManagedOpaquePresetContent,
     storeOpaquePresetLaunch,
     inManagedMachinePublicationTx,
@@ -71,7 +72,7 @@ export async function admitManagedAcquire(params: Readonly<{
             const acquisition = readManagedAcquisitionIdentity(existing.admittedInput);
             if (!sameManagedInput(acquisition, admittedInputIdentity)) throw new ManagedMachineError("request_conflict");
             const retainedAdmission = readManagedAdmissionState(existing.admittedInput);
-            const retainedDigest = retainedAdmission.requestEnvelopeDigest ?? retainedAdmission.machineSetup?.requestEnvelopeDigest;
+            const retainedDigest = readManagedAcquisitionDigest(retainedAdmission);
             if (retainedDigest && retainedDigest !== params.requestEnvelopeDigest) throw new ManagedMachineError("request_conflict");
             if (isStoredOpaquePresetMachine(existing)) {
                 const presetContent = readManagedOpaquePresetContent(existing);
