@@ -108,6 +108,34 @@ describe('webTranscriptKeyboardOwner', () => {
         unregister();
     });
 
+    it('resolves each registered scroller once per press, however deep the pressed element sits', () => {
+        // Each retained Session tab registers a transcript; resolving a scroller searches the DOM with computed
+        // styles, so a press must not repeat that search for every ancestor of its target.
+        const scrollers = [0, 1, 2].map(() => document.createElement('div'));
+        document.body.append(...scrollers);
+        let target: HTMLElement = scrollers[1]!;
+        for (let depth = 0; depth < 20; depth += 1) {
+            const child = document.createElement('div');
+            target.append(child);
+            target = child;
+        }
+        const calls = [0, 0, 0];
+        const inputs = scrollers.map(() => vi.fn());
+        const unregisters = scrollers.map((scroller, index) => registerWebTranscriptKeyboardOwner({
+            document,
+            onViewportKeyboardInput: inputs[index]!,
+            resolveScroller: () => { calls[index]! += 1; return scroller; },
+        }));
+
+        target.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+        const perPress = [...calls];
+        document.body.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'PageDown' }));
+
+        expect({ perPress, input: inputs.map((input) => input.mock.calls.length) })
+            .toEqual({ perPress: [1, 1, 1], input: [0, 1, 0] });
+        for (const unregister of unregisters) unregister();
+    });
+
     it('returns focus only to the exact mounted, registered transcript scroller', () => {
         const scroller = document.createElement('div');
         const unrelatedScroller = document.createElement('div');

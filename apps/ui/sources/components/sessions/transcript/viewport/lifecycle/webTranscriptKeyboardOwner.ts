@@ -87,17 +87,19 @@ function resolveContainingEntry(
     target: EventTarget | null,
 ): RegisteredEntry | null {
     if (!isNode(target)) return null;
-    let current: Node | null = target;
-    while (current) {
-        const matches: RegisteredEntry[] = [];
-        for (const entry of registry.entries.values()) {
-            if (entry.resolveScroller() === current) {
-                matches.push(entry);
-            }
-        }
-        if (matches.length === 1) return matches[0] ?? null;
-        if (matches.length > 1) return null;
-        current = current.parentNode;
+    // Resolving a scroller searches the DOM (computed styles, scroll sizes): once per entry per event,
+    // never once per ancestor of the target.
+    const entriesByScroller = new Map<Node, RegisteredEntry[]>();
+    for (const entry of registry.entries.values()) {
+        const scroller = entry.resolveScroller();
+        if (!scroller) continue;
+        const entries = entriesByScroller.get(scroller);
+        if (entries) entries.push(entry);
+        else entriesByScroller.set(scroller, [entry]);
+    }
+    for (let current: Node | null = target; current; current = current.parentNode) {
+        const matches = entriesByScroller.get(current);
+        if (matches) return matches.length === 1 ? matches[0] ?? null : null;
     }
     return null;
 }
