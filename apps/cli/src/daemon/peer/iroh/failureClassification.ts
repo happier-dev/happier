@@ -7,17 +7,21 @@ import { logger } from '@/ui/logger';
 type FailedReadinessProbeResult = Exclude<ReadinessProbeResult, Readonly<{ status: 'ready' }>>;
 
 export class DaemonHomeReadinessError extends Error {
+  readonly code: string | undefined;
+
   constructor(
     readonly probe: FailedReadinessProbeResult,
   ) {
     super(probe.errorMessage ?? `Home transport readiness failed: ${probe.status}`);
+    this.code = probe.status === 'server_unreachable' ? probe.failure?.code : undefined;
   }
 }
 
 /** Adapt daemon readiness outcomes; native failure policy stays shared. */
 export function classifyDaemonHomeCarrierFailure(error: unknown): HomeCarrierPolicyFailureClassification {
   if (error instanceof DaemonHomeReadinessError) {
-    return { fallbackAllowed: error.probe.status !== 'auth_failed' };
+    return { fallbackAllowed: error.probe.status !== 'auth_failed'
+      && !(error.probe.status === 'server_unreachable' && error.probe.failure) };
   }
   const classification = classifyIrohHomeCarrierFailure(error);
   if (classification.fallbackAllowed) {

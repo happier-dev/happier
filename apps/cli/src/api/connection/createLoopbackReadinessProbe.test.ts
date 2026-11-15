@@ -5,10 +5,10 @@ import { FEATURES_RESPONSE_MAX_UTF8_BYTES_V1 } from '@happier-dev/protocol';
 const axiosGet = vi.hoisted(() => vi.fn());
 
 // Keep the real AxiosHeaders alongside the plain record accepted by Axios response types.
-vi.mock('axios', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('axios')>()),
-  default: { get: axiosGet },
-}));
+vi.mock('axios', async (importOriginal) => {
+  const original = await importOriginal<typeof import('axios')>();
+  return { ...original, default: { ...original.default, get: axiosGet } };
+});
 
 import { createLoopbackReadinessProbe } from './createLoopbackReadinessProbe';
 
@@ -109,6 +109,18 @@ describe('createLoopbackReadinessProbe', () => {
       expectedServerIdentityId: 'srv_expected',
     })()).resolves.toMatchObject({ status: 'auth_failed' });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(axiosGet).not.toHaveBeenCalled();
+  });
+
+  it.each([[200, 'HOME_FEATURES_UNREADABLE'], [404, 'HOME_FEATURES_ENDPOINT_MISSING']] as const)('retains HTTP %s unsupported Home features as a non-retryable refusal before authentication', async (status, code) => {
+    const privateResponseBody = 'private-response-content';
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(privateResponseBody, { status })));
+    const result = await createLoopbackReadinessProbe({
+      serverUrl: 'https://home.example.test', token: 'account-token', expectedServerIdentityId: 'srv_expected',
+    })();
+
+    expect(result).toMatchObject({ status: 'server_unreachable', failure: { code, retryable: false } });
+    expect(JSON.stringify(result)).not.toContain(privateResponseBody);
     expect(axiosGet).not.toHaveBeenCalled();
   });
 

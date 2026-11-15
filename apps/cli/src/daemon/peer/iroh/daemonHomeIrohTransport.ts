@@ -142,6 +142,7 @@ async function waitForDaemonHomeReadiness(
       unsubscribe = supervisor.subscribe((state) => {
         if (state.phase === 'online') resolve({ status: 'ready' });
         if (state.phase === 'auth_failed' && state.lastProbe) resolve(state.lastProbe);
+        if (state.failure && state.lastProbe) resolve(state.lastProbe);
       });
       void supervisor.start().catch(reject);
     });

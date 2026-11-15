@@ -19,6 +19,13 @@ artifacts. Matching 0.3 server and controller/app consumers must reload together
 this adds no persisted state, migration, endpoint or SDK epoch.
 
 
+Home identity readiness retains the existing unsupported-feature refusal codes
+`HOME_FEATURES_UNREADABLE` / `HOME_FEATURES_ENDPOINT_MISSING` as non-retryable
+connection failures. A successful HTTP response does not establish protocol
+compatibility. The daemon settles these failures with the same typed reason;
+it does not replace its executable or reinterpret them as authentication errors.
+A development Home still requires its controller payload for managed recovery.
+
 ## Managed guest Home network context (unreleased 0.3)
 
 Local provisioner `guestHome` input optionally carries closed `hostIdentity`

@@ -93,6 +93,63 @@ afterEach(async () => {
 });
 
 describe('daemon Home startup verification', () => {
+  it.each([[200, 'HOME_FEATURES_UNREADABLE'], [404, 'HOME_FEATURES_ENDPOINT_MISSING']] as const)('settles unsupported HTTP %s Home verification without authentication, publication or automatic retries', async (status, code) => {
+    vi.useFakeTimers();
+    const fetchBoundary = vi.fn<typeof fetch>(async () => new Response('unreadable-home-features', { status }));
+    vi.stubGlobal('fetch', fetchBoundary);
+    const shutdown = new AbortController();
+    const previousOrigin = resolveServerHttpBaseUrl();
+    const startup = prepareSavedHomeTransport({ runtime: null, token: 'fixture-home-token', profile, signal: shutdown.signal });
+    let failure: unknown;
+    const completed = startup.then(() => { throw new Error('Unsupported Home must not become ready'); }, error => { failure = error; });
+    try {
+      await vi.waitFor(() => expect(failure).toMatchObject({ code, probe: {
+        status: 'server_unreachable', failure: { code, retryable: false },
+      } }));
+      const requestsAtRefusal = fetchBoundary.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(DEFAULT_MANAGED_CONNECTION_POLICY.backoffMaxMs);
+      expect(fetchBoundary).toHaveBeenCalledTimes(requestsAtRefusal);
+      expect(axiosGet).not.toHaveBeenCalled();
+      expect(resolveServerHttpBaseUrl()).toBe(previousOrigin);
+    } finally {
+      shutdown.abort();
+      await completed;
+    }
+  });
+
+  it('retains an unreadable Iroh Home refusal without falling back to HTTPS', async () => {
+    vi.useFakeTimers();
+    const fetchBoundary = vi.fn<typeof fetch>(async () => new Response('unreadable-home-features'));
+    vi.stubGlobal('fetch', fetchBoundary);
+    const runtime = await createDaemonMachineIrohRuntime({ happyHomeDir: '/unused-native-fixture',
+      identity: 'ephemeral', relayConfig: { relayPolicy: 'disabled', relayUrls: [] }, native: {
+        createEndpoint: async () => ({ endpointHandle: 'unreadable-home', endpointId: 'b'.repeat(64) }),
+        getEndpointStatus: async () => ({ active: true, endpointId: 'b'.repeat(64), relayUrls: [], directAddresses: [] }),
+        ensureHomeTunnel: async () => ({ tunnelId: 'unreadable-home', runtimeOrigin: 'http://127.0.0.1:48123', observedPath: 'relay' as const }),
+        releaseHomeTunnel: async () => undefined,
+        shutdownEndpoint: async () => undefined,
+      } as never });
+    if (!runtime.available) throw new Error('Expected fixture endpoint');
+    const shutdown = new AbortController();
+    const startup = prepareSavedHomeTransport({ runtime, token: 'fixture-home-token', signal: shutdown.signal,
+      applicationCarrierEligibility: 'automatic', profile: { ...profile, homeConnectionDescriptor: { ...profile.homeConnectionDescriptor!,
+        endpoints: [{ kind: 'iroh', endpointId: 'a'.repeat(64) }, { kind: 'https', url: 'https://ingress.example.test' }],
+      } } });
+    let failure: unknown;
+    const completed = startup.then(() => { throw new Error('Unsupported Home must not become ready'); }, error => { failure = error; });
+    try {
+      await vi.waitFor(() => expect(failure).toMatchObject({ code: 'HOME_FEATURES_UNREADABLE', probe: {
+        failure: { code: 'HOME_FEATURES_UNREADABLE', retryable: false },
+      } }));
+      expect(fetchBoundary.mock.calls.map(([url]) => String(url))).toEqual(['http://127.0.0.1:48123/v1/features']);
+      expect(axiosGet).not.toHaveBeenCalled();
+    } finally {
+      shutdown.abort();
+      await completed;
+      await runtime.shutdown();
+    }
+  });
+
   it('reconsiders Iroh on the existing startup wake when the declared application origin stays unreachable', async () => {
     vi.useFakeTimers();
     vi.stubGlobal('fetch', vi.fn<typeof fetch>(async url => String(url).startsWith('http://qa.localhost:3039/')
@@ -214,12 +271,12 @@ describe('daemon Home startup verification', () => {
     await expect(fetch(`${retainedOrigin}/v1/features`)).rejects.toThrow();
   });
 
-  it.each(['transport_closed', 'future_native_closure', 'probe-timeout', 'health-unavailable', 'features-unavailable'] as const)('keeps startup alive on declared HTTPS with one Iroh attempt per acquisition after %s', async code => {
+  it.each(['transport_closed', 'future_native_closure', 'probe-timeout', 'health-unavailable', 'features-network-unavailable'] as const)('keeps startup alive on declared HTTPS with one Iroh attempt per acquisition after %s', async code => {
     const fetchMock = vi.fn<typeof fetch>(async url => {
       if (String(url).startsWith('http://127.0.0.1:48123/')) {
         if (code === 'probe-timeout') throw new DOMException('timed out', 'AbortError');
         if (code === 'health-unavailable') return new Response('', { status: 503 });
-        return Response.json({ invalid: 'features' });
+        throw new TypeError('fetch failed');
       }
       return features();
     });

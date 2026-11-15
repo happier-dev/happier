@@ -14,6 +14,7 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
+import { DaemonHomeReadinessError } from './peer/iroh/failureClassification';
 import { createManagedActivityInventory, createLiveWorkProducerGroup, type LiveWorkProducerV1 } from './lifecycle/managedActivity';
 import { projectDaemonRequesterWorkAttribution } from './lifecycle/requesterWorkAttribution';
 import { createExecutionRunLiveWorkProducer } from './executionRunRegistry';
@@ -627,7 +628,7 @@ export async function startDaemon(
         if (!preparedIrohState.home) return;
         const readiness = await preparedIrohState.home.verifyAuthenticated(credentials.token);
         if (readiness.status !== 'ready') {
-          throw new Error(readiness.errorMessage ?? `Authenticated Home transport probe failed: ${readiness.status}`);
+          throw new DaemonHomeReadinessError(readiness);
         }
       },
     });

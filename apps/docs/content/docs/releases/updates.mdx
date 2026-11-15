@@ -58,6 +58,12 @@ Updates refuse to cross release lines or replace an installed CLI with an older 
 If a development Home's guest payload is unavailable, choose a connected
 controller with that payload, then retry. An older Home that does not advertise
 its guest CLI source must be updated before managed installation can continue.
+
+If a provisioned machine cannot connect and its controller is offline, restore
+the controller with a compatible CLI and its existing Account/Home profile, then
+run the machine's Update or Retry install. Development Home payloads are supplied
+by that controller; the guest cannot download them through public self-update.
+A Home responding to a health check can still require a newer compatible CLI.
 An older guest that cannot provide diagnostic reports returns
 `guest_cli_incompatible` when inspected; use Retry install to replace its CLI.
 

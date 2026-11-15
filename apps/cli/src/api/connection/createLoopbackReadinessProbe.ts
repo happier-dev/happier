@@ -7,6 +7,7 @@ import { isAuthenticationStatus } from '@/api/client/httpStatusError';
 import { resolveLoopbackHttpUrl } from '@/api/client/loopbackUrl';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { observeServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import { readTerminalAuthHomeIdentity, TerminalAuthEnrollmentVerificationError } from '@/auth/terminalAuthEnrollmentClient';
 
 export function createLoopbackHomeIdentityProbe(params: Readonly<{
   serverUrl: string;
@@ -24,6 +25,8 @@ export function createLoopbackHomeIdentityProbe(params: Readonly<{
         signal: params.signal,
       });
       params.signal?.throwIfAborted();
+
+      if (snapshot.status === 'unsupported') readTerminalAuthHomeIdentity(snapshot);
 
       if (
         snapshot.status === 'error'
@@ -55,6 +58,13 @@ export function createLoopbackHomeIdentityProbe(params: Readonly<{
       }
       return { status: 'ready' };
     } catch (error) {
+      if (error instanceof TerminalAuthEnrollmentVerificationError) {
+        return {
+          status: 'server_unreachable',
+          errorMessage: error.message,
+          failure: { code: error.code, retryable: false },
+        };
+      }
       return {
         status: 'server_unreachable',
         errorMessage: error instanceof Error ? error.message : String(error),

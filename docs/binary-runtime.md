@@ -350,6 +350,26 @@ or `publicdev`, the dev channel); release packaging supplies that channel.
 Older Homes without a valid identity report `guest_cli_identity_unavailable`;
 the supplier does not infer a release line from their package version.
 
+Managed guest recovery uses the same source decision even when the guest daemon
+cannot connect. A `home-payload` Home does not expose that controller-local
+archive as a guest download. Restore a compatible controller with the Home's
+payload and its retained Account/Home profile, then run the existing managed
+Machine Update/Retry install. Keep the guest's enrollment and data; copying a
+payload or selecting a public release is not this recovery path. For a
+`public-release` Home, the existing native/SSH supplier can acquire the exact
+same-line, same-channel signed release without a running guest daemon. The
+standalone `self update` command retains its installed-channel contract; it is
+not an automatic Home-aware managed-guest upgrader.
+
+HTTP 200 from `/health` or `/v1/features` proves that the route responds, not
+that the CLI can decode the Home protocol. The Home identity readiness owner
+preserves `HOME_FEATURES_UNREADABLE` and `HOME_FEATURES_ENDPOINT_MISSING` through
+the connection supervisor's existing non-retryable failure metadata. The public
+identity probe settles that refusal before authenticated readiness, rather than
+retrying it as a network outage. Use a compatible CLI/controller, or repair the Home endpoint,
+then retry. Development package version strings alone do not identify the
+loaded source payload.
+
 The invoking UI's Account-native and native SSH enrollment use the same source
 and version decision. For `public-release`, the existing signed installer runs
 on the guest and requires no controller-local filesystem access. For
