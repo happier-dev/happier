@@ -45,6 +45,7 @@ const RETENTION_DOMAIN_DEFINITIONS = Object.freeze({
     sessionSidechainMessages: { id: 'sessionSidechainMessages', policyConfig: ageConfig('SESSION_SIDECHAIN_MESSAGES') },
     accountChanges: { id: 'accountChanges', policyConfig: ageConfig('ACCOUNT_CHANGES') },
     usageEvents: { id: 'usageEvents', policyConfig: ageConfig('USAGE_EVENTS') },
+    // Owner ruling 2026-11-12: 90 days of detail, then daily summaries, with automatic deletion off too.
     providerAccountUsageHistory: {
         id: 'providerAccountUsageHistory',
         policyConfig: ageConfig('PROVIDER_ACCOUNT_USAGE_HISTORY', { mode: 'delete_older_than', days: 90 }),

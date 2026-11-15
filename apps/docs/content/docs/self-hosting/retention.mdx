@@ -9,8 +9,9 @@ RepeatKeys that carry their own `expiresAt` remain subject to that validity boun
 by the same bounded sweep worker.
 
 In unreleased 0.3 development, provider usage history has a default policy of 90 days of detailed
-observations, followed by daily summaries. The global retention switch still defaults to off; this
-policy only deletes detail when automatic deletion is enabled.
+observations, followed by daily summaries. This policy runs even when the global retention switch
+is off; set `HAPPIER_SERVER_RETENTION__PROVIDER_ACCOUNT_USAGE_HISTORY__MODE=keep_forever` to keep
+all detail.
 
 Public share access logs are kept for 90 days by default. This rule runs even when the global
 retention switch is off; set `HAPPIER_SERVER_RETENTION__PUBLIC_SHARE_ACCESS_LOGS__MODE=keep_forever`
@@ -69,10 +70,6 @@ Operator-configured age-based retention only becomes effective when both of thes
 If retention is disabled, or if every domain is still set to `keep_forever`, the effective operator
 policy remains keep-forever for every domain. Intrinsic lifecycle rules such as RepeatKey expiry still
 run; they preserve rows whose intrinsic expiry is in the future.
-
-In 0.3 development, enabling automatic deletion also activates the default 90-day provider usage
-history policy. Set that domain to `keep_forever` if you want to enable other cleanup rules while
-keeping all provider usage observations.
 
 ## Provider usage history (0.3 development)
 
