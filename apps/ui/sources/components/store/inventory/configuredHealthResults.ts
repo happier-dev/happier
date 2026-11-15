@@ -1,10 +1,9 @@
-import { healthResultProjectionStoredSchema, healthResultProjectionIdentity, healthResultProjectionAt, HEALTH_RESULT_CHECKPOINT_PREFIX,
+import { healthResultProjectionIdentity, readHealthResultProjections,
     type HealthResultProjection } from '@happier-dev/plugins-machine-services/health-results';
 import type { AccountKvService } from '@happier-dev/plugin-sdk/storage';
 import type { HealthCheckResultV1 } from '@happier-dev/plugin-sdk';
 import { runSavedHealthCheck, type SavedHealthCheckRunInput } from '@happier-dev/plugins-machine-services/health-results';
 import { createFrontDoorUiActionExecutor, type UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
-import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 
 export type ConfiguredHealthResultsState = Readonly<{ kind: 'loading' }> | Readonly<{ kind: 'neverObserved' }>
     | Readonly<{ kind: 'notLoaded' }> | Readonly<{ kind: 'unavailable'; code: string }>
@@ -37,14 +36,9 @@ export function configuredHealthResultsForTrigger(page: ConfiguredHealthResultsP
 /** One native page per demand. More pages require the person's continuation; no row performs a read. */
 export async function readConfiguredHealthResults(kv: Pick<AccountKvService, 'list'>, signal: AbortSignal,
     previous: ConfiguredHealthResultsPage, cursor?: string): Promise<ConfiguredHealthResultsPage> {
-    const page = await kv.list({ prefix: HEALTH_RESULT_CHECKPOINT_PREFIX, ...(cursor ? { cursor } : {}), signal });
-    signal.throwIfAborted();
+    const page = await readHealthResultProjections(kv, { signal, cursor });
     const next = new Map<string, Readonly<{ revision: number; selector: string; state: ConfiguredHealthResultsState }>>();
-    for (const row of page.items) {
-        if ('deleted' in row || !isJsonObject(row.value)) continue;
-        const parsed = healthResultProjectionStoredSchema.safeParse(row.value.current);
-        if (!parsed.success) continue;
-        const projection = healthResultProjectionAt(parsed.data, Date.now());
+    for (const { projection } of page.items) {
         for (const member of projection.members) {
             const key = configuredHealthResultKey(member.automationId, member.triggerId);
             const prior = previous.results.get(key);

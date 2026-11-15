@@ -308,9 +308,14 @@ Action writes the association. `projects.provisionOptionsAction` and
 references a safe read-only Action. Data roles have no runtime `actions` arm. These declarations
 grant no secret custody or authority to execute a mutation.
 
-This unreleased source contract admits and projects metadata and validates
-target-role input/result contracts. It does not yet provide installed target
-invocation or platform upload. Native managed-data execution remains a separate integration.
+In unreleased 0.3 development source, installed target Actions run through the
+host's deployment-target role admission and invocation path. For an admitted
+`uploadDeploy` invocation, the host supplies
+`context.services.deploymentSource.materialize` to acquire the reviewed source.
+The built-in Vercel uploader consumes that source for file uploads and
+provider-side builds; the Cloudflare Pages uploader consumes it for its build
+and asset upload. Each role still depends on the installed target declaration
+and the host's available services.
 A projected entry grants no filesystem, secret,
 or deployment authority. Check the generated
 [availability report](/plugins/manifest/availability) for your exact SDK and host.

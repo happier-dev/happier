@@ -17,6 +17,17 @@ describe.each([
     ['public', publicProtocol],
     ['browser', browserProtocol],
 ] as const)('deployment Artifact readers through the %s SDK protocol entry', (_entry, protocol) => {
+    const revisionFailure = {
+        ok: false, error: 'deployment_conflict',
+        failureCause: { phase: 'deployment.artifact.revision', errorClass: 'TypeError',
+            errorCode: 'deployment_conflict', httpStatus: null },
+    } satisfies publicProtocol.DeploymentArtifactReadFailureV1;
+    const contentFailure = {
+        ok: false, error: 'deployment_content_unavailable',
+        failureCause: { phase: 'deployment.artifact.content', errorClass: 'TypeError',
+            errorCode: 'deployment_content_unavailable', httpStatus: null },
+    } satisfies publicProtocol.DeploymentArtifactReadFailureV1;
+
     it('opens exact receipts and refuses stale references and invalid content', () => {
         expectTypeOf(protocol.readDeploymentReceiptArtifactV1).toEqualTypeOf<typeof canonicalReadReceipt>();
         const receipt = createDeploymentReceiptDetailV1();
@@ -29,9 +40,9 @@ describe.each([
         expect(protocol.readDeploymentReceiptArtifactV1(receipt.deployment, artifact))
             .toEqual({ ok: true, title: 'Deployment', content: receipt.content });
         expect(protocol.readDeploymentReceiptArtifactV1(receipt.deployment, { ...artifact, artifactId: 'another-receipt' }))
-            .toEqual({ ok: false, error: 'deployment_conflict' });
+            .toEqual(revisionFailure);
         expect(protocol.readDeploymentReceiptArtifactV1(receipt.deployment, { ...artifact, body: '{}' }))
-            .toEqual({ ok: false, error: 'deployment_content_unavailable' });
+            .toEqual(contentFailure);
     });
 
     it('opens exact target links and preserves canonical content and revision refusals', () => {
@@ -47,10 +58,10 @@ describe.each([
         expect(protocol.readDeploymentTargetLinkArtifactV1(reference, artifact))
             .toEqual({ ok: true, title: 'Cloudflare', content });
         expect(protocol.readDeploymentTargetLinkArtifactV1(reference, { ...artifact, revision: { headerVersion: 1, bodyVersion: 2 } }))
-            .toEqual({ ok: false, error: 'deployment_conflict' });
+            .toEqual(revisionFailure);
         expect(protocol.readDeploymentTargetLinkArtifactV1(reference, { ...artifact,
             body: JSON.stringify({ ...content, credentialId: 'private-credential' }) }))
-            .toEqual({ ok: false, error: 'deployment_content_unavailable' });
+            .toEqual(contentFailure);
     });
 
     it('accepts the producer-owned Environment secret scope through both public SDK projections', () => {

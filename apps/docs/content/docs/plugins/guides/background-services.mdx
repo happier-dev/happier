@@ -563,6 +563,27 @@ share the built-in HTTP, certificate, TCP, DNS and heartbeat producers. Domain
 bindings retain their native Domain admission. Qualified contributed kinds use
 their declared finite Action through ordinary Action policy.
 
+For the saved observations already shown in health details, unreleased 0.3
+development source exposes the safe Account Action
+`happier.machine.services/actions/health/results`. It shares the UI's retained reader and
+returns a native page of `{ key, projection }` items, plus optional `nextCursor`.
+It does not probe the target or require an online Machine:
+
+```ts
+const page = await context.services.actions.execute({
+  pluginId: 'happier.machine.services', localId: 'health/results',
+}, {}, { signal: context.signal });
+```
+
+Pass `{ cursor: page.nextCursor }` on the next invocation when a continuation is
+present. A projection includes `members` identifying the saved automation,
+trigger id and revision, and source selector; match these against the current
+saved source before using its `checks`. Each check carries the retained result
+and any recorded uptime buckets, failure streak and recent samples. Older
+checkpoints may lack history, and partial sample coverage is explicit. An empty
+page means no readable retained projection on that page; it does not establish
+that a target is healthy. Account storage failures reject the read.
+
 `context.services.healthChecks.listKinds({ signal })` reads the admitted catalog.
 Its entries include `pluginId`, local `id`, `title`, closed `configSchema` and
 finite `action`. A contributed producer reads its saved configuration with

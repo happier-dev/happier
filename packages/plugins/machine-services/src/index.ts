@@ -1,2 +1,2 @@
 export { manifest, PLUGIN_MANIFEST } from './manifest.js';
-export { activate } from './activate.js';
+export { activate, activateAccount } from './activate.js';

@@ -6,6 +6,7 @@ import { PluginWebhookHeartbeatManageInputV1ProtocolSchema, PluginWebhookHeartbe
 import { httpRequestActions } from './httpRequest.js';
 import { systemdRuntime } from './systemd.js';
 import { healthCatalogActions } from './healthCatalog.js';
+import { retainedHealthActions } from './healthResults.js';
 import { monitorActions } from './monitorWebhooks.js';
 import { monitorCapabilityContributions, monitorDefinitions, monitorKinds, monitorObserved } from './monitorDefinitions.js';
 import { composeRuntime } from './compose.js';
@@ -42,7 +43,7 @@ export const plugin = definePlugin({
         translations: locales.map(locale => ({ locale, resourceId: `i18n-${locale.toLowerCase()}` })) },
     entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
     activation: { events: [], configuration: { automationEventSources: true } },
-    actions: { ...httpRequestActions, ...machineOutcomeEventActions, ...monitorActions, ...healthCatalogActions, ...savedHealthActions, ...deploymentEventActions, ...managedSetupEventActions, ...mcpUpdateEventActions, ...machinePresenceEventActions,
+    actions: { ...httpRequestActions, ...machineOutcomeEventActions, ...monitorActions, ...healthCatalogActions, ...retainedHealthActions, ...savedHealthActions, ...deploymentEventActions, ...managedSetupEventActions, ...mcpUpdateEventActions, ...machinePresenceEventActions,
         [HEALTH_SETUP_OPEN_ACTION_ID]: {
             title: 'Open health check setup', scopes: ['global', 'machine'], surfaces: ['ui', 'plugin'], dangerLevel: 'safe',
             placementBindings: [],

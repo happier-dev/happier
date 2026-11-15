@@ -1,4 +1,6 @@
 import { HealthCheckResultV1ProtocolSchema, createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
+import type { AccountKvService } from '@happier-dev/plugin-sdk/storage';
+export { HEALTH_RESULTS_ACTION_ID, HEALTH_RESULTS_ACTION_REF } from './actionIds.js';
 export { runSavedHealthCheck, type SavedHealthCheckRunInput } from './savedHealthCheckRun.js';
 import { createProtocolStoredReadSchema, defineProtocolArray, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion,
     ProtocolAutomationTriggerRevisionV1Schema } from '@happier-dev/plugin-sdk/protocol';
@@ -27,6 +29,28 @@ export const healthResultProjectionSchema = defineProtocolObject({
 }, { policy: 'closed' });
 export type HealthResultProjection = ReturnType<typeof healthResultProjectionSchema.parse>;
 export const healthResultProjectionStoredSchema = createProtocolStoredReadSchema(healthResultProjectionSchema);
+
+export const healthResultProjectionPageSchema = defineProtocolObject({
+    items: defineProtocolArray(defineProtocolObject({ key: defineProtocolString(), projection: healthResultProjectionSchema }, { policy: 'closed' })),
+    nextCursor: defineProtocolString().optional(),
+}, { policy: 'closed' });
+export type HealthResultProjectionPage = ReturnType<typeof healthResultProjectionPageSchema.parse>;
+
+/** One native Account KV page, shared by retained UI reads and the public Action. No probe or write. */
+export async function readHealthResultProjections(kv: Pick<AccountKvService, 'list'>,
+    options: Readonly<{ signal: AbortSignal; cursor?: string }>): Promise<HealthResultProjectionPage> {
+    const page = await kv.list({ prefix: HEALTH_RESULT_CHECKPOINT_PREFIX,
+        ...(options.cursor ? { cursor: options.cursor } : {}), signal: options.signal });
+    options.signal.throwIfAborted();
+    const items: Array<HealthResultProjectionPage['items'][number]> = [];
+    const at = Date.now();
+    for (const row of page.items) {
+        if ('deleted' in row || row.value === null || typeof row.value !== 'object' || !('current' in row.value)) continue;
+        const parsed = healthResultProjectionStoredSchema.safeParse(row.value.current);
+        if (parsed.success) items.push({ key: row.key, projection: healthResultProjectionAt(parsed.data, at) });
+    }
+    return { items, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
+}
 
 /** Observation clocks and latency are request freshness, not a changed health condition. */
 export function healthResultProjectionIdentity(value: HealthResultProjection): string {
