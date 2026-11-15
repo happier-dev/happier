@@ -317,6 +317,34 @@ it.each(['repository', 'stored'] as const)('opens CI token setup only for a %s E
   } finally { await act(async () => { controller.retire(); }); }
 });
 
+it('keeps a hyphenated Machine name whole inside the What runs sentence (QA-DEPLOY #37)', async () => {
+  const { createMachineFixture, createMachineMetadataFixture } = await import('@/dev/testkit');
+  const { keepNamesWhole } = await import('@/utils/text/keepNamesWhole');
+  const { storage } = await import('@/sync/domains/state/storage');
+  const detail = environmentDetailForHome();
+  // The fixture's runtime, build and controller Machine are one Machine.
+  const machineIds = [detail.environment.controllerMachineId];
+  const { controller } = controllerFor({ detail });
+  storage.setState({ profileScope: { serverId: scope.serverId, accountId: scope.accountId } });
+  storage.getState().applyMachines(machineIds.map(id => createMachineFixture({ id, installationId: `${id}-install`,
+    metadata: createMachineMetadataFixture({ host: 'NLDW4-5-40-40' }) })), true,
+  { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
+  const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+  const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+    demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone deploy={null}
+    review={noReview} onOpenReceipt={() => {}} lifetime={lifetime} />);
+  try {
+    await waitForContent(screen, 'project-deployments.environment.services');
+    const section = screen.root.findAll(node => node.props.testID === 'project-deployments.environment.services'
+      && typeof node.props.description === 'string')[0];
+    const description = String(section?.props.description ?? '');
+    expect(description).toContain('NLDW4');
+    // The sentence wraps between words at 320, never inside the name; the header fact keeps the name as stored.
+    expect(description).toContain(keepNamesWhole('NLDW4-5-40-40'));
+    expect(description).not.toContain('NLDW4-5-40-40');
+  } finally { await screen.unmount(); await act(async () => { controller.retire(); }); }
+});
+
 it('shows the declared login username and first-admin warning with the serving image identity', async () => {
   const base = environmentDetailForHome();
   const detail = environmentDetailForHome({ content: { ...base.content,
@@ -433,9 +461,11 @@ describe('A removed Environment (PAGE-ACCEPT-100 D17)', () => {
 
 describe('Project deployments page', () => {
   it.each([
-    { phone: false, stored: false }, { phone: true, stored: false },
-    { phone: false, stored: true }, { phone: true, stored: true },
-  ])('shows the Environment catalog action with a serving deployment (phone=$phone, stored=$stored)', async ({ phone, stored }) => {
+    { phone: false, stored: false, ready: false }, { phone: true, stored: false, ready: false },
+    { phone: false, stored: true, ready: false }, { phone: true, stored: true, ready: false },
+    // Once Deploy leads, the Environment's agent actions are a titled section of their own, never a bare control (QA-DEPLOY #36).
+    { phone: false, stored: false, ready: true }, { phone: true, stored: false, ready: true },
+  ])('shows the Environment catalog action with a serving deployment (phone=$phone, stored=$stored, ready=$ready)', async ({ phone, stored, ready }) => {
     const { createDeferred } = await import('@/dev/testkit');
     const catalogAnswer = createDeferred<void>();
     const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
@@ -489,7 +519,8 @@ describe('Project deployments page', () => {
     let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
     try {
       screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
-        demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={phone} deploy={null}
+        demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={phone}
+        deploy={ready ? vi.fn(async () => {}) : null}
         review={noReview} onOpenReceipt={() => {}} />);
       const { AgentActionButton } = await import('@happier-dev/plugin-ui/components');
       const declared = screen.findAllByType(AgentActionButton);
@@ -505,6 +536,15 @@ describe('Project deployments page', () => {
         expect(screen!.root.findAll(node => typeof node.type === 'string' && node.props.role === 'button'
           && node.props.accessibilityLabel === 'Set it up').length).toBeGreaterThan(0);
       });
+      const sections = screen.root.findAll(node => node.props.testID === 'project-deployments.environment.agentActions'
+        && typeof node.props.title === 'string');
+      if (ready) {
+        expect(sections).toHaveLength(1);
+        expect(sections[0]!.props.description).toEqual(expect.any(String));
+        expect(sections[0]!.findAllByType(AgentActionButton).map(button => button.props.title)).toContain('Set it up');
+      } else {
+        expect(sections).toHaveLength(0);
+      }
     } finally {
       catalogAnswer.resolve();
       await screen?.unmount();

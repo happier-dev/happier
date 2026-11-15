@@ -4,7 +4,9 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { declaredSubjectAgentActions, InvestigationAgentActionButtons } from '@/components/inbox/detail/InvestigationAgentActionButtons';
 import { InvestigationOutcomeBanner } from '@/components/inbox/detail/InvestigationOutcomeBanner';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useInvestigateFailure } from '@/hooks/inbox/useInvestigateFailure';
+import { t } from '@/text';
 import { DeploymentPreparationEntry, type DeploymentPreparationContext } from './DeploymentPreparation';
 
 const ENVIRONMENT_AGENT_ACTIONS = { agentActions: 'subjectOnly' } as const;
@@ -20,6 +22,11 @@ export function DeploymentEnvironmentAgentActions(props: Readonly<{
   /** An Environment that already serves leads with Deploy; a setup action stays secondary to it. */
   emphasis: 'primary' | 'secondary';
   preparation?: DeploymentPreparationContext;
+  /**
+   * `facts`: the next step under an Environment that serves nothing yet. `section`: once Deploy leads, the actions are
+   * a titled section of their own (QA-DEPLOY #36), so a lone control never floats under the facts.
+   */
+  placement: 'facts' | 'section';
 }>): React.ReactElement | null {
   const subject = React.useMemo(() => ({ kind: 'deploymentEnvironment' as const,
     serverId: props.serverId, environmentId: props.environmentId }), [props.serverId, props.environmentId]);
@@ -31,8 +38,8 @@ export function DeploymentEnvironmentAgentActions(props: Readonly<{
   const waiting = investigation.actions === undefined;
   const actions = waiting ? declaredSubjectAgentActions('deploymentEnvironment') : investigation.actions ?? [];
   if (!props.preparation && actions.length === 0 && !investigation.showOutcome) return null;
-  return (
-    <>
+  const content = (
+    <View style={styles.actions}>
       {props.preparation ? <DeploymentPreparationEntry {...props.preparation} environmentId={props.environmentId} mode="prepare" /> : null}
       <InvestigationAgentActionButtons actions={actions} pending={waiting || investigation.pending} compact={props.compact}
         emphasis={props.emphasis}
@@ -45,10 +52,20 @@ export function DeploymentEnvironmentAgentActions(props: Readonly<{
             pending={investigation.pending} placement="inline" />
         </View>
       ) : null}
-    </>
+    </View>
+  );
+  return props.placement === 'section' ? (
+    <ItemGroup testID="project-deployments.environment.agentActions" surface="none"
+      title={t('projects.deployments.overviewStatus.agentActionsTitle')}
+      description={t('projects.deployments.overviewStatus.agentActionsDescription')}>
+      {content}
+    </ItemGroup>
+  ) : (
+    <ItemGroup surface="none" header="none">{content}</ItemGroup>
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
+  actions: { paddingHorizontal: theme.space.s16, alignItems: 'flex-start', gap: theme.space.s8 },
   outcome: { alignSelf: 'stretch' },
-});
+}));

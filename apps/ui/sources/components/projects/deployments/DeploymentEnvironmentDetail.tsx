@@ -56,6 +56,7 @@ import {
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
+import { keepNamesWhole } from '@/utils/text/keepNamesWhole';
 import { HappyError } from '@/utils/errors/errors';
 import { formatRelativeTime } from '@/utils/time/formatShortRelativeTime';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
@@ -510,6 +511,13 @@ export const DeploymentEnvironmentDetail = React.memo(
     const availability = deploymentDeployAvailability(detail);
     const ready = availability.kind === 'ready' && props.deploy !== null;
     const offline = ready && machineOnline === false;
+    const environmentAgentActions = (
+      <DeploymentEnvironmentAgentActions serverId={props.serverId} environmentId={detail.environment.id}
+        controllerMachineId={detail.environment.controllerMachineId}
+        preparation={!props.preparationInList && props.lifetime && detail.content.definition.kind === 'repository'
+          ? { lifetime: props.lifetime, projectSourceId: detail.environment.projectSourceId } : undefined}
+        compact={props.phone} emphasis={ready ? 'secondary' : 'primary'} placement={ready ? 'section' : 'facts'} />
+    );
     const { deploy, review, environmentId } = props;
     const pressDeploy = async () => {
       if (!deploy || availability.kind !== 'ready') return;
@@ -996,7 +1004,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                       subtitle={(runtime ? runtime.source.kind === 'plugin' : !definition)
                         ? t('projects.deployments.platformLink.nothingDeployedBody')
                         : knownMachine(machineIds[0])
-                          ? t('projects.deployments.nothingDeployedBody', { machine: knownMachine(machineIds[0])! })
+                          ? t('projects.deployments.nothingDeployedBody', { machine: keepNamesWhole(knownMachine(machineIds[0])!) })
                           : t('projects.deployments.nothingDeployedBodyAny')}
                       mode="info"
                     />
@@ -1004,23 +1012,15 @@ export const DeploymentEnvironmentDetail = React.memo(
                 </ItemGroup>
                 </ItemGroupDefaultSurfaceProvider>
               )}
-              {/* The Environment's own agent actions sit on the facts' edge; Deploy stays the page's one primary. */}
-              <ItemGroup surface="none" header="none">
-                <View style={styles.agentActions}>
-                  <DeploymentEnvironmentAgentActions serverId={props.serverId} environmentId={detail.environment.id}
-                    controllerMachineId={detail.environment.controllerMachineId}
-                    preparation={!props.preparationInList && props.lifetime && detail.content.definition.kind === 'repository'
-                      ? { lifetime: props.lifetime, projectSourceId: detail.environment.projectSourceId } : undefined}
-                    compact={props.phone} emphasis={ready ? 'secondary' : 'primary'} />
-                </View>
-              </ItemGroup>
+              {/* Before anything serves, the Environment's agent actions are the next step under the facts. */}
+              {ready ? null : environmentAgentActions}
               {services.length > 0 ? (
                 <ItemGroup
                   testID="project-deployments.environment.services"
                   title={t('projects.deployments.overviewStatus.whatRunsTitle')}
                   titleAccessory={<ManagedSectionCount count={services.length} />}
                   description={knownMachine(machineIds[0])
-                    ? t('projects.deployments.overviewStatus.servicesRun', { machine: knownMachine(machineIds[0])! })
+                    ? t('projects.deployments.overviewStatus.servicesRun', { machine: keepNamesWhole(knownMachine(machineIds[0])!) })
                     : t('projects.deployments.overviewStatus.servicesRunAny')}
                   surface="none"
                   action={machineIds.length === 1 ? (
@@ -1127,6 +1127,8 @@ export const DeploymentEnvironmentDetail = React.memo(
                   </SectionContentRow>
                 </ItemGroup>
               ) : null}
+              {/* Once Deploy leads, they are a titled section of their own beside the Environment's other agent work. */}
+              {ready ? environmentAgentActions : null}
               {triggerSubject ? (
                 <SubjectTriggersSection subject={triggerSubject}
                   subjectName={props.environmentTitle?.(props.environmentId) ?? detail.content.name}
@@ -1478,7 +1480,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   // The row already insets its bottom content; the strip only keeps its distance from the commit line.
   factsLine: { color: theme.colors.text.secondary },
-  agentActions: { paddingHorizontal: theme.space.s16, alignItems: 'flex-start', gap: theme.space.s8 },
   mono: Typography.mono(),
   // The facts are their own card a grid gap under the receipt (lab `envOv`), not a second half of it.
   factsGroup: { marginTop: PAGE_LIST_METRICS.cardGapPx },

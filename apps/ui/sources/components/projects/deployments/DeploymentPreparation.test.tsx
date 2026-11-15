@@ -300,7 +300,8 @@ describe('deployment preparation entry', () => {
     const {serverId, account} = await fixture();
     try {
       const screen = await renderAccountScreen(<ModalProvider><DeploymentEnvironmentAgentActions serverId={serverId} environmentId="staging"
-        compact={false} emphasis="secondary" preparation={{ lifetime: account.accountLifetime, projectSourceId: 'project' }} /></ModalProvider>);
+        compact={false} emphasis="secondary" placement="section"
+        preparation={{ lifetime: account.accountLifetime, projectSourceId: 'project' }} /></ModalProvider>);
       await screen.pressByTestIdAsync('project-deployments.prepare.open');
       expect(screen.findByTestId('project-deployments.prepare.sheet')).not.toBeNull();
       await waitReady(screen);
