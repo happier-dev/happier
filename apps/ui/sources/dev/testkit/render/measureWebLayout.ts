@@ -235,13 +235,15 @@ export async function measureWebLayout(container: HTMLElement, options: Readonly
             let unchanged = 0;
             for (let pass = 0; pass < 8 && unchanged < 2; pass += 1) {
                 const before = container.innerHTML;
+                // The elements serialized now are the ones the browser measures; a runtime that re-renders
+                // on its own timers (a virtualized list) may change the markup while the page loads.
+                const elements = Array.from(container.querySelectorAll('*'));
                 await page.setContent(serialize(container, options.viewport.width));
                 const boxes = await page.evaluate(() => Array.from(document.querySelectorAll('#root *')).map((element) => {
                     const r = element.getBoundingClientRect();
                     return { rect: { top: r.top, bottom: r.bottom, left: r.left, right: r.right, width: r.width, height: r.height },
                         scrollHeight: element.scrollHeight, scrollWidth: element.scrollWidth };
                 }));
-                const elements = Array.from(container.querySelectorAll('*'));
                 if (elements.length !== boxes.length) {
                     throw new Error(`measureWebLayout: the browser parsed ${boxes.length} elements, jsdom holds ${elements.length}`);
                 }
