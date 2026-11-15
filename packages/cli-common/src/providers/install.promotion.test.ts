@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import type { PathLike, RmOptions } from 'node:fs';
-import { chmod, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 
+import type { runCommandCapture } from '../process/index.js';
 import { installProviderCli } from './install.js';
 
 function windowsCodexAssetName(): string {
@@ -450,6 +451,58 @@ describe('installProviderCli managed promotion', () => {
       expect(warning).toHaveBeenCalledWith(expect.stringContaining('candidate could not be promoted'));
     } finally {
       warning.mockRestore();
+      await rm(homeDir, { recursive: true, force: true });
+      await rm(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps a Windows managed package resolvable after its staged workspace is promoted', async () => {
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+    if (!originalPlatform) throw new Error('Expected configurable platform');
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-install-relocate-home-'));
+    const logDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-install-relocate-log-'));
+    Object.defineProperty(process, 'platform', { ...originalPlatform, value: 'win32' });
+    try {
+      // pnpm is the external boundary. Its default isolated linker on Windows links
+      // each package with a junction, which stores an absolute target into the staging
+      // workspace; `node-linker=hoisted` writes real directories instead. The model
+      // reproduces that layout on every host so promotion runs against it for real.
+      const runCommand: typeof runCommandCapture = async ({ args, cwd }) => {
+        if (!cwd) throw new Error('Expected managed package workspace');
+        const packageDir = join(cwd, 'node_modules', '@github', 'copilot');
+        const hoisted = args.includes('--config.node-linker=hoisted');
+        const contentDir = hoisted
+          ? packageDir
+          : join(cwd, 'node_modules', '.pnpm', '@github+copilot@1.0.0', 'node_modules', '@github', 'copilot');
+        await mkdir(contentDir, { recursive: true });
+        await writeFile(join(contentDir, 'npm-loader.js'), 'loader', 'utf8');
+        if (!hoisted) {
+          await mkdir(dirname(packageDir), { recursive: true });
+          await symlink(contentDir, packageDir, 'junction');
+        }
+        return { kind: 'exited', status: 0, signal: null, stdout: '', stderr: '' };
+      };
+
+      const result = await installProviderCli({
+        providerId: 'copilot',
+        platform: 'win32',
+        logDir,
+        env: { ...process.env, HAPPIER_HOME_DIR: homeDir, PATH: '' },
+        skipIfInstalled: false,
+        deps: {
+          ensureManagedPnpmCommand: async () => '/managed/pnpm',
+          ensureManagedJavaScriptRuntimeCommand: async () => '/managed/node/bin/node',
+          runCommand,
+        },
+      });
+
+      expect(result.ok, result.ok ? undefined : result.errorMessage).toBe(true);
+      const installRoot = join(homeDir, 'tools', 'providers', 'copilot');
+      expect(await readdir(join(installRoot, '.tmp'))).toEqual([]);
+      const loaderPath = join(installRoot, 'current', 'workspace', 'node_modules', '@github', 'copilot', 'npm-loader.js');
+      expect(await readFile(loaderPath, 'utf8')).toBe('loader');
+    } finally {
+      Object.defineProperty(process, 'platform', originalPlatform);
       await rm(homeDir, { recursive: true, force: true });
       await rm(logDir, { recursive: true, force: true });
     }
