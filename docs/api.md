@@ -101,7 +101,14 @@ the reviewed effect. Approval dispatches that retained effect rather than
 recomputing it from a changed query or draft.
 
 `account/publicProfilePublication.ts` separates reviewed prepared request bodies
-from author Action intents. The server lifecycle keeps consent and snapshot
+from author Action intents. The Action preparation owner in
+`actions/executor/publicProfileActions.ts` omits author-selected repositories
+classified as private from both disclosure links and prepared repository
+selections. Ready previews and acknowledged Publish/Update Action results carry
+`omittedPrivateProjectCount` when any were left out. That feedback stays local to
+the Action result, outside the public view, HTTP body and stored edition;
+unknown visibility or a failed repository read still refuses preparation.
+The server lifecycle keeps consent and snapshot
 writes in one `AccountPublicProfile` row. Ordinary mutations condition their
 writes on the admitted row and use the canonical transaction replay on a
 conflict, so a late refresh cannot revive a paused or withdrawn page or restore

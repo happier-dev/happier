@@ -185,6 +185,7 @@ function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnTy
   const settlePublishMoment = React.useCallback(() => setPublishMoment(null), []);
   // Why the page's own Usage preview is missing: said once, on the page's period line.
   const [previewReason, setPreviewReason] = React.useState<PublicProfilePreparationUnavailableReasonV1 | null>(null);
+  const [omittedPrivateProjectCount, setOmittedPrivateProjectCount] = React.useState(0);
   const [submitting, setSubmitting] = React.useState(false);
   const [panel, setPanel] = React.useState<'look' | 'publicData' | 'details' | null>(null);
   const lookAnchor = React.useRef<View>(null);
@@ -256,7 +257,10 @@ function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnTy
           }, { capturePublicProfilePreview: preview => { if (current) admitted = preview; } }),
         );
         if (!current) return null;
-        if (result.kind === 'ready') setSnapshotView({ view: result.view, period: JSON.parse(queryKey).period.relative });
+        if (result.kind === 'ready') {
+          setSnapshotView({ view: result.view, period: JSON.parse(queryKey).period.relative });
+          setOmittedPrivateProjectCount(result.omittedPrivateProjectCount ?? 0);
+        }
         else setPreviewReason(result.reason);
         return admitted;
       } catch {
@@ -393,7 +397,7 @@ function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnTy
     }
     const review = (disclosure: PublicProfileLocalPreviewViewV1 | null,
       policy: PublicProfilePolicyV1, prepared: PublicProfilePreparedAppearanceV1,
-      period: string, reviewContext: PublicProfileContextV1 = context): Promise<boolean> => {
+      period: string, reviewContext: PublicProfileContextV1 = context, omittedCount = 0): Promise<boolean> => {
       const service = reviewContext.service;
       if (!service) return Promise.resolve(false);
       const picture = prepared.atmosphere.source === 'picture' ? prepared.atmosphere.picture : null;
@@ -416,6 +420,7 @@ function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnTy
             pageUrl: reviewContext.urls?.page ?? null, period,
             sharedFields: PUBLIC_PROFILE_FIELDS_V1.filter(field => policy.fields[field]),
             disclosure, preparationReason: !disclosure ? previewReason : null,
+            omittedPrivateProjectCount: omittedCount,
             ...(picture && pictureCopy
               ? { renderPicture: () => <ReviewPictureBand picture={picture} data={pictureCopy.data} copyId={pictureCopy.copyId} /> }
               : {}),
@@ -451,7 +456,7 @@ function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnTy
                 metadata: body.metadata, snapshot: body.snapshot, layout: body.layout, appearance: body.appearance,
                 relativePeriod: body.query.period.relative });
               return view ? review(view, body.policy, body.appearance,
-                formatUsageCalendarPeriod(body.snapshot.period), effect.publicationContext) : false;
+                formatUsageCalendarPeriod(body.snapshot.period), effect.publicationContext, effect.omittedPrivateProjectCount ?? 0) : false;
             },
           })
         : await execution.execute('account.public_profile.update', {
@@ -462,9 +467,10 @@ function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnTy
         if (!isActionApprovalDeclinedErrorCode(outcome.errorCode)) setNotice(publicProfileMutationNotice(outcome));
         return;
       }
-      const outcomeNotice = settlePublicProfileMutation(outcome.result, record => {
+      const outcomeNotice = settlePublicProfileMutation(outcome.result, (record, omittedCount) => {
         seeded.current = false;
         acknowledge(record);
+        setOmittedPrivateProjectCount(omittedCount);
       });
       if (outcomeNotice) setNotice(outcomeNotice);
       else if (publishing && context?.urls?.page) {
@@ -575,6 +581,7 @@ function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnTy
           renderBand={renderBand}
           singleColumn={singleColumn}
           notice={notice}
+          omittedPrivateProjectCount={omittedPrivateProjectCount}
           noticeTone={noticeState?.tone}
           noticeAction={undoable && notice
             ? { label: t('publicIdentity.publicData.consent.undo'), onPress: () => { void undo(); } }
@@ -755,6 +762,7 @@ function PublicProfileReviewModal(
       sharedFields: readonly (typeof PUBLIC_PROFILE_FIELDS_V1)[number][];
       disclosure: PublicProfileLocalPreviewViewV1 | null;
       preparationReason: PublicProfilePreparationUnavailableReasonV1 | null;
+      omittedPrivateProjectCount: number;
       renderPicture?: () => React.ReactNode;
       endToEndEncrypted: boolean;
       indexable: boolean;
@@ -771,6 +779,7 @@ function PublicProfileReviewModal(
       sharedFields={props.sharedFields}
       disclosure={props.disclosure}
       preparationReason={props.preparationReason}
+      omittedPrivateProjectCount={props.omittedPrivateProjectCount}
       renderPicture={props.renderPicture}
       endToEndEncrypted={props.endToEndEncrypted}
       indexable={props.indexable}

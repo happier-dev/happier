@@ -41,6 +41,8 @@ export type PublicProfileEditorProps = Readonly<{
   unavailable?: Readonly<{ reason: string; onRetry: () => void }> | null;
   /** The outcome of the last Publish, Apply or consent request. */
   notice: string | null;
+  /** The metadata owner's omission fact; no repository classification happens here. */
+  omittedPrivateProjectCount?: number;
   /** A completed outcome reads as success; anything else needs the owner's attention. */
   noticeTone?: 'success' | 'warning';
   /** Undo for an acknowledged Apply: the notice then reports success and offers it. */
@@ -110,6 +112,10 @@ export function PublicProfileEditor(
     />
     </PublishRiseLine>
   ) : null;
+  const omissions = props.omittedPrivateProjectCount ? (
+    <SurfaceStateCard testID="public-profile-private-project-omissions" kind="warning" layout="inline" size="line"
+      title={t('publicIdentity.editor.privateProjectsOmitted', { count: props.omittedPrivateProjectCount })} />
+  ) : null;
   const toolbar = (
     <View style={styles.toolbar}>
       <View style={[styles.banner, props.singleColumn ? styles.bannerStacked : null]} testID="public-profile-editor-banner">
@@ -125,6 +131,7 @@ export function PublicProfileEditor(
       </View>
       {unavailable}
       {notice}
+      {omissions}
       {props.consentStatus}
     </View>
   );
@@ -153,10 +160,11 @@ export function PublicProfileEditor(
           onPress: props.onSubmit,
         }}
       />
-      {props.mode === 'preview' && (unavailable || notice || props.consentStatus) ? (
+      {props.mode === 'preview' && (unavailable || notice || omissions || props.consentStatus) ? (
         <View style={styles.previewNotices}>
           {unavailable}
           {notice}
+          {omissions}
           {props.consentStatus}
         </View>
       ) : null}

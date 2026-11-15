@@ -113,6 +113,7 @@ export const publicIdentity: PublicIdentityTranslations = {
       customizing: 'Dostosowywanie profilu',
       hintNew: 'Widzisz to tylko Ty, dopóki nie opublikujesz.',
       hintChanges: ({ count }: { count: number }) => (count === 1 ? '1 zmiana, jeszcze nie na Twojej stronie publicznej.' : `Zmiany: ${count}, jeszcze nie na Twojej stronie publicznej.`),
+      privateProjectsOmitted: ({ count }: { count: number }) => `Pominięto ${count} wybranych projektów, ponieważ są prywatne.`,
       hintNone: 'Dane publiczne decydują o tym, co widzą odwiedzający.',
       edit: 'Edytuj',
       preview: 'Podgląd',

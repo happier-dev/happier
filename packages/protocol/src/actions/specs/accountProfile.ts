@@ -11,7 +11,7 @@ import { homeDomainActionRow, homeDomainApprovalField } from './homeDomainRow.js
 import { PublicProfileOwnerReadV1Schema, PublicProfileMutationResultV1Schema,
   PublicProfileReportRequestV1Schema, PublicProfileReportResultV1Schema } from '../../account/publicProfilePublication.js';
 import { PublicProfilePreviewIntentV1Schema, PublicProfilePublishIntentV1Schema, PublicProfileUpdateIntentV1Schema,
-  PublicProfilePreviewResultV1Schema, PublicProfileUpdateResultV1Schema } from '../../account/publicProfileIntents.js';
+  PublicProfilePreviewResultV1Schema, PublicProfilePreparedMutationResultV1Schema, PublicProfileUpdateResultV1Schema } from '../../account/publicProfileIntents.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import { PublicEmbedInputV1Schema, PublicEmbedResultV1Schema } from '../../account/publicProfileEmbeds.js';
 import type { PublicProfilePreparedRequestV1 } from '../../account/publicProfilePublication.js';
@@ -96,7 +96,7 @@ function createAccountProfileActionSpecsV1() {
     approvalInputCustody: 'live_only', projectObservationInput: projectPublicProfileReviewInput,
     description: 'Publish a Public profile draft as reviewed plaintext facts and presentation on this Account service. Supply policy for visible fields, metadataSelection for bio, links and repositories, query for the period, layout for blocks and appearance for the visitor theme or background. Unsubmitted form edits are not read automatically. Publishing includes daily facts refresh while a device runs Happier, subject to explicit Action Off or Ask settings.',
     safety: 'danger', sideEffectClass: 'external', cliPath: ['account', 'public-profile', 'publish'],
-    method: 'POST', path: '/v1/account/public-profile/publish', inputSchema: PublicProfilePublishIntentV1Schema, outputSchema: PublicProfileMutationResultV1Schema,
+    method: 'POST', path: '/v1/account/public-profile/publish', inputSchema: PublicProfilePublishIntentV1Schema, outputSchema: PublicProfilePreparedMutationResultV1Schema,
   }),
   homeDomainActionRow({
     id: 'account.public_profile.resume', approval: { result: 'required', flow: 'blocking' }, title: 'Resume your public profile',

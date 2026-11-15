@@ -69,6 +69,8 @@ export type PreparedPublicProfileAction = Readonly<{
   request: PublicProfilePreparedRequestV1;
   /** The same admitted owner read supplies this host-local review identity and destination. */
   publicationContext: PublicProfileContextV1;
+  /** Private selection feedback is local to the Action, never a published field. */
+  omittedPrivateProjectCount?: number;
 }>;
 export type PublicProfileActionPreparation = Readonly<{ kind: 'prepared'; effect: PreparedPublicProfileAction }>
   | Readonly<{ kind: 'settled'; result: ActionExecuteResult }>;
@@ -97,24 +99,31 @@ async function resolveMetadata(input: PublicProfileMetadataSelectionV1, policy: 
     ...(policy.fields.links && disclosure.links !== undefined ? { links: disclosure.links } : {}),
     ...(policy.fields.avatar && disclosure.avatar !== undefined ? { avatar: disclosure.avatar } : {}),
   };
-  const projectSelections = policy.fields.projects ? selected : [];
-  if (!projectSelections.length) return { metadata, projectSelections };
+  const candidates = policy.fields.projects ? selected : [];
+  const projectSelections: ProjectSelection[] = [];
+  let omittedPrivateProjectCount = 0;
+  if (!candidates.length) return { metadata, projectSelections, omittedPrivateProjectCount };
   if (!ports.getRepository) return null;
-  const observed = await Promise.all(projectSelections.map(selector => ports.getRepository!(selector, context)));
+  const observed = await Promise.all(candidates.map(selector => ports.getRepository!(selector, context)));
   throwIfAborted(context.signal);
   const projects: NonNullable<PublicProfileMetadataV1['projects']> = [];
-  for (const observation of observed) {
+  for (const [index, observation] of observed.entries()) {
     const refused = readActionFailureEnvelope(observation);
     if (refused) return refused;
     if ('kind' in observation && observation.kind === 'failed') return {
       ...failure(observation.code), ...(observation.failureCause ? { failureCause: observation.failureCause } : {}),
     };
+    if ('kind' in observation && observation.kind === 'private') {
+      omittedPrivateProjectCount += 1;
+      continue;
+    }
     if (!('kind' in observation) || observation.kind !== 'public') return null;
     const link = PublicProfileLinkV1Schema.safeParse(observation.repository);
     if (!link.success) return null;
+    projectSelections.push(candidates[index]!);
     if (!projects.some(project => project.label === link.data.label && project.url === link.data.url)) projects.push(link.data);
   }
-  return { metadata: { ...metadata, projects }, projectSelections };
+  return { metadata: { ...metadata, projects }, projectSelections, omittedPrivateProjectCount };
 }
 
 async function recheckProjects(record: PublicProfileOwnerRecordV1, ports: PublicProfileActionPorts, context: ActionExecutorContext) {
@@ -205,8 +214,10 @@ export async function preparePublicProfileAction(actionId: PublicProfilePreparat
     if (needsSnapshot && !query) return unavailable('invalid_stored_content');
     if (built?.kind === 'unavailable') return unavailable(built.reason);
     return { kind: 'prepared', effect: { actionId, publicationContext: owner.context,
+      ...(metadata?.omittedPrivateProjectCount ? { omittedPrivateProjectCount: metadata.omittedPrivateProjectCount } : {}),
       request: PublicProfilePreparedRequestV1Schema.parse({ operation: 'update', body: {
-        ...(intent.policy ? { policy: intent.policy } : {}), ...(metadata ?? {}),
+        ...(intent.policy ? { policy: intent.policy } : {}),
+        ...(metadata ? { metadata: metadata.metadata, projectSelections: metadata.projectSelections } : {}),
         ...(intent.query ? { query } : {}), ...(built?.kind === 'ready' ? { snapshot: built.snapshot } : {}),
         ...(layout ? { layout } : {}), ...(intent.appearance ? { appearance: intent.appearance } : {}),
       } }),
@@ -254,11 +265,15 @@ export async function preparePublicProfileAction(actionId: PublicProfilePreparat
     context.capturePublicProfilePreview?.((nextQuery, nextPolicy) =>
       getUsageQueryKey(query) === getUsageQueryKey(nextQuery) && !hasWiderPublicProfileUsageFields(policy, nextPolicy)
         ? { kind: 'ready', snapshot: projectPublicProfileSnapshot(built.snapshot, nextPolicy) } : undefined);
-    return { kind: 'settled', result: { ok: true, result: { kind: 'ready', view } } };
+    return { kind: 'settled', result: { ok: true, result: { kind: 'ready', view,
+      ...(metadata.omittedPrivateProjectCount ? { omittedPrivateProjectCount: metadata.omittedPrivateProjectCount } : {}),
+    } } };
   }
   throwIfAborted(context.signal);
   return { kind: 'prepared', effect: { actionId, publicationContext: owner.context,
-    request: PublicProfilePreparedRequestV1Schema.parse({ operation: 'publish', body: { policy, ...metadata, query,
+    ...(metadata.omittedPrivateProjectCount ? { omittedPrivateProjectCount: metadata.omittedPrivateProjectCount } : {}),
+    request: PublicProfilePreparedRequestV1Schema.parse({ operation: 'publish', body: { policy,
+      metadata: metadata.metadata, projectSelections: metadata.projectSelections, query,
       snapshot: built.snapshot, layout, appearance: intent.appearance } }),
   } };
 }
@@ -272,5 +287,8 @@ export async function executePublicProfileAction(effect: PreparedPublicProfileAc
   if (refused) return refused;
   const result = PublicProfileMutationResultV1Schema.safeParse(raw);
   if (!result.success) return invalidActionOutputFailure(result.error);
-  return { ok: true, result: result.data };
+  return { ok: true, result: { ...result.data,
+    ...(result.data.kind === 'updated' && effect.omittedPrivateProjectCount
+      ? { omittedPrivateProjectCount: effect.omittedPrivateProjectCount } : {}),
+  } };
 }

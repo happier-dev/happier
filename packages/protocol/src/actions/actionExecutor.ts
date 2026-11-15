@@ -9,7 +9,7 @@ import { isSessionAgentReadinessRootActionIdV1, readSessionAgentReadinessRoleV1,
 import { dispatchSessionOrganizationAppearance } from './executor/session/organizationAppearance.js';
 import type { SessionSpaceMembershipSetInputV1 } from './sessionSpaceMembership.js';
 import { dispatchProjectsDispatch1, dispatchProjectsDispatch2, dispatchProjectsDispatch3 } from './executor/projects/dispatch.js';
-import { admitPresentUserConfirmationV1, recordPresentUserApprovalV1 } from './executor/approvalReview.js';
+import { admitPresentUserConfirmationV1, bindPresentUserActionConfirmationV1, recordPresentUserApprovalV1 } from './executor/approvalReview.js';
 import { withScmRefineInputAuthorizationV1, readHostRootInputCredentialActionV1 } from './executor/scmRefineInputPurpose.js';
 import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1, readHostReviewedChildRootV1, readDeploymentRoleRootInputV1, hasHostReviewedChildCredentialScopeAdmissionV1, retainHostReviewedChildAdmissionV1, retainHostReviewedChildOperationContextV1 } from './executor/deploymentRoleChild.js';
 import { prepareHostReviewedChildrenV1, readHostReviewedChildrenPlanV1 } from './executor/deploymentRoleApproval.js';
@@ -2481,8 +2481,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             const reviewed = await ctx.reviewPublicProfilePreparedAction(prepared.effect);
             if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
             if (!reviewed) return { ok: false, errorCode: 'approval_canceled', error: 'approval_canceled' };
-            if (ctx.surface === 'ui' && ctx.authority === 'present_user' && ctx.actionCaller?.kind === 'host') {
-              ctx = { ...ctx, presentUserConfirmation: { actionId } };
+            if (ctx.surface === 'ui' && ctx.actionCaller?.kind === 'host') {
+              ctx = bindPresentUserActionConfirmationV1(actionId, admittedInput, ctx);
             }
           }
         }

@@ -3071,6 +3071,7 @@ export type AccountProfileActionResultById = {
             indexable: boolean;
             relativePeriod?: '30days' | '7days' | '90days' | 'all' | 'today' | 'year' | undefined;
         };
+        omittedPrivateProjectCount?: number | undefined;
     } | {
         kind: 'unavailable';
         reason: 'asset_unavailable' | 'feature_disabled' | 'invalid_snapshot' | 'invalid_stored_content' | 'no_eligible_personal_usage' | 'not_published' | 'period_unavailable' | 'preparation_unavailable' | 'project_visibility_unavailable' | 'public_ingress_unconfigured' | 'query_mismatch' | 'report_contact_unconfigured' | 'restricted' | 'source_time_unavailable' | 'usage_query_result_invalid' | 'usage_unavailable' | 'username_required';
@@ -3605,6 +3606,7 @@ export type AccountProfileActionResultById = {
                 reason: string;
             };
         };
+        omittedPrivateProjectCount?: number | undefined;
     };
     readonly "account.public_profile.resume": {
         kind: 'unavailable';
@@ -4667,6 +4669,7 @@ export type AccountProfileActionResultById = {
                 reason: string;
             };
         };
+        omittedPrivateProjectCount?: number | undefined;
     };
     readonly "account.public_profile.refresh": {
         kind: 'unavailable';

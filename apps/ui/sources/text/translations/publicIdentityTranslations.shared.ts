@@ -97,6 +97,7 @@ export const publicIdentityEn = {
       customizing: 'Customizing your profile',
       hintNew: 'Only you can see this until you publish.',
       hintChanges: ({ count }: { count: number }) => (count === 1 ? '1 change, not on your public page yet.' : `${count} changes, not on your public page yet.`),
+      privateProjectsOmitted: ({ count }: { count: number }) => `${count} selected projects left out as private.`,
       hintNone: 'Public data decides what visitors see.',
       edit: 'Edit',
       preview: 'Preview',

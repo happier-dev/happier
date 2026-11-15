@@ -135,6 +135,16 @@ function editor(overrides: Partial<PublicProfileEditorProps> = {}) {
 }
 
 describe('PublicProfileEditor', () => {
+  it('shows the owner-reported private-project omission in Edit and Preview', async () => {
+    for (const mode of ['edit', 'preview'] as const) {
+      const screen = await renderScreen(editor({ mode, omittedPrivateProjectCount: 2 }));
+      expect(screen.findByTestId('public-profile-private-project-omissions')).not.toBeNull();
+      expect(screen.getTextContent()).toContain(t('publicIdentity.editor.privateProjectsOmitted', { count: 2 }));
+      await screen.unmount();
+    }
+    const clear = await renderScreen(editor({ omittedPrivateProjectCount: 0 }));
+    expect(clear.findByTestId('public-profile-private-project-omissions')).toBeNull();
+  });
   it('says a successful outcome as success, with or without Undo, and a failure as a warning', async () => {
     const noticeKind = (screen: Awaited<ReturnType<typeof renderScreen>>) =>
       screen.findAll((node) => node.props?.testID === 'public-profile-editor-notice' && typeof node.props.kind === 'string')[0]?.props.kind;

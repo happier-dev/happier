@@ -21,11 +21,13 @@ import { createWidgetDefinitionArtifactPortV1 } from '../widgets/widgetDefinitio
 import { WidgetDefinitionV1Schema } from '../widgets/widgetDefinitionV1.js';
 import { WidgetAreaLayoutV1Schema } from '../widgets/widgetSurfaceArtifactV1.js';
 import { ArtifactActionInputSchemasV1, ArtifactDocumentV1Schema } from '../artifacts/artifactActionsV1.js';
+import { computeActionInputApprovalDigestV1 } from './decisionAuthority.js';
 
 const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
   'account.public_profile.update': ['cli', 'plugin'], 'account.public_profile.refresh': ['cli'],
 } });
-const context = { surface: 'cli', authority: 'present_user', serverId: 'home', expectedAccountId: 'account', actionsSettings: settings } as const;
+const context = { surface: 'cli', authority: 'present_user', serverId: 'home', expectedAccountId: 'account',
+  runtimeAccountId: 'account', actionRequestId: 'public-profile-request', actionsSettings: settings } as const;
 const approvalRequired: NonNullable<ActionExecutorDeps['isActionApprovalRequired']> = (id, ctx, input) =>
   isApprovalRequiredByActionsSettings(id, ctx.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }), ctx, undefined, undefined, input);
 const layout = { v: 1, items: [] } as const;
@@ -49,6 +51,77 @@ function owner() {
 }
 
 describe('public-profile Actions through the shared executor', () => {
+  it.each([
+    { actionId: 'account.public_profile.preview', includePublic: true },
+    { actionId: 'account.public_profile.update', includePublic: true },
+    { actionId: 'account.public_profile.publish', includePublic: true },
+    { actionId: 'account.public_profile.preview', includePublic: false },
+  ] as const)('omits known-private selections and reports their count through $actionId (public=$includePublic)', async ({ actionId, includePublic }) => {
+    const project = (name: string) => ({
+      provider: { id: 'example/forge', kind: 'custom' as const, displayName: 'Forge', baseUrl: 'https://forge.test' },
+      repository: { nameWithOwner: `owner/${name}` }, protocol: 'https' as const,
+    });
+    const publicProject = project('public');
+    const privateProject = project('private');
+    const policy = { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1, fields: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1.fields } };
+    for (const field of PUBLIC_PROFILE_FIELDS_V1) policy.fields[field] = field === 'projects';
+    const current = owner();
+    if (current.kind !== 'ready') throw new Error('Expected existing edition');
+    current.record.policy = policy;
+    const writes: unknown[] = [];
+    const homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']> = async args => {
+      if (args.actionId === 'account.public_profile.get') return current;
+      writes.push(bindPublicProfilePreparedHttpRequestV1(args.actionId, args.preparedRequest));
+      return { kind: 'updated', record: null };
+    };
+    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+      publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {},
+        getRepository: async selector => selector.repository.nameWithOwner === publicProject.repository.nameWithOwner
+          ? { success: true, kind: 'public', repository: { label: 'owner/public', url: 'https://forge.test/owner/public' } }
+          : { success: true, kind: 'private' },
+      }),
+    } as ActionExecutorDeps);
+    const result = await executor.execute(actionId, {
+      ...(actionId === 'account.public_profile.publish' ? { intent: 'publish' } : {}),
+      policy, metadataSelection: { projectSelections: [privateProject, includePublic ? publicProject : project('another-private')] },
+      query: normalizeUsageQuery({ period: { relative: 'all' } }), layout,
+      appearance: DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1,
+    }, { ...context, surface: 'ui', actionCaller: { kind: 'host' }, reviewPublicProfilePreparedAction: async () => true });
+    const omittedPrivateProjectCount = includePublic ? 1 : 2;
+    expect(result).toMatchObject({ ok: true, result: { omittedPrivateProjectCount } });
+    if (!result.ok) throw new Error('Expected prepared result');
+    expect(getActionSpec(actionId).outputSchema.parse(result.result)).toMatchObject({ omittedPrivateProjectCount });
+    if (actionId === 'account.public_profile.preview') {
+      expect(result).toMatchObject({ result: { kind: 'ready', view: { metadata: {
+        projects: includePublic ? [{ label: 'owner/public', url: 'https://forge.test/owner/public' }] : [],
+      } } } });
+      expect(writes).toEqual([]);
+    } else {
+      expect(writes).toHaveLength(1);
+      expect(writes[0]).toMatchObject({ body: { projectSelections: [publicProject], metadata: {
+        projects: [{ label: 'owner/public', url: 'https://forge.test/owner/public' }],
+      } } });
+      expect(JSON.stringify(writes)).not.toContain('owner/private');
+      expect(JSON.stringify(writes)).not.toContain('omittedPrivateProjectCount');
+    }
+  });
+  it.each(['unknown', 'unsupported'] as const)('still refuses a %s repository classification', async kind => {
+    const homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']> = async () => owner();
+    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+      publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {},
+        getRepository: async () => ({ success: true, kind }),
+      }),
+    } as ActionExecutorDeps);
+    const result = await executor.execute('account.public_profile.preview', {
+      policy: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1, fields: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1.fields, projects: true } },
+      metadataSelection: { projectSelections: [{
+        provider: { id: 'example/forge', kind: 'custom', displayName: 'Forge', baseUrl: 'https://forge.test' },
+        repository: { nameWithOwner: 'owner/repository' }, protocol: 'https',
+      }] }, query: normalizeUsageQuery({ period: { relative: 'all' } }), layout,
+      appearance: DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1,
+    }, context);
+    expect(result).toMatchObject({ ok: true, result: { kind: 'unavailable', reason: 'project_visibility_unavailable' } });
+  });
   it.each(['account.public_profile.preview', 'account.public_profile.update', 'account.public_profile.publish'] as const)(
     'retains the repository authentication cause when %s metadata cannot be prepared', async actionId => {
     const failureCause = { phase: 'scm.repository.read', errorClass: 'Error', errorCode: 'authentication_required',
@@ -316,10 +389,11 @@ describe('public-profile Actions through the shared executor', () => {
     const current = owner();
     if (current.kind !== 'ready') throw new Error('Expected existing edition');
     current.record.query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1_000 } });
-    let writes = 0;
+    const writes: unknown[] = [];
+    const reviewedRequests: unknown[] = [];
     const homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']> = async args => {
       if (args.actionId === 'account.public_profile.get') return current;
-      writes += 1;
+      writes.push(args.preparedRequest);
       return { kind: 'updated', record: null };
     };
     const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
@@ -342,10 +416,42 @@ describe('public-profile Actions through the shared executor', () => {
       actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, ...(scenario.ask ? {
         actions: { 'account.public_profile.publish': { approvalRequiredSurfaces: ['ui'] } },
       } : {}) }),
-      reviewPublicProfilePreparedAction: async effect => effect.request.operation === 'publish',
+      reviewPublicProfilePreparedAction: async effect => {
+        reviewedRequests.push(structuredClone(effect.request));
+        return effect.request.operation === 'publish';
+      },
     });
-    expect(result).toMatchObject({ ok: scenario.succeeds });
-    expect(writes).toBe(scenario.succeeds ? 1 : 0);
+    expect(result, !result.ok ? JSON.stringify({ errorCode: result.errorCode, error: result.error }) : undefined)
+      .toMatchObject({ ok: scenario.succeeds });
+    expect(writes).toHaveLength(scenario.succeeds ? 1 : 0);
+    if (scenario.succeeds) expect(writes).toEqual(reviewedRequests);
+  });
+  it('refuses a prepared-publication confirmation when the reviewed payload changes', async () => {
+    let writes = 0;
+    const homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']> = async args => {
+      if (args.actionId === 'account.public_profile.get') return owner();
+      writes += 1;
+      return { kind: 'updated', record: null };
+    };
+    const policy = { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1, fields: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1.fields } };
+    for (const field of PUBLIC_PROFILE_FIELDS_V1) policy.fields[field] = field === 'bio';
+    const input = { intent: 'publish', policy, metadataSelection: { bio: 'Reviewed biography' },
+      query: normalizeUsageQuery({ period: { relative: 'all' } }), layout, appearance: DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1 };
+    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+      publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {} }),
+    } as ActionExecutorDeps);
+    const result = await executor.execute('account.public_profile.publish', {
+      ...input, metadataSelection: { bio: 'Changed biography' },
+    }, { ...context, surface: 'ui', actionCaller: { kind: 'host' },
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+        'account.public_profile.publish': { approvalRequiredSurfaces: ['ui'] },
+      } }),
+      presentUserConfirmation: { actionId: 'account.public_profile.publish',
+        inputDigest: computeActionInputApprovalDigestV1('account.public_profile.publish', input),
+        requestId: context.actionRequestId, accountId: context.runtimeAccountId, serverId: context.serverId, target: null },
+    });
+    expect(result).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+    expect(writes).toBe(0);
   });
   it.each(['publish', 'resume', 'update', 'refresh'] as const)('requires a declared public population in the prepared %s HTTP grammar', operation => {
     const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1 } });
@@ -699,7 +805,8 @@ describe('public-profile Actions through the shared executor', () => {
         })).toMatchObject({ ok: true });
       }
       result = await pending;
-      expect(result.ok, !result.ok ? JSON.stringify({ errorCode: result.errorCode, error: result.error, details: result.details }) : undefined).toBe(true);
+      expect(result.ok, !result.ok ? JSON.stringify({ errorCode: result.errorCode, error: result.error, details: result.details }) : undefined)
+        .toBe(variant !== 'preview_required');
     } finally { coordinator.dispose(); }
     expect(reviewOrder).toEqual(operation === 'preview' ? variant === 'preview_required' ? ['approval'] : [] : ['review', 'approval']);
     expect(reviewed).toHaveLength(operation === 'preview' ? 0 : 1);
@@ -715,7 +822,8 @@ describe('public-profile Actions through the shared executor', () => {
         expect(JSON.stringify(stored)).not.toContain(picturePng);
       } else expect(offered).toBeUndefined();
       expect(writes).toEqual([]);
-      expect(result).toMatchObject({ ok: true, result: { kind: 'ready', view: { appearance, snapshot: { facts: { tokens: 1234567 } } } } });
+      if (variant === 'preview_required') expect(result).toMatchObject({ ok: false, errorCode: 'approval_result_held' });
+      else expect(result).toMatchObject({ ok: true, result: { kind: 'ready', view: { appearance, snapshot: { facts: { tokens: 1234567 } } } } });
       return;
     }
     expect(offered).toBeDefined();

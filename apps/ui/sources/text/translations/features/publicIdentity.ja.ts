@@ -113,6 +113,7 @@ export const publicIdentity: PublicIdentityTranslations = {
       customizing: 'プロフィールをカスタマイズ中',
       hintNew: '公開するまで、あなただけに表示されます。',
       hintChanges: ({ count }: { count: number }) => (count === 1 ? '1 件の変更はまだ公開ページに反映されていません。' : `${count} 件の変更はまだ公開ページに反映されていません。`),
+      privateProjectsOmitted: ({ count }: { count: number }) => `選択した ${count} 件のプロジェクトは非公開のため除外されました。`,
       hintNone: '訪問者に見える内容は公開データで決まります。',
       edit: '編集',
       preview: 'プレビュー',

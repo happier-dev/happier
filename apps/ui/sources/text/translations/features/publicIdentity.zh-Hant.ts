@@ -113,6 +113,7 @@ export const publicIdentity: PublicIdentityTranslations = {
       customizing: '正在自訂你的個人頁面',
       hintNew: '發布之前只有你看得到。',
       hintChanges: ({ count }: { count: number }) => (count === 1 ? '1 項變更，尚未出現在你的公開頁面上。' : `${count} 項變更，尚未出現在你的公開頁面上。`),
+      privateProjectsOmitted: ({ count }: { count: number }) => `已排除 ${count} 個所選私人專案。`,
       hintNone: '公開資料決定訪客能看到什麼。',
       edit: '編輯',
       preview: '預覽',

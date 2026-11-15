@@ -1,5 +1,5 @@
-import { PublicProfileMutationResultV1Schema, type PublicProfileOwnerRecordV1 } from '@happier-dev/protocol/account/publicProfilePublication';
-import { PublicProfilePreparationUnavailableReasonV1Schema } from '@happier-dev/protocol/account/publicProfileIntents';
+import type { PublicProfileOwnerRecordV1 } from '@happier-dev/protocol/account/publicProfilePublication';
+import { PublicProfilePreparedMutationResultV1Schema, PublicProfilePreparationUnavailableReasonV1Schema } from '@happier-dev/protocol/account/publicProfileIntents';
 
 import { t } from '@/text';
 
@@ -20,7 +20,7 @@ export function publicProfileMutationNotice(result: unknown): string | null {
 
 /** Settle a confirmed write through the existing read owner, without another invalidation. */
 export function settlePublicProfileMutation(result: unknown,
-  onAcknowledged?: (record: PublicProfileOwnerRecordV1 | null) => void): string | null {
+  onAcknowledged?: (record: PublicProfileOwnerRecordV1 | null, omittedPrivateProjectCount: number) => void): string | null {
   // Settled host outcomes may also carry credential-use annotations; read the
   // failure cause without reparsing them as a strict public wire envelope.
   if (result !== null && typeof result === 'object' && 'ok' in result && result.ok === false) {
@@ -30,9 +30,9 @@ export function settlePublicProfileMutation(result: unknown,
       ? PublicProfilePreparationUnavailableReasonV1Schema.safeParse(details.reason) : null;
     return reason?.success ? t(`publicIdentity.profile.reasons.${reason.data}`) : t('publicIdentity.profile.actionFailed');
   }
-  const mutation = PublicProfileMutationResultV1Schema.safeParse(result);
+  const mutation = PublicProfilePreparedMutationResultV1Schema.safeParse(result);
   if (!mutation.success) return t('publicIdentity.profile.actionFailed');
   if (mutation.data.kind === 'unavailable') return t(`publicIdentity.profile.reasons.${mutation.data.reason}`);
-  onAcknowledged?.(mutation.data.record);
+  onAcknowledged?.(mutation.data.record, mutation.data.omittedPrivateProjectCount ?? 0);
   return null;
 }

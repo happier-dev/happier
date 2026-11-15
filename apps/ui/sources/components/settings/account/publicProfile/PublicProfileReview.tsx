@@ -31,6 +31,7 @@ export type PublicProfileReviewProps = Readonly<{
   /** Exactly what visitors would read, as captured for this review. */
   disclosure: PublicProfileLocalPreviewViewV1 | PublicProfileViewV1 | null;
   preparationReason?: PublicProfilePreparationUnavailableReasonV1 | null;
+  omittedPrivateProjectCount?: number;
   /** The retained picture copy Confirm sends; absent when no picture leaves the device. */
   renderPicture?: () => React.ReactNode;
   endToEndEncrypted: boolean;
@@ -61,6 +62,9 @@ export function PublicProfileReview(
   const jointInference = shared.has('tokens') && shared.has('weeklyAgentMix');
   const preparationNotice = props.preparationReason ? t(`publicIdentity.profile.reasons.${props.preparationReason}`) : null;
   const consequences = [
+    props.omittedPrivateProjectCount
+      ? t('publicIdentity.editor.privateProjectsOmitted', { count: props.omittedPrivateProjectCount })
+      : null,
     jointInference
       ? t('publicIdentity.publicData.details.weeklyAgentMix')
       : null,

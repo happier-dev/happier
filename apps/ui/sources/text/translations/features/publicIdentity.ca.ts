@@ -113,6 +113,7 @@ export const publicIdentity: PublicIdentityTranslations = {
       customizing: 'Personalitzant el teu perfil',
       hintNew: 'Només tu ho pots veure fins que publiquis.',
       hintChanges: ({ count }: { count: number }) => (count === 1 ? '1 canvi, encara no a la teva pàgina pública.' : `${count} canvis, encara no a la teva pàgina pública.`),
+      privateProjectsOmitted: ({ count }: { count: number }) => `${count} projectes seleccionats omesos perquè són privats.`,
       hintNone: 'Les dades públiques decideixen què veuen els visitants.',
       edit: 'Edita',
       preview: 'Previsualització',

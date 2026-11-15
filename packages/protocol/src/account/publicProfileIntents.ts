@@ -54,8 +54,14 @@ export const PublicProfilePreparationUnavailableReasonV1Schema = lazyZodSchema((
   'project_visibility_unavailable', 'preparation_unavailable',
 ]));
 export type PublicProfilePreparationUnavailableReasonV1 = z.infer<typeof PublicProfilePreparationUnavailableReasonV1Schema>;
+/** Host preparation feedback stays out of the stored edition and public HTTP payload. */
+const omittedPrivateProjectCount = z.optional(z.number().check(z.int(), z.positive()));
 export const PublicProfilePreviewResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('ready'), view: PublicProfileLocalPreviewViewV1Schema }),
+  z.strictObject({ kind: z.literal('ready'), view: PublicProfileLocalPreviewViewV1Schema, omittedPrivateProjectCount }),
   z.strictObject({ kind: z.literal('unavailable'), reason: PublicProfilePreparationUnavailableReasonV1Schema }),
 ]));
-export const PublicProfileUpdateResultV1Schema = PublicProfileMutationResultV1Schema;
+export const PublicProfilePreparedMutationResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.extend(PublicProfileMutationResultV1Schema._zod.def.options[0], { omittedPrivateProjectCount }),
+  PublicProfileMutationResultV1Schema._zod.def.options[1],
+]));
+export const PublicProfileUpdateResultV1Schema = PublicProfilePreparedMutationResultV1Schema;

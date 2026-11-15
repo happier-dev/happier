@@ -6,6 +6,22 @@ import type { ActionExecutorContext } from './types.js';
 import { isPresentUserHostInvocation, isHomeAdmittedPresentUserHostInvocation, pluginActionInvokeConfirmationMismatchV1 } from '../invocationAuthority.js';
 import { readExternalActionBindingAuthority } from '../externalActionBindingAuthority.js';
 
+/** Bind a host's completed Confirm to the captured Account, target and normalized intent. */
+export function bindPresentUserActionConfirmationV1(actionId: ActionId, input: unknown, context: ActionExecutorContext,
+  reviewDigest?: string): ActionExecutorContext {
+  // A supplied marker belongs to its original invocation, including legacy default-only markers.
+  if (context.presentUserConfirmation || !isPresentUserHostInvocation(context)
+    || !context.runtimeAccountId || !context.actionRequestId || !(context.serverIdentityId ?? context.serverId)) return context;
+  const target = context.externalActionTarget;
+  return { ...context, authority: 'present_user', actionCaller: { kind: 'host' }, presentUserConfirmation: {
+    actionId, inputDigest: computeActionInputApprovalDigestV1(actionId, input, context.sessionTargetsV1),
+    ...(reviewDigest ? { reviewDigest } : {}), requestId: context.actionRequestId,
+    accountId: context.runtimeAccountId, serverId: context.serverIdentityId ?? context.serverId!,
+    target: target ? target.kind === 'session' ? { kind: 'session', sessionId: target.sessionId }
+      : { kind: 'machine', machineId: target.machineId, ...(target.project ? { project: { ...target.project } } : {}) } : null,
+  } };
+}
+
 /** Both a witnessed Artifact decision and a native Confirm record the same reviewed parent. */
 export function recordPresentUserApprovalV1(args: Readonly<{
   actionId: ActionId;
