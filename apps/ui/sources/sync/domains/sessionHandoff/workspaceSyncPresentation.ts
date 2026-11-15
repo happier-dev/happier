@@ -4,6 +4,7 @@ import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionE
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import type { WorkspaceSyncSetAttention } from './workspaceSyncRelationshipModel';
 import type { WorkspaceSyncStatusSnapshot } from './workspaceSyncStatusStore';
+import type { WorkspaceSyncDestinationPlacement } from '@/sync/ops/workspaceSyncRelationshipCreate';
 
 /** Keep known conflicts distinct from links whose current status needs checking. */
 export function formatWorkspaceSyncSetAttention(attention: WorkspaceSyncSetAttention): string | null {
@@ -64,21 +65,24 @@ export function readWorkspaceSyncErrorCode(error: unknown): string | null {
 }
 
 /**
- * The refusal copy for a failed Workspace Sync Action: the daemon's typed code mapped through
- * the one error presentation, with the exact code available for diagnosis.
+ * The refusal copy for a failed Workspace Sync Action: the human message for its typed cause (or
+ * code), with the exact code for diagnosis. Request ids and technical details stay on the carried
+ * error for diagnostics, never on the failure screen (OWNER-RULINGS 2026-11-12 (7)).
+ * Own-folder guidance is for the Can use route only; `placement` is Add Machine's decided route.
  */
-export function presentWorkspaceSyncFailure(error: unknown): string | null {
+export function presentWorkspaceSyncFailure(error: unknown, placement?: WorkspaceSyncDestinationPlacement): string | null {
     const code = readWorkspaceSyncErrorCode(error);
     if (!code) return null;
-    const key = resolveWorkspaceSyncErrorTranslationKey(code);
     const record = error as Readonly<Record<string, unknown>>;
-    // The shared presenter selects safe details and typed causes; transport prose stays private.
-    const presented = presentActionExecutionFailure({ ok: false, errorCode: code,
-        details: record.details,
-        failureCause: record.failureCause === undefined ? undefined : readActionFailureCauseV1(record.failureCause),
-    });
-    const message = key ? `${t(key)} (${code})` : `${presented.reason} (${code})`;
-    return [message, ...presented.technicalDetails.filter(detail => detail.key !== 'code').map(detail => detail.value)].join(' · ');
+    const failureCause = record.failureCause === undefined ? undefined : readActionFailureCauseV1(record.failureCause);
+    // Home's Manage refusal arrives as credential_scope_denied with the typed machine_manage_required cause.
+    const causeKey = failureCause?.errorCode ? resolveWorkspaceSyncErrorTranslationKey(failureCause.errorCode) : null;
+    const shownCode = causeKey && failureCause?.errorCode ? failureCause.errorCode : code;
+    let key = causeKey ?? resolveWorkspaceSyncErrorTranslationKey(code);
+    if (key === 'workspaceSync.error.ownFolderOnly' && placement !== 'destination_open') key = 'workspaceSync.error.needsAttention';
+    const message = key ? t(key) : presentActionExecutionFailure({ ok: false, errorCode: code, details: record.details,
+        ...(failureCause ? { failureCause } : {}) }).reason;
+    return `${message} (${shownCode})`;
 }
 
 export function resolveWorkspaceSyncModeTranslationKey(value: unknown): WorkspaceSyncModeTranslationKey | null {

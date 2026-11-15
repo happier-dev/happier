@@ -27,6 +27,25 @@ describe('workspaceSyncPresentation', () => {
         expect(presentWorkspaceSyncFailure(error)).toContain('project_requester_authority_unavailable');
         expect(presentWorkspaceSyncFailure({ code: 'relationship_not_ready' })).toContain('relationship_not_ready');
     });
+    // R126S3: a Manage owner got Can use guidance plus raw "false · dispatch · Error" diagnostics.
+    const nativeRefusal = { code: 'workspace_private_checkout_review_required', effectAttempted: false, requestId: 'request-r126s3',
+        failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: 'workspace_private_checkout_review_required', httpStatus: null } };
+    it('never gives a Manage placement the Can use own-folder guidance', () => {
+        expect(presentWorkspaceSyncFailure(nativeRefusal, 'source_relationship'))
+            .toBe(`${t('workspaceSync.error.needsAttention')} (workspace_private_checkout_review_required)`);
+        expect(presentWorkspaceSyncFailure(nativeRefusal, 'destination_open'))
+            .toBe(`${t('workspaceSync.error.ownFolderOnly')} (workspace_private_checkout_review_required)`);
+    });
+
+    it('shows the human message for the typed cause and keeps diagnostics and the request id off the screen', () => {
+        const homeRefusal = { code: 'credential_scope_denied', requestId: 'request-home', details: { reason: 'target_not_authorized' },
+            failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: null } };
+        expect(presentWorkspaceSyncFailure(homeRefusal, 'destination_open'))
+            .toBe(`${t('workspaceSync.error.manageRequired')} (machine_manage_required)`);
+        const message = presentWorkspaceSyncFailure(nativeRefusal, 'destination_open') ?? '';
+        for (const diagnostic of ['dispatch', ' · ', 'Error', 'request-r126s3', 'false']) expect(message).not.toContain(diagnostic);
+    });
+
     it('uses directional relationship titles for immutable one-way and two-way modes', () => {
         expect(formatWorkspaceSyncRelationshipTitle({
             alphaLabel: 'Source',

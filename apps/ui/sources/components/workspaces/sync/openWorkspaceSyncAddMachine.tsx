@@ -158,7 +158,9 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
     const [error, setError] = React.useState<string | null>(null);
     const [inspectRequired, setInspectRequired] = React.useState(false);
     const [linkedConflictCount, setLinkedConflictCount] = React.useState<number | null>(null);
-    const [materializedSourceRefId, setMaterializedSourceRefId] = React.useState<string | null>(props.source.id ?? null);
+    // The source checkout a folder-only source was attached as; its address names the source Machine.
+    const [materializedSource, setMaterializedSource] = React.useState<WorkspaceAddressV1 | null>(null);
+    const materializedSourceRefId = props.source.id ?? materializedSource?.workspaceId ?? null;
     const requestIdentity = React.useRef<{ fingerprint: string; id: string } | null>(null);
     const submissionInFlight = React.useRef(false);
 
@@ -263,10 +265,10 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
             }
             setError(signal.aborted
                 ? t('workspaceSync.error.needsAttention')
-                : presentWorkspaceSyncFailure(caught) ?? (caught instanceof Error ? caught.message : t('errors.operationFailed')));
+                : presentWorkspaceSyncFailure(caught, placement ?? undefined) ?? (caught instanceof Error ? caught.message : t('errors.operationFailed')));
             setPhase('approval_pending');
         }
-    }, [destinationIntent, homeDir, mode, props.source.serverId, resolvedPath, selectedMachine]);
+    }, [destinationIntent, homeDir, mode, placement, props.source.serverId, resolvedPath, selectedMachine]);
 
     const submit = React.useCallback(async () => {
         if (submissionInFlight.current || busy || phase === 'linked' || inspectRequired) return;
@@ -293,8 +295,10 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
         )) return;
         setError(null);
         setPhase('submitting');
-        let sourceWorkspaceRefId = hub.id ?? materializedSourceRefId;
-        if (!sourceWorkspaceRefId) {
+        let sourceCheckout: WorkspaceAddressV1 | null = hub.id
+            ? { serverId: props.source.serverId, workspaceId: hub.id, machineId: hub.machineId, rootPath: hub.rootPath }
+            : materializedSource;
+        if (!sourceCheckout) {
             try {
                 const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
                 const opened = await createDefaultActionExecutor().execute('projects.open', {
@@ -311,8 +315,8 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
                 if (accepted.kind === 'outcomeUnknown') setInspectRequired(true);
                 if (accepted.kind !== 'opened' || accepted.workspace.serverId !== props.source.serverId
                     || accepted.workspace.machineId !== props.source.machineId) throw new Error(t('common.saveError'));
-                sourceWorkspaceRefId = accepted.workspace.workspaceId;
-                setMaterializedSourceRefId(sourceWorkspaceRefId);
+                sourceCheckout = accepted.workspace;
+                setMaterializedSource(sourceCheckout);
             } catch (caught) {
                 setError(presentWorkspaceSyncFailure(caught) ?? (caught instanceof Error ? caught.message : t('errors.operationFailed')));
                 setPhase('idle');
@@ -325,7 +329,7 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
         }
         const input = {
             v: 1 as const,
-            sourceWorkspaceRefId,
+            sourceWorkspaceRefId: sourceCheckout.workspaceId,
             ...(replacement ? { replaceRelationshipId: replacement.relationship.relationshipId } : {}),
             targetMachineId: selectedMachine.id,
             targetPath: resolvedPath,
@@ -349,7 +353,7 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
                 serverId: props.source.serverId,
                 actionRequestId: requestIdentity.current.id,
                 signal: controller.signal,
-                ...(placement ? { placement } : {}),
+                ...(placement === 'destination_open' ? { placement, source: sourceCheckout } : placement ? { placement } : {}),
             });
             if (outcome.kind === 'opened') {
                 setLinkedConflictCount(null);
@@ -375,7 +379,7 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
             }
             setError(controller.signal.aborted
                 ? t('workspaceSync.error.needsAttention')
-                : presentWorkspaceSyncFailure(caught) ?? (caught instanceof Error ? caught.message : t('errors.operationFailed')));
+                : presentWorkspaceSyncFailure(caught, placement ?? undefined) ?? (caught instanceof Error ? caught.message : t('errors.operationFailed')));
             setPhase('idle');
         }
         } finally {
@@ -384,7 +388,7 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
             props.operation.inFlight = false;
             props.operation.abortController = null;
         }
-    }, [binding, blockedReason, busy, confirmAndApprove, contentSelection, destinationIntent, existing, hub, includeIgnoredMode, inspectRequired, materializedSourceRefId, mode, patternsDraft, pendingApprovalId, phase, placement, props, resolvedPath, selectedMachine]);
+    }, [binding, blockedReason, busy, confirmAndApprove, contentSelection, destinationIntent, existing, hub, includeIgnoredMode, inspectRequired, materializedSource, mode, patternsDraft, pendingApprovalId, phase, placement, props, resolvedPath, selectedMachine]);
 
     const footer = React.useMemo(() => (
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 10 }}>

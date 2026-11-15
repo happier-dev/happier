@@ -10,6 +10,9 @@ import { PROJECT_ACTION_INPUT_SCHEMAS_V1 } from '../actions/projectActionFamily.
 import { DaemonLocalServiceLauncherStartRequestV1Schema } from '../local/services/launcher/v1.js';
 import { ProjectServiceRelocateInputV1Schema } from './projectServiceRelocationV1.js';
 import type { ExternalActionExecutionAuthorizationBindingV1 } from '../actions/externalActionApi.js';
+import type { OpenProjectInputV1 } from '../projects/openProjectV1.js';
+import type { WorkspaceSyncRelationshipCreateActionInputV1 } from '../sessions/control/handoff/workspaceSyncSchemas.js';
+import type { WorkspaceAddressV1 } from './workspaceRefV1.js';
 
 /** The incumbent relationship identity, shared by its issuer and both endpoints. */
 export function deriveWorkspaceSyncRelationshipId(operationId: string): string {
@@ -43,6 +46,24 @@ export function readWorkspaceSyncSourceAdmissionV1(binding: ExternalActionExecut
     && (expected.workspaceRefId === undefined || admitted.sourceWorkspaceRefId === expected.workspaceRefId) ? admitted : null;
 }
 
+/**
+ * Add Machine into a Can use destination: Project Open Sync of the source Workspace on the destination.
+ * The source checkout names the source Machine Home admits as SOURCE; a workspace-only Open would
+ * name the destination instead (R126S3).
+ */
+export function buildWorkspaceSyncDestinationOpenInputV1(input: Readonly<{
+  serverId: string;
+  source: WorkspaceAddressV1;
+  link: Pick<WorkspaceSyncRelationshipCreateActionInputV1, 'targetMachineId' | 'targetPath' | 'mode' | 'contentPolicy'>;
+}>): OpenProjectInputV1 {
+  return OpenProjectInputV1Schema.parse({
+    serverId: input.serverId, machineId: input.link.targetMachineId,
+    source: { kind: 'workspace', workspaceId: input.source.workspaceId, checkout: input.source },
+    materialization: { kind: 'sync', targetPath: input.link.targetPath, workspaceAction: { kind: 'create_relationship',
+      mode: input.link.mode, contentPolicy: input.link.contentPolicy, flushBeforeCommit: true } },
+  });
+}
+
 export function projectWorkspaceSyncAdmissionInputV1(actionId: string, input: unknown): WorkspaceSyncAdmissionInputV1 | undefined {
   if (isProjectWorkspaceSyncPreparationActionV1(actionId)) {
     if (actionId === 'projects.service.relocate') {
@@ -62,6 +83,8 @@ export function projectWorkspaceSyncAdmissionInputV1(actionId: string, input: un
   const source = parsed.data.source;
   const action = parsed.data.materialization.workspaceAction;
   if (source.kind === 'workspace') {
+    // Workspace-only names a source on the opening Machine (released same-Machine worker copy,
+    // a0ef8b30543); a source on another Machine carries its checkout.
     return { sourceMachineId: source.checkout?.machineId ?? parsed.data.machineId,
       sourceWorkspaceRefId: source.checkout?.workspaceId ?? source.workspaceId,
       ...(action.kind === 'relationship' ? { relationshipId: action.relationshipId } : {}) };

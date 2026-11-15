@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HandoffTargetReplacementPreflightV1Schema, WorkspaceSyncRelationshipCreateRpcRequestV1Schema,
     WorkspaceSyncRelationshipCreateResultV1Schema, computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { projectWorkspaceSyncAdmissionInputV1 } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeSchema, ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema, ExternalActionHttpErrorSchema } from '@happier-dev/protocol/actions/externalActionApi';
 
 import { createMachineFixture, invokeTestInstanceHandler, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -581,7 +582,9 @@ describe('Project Add machine modal', () => {
         expect(presentFailure.mock.calls.some(([failure]) =>
             typeof failure === 'object' && failure !== null && 'requestId' in failure && failure.requestId === requestId)).toBe(true);
         expect(modal.screen.getTextContent()).not.toContain(requestId);
-        expect(modal.screen.getTextContent()).toContain('target_not_authorized');
+        // The failure screen shows the typed cause's human message; details stay with the carried error.
+        expect(modal.screen.getTextContent()).toContain('workspaceSync.error.manageRequired');
+        expect(modal.screen.getTextContent()).not.toContain('target_not_authorized');
         expect(modal.screen.getTextContent()).not.toContain('/secret/workspace');
         expect(callsFor(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE)).toEqual([]);
     });
@@ -769,9 +772,13 @@ describe('Project Add machine modal', () => {
             await vi.waitFor(() => expect(openRequests()).toHaveLength(1));
             const envelope = ExternalActionRequestEnvelopeV1Schema.parse(openRequests()[0]!.input);
             expect(envelope.input).toMatchObject({ serverId: workspace.serverId, machineId: 'machine-b',
-                source: { kind: 'workspace', workspaceId: source().id },
+                source: { kind: 'workspace', workspaceId: source().id, checkout: { serverId: workspace.serverId,
+                    workspaceId: source().id, machineId: 'machine-a', rootPath: '/source' } },
                 materialization: { kind: 'sync', targetPath: `${memberRoot}/copy`,
                     workspaceAction: { kind: 'create_relationship', mode: 'keep_synced', flushBeforeCommit: true } } });
+            // Home admits the SOURCE Machine this wire value names (R126S3: it named the destination).
+            expect(projectWorkspaceSyncAdmissionInputV1('projects.open', envelope.input))
+                .toEqual({ sourceMachineId: 'machine-a', sourceWorkspaceRefId: source().id });
             await vi.waitFor(() => expect(modal.screen.getTextContent()).toContain('workspaceSync.state.watching'));
             expect(callsFor(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE)).toEqual([]);
             expect(callsFor(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT)).toEqual([]);

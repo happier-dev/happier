@@ -2,7 +2,8 @@ import { carryActionFailureDiagnostic } from '@happier-dev/protocol/actions/exec
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { WorkspaceSyncRelationshipWriteActionInputV1Schema, WorkspaceSyncRelationshipCreateResultV1Schema, type WorkspaceSyncRelationshipWriteActionInputV1, type WorkspaceSyncRelationshipCreateResultV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
-import { OpenProjectInputV1Schema, OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
+import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
+import { buildWorkspaceSyncDestinationOpenInputV1 } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
@@ -23,9 +24,12 @@ export type CreateWorkspaceSyncRelationshipRequest = Readonly<{
     serverId?: string | null;
     actionRequestId: string;
     signal?: AbortSignal;
+}> & (
     /** From `resolveWorkspaceSyncDestinationPlacement`; absent keeps the source-run relationship. */
-    placement?: WorkspaceSyncDestinationPlacement;
-}>;
+    | Readonly<{ placement?: 'source_relationship' }>
+    /** The destination opens the source checkout, which names the source Machine Home admits. */
+    | Readonly<{ placement: 'destination_open'; source: WorkspaceAddressV1 }>
+);
 
 export type CreateWorkspaceSyncRelationshipOutcome =
     | Readonly<{ kind: 'linked'; result: WorkspaceSyncRelationshipCreateResultV1 }>
@@ -99,19 +103,14 @@ function readDestinationOpenResult(raw: unknown): CreateWorkspaceSyncRelationshi
     throw workspaceSyncActionError('workspace_sync_unavailable', 'The source Workspace is ambiguous');
 }
 
-async function openSourceIntoDestination(request: CreateWorkspaceSyncRelationshipRequest,
+async function openSourceIntoDestination(request: Extract<CreateWorkspaceSyncRelationshipRequest, { placement: 'destination_open' }>,
     actionInput: WorkspaceSyncRelationshipWriteActionInputV1): Promise<CreateWorkspaceSyncRelationshipOutcome> {
     // Replacement and worker copies need Manage; Project Open Sync cannot express them.
     if ('replaceRelationshipId' in actionInput || actionInput.purpose) {
         throw workspaceSyncActionError('machine_manage_required', 'This needs Manage access to the destination Machine');
     }
     if (!request.serverId) throw workspaceSyncActionError('workspace_sync_unavailable', 'The source Home is unavailable');
-    const input = OpenProjectInputV1Schema.parse({
-        serverId: request.serverId, machineId: actionInput.targetMachineId,
-        source: { kind: 'workspace', workspaceId: actionInput.sourceWorkspaceRefId },
-        materialization: { kind: 'sync', targetPath: actionInput.targetPath, workspaceAction: {
-            kind: 'create_relationship', mode: actionInput.mode, contentPolicy: actionInput.contentPolicy, flushBeforeCommit: true } },
-    });
+    const input = buildWorkspaceSyncDestinationOpenInputV1({ serverId: request.serverId, source: request.source, link: actionInput });
     const opened = await createDefaultActionExecutor().execute('projects.open', input, {
         serverId: request.serverId, surface: 'ui', actionRequestId: request.actionRequestId, signal: request.signal,
     });

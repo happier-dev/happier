@@ -79,6 +79,7 @@ import { wrapApiTokenEncryptionAccessV1 } from '@happier-dev/protocol/crypto/api
 import { buildEmbedParentGrantV1 } from '@happier-dev/protocol/embed';
 import { packSessionDataKeyBundleV0, serializeSessionDataKeyValue, SESSION_DATA_KEY_NONCE_BYTES } from '@happier-dev/protocol/crypto/sessionDataKeyBundleV0';
 import { OpenProjectInputV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
+import { buildWorkspaceSyncDestinationOpenInputV1 } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
 import { PROJECT_ACTION_INPUT_SCHEMAS_V1, PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { sealExternalActionRequestV2, openExternalActionRequestV2, prepareExternalActionResponseV2,
     openExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
@@ -7139,17 +7140,35 @@ describe("external Action execution authorization", () => {
                     principal: { kind: 'account', accountId: fixture.account.id }, level: 'view' }));
                 await call();
                 expect(callback).toHaveBeenLastCalledWith(expect.objectContaining({ ok: false, errorCode: 'RPC_FORBIDDEN' }));
-                const openInput = OpenProjectInputV1Schema.parse({ serverId: homeId, machineId: target.id,
-                    source: { kind: 'workspace', workspaceId: sourceRefId }, materialization: { kind: 'sync', targetPath: '/worker-copy',
-                        workspaceAction: { kind: 'create_relationship', mode: 'keep_synced',
-                            contentPolicy: createFixtureCopyOnceWorkspaceAction().contentPolicy, flushBeforeCommit: true } } });
+                // Add Machine's own producer builds the Open: the source Workspace lives on the requester's
+                // own Machine, so Home must admit that Machine as SOURCE, never the Can use destination (R126S3).
+                const openInput = buildWorkspaceSyncDestinationOpenInputV1({ serverId: homeId,
+                    source: { serverId: homeId, workspaceId: sourceRefId, machineId: source.id, rootPath: '/source' },
+                    link: { targetMachineId: target.id, targetPath: '/worker-copy', mode: 'keep_synced',
+                        contentPolicy: createFixtureCopyOnceWorkspaceAction().contentPolicy } });
                 const openTarget = { kind: 'machine' as const, machineId: target.id };
                 const opened = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1('projects.open'),
                     headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: target.id, envelope:
                         ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: crypto.randomUUID(), target: openTarget, input: openInput }) } });
                 expect(opened.statusCode, opened.body).toBe(200);
                 expect(ExternalActionExecutionAuthorizationV1Schema.parse(opened.json()).binding)
-                    .toMatchObject({ actionId: 'projects.open', machineId: target.id, admittedMachineRole: 'use' });
+                    .toMatchObject({ actionId: 'projects.open', machineId: target.id, admittedMachineRole: 'use',
+                        workspaceSyncAdmission: { sourceWorkspaceRefId: sourceRefId,
+                            source: { machineId: source.id, custodianAccountId: fixture.account.id, actorAccountId: fixture.account.id } } });
+                // A source Machine the requester cannot use is never admitted as SOURCE.
+                const foreign = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: targetCustodian.id, active: true,
+                    metadata: source.metadata, dataEncryptionKey: source.dataEncryptionKey, installationId: crypto.randomUUID(),
+                    installationPublicKey: new Uint8Array(targetKey.publicKey), operationProtocolCapabilities: capabilities,
+                    operationProtocolCapabilitiesRevision: 1 } });
+                const foreignOpen = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1('projects.open'),
+                    headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: target.id, envelope:
+                        ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: crypto.randomUUID(), target: openTarget,
+                            input: buildWorkspaceSyncDestinationOpenInputV1({ serverId: homeId,
+                                source: { serverId: homeId, workspaceId: sourceRefId, machineId: foreign.id, rootPath: '/source' },
+                                link: { targetMachineId: target.id, targetPath: '/worker-copy', mode: 'keep_synced',
+                                    contentPolicy: createFixtureCopyOnceWorkspaceAction().contentPolicy } }) }) } });
+                expect(foreignOpen.statusCode, foreignOpen.body).toBe(403);
+                expect(foreignOpen.json()).toMatchObject({ error: 'credential_scope_denied' });
                 await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: targetCustodian.id, machineId: target.id,
                     principal: { kind: 'account', accountId: fixture.account.id } }));
                 await call();
