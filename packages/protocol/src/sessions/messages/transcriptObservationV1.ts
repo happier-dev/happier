@@ -10,6 +10,7 @@ import { SessionTranscriptSourceTimestampMsSchema } from './transcriptSourceTime
 import { SessionSurfaceItemIdSchema } from '../board/ids.js';
 import { SessionSystemRecordRevisionSchema } from '../system/records/sessionSystemRecordRevision.js';
 import { EXTERNAL_ACTION_SOCKET_MIN_BUFFER_BYTES_V2 } from '../../actions/externalActionLimits.js';
+import { SessionFollowTerminalAckFactsV1Schema } from '../follow/accountFollow.js';
 
 export const SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V1 = 'session-transcript-observation-v1' as const;
 export const SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V2 = 'session-transcript-observation-v2' as const;
@@ -142,6 +143,11 @@ const SessionTranscriptObservationBodyV1Schema = lazyZodSchema(() => z.strictObj
     baseLength: z.number().check(z.int(), z.minimum(0)),
     baseUpdatedAt: SessionTranscriptSourceTimestampMsSchema,
   })),
+  /**
+   * The publisher will announce this row as a terminal Follow original: Home returns the
+   * writer's own follow facts for it in the ack (`followRoutes`), when it may.
+   */
+  followFacts: z.optional(z.literal(true)),
 }));
 
 function refineObservationTimestamps(value: { createdAt: number; updatedAt: number }, context: z.core.$RefinementCtx) {
@@ -198,6 +204,8 @@ export const SessionTranscriptObservationAckV1Schema = lazyZodSchema(() => z.uni
     didWrite: z.boolean(),
     didUpdate: z.optional(z.boolean()),
     ingestedAt: SessionTranscriptSourceTimestampMsSchema,
+    /** Only for a `followFacts` request from the Session's own admitted publisher. */
+    followRoutes: z.optional(SessionFollowTerminalAckFactsV1Schema),
   }),
   z.strictObject({
     ok: z.literal(false),

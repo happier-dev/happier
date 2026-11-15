@@ -14,7 +14,7 @@ import { FollowEventV1Schema, FollowPolicyV1Schema, serializeFollowPolicyV1 } fr
 import { SessionFollowSelectedDeliveryV1Schema } from './sessionFollowSelectedDeliveryV1.js';
 import { SessionFollowPublisherGenerationV1Schema, SessionFollowSourceMessageV1Schema, SessionFollowSourceRequestsV1Schema, SessionFollowSourceTurnV1Schema, SessionFollowStalledOccurrenceV1Schema } from './sessionFollowSourceOccurrenceV1.js';
 import { SessionMetadataPublisherPreconditionV1Schema } from '../metadata/sessionMetadataSchemasV1.js';
-import { SessionFollowDefaultRelationshipsV1Schema } from './accountFollow.js';
+import { SessionFollowCurrentAccountFactsV1Schema } from './accountFollow.js';
 import { ExecutionRunOutputRefV1Schema } from '../../reviews/reviewNarration.js';
 import { WorkerUpdateV1Schema, classifyWorkerUpdateEventV1 } from '../relations/workerUpdateV1.js';
 import {
@@ -262,8 +262,7 @@ export const SessionFollowObserveSourceRoutesResponseV1Schema = lazyZodSchema(()
     /** Existing Pending/Message custody for this exact handler-bound question original. */
     representedQuestionHandlerSessionId: z.optional(SessionIdZodSchema),
     /** Private to this current Account read, never copied into the original or native input. */
-    currentAccountFacts: z.optional(z.strictObject({ defaultRelationships: SessionFollowDefaultRelationshipsV1Schema,
-      personalFollowSuppressed: z.boolean(), hasPersistentFollow: z.optional(z.boolean()) })),
+    currentAccountFacts: z.optional(SessionFollowCurrentAccountFactsV1Schema),
   }).check(z.superRefine((value, context) => {
     const identities = new Set<string>();
     for (const [index, route] of value.routes.entries()) {

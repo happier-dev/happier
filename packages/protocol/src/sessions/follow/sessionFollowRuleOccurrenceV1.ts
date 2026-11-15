@@ -12,7 +12,7 @@ import type { OpenedSessionFollowRuleV1 } from './actions.js';
 export type { OpenedSessionFollowRuleV1 } from './actions.js';
 import { SessionMetadataPublisherPreconditionV1Schema } from '../metadata/sessionMetadataSchemasV1.js';
 import { SessionFollowSourceMessageV1Schema, SessionFollowSourceRequestsV1Schema, SessionFollowSourceTurnV1Schema } from './sessionFollowSourceOccurrenceV1.js';
-import { normalizeSessionFollowDefaultRulesV1, type SessionAutoFollowPreferencesV1, type SessionAutoFollowTriggerV1,
+import { normalizeSessionFollowDefaultRulesV1, SessionFollowTerminalAckFactsV1Schema, type SessionAutoFollowPreferencesV1, type SessionAutoFollowTriggerV1,
   type SessionFollowDefaultRelationshipsV1 } from './accountFollow.js';
 
 /** Stored inside the original encrypted/plain message, never in an Account change hint. */
@@ -41,8 +41,11 @@ export function projectSessionFollowRuleSharedSourceEvidenceV1(evidence: Session
 export const SessionFollowRuleSourceOccurrenceV1Schema = lazyZodSchema(() => {
   const fields = { sourceSessionId: z.string().check(z.minLength(1)), sourcePublisher: SessionMetadataPublisherPreconditionV1Schema };
   return z.union([
-    z.strictObject({ ...fields, sourceTurn: SessionFollowSourceTurnV1Schema, evidence: SessionFollowRuleSourceEvidenceV1Schema }),
+    z.strictObject({ ...fields, sourceTurn: SessionFollowSourceTurnV1Schema, evidence: SessionFollowRuleSourceEvidenceV1Schema,
+      followRoutes: z.optional(SessionFollowTerminalAckFactsV1Schema) }),
     z.strictObject({ ...fields, sourceMessage: SessionFollowSourceMessageV1Schema,
+      /** The terminal row's write ack facts, from Home to this publisher; the source evaluator's route read answer when `edges` is `none`. */
+      followRoutes: z.optional(SessionFollowTerminalAckFactsV1Schema),
       /**
        * Trust boundary: the Machine hosting the Session is the authority for that Session's own
        * Turns, so it reports the Turn a terminal message closes and the dispatcher does not re-read
