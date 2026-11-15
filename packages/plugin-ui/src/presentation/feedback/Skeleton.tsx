@@ -149,6 +149,26 @@ const SKELETON_TITLE_WIDTHS: readonly HappierDimension[] = ['62%', '48%', '71%',
 const SKELETON_META_WIDTH: HappierDimension = '34%';
 /** One quiet bar: the lab's thin line (8 px, radius 4), the same for title and meta. */
 const SKELETON_BAR = Object.freeze({ height: 8, radius: 4 });
+/**
+ * A loaded row whose name is still arriving (a record that is still decrypting): its title line holds the loading
+ * rows' own title bar, centred in the title's line box, so the row keeps its height and the name lands in place.
+ * Its other facts stay live beside it; the row's accessible name says what it is, the bar says nothing.
+ */
+export function HappierSkeletonTitle(props: Readonly<{
+  theme: HappierUiTheme;
+  /** The title's line height: the bar stands centred in it. */
+  lineHeight: number;
+  testID?: string;
+}>) {
+  const palette = useOptionalHappierUiPalette(props.theme);
+  return (
+    <View style={{ height: props.lineHeight, justifyContent: 'center', flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
+      <HappierSkeletonBlock color={palette?.skeleton ?? props.theme.colors.control} width={SKELETON_TITLE_WIDTHS[0]!}
+        height={SKELETON_BAR.height} radius={SKELETON_BAR.radius} {...(props.testID === undefined ? {} : { testID: props.testID })} />
+    </View>
+  );
+}
+
 /** The glyph placeholder: the small glyph step, on the one small radius. */
 const SKELETON_GLYPH = Object.freeze({ size: 16, radius: 4 });
 

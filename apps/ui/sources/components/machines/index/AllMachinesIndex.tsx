@@ -481,6 +481,8 @@ function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummarySt
         return {
         glyph: (item) => <MachineIndexMark item={item} />,
         title: (item) => item.title,
+        // A name still decrypting holds the Collection's title skeleton (as the rail does), never "Loading…".
+        titlePending: (item) => item.hydrating === true,
         titleSuffix: (item) => item.facts,
         // The list's second line (phones): the strip, or why the machine shows none.
         byline: (item) => <MachineIndexListLine item={item} style={style} metrics={metrics} />,

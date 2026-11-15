@@ -1025,6 +1025,28 @@ describe('Collection table', () => {
       view.unmount();
     }
   });
+  it.each([['table', 1440], ['list', 390], ['grid', 1440]] as const)(
+    'holds a pending title in %s as the shared skeleton, never a word, while the rest of the row is live',
+    async (presentation, width) => {
+      const view = mount({
+        presentation,
+        anatomy: { ...anatomy, titlePending: (entry) => entry.id === 'a' },
+      });
+      try {
+        view.measure(width);
+        const pending = view.query('row:a:title-pending');
+        expect(pending).not.toBeNull();
+        expect(view.container.textContent).not.toContain(entries[0]!.title);
+        // The row still names its item to assistive tech, and its neighbours keep their titles.
+        expect(view.query('row:a')?.getAttribute('aria-label') ?? '').toContain(entries[0]!.title);
+        expect(view.container.textContent).toContain(entries[2]!.title);
+        expect(view.query('row:c:title-pending')).toBeNull();
+      } finally {
+        view.unmount();
+      }
+    },
+  );
+
   it.each(['list', 'table', 'board', 'grid'] as const)(
     'chooses cards in %s without opening their navigation destinations',
     async (presentation) => {

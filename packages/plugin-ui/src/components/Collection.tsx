@@ -29,7 +29,7 @@ import {
 import { useContainingHappierMaterialRole, useHappierMaterialColorResolver } from '../presentation/layout/Surface.js';
 import { HappierBodyEdgeContext, useHappierColumnEdgeRemainder } from '../presentation/layout/columnEdge.js';
 import { HAPPIER_PAGE_METRICS, isHappierPageRowNarrow, readHappierVisibleLayoutWidth } from '../presentation/layout/pageMetrics.js';
-import { resolveHappierPageTextStyle, resolveHappierTextStepStyle } from '../presentation/layout/pageText.js';
+import { HAPPIER_PAGE_TEXT, resolveHappierPageTextStyle, resolveHappierTextStepStyle } from '../presentation/layout/pageText.js';
 import { HAPPIER_ROW_TITLE_META_GAP_PX, resolveHappierRowTitleMetaPlacement } from '../presentation/layout/pageRowMetrics.js';
 import { useHappierPageSection } from '../presentation/layout/PageSection.js';
 import { useHappierPageChromeInternal } from '../presentation/layout/pageChrome.js';
@@ -88,7 +88,7 @@ import type { HappierLayoutChangeEvent, HappierPortableStyle } from '../presenta
 import { HappierText } from '../presentation/text/Text.js';
 import { CollectionCards, CollectionGroupActionButton, readCollectionLineHeight } from './CollectionCards.js';
 import { Dropdown } from './Overlay.js';
-import { HappierSkeletonRows } from '../presentation/feedback/Skeleton.js';
+import { HappierSkeletonRows, HappierSkeletonTitle } from '../presentation/feedback/Skeleton.js';
 import { List, ListItemSelectionContext, type ItemProps, type ListMultiSelectionCapabilityProps, type ListSingleChoiceCapabilityProps, type ListSectionData, type ListSelectionProps } from './List.js';
 import { encodeHappierSectionRowCellKey, resolveHappierRovingTabStop } from '../presentation/collection/semantics.js';
 import { HAPPIER_ITEM_DENSITY_ROW_HEIGHT, HAPPIER_ROW_CONTENT_POINTER_EVENTS, HAPPIER_ROW_CONTROL_POINTER_EVENTS } from '../presentation/collection/List.js';
@@ -202,6 +202,12 @@ export type CollectionAnatomy<Item> = Readonly<{
    * ending in an ellipsis, instead of wrapping it as a name. Keep the full title in `accessibilityLabel`.
    */
   titleIdentifier?: boolean;
+  /**
+   * The item's name is still arriving (its record is still decrypting): the title's place holds the loading rows'
+   * title bar instead of a word like "Loading…", in every geometry, while the rest of the row stays live. `title`
+   * and `accessibilityLabel` still name the item for assistive tech.
+   */
+  titlePending?: (item: Item) => boolean;
   /**
    * The rest of the title line in the table's Entry cell: the item's short designation ("#2481", "!88") as quiet
    * text, or the caller's own inline line (a status word, a command, chips) that gives way before the title does.
@@ -1294,6 +1300,13 @@ function ListColumnValue(props: Readonly<{ value: ReactNode; textStyle: HappierP
 }
 
 /** The table's Entry cell: the title, then its designation quietly after it (lab `.tt` + `.nb`). */
+/** The title's place while the anatomy says the item's name is still arriving (`titlePending`). */
+function CollectionPendingTitle<Item>(props: Readonly<{ item: Item; anatomy: CollectionAnatomy<Item>; lineHeight?: number }>): ReactElement {
+  const theme = useHappierUiTheme();
+  return <HappierSkeletonTitle theme={theme} lineHeight={props.lineHeight ?? theme.typography.label.lineHeight}
+    {...(props.anatomy.testID === undefined ? {} : { testID: `${props.anatomy.testID(props.item)}:title-pending` })} />;
+}
+
 function TableTitle<Item>(props: Readonly<{
   item: Item;
   anatomy: CollectionAnatomy<Item>;
@@ -1304,6 +1317,7 @@ function TableTitle<Item>(props: Readonly<{
   const stepStyle = props.titleStyle ?? null;
   const suffix = anatomy.titleSuffix?.(item) ?? null;
   const controls = anatomy.titleControls?.(item) ?? null;
+  const pending = anatomy.titlePending?.(item) === true;
   if (controls !== null && controls !== false) {
     // A row with controls: the title and its line pass presses to the row beneath; the controls take their own.
     const layer = rowLayerPointerEvents(anatomy);
@@ -1311,7 +1325,8 @@ function TableTitle<Item>(props: Readonly<{
     return (
       <View pointerEvents={layer?.content} style={titleWithLineStyle}>
         <View pointerEvents={layer?.leaf} style={empty ? titleTextStyle : titleBeforeLineStyle}>
-          <HappierText variant="label" tone="neutral" numberOfLines={1} style={stepStyle}>{anatomy.title(item)}</HappierText>
+          {pending ? <CollectionPendingTitle item={item} anatomy={anatomy} />
+            : <HappierText variant="label" tone="neutral" numberOfLines={1} style={stepStyle}>{anatomy.title(item)}</HappierText>}
         </View>
         {empty ? null : (
           <View pointerEvents={layer?.leaf} style={titleLineStyle}>
@@ -1325,7 +1340,7 @@ function TableTitle<Item>(props: Readonly<{
     );
   }
   const inline = suffix !== null && suffix !== false && typeof suffix !== 'string' && typeof suffix !== 'number';
-  const title = (
+  const title = pending ? <CollectionPendingTitle item={item} anatomy={anatomy} /> : (
     <HappierText variant="label" tone="neutral" numberOfLines={1} style={[inline ? titleBeforeLineStyle : titleTextStyle, stepStyle]}>
       {anatomy.title(item)}
     </HappierText>
@@ -1500,6 +1515,8 @@ function ListCells<Item>(props: Readonly<{
   const kindLabel = catalog ? anatomy.kindLabel?.(item) : null;
   // A mixed list's kind word runs on in the name's own line, right after it on its baseline (S10 catalogRow): it
   // wraps with the name and never floats to the row's end or squeezes the name.
+  // The list row's title step (a page row's, or the collection list's), shared by the title and its pending bar.
+  const listTitleStep = page ? HAPPIER_PAGE_TEXT.rowTitle : HAPPIER_COLLECTION_LIST_TEXT.listRowTitle;
   const kindWord = kindLabel === undefined || kindLabel === null || kindLabel === '' ? null : (
     <HappierText variant="meta" tone="secondary" style={catalogKindWordStyle}>{`\u2002${kindLabel}`}</HappierText>
   );
@@ -1573,12 +1590,13 @@ function ListCells<Item>(props: Readonly<{
         {singleLine ? null : <View pointerEvents={layer?.leaf} style={catalog ? catalogTitleLineStyle : props.wrapTitle ? wrappedTitleLineStyle : lineStyle}>
           {/* A catalog name, and an authored name on the resting page list, is never ellipsized: it wraps and the
               row grows above its floor (ST-5; a phone at large text, FIN-QA-LARGETEXT T1). A dense index row keeps one line. */}
+          {anatomy.titlePending?.(item) === true ? <CollectionPendingTitle item={item} anatomy={anatomy} lineHeight={listTitleStep.lineHeight} /> : (
           <HappierText variant="label" tone="neutral" {...((catalog || props.wrapTitle) && anatomy.titleIdentifier !== true ? {} : { numberOfLines: 1 })}
-            style={[titleTextStyle, catalog ? null : flexCellStyle, page ? resolveHappierPageTextStyle('rowTitle', typography) : resolveHappierTextStepStyle(HAPPIER_COLLECTION_LIST_TEXT.listRowTitle, typography),
+            style={[titleTextStyle, catalog ? null : flexCellStyle, resolveHappierTextStepStyle(listTitleStep, typography),
               anatomy.titleIdentifier === true ? { fontFamily: typography?.mono?.fontFamily ?? IDENTIFIER_FALLBACK_FONT } : null]}>
             {anatomy.title(item)}
             {kindWord}
-          </HappierText>
+          </HappierText>)}
           {/* A catalog name keeps its natural width, so its meta grows to stand at the line's end; any other title fills
               the line and the meta keeps its own width (a growing meta took half of a phone row's title line). */}
           {metaPlacement === 'inline' && metaCell !== null && !metaOnRow ? (catalog ? <View style={catalogMetaInlineStyle}>{metaCell}</View> : metaCell) : null}

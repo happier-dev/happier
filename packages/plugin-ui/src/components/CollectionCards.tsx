@@ -18,7 +18,7 @@ import { resolveHappierCollectionGridRows } from '../presentation/collection/col
 import { HappierCardActionsCornerContext, HappierCardFillsCellContext, HappierCardSelectionRingContext } from '../presentation/collection/CollectionList.js';
 import { resolveHappierCollectionGridGeometry } from '../presentation/collection/collectionTable.js';
 import { useHappierCollectionViewport, type HappierCollectionModel, type HappierCollectionViewport } from '../presentation/collection/useCollection.js';
-import { HappierSkeletonBlock } from '../presentation/feedback/Skeleton.js';
+import { HappierSkeletonBlock, HappierSkeletonTitle } from '../presentation/feedback/Skeleton.js';
 import { HappierSegmentedChoice } from '../presentation/form/SegmentedChoice.js';
 import { HappierPressable } from '../presentation/interaction/Pressable.js';
 import { Button } from './Button.js';
@@ -207,6 +207,10 @@ function BoardCard<Item>(props: Readonly<{ item: Item; anatomy: CollectionAnatom
   // A card under a preview band (lab artifacts A1): mark beside the title, where under it, kind and age at the foot.
   const previewCard = (props.previewInset ?? 0) > 0;
   const cardText = useCardText();
+  const theme = useHappierUiTheme();
+  // A name still arriving (`titlePending`) holds the loading rows' title bar on the card's title line.
+  const pendingTitle = anatomy.titlePending?.(item) === true ? <HappierSkeletonTitle theme={theme} lineHeight={cardText.title}
+    {...(testID === undefined ? {} : { testID: `${testID}:title-pending` })} /> : null;
   // The mark centres on the title's first line, so a wrapped title keeps the mark beside its opening words.
   const boardMark = board ? <View style={[boardMarkStyle, { height: cardText.title }]}>{anatomy.glyph(item)}</View> : null;
   // On a board the reason moves to the facts line, so the top-right slot holds only the item's own control.
@@ -238,13 +242,13 @@ function BoardCard<Item>(props: Readonly<{ item: Item; anatomy: CollectionAnatom
       props.previewInset ? { paddingTop: props.previewInset } : null, props.fillsCell && Platform.OS === 'web' ? CELL_FILL_STYLE : null]}
     mark={board ? undefined : anatomy.glyph(item)} title={titleSuffix || anatomy.titleMeta ? <View pointerEvents="none" style={[card.lineStyle, { flexWrap: 'wrap' }]}>
       {boardMark}
-      <HappierText variant="heading" tone="neutral">{anatomy.title(item)}</HappierText>
+      {pendingTitle ?? <HappierText variant="heading" tone="neutral">{anatomy.title(item)}</HappierText>}
       <Slot value={titleSuffix?.(item)} />
       <Slot value={anatomy.titleMeta?.(item)} />
     </View> : board ? <View pointerEvents="none" style={[card.lineStyle, { alignItems: 'flex-start' }]}>
       {boardMark}
-      <HappierText variant="heading" tone="neutral" numberOfLines={2} accessibilityRole="header" style={shrinkStyle}>{anatomy.title(item)}</HappierText>
-    </View> : anatomy.title(item)}
+      {pendingTitle ?? <HappierText variant="heading" tone="neutral" numberOfLines={2} accessibilityRole="header" style={shrinkStyle}>{anatomy.title(item)}</HappierText>}
+    </View> : pendingTitle ?? anatomy.title(item)}
     source={anatomy.card?.description ? <Passive>{anatomy.card.description(item)}</Passive>
       : hasDescription(description) ? <Passive><HappierText variant="body" tone="secondary" numberOfLines={2} testID={testID === undefined ? undefined : `${testID}:description`}>{description}</HappierText></Passive>
       : placeUnderTitle && present(place) ? <Passive><Slot value={place} tone="muted" /></Passive> : null}
@@ -1011,7 +1015,7 @@ function PageWindowedGridRow<Item>(props: Readonly<{
   testID?: string;
 }>): ReactElement {
   const { rows, keyOf, estimate, cardWidth, tracker } = props;
-  const { root, span, window, measure } = usePageWindow(tracker);
+  const { root, span, window, measure, near: nearPage } = usePageWindow(tracker);
   const [measured, setMeasured] = useState<Readonly<{ cardWidth: number; heights: ReadonlyMap<string, number> }>>(
     () => ({ cardWidth, heights: NO_HEIGHTS }),
   );
@@ -1034,10 +1038,7 @@ function PageWindowedGridRow<Item>(props: Readonly<{
     // `estimate` is a new closure each render; the geometry it reads arrives through `rows` and `cardWidth`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, heights, keyOf, cardWidth]);
-  // Before the page has placed the grid, it stands at the page's top: the first window of cards paints at once.
-  const top = span?.top ?? 0;
-  const near = (line: Readonly<{ offset: number; height: number }>) => window === null
-    || (top + line.offset + line.height >= window.top && top + line.offset <= window.bottom);
+  const near = (line: Readonly<{ offset: number; height: number }>) => nearPage(line.offset, line.height);
   const lineOf = (key: string | null) => key === null ? -1 : rows.findIndex(row => row.some(item => keyOf(item) === key));
   const pinnedLines = new Set(props.pinnedKeys.map(lineOf).filter(index => index >= 0));
   const revealLine = lineOf(props.revealKey);
