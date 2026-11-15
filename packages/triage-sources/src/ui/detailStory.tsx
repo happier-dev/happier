@@ -374,7 +374,7 @@ export function TriageDetailSpread({ tiles, trend, locale, nowMs }: Readonly<{
   const points = trend === null ? [] : trend.points;
   if (tiles.length === 0 && points.length === 0) return null;
   const tileRow = tiles.length === 0 ? null : <Row gap="large" style={{ flexWrap: 'wrap' }}>
-    {tiles.map((tile) => <Metric key={tile.id} label={tile.label} value={tile.value} caption={tile.label} />)}
+    {tiles.map((tile) => <Metric key={tile.id} size="stat" label={tile.label} value={tile.value} caption={tile.label} />)}
   </Row>;
   const chart = trend === null || points.length === 0 ? null : <Chart style="line" label={trend.label}
     points={points.map((point) => ({

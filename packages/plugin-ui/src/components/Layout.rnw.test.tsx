@@ -5,6 +5,8 @@ import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
 import { Button } from './Button.js';
+import { Action } from './Action.js';
+import { PluginUiPresentationHostProviderInternal, type PluginUiPresentationHost } from '../presentationHost/context.js';
 import { ListDetailLayout, Row, Screen, ScrollArea, Stack } from './Layout.js';
 import { hitAreaClippingAncestors } from '../presentation/interaction/hitArea.testSupport.js';
 import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '../environment/interactiveTarget.js';
@@ -272,6 +274,32 @@ describe('plugin-ui semantic layout', () => {
     );
     expect(slotOf(stretched.container, 'stretched').getAttribute('role')).toBe('button');
     stretched.unmount();
+  });
+
+  it('keeps a host-drawn Action.Control on its own width in a default column, like any labelled button', () => {
+    // Sentry's Resolve and Archive drew as bars across the pane (QA-ARM-PHONE-1114 sentry-controls-*).
+    const host: PluginUiPresentationHost = {
+      renderMarkdown: () => null, renderCodeBlock: () => null, renderPopover: () => null, renderIcon: () => null,
+      renderActionControl: ({ presentation }) => <Button title={presentation.title} onPress={() => undefined} />,
+    };
+    const context = createSurfaceContext();
+    const hostApi = createHostApiStub(context, {
+      version: () => ({ apiVersion: '1.0.0', wireVersion: 1, methods: ['actionControl'] }),
+      actionControl: async () => ({ dispose() {}, update: async () => {} }),
+    });
+    const mount = mountThroughReactNativeWeb(
+      <PluginUiProvider hostApi={hostApi} context={context}>
+        <PluginUiPresentationHostProviderInternal host={host}>
+          <Stack testID="default" gap="small">
+            <Action.Control action="projects.compute.exec" title="Resolve" controller={{ prepare: () => null, onSettled() {} }} />
+          </Stack>
+        </PluginUiPresentationHostProviderInternal>
+      </PluginUiProvider>,
+    );
+    const slot = mount.container.querySelector('[data-testid="default"] > *') as HTMLElement;
+    expect(slot.textContent).toBe('Resolve');
+    expect(slot.getAttribute('role')).not.toBe('button');
+    mount.unmount();
   });
 
   it('keeps Row logical under an RTL surface context instead of reversing it manually', () => {

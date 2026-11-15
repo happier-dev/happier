@@ -310,7 +310,8 @@ function LinkedRowPeek(props: Readonly<{
                 : props.statusRead.phase === 'unavailable' ? <FreshnessLine tone="warning" reason={text('plugins.triage.sessionLinks.status.unavailable', 'PR status is unavailable.')}
                     action={{ label: text('plugins.triage.surface.refresh', 'Refresh'), onPress: onRefresh }} />
                     : partial ? <FreshnessLine tone="neutral" reason={text('plugins.triage.sessionLinks.status.partial', 'Some status details could not be read.')} /> : null}
-            <Row gap="small" align="center">
+            {/* A narrow pane wraps the actions to a second line; a label never breaks inside a word ("Op/en"). */}
+            <Row gap="small" align="center" wrap>
                 <Button
                     variant="primary"
                     title={text('plugins.triage.sessionLinks.open', 'Open')}

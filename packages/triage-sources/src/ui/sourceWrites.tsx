@@ -10,6 +10,7 @@ import {
   Action,
   Banner,
   Button,
+  Row,
   Stack,
   Text,
   TextField,
@@ -306,19 +307,24 @@ export function TriageSourceWrites({
   return (
     <>
       {children?.({ held, settle })}
-      {writes.map((write) => (
-        <Action.Control
-          key={write.id}
-          action={write.action}
-          controller={controllers.get(write.id)!}
-          title={write.title}
-          {...(write.titleKey === undefined
-            ? {}
-            : { titleKey: write.titleKey })}
-          {...(write.variant === undefined ? {} : { variant: write.variant })}
-          disabled={held || write.input === null}
-        />
-      ))}
+      {/* The writes are operations beside the entry, side by side (lab c4 Resolve), never bars across the pane. */}
+      {writes.length === 0 ? null : (
+        <Row gap="small" align="center" wrap>
+          {writes.map((write) => (
+            <Action.Control
+              key={write.id}
+              action={write.action}
+              controller={controllers.get(write.id)!}
+              title={write.title}
+              {...(write.titleKey === undefined
+                ? {}
+                : { titleKey: write.titleKey })}
+              {...(write.variant === undefined ? {} : { variant: write.variant })}
+              disabled={held || write.input === null}
+            />
+          ))}
+        </Row>
+      )}
       {notice}
     </>
   );

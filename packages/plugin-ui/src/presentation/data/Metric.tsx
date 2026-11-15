@@ -133,7 +133,8 @@ export function HappierDataMetric(props: HappierDataMetricProps) {
     <View
       testID={props.testID}
       accessible
-      style={{ gap: size === 'default' ? 0 : 2, minWidth: 0 }}
+      // Never wider than its cell: a value with no space to wrap at (a release name) breaks inside itself instead.
+      style={{ gap: size === 'default' ? 0 : 2, minWidth: 0, maxWidth: '100%' }}
       accessibilityLabel={[
         `${props.label}: ${spokenValue}`,
         props.comparison

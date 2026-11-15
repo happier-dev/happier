@@ -329,6 +329,21 @@ describe('public data nodes through React Native Web', () => {
     }
   });
 
+  it('keeps a value with no space to wrap at inside its cell, never past the pane edge', () => {
+    // Sentry's "First seen in example-app@2026.5.1" ran past a 308 px pane (QA-ARM-PHONE-1114 PHONE-VISUAL-08).
+    const context = createSurfaceContext();
+    const mount = mountThroughReactNativeWeb(
+      <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+        <Metric testID="metric" label="First seen in" size="stat" value="example-app@2026.5.1" caption="First seen in" />
+      </PluginUiProvider>,
+    );
+    try {
+      expect(getComputedStyle(query(mount.container, 'metric')!).maxWidth).toBe('100%');
+    } finally {
+      mount.unmount();
+    }
+  });
+
   it('binds each number to its unit so a narrow cell wraps between "1 h" and "54 min", never before "min"', () => {
     const context = createSurfaceContext();
     const mount = mountThroughReactNativeWeb(

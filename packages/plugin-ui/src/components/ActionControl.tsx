@@ -117,3 +117,6 @@ export function ActionControl(props: ActionControlProps): ReactNode {
   if (unavailable) return props.fallback ?? null;
   return renderInline ? renderInline({ control: bound, presentation: nextPresentation }) : null;
 }
+
+// The host draws it as a labelled button: in a stretching column it keeps its own width (`isHappierInlineControl`).
+ActionControl.happierInlineControl = true as const;
