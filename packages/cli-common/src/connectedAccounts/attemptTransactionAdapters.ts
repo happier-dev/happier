@@ -20,6 +20,7 @@ import {
 } from './attemptTransactionApi.js';
 import type { PkceCodes } from './pkce.js';
 import { ConnectedAccountManualAttemptDraftSchema } from './manualAttemptDraft.js';
+import { parseConnectedAccountConfigurationRecordContent } from './configurationOwner.js';
 import type {
   ConnectedAccountAttemptAddressOwner,
   ConnectedAccountAttemptAddressSnapshot,
@@ -124,6 +125,9 @@ const DevicePayloadSchema = z.strictObject({
 });
 type OAuthPayload = z.infer<typeof OAuthPayloadSchema>;
 type DevicePayload = z.infer<typeof DevicePayloadSchema>;
+const ConfigurationDraftSchema = z.strictObject({
+  configuration: z.strictObject({ revision: z.string(), content: z.unknown() }),
+});
 
 function sameService(
   left: ConnectedAccountOAuthTransactionSnapshot['service'],
@@ -275,7 +279,8 @@ export function createConnectedAccountAttemptTransactionAdapters(
   }>): Promise<OAuthPayload | null> {
     const opened = await open(input.record);
     // Before OAuth begins this same addressed record contains only a form draft.
-    if (input.record.scope.phase === 'configurationRequired' && opened === null) return null;
+    if (input.record.scope.phase === 'configurationRequired'
+      && (opened === null || ConfigurationDraftSchema.safeParse(opened).success)) return null;
     const parsed = createStoredReadSchema(OAuthPayloadSchema).parse(opened);
     if (parsed.snapshot.attemptId !== input.attemptId) {
       throw new Error(
@@ -326,6 +331,19 @@ export function createConnectedAccountAttemptTransactionAdapters(
       async acknowledge(snapshot) {
         if (closed) {
           throw new Error('Connected-account OAuth transaction is closed');
+        }
+        if (payload.snapshot.phase === 'configurationRequired'
+          && payload.snapshot.expectedConfigurationRevision !== snapshot.expectedConfigurationRevision) {
+          // The configuration form commits to this row while the OAuth handle waits.
+          const current = await api.read({ attemptId: snapshot.attemptId });
+          if (!current || current.kind !== 'oauth') {
+            throw new ConnectedAccountAttemptTransactionApiError('connected_account_attempt_transaction_not_found');
+          }
+          const persisted = await readOAuthPayload({ attemptId: snapshot.attemptId, record: current });
+          if (!persisted) throw new ConnectedAccountAttemptTransactionApiError('connected_account_attempt_transaction_unreadable');
+          assertOAuthSnapshotAdvance(payload.snapshot, persisted.snapshot);
+          payload = persisted;
+          record = current;
         }
         assertOAuthSnapshotAdvance(payload.snapshot, snapshot);
         const nextPayload = OAuthPayloadSchema.parse({
@@ -477,6 +495,42 @@ export function createConnectedAccountAttemptTransactionAdapters(
       const opened = await open(record);
       if (opened === null) return null;
       return createStoredReadSchema(ConnectedAccountManualAttemptDraftSchema).parse(opened).manual;
+    },
+    async readConfiguration(record) {
+      const opened = await open(record);
+      if (opened === null) return null;
+      if (record.kind !== 'manual' && ConfigurationDraftSchema.safeParse(opened).success) {
+        const draft = ConfigurationDraftSchema.parse(opened).configuration;
+        return parseConnectedAccountConfigurationRecordContent(draft.content, draft.revision, 'attempt');
+      }
+      const snapshot = record.kind === 'manual'
+        ? createStoredReadSchema(ConnectedAccountManualAttemptDraftSchema).parse(opened).manual
+        : record.kind === 'oauth'
+          ? createStoredReadSchema(OAuthPayloadSchema).parse(opened).snapshot
+          : createStoredReadSchema(DevicePayloadSchema).parse(opened).snapshot;
+      return snapshot.stagedAccountConfigurationContent === undefined || snapshot.expectedConfigurationRevision === null
+        ? null : parseConnectedAccountConfigurationRecordContent(
+          snapshot.stagedAccountConfigurationContent, snapshot.expectedConfigurationRevision, 'attempt');
+    },
+    async replaceConfiguration({ attemptId, record, configuration }) {
+      const { revision, ...content } = configuration;
+      const opened = await open(record);
+      let payload: unknown;
+      if (record.kind === 'manual') {
+        const draft = createStoredReadSchema(ConnectedAccountManualAttemptDraftSchema).parse(opened);
+        payload = { manual: { ...draft.manual, expectedConfigurationRevision: revision, stagedAccountConfigurationContent: content } };
+      } else if (record.scope.phase === 'configurationRequired'
+        && (opened === null || ConfigurationDraftSchema.safeParse(opened).success)) {
+        payload = { configuration: { revision, content } };
+      } else {
+        const current = record.kind === 'oauth'
+          ? createStoredReadSchema(OAuthPayloadSchema).parse(opened)
+          : createStoredReadSchema(DevicePayloadSchema).parse(opened);
+        payload = { ...current, snapshot: { ...current.snapshot,
+          expectedConfigurationRevision: revision, stagedAccountConfigurationContent: content } };
+      }
+      await api.replace({ attemptId, kind: record.kind, expectedRevision: record.revision,
+        content: await seal(payload), scope: record.scope, expiresAtMs: record.expiresAtMs });
     },
     async clear(attemptId) {
       const record = await api.read({ attemptId });

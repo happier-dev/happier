@@ -1,5 +1,16 @@
 # Compatibility and version skew
 
+## Attempt configuration drafts (unreleased 0.3)
+
+Accepted attempt configuration now persists in the existing sealed transaction.
+Manual and active OAuth/device transactions retain their existing staged content
+and revision fields. Before OAuth/device authorization, a previously null payload
+can hold `{ configuration: { revision, content } }`; continuation replaces that
+draft with the ordinary authorization snapshot. Existing null drafts remain
+readable. Matching configuration readers and writers reload together under the
+unpublished 0.3 direct cut; this changes no database schema or released 0.2 format.
+
+
 ## Native firewall recovery commands (unreleased 0.3)
 
 `MachineFirewallRecoveryV1` optionally carries closed `restore: { capturedAt,

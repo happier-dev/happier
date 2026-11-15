@@ -13,7 +13,7 @@ import type {
     ConnectedAccountStageAccountConfiguration,
     ConnectedAccountManualInput,
 } from './authenticationTypes.js';
-import { applyConnectedAccountConfigurationFields, type ConnectedAccountConfigurationOwner } from './configurationOwner.js';
+import { applyConnectedAccountConfigurationFields, type ConnectedAccountConfigurationOwner, type ConnectedAccountConfigurationRecord } from './configurationOwner.js';
 import { resolveConnectedAccountAttemptTransactionExpiry, type ConnectedAccountAttemptTransactionRecord, type PendingConnectedAccountAttemptTransaction } from './attemptTransactionApi.js';
 import { type ConnectedAccountDirectExportContractV1, resolveConnectedAccountDirectExportContractV1, isConnectedAccountApiKeyModeV1, listConnectedAccountSecretCredentialKeysV1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { QualifiedConnectedAccountIdSchema, sameQualifiedConnectedAccountRef,
@@ -239,6 +239,12 @@ export type ConnectedAccountAttemptAddressOwner = Readonly<{
     acknowledge(snapshot: ConnectedAccountAttemptAddressSnapshot): Promise<Readonly<{ expiresAtMs: number }>>;
     read(attemptId: string): Promise<ConnectedAccountAttemptTransactionRecord | null>;
     readManualDraft?(record: ConnectedAccountAttemptTransactionRecord): Promise<ConnectedAccountManualAttemptBasis | null>;
+    readConfiguration?(record: ConnectedAccountAttemptTransactionRecord): Promise<ConnectedAccountConfigurationRecord | null>;
+    replaceConfiguration?(input: Readonly<{
+        attemptId: string;
+        record: ConnectedAccountAttemptTransactionRecord;
+        configuration: ConnectedAccountConfigurationRecord;
+    }>): Promise<void>;
     clear(attemptId: string): MaybePromise<void>;
 }>;
 

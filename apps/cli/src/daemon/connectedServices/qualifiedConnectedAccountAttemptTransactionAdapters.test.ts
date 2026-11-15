@@ -273,6 +273,14 @@ describe('qualified Connected Account attempt transaction adapters', () => {
     expect(await configurations.replace({ target, expectedRevision: recovered!.revision, replacement })).toMatchObject({
       status: 'committed', record: { revision: 'configuration-2', values: { tenant: 'edited-fixture' } },
     });
+    const independent = createConnectedAccountAttemptConfigurationStore({
+      createRevision: () => 'configuration-3', transactions: createHost(),
+    });
+    expect(await independent.read(target)).toEqual({ revision: 'configuration-2', ...replacement });
+    vi.spyOn(api, 'replace').mockRejectedValueOnce(new Error('database unavailable'));
+    expect(await independent.replace({ target, expectedRevision: 'configuration-2',
+      replacement: { ...replacement, values: { tenant: 'not-saved' } } })).toMatchObject({ status: 'unavailable' });
+    expect(await independent.read(target)).toEqual({ revision: 'configuration-2', ...replacement });
     expect(await configurations.replace({ target, expectedRevision: recovered!.revision, replacement })).toEqual({
       status: 'conflict', code: 'connected_account_configuration_changed',
     });
@@ -281,6 +289,42 @@ describe('qualified Connected Account attempt transaction adapters', () => {
     expect(submitted?.scope.phase).toBe('starting');
     expect(await first.address.readManualDraft!(submitted!)).toBeNull();
     expect(submitted?.scope).not.toHaveProperty('machineId');
+  });
+
+  it.each(['oauth', 'device'] as const)('retains accepted %s configuration before authorization across exact reads in independent hosts', async kind => {
+    const api = createTransactionApi();
+    const createHost = () => createQualifiedConnectedAccountAttemptTransactionAdapters({
+      credentials: tokenOnlyCredentials(), getAccountEncryptionMode: async () => 'plain', api, now: () => 5_000,
+    });
+    const first = createHost();
+    const target = { kind: 'attempt' as const, attemptId: 'configuration-draft', service, modeId: kind };
+    await first.address.acknowledge({ ...target, kind, phase: 'configurationRequired', createdAtMs: 5_000, intent: 'connect' });
+    const store = createConnectedAccountAttemptConfigurationStore({ createRevision: () => 'saved-revision', transactions: first });
+    const replacement = { values: { baseUrl: 'https://forge.example.test' }, secretRefs: {} };
+    expect(await store.replace({ target, expectedRevision: null, replacement })).toMatchObject({ status: 'committed' });
+    const independent = createConnectedAccountAttemptConfigurationStore({ createRevision: () => 'edited-revision', transactions: createHost() });
+    expect(await independent.read(target)).toEqual({ revision: 'saved-revision', ...replacement });
+    expect(await independent.replace({ target, expectedRevision: null, replacement })).toMatchObject({ status: 'conflict' });
+  });
+
+  it('continues an existing OAuth handle after configuration replacement in another host', async () => {
+    const api = createTransactionApi();
+    const createHost = () => createQualifiedConnectedAccountAttemptTransactionAdapters({
+      credentials: tokenOnlyCredentials(), ...plainAccount, api, now: () => 5_000,
+    });
+    const first = createHost();
+    const snapshot = { ...oauthSnapshot(), phase: 'configurationRequired' as const,
+      stagedAccountConfigurationContent: { values: { tenant: 'old' }, secretRefs: {} } };
+    const handle = await first.oauth.create({ attemptId: snapshot.attemptId, service, snapshot,
+      callbackUrl: 'https://app.example/callback' });
+    const store = createConnectedAccountAttemptConfigurationStore({ createRevision: () => 'configuration-2', transactions: createHost() });
+    const target = { kind: 'attempt' as const, attemptId: snapshot.attemptId, service, modeId: snapshot.modeId };
+    const replacement = { values: { tenant: 'new' }, secretRefs: {} };
+    expect(await store.replace({ target, expectedRevision: 'configuration-1', replacement })).toMatchObject({ status: 'committed' });
+    await handle.acknowledge({ ...snapshot, expectedConfigurationRevision: 'configuration-2', stagedAccountConfigurationContent: replacement });
+    expect((await createHost().oauth.read(snapshot.attemptId))?.snapshot).toMatchObject({
+      expectedConfigurationRevision: 'configuration-2', stagedAccountConfigurationContent: replacement,
+    });
   });
 
   it('persists and restores an Account-scoped attempt without a Machine', async () => {

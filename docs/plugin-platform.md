@@ -10087,6 +10087,13 @@ Established Account forms show them; provider-discovered replacements clear
 their deferred IDs and use the same configuration owner for selection and
 validation.
 
+Attempt configuration replacement commits the revision and values into the
+existing Account-mode transaction envelope before reporting success. Exact reads
+from another host use that persisted configuration. Manual drafts retain it in
+their existing staged Account content; OAuth/device drafts before authorization
+retain a sealed configuration draft until the ordinary continuation consumes it.
+This is unreleased 0.3 behavior and does not add another persistence store.
+
 After exchanging an authorization code, a provider can stage its grant in
 `attemptCredentials` and return `{ status: 'configurationRequired', fields }`.
 The fields replace matching Account configuration fields in the admitted mode;

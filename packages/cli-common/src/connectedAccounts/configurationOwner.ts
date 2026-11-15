@@ -11,8 +11,6 @@ import type { ConnectedAccountCredentialSecretReader, ConnectedAccountCredential
 import type {
     ConnectedAccountAttemptAddressOwner,
     ConnectedAccountAttemptConfigurationAdmission,
-    ConnectedAccountDeviceTransactionOwner,
-    ConnectedAccountOAuthTransactionOwner,
 } from './authenticationAttemptOwner.js';
 import { cloneStrictPluginJsonValue } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import type { ConnectedAccountSourceCustodyV1 } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
@@ -160,48 +158,18 @@ export type ConnectedAccountAttemptConfigurationStore = Readonly<{
     destroy(attemptId: string): Promise<void>;
 }>;
 
-/** The existing host-lifetime attempt staging store, shared by daemon and Account hosts. */
+/** Configuration projection over the existing sealed attempt transaction. */
 export function createConnectedAccountAttemptConfigurationStore(params: Readonly<{
     createRevision(): string;
     transactions?: Readonly<{
         address?: ConnectedAccountAttemptAddressOwner;
-        oauth?: ConnectedAccountOAuthTransactionOwner;
-        device?: ConnectedAccountDeviceTransactionOwner;
     }>;
 }>): ConnectedAccountAttemptConfigurationStore {
-    const configurations = new Map<string, Readonly<{
-        target: AttemptConfigurationTarget;
-        record: ConnectedAccountConfigurationRecord;
-    }>>();
-
     async function read(target: AttemptConfigurationTarget): Promise<ConnectedAccountConfigurationRecord | null> {
-        const staged = configurations.get(target.attemptId);
-        if (staged) {
-            return sameService(staged.target.service, target.service) && staged.target.modeId === target.modeId
-                ? staged.record : null;
-        }
         const record = await params.transactions?.address?.read(target.attemptId);
         if (!record) return null;
-        if (record.kind === 'manual') {
-            if (!sameService(record.scope.service, target.service) || record.scope.modeId !== target.modeId) return null;
-            const manual = await params.transactions?.address?.readManualDraft?.(record);
-            return manual?.stagedAccountConfigurationContent === undefined || manual.expectedConfigurationRevision === null
-                ? null
-                : parseConnectedAccountConfigurationRecordContent(
-                    manual.stagedAccountConfigurationContent, manual.expectedConfigurationRevision, 'attempt',
-                );
-        }
-        const snapshot = record.kind === 'oauth'
-            ? (await params.transactions?.oauth?.read?.(target.attemptId, record))?.snapshot
-            : record.kind === 'device'
-                ? await params.transactions?.device?.read(target.attemptId, record)
-                : null;
-        if (!snapshot || snapshot.attemptId !== target.attemptId
-            || !sameService(snapshot.service, target.service) || snapshot.modeId !== target.modeId
-            || snapshot.stagedAccountConfigurationContent === undefined) return null;
-        return parseConnectedAccountConfigurationRecordContent(
-            snapshot.stagedAccountConfigurationContent, snapshot.expectedConfigurationRevision, 'attempt',
-        );
+        if (!sameService(record.scope.service, target.service) || record.scope.modeId !== target.modeId) return null;
+        return params.transactions?.address?.readConfiguration?.(record) ?? null;
     }
 
     return Object.freeze({
@@ -212,30 +180,28 @@ export function createConnectedAccountAttemptConfigurationStore(params: Readonly
             replacement: Omit<ConnectedAccountConfigurationRecord, 'revision'>;
         }>) {
             try {
-                const restored = await read(input.target);
-                // A restored draft and a warm draft have the same revision authority.
-                // Prefer a local replacement committed while the persisted read awaited.
-                const current = configurations.get(input.target.attemptId);
-                if ((current && (!sameService(current.target.service, input.target.service)
-                    || current.target.modeId !== input.target.modeId))
-                    || (current?.record.revision ?? restored?.revision ?? null) !== input.expectedRevision) {
-                    return Object.freeze({ status: 'conflict' as const, code: 'connected_account_configuration_changed' });
+                const address = params.transactions?.address;
+                if (address) {
+                    const transaction = await address.read(input.target.attemptId);
+                    if (!transaction || !address.readConfiguration || !address.replaceConfiguration) {
+                        return Object.freeze({ status: 'unavailable' as const, code: 'connected_account_configuration_persistence_unavailable' });
+                    }
+                    if (!sameService(transaction.scope.service, input.target.service)
+                        || transaction.scope.modeId !== input.target.modeId
+                        || ((await address.readConfiguration(transaction))?.revision ?? null) !== input.expectedRevision) {
+                        return Object.freeze({ status: 'conflict' as const, code: 'connected_account_configuration_changed' });
+                    }
+                    const record = parseConnectedAccountConfigurationRecordContent(input.replacement, params.createRevision(), 'attempt');
+                    await address.replaceConfiguration({ attemptId: input.target.attemptId, record: transaction, configuration: record });
+                    return Object.freeze({ status: 'committed' as const, record });
                 }
-                const record = parseConnectedAccountConfigurationRecordContent(input.replacement, params.createRevision(), 'attempt');
-                configurations.set(input.target.attemptId, Object.freeze({
-                    target: Object.freeze({
-                        kind: 'attempt', attemptId: input.target.attemptId,
-                        service: Object.freeze({ ...input.target.service }), modeId: input.target.modeId,
-                    }),
-                    record,
-                }));
-                return Object.freeze({ status: 'committed' as const, record });
+                return Object.freeze({ status: 'unavailable' as const, code: 'connected_account_configuration_persistence_unavailable' });
             } catch {
                 return Object.freeze({ status: 'unavailable' as const, code: 'connected_account_configuration_persistence_unavailable' });
             }
         },
-        async destroy(attemptId: string): Promise<void> {
-            configurations.delete(attemptId);
+        async destroy(_attemptId: string): Promise<void> {
+            // The attempt lifecycle deletes the addressed transaction and its configuration together.
         },
     });
 }

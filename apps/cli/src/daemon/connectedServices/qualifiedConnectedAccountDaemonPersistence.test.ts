@@ -266,7 +266,12 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
   });
 
   it('keeps independent live attempt configurations beyond 64 until their owner closes them', async () => {
+    const attemptTransactions = createQualifiedConnectedAccountAttemptTransactionAdapters({
+      credentials: { token: 'token-1', encryption: null }, getAccountEncryptionMode: async () => 'plain',
+      api: createConnectedAccountAttemptTransactionApiBoundary(),
+    });
     const persistence = createQualifiedConnectedAccountDaemonPersistence({
+      attemptTransactions,
       credentials: { token: 'token-1', encryption: { type: 'dataKey', publicKey: new Uint8Array(32), machineKey: new Uint8Array(32) } },
       getAccountEncryptionMode: async () => 'plain',
       readCredential: async () => null,
@@ -277,6 +282,8 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
     for (let index = 0; index < 80; index += 1) {
       const attemptId = `attempt-${index}`;
       const target = { kind: 'attempt' as const, attemptId, service, modeId: 'oauth' };
+      await attemptTransactions.address.acknowledge({ ...target, kind: 'oauth', phase: 'configurationRequired',
+        createdAtMs: Date.now(), intent: 'connect' });
       const configured = await persistence.configuration.replace({ target, expectedRevision: null,
         replacement: { values: { tenant: 'acme' }, secretRefs: {} }, ...runtimeIdentity() });
       expect(configured.status).toBe('committed');
@@ -285,6 +292,7 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
     }
     for (const target of targets) {
       expect(await persistence.configuration.read(target)).not.toBeNull();
+      await attemptTransactions.address.clear(target.attemptId);
       await persistence.configuration.destroyAttempt(target.attemptId);
       expect(await persistence.configuration.read(target)).toBeNull();
     }
@@ -334,10 +342,15 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
   });
 
   it('keeps attempt secrets inline, target-bound, and inaccessible after destruction', async () => {
+    const attemptTransactions = createQualifiedConnectedAccountAttemptTransactionAdapters({
+      credentials: { token: 'token-1', encryption: null }, getAccountEncryptionMode: async () => 'plain',
+      api: createConnectedAccountAttemptTransactionApiBoundary(),
+    });
     const hasSavedSecret = vi.fn(async () => false);
     const readSavedSecret = vi.fn(async () => null);
     let revision = 0;
     const persistence = createQualifiedConnectedAccountDaemonPersistence({
+      attemptTransactions,
       credentials: {
         token: 'token-1',
         encryption: {
@@ -365,6 +378,8 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
       modeId: 'oauth',
     });
 
+    await attemptTransactions.address.acknowledge({ ...target, kind: 'oauth', phase: 'configurationRequired',
+      createdAtMs: Date.now(), intent: 'connect' });
     const committed = await persistence.configuration.replace({
       target,
       expectedRevision: null,
@@ -426,6 +441,7 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
       code: 'connected_account_configuration_persistence_unavailable',
     });
 
+    await attemptTransactions.address.clear(target.attemptId);
     await persistence.configuration.destroyAttempt(target.attemptId);
     await expect(persistence.configuration.read(target)).resolves.toBeNull();
     expect(hasSavedSecret).not.toHaveBeenCalled();
