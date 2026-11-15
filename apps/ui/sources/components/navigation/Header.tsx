@@ -161,8 +161,12 @@ export const DefaultBackButton: React.FC<{
     accessibilityLabel?: string;
     /** A neighbour flush after Back (an identity mark): Back's reach on that side stops at half the gap to it. */
     trailingReachPx?: number;
-}> = ({ tintColor = '#000', onPress, testID, label, accessibilityLabel, trailingReachPx }) => {
+}> = ({ tintColor, onPress, testID, label, accessibilityLabel, trailingReachPx }) => {
     const styles = stylesheet;
+    const { theme } = useUnistyles();
+    // A Back drawn without a tint (a plugin's pushed detail publishing its way back to the band) takes the band's
+    // own ink, so it reads in both themes rather than staying black on a dark band.
+    const ink = tintColor ?? theme.colors.chrome.header.foreground;
     const bounded = trailingReachPx !== undefined;
     return (
         <HappierPressable onPress={onPress} accessibilityRole="button" accessibilityLabel={accessibilityLabel ?? t('common.back')} testID={testID}
@@ -171,9 +175,9 @@ export const DefaultBackButton: React.FC<{
             <Icon
                 name={Platform.OS === 'ios' ? 'caret-left' : 'arrow-left'}
                 size={BACK_GLYPH_SIZE_PX}
-                color={tintColor}
+                color={ink}
             />
-            {label ? <Text numberOfLines={1} style={[Typography.variant('reading'), styles.backButtonLabel, { color: tintColor }]}>{label}</Text> : null}
+            {label ? <Text numberOfLines={1} style={[Typography.variant('reading'), styles.backButtonLabel, { color: ink }]}>{label}</Text> : null}
         </HappierPressable>
     );
 };
@@ -347,14 +351,21 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         paddingHorizontal: HEADER_CONTENT_PADDING_PX,
         width: '100%',
     },
+    // Back, the title and the trailing controls share a narrow bar by their own widths: each gives up room in
+    // proportion to what it holds, so Back's parent name and a long control shorten before the title is cut to
+    // its first letters (phone 390: "← PRs & Issues  f.  [machine chip]").
     leftContainer: {
         flexGrow: 0,
-        flexShrink: 0,
-        alignItems: 'flex-start',
+        flexShrink: 1,
+        minWidth: 0,
+        // A row, so Back itself shortens with the bar rather than overflowing a narrowed column.
+        flexDirection: 'row',
+        alignItems: 'center',
     },
     centerContainer: {
         flexGrow: 1,
-        flexBasis: 0,
+        flexShrink: 1,
+        flexBasis: 'auto',
         minWidth: 0,
         alignSelf: 'stretch',
         flexDirection: 'row',
@@ -405,6 +416,9 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     backButtonTarget: {
         flexDirection: 'row',
         alignItems: 'center',
+        // Its parent's name shortens with the bar; the chevron keeps its size.
+        flexShrink: 1,
+        minWidth: 0,
         padding: theme.space.s8,
         margin: -theme.space.s8,
     },
