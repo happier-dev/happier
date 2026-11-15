@@ -6423,9 +6423,11 @@ const machineDetailPageTranslations = { de: translated({
             replacedByFact: ({ machine }) => `Ersetzt durch ${machine}`,
             /** One recovery per state on the Machine page: the row says what is wrong, the button what fixes it. */
             recovery: {
-                restartDaemon: "Hintergrunddienst neu starten",
+                restartDaemon: "Neu starten",
                 daemonDown: "Happier antwortet nicht",
                 updateAvailable: "Eine neuere Happier-Version ist bereit",
+                daemonDownHelp: "Neu starten richtet Happier erneut ein und startet den Hintergrunddienst. Sitzungen laufen weiter, sobald es wieder verbunden ist.",
+                updateHelp: "Aktualisieren installiert die Happier-Version, die dieses Home verwendet.",
             },
             unavailableTitle: 'Dieser Rechner kann gerade keine Sessions starten',
             startAction: 'Session starten',

@@ -17,6 +17,14 @@ describe('native Ends presentation', () => {
     expect(resolveManagedNativeEndState({ provider: 'Modal', finiteOnly: true,
       duration: { ...duration, idleAfterMs } })).toEqual(state);
   });
+  it('gives every state a list row shows as a status word its one short word (TH D3)', () => {
+    for (const state of [{ kind: 'creationCanceledCleanup' }, { kind: 'cleanupUnknown' }, { kind: 'mayExist', name: 'Cua' },
+      { kind: 'cleanupPending' }] as const) {
+      const presentation = describeManagedLifecycleState(state as Parameters<typeof describeManagedLifecycleState>[0]);
+      expect(presentation.word).toEqual(expect.any(String));
+      expect(presentation.word).not.toBe(presentation.line);
+    }
+  });
   it('prefers a real native expiry even when the creation record includes limits', () => {
     const state = resolveManagedNativeEndState({ provider: 'Modal', finiteOnly: true, duration, nativeExpiry: 1_790_008_200_000 });
     expect(state).toEqual({ kind: 'nativeExpiry', provider: 'Modal', at: 1_790_008_200_000 });

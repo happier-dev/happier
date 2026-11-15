@@ -262,7 +262,8 @@ export function buildMachineCollection(input: Readonly<{
                         const titleParts = names.get(machine.id)!;
                         return { kind: 'managed', managedId: machine.id,
                         serverId: group.serverId, title: formatMachineDisplayNameParts(titleParts), titleParts, host: null, platformLabel: '', platform: null, online: false, status: 'offline',
-                        presence: awaitingConsent ? t('approvals.waitingForYou') : creation.line,
+                        // A row's status cell holds the state's one word; its sentence stays on the machine's page (TH D3).
+                        presence: awaitingConsent ? t('approvals.waitingForYou') : creation.word ?? creation.line,
                         ...(!awaitingConsent && creation.word ? { presenceWord: creation.word } : {}), reason: null, ownership: null, ownerName: null,
                         ...(enrolledMachineId ? { enrolledMachineId } : {}) };
                     })

@@ -187,4 +187,15 @@ it('uses the page Home credential scope rather than treating a reachable Machine
     // checks for a machine that is online but cannot start sessions.
     expect(screen.findByTestId('machine-detail-unavailable')).toBeNull();
     expect(screen.findByTestId('machine-vitals-offline')).not.toBeNull();
+    // A created machine still running whose Happier went quiet says so once, on its recovery row (TH D6): the vitals
+    // body adds no second offline banner.
+    const { ManagedMachineFullV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
+    const runningGuest = ManagedMachineFullV1Schema.parse({ id: 'managed-overview', homeId: 'home', custodianAccountId: 'owner',
+        launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Overview Machine', choices: {} },
+        allocation: 'bound', creationState: 'active', enrolledMachineId: machine.id,
+        resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: {} },
+        observation: { observedAt: 1, availability: 'present', power: 'running', storage: 'retained' },
+        desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+    await screen.update(frame({ ...state, managedEnrolled: { ...state.managedEnrolled, machine: runningGuest } }, false));
+    expect(screen.findByTestId('machine-vitals-offline')).toBeNull();
 });

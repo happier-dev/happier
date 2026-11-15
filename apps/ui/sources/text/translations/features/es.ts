@@ -6431,9 +6431,11 @@ const machineDetailPageTranslations = { es: translated({
             replacedByFact: ({ machine }) => `Sustituida por ${machine}`,
             /** One recovery per state on the Machine page: the row says what is wrong, the button what fixes it. */
             recovery: {
-                restartDaemon: "Reiniciar el servicio en segundo plano",
+                restartDaemon: "Reiniciar",
                 daemonDown: "Happier no responde",
                 updateAvailable: "Hay una versión más reciente de Happier",
+                daemonDownHelp: "Reiniciar vuelve a configurar Happier e inicia su servicio en segundo plano. Las sesiones continúan cuando se vuelva a conectar.",
+                updateHelp: "Actualizar instala la versión de Happier que usa este Home.",
             },
             unavailableTitle: 'Esta máquina no puede iniciar sesiones ahora mismo',
             startAction: 'Iniciar sesión',

@@ -1515,7 +1515,7 @@ describe('reachable preset detail', () => {
       id: 'controller', value: t('managedMachines.receipt.managingComputer'),
     }));
     expect(model.receipt?.facts).not.toContainEqual(expect.objectContaining({ id: 'controller', value: t('common.unknown') }));
-    expect(model.controller?.row.title).toBe(t('managedMachines.receipt.managingComputer'));
+    expect(model.controller?.row.title).toBe(t('machinePresets.controllerUnnamed'));
     expect(screen.findByTestId('machine-preset.configuration-unavailable')).toBeNull();
     await screen.unmount();
   });

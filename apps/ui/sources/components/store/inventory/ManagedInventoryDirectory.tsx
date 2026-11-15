@@ -88,6 +88,11 @@ export type ManagedInventoryDirectoryProps = Readonly<{
   testIDPrefix: string;
   /** Inside another section (the Machine page): its sections read one step quieter than the parent title. */
   nested?: boolean;
+  /**
+   * The page already says its one Machine is offline: reads that could not reach it add no second outage line or
+   * Retry (TH D6); last-known rows stay.
+   */
+  offlineStatedAbove?: boolean;
 }>;
 
 /**
@@ -215,7 +220,7 @@ export function ManagedInventoryDirectory(
           ))}
         </ItemGroup>
       ) : null}
-      <ManagedInventoryCoverage families={state.families} testIDPrefix={props.testIDPrefix} sectionsPage />
+      {props.offlineStatedAbove ? null : <ManagedInventoryCoverage families={state.families} testIDPrefix={props.testIDPrefix} sectionsPage />}
       {sections.map((section) => (
         <InventorySection
           key={section.key}

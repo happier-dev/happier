@@ -6426,9 +6426,11 @@ const machineDetailPageTranslations = { ja: translated({
             replacedByFact: ({ machine }) => `${machine} に置き換え済み`,
             /** One recovery per state on the Machine page: the row says what is wrong, the button what fixes it. */
             recovery: {
-                restartDaemon: "バックグラウンドサービスを再起動",
+                restartDaemon: "再起動",
                 daemonDown: "Happier が応答していません",
                 updateAvailable: "新しい Happier を利用できます",
+                daemonDownHelp: "再起動すると Happier を再設定し、バックグラウンドサービスを開始します。再接続するとセッションが再開します。",
+                updateHelp: "アップデートすると、この Home が使っている Happier のバージョンをインストールします。",
             },
             unavailableTitle: 'このマシンは現在セッションを開始できません',
             startAction: 'セッションを開始',

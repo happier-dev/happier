@@ -246,7 +246,7 @@ describe('buildMachineCollection', () => {
             managedByServerId: { a: [managed('removed', { allocation: 'confirmed-absent', enrolledMachineId: 'deleted-guest',
                 desired: 'delete', observation: { observedAt: 20, availability: 'absent' } })] } });
         const row = collection.sections.flatMap(section => section.rows)[0]!;
-        expect(row).toMatchObject({ kind: 'managed', managedId: 'removed', presence: t('managedPower.resourceAbsent') });
+        expect(row).toMatchObject({ kind: 'managed', managedId: 'removed', presence: t('managedPower.ended') });
         expect(machineCollectionHref(row)).toBe('/settings/machines/managed/removed?serverId=a');
         expect(machineCollectionHref(row, 'rail')).toBe('/machines/managed/removed?serverId=a');
     });
@@ -333,11 +333,12 @@ describe('buildMachineCollection', () => {
         expect(waiting.other).toBe(presence(buildMachineCollection(input)).other);
         expect(presence(buildMachineCollection(input)).pending).not.toBe(t('approvals.waitingForYou'));
     });
-    it('gives an ended created machine one short rail word while its full line stays the presence (UIR5c)', () => {
+    // TH D3 (11-15) supersedes UIR5c's full line: a row's status cell is the state's one word on every width.
+    it('gives an ended created machine one short word as its presence and rail word', () => {
         const collection = buildMachineCollection({ groups: [group('a', [])], groupedByHome: false,
             managedByServerId: { a: [managed('ended', { allocation: 'confirmed-absent', creationState: 'canceled' }), managed('live')] } });
         const rows = collection.sections.flatMap(section => section.rows);
-        expect(rows.find(row => row.managedId === 'ended')).toMatchObject({ presence: t('managedPower.resourceAbsent'), presenceWord: t('managedPower.ended') });
+        expect(rows.find(row => row.managedId === 'ended')).toMatchObject({ presence: t('managedPower.ended'), presenceWord: t('managedPower.ended') });
         expect(rows.find(row => row.managedId === 'live')).not.toHaveProperty('presenceWord');
     });
     it('names preset audiences from the exact Home and owner rather than the operation label', () => {

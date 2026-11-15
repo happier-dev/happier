@@ -8,6 +8,7 @@ import { MachineVitalsOverview } from '@/components/machines/vitals/MachineVital
 import { MachineProjectWorkSection } from '@/components/projects/workers/MachineProjectWorkSection';
 import { ManagedEnrolledMachineSectionsView } from '@/components/settings/machines/managed/ManagedMachineSections';
 import { describeMachineRuntimePresence, projectMachineManagedPresence } from '@/utils/sessions/machinePresenceLine';
+import { resolveManagedInstallationRecovery } from '@/components/settings/machines/managed/managedCreationPresentation';
 import { splitHappierBannerPoint } from '@happier-dev/plugin-ui/presentation';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { CheckoutReachabilityScope } from '@/components/workspaces/reachability/checkoutReachability';
@@ -70,6 +71,11 @@ export function MachineOverview(props: MachinePageTabBodyProps) {
     if (!machine) return null;
     const runtimePresence = describeMachineRuntimePresence(machine, undefined,
         projectMachineManagedPresence(machine, managedEnrolled.machine), machineAccountScope);
+    // A created machine whose Happier went quiet says so once, on its recovery row with Restart (TH D6): the vitals
+    // body then shows what it last reported without a second offline banner and Try again.
+    const managedMachine = managedEnrolled.machine;
+    const managedRecoveryExplains = managedMachine !== undefined && props.online === false
+        && resolveManagedInstallationRecovery(managedMachine, null, { guestOnline: false }) === 'restartDaemon';
     return (
         // The vitals banner says once that the machine is offline; the sections below inherit it, never repeat it.
         <CheckoutReachabilityScope scope={reachabilityScope}>
@@ -104,8 +110,8 @@ export function MachineOverview(props: MachinePageTabBodyProps) {
             {/* Plan 20's vitals body: live while this tab is shown, its history and Alerts row. */}
             <MachineVitalsOverview serverId={props.serverId} machine={machine} machineName={props.machineName} online={props.online}
                 rangeInBar={props.barAccessoryShown} onOpenProcesses={openProcesses}
-                offlineRetry={runtimePresence.nextAction === 'retry' ? offlineRetry : undefined}
-                offlineTitle={runtimePresence.label} offlineExplained={runtimePresence.nextAction !== 'retry'} />
+                offlineRetry={runtimePresence.nextAction === 'retry' && !managedRecoveryExplains ? offlineRetry : undefined}
+                offlineTitle={runtimePresence.label} offlineExplained={runtimePresence.nextAction !== 'retry' || managedRecoveryExplains} />
 
             {/* The page answers first; the agent is there when it is not enough (lab `ra` A1). */}
             <MachineResourcesAskBlock serverId={props.serverId} machineId={props.machineId} machineName={props.machineName} />
@@ -114,7 +120,8 @@ export function MachineOverview(props: MachinePageTabBodyProps) {
             <SubjectTriggersSection subject={triggerSubject} subjectName={props.machineName} />
 
             {/* What's on this Machine (S50 `i:machine`): everything Happier manages here, the same rows as Store → Installed. */}
-            <MachineInventoryBlock serverId={props.serverId} machineId={props.machineId} scope={machineAccountScope} />
+            <MachineInventoryBlock serverId={props.serverId} machineId={props.machineId} scope={machineAccountScope}
+                offline={props.online === false} />
 
             {/* Skills and MCP servers (Capabilities P8 U8.6): what sessions on this machine get, before This machine. */}
             <MachineCapabilitiesSection machineId={props.machineId} machineName={props.machineName} offline={props.online === false} />

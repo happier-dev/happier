@@ -3,6 +3,7 @@ import { useMachinesDoor } from '@/components/machines/page/machinesDoor';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import type { MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
@@ -18,6 +19,8 @@ import { machinePoolCollectionHref } from '../collection/machineCollectionModel'
 import { useUnistyles } from 'react-native-unistyles';
 import { HappierCollectionListMark } from '@happier-dev/plugin-ui/presentation';
 import { Icon } from '@/components/ui/icons/Icon';
+
+const FIRST_READ = Object.freeze({ kind: 'loading' } as const);
 
 const MEMBER_PREVIEW_LIMIT = 2;
 
@@ -108,11 +111,10 @@ export const MachinePoolsSection = React.memo(function MachinePoolsSection(props
                 else navigateWithFocusReturn.navigateFrom(rowTestId, () => router.push(href as never));
             };
             const statusRows = <>
-                {featurePending ? <EmptyState
-                    testID={`settings.machinePools.featureLoading.${group.serverId}`}
-                    layout="line" lineLoading
-                    title={t('common.loading')}
-                /> : null}
+                {/* The first read reserves its row quietly, never a "Loading…" line (TH D12). */}
+                {featurePending ? <ItemLoadStateRows state={FIRST_READ} rows={1} lines={1} shape={rail ? 'list' : undefined}
+                    accessibilityLabel={t('machinePools.title')}
+                    testID={`settings.machinePools.featureLoading.${group.serverId}`} /> : null}
                 {featureError ? <Item
                     testID={`settings.machinePools.featureFailed.${group.serverId}`}
                     pressableStyle={rail ? collectionListStyles.row : undefined}
@@ -199,8 +201,8 @@ export const MachinePoolsSection = React.memo(function MachinePoolsSection(props
                 />;
             });
             const loadingRow = rows.length === 0 && featureEnabled && projection.status === 'loading'
-                ? <EmptyState layout="line" lineLoading title={t('common.loading')}
-                    />
+                ? <ItemLoadStateRows state={FIRST_READ} rows={1} lines={1} shape={rail ? 'list' : undefined}
+                    accessibilityLabel={t('machinePools.title')} />
                 : null;
             if (rail) {
                 // Adding goes through the rail's "+": a Home with nothing to list shows no heading.

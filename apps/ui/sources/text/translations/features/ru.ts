@@ -6458,9 +6458,11 @@ const machineDetailPageTranslations = { ru: translated({
             replacedByFact: ({ machine }) => `Заменена на ${machine}`,
             /** One recovery per state on the Machine page: the row says what is wrong, the button what fixes it. */
             recovery: {
-                restartDaemon: "Перезапустить фоновую службу",
+                restartDaemon: "Перезапустить",
                 daemonDown: "Happier не отвечает",
                 updateAvailable: "Доступна более новая версия Happier",
+                daemonDownHelp: "Перезапуск заново настраивает Happier и запускает фоновую службу. Сессии продолжатся после переподключения.",
+                updateHelp: "Обновление устанавливает версию Happier, которую использует этот Home.",
             },
             unavailableTitle: 'Эта машина сейчас не может запускать сессии',
             startAction: 'Запустить сессию',

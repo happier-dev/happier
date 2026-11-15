@@ -3702,6 +3702,11 @@ describe('managed Machine detail', () => {
             handlers={{ reinstall: () => pressed.push('recovery') }} />);
         const rows = screen.tree.findAll(node => node.props?.testID === 'managed-machine.installation' && typeof node.props.title === 'string');
         expect(rows.map(row => row.props.title)).toEqual([title()]);
+        if (enrolled) {
+            // One row (TH N6): what the press does and when it was seen join the line; no separate freshness row.
+            expect(rows[0]!.props.subtitle).toContain(t(online ? 'machineDetailPage.recovery.updateHelp' : 'machineDetailPage.recovery.daemonDownHelp'));
+            expect(screen.findByTestId('managed-machine.observation')).toBeNull();
+        }
         const buttons = screen.tree.findAllByType(RoundButton).filter(button => button.props.testID === 'managed-machine.installation-retry');
         expect(buttons.map(button => button.props.title)).toEqual([action()]);
         await act(async () => buttons[0]!.props.onPress());

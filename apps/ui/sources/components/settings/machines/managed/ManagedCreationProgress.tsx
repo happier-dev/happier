@@ -75,6 +75,9 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
         : recoveryKind === 'restartDaemon' ? t('machineDetailPage.recovery.restartDaemon') : t('managedMachines.creation.retryInstall');
     const recoveryLine = recoveryKind === 'update' ? t('machineDetailPage.recovery.updateAvailable')
         : recoveryKind === 'restartDaemon' ? t('machineDetailPage.recovery.daemonDown') : null;
+    // What the press does, said once on the row with the button (TH N6).
+    const recoveryHelp = recoveryKind === 'update' ? t('machineDetailPage.recovery.updateHelp')
+        : recoveryKind === 'restartDaemon' ? t('machineDetailPage.recovery.daemonDownHelp') : null;
     const prompt = readManagedInstallationPrompt(operation);
     const trustPrompt = prompt?.kind === 'ssh.trustHost' || prompt?.kind === 'ssh.replaceHostKey' ? prompt : null;
     // A host key is asked in the one trust sheet (lab af-ssh Kp), never inline: the row names the question and opens it.
@@ -148,6 +151,11 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
     // With nothing to retry or check on it, the observation's time is the state row's own quiet meta, not a second row.
     const asOfOnStateRow = machine.observation && !staleRead && !observationChecks
         ? t('surfaceState.asOf', { time: formatAsOfTime(machine.observation.observedAt) }) : undefined;
+    // A recovery the owner names (update, restart) is one row: the problem, what the press does and when it was seen,
+    // with the button trailing. Its freshness joins that line instead of a second row (TH N6); a failed re-read keeps its own.
+    const recoveryRow = Boolean(installationRetryOnly && recoveryLine && !staleRead);
+    const recoverySubtitle = [recoveryHelp, machine.observation ? t('surfaceState.asOf', { time: formatAsOfTime(machine.observation.observedAt) }) : null]
+        .filter(Boolean).join(' ');
     const installationRetry = canRetryInstallation && props.handlers?.reinstall ?
         <RoundButton title={installationActionLabel} display="secondary" size="small"
             testID="managed-machine.installation-retry" onPress={props.handlers.reinstall} /> : undefined;
@@ -174,12 +182,11 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
                 {failedOperation ? <FailedInstallationCard operation={failedOperation} title={failure.title} detail={failure.detail}
                     action={failureAction} /> : <SurfaceStateCard kind="error" size="details" layout="inline" title={failure.title}
                     diagnosticCode={failure.detail} testID="managed-machine.installation-error" action={failureAction} />}
-            </SectionContentRow> : <Item title={installationRetryOnly && recoveryLine ? recoveryLine : name}
-                subtitle={installationRetryOnly && recoveryLine ? undefined : prompt ? promptMessage : heldAsk ? t('approvals.waitingForYou')
+            </SectionContentRow> : <Item title={recoveryRow && recoveryLine ? recoveryLine : name}
+                subtitle={recoveryRow ? recoverySubtitle : prompt ? promptMessage : heldAsk ? t('approvals.waitingForYou')
                 : status ? describeActionOperationStatusLabel(status.label) : lifecycle.line}
-                mode="info" showChevron={false} testID="managed-machine.installation" subtitleLines={prompt ? 0 : undefined}
-                // A recovery button can be long ("Restart background service"): on a phone it moves beneath its line.
-                accessoryLayout={prompt && props.answerPrompt || installationRetryOnly ? 'adaptive' : undefined}
+                mode="info" showChevron={false} testID="managed-machine.installation" subtitleLines={prompt || recoveryRow ? 0 : undefined}
+                accessoryLayout={prompt && props.answerPrompt ? 'adaptive' : undefined}
                 subtitleLeading={!prompt && !heldAsk && status?.tone === 'active' ? <ActivitySpinner size="small"
                     accessibilityElementsHidden importantForAccessibility="no" /> : undefined}
                 rightElement={heldAsk && props.reviewApproval ? <RoundButton title={t('approvals.review')} display="secondary" size="small"
@@ -192,7 +199,7 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
                     <RoundButton title={t('common.continue')} size="small"
                         testID="managed-machine.installation-prompt-approve" onPress={() => props.answerPrompt?.(true)} />
                 </View> : installationRetry} />}
-            {operationTells ? observationRow : null}
+            {operationTells && !recoveryRow ? observationRow : null}
         </ItemGroup> : null}
         {/* A blocking or billing-uncertain state is the page's banner, which already says what may bill. */}
         {stateRow && lifecycle.banner ? <ManagedMachineStateRow name={name} mark={null}
@@ -208,8 +215,9 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
                 {...(asOfOnStateRow ? { asOf: asOfOnStateRow } : {})}
                 ended={machine.allocation === 'confirmed-absent'} testID="managed-machine.progress" />
             {/* Without an operation to report, the install is a step of this same resource, not a second copy of its row. */}
-            {installationRetryOnly && !failure ? <Item title={recoveryLine ?? t('managedMachines.creation.install')} mode="info" showChevron={false}
-                testID="managed-machine.installation" accessoryLayout="adaptive" rightElement={installationRetry} /> : null}
+            {installationRetryOnly && !failure ? <Item title={recoveryLine ?? t('managedMachines.creation.install')}
+                subtitle={recoveryHelp ?? undefined} subtitleLines={0} mode="info" showChevron={false}
+                testID="managed-machine.installation" rightElement={installationRetry} /> : null}
             {mayBill && machine.allocation !== 'confirmed-absent' && (machine.allocation === 'may-exist' || machine.cleanup) ? <Item title={t('managedMachines.creation.mayBill')}
                 mode="info" showChevron={false} titleLines={0} testID="managed-machine.possible-cost" /> : null}
             {asOfOnStateRow ? null : observationRow}

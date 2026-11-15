@@ -28,6 +28,8 @@ export function MachineInventoryBlock(
     serverId: string;
     machineId: string;
     scope: ServerAccountScope | null;
+    /** The page already says this Machine is offline; the section adds no outage line of its own. */
+    offline?: boolean;
   }>,
 ) {
   const focused = useOptionalScreenIsFocused() !== false;
@@ -80,9 +82,9 @@ export function MachineInventoryBlock(
       {(state) =>
         state.rows.length === 0 &&
         state.attention.length === 0 &&
-        state.families.every(
+        (props.offline === true || state.families.every(
           (family) => family.result.coverage === 'available',
-        ) ? null : (
+        )) ? null : (
           <>
             <ItemGroup
               testID="machine.inventory"
@@ -107,6 +109,7 @@ export function MachineInventoryBlock(
               columns={1}
               preview={MANAGED_INVENTORY_PREVIEW_ROWS}
                     nested
+              offlineStatedAbove={props.offline === true}
               testIDPrefix="machine.inventory"
             />
           </>

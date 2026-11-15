@@ -24,8 +24,10 @@ export function buildManagedPresetHistory(input: Readonly<{
 }>): readonly ManagedPresetHistoryRow[] {
     return input.machines.flatMap(machine => {
         if (machine.homeId !== input.homeId || machine.preset?.id !== input.presetId) return [];
+        // A history row's status is the state's one word ("Ended"), not its sentence (TH D3).
+        const creation = describeManagedCreation(machine);
         return [{ managedId: machine.id, presetRevision: machine.preset.revision,
-            title: machine.launch?.name ?? t('common.machine'), subtitle: describeManagedCreation(machine).line,
+            title: machine.launch?.name ?? t('common.machine'), subtitle: creation.word ?? creation.line,
             href: machineCollectionHref({ kind: 'managed', managedId: machine.id, serverId: input.serverId }), machine }];
     });
 }

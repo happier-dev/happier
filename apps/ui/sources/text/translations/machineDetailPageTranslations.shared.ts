@@ -40,9 +40,11 @@ export const english = {
         replacedByFact: ({ machine }: { machine: string }) => `Replaced by ${machine}`,
         /** One recovery per state on the Machine page: the row says what is wrong, the button what fixes it. */
         recovery: {
-            restartDaemon: "Restart background service",
+            restartDaemon: "Restart",
             daemonDown: "Happier isn’t responding",
             updateAvailable: "A newer Happier is ready",
+            daemonDownHelp: "Restart sets Happier up again and starts its background service. Sessions resume when it reconnects.",
+            updateHelp: "Update installs the Happier version this Home runs.",
         },
         unavailableTitle: "This machine can't start sessions right now",
         startAction: 'Start session',

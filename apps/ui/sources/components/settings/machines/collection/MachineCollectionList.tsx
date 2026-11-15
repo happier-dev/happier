@@ -18,6 +18,7 @@ import { MachineFleetUpdatesEntry } from '@/components/machines/updates/MachineF
 import { machineFleetPageHref } from '@/components/machines/page/machinePageHref';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
@@ -69,6 +70,8 @@ import { MachineListRowSummary } from '@/components/machines/summary/MachineList
 import { MachineResourceLiveDemand } from '@/sync/domains/machines/resources/useMachineResourceLiveDemand';
 import { useThisComputerServiceSummary } from '../localControl/useThisComputerServiceSummary';
 
+const FIRST_READ = Object.freeze({ kind: 'loading' } as const);
+
 /** The collection offers a search field only once it no longer fits at a glance. */
 const SEARCH_THRESHOLD = 8;
 
@@ -78,8 +81,9 @@ function MachinePresetTeamCollectionRow(props: Readonly<{
 }>) {
     const binding = useTeamBinding(props.serverId, props.knownName ? '' : props.teamId);
     const state = binding.kind === 'bound' ? binding.state : null;
+    // While the Team's name is read the row's audience stays empty, never a "Loading…" fact (TH D12).
     const name = props.knownName ?? (state?.kind === 'ready' && state.team.capabilities.viewTeam ? state.team.name
-        : state?.kind === 'unavailable' ? t('common.unavailable') : t('common.loading'));
+        : state?.kind === 'unavailable' ? t('common.unavailable') : '');
     return props.render(name);
 }
 
@@ -524,7 +528,7 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
                 {managedReadApprovals}
                 {loading ? (
                     <ItemGroup title={t('settings.machines')}>
-                        <Item title={t('common.loading')} showChevron={false} mode="info" />
+                        <ItemLoadStateRows state={FIRST_READ} rows={3} lines={2} accessibilityLabel={t('settings.machines')} />
                     </ItemGroup>
                 ) : unreadableGroup ? (
                     <ItemGroup title={t('settings.machines')}>
@@ -791,13 +795,17 @@ export function MachinePresetCollectionSectionView(props: Readonly<{
             diagnosticCode={props.state.error} action={props.refresh ? { label: t('common.retry'), onPress: props.refresh } : undefined} /> : null}
         {props.section.rows.map(row => {
             const render = (audience: string) => <Item key={machineCollectionRowKey(row)} testID={`settings.machines.preset.${row.serverId}.${row.presetId}`}
-            rowRole={props.rail ? 'item' : 'catalogRow'}
+            // The same rail anatomy as machine and pool rows: the name keeps its line, the fact yields (TH D2).
+            rowRole="catalogRow"
             title={row.title}
-            // The rail is an index: one line, with who it is for as the right-hand fact (lab m-presets).
-            {...(props.rail ? { detail: row.preset.archivedAt !== undefined ? t('machinePresets.archivedShort') : audience }
-                : { subtitle: row.preset.archivedAt !== undefined ? `${audience} · ${t('machinePresets.archived')}` : audience })}
+            // The rail is an index: the name keeps its line; a short fact (Yours, Archived) sits at its end, while a Team's
+            // name, which can be as long as the preset's, moves beneath it so neither truncates the other (TH D2).
+            {...(props.rail ? row.preset.archivedAt === undefined && row.preset.owner.kind === 'team'
+                ? { subtitle: audience || undefined }
+                : { detail: row.preset.archivedAt !== undefined ? t('machinePresets.archivedShort') : audience || undefined }
+                : { subtitle: row.preset.archivedAt !== undefined ? [audience, t('machinePresets.archived')].filter(Boolean).join(' · ') : audience || undefined })}
             // The preset's provider mark, as the preset page draws it (lab m-presets rail).
-            icon={<HappierCollectionListMark rowRole={props.rail ? 'item' : 'catalogRow'}><ManagedPresetMark serverId={row.serverId} preset={row.preset}
+            icon={<HappierCollectionListMark rowRole="catalogRow"><ManagedPresetMark serverId={row.serverId} preset={row.preset}
                 size={props.rail ? MANAGED_PROVISIONER_MARK_SIZE.rail : MANAGED_PROVISIONER_MARK_SIZE.row} /></HappierCollectionListMark>}
             density={props.rail ? 'compact' : undefined} selected={props.rail ? isMachineCollectionRowSelected(props.selectedKey, row) : undefined}
             showChevron={!props.rail} pressableStyle={props.rail ? collectionListStyles.row : undefined}
@@ -807,10 +815,13 @@ export function MachinePresetCollectionSectionView(props: Readonly<{
                 serverId={row.serverId} teamId={row.preset.owner.teamId} knownName={row.teamName} render={render} /> : render(row.audience);
         })}
         {/* Loading and empty are one line on the rows' edge, so the section never shifts when the answer arrives. */}
-        {props.section.rows.length === 0 && !props.state?.error ? (
+        {/* The first read reserves its row quietly (TH D12); empty is one line on the rows' edge. */}
+        {props.section.rows.length === 0 && !props.state?.error ? awaiting ? (
+            <ItemLoadStateRows state={FIRST_READ} rows={1} lines={1} shape={props.rail ? 'list' : undefined}
+                accessibilityLabel={t('machinePresets.short')} testID={`settings.machines.presets.loading.${props.section.serverId}`} />
+        ) : (
             <EmptyState testID={`settings.machines.presets.empty.${props.section.serverId}`} layout="line"
-                title={awaiting ? t('machinePresets.loading') : props.query.trim() ? t('common.noMatches') : t('machinePresets.empty')}
-                lineLoading={awaiting}
+                title={props.query.trim() ? t('common.noMatches') : t('machinePresets.empty')}
                 />) : null}
     </>;
     if (!props.rail) return <ItemGroup title={title} action={add}>{rows}</ItemGroup>;

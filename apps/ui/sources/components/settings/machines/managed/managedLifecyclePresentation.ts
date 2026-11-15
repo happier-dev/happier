@@ -178,11 +178,11 @@ export function describeManagedLifecycleState(
         ['checkNow'],
       );
     case 'creationCanceledCleanup':
-      return present(
+      return { ...present(
         'warning',
         { cause: t('managedMachines.creation.canceledCleanup') },
         ['review', 'deleteNow', 'checkNow', 'openProvider', 'remove'],
-      );
+      ), word: t('managedMachines.creation.cleanupPendingShort') };
     case 'stopPending':
       return present('pending', { detail: t('managedPower.stopPending') }, [
         'checkNow',
@@ -269,7 +269,7 @@ export function describeManagedLifecycleState(
     case 'draining':
       return present('pending', { detail: t('managedRetention.draining') }, []);
     case 'cleanupPending':
-      return present(
+      return { ...present(
         'danger',
         {
           // The banner's title names the state; its body says what it means for the bill.
@@ -279,16 +279,16 @@ export function describeManagedLifecycleState(
         },
         ['review', 'tryAgain', 'openProvider'],
         { title: t('managedCleanup.pendingTitle') },
-      );
+      ), word: t('managedMachines.creation.cleanupPendingShort') };
     case 'cleanupUnknown':
-      return present(
+      return { ...present(
         'warning',
         {
           cause: t('managedMachines.cleanup.unknownCause'),
           detail: t('managedMachines.cleanup.unknownDetail'),
         },
         ['checkNow', 'remove', 'openProvider'],
-      );
+      ), word: t('managedMachines.creation.cleanupUnknownShort') };
     case 'providerRemoved':
       return present(
         'warning',
@@ -356,7 +356,7 @@ export function describeManagedLifecycleState(
         ['createAnother'],
       );
     case 'mayExist':
-      return present(
+      return { ...present(
         'warning',
         {
           cause: t('managedMachines.creation.unknownCause', {
@@ -365,7 +365,7 @@ export function describeManagedLifecycleState(
           detail: t('managedMachines.creation.unknownDetail'),
         },
         ['checkNow', 'openProvider'],
-      );
+      ), word: t('managedMachines.creation.mayExistShort') };
   }
 }
 

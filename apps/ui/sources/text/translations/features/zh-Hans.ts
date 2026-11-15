@@ -6421,9 +6421,11 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
             replacedByFact: ({ machine }) => `已被 ${machine} 替换`,
             /** One recovery per state on the Machine page: the row says what is wrong, the button what fixes it. */
             recovery: {
-                restartDaemon: "重启后台服务",
+                restartDaemon: "重启",
                 daemonDown: "Happier 没有响应",
                 updateAvailable: "有更新的 Happier 可用",
+                daemonDownHelp: "重启会重新设置 Happier 并启动其后台服务。重新连接后会话会继续。",
+                updateHelp: "更新会安装此 Home 使用的 Happier 版本。",
             },
             unavailableTitle: '这台机器目前无法启动会话',
             startAction: '启动会话',
