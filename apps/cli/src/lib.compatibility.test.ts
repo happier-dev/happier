@@ -3,7 +3,7 @@ import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { RawJSONLines as CanonicalRawJSONLines } from '@happier-dev/plugins-claude/agent/transcripts';
-import { RawJSONLinesSchema } from '@happier-dev/protocol/agents/claude/transcripts';
+import { RawJSONLinesSchema } from '@happier-dev/plugins-claude/agent/transcripts';
 import { RawJSONLinesSchema as PluginRawJSONLinesSchema } from '../../../packages/plugins/claude/src/agent/transcripts/rawJsonLines';
 import { describe, expect, it } from 'vitest';
 
@@ -25,7 +25,7 @@ const rawJSONLinesTypesHaveExactIdentity: IsExactType<
 
 const cliSourceDir = dirname(fileURLToPath(import.meta.url));
 const cliPackageDir = resolve(cliSourceDir, '..');
-const claudeTranscriptExportSource = '@happier-dev/protocol/agents/claude/transcripts';
+const claudeTranscriptExportSource = '@happier-dev/plugins-claude/agent/transcripts';
 const genericRuntimeRootNames = ['agent', 'api', 'daemon', 'rpc', 'session', 'terminal'] as const;
 
 function listProductionTypeScriptFiles(root: string): readonly string[] {
@@ -82,7 +82,7 @@ describe('@happier-dev/cli/lib Claude transcript compatibility identities', () =
             ...libSource.matchAll(/from\s+['"](@happier-dev\/plugins-claude[^'"]*)['"]/gu),
         ].map((match) => match[1]);
         const canonicalExports = libSource.matchAll(
-            /export\s*(type\s+)?\{([^}]*)\}\s*from\s*['"]@happier-dev\/protocol\/agents\/claude\/transcripts['"]/gu,
+            /export\s*(type\s+)?\{([^}]*)\}\s*from\s*['"]@happier-dev\/plugins-claude\/agent\/transcripts['"]/gu,
         );
         const exportedNames = [...canonicalExports]
             .flatMap((declaration) => declaration[2]!.split(',')
@@ -91,7 +91,7 @@ describe('@happier-dev/cli/lib Claude transcript compatibility identities', () =
                 .map((name) => `${declaration[1] ? 'type ' : ''}${name}`))
             .sort();
 
-        expect(claudeModuleReferences).toEqual([]);
+        expect(claudeModuleReferences).toEqual([claudeTranscriptExportSource, claudeTranscriptExportSource]);
         expect(libSource).toContain(claudeTranscriptExportSource);
         expect(exportedNames).toEqual(['RawJSONLinesSchema', 'type RawJSONLines']);
     });
