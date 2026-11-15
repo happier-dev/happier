@@ -32,6 +32,19 @@ function createRuntime(
 }
 
 describe('createSessionClientUpdateRuntime', () => {
+  it('advances the transcript watermark through own acknowledged writes only across a contiguous run', () => {
+    const runtime = createRuntime();
+    for (const seq of [1, 2, 3]) runtime.observeCommittedAck({ seq });
+    expect(runtime.getLastObservedMessageSeq()).toBe(3);
+    // Seq 4 belongs to someone else and has not been seen: an own ack at 5 cannot cross it.
+    runtime.observeCommittedAck({ seq: 5 });
+    expect(runtime.getLastObservedMessageSeq()).toBe(3);
+    runtime.handleUpdate({ id: 'foreign', seq: 1, createdAt: 1, body: { t: 'new-message', delivery: 'full' as const,
+      sid: 'session-1', message: { id: 'foreign-4', seq: 4, localId: null, createdAt: 1, updatedAt: 1, messageRole: 'agent',
+        content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'foreign' } } } } } } as Update,
+      { source: 'session-scoped' });
+    expect(runtime.getLastObservedMessageSeq()).toBe(5);
+  });
   it('does not treat bodyless observations as materialized or accepted runtime messages', () => {
     const emit = vi.fn();
     const observeCommittedUserMessageSeq = vi.fn();

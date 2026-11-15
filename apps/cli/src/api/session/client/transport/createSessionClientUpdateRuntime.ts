@@ -55,6 +55,13 @@ export function createSessionClientUpdateRuntime(
 ): SessionClientUpdateRuntime {
     const receivedMessageIds = new Set<string>();
     let lastObservedMessageSeq = deps.initialLastObservedMessageSeq;
+    // Own-write acks above a seq this client has not seen. The watermark crosses
+    // them only through a contiguous run, so a foreign row in a gap still reads.
+    const ownAckedSeqsAhead = new Set<number>();
+    const advanceThroughOwnAcks = () => {
+        while (ownAckedSeqsAhead.delete(lastObservedMessageSeq + 1)) lastObservedMessageSeq += 1;
+        for (const seq of ownAckedSeqsAhead) if (seq <= lastObservedMessageSeq) ownAckedSeqsAhead.delete(seq);
+    };
     let lastObservedUserMessageSeq = 0;
     let pendingWakeSeq = 0;
     const latestExecutionRunPendingWakeVersion = new Map<string, number>();
@@ -128,6 +135,7 @@ export function createSessionClientUpdateRuntime(
                 });
                 if (newMessageHandlingResult.handled) {
                     lastObservedMessageSeq = newMessageHandlingResult.lastObservedMessageSeq;
+                    if (ownAckedSeqsAhead.size > 0) advanceThroughOwnAcks();
                     lastObservedUserMessageSeq = Math.max(
                         lastObservedUserMessageSeq,
                         newMessageHandlingResult.lastObservedUserMessageSeq,
@@ -224,7 +232,10 @@ export function createSessionClientUpdateRuntime(
         },
 
         observeCommittedAck(params) {
-            lastObservedMessageSeq = Math.max(lastObservedMessageSeq, params.seq);
+            if (Number.isSafeInteger(params.seq) && params.seq > lastObservedMessageSeq) {
+                ownAckedSeqsAhead.add(params.seq);
+                advanceThroughOwnAcks();
+            }
             if (params.markAsUserMessage === true) {
                 if (
                     params.refreshAgentQueueEchoSuppression === true
@@ -247,6 +258,7 @@ export function createSessionClientUpdateRuntime(
 
         setLastObservedMessageSeq(value) {
             lastObservedMessageSeq = value;
+            if (ownAckedSeqsAhead.size > 0) advanceThroughOwnAcks();
         },
 
         getLastObservedUserMessageSeq() {

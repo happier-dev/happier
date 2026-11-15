@@ -627,7 +627,7 @@ describe('ApiSessionClient socket write readiness', () => {
       for (const seq of [1, 2]) {
         row.latestTurnId = `completed-native-turn-${seq}`;
         const admission = producer === 'ready'
-          ? await enqueueReadySessionEventCommitted(client, 'home_required', row.latestTurnId)
+          ? await enqueueReadySessionEventCommitted(client, row.latestTurnId)
           : await client.enqueueAgentMessageCommitted('codex', { type: 'task_complete', id: row.latestTurnId }, {
             localId: `${row.latestTurnId}:task_complete`, meta: { source: 'runtime', runtimeEventKind: 'turn-complete',
               runtimeTurnId: row.latestTurnId }, provenance: { kind: 'non_dependent', source: 'external' },
@@ -643,6 +643,63 @@ describe('ApiSessionClient socket write readiness', () => {
         expect.soft(checkpoints('[Session Follow] Dispatch checkpoint', { phase: 'facts', status: 'started' })).toHaveLength(seq);
       }
     } finally { await client.close(); await app.close(); dispatcher.dispose(); notifications.mockRestore(); log.mockRestore(); }
+  });
+
+  it('reads transcript rows only for seqs its own acknowledged writes did not cover', async () => {
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'own-acks' })).toString('base64url')}.signature`;
+    const session = createPlainSessionFixture({ id: 's-own-acks' });
+    serveSession(createSessionRecordFixture({ id: session.id, encryptionMode: 'plain', metadataLayoutVersion: 0,
+      metadata: JSON.stringify(session.metadata), metadataVersion: session.metadataVersion, share: null }));
+    const served = vi.mocked(axios.get).getMockImplementation()!;
+    let changes: unknown[] = [];
+    let messageReads = 0;
+    vi.mocked(axios.get).mockImplementation(async (url, config) => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/profile') return { status: 200, data: { id: 'own-acks' } };
+      if (path === '/v2/changes') return { status: 200, data: { changes, nextCursor: changes.length } };
+      if (path === `/v2/sessions/${session.id}/messages`) {
+        messageReads += 1;
+        return { status: 200, data: { messages: [], hasMore: false } };
+      }
+      return await served(url, config);
+    });
+    // Home assigns one seq per committed row, whoever wrote it.
+    const activity = createSessionRuntimeActivityHomeStub({ machineId: 'machine-1' });
+    const transcript = createSessionTranscriptHomeStub();
+    let foreignRows = 0;
+    const socket = createApiSessionSocketStub({ emitWithAck: async (event, payload) => {
+      const ack = transcript.answer(event, payload);
+      if (ack && event === SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1) return { ...(ack as { seq: number }), seq: (ack as { seq: number }).seq + foreignRows };
+      return activity.answer(event, payload) ?? ack ?? { result: 'success' };
+    } });
+    const client = createClient(session, [socket], {
+      metadataAuthority: { kind: 'owner', credentials: { token, encryption: null } } }, undefined, token);
+    const writeAgentRow = async (localId: string) => {
+      await client.enqueueAgentMessageCommitted('codex', { type: 'message', message: localId },
+        { localId, provenance: { kind: 'non_dependent', source: 'background' } });
+      await client.flushDurableMutationDelivery();
+    };
+    // The live Account wake's owner path (`onAccountCatalogInvalidated` → live changes sync).
+    const wakeWithTranscriptSeq = async (seq: number) => {
+      changes = [{ cursor: seq, kind: 'session', entityId: session.id, changedAt: seq,
+        hint: { lastMessageSeq: seq, lastMessageId: `message-${seq}` } }];
+      await (client as unknown as { recoveryRuntime: { syncChangesOnConnect(opts: { reason: 'live' }): Promise<void> } })
+        .recoveryRuntime.syncChangesOnConnect({ reason: 'live' });
+    };
+    await client.flushDurableMutationDelivery();
+    // One Turn: three agent rows, each acknowledged by Home (seqs 1–3), then the Account wake.
+    await writeAgentRow('turn-1-a');
+    await writeAgentRow('turn-1-b');
+    await writeAgentRow('turn-1-c');
+    expect(socket.emitWithAck.mock.calls.filter(([event]) => event === SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1)).toHaveLength(3);
+    await wakeWithTranscriptSeq(3);
+    expect(messageReads).toBe(0);
+
+    // A foreign row takes seq 4, which this host neither wrote nor observed; its own next row is seq 5.
+    foreignRows = 1;
+    await writeAgentRow('turn-2-a');
+    await wakeWithTranscriptSeq(5);
+    expect(messageReads).toBe(1);
   });
 
   it.each(['foreground', 'sidechain', 'ordinary', 'explicit-local-custody'] as const)(
