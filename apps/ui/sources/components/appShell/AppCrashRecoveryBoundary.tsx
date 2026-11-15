@@ -127,14 +127,14 @@ export function AppBlockingScreen(props: Readonly<{
 }>): React.ReactElement {
   React.useSyncExternalStore(subscribeSystemTheme, readSystemThemeForCrashRecovery, () => null);
   const theme = resolveCrashRecoveryFallbackTheme();
-  const contentReady = useDesktopMainWindowContentReady();
+  const onContentLayout = useDesktopMainWindowContentReady();
 
   const primary = props.actions.filter((a) => a.variant === 'primary');
   const secondary = props.actions.filter((a) => a.variant === 'secondary');
   const ordered = [...primary, ...secondary];
 
   return (
-    <View testID={props.testID} ref={contentReady.ref} onLayout={contentReady.onLayout} style={[styles.container, { backgroundColor: theme.colors.surface.base }]}>
+    <View testID={props.testID} onLayout={onContentLayout} style={[styles.container, { backgroundColor: theme.colors.surface.base }]}>
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.content}

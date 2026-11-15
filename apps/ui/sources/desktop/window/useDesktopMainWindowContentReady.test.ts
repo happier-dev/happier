@@ -16,10 +16,10 @@ describe('main content readiness', () => {
         vi.stubGlobal('__TAURI_INTERNALS__', { invoke, metadata: { currentWindow: { label: 'main' } } });
         const hook = await renderHook(useDesktopMainWindowContentReady);
         expect(invoke).not.toHaveBeenCalled();
-        hook.getCurrent().onLayout(layout(0, 500));
+        hook.getCurrent()(layout(0, 500));
         expect(invoke).not.toHaveBeenCalled();
-        hook.getCurrent().onLayout(layout(800, 600));
-        hook.getCurrent().onLayout(layout(900, 700));
+        hook.getCurrent()(layout(800, 600));
+        hook.getCurrent()(layout(900, 700));
         expect(invoke.mock.calls.map(([command]) => command)).toEqual(['desktop_main_window_content_rendered']);
     });
 
@@ -27,21 +27,7 @@ describe('main content readiness', () => {
         const invoke = vi.fn(async (_command: string, _args?: Record<string, unknown>) => false);
         vi.stubGlobal('__TAURI_INTERNALS__', { invoke, metadata: { currentWindow: { label: 'destination_session' } } });
         const hook = await renderHook(useDesktopMainWindowContentReady);
-        hook.getCurrent().onLayout(layout(800, 600));
+        hook.getCurrent()(layout(800, 600));
         expect(invoke).not.toHaveBeenCalled();
-    });
-
-    it('acknowledges content that already has a size when it is committed, without waiting for a layout event', async () => {
-        // WebKit throttles rendering updates (ResizeObserver) and timers in a hidden window, so the
-        // first onLayout may never arrive while main waits hidden for it. The committed node is the DOM
-        // boundary here (the test DOM has no layout engine), so its measured size is supplied.
-        const invoke = vi.fn(async (_command: string, _args?: Record<string, unknown>) => true);
-        vi.stubGlobal('__TAURI_INTERNALS__', { invoke, metadata: { currentWindow: { label: 'main' } } });
-        const hook = await renderHook(useDesktopMainWindowContentReady);
-        hook.getCurrent().ref({ offsetWidth: 0, offsetHeight: 0 });
-        expect(invoke).not.toHaveBeenCalled();
-        hook.getCurrent().ref({ offsetWidth: 1280, offsetHeight: 800 });
-        hook.getCurrent().onLayout(layout(1280, 800));
-        expect(invoke.mock.calls.map(([command]) => command)).toEqual(['desktop_main_window_content_rendered']);
     });
 });
