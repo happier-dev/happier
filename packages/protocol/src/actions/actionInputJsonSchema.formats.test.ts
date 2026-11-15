@@ -2,8 +2,32 @@ import { describe, expect, it } from 'vitest';
 import * as z from 'zod/mini';
 import { zodSchemaToJsonSchemaObject } from './actionInputJsonSchema.js';
 import { compilePluginJsonSchema } from '../plugins/actions/jsonSchemaValidation.js';
+import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from './actionCatalog.js';
+import { getActionSpec } from './actionSpecs.js';
 
 describe('portable Zod string-check projection', () => {
+  it('admits the native reachability Workflow contract while retaining IPv4 and IPv6 CIDR constraints', () => {
+    const definition = actionSpecToActionDefinitionV1(getActionSpec('machines.reachability.inspect'));
+    const contract = freezeWorkflowActionContractV1(definition);
+    expect(contract).not.toBeNull();
+    const validate = compilePluginJsonSchema(contract!.inputSchema);
+    const inputWithCidrs = (sourceCidrs: string[]) => ({
+      machineId: 'machine',
+      change: {
+        kind: 'posture',
+        posture: {
+          revision: 0,
+          management: { providers: [], publicSsh: { kind: 'open', port: 22, sourceCidrs } },
+          defaultServiceIngress: { kind: 'none' },
+        },
+      },
+    });
+    expect(validate(inputWithCidrs(['192.0.2.0/24', '2001:db8::/64']))).toBe(true);
+    for (const invalid of ['192.0.2.0/33', '2001:db8::/129', 'invalid/24']) {
+      expect(validate(inputWithCidrs([invalid])), invalid).toBe(false);
+    }
+  });
+
   it('retains string-check constraints through the strict plugin consumer, including combined patterns and definitions', () => {
     const checks = z.strictObject({
       prefix: z.string().check(z.startsWith('/')),

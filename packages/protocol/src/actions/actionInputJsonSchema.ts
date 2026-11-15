@@ -69,7 +69,7 @@ function projectPortableSchemaKeywords(value: unknown): void {
 
 // Zod 4.6 emits these check names as formats as well as their complete pattern
 // constraints. They are not JSON Schema formats; keep the patterns portable.
-const patternOnlyStringChecks = new Set(['starts_with', 'ends_with', 'includes', 'lowercase', 'uppercase']);
+const patternOnlyStringChecks = new Set(['starts_with', 'ends_with', 'includes', 'lowercase', 'uppercase', 'cidrv4', 'cidrv6']);
 
 /**
  * Uses Zod's canonical JSON Schema projection, shared with public manifest
