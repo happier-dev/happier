@@ -195,10 +195,16 @@ function FleetBody(props: MachineWidgetBodyProps) {
   const device = useMachineSummarySettingValue();
   const { style, metrics } = resolveFleetPresentation(props.input, device);
   const { serverId, status, settled: machineListSettled, refresh, fleet, needs, needsByKey } = useMachineFleetModel(props.serverId);
-  // A mounted Machines widget keeps its online machines' summaries live (one batched demand).
-  const demand = React.useMemo(() => fleet.filter((entry) => entry.online).map((entry) => ({ serverId, machineId: entry.machine.id })), [fleet, serverId]);
-  useMachineResourceLiveDemand(demand, { detail: 'summary', enabled: metrics.length > 0 });
   const order = useFleetRowOrder(fleet, needs);
+  const ordered = React.useMemo(() => {
+    const byKey = new Map(fleet.map((entry) => [entry.key, entry]));
+    return order.flatMap((key) => (byKey.get(key) ? [byKey.get(key)!] : []));
+  }, [fleet, order]);
+  // Summaries are kept live (one batched demand) for the online machines whose rows show metrics:
+  // Small rows are compact, Wide lists its two rows, and the larger sizes list every online machine.
+  const demand = React.useMemo(() => (size === 'small' ? [] : size === 'wide' ? selectListedFleetRows(ordered, needsByKey, needs.length) : fleet)
+    .filter((entry) => entry.online).map((entry) => ({ serverId, machineId: entry.machine.id })), [fleet, needs.length, needsByKey, ordered, serverId, size]);
+  useMachineResourceLiveDemand(demand, { detail: 'summary', enabled: metrics.length > 0 });
   const door = useMachinesDoor();
   const router = useRouter();
   const openMachine = React.useCallback((target: Readonly<{ serverId: string; machineId: string }>, tab?: MachinePageTabParams | null) => {
@@ -230,8 +236,6 @@ function FleetBody(props: MachineWidgetBodyProps) {
       testID={props.testID} /></>;
   }
   if (size === 'large') return <>{freshness}<FleetCards fleet={fleet} serverId={serverId} style={style} metrics={metrics} openMachine={openMachine} testID={props.testID} /></>;
-  const byKey = new Map(fleet.map((entry) => [entry.key, entry]));
-  const ordered = order.flatMap((key) => (byKey.get(key) ? [byKey.get(key)!] : []));
   const calm = ordered.filter((entry) => entry.online && !needsByKey.has(entry.key));
   const { offline, unknown } = partitionMachineFleetPresence(ordered, entry => entry.fleetPresence);
   const row = (entry: FleetMachine, compact: boolean) => (
@@ -243,7 +247,7 @@ function FleetBody(props: MachineWidgetBodyProps) {
   );
   if (size === 'small' || size === 'wide') {
     // Small sizes list only who needs the person (in a word); calm and offline collapse into one line.
-    const shown = needs.length > 0 ? ordered.filter((entry) => needsByKey.has(entry.key)) : [...calm, ...unknown].slice(0, 2);
+    const shown = selectListedFleetRows(ordered, needsByKey, needs.length);
     const rest = describeRest(needs.length > 0 ? calm : calm.slice(2), offline, needs.length);
     // Wide has two columns of room: the blocks stand side by side, as the card's two halves (lab FL Wide).
     const half = Math.ceil(shown.length / 2);
@@ -281,6 +285,14 @@ function FleetBody(props: MachineWidgetBodyProps) {
       rest={rows(online.slice(half), false)} />{offlineEnd}</MachineWidgetColumn>;
   }
   return <MachineWidgetColumn testID={props.testID}>{freshness}{rows(online, false)}{offlineEnd}</MachineWidgetColumn>;
+}
+
+/** Small and Wide list only who needs the person, or else the first two calm (then unknown) machines. */
+function selectListedFleetRows(ordered: readonly FleetMachine[], needsByKey: ReadonlyMap<string, unknown>, needCount: number): readonly FleetMachine[] {
+  if (needCount > 0) return ordered.filter((entry) => needsByKey.has(entry.key));
+  const calm = ordered.filter((entry) => entry.online && !needsByKey.has(entry.key));
+  const { unknown } = partitionMachineFleetPresence(ordered, entry => entry.fleetPresence);
+  return [...calm, ...unknown].slice(0, 2);
 }
 
 /**

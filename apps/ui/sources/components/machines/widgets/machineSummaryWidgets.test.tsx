@@ -1087,6 +1087,28 @@ describe('Machines widget presentation', () => {
     }
   });
 
+  it.each([4, 40])('asks Vitals only of the machines whose row shows metrics, not all %i online machines', async (count) => {
+    const serverId = getActiveServerSnapshot().serverId;
+    const machines = Array.from({ length: count }, (_, index) => createMachineFixture({ id: `online-${index}`, active: true,
+      activeAt: Date.now(), daemonStateVersion: 1, daemonState: { resources } }));
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, machines);
+    // Replies stay parked: the count is what the widget asks, not what it draws from answers.
+    boundary.rpc.mockImplementation(() => new Promise(() => {}));
+    const asked = () => new Set(boundary.rpc.mock.calls
+      .filter(([call]) => call.method.startsWith('machines.vitals') || call.method.startsWith('daemon.vitals'))
+      .map(([call]) => (call as { machineId?: string }).machineId));
+    // Small lists two compact rows without metrics; Wide lists two rows with them.
+    for (const [size, limit] of [['small', 0], ['wide', 2]] as const) {
+      boundary.rpc.mockClear();
+      const screen = await renderScreen(<WidgetPresentationProvider value={{ size, footprint: getWidgetSizeFootprintV1('home', size)! }}>
+        <MachineFleetWidget input={{ metrics: ['cpu'] }} serverId={serverId} testID="fleet" />
+      </WidgetPresentationProvider>);
+      await act(async () => { for (let turn = 0; turn < 8; turn++) await Promise.resolve(); });
+      expect({ size, asked: asked().size }).toEqual({ size, asked: Math.min(limit, count) });
+      await screen.unmount();
+    }
+  });
+
   it('says a fleet that is all offline as one line state, so the frame sizes the card to that line (owner 1111 B capture)', async () => {
     const serverId = getActiveServerSnapshot().serverId;
     const offline = ['old-a', 'old-b', 'old-c'].map((id) => createMachineFixture({ id, active: false, activeAt: Date.now() - 86_400_000 }));
