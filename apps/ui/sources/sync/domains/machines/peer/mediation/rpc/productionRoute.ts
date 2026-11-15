@@ -36,8 +36,6 @@ import { MachineRpcDirectIdentityError, resolveDirectRpcUrl, type MachineRpcDire
 import { resolveMachineRpcDirectRoutePreflight } from './directRoutePreflight';
 import { resolveMachineRpcDirectRouteGrant } from './routeGrant';
 
-const MACHINE_RPC_DIRECT_FETCH_TIMEOUT_MS = 5_000;
-
 type TargetServer = Readonly<{
     serverId: string;
     serverUrl: string;
@@ -217,11 +215,10 @@ async function fetchJson(params: Readonly<{
     onDispatched?: () => void;
     onResponse?: () => void;
 }>): Promise<DirectJsonResponse> {
-    const timeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0
-        ? params.timeoutMs
-        : MACHINE_RPC_DIRECT_FETCH_TIMEOUT_MS;
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    const timeoutId = controller && params.operationTimeoutMs !== null ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    const timeoutId = controller && params.operationTimeoutMs !== null && typeof params.timeoutMs === 'number' && params.timeoutMs > 0
+        ? setTimeout(() => controller.abort(), params.timeoutMs)
+        : null;
     const externalSignal = params.signal;
     const forwardExternalAbort = controller && externalSignal ? () => controller.abort() : null;
     if (controller && externalSignal && forwardExternalAbort) {
@@ -314,11 +311,12 @@ export async function resolveProductionMachineRpcDirectRoute(input: Readonly<{
         if (credentialAccountId !== expectedAccountId) return fallback('grant_missing');
     }
 
-    const featuresTimeoutMs = input.resolveRemainingTimeoutMs?.() ?? input.timeoutMs ?? MACHINE_RPC_DIRECT_FETCH_TIMEOUT_MS;
-    if (featuresTimeoutMs <= 0) return fallback('topology_unavailable');
+    const featuresTimeoutMs = input.resolveRemainingTimeoutMs?.() ?? input.timeoutMs;
+    if (featuresTimeoutMs !== undefined && featuresTimeoutMs <= 0) return fallback('topology_unavailable');
     const serverFeatures = await getReadyServerFeatures({
         serverId: server.serverId,
         timeoutMs: featuresTimeoutMs,
+        signal: input.signal,
     }).catch(() => null);
     const policyPreflight = resolveMachineRpcDirectRoutePreflight({
         method: input.method,

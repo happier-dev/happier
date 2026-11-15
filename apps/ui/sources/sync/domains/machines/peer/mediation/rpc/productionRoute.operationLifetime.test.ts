@@ -31,7 +31,7 @@ const response = { v: 2, ok: true, requestId: request.requestId, method: request
 
 afterEach(() => { resetRuntimeFetch(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
-it('keeps direct plugin work alive beyond its former HTTP cutoff and preserves caller cancellation', async () => {
+it.each([{}, { operationTimeoutMs: null }] as const)('keeps direct work within its caller lifetime %j and preserves cancellation', async (lifetime) => {
     vi.useFakeTimers();
     let answer!: (response: Response) => void;
     let issuedSignal: AbortSignal | undefined;
@@ -44,10 +44,10 @@ it('keeps direct plugin work alive beyond its former HTTP cutoff and preserves c
     }));
     const controller = new AbortController();
     const pending = postProductionMachineRpcDirect({
-        url: 'http://127.0.0.1:1234/rpc', request, operationTimeoutMs: null, signal: controller.signal,
+        url: 'http://127.0.0.1:1234/rpc', request, ...lifetime, signal: controller.signal,
     });
     let settled = false;
-    void pending.then(() => { settled = true; });
+    void pending.then(() => { settled = true; }, () => { settled = true; });
     await vi.advanceTimersByTimeAsync(31_000);
     expect(issuedSignal?.aborted).toBe(false);
     expect(settled).toBe(false);
@@ -55,7 +55,7 @@ it('keeps direct plugin work alive beyond its former HTTP cutoff and preserves c
     await expect(pending).resolves.toEqual(response);
 
     const cancelled = postProductionMachineRpcDirect({
-        url: 'http://127.0.0.1:1234/rpc', request, operationTimeoutMs: null, signal: controller.signal,
+        url: 'http://127.0.0.1:1234/rpc', request, ...lifetime, signal: controller.signal,
     }).catch((error: unknown) => error);
     controller.abort();
     expect(readRpcRequestDisposition(await cancelled)).toBe('outcomeUnknown');

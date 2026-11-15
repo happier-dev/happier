@@ -12,8 +12,6 @@ import {
 import type { PeerTcpTunnelClientStream } from './client';
 import { assertPeerTcpTunnelStreamWritable } from './streamClosed';
 
-const DEFAULT_TUNNEL_WEBSOCKET_OPEN_TIMEOUT_MS = 30_000;
-
 export type PeerTcpTunnelWebSocketLike = {
     binaryType?: string;
     onopen?: () => void;
@@ -133,9 +131,11 @@ export async function openPeerTcpTunnelLoopbackStream(input: Readonly<{
 
     await new Promise<void>((resolve, reject) => {
         rejectOpen = reject;
-        openTimeout = setTimeout(() => {
-            failOpen(new Error('Peer TCP tunnel loopback websocket open timed out'));
-        }, Math.max(1, Math.floor(input.openTimeoutMs ?? DEFAULT_TUNNEL_WEBSOCKET_OPEN_TIMEOUT_MS)));
+        if (input.openTimeoutMs !== undefined) {
+            openTimeout = setTimeout(() => {
+                failOpen(new Error('Peer TCP tunnel loopback websocket open timed out'));
+            }, Math.max(1, Math.floor(input.openTimeoutMs)));
+        }
         socket.onopen = () => {
             if (openSettled || closed) return;
             openSettled = true;
@@ -146,6 +146,7 @@ export async function openPeerTcpTunnelLoopbackStream(input: Readonly<{
         socket.onerror = (event) => {
             failOpen(event instanceof Error ? event : new Error('Peer TCP tunnel loopback websocket failed'));
         };
+        socket.onclose = () => failOpen(new Error('Peer TCP tunnel loopback websocket closed before opening'));
         input.signal?.addEventListener('abort', abort, { once: true });
         if (input.signal?.aborted) abort();
     });

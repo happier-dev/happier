@@ -79,6 +79,44 @@ const binaryResponse: PeerTcpTunnelOpenResponseV1 = {
 };
 
 describe('openPeerTcpTunnelLoopbackStream', () => {
+    it('settles an unattached websocket when its transport closes and retires it once', async () => {
+        const { openPeerTcpTunnelLoopbackStream } = await import('./loopbackStream');
+        const { getSocket, WebSocketCtor } = createWebSocketFixture();
+        let retired = 0;
+        const opening = openPeerTcpTunnelLoopbackStream({
+            endpointUrl: 'http://127.0.0.1:48127', open, response: binaryResponse, WebSocketCtor,
+            onRetired: () => { retired += 1; },
+        });
+        const closed = expect(opening).rejects.toThrow('closed before opening');
+        getSocket().onclose?.();
+        await closed;
+        expect(retired).toBe(1);
+    });
+
+    it('lets a valid delayed websocket attach within the caller lifetime beyond the former default cutoff', async () => {
+        const { openPeerTcpTunnelLoopbackStream } = await import('./loopbackStream');
+        vi.useFakeTimers();
+        try {
+            const { getSocket, WebSocketCtor } = createWebSocketFixture();
+            let retired = 0;
+            const opening = openPeerTcpTunnelLoopbackStream({
+                endpointUrl: 'http://127.0.0.1:48127', open, response: binaryResponse, WebSocketCtor,
+                onRetired: () => { retired += 1; },
+            });
+            let failure: unknown;
+            void opening.catch(error => { failure = error; });
+            await vi.advanceTimersByTimeAsync(31_000);
+            expect(failure).toBeUndefined();
+            expect(getSocket().close).not.toHaveBeenCalled();
+            getSocket().onopen?.();
+            const stream = await opening;
+            stream.close();
+            expect(retired).toBe(1);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('keeps native authentication out of the URL and returns cleanup custody on peer closure', async () => {
         const mod = await loadModule('./loopbackStream');
         const openStream = mod.openPeerTcpTunnelLoopbackStream;
