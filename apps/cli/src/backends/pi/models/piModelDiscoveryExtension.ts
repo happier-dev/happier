@@ -1,8 +1,14 @@
 import { materializeProtectedTempTextArtifact } from '@/utils/fs/protectedTempTextArtifact';
 
+import { PI_SHARED_CONTROL_SIDE_CHANNEL_EVENT } from '../sharedControl/piSharedControlProtocol';
+
 const PI_MODEL_DISCOVERY_MARKER = 'happier-pi-model-catalog';
 
-/** Run in Pi so its registry remains the owner of catalogs, auth, extensions and cache policy. */
+/**
+ * Run in Pi so its registry remains the owner of catalogs, auth, extensions and cache policy.
+ * The marker goes to stderr, which the RPC backend and the JSON-mode preflight probe read. In the
+ * native TUI the terminal belongs to Pi, so it goes over Pi's extension bus to the Happier bridge.
+ */
 export function buildPiModelDiscoveryExtensionSource(params: Readonly<{
   bypassCache?: boolean;
   background?: boolean;
@@ -10,7 +16,8 @@ export function buildPiModelDiscoveryExtensionSource(params: Readonly<{
   return `
 export default function happierModelDiscovery(pi) {
   let generation = 0;
-  const emit = (publication, result) => publication === generation && process.stderr.write(JSON.stringify({type:${JSON.stringify(PI_MODEL_DISCOVERY_MARKER)}, ...result}) + "\\n");
+  let publish = (line) => process.stderr.write(line + "\\n");
+  const emit = (publication, result) => publication === generation && publish(JSON.stringify({type:${JSON.stringify(PI_MODEL_DISCOVERY_MARKER)}, ...result}));
   const discover = async (ctx, publication) => {
     try {
       const offline = process.env.PI_OFFLINE;
@@ -38,6 +45,7 @@ export default function happierModelDiscovery(pi) {
     } catch { emit(publication, {error:"refresh-failed"}); }
   };
   pi.on("session_start", (_event, ctx) => {
+    if (ctx?.mode === "tui") publish = (line) => pi.events.emit(${JSON.stringify(PI_SHARED_CONTROL_SIDE_CHANNEL_EVENT)}, line);
     const publication = ++generation;
     ${params.background ? 'void discover(ctx, publication);' : 'return discover(ctx, publication);'}
   });

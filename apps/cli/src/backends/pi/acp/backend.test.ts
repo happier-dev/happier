@@ -268,6 +268,28 @@ describe('happy tools bridge extension args', () => {
     },
   );
 
+  it('launches the native Pi terminal without RPC mode or the CI marker, keeping tool and thinking policy', () => {
+    process.env.PATH = '';
+    process.env.HAPPIER_PI_PATH = createFakeBin('pi');
+
+    const backendFor = (launchMode: 'rpc' | 'interactive') => createPiBackend({
+      cwd: '/tmp',
+      env: { HAPPIER_PI_THINKING_LEVEL: 'high' },
+      permissionMode: 'read-only',
+      happierSessionId: 'happy-session-1',
+      happyToolsBridge: baseBridge,
+      launchMode,
+    }) as unknown as { options: { args: string[]; env: Record<string, string> } };
+    const interactive = backendFor('interactive');
+    const rpc = backendFor('rpc');
+
+    expect(interactive.options.args).not.toContain('--mode');
+    expect(interactive.options.env).not.toHaveProperty('CI');
+    expect(rpc.options.args).toEqual(expect.arrayContaining(['--mode', 'rpc']));
+    expect(rpc.options.env.CI).toBe('1');
+    expect(interactive.options.args).toEqual(rpc.options.args.filter((arg) => arg !== '--mode' && arg !== 'rpc'));
+  });
+
   it('leaves Pi native and extension tools unfiltered in Auto mode', () => {
     process.env.PATH = '';
     process.env.HAPPIER_PI_PATH = createFakeBin('pi');

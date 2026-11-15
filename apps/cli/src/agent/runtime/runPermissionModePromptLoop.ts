@@ -148,6 +148,11 @@ export async function runPermissionModePromptLoop(opts: {
     baseOverride?: string | null;
   }) => Promise<string | null | undefined>;
   formatPromptErrorMessage: (error: unknown) => string;
+  /**
+   * Present when this runtime cannot be reset (its provider process is the user's own terminal):
+   * returns the notice shown instead of `/clear` or of a restart for changed queue settings.
+   */
+  describeUnavailableRuntimeReset?: ((cause: 'clear' | 'settings_change') => string) | null;
 }): Promise<void> {
   let wasStarted = false;
   let currentModeHash: string | null = null;
@@ -246,6 +251,11 @@ export async function runPermissionModePromptLoop(opts: {
       localId: localIds[0],
       reason,
     });
+  };
+
+  const postNotice = (message: string): void => {
+    opts.messageBuffer.addMessage(message, 'status');
+    opts.session.sendAgentMessage(opts.agentMessageType, { type: 'message', message });
   };
 
   const ensureFreshSessionSnapshotBeforeTurnBestEffort = async (): Promise<void> => {
@@ -392,6 +402,11 @@ export async function runPermissionModePromptLoop(opts: {
 
     opts.permissionHandler.setPermissionMode(message.mode.permissionMode);
 
+    if (wasStarted && currentModeHash && message.hash !== currentModeHash && opts.describeUnavailableRuntimeReset) {
+      // The provider cannot restart; keep the live runtime and say the new settings do not apply.
+      currentModeHash = message.hash;
+      postNotice(opts.describeUnavailableRuntimeReset('settings_change'));
+    }
     if (wasStarted && currentModeHash && message.hash !== currentModeHash) {
       const resumeId = opts.runtime.getSessionId();
       currentModeHash = message.hash;
@@ -428,6 +443,12 @@ export async function runPermissionModePromptLoop(opts: {
     opts.messageBuffer.addMessage(message.message.text, 'user');
 
     const special = parseSpecialCommand(message.message.text);
+    if (special.type === 'clear' && opts.describeUnavailableRuntimeReset) {
+      postNotice(opts.describeUnavailableRuntimeReset('clear'));
+      confirmQueuedUserMessageDeliveredToProvider(message, undefined, { kind: 'command' });
+      opts.sendReady();
+      continue;
+    }
     if (special.type === 'clear') {
       opts.messageBuffer.addMessage(`Resetting ${opts.providerName} session…`, 'status');
       await opts.runtime.reset();

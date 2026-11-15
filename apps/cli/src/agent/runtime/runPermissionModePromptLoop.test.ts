@@ -1608,6 +1608,94 @@ describe('runPermissionModePromptLoop', () => {
     expect(updateMetadataSpy).not.toHaveBeenCalled();
   });
 
+  // A runtime whose provider process is the user's own terminal (Pi's native TUI) cannot be reset:
+  // a reset would re-adopt the same live session and only pretend to start fresh.
+  it('refuses /clear with a notice instead of resetting a runtime that cannot be reset', async () => {
+    const notices: string[] = [];
+    const session = createMutableApiSessionClientFixture({ overrides: {
+      sendAgentMessage: (_provider, body) => {
+        if (body.type === 'message') notices.push(body.message);
+      },
+    } });
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const permissionHandler = { setPermissionMode: vi.fn(), reset: vi.fn() } as any;
+    queue.push({ text: '/clear', localId: 'local-clear' }, { permissionMode: 'default' });
+    let shouldExit = false;
+    const readySpy = vi.fn(() => { shouldExit = true; });
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime,
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer: new MessageBuffer(),
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: readySpy,
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+      describeUnavailableRuntimeReset: (cause) => `cannot reset (${cause})`,
+    });
+
+    expect(runtime.reset).not.toHaveBeenCalled();
+    expect(runtime.sendPrompt).not.toHaveBeenCalled();
+    expect(notices).toEqual(['cannot reset (clear)']);
+    expect(readySpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a runtime that cannot be reset when queue settings change, with one notice', async () => {
+    const notices: string[] = [];
+    const session = createMutableApiSessionClientFixture({ overrides: {
+      sendAgentMessage: (_provider, body) => {
+        if (body.type === 'message') notices.push(body.message);
+      },
+    } });
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const permissionHandler = { setPermissionMode: vi.fn(), reset: vi.fn() } as any;
+    queue.push({ text: 'first', localId: 'local-first' }, { permissionMode: 'default' });
+    queue.push({ text: 'second', localId: 'local-second' }, { permissionMode: 'read-only' });
+    queue.push({ text: 'third', localId: 'local-third' }, { permissionMode: 'read-only' });
+    let readyCount = 0;
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime,
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer: new MessageBuffer(),
+      shouldExit: () => readyCount >= 2,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => { readyCount += 1; },
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+      describeUnavailableRuntimeReset: (cause) => `cannot reset (${cause})`,
+    });
+
+    expect(runtime.reset).not.toHaveBeenCalled();
+    expect(runtime.startOrLoad).toHaveBeenCalledTimes(1);
+    expect(runtime.sendPrompt).toHaveBeenNthCalledWith(1, 'first');
+    expect(runtime.sendPrompt).toHaveBeenNthCalledWith(2, 'second\nthird');
+    expect(notices).toEqual(['cannot reset (settings_change)']);
+  });
+
   it('handles /compact through a runtime compaction hook without sending it as a normal prompt', async () => {
     const session = createPromptLoopSession();
     session.__setMetadata({

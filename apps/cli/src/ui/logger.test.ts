@@ -127,6 +127,35 @@ describe('logger', () => {
         logSpy.mockRestore();
     });
 
+    // A provider TUI (Pi's native terminal) owns the screen: any console line corrupts it.
+    it('keeps info and warn off the console while a provider terminal owns it, and still writes the log file', async () => {
+        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        const { logger } = (await import('@/ui/logger')) as typeof import('@/ui/logger');
+
+        try {
+            const releaseFirst = logger.muteConsole('provider terminal');
+            const releaseSecond = logger.muteConsole('second owner');
+            logger.info('[TEST] muted info');
+            logger.warn('[TEST] muted warn');
+            releaseFirst();
+            releaseFirst();
+            logger.info('[TEST] still muted by the second owner');
+            expect(logSpy).not.toHaveBeenCalled();
+
+            releaseSecond();
+            logger.info('[TEST] console is back');
+            expect(logSpy).toHaveBeenCalledTimes(1);
+        } finally {
+            logSpy.mockRestore();
+        }
+        logger.flushSync();
+
+        const content = readFileSync(logger.getLogPath(), 'utf8');
+        expect(content).toContain('[TEST] muted info');
+        expect(content).toContain('[WARN] [TEST] muted warn');
+        expect(content).toContain('[TEST] still muted by the second owner');
+    });
+
     it('durably records sanitized fatal errors without serializing argv or env fields', async () => {
         const { logger } = (await import('@/ui/logger')) as typeof import('@/ui/logger');
         const error = Object.assign(

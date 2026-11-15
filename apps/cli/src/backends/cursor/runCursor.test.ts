@@ -76,6 +76,7 @@ describe('runCursor', () => {
       toolDelivery: 'unsupported',
       turnAssistantPreviewTracker: {} as never,
       providerInputConsumer: {} as never,
+      requestRunnerTermination: vi.fn(),
     });
 
     expect(createCursorAcpRuntimeMock).toHaveBeenCalledWith(expect.objectContaining({

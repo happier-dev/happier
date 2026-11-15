@@ -241,7 +241,7 @@ describe('PiRpcBackend process startup lifecycle', () => {
     backends.push(backend);
 
     const priv = backend as unknown as {
-      process: unknown | null;
+      channel: unknown | null;
       processTransitionInFlight: Promise<void> | null;
     };
     const start = backend.startSession();
@@ -262,7 +262,7 @@ describe('PiRpcBackend process startup lifecycle', () => {
     await transition;
     await expect(start).rejects.toThrow('Pi session open timed out during process startup');
     expect(settlementAtDeadline).toBe('rejected');
-    expect(priv.process).toBeNull();
+    expect(priv.channel).toBeNull();
     expect(cleanup).toHaveBeenCalledOnce();
   });
 
@@ -282,7 +282,7 @@ describe('PiRpcBackend process startup lifecycle', () => {
     backends.push(backend);
 
     const priv = backend as unknown as {
-      process: unknown | null;
+      channel: unknown | null;
       processTransitionInFlight: Promise<void> | null;
     };
     const load = backend.loadSession('pi-startup');
@@ -303,7 +303,7 @@ describe('PiRpcBackend process startup lifecycle', () => {
     await transition;
     await expect(load).rejects.toThrow('Pi session open timed out during process startup');
     expect(settlementAtDeadline).toBe('rejected');
-    expect(priv.process).toBeNull();
+    expect(priv.channel).toBeNull();
     expect(cleanup).toHaveBeenCalledOnce();
   });
 
@@ -321,7 +321,7 @@ describe('PiRpcBackend process startup lifecycle', () => {
     });
     backends.push(backend);
 
-    const priv = backend as unknown as { process: unknown | null };
+    const priv = backend as unknown as { channel: unknown | null };
     const load = backend.loadSession(join(dir, 'pi-startup.jsonl'));
     const settled = vi.fn();
     void load.then(
@@ -338,7 +338,7 @@ describe('PiRpcBackend process startup lifecycle', () => {
     await expect(load).rejects.toThrow('Pi session open timed out during session file discovery');
     expect(settlementAtDeadline).toBe('rejected');
     expect(artifactBoundary.materialize).not.toHaveBeenCalled();
-    expect(priv.process).toBeNull();
+    expect(priv.channel).toBeNull();
   });
 
   it('cleans the protected artifact when the Pi process cannot launch', async () => {

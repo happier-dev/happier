@@ -40,7 +40,7 @@ export function spawnDetachedInlineNodeTestProcess(source: string, options: Spaw
 
 export async function spawnInlineNodeParentWithChild(
   childSource = 'setInterval(() => {}, 1000)',
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; stdio?: 'pipe' } = {},
 ): Promise<{ parent: ChildProcess; childPid: number }> {
   const timeoutMs = opts.timeoutMs ?? 2_000
   const parent = spawnInlineNodeTestProcess(
@@ -50,7 +50,7 @@ export async function spawnInlineNodeParentWithChild(
       'console.log(String(child.pid));',
       'setInterval(() => {}, 1000);',
     ].join('\n'),
-    { stdio: ['ignore', 'pipe', 'ignore'] },
+    { stdio: opts.stdio ?? ['ignore', 'pipe', 'ignore'] },
   )
 
   const childPid = await new Promise<number>((resolve, reject) => {

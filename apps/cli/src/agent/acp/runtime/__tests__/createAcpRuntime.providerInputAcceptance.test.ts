@@ -190,6 +190,38 @@ describe('createAcpRuntime Standard ACP provider-input acceptance contract', () 
     expect(backend.waitForResponseComplete).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps the reversible reason a backend gives its exact pre-acceptance refusal', async () => {
+    const backend = {
+      ...createFakeAcpRuntimeBackend(),
+      sendPromptWithEvidence: vi.fn(async () => {
+        throw new AcpPromptSubmissionPhaseError(
+          'rejected_before_effect',
+          new ProviderPromptSubmissionRejectedBeforeEffectError(
+            'provider_unavailable_before_acceptance',
+            new Error('the provider terminal is on another session'),
+          ),
+        );
+      }),
+    };
+    const runtime = createAcpRuntime({
+      provider: 'customAcp',
+      directory: '/tmp',
+      session: createBasicSessionClient(),
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+    });
+
+    await runtime.startOrLoad({ resumeId: null });
+
+    await expect(runtime.sendPromptWithMeta({
+      text: 'hello',
+      localId: 'local-unavailable',
+    })).rejects.toMatchObject({ reason: 'provider_unavailable_before_acceptance' });
+  });
+
   it('translates an exact ACP rejection after invocation to provider_rejected_before_acceptance', async () => {
     const backend = {
       ...createFakeAcpRuntimeBackend(),

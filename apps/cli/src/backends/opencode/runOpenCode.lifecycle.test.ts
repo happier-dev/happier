@@ -64,6 +64,7 @@ describe('OpenCode runner lifecycle affinity', () => {
       setThinking: () => {}, memoryRecallGuidanceEnabled: false, toolDelivery: 'native_mcp',
       processEnv: { ...process.env, HAPPIER_OPENCODE_SERVER_STATUS_POLL_ENABLED: '0' },
       providerInputConsumer: consumer, turnAssistantPreviewTracker: createTurnAssistantPreviewTracker(),
+      requestRunnerTermination: () => {},
     });
     try {
       // A second session keeps the shared server alive across this runner's reset.

@@ -1,4 +1,4 @@
-import { resolveTerminalInjectionReadiness } from '@/agent/runtime/terminal/injection/arbiter';
+import { resolveTerminalInjectionReadiness, TERMINAL_INPUT_BUSY_TURN_FALLBACK_WAKE_MS } from '@/agent/runtime/terminal/injection/arbiter';
 import type { TerminalInputInjectionResult, TerminalLifecycleObservation, TerminalTurnState } from '@/agent/runtime/terminal/_types';
 import { isNonSteerablePromptPayload, parseSpecialCommand } from '@/cli/parsers/specialCommands';
 import { logger } from '@/ui/logger';
@@ -35,7 +35,7 @@ const DEFAULT_INJECTION_RETRY_BASE_DELAY_MS = 250;
 // by the turn-end lifecycle hook. This bounded fallback wake re-evaluates the
 // deferral even if that hook never arrives, so the prompt cannot starve forever.
 // It re-defers (no mid-turn injection) while the turn is still running.
-const DEFAULT_BUSY_TURN_FALLBACK_WAKE_MS = 15_000;
+const DEFAULT_BUSY_TURN_FALLBACK_WAKE_MS = TERMINAL_INPUT_BUSY_TURN_FALLBACK_WAKE_MS;
 // A 'running' turn state can be STALE: after a respawn, replayed transcript rows mark the
 // turn running but no live provider turn exists, so turn-end evidence never arrives and a
 // deferred ui_pending prompt starves forever (incident cmq7pyqkj, L1). When NO provider

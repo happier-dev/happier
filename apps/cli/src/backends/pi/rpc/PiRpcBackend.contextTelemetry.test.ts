@@ -6,7 +6,7 @@ import { parsePiContextTelemetryFromSessionStats } from './piContextTelemetryMar
 import { PiRpcBackend } from './PiRpcBackend';
 
 type PrivateContextTelemetryBackend = {
-  process: unknown;
+  channel: unknown;
   latestContextTelemetry: { used: number; size: number } | null;
   assistantBoundaryContextTelemetry: { used: number; size: number } | null;
   lastPublishedUsageKey: string | null;
@@ -28,7 +28,7 @@ function createBackendForContextTelemetry(): PiRpcBackend {
     happierSessionId: 'sess_pi_ctx_1',
   });
   // publishUsageStatsBestEffort early-returns without a live child process handle.
-  (backend as unknown as PrivateContextTelemetryBackend).process = { pid: 1 } as never;
+  (backend as unknown as PrivateContextTelemetryBackend).channel = { pid: 1 } as never;
   return backend;
 }
 

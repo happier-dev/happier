@@ -1286,6 +1286,34 @@ describe('runStandardAcpProvider', () => {
     expect(harness.metrics.cleanupCalls).toBe(1);
   });
 
+  // A provider whose process owns the user's terminal (Pi native TUI) ends the runner when that
+  // process exits; the runner then cleans up exactly as for any other termination.
+  it('lets the provider runtime end the runner with the provider exit code', async () => {
+    const harness = createHarness();
+    harness.opts.startedBy = 'terminal';
+    let requestRunnerTermination: Parameters<StandardAcpProviderConfig['createRuntime']>[0]['requestRunnerTermination'] | null = null;
+    harness.config.createRuntime = (params) => {
+      requestRunnerTermination = params.requestRunnerTermination;
+      return harness.runtime;
+    };
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      requestRunnerTermination?.({ kind: 'exit', code: 7 });
+    };
+
+    try {
+      await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+      await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(7));
+    } finally {
+      exitSpy.mockRestore();
+    }
+
+    expect(harness.runtime.cancel).toHaveBeenCalled();
+    expect(harness.session.close).toHaveBeenCalledTimes(1);
+    expect(harness.metrics.cleanupCalls).toBe(1);
+    expect(sessionWasArchived(harness.session)).toBe(false);
+  });
+
   it.each(['completed', 'failed', 'flush-failed'] as const)(
     'resumes queued input immediately after %s Stop cancellation without polling',
     async (cancelOutcome) => {

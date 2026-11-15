@@ -1707,7 +1707,7 @@ describe('PiRpcBackend prompt error handling', () => {
     tempDirs.push(workDir);
     const fakeScript = makeFakePiRpcImmediateGenericPromptFailureScript(workDir);
 
-    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    const warnSpy = vi.spyOn(logger, 'warnFile').mockImplementation(() => undefined);
     const backend = new PiRpcBackend({
       cwd: workDir,
       command: process.execPath,
@@ -2062,7 +2062,7 @@ describe('PiRpcBackend prompt error handling', () => {
     const workDir = makeTempDir('happier-pi-rpc-structured-assistant-failure-');
     tempDirs.push(workDir);
     const fakeScript = makeFakePiRpcStructuredAssistantFailureScript(workDir);
-    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    const warnSpy = vi.spyOn(logger, 'warnFile').mockImplementation(() => undefined);
 
     const backend = new PiRpcBackend({
       cwd: workDir,

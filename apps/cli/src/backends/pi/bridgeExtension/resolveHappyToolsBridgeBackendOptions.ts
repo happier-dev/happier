@@ -52,6 +52,11 @@ export async function resolveHappyToolsBridgeBackendOptions(params: Readonly<{
   sessionMetadata?: unknown;
   memoryRecallGuidanceEnabled: boolean;
   memoryMachineId?: string | null;
+  /**
+   * Materializes the extension file Pi loads. Defaults to the shared asset under `agentDir`; the
+   * native terminal passes its own per-launch copy instead.
+   */
+  materializeExtension?: () => Promise<string>;
 }>): Promise<HappyToolsBridgeBackendOptions | null> {
   if (!params.agentDir || !isSessionHappierToolsEnabled(params.sessionMetadata)) return null;
 
@@ -115,7 +120,8 @@ export async function resolveHappyToolsBridgeBackendOptions(params: Readonly<{
       },
     },
   });
-  const extensionPath = await ensurePiBridgeExtensionAsset(params.agentDir);
+  const agentDir = params.agentDir;
+  const extensionPath = await (params.materializeExtension ?? (() => ensurePiBridgeExtensionAsset(agentDir)))();
 
   return { extensionPath, sessionConfig };
 }

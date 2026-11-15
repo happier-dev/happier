@@ -957,7 +957,11 @@ export function createAcpRuntime(params: {
       error instanceof AcpPromptSubmissionPhaseError
       && error.phase === 'rejected_before_effect'
     ) {
-      throw createRejectedBeforeProviderEffectError(error, 'provider_rejected_before_acceptance');
+      // A backend that knows why it refused (e.g. temporarily unavailable) keeps that reason.
+      throw createRejectedBeforeProviderEffectError(
+        error.cause instanceof ProviderPromptSubmissionRejectedBeforeEffectError ? error.cause : error,
+        'provider_rejected_before_acceptance',
+      );
     }
     return rethrowPromptError(error, turn);
   };
