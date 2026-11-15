@@ -1,4 +1,4 @@
-import { isPluginError } from '@happier-dev/plugin-sdk/errors';
+import { isPluginError, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 import type { HttpService, PluginFetchCredentialBinding } from '@happier-dev/plugin-sdk/http';
 import { pluginJsonValuesEqual, type ProtocolJsonValue } from '@happier-dev/plugin-sdk/protocol';
 import { prepareOwnedCloudflareIngress } from './cloudflareIngress.js';
@@ -103,7 +103,7 @@ export function cloudflareRemoteTunnel(value: ProtocolJsonValue | undefined, acc
  */
 export type CloudflareConnectorRouteResult<T> =
   | (Extract<CloudflareRouteResult, { kind: 'verified' }> & Readonly<{ connector: T }>)
-  | (Exclude<CloudflareRouteResult, { kind: 'verified' }> & Readonly<{ connector?: T }>);
+  | (Exclude<CloudflareRouteResult, { kind: 'verified' }> & Readonly<{ connector?: T; failureCause?: ActionFailureCauseV1 }>);
 export function reconcileOwnedCloudflareRoutes<T>(input: CloudflareRouteRequest & Readonly<{
   prepareConnector(): Promise<T>;
 }>): Promise<CloudflareConnectorRouteResult<T>>;
@@ -111,7 +111,7 @@ export function reconcileOwnedCloudflareRoutes(input: CloudflareRouteRequest): P
 export function reconcileOwnedCloudflareRoutes(input: CloudflareRouteRequest | CloudflareRemovalRouteRequest): Promise<CloudflareRemovalRouteResult>;
 export async function reconcileOwnedCloudflareRoutes(input: (CloudflareRouteRequest | CloudflareRemovalRouteRequest) & Readonly<{
   prepareConnector?: () => Promise<unknown>;
-}>): Promise<CloudflareRemovalRouteResult & Readonly<{ connector?: unknown }>> {
+}>): Promise<CloudflareRemovalRouteResult & Readonly<{ connector?: unknown; failureCause?: ActionFailureCauseV1 }>> {
   const collectionUrl = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(input.accountId)}/cfd_tunnel`;
   const dnsUrl = `https://api.cloudflare.com/client/v4/zones/${encodeURIComponent(input.zoneId)}/dns_records`;
   let attempted = false, changed = false;
@@ -235,7 +235,8 @@ export async function reconcileOwnedCloudflareRoutes(input: (CloudflareRouteRequ
     // Cloudflare offers no compare-and-swap; another GET cannot add one.
     if (prepared.config !== previous.config) {
       const applied = readRecord((await request('PUT', configurationUrl, { config: prepared.config })).result);
-      if (!object(applied.config) || !pluginJsonValuesEqual(applied.config, prepared.config)) throw new CloudflareProviderRefusal('outcome_unknown');
+      if (!object(applied.config) || !pluginJsonValuesEqual(applied.config, prepared.config)) throw new CloudflareProviderRefusal('outcome_unknown',
+        `${operation}: result.config did not acknowledge the requested configuration`);
     }
     const nextRules = prepared.config.ingress;
     for (const hostname of hostnames) {
@@ -258,9 +259,12 @@ export async function reconcileOwnedCloudflareRoutes(input: (CloudflareRouteRequ
   } catch (error) {
     if (isPluginError(error) && !connector) throw error;
     const providerOutput = error instanceof CloudflareProviderRefusal && error.providerOutput ? { providerOutput: error.providerOutput } : {};
+    // Configure's declared result carries the first cause across this settlement boundary.
+    const diagnosis = input.prepareConnector ? { failureCause: projectActionFailureCauseV1(error, 'deployment.cloudflare.tunnel.routes') } : {};
     if (changed || attempted || connector) return { kind: 'unknown', code: isPluginError(error) || error instanceof CloudflareProviderRefusal ? error.code : 'outcome_unknown', ...providerOutput,
-      ...(ownership.size === 0 ? {} : { dnsOwnership: [...ownership].map(([hostname, recordId]) => ({ hostname, recordId })) }), ...connector };
+      ...(ownership.size === 0 ? {} : { dnsOwnership: [...ownership].map(([hostname, recordId]) => ({ hostname, recordId })) }), ...connector, ...diagnosis };
     if (input.signal.aborted) return { kind: 'refused', code: 'cancelled' };
-    return error instanceof CloudflareProviderRefusal ? { kind: 'refused', code: error.code, ...providerOutput } : { kind: 'unknown', code: 'provider_unavailable' };
+    return error instanceof CloudflareProviderRefusal ? { kind: 'refused', code: error.code, ...providerOutput, ...diagnosis }
+      : { kind: 'unknown', code: 'provider_unavailable', ...diagnosis };
   }
 }

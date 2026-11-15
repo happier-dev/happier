@@ -4998,6 +4998,13 @@ result cannot be replaced by successful public Caddy activation.
 The prepared body update carries the Artifact owner's matching revision provenance
 and key envelope through the existing Artifact writer, keeping the new body readable
 without changing the retained header.
+If preparation fails after Cloudflare acknowledges a tunnel ID, the Domain saves
+that ID before returning the failure when its content update succeeds. Its typed failure identifies the retained
+tunnel and adoption recovery, preserving the provider's original cause and safe
+response diagnostic. After resolving the cause, reviewing Add again adopts the
+saved tunnel instead of creating another. If the content update itself fails,
+the failure still names the tunnel for explicit adoption. Remove cleans only its owned routes;
+the shared tunnel remains available for deliberate inspection or retirement.
 
 After a template's Deploy succeeds, its Domain step invokes that same authored
 Action through the admitted reviewed-child issuer. The existing signed child

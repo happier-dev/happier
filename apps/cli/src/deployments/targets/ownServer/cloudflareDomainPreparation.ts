@@ -16,12 +16,18 @@ const refuse = (code: string, details?: Readonly<{ requiredFact: string }>): nev
     throw Object.assign(new Error(code), { code, ...(details ? { details } : {}) });
 };
 /** Keep the remote result's diagnosis when Domain execution has not reached Caddy. */
-function refuseCloudflare(code: string, phase: 'preparation' | 'retirement', providerCode = code,
-    child?: ActionExecuteFailure, providerOutput?: string, failureCause?: ActionFailureCauseV1): never {
+function refuseCloudflare(code: string, phase: 'preparation' | 'retirement', options: Readonly<{
+    providerCode?: string; child?: ActionExecuteFailure; providerOutput?: string;
+    failureCause?: ActionFailureCauseV1; tunnelId?: string;
+}> = {}): never {
+    const { child, providerOutput, failureCause, tunnelId, providerCode = code } = options;
     const failure: ActionExecuteFailure = { ok: false, errorCode: code, error: code,
         details: { requiredFact: 'cloudflarePreparation', ...(providerOutput ? { providerOutput } : {}),
-            remedy: 'Inspect the selected Cloudflare tunnel and its owned hostname routes, resolve the reported provider error, then review the Domain operation again.' },
-        failureCause: child?.failureCause ?? failureCause ?? projectActionFailureCauseV1({ code: providerCode }, `deployment.domain.cloudflare_${phase}`),
+            ...(tunnelId ? { tunnelId, recovery: { kind: 'adopt' as const, tunnelId } } : {}),
+            remedy: tunnelId
+                ? `Cloudflare tunnel ${tunnelId} remains available. Resolve the reported error, then review this Domain using that tunnel (Adopt). Remove cleans its owned routes while retaining the tunnel.`
+                : 'Inspect the selected Cloudflare tunnel and its owned hostname routes, resolve the reported provider error, then review the Domain operation again.' },
+        failureCause: child?.failureCause ?? failureCause ?? projectActionFailureCauseV1(Object.assign(new Error(providerCode), { code: providerCode }), `deployment.domain.cloudflare_${phase}`),
         ...(typeof child?.effectAttempted === 'boolean' ? { effectAttempted: child.effectAttempted } : {}) };
     throw Object.assign(new Error(code, { cause: failure }), { code });
 }
@@ -90,16 +96,21 @@ export async function prepareCloudflareDomainForHost(input: Readonly<{
             });
             const capture = domain.placements?.find(item => item.desired);
             if (!capture) return refuse('target_mismatch');
-            updated = await host.persistPreparedContent({ domain, capture, context, content: { ...opened.content,
-                cloudflarePreparation: { tunnelId, owned: desired.map(({ service, ...route }) => ({ ...route, expectedService: service })),
-                    dnsOwnership: [...(prepared?.dnsOwnership ?? previous?.dnsOwnership ?? selected.controller.dnsOwnership)],
-                    connectors: [...(previous?.connectors ?? []).filter(old => !connectors.some(current =>
-                        old.machineId === current.machineId && old.installationId === current.installationId)), ...connectors] } } });
+            try {
+                updated = await host.persistPreparedContent({ domain, capture, context, content: { ...opened.content,
+                    cloudflarePreparation: { tunnelId, owned: desired.map(({ service, ...route }) => ({ ...route, expectedService: service })),
+                        dnsOwnership: [...(prepared?.dnsOwnership ?? previous?.dnsOwnership ?? selected.controller.dnsOwnership)],
+                        connectors: [...(previous?.connectors ?? []).filter(old => !connectors.some(current =>
+                            old.machineId === current.machineId && old.installationId === current.installationId)), ...connectors] } } });
+            } catch (error) {
+                const failureCause = projectActionFailureCauseV1(error, 'deployment.domain.cloudflare_preparation');
+                return refuseCloudflare(failureCause.errorCode ?? 'outcome_unknown', 'preparation', { failureCause, tunnelId });
+            }
         }
-        if (!result.ok) return refuseCloudflare(result.errorCode, 'preparation', result.errorCode, result);
+        if (!result.ok) return refuseCloudflare(result.errorCode, 'preparation', { child: result, tunnelId });
         if (prepared?.kind !== 'prepared') return refuseCloudflare(prepared?.kind === 'unknown' ? 'outcome_unknown'
-            : prepared?.code ?? 'provider_unavailable', 'preparation', prepared?.code ?? 'provider_unavailable', undefined,
-            prepared?.providerOutput, prepared?.failureCause);
+            : prepared?.code ?? 'provider_unavailable', 'preparation', { providerCode: prepared?.code ?? 'provider_unavailable',
+            providerOutput: prepared?.providerOutput, failureCause: prepared?.failureCause, tunnelId });
         return updated;
     } finally { await Promise.all(admissions.map(item => item.release?.())); }
 }
@@ -125,11 +136,11 @@ export async function disableCloudflareDomainForHost(content: DeploymentDomainCo
     } : recovered;
     if (!request) return refuse('required_fact_unavailable', { requiredFact: 'reviewed_cloudflare_child' });
     const result = await context.hostReviewedChild.invoke(request);
-    if (!result.ok) return refuseCloudflare(result.errorCode, 'retirement', result.errorCode, result);
+    if (!result.ok) return refuseCloudflare(result.errorCode, 'retirement', { child: result });
     // The contributed runtime validates the declared closed Action result.
     const disabled = result.result as { kind: 'verified' | 'unknown' | 'refused'; code?: string; providerOutput?: string };
     if (disabled.kind !== 'verified') return refuseCloudflare(disabled.kind === 'unknown' ? 'outcome_unknown'
-        : disabled.code ?? 'provider_unavailable', 'retirement', disabled.code ?? 'provider_unavailable', undefined, disabled.providerOutput);
+        : disabled.code ?? 'provider_unavailable', 'retirement', { providerCode: disabled.code ?? 'provider_unavailable', providerOutput: disabled.providerOutput });
 }
 
 /** Native children consume only their own saved value-free operand. */

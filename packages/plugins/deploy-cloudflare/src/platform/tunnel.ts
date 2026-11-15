@@ -1,5 +1,5 @@
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
-import { isPluginError, ActionFailureCauseV1ProtocolSchema, type ActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
+import { isPluginError, projectActionFailureCauseV1, ActionFailureCauseV1ProtocolSchema, type ActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 import type { PluginAccountActionContext, PluginAccountActionHandler, PluginActionDeclaration, PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/plugin-sdk/connected-accounts';
 import { defineProtocolArray as array, defineProtocolLiteral as literal, defineProtocolObject as object,
@@ -108,6 +108,7 @@ const configureTunnel: PluginAccountActionHandler<ReturnType<typeof tunnelConfig
     if (routes.kind !== 'verified') return { kind: createAttempted || grantAttempted || routes.kind === 'unknown' ? 'unknown' : 'refused',
       code: grantAttempted && !routes.connector ? 'connector_grant_unavailable' : routes.code,
       ...(routes.providerOutput ? { providerOutput: routes.providerOutput } : {}),
+      ...(routes.failureCause ? { failureCause: routes.failureCause } : {}),
       tunnelId, ...(routes.connector ? { grants: [...routes.connector.grants] } : {}),
       ...(routes.kind === 'unknown' && routes.dnsOwnership ? { dnsOwnership: [...routes.dnsOwnership] } : {}) };
     return { kind: 'prepared', tunnelId, grants: [...routes.connector.grants], dnsOwnership: [...routes.dnsOwnership] };
@@ -116,7 +117,7 @@ const configureTunnel: PluginAccountActionHandler<ReturnType<typeof tunnelConfig
       : context.signal.aborted ? 'cancelled'
         : isPluginError(error) || error instanceof CloudflareProviderRefusal ? error.code : grantAttempted ? 'connector_grant_unavailable' : 'provider_unavailable';
     return { kind: createAttempted || grantAttempted ? 'unknown' : 'refused', code, ...(tunnelId ? { tunnelId } : {}),
-      ...(isPluginError(error) && error.data.failureCause ? { failureCause: error.data.failureCause } : {}),
+      failureCause: projectActionFailureCauseV1(error, 'deployment.cloudflare.tunnel.configure'),
       ...(error instanceof CloudflareProviderRefusal && error.providerOutput ? { providerOutput: error.providerOutput } : {}) };
   }
 };

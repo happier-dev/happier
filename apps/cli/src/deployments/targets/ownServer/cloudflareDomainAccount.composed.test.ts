@@ -98,7 +98,7 @@ it.each(['connector grant authorization refused', 'create connector grant author
     const malformedPreparation = scenario === 'create malformed configuration';
     const malformedConfigurationValue = 'private-malformed-configuration-value';
     const grantAuthorizationRefused = scenario === 'connector grant authorization refused' || scenario === 'create connector grant authorization refused';
-    const creatingTunnel = createWithoutVersion || malformedPreparation || scenario === 'create connector grant authorization refused';
+    const creatingTunnel = createWithoutVersion || malformedPreparation || scenario === 'create connector grant authorization refused' || scenario === 'content conflict';
     const removing = scenario === 'remove shared' || scenario === 'remove final' || unprepared;
     const actionId = removing ? 'deployments.domains.remove' as const : 'deployments.domains.add' as const;
     const origin = 'https://cloudflare-domain-home.test';
@@ -654,8 +654,12 @@ it.each(['connector grant authorization refused', 'create connector grant author
                 details: { step: 'native_execution', requiredFact: 'cloudflarePreparation',
                     providerOutput: expect.stringMatching(/(?=.*configurations)(?=.*result\.config)(?=.*object)/),
                     remedy: expect.stringMatching(/\S/) }, failureCause: {
-                    phase: malformedRemoval ? 'deployment.domain.cloudflare_retirement' : 'deployment.domain.cloudflare_preparation',
+                    phase: malformedRemoval ? 'deployment.domain.cloudflare_retirement' : 'deployment.cloudflare.tunnel.routes',
                     errorCode: 'invalid_provider_output' } });
+            if (malformedPreparation) expect(result).toMatchObject({
+                details: { tunnelId: 'reviewed-tunnel', recovery: { kind: 'adopt', tunnelId: 'reviewed-tunnel' } },
+                failureCause: { errorClass: 'Error' },
+            });
             expect(JSON.stringify(result)).not.toContain(malformedConfigurationValue);
             expect(domain?.deletedAtMs).toBeUndefined();
             expect(trace).not.toContain('domain-removed');
@@ -732,6 +736,10 @@ it.each(['connector grant authorization refused', 'create connector grant author
         expect(result).toMatchObject({ ok: false, errorCode: scenario === 'prepared' || scenario === 'connector admitted Domain child proof' || createWithoutVersion || omittedConfiguration || scenario === 'two members' ? 'native_route_unavailable'
             : scenario === 'content conflict' ? 'deployment_conflict' : 'outcome_unknown' });
         if (scenario === 'content conflict') {
+            expect(trace).toContain('vendor-tunnel-created');
+            expect(result).toMatchObject({ details: { tunnelId: 'reviewed-tunnel',
+                recovery: { kind: 'adopt', tunnelId: 'reviewed-tunnel' } },
+                failureCause: { errorClass: 'Error', errorCode: 'deployment_conflict' } });
             expect(nativeJobs).toEqual([]);
             expect(authored.artifacts.read(authoredInput.contentArtifactId)?.bodyVersion).toBe(1);
         } else {

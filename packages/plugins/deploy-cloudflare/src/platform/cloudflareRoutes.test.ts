@@ -282,7 +282,8 @@ describe('Cloudflare controller owned route lifecycle', () => {
     const state = fixture({ putAcknowledgementMismatch: true });
     const result = await reconcileOwnedCloudflareRoutes(state.request);
     expect(result, JSON.stringify({ actual: result, expected: { kind: 'unknown', code: 'outcome_unknown' } }))
-      .toEqual({ kind: 'unknown', code: 'outcome_unknown' });
+      .toEqual({ kind: 'unknown', code: 'outcome_unknown',
+        providerOutput: expect.stringMatching(/^PUT .*\/configurations: result\.config/) });
     expect(state.mutations().map(request => request.method)).toEqual(['PUT']);
     expect(state.configReads()).toBe(1);
   });
@@ -418,6 +419,19 @@ describe('Cloudflare controller create/adopt through the activated Account Actio
     } finally { await state.kit.dispose(); }
   });
 
+  it('retains the failed configuration acknowledgement cause and known tunnel after create', async () => {
+    const state = await controller({ canonicalRemote: true, putAcknowledgementMismatch: true });
+    try {
+      const result = await state.invoke({ ...state.input, tunnel: { kind: 'create', name: 'reviewed-tunnel' } });
+      expect(result).toMatchObject({ kind: 'unknown', code: 'outcome_unknown', tunnelId, grants,
+        failureCause: { phase: 'deployment.cloudflare.tunnel.routes', errorClass: 'Error', errorCode: 'outcome_unknown' },
+        providerOutput: expect.stringMatching(/^PUT .*\/configurations: result\.config/) });
+      expect(state.record()).toBeNull();
+      expect(state.mutations().map(request => request.method)).toEqual(['POST', 'PUT']);
+      expect(JSON.stringify(result)).not.toContain(connectorToken);
+    } finally { await state.kit.dispose(); }
+  });
+
   it('requires the admitted controller grant service before any vendor effect and refuses portable execution', async () => {
     const state = await controller({ noGrant: true });
     try {
@@ -431,7 +445,8 @@ describe('Cloudflare controller create/adopt through the activated Account Actio
     'refuses a selected tunnel or route ownership mismatch before token acquisition: %j', async options => {
       const state = await controller({ ...options, canonicalRemote: true });
       try {
-        expect(await state.invoke()).toEqual({ kind: 'refused', code: 'route_conflict', tunnelId });
+        expect(await state.invoke()).toEqual({ kind: 'refused', code: 'route_conflict', tunnelId,
+          failureCause: { phase: 'deployment.cloudflare.tunnel.routes', errorClass: 'Error', errorCode: 'route_conflict', httpStatus: null } });
         expect(state.write).not.toHaveBeenCalled();
         expect(state.requests.some(request => request.url.endsWith('/token'))).toBe(false);
         expect(state.mutations()).toEqual([]);
@@ -442,14 +457,16 @@ describe('Cloudflare controller create/adopt through the activated Account Actio
     const lost = await controller({ createLost: true });
     try {
       expect(await lost.invoke({ ...lost.input, tunnel: { kind: 'create', name: 'reviewed-tunnel' } }))
-        .toEqual({ kind: 'unknown', code: 'outcome_unknown' });
+        .toEqual({ kind: 'unknown', code: 'outcome_unknown',
+          failureCause: { phase: 'deployment.cloudflare.tunnel.configure', errorClass: 'Error', errorCode: null, httpStatus: null } });
       expect(lost.requests.map(request => request.method)).toEqual(['POST']);
       expect(lost.write).not.toHaveBeenCalled();
     } finally { await lost.kit.dispose(); }
     const partial = await controller({ canonicalRemote: true, grantError: new Error(connectorToken) });
     try {
       const result = await partial.invoke({ ...partial.input, tunnel: { kind: 'create', name: 'reviewed-tunnel' } });
-      expect(result).toEqual({ kind: 'unknown', code: 'connector_grant_unavailable', tunnelId });
+      expect(result).toEqual({ kind: 'unknown', code: 'connector_grant_unavailable', tunnelId,
+        failureCause: { phase: 'deployment.cloudflare.tunnel.routes', errorClass: 'Error', errorCode: null, httpStatus: null } });
       expect(JSON.stringify(result)).not.toContain(connectorToken);
       expect(partial.buffers.every(bytes => bytes.every(byte => byte === 0))).toBe(true);
       expect(partial.requests.some(request => request.url === root && request.method === 'DELETE')).toBe(false);
@@ -464,7 +481,9 @@ describe('Cloudflare controller create/adopt through the activated Account Actio
     const state = await controller({ ...options, canonicalRemote: true });
     try {
       const result = await state.invoke();
-      expect(result).toEqual({ ...expected, tunnelId });
+      expect(result).toEqual({ ...expected, tunnelId,
+        failureCause: { phase: 'deployment.cloudflare.tunnel.routes', errorClass: 'Error',
+          errorCode: options.tokenLost ? null : 'invalid_provider_output', httpStatus: null } });
       expect(JSON.stringify(result)).not.toContain(connectorToken);
       expect(state.write).not.toHaveBeenCalled();
     } finally { await state.kit.dispose(); }
