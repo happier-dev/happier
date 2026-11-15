@@ -101,7 +101,6 @@ describe('confirmed stop across a hidden daemon PID namespace', () => {
     (['inspect', 'stop'] as const).map(operation => ({ kind, operation }))))('$operation replaces a $kind PID publication with a reused foreign control port without signalling it', async ({ kind, operation }) => {
     await withConfiguredDaemonTestHome({ prefix: 'daemon-reused-coordinates-' }, async ({ homeDir }) => {
       const { createServer } = await import('node:http');
-      const { once } = await import('node:events');
       const server = createServer((req, res) => { req.resume(); res.writeHead(404); res.end('foreign endpoint'); });
       server.listen(0, '127.0.0.1');
       await once(server, 'listening');
