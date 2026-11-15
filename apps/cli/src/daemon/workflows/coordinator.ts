@@ -1395,6 +1395,12 @@ async function skipWorkflowBlock(
   await context.deps.store.commitFact({ key, lifecycle: 'skipped', reason });
 }
 
+function needsWorkflowConditionEvaluation(current: WorkflowCoordinatorInvocation | undefined): boolean {
+  // A storage interruption can retain a skip's pending intent before its
+  // skipped fact. That slot has admitted no execution or container work yet.
+  return !current || (current.lifecycle === 'pending' && !current.execution && !current.container);
+}
+
 /** One status predicate and failure progression for every ordered Workflow list. */
 async function executeSequenceBlock(
   blocks: readonly WorkflowBlock[],
@@ -1407,7 +1413,7 @@ async function executeSequenceBlock(
   const block = blocks[index]!;
   const coordinate = { runId: context.runId, scope, ...(parentKey ? { parentKey } : {}) };
   const current = await context.deps.store.readCurrent({ ...coordinate, blockId: block.id, memberOrdinal: String(index) });
-  if (!current) {
+  if (needsWorkflowConditionEvaluation(current)) {
     const runWhen = block.runWhen ?? 'success';
     // Sequence advancement already proves success/skipped for an ordinary
     // successor: the catch below propagates failure unless the next block is
@@ -1449,7 +1455,7 @@ async function executeBlock(
     ...(parentKey ? { parentKey } : {}) });
   if (current?.lifecycle === 'skipped' || (current?.lifecycle === 'completed' && current.containerResult)) return;
   const runtime = createResolutionRuntime(context.inputs, frame, context.deps.store, context.deps.sessionContext);
-  if (!current && 'onlyWhen' in block && block.onlyWhen) {
+  if (needsWorkflowConditionEvaluation(current) && 'onlyWhen' in block && block.onlyWhen) {
     const matched = await evaluateWorkflowCondition(block.onlyWhen, runtime);
     if (block.kind === 'action' && block.actionId === 'notifications.notify_me') {
       const message = block.input.message;

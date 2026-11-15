@@ -26,13 +26,15 @@ const rootId = 'recovered-root';
 const encryption = { witness: { mode: 'plain' as const, version: 1, contentKeyFingerprint: null },
   runCrypto: { mode: 'plain' as const } };
 
-async function interruptedRoot(lifecycle: 'pending' | 'running' | 'needs_attention', claimOrigin: 'direct' | 'automation' = 'direct') {
+async function interruptedRoot(lifecycle: 'pending' | 'running' | 'needs_attention', claimOrigin: 'direct' | 'automation' = 'direct',
+  condition: 'onlyWhen' | 'runWhen' = 'onlyWhen') {
   const origin = claimOrigin === 'direct' ? { kind: 'direct' as const }
     : { kind: 'automation' as const, automationId: 'automation-1' };
   const definition = WorkflowDefinitionV1Schema.parse({ version: 1, inputs: [], blocks: [
     { kind: 'wait', id: 'check', document: { text: 'Review if needed', references: [], attachments: [] },
-      onlyWhen: { kind: 'compare', operator: 'eq', left: { kind: 'literal', value: true },
-        right: { kind: 'literal', value: false } } },
+      ...(condition === 'runWhen' ? { runWhen: 'failure' } : {
+        onlyWhen: { kind: 'compare', operator: 'eq', left: { kind: 'literal', value: true },
+          right: { kind: 'literal', value: false } } }) },
   ] });
   const accepted = await materializeWorkflowAcceptedSnapshotV1({ definition,
     context: { source: origin.kind === 'direct' ? { kind: 'inline' } : origin, inputs: {}, machineId, executionTarget: { kind: 'detached_run' },
@@ -144,6 +146,32 @@ function heartbeatHttpFailure(status?: number) {
 }
 
 describe('Workflow root recovery', () => {
+  it.each(['onlyWhen', 'runWhen'] as const)('preserves a false %s after storage loses the skip fact', async condition => {
+    const h = await interruptedRoot('pending', 'direct', condition);
+    const failure = new Error('skip_fact_not_written');
+    let skipFault = true;
+    // Fault only the persistent storage boundary; replay the real durable
+    // coordinator and reject an incorrectly opened human review immediately.
+    const storage = { ...h.storage, execute: async (operation: Parameters<typeof h.storage.execute>[0]) => {
+      if (operation.operation === 'invocations.fact' && operation.lifecycle === 'skipped' && skipFault) {
+        skipFault = false;
+        throw failure;
+      }
+      if (operation.operation === 'invocations.fact' && operation.lifecycle === 'waiting_for_review') {
+        throw new Error('false_condition_entered_review');
+      }
+      return h.storage.execute(operation);
+    } };
+    await expect(recoveredCoordinator(storage)({ runId, attempt: 0, expectedRevision: h.storage.run().revision,
+      acceptedEnvelope: h.acceptedEnvelope, accountCurrentness: encryption.witness })).rejects.toBe(failure);
+    expect(skipFault).toBe(false);
+    await expect(recoveredCoordinator(storage)({ runId, attempt: 1, expectedRevision: h.storage.run().revision,
+      acceptedEnvelope: h.acceptedEnvelope, accountCurrentness: encryption.witness })).resolves.toMatchObject({ state: 'succeeded' });
+    const children = h.storage.rows().filter(row => row.index.parentRecordId !== null);
+    expect(children).toHaveLength(1);
+    expect(children[0]?.index.lifecycle).toBe('skipped');
+  });
+
   it('commits the frontier through one content-free control read', async () => {
     const h = await interruptedRoot('pending');
     const reads: { request: Parameters<typeof h.storage.execute>[0]; response: unknown }[] = [];
