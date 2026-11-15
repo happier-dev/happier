@@ -30,7 +30,7 @@ const credentialBindings = {
 } as const satisfies CloudflareRouteRequest['credentialBindings'];
 type FixtureOptions = { installed?: boolean; dnsInstalled?: boolean; foreignDns?: boolean; localTunnel?: boolean;
   putLost?: boolean; dnsLost?: boolean; dnsVerificationLost?: boolean; dnsAcknowledgement?: 'missing-id' | 'wrong-target';
-  putAcknowledgementMismatch?: boolean; denied?: boolean; abort?: AbortController;
+  putUnsuccessful?: boolean; denied?: boolean; abort?: AbortController;
   pagedForeignDns?: boolean; retainedDnsReadLost?: boolean; foreignPath?: boolean; readLost?: boolean; malformedJson?: boolean;
   createLost?: boolean; tokenLost?: boolean; tokenResult?: unknown; canonicalRemote?: boolean;
   tunnelName?: string; wrongAccount?: boolean; tunnelPages?: readonly (readonly Record<string, unknown>[])[];
@@ -86,7 +86,11 @@ function fixture(options: FixtureOptions = {}) {
         if (options.denied) return { status: 403, finalUrl: input.url, headers: {}, body: new TextEncoder().encode(JSON.stringify({ success: false, errors: [{ message: 'synthetic-private-native-error' }] })) };
         config = (body as { config: typeof config }).config;
         if (options.putLost) throw new Error('synthetic-private-native-error');
-        result = { version: 2, config: options.putAcknowledgementMismatch ? { ingress: [fallback] } : config };
+        if (options.putUnsuccessful) return { status: 200, finalUrl: input.url, headers: {}, body: new TextEncoder().encode(JSON.stringify({ success: false, errors: [] })) };
+        // Live PUT acknowledgement shape (.project/tmp/CF-HEALTHY-ROUTE-1115/live-put-configurations.json,
+        // 2026-11-15): Cloudflare echoes the ingress and adds its own warp-routing default.
+        result = { tunnel_id: tunnelId, version: 2, config: { ...config, 'warp-routing': { enabled: false } },
+          source: 'cloudflare', created_at: '2026-11-15T16:26:15.264332Z' };
       } else throw new Error('Unexpected config method');
     } else if (input.url.startsWith(`${dnsRoot}?`) && method === 'GET') {
       const query = new URL(input.url).searchParams;
@@ -269,7 +273,7 @@ describe('Cloudflare controller owned route lifecycle', () => {
     } finally { await kit.dispose(); }
   });
 
-  it('N33 merges from one configuration GET and trusts the PUT acknowledgement without rereading its own write', async () => {
+  it('N33 merges from one configuration GET and trusts the provider-normalized PUT acknowledgement without rereading its own write', async () => {
     const state = fixture();
     expect(await reconcileOwnedCloudflareRoutes(state.request)).toEqual({ kind: 'verified', tunnelId,
       dnsOwnership: [{ hostname, recordId: 'record-new' }] });
@@ -278,12 +282,12 @@ describe('Cloudflare controller owned route lifecycle', () => {
     expect(state.requests.filter(request => request.url === `${root}/configurations`).map(request => request.method)).toEqual(['GET', 'PUT']);
   });
 
-  it('N33 settles a mismatched PUT acknowledgement as unknown without a DNS write or false success', async () => {
-    const state = fixture({ putAcknowledgementMismatch: true });
+  it('N33 settles an unsuccessful PUT envelope as unknown without a DNS write or false success', async () => {
+    const state = fixture({ putUnsuccessful: true });
     const result = await reconcileOwnedCloudflareRoutes(state.request);
-    expect(result, JSON.stringify({ actual: result, expected: { kind: 'unknown', code: 'outcome_unknown' } }))
-      .toEqual({ kind: 'unknown', code: 'outcome_unknown',
-        providerOutput: expect.stringMatching(/^PUT .*\/configurations: result\.config/) });
+    expect(result, JSON.stringify({ actual: result, expected: { kind: 'unknown', code: 'invalid_provider_output' } }))
+      .toEqual({ kind: 'unknown', code: 'invalid_provider_output',
+        providerOutput: 'PUT /accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations: success expected true' });
     expect(state.mutations().map(request => request.method)).toEqual(['PUT']);
     expect(state.configReads()).toBe(1);
   });
@@ -420,12 +424,12 @@ describe('Cloudflare controller create/adopt through the activated Account Actio
   });
 
   it('retains the failed configuration acknowledgement cause and known tunnel after create', async () => {
-    const state = await controller({ canonicalRemote: true, putAcknowledgementMismatch: true });
+    const state = await controller({ canonicalRemote: true, putUnsuccessful: true });
     try {
       const result = await state.invoke({ ...state.input, tunnel: { kind: 'create', name: 'reviewed-tunnel' } });
-      expect(result).toMatchObject({ kind: 'unknown', code: 'outcome_unknown', tunnelId, grants,
-        failureCause: { phase: 'deployment.cloudflare.tunnel.routes', errorClass: 'Error', errorCode: 'outcome_unknown' },
-        providerOutput: expect.stringMatching(/^PUT .*\/configurations: result\.config/) });
+      expect(result).toMatchObject({ kind: 'unknown', code: 'invalid_provider_output', tunnelId, grants,
+        failureCause: { phase: 'deployment.cloudflare.tunnel.routes', errorClass: 'Error', errorCode: 'invalid_provider_output' },
+        providerOutput: 'PUT /accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations: success expected true' });
       expect(state.record()).toBeNull();
       expect(state.mutations().map(request => request.method)).toEqual(['POST', 'PUT']);
       expect(JSON.stringify(result)).not.toContain(connectorToken);

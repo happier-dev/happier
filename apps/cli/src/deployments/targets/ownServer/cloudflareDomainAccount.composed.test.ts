@@ -410,7 +410,11 @@ it.each(['connector grant authorization refused', 'create connector grant author
                 const body: unknown = await request.json();
                 if (!body || typeof body !== 'object' || !('config' in body)) throw new Error('Expected exact tunnel configuration');
                 remoteConfig = body.config; trace.push('vendor-config');
-                if (routeFailure) return Response.json({ success: true, result: { config: { ingress: [{ service: 'http_status:404' }] } } });
+                if (routeFailure) return Response.json({ success: false, errors: [] });
+                // Live PUT acknowledgement (.project/tmp/CF-HEALTHY-ROUTE-1115/live-put-configurations.json):
+                // Cloudflare echoes the ingress and adds its own warp-routing default.
+                return Response.json({ success: true, result: { tunnel_id: 'reviewed-tunnel', version: 2, source: 'cloudflare',
+                    config: Object.assign({}, remoteConfig, { 'warp-routing': { enabled: false } }) } });
             }
             if (method === 'GET' && omittedConfigurationResult) return Response.json({ success: true });
             // Cloudflare's GET configuration contract makes version optional.
@@ -672,7 +676,7 @@ it.each(['connector grant authorization refused', 'create connector grant author
                 details: { requiredFact: 'cloudflarePreparation', tunnelId: 'reviewed-tunnel',
                     recovery: { kind: 'adopt', tunnelId: 'reviewed-tunnel' } },
                 ...(malformedNative || transitionRefused ? {} : { failureCause: { phase: routeFailure ? 'deployment.cloudflare.tunnel.routes' : 'deployment.domain.native_execution',
-                    errorClass: 'Error', errorCode: routeFailure ? 'outcome_unknown' : 'native_effect_failed' } }) });
+                    errorClass: 'Error', errorCode: routeFailure ? 'invalid_provider_output' : 'native_effect_failed' } }) });
             expect(authored.artifacts.read(authoredInput.contentArtifactId)?.bodyVersion).toBe(2);
             expect(preparedBody).toMatchObject({ cloudflarePreparation: { tunnelId: 'reviewed-tunnel' } });
             expect(nativeJobs).toHaveLength(routeFailure ? 0 : 1);

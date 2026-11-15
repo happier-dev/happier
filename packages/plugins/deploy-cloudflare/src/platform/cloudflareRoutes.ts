@@ -1,6 +1,6 @@
 import { isPluginError, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 import type { HttpService, PluginFetchCredentialBinding } from '@happier-dev/plugin-sdk/http';
-import { pluginJsonValuesEqual, type ProtocolJsonValue } from '@happier-dev/plugin-sdk/protocol';
+import type { ProtocolJsonValue } from '@happier-dev/plugin-sdk/protocol';
 import { prepareOwnedCloudflareIngress } from './cloudflareIngress.js';
 import type { DesiredHostname, OwnedHostname } from './cloudflareIngress.js';
 
@@ -231,13 +231,11 @@ export async function reconcileOwnedCloudflareRoutes(input: (CloudflareRouteRequ
     // Seal within this invocation after ownership preflight and before PUT;
     // retain only its opaque result if a later vendor effect is unknown.
     if (input.prepareConnector) connector = { connector: await input.prepareConnector() };
-    // One GET supplies the merge basis; consume the PUT acknowledgement.
-    // Cloudflare offers no compare-and-swap; another GET cannot add one.
-    if (prepared.config !== previous.config) {
-      const applied = readRecord((await request('PUT', configurationUrl, { config: prepared.config })).result);
-      if (!object(applied.config) || !pluginJsonValuesEqual(applied.config, prepared.config)) throw new CloudflareProviderRefusal('outcome_unknown',
-        `${operation}: result.config did not acknowledge the requested configuration`);
-    }
+    // One GET supplies the merge basis; the successful PUT envelope is the
+    // acknowledgement. Cloudflare normalizes result.config (a live PUT adds
+    // warp-routing defaults, 2026-11-15), so its echo is not compared with the
+    // request. Cloudflare offers no compare-and-swap; another GET cannot add one.
+    if (prepared.config !== previous.config) await request('PUT', configurationUrl, { config: prepared.config });
     const nextRules = prepared.config.ingress;
     for (const hostname of hostnames) {
       const retained = Array.isArray(nextRules) && nextRules.some(rule => object(rule) && rule.hostname === hostname);
