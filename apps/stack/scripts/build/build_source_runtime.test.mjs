@@ -2734,7 +2734,7 @@ async function readFixtureDependencyPublication(repoDir) {
   };
 }
 
-async function reloadFixtureGraph(t, source) {
+async function reloadFixtureGraph(t, source, { candidate = 'candidate' } = {}) {
   const fixture = await createTempFixture(t, { prefix: 'hstack-source-reload-selection-', registerCleanup: false });
   const stackBaseDir = fixture.path('stacks/qa');
   const sourceRoot = join(stackBaseDir, 'source-runtime');
@@ -3217,6 +3217,57 @@ test('source reload passing daemon selects the validated graph without claiming 
   assert.deepEqual(JSON.parse(await readFile(graph.selectedPath, 'utf8')), { entrypoint: graph.daemon.entrypoint });
   assert.deepEqual(JSON.parse(await readFile(graph.runtimePath, 'utf8')), graph.runtime);
 });
+
+// 2026-11-15 (549e3ca742f, four QA outages): a --restart reload selects, stops
+// the incumbent, then launches. Retention in that window reclaimed the selected
+// shared bundle and the launch refused source_bundle_unavailable.
+async function restartReloadSelection(t) {
+  const graph = await reloadFixtureGraph(t, 'export {};', { candidate: 'stacks/source-bundles/runtime-candidate' });
+  const stacksRoot = dirname(graph.stackBaseDir);
+  const past = (Date.now() - 60000) / 1000;
+  await utimes(join(stacksRoot, 'source-bundles/runtime-candidate/source-bundle.json'), past, past);
+  // A newer completed daemon product is the retained fallback; only a pin keeps the candidate.
+  const newest = join(stacksRoot, 'source-bundles/runtime-newest');
+  await mkdir(newest, { recursive: true });
+  await writeFile(join(newest, 'index.mjs'), 'export {};');
+  await writeFile(join(newest, 'source-bundle.json'), JSON.stringify({ component: 'daemon', entrypoint: join(newest, 'index.mjs') }));
+  // Process discovery is the OS boundary; retain the real pin and retirement owners.
+  const readdirOwner = fs.promises.readdir;
+  t.mock.method(fs.promises, 'readdir', async (path, ...args) =>
+    String(path) === '/proc' ? [] : await readdirOwner(path, ...args));
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  const admitted = await admitSourceRuntimeReload({ stackBaseDir: graph.stackBaseDir,
+    components: { daemon: graph.daemon }, pending: graph.pending });
+  await admitted.activate();
+  await graph.pending.dispose(); // The reload owner's own lifecycle ends here.
+  await rm(graph.runtimePath); // The restart stops the incumbent; its runtime record is finalized.
+  const { reclaimSourceBundles } = await import('./build_source_runtime.mjs');
+  await reclaimSourceBundles({ stacksRoot, dryRun: false });
+  const { readSelectedSourceRuntimeRecord } = await import('../runtime/shared/source_bundle_record.mjs');
+  assert.equal((await readSelectedSourceRuntimeRecord({ stackBaseDir: graph.stackBaseDir, component: 'daemon' })).entrypoint,
+    graph.daemon.entrypoint, 'the launch still finds the selection the reload made before the stop');
+  return { graph, reclaim: () => reclaimSourceBundles({ stacksRoot, dryRun: false }) };
+}
+
+test('a restart reload selection stays pinned through the incumbent stop until its Stack starts',
+  { skip: process.platform !== 'linux' }, async t => {
+    const { graph, reclaim } = await restartReloadSelection(t);
+    // The launch takes the request over; once it finishes and its Stack stops, nothing pins the selection.
+    const start = await beginPendingSourceStart({ stackBaseDir: graph.stackBaseDir });
+    await start.publish(async () => {});
+    await reclaim();
+    assert.equal(existsSync(graph.daemon.entrypoint), false, 'a stopped Stack with no pending selection releases its pin');
+  });
+
+test('a terminal stop releases a restart reload selection that never launched',
+  { skip: process.platform !== 'linux' }, async t => {
+    const { graph, reclaim } = await restartReloadSelection(t);
+    const { releasePendingSourceSelection } = await import('../runtime/shared/pending_source_start.mjs');
+    await releasePendingSourceSelection({ stackBaseDir: graph.stackBaseDir });
+    await reclaim();
+    assert.equal(existsSync(graph.daemon.entrypoint), false);
+  });
 
 test('source reload refuses a lost prepared product before changing the incumbent', async t => {
   const graph = await reloadFixtureGraph(t, 'export {};');

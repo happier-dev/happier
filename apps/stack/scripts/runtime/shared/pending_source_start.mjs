@@ -84,6 +84,24 @@ export async function updatePendingSourcePreparationPhase({ stackBaseDir, reques
   }, { lockPath: `${markerPath}.lock`, signal });
 }
 
+/** A reload's activation selected replacement bytes its Stack has not launched
+ * yet: a `--restart` stops the incumbent first, and on an execution host the
+ * selecting worker has exited by then. The request stays as this pid-less
+ * marker until the next start takes it over or a terminal stop clears it, so
+ * retention keeps the selection pinned in between (owner ruling 2026-11-15). */
+export function pendingSourceSelectionAwaitsActivation(marker) {
+  return marker?.phase === 'selected';
+}
+
+/** Terminal stop: the Stack will not launch the unactivated selection. */
+export async function releasePendingSourceSelection({ stackBaseDir }) {
+  const markerPath = join(stackBaseDir, 'source-runtime/start.pending.json');
+  if (!pendingSourceSelectionAwaitsActivation(await readJsonIfExists(markerPath))) return;
+  await withJsonOwnerFileLock(async () => {
+    if (pendingSourceSelectionAwaitsActivation(await readJsonIfExists(markerPath))) await unlink(markerPath);
+  }, { lockPath: `${markerPath}.lock` });
+}
+
 export function supersededError() {
   const error = new Error('Source Stack start superseded by a newer start for this stack');
   error.name = 'AbortError';
@@ -192,6 +210,16 @@ export async function beginPendingSourceStart({ stackBaseDir, onPhase, requestId
         const result = await fn();
         close();
         await removeOwnMarker();
+        return result;
+      });
+    },
+    // A reload selection hands this request to the Stack's next start.
+    async publishSelection(fn) {
+      return await publishCurrent(async () => {
+        const result = await fn();
+        close();
+        await writeJsonAtomic(markerPath, { requestId, phase: 'selected' });
+        ownsMarker = false;
         return result;
       });
     },

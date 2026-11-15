@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 import { resolveSourceRevision } from './source_revision.mjs';
+import { beginPendingSourceStart } from '../runtime/shared/pending_source_start.mjs';
 import { prepareSourceTreeRuntimeComponents, prepareStackSourceRevisionTree, releaseStackSourceRevisionTree, releaseStackSourceTrees,
   resolveSourceTreeRevision, setSourceRevisionTreeWritable, sourceRevisionTreesRoot, writeSourceRevisionArchive } from './source_revision_tree.mjs';
 
@@ -249,6 +250,12 @@ test('a restart onto a new tree keeps the tree it selected; stop releases only t
   // The incumbent keeps running from its own tree while the replacement prepares.
   assert.equal(await lstat(incumbent.entrypoint).then(() => true, () => false), true, 'preparing never deletes the running tree');
   assert.notEqual(replacement.serverDir, incumbent.serverDir);
+  // A stop while that reload is still in flight keeps its finished, not yet selected tree.
+  const inFlight = await beginPendingSourceStart({ stackBaseDir });
+  try {
+    await releaseStackSourceTrees({ stackBaseDir, components: ['server'] });
+    assert.equal(await lstat(replacement.entrypoint).then(() => true, () => false), true, 'an in-flight reload keeps its tree');
+  } finally { await inFlight.dispose(); }
   // Restart order: select the replacement, then stop the incumbent.
   await select(replacement);
   await releaseStackSourceTrees({ stackBaseDir, components: ['server'] });

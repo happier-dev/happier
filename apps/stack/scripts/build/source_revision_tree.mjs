@@ -464,6 +464,9 @@ await runSqliteMigrationDeploy({ serverRoot: ${JSON.stringify(serverDir)}, runSc
  * the next start launches. A Stack without trees is untouched. */
 export async function releaseStackSourceTrees({ stackBaseDir, components = ['server', 'daemon'], signal }) {
   const sourceRoot = join(resolve(stackBaseDir), 'source-runtime');
+  // An in-flight reload's finished tree is not selected yet. Its activation
+  // still needs it; the Stack's next stop releases the incumbent's tree.
+  if (isPidAlive((await readJson(join(sourceRoot, 'start.pending.json')))?.pid)) return [];
   const entries = await readdir(sourceRoot, { withFileTypes: true }).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error));
   const released = [];
   for (const component of components) {

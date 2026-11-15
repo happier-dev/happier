@@ -22,7 +22,7 @@ import { prepareSourceComponent } from '../utils/dev/devReloadCoordinator.mjs';
 import { assertBuildInputDependencies, captureBuildInputFiles, isTerminalBuildFailure, mountCapturedWorkspaceDependencies, mountInstalledNodeModules, readBuildInputDependencies, readBuildInputIdentity, readTerminalBuildFailure, serializeTerminalBuildFailure, withBuildInputDependencies, withSingleTrailingBuildPass } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { assertSourceRuntimeDependenciesCurrent, sourceRuntimeDependencyIdentityMatches } from '../../../../packages/cli-common/sourceRuntimeDependencies.mjs';
 import { probeCliDistRuntimeImport } from '../utils/cli/cliDistIntegrity.mjs';
-import { retainPendingSourcePreparation, updatePendingSourcePreparationPhase } from '../runtime/shared/pending_source_start.mjs';
+import { pendingSourceSelectionAwaitsActivation, retainPendingSourcePreparation, updatePendingSourcePreparationPhase } from '../runtime/shared/pending_source_start.mjs';
 import { readBundledPluginPackageResourceRelativePaths } from '../../../../packages/cli-common/bundledPluginResources.mjs';
 import { BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH } from '../../../../packages/cli-common/bundledPluginPublicationPolicy.mjs';
 import { reapHistoricalTempRoots } from '../utils/dev_targets/historical_temp_roots.mjs';
@@ -387,16 +387,22 @@ function readSourceRetentionStack(stackBaseDir) {
   const state = readSourceRetentionRecord(join(stackBaseDir, 'stack.runtime.json'));
   const references = [];
   if (pending && isPidAlive(pending.pid)) references.push(...(pending.preparationDirs ?? []), pending.preparationDir);
-  for (const component of ['daemon', 'server', 'ui']) {
-    references.push(...sourceRecordReferencePaths(readSourceRetentionRecord(join(sourceRoot, `selected-${component}.json`))));
-  }
+  const selections = ['daemon', 'server', 'ui'].flatMap(component =>
+    sourceRecordReferencePaths(readSourceRetentionRecord(join(sourceRoot, `selected-${component}.json`))));
   if ([state?.ownerPid, state?.processes?.daemonPid, ...(state?.processes?.daemonPids ?? [])].some(isPidAlive)) {
     references.push(...sourceRecordReferencePaths(state?.sourceRuntimeLaunch));
   }
   if ([state?.ownerPid, state?.processes?.serverPid].some(isPidAlive)) {
     references.push(...sourceRecordReferencePaths(state?.sourceUiLaunch));
   }
-  return { state, pending, references };
+  // A Stack's own outputs stay pinned by its selections. A shared bundle stays
+  // pinned by a selection only while its Stack runs or prepares, or while a
+  // reload's selection awaits activation (owner ruling 2026-11-15, growth
+  // fixes): a stopped Stack with no pending selection releases it, and its
+  // next start treats a reclaimed selection as absent.
+  const pinsSelections = privateSourceStackActive(state, pending) || pendingSourceSelectionAwaitsActivation(pending);
+  return { state, pending, references: [...references, ...selections],
+    sharedReferences: pinsSelections ? [...references, ...selections] : references };
 }
 
 function canonicalSourceReferences(references) {
@@ -458,7 +464,7 @@ async function retireSourceCandidates({ stacksRoot, bundleRoot, candidates, dryR
     const stacks = new Map(readdirSync(stacksRoot, { withFileTypes: true })
       .filter(entry => entry.isDirectory() && entry.name !== 'source-bundles')
       .map(entry => [join(stacksRoot, entry.name), readSourceRetentionStack(join(stacksRoot, entry.name))]));
-    const references = canonicalSourceReferences([...stacks.values()].flatMap(stack => stack.references));
+    const references = canonicalSourceReferences([...stacks.values()].flatMap(stack => stack.sharedReferences));
     for (const candidate of candidates) {
       const info = sourceRetentionStat(candidate.directory);
       const completion = candidate.privateStack ? null : sourceRetentionStat(join(candidate.directory, 'source-bundle.json'));
@@ -539,8 +545,8 @@ async function retainSourceBundles({ stacksRoot, bundleRoot, newest, dryRun = fa
     if (!entry.isDirectory() || entry.name === 'source-bundles') continue;
     const stackBaseDir = join(stacksRoot, entry.name);
     const sourceRoot = join(stackBaseDir, 'source-runtime');
-    const { pending, state, references: stackReferences } = readSourceRetentionStack(stackBaseDir);
-    references.push(...stackReferences);
+    const { pending, state, sharedReferences } = readSourceRetentionStack(stackBaseDir);
+    references.push(...sharedReferences);
     if (existsSync(sourceRoot)) {
       const entries = await readdir(sourceRoot, {withFileTypes:true});
       // Maintenance nominates only its exact private stacks; ordinary
@@ -1259,7 +1265,7 @@ export async function admitSourceRuntimeReload({ stackBaseDir, components, ui = 
     }
   }
   const sourceRoot = join(stackBaseDir, 'source-runtime');
-  return { activate: () => pending.publish(() => withSourceBundlePublicationCustody({
+  return { activate: () => pending.publishSelection(() => withSourceBundlePublicationCustody({
     bundleRoot: join(dirname(stackBaseDir), 'source-bundles'), signal: pending.signal, operation: 'activation',
   }, async () => {
     const previous = new Map();

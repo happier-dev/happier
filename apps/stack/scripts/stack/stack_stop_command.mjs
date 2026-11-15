@@ -45,6 +45,13 @@ export async function runStackStopCommand({ rootDir, stackName, passthrough, jso
   // never the tree the restart just selected), so an unreferenced base is
   // deleted (no timer; owner 2026-11-14).
   if (out.finalization?.finalized !== false) {
+    // An operator's stop is terminal: an unactivated reload selection stops
+    // pinning its bundles. On an execution host the controller's restart also
+    // retires the incumbent through this command, after the reload selected.
+    if (process.env.HAPPIER_DEV_TARGET_EXECUTION !== '1') {
+      const { releasePendingSourceSelection } = await import('../runtime/shared/pending_source_start.mjs');
+      await releasePendingSourceSelection({ stackBaseDir: baseDir });
+    }
     const { releaseStackSourceTrees } = await import('../build/source_revision_tree.mjs');
     await releaseStackSourceTrees({ stackBaseDir: baseDir, components: preserveDaemon ? ['server'] : ['server', 'daemon'] });
   }
