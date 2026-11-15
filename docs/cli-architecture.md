@@ -197,7 +197,13 @@ the promoted CLI and explicitly restarts its existing daemon through the process
 or service lifecycle owner before waiting for registration. A healthy daemon,
 unchanged service definition or matching CLI version does not prove that its
 running process adopted the promoted payload. Native boot recovery continues to
-reuse its retained installation without another install or pairing.
+reuse its retained installation without another install or pairing. In 0.3
+development, initial remote enrollment and retained native updates share the
+remote daemon lifecycle selector. If service installation's existing preflight
+reports `service_manager_unavailable` with `preflight`/`unavailable`, setup uses
+the daemon process lifecycle instead. Other install/start failures remain fatal;
+bootstrap progress identifies service install and start separately. This adds no
+availability probe or install retry.
 
 Approval replay in 0.3 development retains the credentialed executor's captured
 Account and Home. A mutable default profile cannot replace that identity: the

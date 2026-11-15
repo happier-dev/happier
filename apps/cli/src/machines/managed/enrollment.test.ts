@@ -608,7 +608,7 @@ describe('runManagedMachineEnrollment', () => {
       });
       await expect(result).resolves.toEqual({ machineId: 'ordinary-machine' });
       expect(commands.some(command => /\bdaemon\b.*\bservice\b/u.test(command))).toBe(false);
-      expect(commands.some(command => /\bdaemon\b.*\bstart\b.*--json/u.test(command))).toBe(true);
+      expect(commands.some(command => /\bdaemon\b.*\brestart\b.*--json/u.test(command))).toBe(true);
       expect(commands.some(command => /\bauth\b.*\b(request|wait)\b/u.test(command))).toBe(false);
     } finally { await rm(root, { recursive: true, force: true }); }
   });

@@ -6,6 +6,7 @@ import type { MachineProvisionerProcessConfigV1 } from '@happier-dev/protocol/pl
 import type { InteractiveSystemTaskContext, InteractiveSystemTaskKind } from '../interactiveTaskKinds.js';
 import { createRemoteNativeBootstrapMachineTaskKind } from './remoteSshBootstrapMachineKind.js';
 import type { PrepareManagedDedicatedBootstrap } from '../ssh/installRemoteCli.js';
+import { installRemoteDaemonLifecycle } from './remoteDaemonLifecycle.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -17,7 +18,6 @@ import { buildRemoteHappierInvocationCommand, buildDedicatedDaemonInvocationComm
 import { resolveRemoteInstalledFirstPartyBinaryPath } from '../ssh/remoteFirstPartyInstallPath.js';
 import { installRemoteCli as installSharedRemoteCli } from '../ssh/installRemoteCli.js';
 import { prepareDedicatedDaemonBootstrap } from '../ssh/dedicatedDaemonBootstrap.js';
-import { resolveRemoteSelfDownloadFirstPartyInstallPlan, executeRemoteSelfDownloadFirstPartyInstallPlan } from '../ssh/remoteSelfDownloadFirstPartyInstallCommand.js';
 import { createHappierJsonExecutorFromTextRunner } from '../executors/happierJsonExecutorFromTextRunner.js';
 import { createEnrollMachineFlowExecutorFromHappierJsonExecutor } from '../executors/enrollMachineFlowExecutor.js';
 import { resolveLocalHappierCommandTimeoutMs } from '../executors/happierJsonExecutorFromTextRunner.js';
@@ -55,6 +55,8 @@ export type ManagedMachineEnrollmentInput = Readonly<{
   /** Only the retained generated bundle supplies this; scanner evidence is not trust. */
   guestHostPublicKey?: string;
   operationId?: string;
+  /** Explicit Retry install replaces the payload; ordinary boot recovery reuses it. */
+  replacePayload?: boolean;
   /** Persist successful installation before ordinary Account pairing starts. */
   onInstalled?(): Promise<void>;
   /** Host-private admitted Create carrier; never part of task params or a wire input. */
@@ -84,20 +86,6 @@ export type ManagedMachineEnrollmentDependencies = Readonly<{
   }>): Promise<Readonly<{ machineId: string }>>;
   installNativePayload?(input: ManagedNativePayloadInstallation): Promise<Readonly<{ binaryPath: string }>>;
 }>;
-
-async function installNativeSelfDownload(input: ManagedNativePayloadInstallation): Promise<Readonly<{ binaryPath: string }>> {
-  input.signal?.throwIfAborted();
-  input.onPhase?.('prepare');
-  const plan = await resolveRemoteSelfDownloadFirstPartyInstallPlan({ componentId: 'happier-cli', channel: input.channel,
-    os: input.os, arch: input.arch, remoteHomeDir: input.remoteHomeDir,
-    runRemoteText: command => input.exec({ command, signal: input.signal }) });
-  input.signal?.throwIfAborted();
-  input.onPhase?.('transfer');
-  const result = await executeRemoteSelfDownloadFirstPartyInstallPlan({ componentId: 'happier-cli', channel: input.channel,
-    remoteHomeDir: input.remoteHomeDir, plan, runRemoteText: async command => input.exec({ command, signal: input.signal }) });
-  if (result.status !== 0) throw new SystemTaskExecutionError('remote_command_failed', 'Native binary installation failed.');
-  return { binaryPath: plan.binaryPath };
-}
 
 /** The retained operation publishes only the current question's closed, nonsecret projection. */
 export function projectManagedMachineBootstrapPrompt(prompt: InteractiveSystemTaskPromptRequest): ManagedMachineBootstrapPromptV1 {
@@ -147,7 +135,7 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
   }
   const dedicatedIdentity = row.enrollmentIdentity?.kind === 'dedicatedDaemonUser' ? row.enrollmentIdentity : undefined;
   const nativeGuestHome = carrier.kind === 'native' && !dedicatedIdentity ? carrier.guestHome : undefined;
-  const nativeProcess = carrier.kind === 'native' && !dedicatedIdentity
+  let nativeProcess = carrier.kind === 'native' && !dedicatedIdentity
     && (nativeGuestHome !== undefined || row.enrollmentIdentity?.kind === 'guestProcess');
   const configuration = {
     relay: { relayUrl: input.target.canonicalAuthUrl, webappUrl: input.target.webappUrl },
@@ -205,7 +193,7 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
   };
   // Registration may commit before the native config update is confirmed.
   // Retry the retained installation's boot config, not installation/pairing.
-  if (row.enrolledMachineId && nativeGuestHome) {
+  if (row.enrolledMachineId && nativeGuestHome && !input.replacePayload) {
     await configureNativeBoot(resolveRemoteInstalledFirstPartyBinaryPath({
       componentId: 'happier-cli', channel: configuration.channel, remoteHomeDir: nativeGuestHome.happyHomeDir,
     }));
@@ -250,7 +238,8 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
             context?.emit({ type: 'progress', stepId: 'ssh.installCli.transfer',
               message: `Transferring Happier: ${transferredBytes} of ${totalBytes} bytes` });
           } };
-        const installed = deps.installNativePayload ? await deps.installNativePayload(installation) : await installNativeSelfDownload(installation);
+        if (!deps.installNativePayload) throw new SystemTaskExecutionError('guest_payload_missing', 'This Home cannot supply its guest CLI payload through this transport.');
+        const installed = await deps.installNativePayload(installation);
         binaryPath = installed.binaryPath;
         return installed;
       } },
@@ -268,26 +257,28 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
     // sign-in or changing the existing Machine. Native-process boot recovery is
     // handled above and continues to reuse its retained installation.
     await installRemoteCli(input.signal);
-    const commands = nativeProcess ? [{ step: 'restart' as const, args: ['daemon', 'restart', '--json'] }]
-      : (['install', 'restart'] as const).map(step => ({ step,
-        args: ['daemon', 'service', step, ...(dedicatedIdentity ? ['--mode=user'] : []), '--json'] }));
-    // A healthy daemon or unchanged service can keep running the old payload at
-    // the same CLI version. Adopt the payload through its lifecycle owner.
-    for (const { step, args } of commands) {
+    const runCommand = async (step: 'install' | 'restart', process: boolean) => {
+      const args = process ? ['daemon', 'restart', '--json']
+        : ['daemon', 'service', step, ...(dedicatedIdentity ? ['--mode=user'] : []), '--json'];
       const updated = await payloadExec({
         command: buildRemoteHappierInvocationCommand({ binaryPath, args, channel: configuration.channel }),
         signal: input.signal,
         timeoutMs: resolveLocalHappierCommandTimeoutMs(args),
       });
-      const cause = nativeProcess ? null : GuestServiceFailureFactsV1Schema.safeParse(readGuestCliFailureOutput(updated.stdout, ''));
+      const cause = process ? null : GuestServiceFailureFactsV1Schema.safeParse(readGuestCliFailureOutput(updated.stdout, updated.stderr));
       if (updated.status !== 0 || cause?.success) throw new SystemTaskExecutionError('background_service_failed', 'The updated guest background service could not be activated.', {
-        details: nativeProcess
+        details: process
           ? { kind: 'managedService', step, exitStatus: updated.status,
             stderrTail: trimBugReportTextToMaxBytes(redactBugReportSensitiveText(updated.stderr), DEFAULT_COMMAND_CAPTURE_MAX_BYTES) }
           : { kind: 'managedService', step, exitStatus: updated.status, cause: cause?.success ? cause.data : null },
       });
       input.signal?.throwIfAborted();
-    }
+    };
+    nativeProcess = await installRemoteDaemonLifecycle({ preferProcess: nativeProcess,
+      installService: () => runCommand('install', false) }) === 'process';
+    // Adoption restarts the selected lifecycle even when the CLI version matches.
+    await runCommand('restart', nativeProcess);
+    if (nativeGuestHome) await configureNativeBoot(binaryPath);
     // Installation can replace the guest daemon before Home acknowledges its
     // new control socket. Reuse enrollment's native readiness owner before the
     // retained controller dispatches policy children; never retry installation.

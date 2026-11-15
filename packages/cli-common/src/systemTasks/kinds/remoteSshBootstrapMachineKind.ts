@@ -18,6 +18,7 @@ import { createEnrollMachineFlowExecutorFromHappierJsonExecutor } from '../execu
 import { resolveDaemonServiceInstallConflictPlan } from '../../happierRuntime/daemonInstallConflict.js';
 import type { HappierService, HappierServicePlatform } from '../../happierRuntime/types.js';
 import { resolveDaemonServiceBackend } from '../setupServiceGuidance/buildBackgroundServiceSetupGuidance.js';
+import { installRemoteDaemonLifecycle } from './remoteDaemonLifecycle.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import {
   redactSensitiveSystemTaskJsonValue,
@@ -995,7 +996,7 @@ async function runRemoteMachineBootstrapRecipe({
       const lifecycle = parsedRemote.enrollmentIdentity?.kind === 'dedicatedDaemonUser' ? 'service'
         : parsedRemote.enrollmentIdentity?.kind === 'guestProcess' || startDaemonProcess ? 'process'
           : (parsedRemote.serviceMode ?? 'user') === 'none' ? 'none' : 'service';
-      const processManaged = lifecycle === 'process';
+      let processManaged = lifecycle === 'process';
       const shouldManageService = lifecycle === 'service';
       if (shouldManageService && await preflightRemoteBackgroundServiceReplacement({
         ctx,
@@ -1036,9 +1037,9 @@ async function runRemoteMachineBootstrapRecipe({
           : {}),
         steps: {
           configureRelay: !parsedRemote.homeTarget?.descriptor,
-          installService: shouldManageService,
-          startService: shouldManageService,
-          verifyService: shouldManageService,
+          installService: false,
+          startService: false,
+          verifyService: false,
         },
         stepIds: {
           authRequest: 'ssh.auth.request',
@@ -1129,10 +1130,26 @@ async function runRemoteMachineBootstrapRecipe({
       });
 
       let daemonStatus = flowResult.daemonStatus;
+      if (shouldManageService) {
+        processManaged = await installRemoteDaemonLifecycle({ preferProcess: false, installService: async () => {
+          ctx.emit({ type: 'progress', stepId: 'daemon.service.install', message: 'Installing background service' });
+          await flowExecutor.installDaemonService?.();
+        } }) === 'process';
+        if (!processManaged) {
+          ctx.emit({ type: 'progress', stepId: 'daemon.service.start', message: 'Starting background service' });
+          await flowExecutor.startDaemonService?.();
+          ctx.emit({ type: 'progress', stepId: 'daemon.service.verify', message: 'Verifying background service' });
+          daemonStatus = await flowExecutor.waitForReadyDaemon?.({ signal: ctx.signal });
+          if (daemonStatus && (!daemonStatus.serviceInstalled || !daemonStatus.daemonRunning || daemonStatus.needsAuth)) {
+            throw new SystemTaskExecutionError('daemon_service_not_ready', 'Background service did not reach a ready state.');
+          }
+        }
+      }
       if (processManaged) {
         const executor = createRemoteEnrollmentExecutor();
         if (!executor) throw new SystemTaskExecutionError('remote_cli_update_required', 'Remote enrollment requires the canonical CLI executor.');
         const options = { signal: ctx.signal, timeoutMs: remainingEnrollmentMs() };
+        ctx.emit({ type: 'progress', stepId: 'daemon.start', message: 'Starting daemon process' });
         if (startDaemonProcess) await startDaemonProcess(options);
         else await executor.runHappierJson(['daemon', 'start', '--json'], options);
         daemonStatus = await createEnrollMachineFlowExecutorFromHappierJsonExecutor({ executor }).waitForReadyDaemon!({

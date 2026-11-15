@@ -4,6 +4,7 @@ import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/act
 import type { HostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/types';
 import { readFile, stat } from 'node:fs/promises';
 
+import { createHappierJsonExecutorFromTextRunner } from '../executors/happierJsonExecutorFromTextRunner.js';
 import { createSystemTasksRunner } from '../interactiveTaskKinds.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import { resolveHomeTargetFromDescriptor } from '../../homeTarget/homeTarget.js';
@@ -42,6 +43,44 @@ it('refuses a controller-only descriptor before contacting an SSH machine', asyn
 });
 
 describe('native transport through the remote bootstrap task', () => {
+  it.each(['unavailable', 'unavailable-after-write', 'install-failed', 'start-failed', 'service'] as const)(
+    'uses service preflight availability and reports lifecycle phases (%s)', async scenario => {
+      const commands: string[][] = [];
+      const phases: string[] = [];
+      let running = false;
+      const executor = createHappierJsonExecutorFromTextRunner(async args => {
+        commands.push([...args]);
+        if (args[0] === 'service' && (args[1] === 'install' && scenario !== 'service' && scenario !== 'start-failed'
+          || args[1] === 'start' && scenario === 'start-failed')) {
+          return { status: 1, stdout: '', stderr: JSON.stringify({ ok: false,
+            error: scenario.startsWith('unavailable') ? 'service_manager_unavailable' : 'service_command_failed',
+            serviceStep: scenario === 'unavailable' ? 'preflight' : 'command',
+            serviceStepStatus: scenario === 'unavailable' ? 'unavailable' : 'failed' }) };
+        }
+        if ((args[0] === 'daemon' || args[0] === 'service') && args[1] === 'start') running = true;
+        return { status: 0, stderr: '', stdout: JSON.stringify({ data: { authenticated: true, credentialState: 'valid', machineRegistrationState: 'server-confirmed', machineId: 'joined' }, authenticated: true,
+          credentialState: 'valid', machineRegistrationState: 'server-confirmed', machineId: 'joined', services: [],
+          service: { installed: scenario === 'service' }, daemon: { running, healthy: running },
+          auth: { needsAuth: false, machineId: 'joined' } }) };
+      });
+      const task = createRemoteNativeBootstrapMachineTaskKind({
+        configuration: { relay: { relayUrl: 'https://home.example.test' } },
+        assertCurrent: async () => {}, installRemoteCli: async () => {}, approveLocalAuthRequest: async () => {}, executor,
+      });
+      const result = task.run({ params: {}, emit: event => { if (event.type === 'progress' && event.stepId) phases.push(event.stepId); },
+        prompt: async () => ({ approved: true }) });
+      if (scenario === 'unavailable' || scenario === 'service') {
+        await expect(result).resolves.toMatchObject({ machineId: 'joined' });
+        expect(running).toBe(true);
+        expect(commands.filter(args => args[0] === 'daemon' && args[1] === 'start')).toHaveLength(scenario === 'unavailable' ? 1 : 0);
+        expect(commands.filter(args => args[0] === 'service' && args[1] === 'start')).toHaveLength(scenario === 'service' ? 1 : 0);
+      } else {
+        await expect(result).rejects.toMatchObject({ code: 'cli_command_failed' });
+        expect(phases.at(-1)).toBe(scenario === 'install-failed' || scenario === 'unavailable-after-write' ? 'daemon.service.install' : 'daemon.service.start');
+        expect(commands.some(args => args[0] === 'daemon' && args[1] === 'start')).toBe(false);
+      }
+    });
+
   it.each(['auth_request', 'auth_wait', 'prose', 'released-http', 'released-network'] as const)('retains only safe stderr causes without retrying managed bootstrap (%s)', async kind => {
     const secret = 'private-guest-token-must-not-cross-bootstrap';
     const correlation = { homeId: HOME_TARGET.homeServerIdentityId, managedId: 'managed-stderr', requestId: 'request-stderr', expectedIntentRevision: 1,

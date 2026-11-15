@@ -92,7 +92,8 @@ describe('retained native bootstrap readiness lifetime', () => {
       if (!('stderrTail' in serviceFailure)) throw new Error('Expected native process diagnostic');
       expect(Buffer.byteLength(serviceFailure.stderrTail, 'utf8')).toBeLessThanOrEqual(DEFAULT_COMMAND_CAPTURE_MAX_BYTES);
     } else if (response === 'invalid') {
-      expect(serviceFailure).toEqual({ kind: 'managedService', step, exitStatus: 42, cause: null });
+      expect(serviceFailure).toEqual({ kind: 'managedService', step, exitStatus: 42,
+        cause: { guestCliCode: 'service_command_failed', serviceStep: 'command', serviceStepStatus: 'failed' } });
     } else {
       expect(serviceFailure).toEqual({ kind: 'managedService', step, exitStatus: 42,
         cause: { guestCliCode: 'service_command_failed', serviceStep: 'command', serviceStepStatus: 'failed',

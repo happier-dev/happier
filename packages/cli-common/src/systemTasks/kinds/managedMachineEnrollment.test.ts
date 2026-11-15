@@ -38,12 +38,14 @@ describe('portable managed enrollment', () => {
     })).resolves.toEqual({ machineId: 'joined' });
   });
   it.each([
+    { requesterEnrollment: false, dedicatedRetry: true, retainedEnrollment: true, adminAccessAtCreation: 'preauthorized' as const, noServiceManager: true },
+    { requesterEnrollment: false, dedicatedRetry: true, retainedEnrollment: false, adminAccessAtCreation: 'preauthorized' as const, noServiceManager: true },
     { requesterEnrollment: false, dedicatedRetry: false, retainedEnrollment: false, adminAccessAtCreation: 'ask' as const },
     { requesterEnrollment: true, dedicatedRetry: false, retainedEnrollment: false, adminAccessAtCreation: 'ask' as const },
     { requesterEnrollment: false, dedicatedRetry: true, retainedEnrollment: false, adminAccessAtCreation: 'ask' as const },
     { requesterEnrollment: false, dedicatedRetry: true, retainedEnrollment: false, adminAccessAtCreation: 'preauthorized' as const },
     { requesterEnrollment: false, dedicatedRetry: true, retainedEnrollment: true, adminAccessAtCreation: 'preauthorized' as const },
-  ])('uses local Account pairing only for the custodian row (requester=$requesterEnrollment, dedicated retry=$dedicatedRetry, mode=$adminAccessAtCreation, retained=$retainedEnrollment)', async ({ requesterEnrollment, dedicatedRetry, retainedEnrollment, adminAccessAtCreation }) => {
+  ])('uses local Account pairing only for the custodian row (requester=$requesterEnrollment, dedicated retry=$dedicatedRetry, mode=$adminAccessAtCreation, retained=$retainedEnrollment)', async ({ requesterEnrollment, dedicatedRetry, retainedEnrollment, adminAccessAtCreation, ...availability }) => {
     const commands: string[] = [];
     const phases: string[] = [];
     const events: unknown[] = [];
@@ -78,6 +80,10 @@ describe('portable managed enrollment', () => {
         if (command.startsWith('uname -s;')) return { status: 0, stdout: 'Linux\nx86_64\n/home/guest\n', stderr: '' };
         if (invocation.includes('auth request')) { expect(phases).toEqual(['install', 'installed']); phases.push('request'); return { status: 0, stdout: JSON.stringify(request), stderr: '' }; }
         if (invocation.includes('auth wait')) { phases.push('wait'); return { status: 0, stdout: JSON.stringify(completion), stderr: '' }; }
+        if ('noServiceManager' in availability && availability.noServiceManager && invocation.includes('service install')) {
+          return { status: 1, stdout: JSON.stringify({ ok: false, error: 'service_manager_unavailable', serviceStep: 'preflight', serviceStepStatus: 'unavailable' }), stderr: '' };
+        }
+        if (invocation.includes('daemon restart')) running = true;
         if (invocation.includes('daemon start') || invocation.includes('service start') || invocation.includes('service restart')) running = true;
         const status = { authenticated: true, credentialState: 'valid', machineRegistrationState: 'server-confirmed', machineId: 'joined',
           services: [], service: { installed: dedicatedRetry }, daemon: { running, healthy: running }, auth: { needsAuth: false, machineId: 'joined' },
@@ -102,20 +108,32 @@ describe('portable managed enrollment', () => {
     expect(await enrollment).toEqual({ machineId: 'joined' });
     expect(phases).toEqual(retainedEnrollment ? ['install', 'installed'] : ['install', 'installed', 'request', 'approve', 'wait']);
     expect(running).toBe(true);
+    if ('noServiceManager' in availability) {
+      expect(commands.some(command => command.replaceAll(/["']/gu, '').includes(retainedEnrollment ? 'daemon restart' : 'daemon start'))).toBe(true);
+      expect(commands.some(command => command.replaceAll(/["']/gu, '').includes('service restart'))).toBe(false);
+    }
     expect(rowReads).toBe(1);
-    expect(commands.some(command => command.replaceAll(/["']/gu, '').includes('service start'))).toBe(dedicatedRetry && !retainedEnrollment);
+    expect(commands.some(command => command.replaceAll(/["']/gu, '').includes('service start'))).toBe(dedicatedRetry && !retainedEnrollment && !('noServiceManager' in availability));
     expect(JSON.stringify(events)).not.toContain(pairing.secretB64Url);
   });
 
-  it('repairs native process boot on the same retained Machine without installation or another pairing', async () => {
+  it.each([false, true])('recovers retained process boot with explicit payload replacement %s', async replacePayload => {
+    let installed = 0;
     const commands: Parameters<ManagedNativeBootstrapIO['exec']>[0][] = [];
     let rowReads = 0;
     const controller = new AbortController();
     const guestHome = { homeDir: '/persistent/home', happyHomeDir: '/persistent/home/.happier', daemonStartup: 'native-process' };
     const result = await runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, channel: 'stable', signal: controller.signal,
+      replacePayload,
       carrier: { kind: 'native', transport: { contributionRef: resource.contributionRef, schemaVersion: 1 }, guestHome } }, {
       readCurrentManagedRow: async () => { rowReads++; return machine; },
-      native: { exec: async request => { commands.push(request); return { status: 0, stdout: '', stderr: '' }; },
+      installNativePayload: replacePayload ? async () => { installed++; return { binaryPath: '/persistent/home/.happier/cli/current/happier' }; } : undefined,
+      native: { exec: async request => {
+        commands.push(request);
+        if (request.command.includes('uname -s;')) return { status: 0, stdout: 'Linux\nx86_64\n/persistent/home\n', stderr: '' };
+        if (request.command.includes("'daemon' 'status'")) return { status: 0, stdout: JSON.stringify({ daemon: { pid: 1, running: true, healthy: true }, service: { installed: false }, auth: { needsAuth: false, machineId: 'same-machine' } }), stderr: '' };
+        return { status: 0, stdout: '', stderr: '' };
+      },
         putFile: async () => { throw new Error('Boot recovery does not transfer another payload'); } },
       createPromptId: () => 'prompt',
       runTask: async () => { throw new Error('Boot recovery does not request pairing'); },
@@ -123,6 +141,8 @@ describe('portable managed enrollment', () => {
     });
     expect(result).toEqual({ machineId: 'same-machine' });
     expect(rowReads).toBe(1);
+    expect(installed).toBe(replacePayload ? 1 : 0);
+    if (replacePayload) return;
     expect(commands).toHaveLength(1);
     expect(commands[0]?.signal).toBe(controller.signal);
     expect(commands[0]?.processConfig).toMatchObject({ environment: { HOME: guestHome.homeDir, HAPPIER_HOME_DIR: guestHome.happyHomeDir },
