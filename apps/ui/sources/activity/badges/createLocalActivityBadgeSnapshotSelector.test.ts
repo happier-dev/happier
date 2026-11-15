@@ -17,6 +17,7 @@ import type { SessionMessages } from '@/sync/store/domains/messages';
 import type { StorageState } from '@/sync/store/types';
 import { createLocalActivityBadgeSnapshotSelector } from './createLocalActivityBadgeSnapshotSelector';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { buildNextSessionListRenderableDelta } from '@/sync/store/domains/sessionListIndexFinalization';
 
 let currentState: StorageState;
 
@@ -334,8 +335,8 @@ describe('createLocalActivityBadgeSnapshotSelector', () => {
             const allocations = stringify.mock.calls.filter(([value]) => Array.isArray(value)
                 && value[0] === 'server1' && typeof value[1] === 'string' && value[1].startsWith('key-cost-session-')).length;
             console.info('[PERF-3 badge keys]', JSON.stringify({ addresses: ids.length, allocations, ms: performance.now() - start }));
-            // The attention/runtime signatures each walk the same membership once.
-            expect(allocations).toBe(ids.length * 2);
+            // Address keys stay linear in the membership (no per-comparison or per-pass re-allocation).
+            expect(allocations).toBeLessThanOrEqual(ids.length);
         } finally { stringify.mockRestore(); }
     });
 
@@ -690,6 +691,8 @@ describe('createLocalActivityBadgeSnapshotSelector', () => {
         });
         const sessionListRowsByServerId = { server1: { session1: renderable } };
         const ordinarySessionListMembershipByServerId = { server1: ['session1'] };
+        // The store keeps every slice the tick did not move by identity.
+        const concurrentSessionListCacheByServerId = {};
         const first = selector(createStorageState({
             sessionListRenderableDelta: {
                 revision: 1,
@@ -699,6 +702,7 @@ describe('createLocalActivityBadgeSnapshotSelector', () => {
             },
             sessionListRowsByServerId,
             ordinarySessionListMembershipByServerId,
+            concurrentSessionListCacheByServerId,
             sessionListIndexByServerId: {
                 server1: [{ type: 'session', sessionId: 'session1', serverId: 'server1', serverName: undefined }],
             },
@@ -714,6 +718,7 @@ describe('createLocalActivityBadgeSnapshotSelector', () => {
             },
             sessionListRowsByServerId,
             ordinarySessionListMembershipByServerId,
+            concurrentSessionListCacheByServerId,
             sessionListIndexByServerId: {
                 server1: [{ type: 'session', sessionId: 'session1', serverId: 'server1', serverName: undefined }],
             },
@@ -997,6 +1002,78 @@ describe('createLocalActivityBadgeSnapshotSelector', () => {
 
         expect(first.localBadgeState.count).toBe(0);
         expect(second).toBe(first);
+    });
+
+    it('counts a transcript permission whose publication names the Session only as hydrated, at the same instant', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(1_000));
+        const session = createSession({ id: 'session1', active: true, presence: 'online', metadata: { path: '/repo', host: 'local' } });
+        const first = createStorageState({ sessions: { session1: session },
+            sessionMessages: { session1: createSessionMessages({ messagesVersion: 1 }) },
+            sessionListRenderableDelta: buildNextSessionListRenderableDelta({ previous: undefined, changedSessionIds: [],
+                removedSessionIds: [], rebuiltSessionListIndex: false, ordinaryMembershipChanges: [] }) });
+        const selector = createSelector();
+        expect(selector(first).localBadgeState.count).toBe(0);
+        const permission = createPermissionMessage(1_000);
+        // The message writer's row-less publication: the Session record moved, its list row did not.
+        const second = createStorageState({ ...first, sessions: { session1: { ...session, seq: 1 } },
+            sessionMessages: { session1: createSessionMessages({ messageIdsOldestFirst: [permission.id],
+                messagesById: { [permission.id]: permission }, messagesVersion: 2 }) },
+            sessionListRenderableDelta: buildNextSessionListRenderableDelta({ previous: first.sessionListRenderableDelta,
+                changedSessionIds: [], removedSessionIds: [], hydratedSessionIds: ['session1'], rebuiltSessionListIndex: false,
+                ordinaryMembershipChanges: [] }) });
+        expect(selector(second).localBadgeState.count).toBe(1);
+    });
+
+    it('reads only the Sessions a message publication names, whatever the loaded list size', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(1_000));
+        const readsPerPublication = (loaded: number) => {
+            const counter = { reads: 0 };
+            const watch = <T extends object>(value: T): T => new Proxy(value, {
+                get(target, key, receiver) { if (typeof key === 'string' && key in target) counter.reads += 1; return Reflect.get(target, key, receiver); },
+                getOwnPropertyDescriptor(target, key) { counter.reads += 1; return Reflect.getOwnPropertyDescriptor(target, key); },
+            });
+            const sessions: Record<string, Session> = {};
+            const rows: Record<string, SessionListRenderableSession> = {};
+            for (let index = 0; index < loaded; index += 1) {
+                const session = createSession({ id: `s-${index}`, active: true, presence: 'online', metadata: { path: '/repo', host: 'local' } });
+                sessions[session.id] = session;
+                rows[session.id] = createRenderable({ id: session.id, active: true, presence: 'online', metadata: { path: '/repo', host: 'local' } });
+            }
+            const membership = Object.keys(rows);
+            const first = createStorageState({ sessions, sessionListRowsByServerId: { server1: rows },
+                ordinarySessionListMembershipByServerId: { server1: membership },
+                sessionMessages: { 's-0': createSessionMessages({ messagesVersion: 1 }) },
+                sessionListRenderableDelta: buildNextSessionListRenderableDelta({ previous: undefined, changedSessionIds: [],
+                    removedSessionIds: [], rebuiltSessionListIndex: false, ordinaryMembershipChanges: [] }) });
+            const selector = createSelector();
+            expect(selector(first).localBadgeState.count).toBe(0);
+            // One streamed message raises a transcript permission: the transcript and the Session move,
+            // and the writer names the Session.
+            const permission = createPermissionMessage(1_000);
+            const arrived = { ...sessions['s-0']!, seq: 1 };
+            const second = createStorageState({ ...first,
+                sessions: watch({ ...sessions, 's-0': arrived }),
+                sessionListRowsByServerId: { server1: watch(rows) },
+                ordinarySessionListMembershipByServerId: { server1: watch(membership) },
+                sessionMessages: { 's-0': createSessionMessages({ messageIdsOldestFirst: [permission.id],
+                    messagesById: { [permission.id]: permission }, messagesVersion: 2 }) },
+                sessionListRenderableDelta: buildNextSessionListRenderableDelta({ previous: first.sessionListRenderableDelta,
+                    changedSessionIds: [], removedSessionIds: [], hydratedSessionIds: ['s-0'], rebuiltSessionListIndex: false,
+                    ordinaryMembershipChanges: [] }) });
+            vi.setSystemTime(new Date(1_001));
+            counter.reads = 0;
+            const after = selector(second);
+            const reads = counter.reads;
+            expect(after.localBadgeState.count).toBe(1);
+            vi.setSystemTime(new Date(1_000));
+            return reads;
+        };
+        const small = readsPerPublication(100);
+        const large = readsPerPublication(2_000);
+        expect({ small, large }).toEqual({ small, large: small });
+        expect(small).toBeLessThan(40);
     });
 
     it('keeps the published badge snapshot when a streamed reply changes a candidate transcript but not the badge', () => {
