@@ -48,6 +48,15 @@ describe('managed OpenCode Windows activation proof', () => {
         throw new Error(`Unexpected command: ${command}`);
       }
       const script = args.at(-1) ?? '';
+      // Process inspection also selects ParentProcessId; match its richer projection first.
+      if (script.includes('CommandLine')) {
+        return JSON.stringify({
+          ProcessId: listenerPid,
+          ParentProcessId: 47_000,
+          Name: 'opencode.exe',
+          CommandLine: commandLine,
+        });
+      }
       if (script.includes('ParentProcessId')) {
         // PowerShell variable names are case-insensitive and $PID is read-only. Reintroducing the
         // old `$pid` ancestry cursor must reproduce the real Windows failure instead of allowing
@@ -59,13 +68,6 @@ describe('managed OpenCode Windows activation proof', () => {
           { ProcessId: listenerPid, ParentProcessId: 47_000 },
           { ProcessId: 47_000, ParentProcessId: spawnPid },
         ]);
-      }
-      if (script.includes('CommandLine')) {
-        return JSON.stringify({
-          ProcessId: listenerPid,
-          Name: 'opencode.exe',
-          CommandLine: commandLine,
-        });
       }
       throw new Error(`Unexpected PowerShell script: ${script}`);
     });
@@ -80,14 +82,7 @@ describe('managed OpenCode Windows activation proof', () => {
 
     const { getOpenCodeServerProcessInfoBestEffort } = await import('./openCodeServerProcessState');
     const processInfo = await getOpenCodeServerProcessInfoBestEffort(trackedPid);
-    expect(processInfo, JSON.stringify({
-      platform: process.platform,
-      processInspectionCalls: execFileSyncMock.mock.calls,
-      processInspectionResults: execFileSyncMock.mock.results.map(({ type, value }) => ({
-        type,
-        value: value instanceof Error ? value.message : value,
-      })),
-    })).toEqual({
+    expect(processInfo).toEqual({
       name: 'opencode.exe',
       cmd: commandLine,
     });
