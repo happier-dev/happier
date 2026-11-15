@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { WorkspaceSource } from '@/workspaces/source/workspaceSource';
 
 /**
@@ -19,6 +20,8 @@ import type { WorkspaceSource } from '@/workspaces/source/workspaceSource';
 export type HostedSessionScope = {
   readonly environment: NodeJS.ProcessEnv;
   termination: unknown;
+  /** Content-free runner failure retained until this Session reports its end. */
+  failureCause?: SessionRuntimeIssueV1['failureCause'];
   sessionId?: string;
   workingDirectory?: string;
   /** Where this Session's workspace lives; bound by the placement owner (absent = this Machine's disk). */

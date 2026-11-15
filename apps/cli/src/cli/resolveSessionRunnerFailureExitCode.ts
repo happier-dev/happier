@@ -1,3 +1,4 @@
+import { readHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { HostTerminalTranscriptFollowAdmissionError } from '@/agent/runtime/session/terminal/contract';
 import { isPluginError } from '@happier-dev/plugin-sdk';
 import { logger } from '@/ui/logger';
@@ -40,6 +41,8 @@ export function resolveSessionRunnerFailureExitCode(error: unknown): number {
 export function reportSessionRunnerFailure(error: unknown): number {
   const exitCode = resolveSessionRunnerFailureExitCode(error);
   const { originalCode, failureCause } = readSessionPreparationFailureDiagnostic(error);
+  const scope = readHostedSessionScope();
+  if (scope?.end && failureCause) scope.failureCause = failureCause;
   if (failureCause) writeConsoleErrorBestEffort(formatSessionRunnerFailureCause(failureCause));
   const diagnostic = readUnexpectedActionErrorDiagnosticV1(error);
   logger.infoFile('[Session] Runner failed', {

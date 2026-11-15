@@ -2,6 +2,13 @@
 
 The host owns the executable Session and turn lifecycle. An Agent plugin supplies its native protocol, correlation and evidence through the public SDK; the host admits input, coordinates work, publishes lifecycle and writes the canonical transcript. Session interaction and finite Execution Runs use that same ownership boundary.
 
+Hosted runner startup failures retain the existing typed `failureCause` in that
+Session's scope and local end response. The daemon forwards it through the ordinary
+spawn failure projection; it never attributes the shared host's stderr to an
+individual Session. Older local end responses without a cause retain their exit
+code. A missing admitted runner source names
+`RUNNER_AGENT_SESSION_RUNTIME_SOURCE_MISSING` at `client_start`.
+
 Hosted Sessions bind physical Stop to the runtime's ordinary Stop callback before native construction. A native-open refusal can therefore keep serving Pending input and still stop through its existing cleanup owner. Caller-owned child runtimes retain their caller's Stop binding; ending one Session never signals the shared host.
 
 Restart eligibility and runtime status read a hosted Session's own launch mode,

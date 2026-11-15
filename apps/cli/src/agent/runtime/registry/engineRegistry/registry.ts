@@ -209,8 +209,9 @@ export async function resolveCliEngineRegistry(
                 ) {
                     const error = new Error(
                         `Daemon-spawned native Agent backend '${backend.id}' is missing its runner-local runtime source`,
-                    ) as Error & { code: string };
+                    ) as Error & { code: string; failureCause: { code: string; phase: 'client_start'; failureReason: 'unknown' } };
                     error.code = 'RUNNER_AGENT_SESSION_RUNTIME_SOURCE_MISSING';
+                    error.failureCause = { code: error.code, phase: 'client_start', failureReason: 'unknown' };
                     throw error;
                 }
 

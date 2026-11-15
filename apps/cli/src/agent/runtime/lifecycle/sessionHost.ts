@@ -6,6 +6,7 @@ import {
   SESSION_HOST_HANDOVER_EXIT_CODE,
   SessionHostClosingError,
   type SessionHostAddRequest,
+  type SessionHostCommandEnd,
   type LocalSessionHostEndResult,
 } from '@/session/transport/rpc/localSessionRpcChannel';
 import { handOverSessionHolderClients, pauseSessionHolderDelivery } from '@/subprocess/supervision/sessionHolder';
@@ -19,10 +20,10 @@ export { SESSION_HOST_READY_LINE } from '@/session/transport/rpc/localSessionRpc
 
 export type SessionHost = Readonly<{
   /** Same contract as the daemon's add call: resolves with the Session's exit code when it ends. */
-  addSession(request: SessionHostAddRequest): Promise<Readonly<{ exitCode: number }>>;
+  addSession(request: SessionHostAddRequest): Promise<SessionHostCommandEnd>;
   endSession(trackingKey: string): LocalSessionHostEndResult;
   /** This running Session's end, for a daemon that re-observes it after a restart. */
-  watchSession(trackingKey: string): Promise<Readonly<{ exitCode: number }>> | null;
+  watchSession(trackingKey: string): Promise<SessionHostCommandEnd> | null;
   /** Hand every Session to a newer host (see `LocalSessionHostAdmission.handOver`). */
   handOver(): boolean;
   /** Settles when the host stopped admitting: after its last Session ended, or on a process signal. */
@@ -45,7 +46,7 @@ export async function startSessionHost(params: Readonly<{
   process?: Pick<EventEmitter, 'on' | 'removeListener'>;
   exit?: (code: number) => void;
 }>): Promise<SessionHost> {
-  const sessions = new Map<string, { scope: HostedSessionScope | null; ended: Promise<Readonly<{ exitCode: number }>> }>();
+  const sessions = new Map<string, { scope: HostedSessionScope | null; ended: Promise<SessionHostCommandEnd> }>();
   // Every hosted Session of one Account shares one Account update connection.
   shareAccountUpdatesInThisProcess();
   let closing = false;
@@ -65,13 +66,13 @@ export async function startSessionHost(params: Readonly<{
     termination.requestTermination({ kind: 'exit', code: 0 });
   };
 
-  const addSession = (request: SessionHostAddRequest): Promise<Readonly<{ exitCode: number }>> => {
+  const addSession = (request: SessionHostAddRequest): Promise<SessionHostCommandEnd> => {
     if (closing) throw new SessionHostClosingError('The session host is ending');
     if (sessions.has(request.trackingKey)) throw new Error('This Session is already hosted');
-    let resolveEnded!: (end: Readonly<{ exitCode: number }>) => void;
+    let resolveEnded!: (end: SessionHostCommandEnd) => void;
     const session = {
       scope: null as HostedSessionScope | null,
-      ended: new Promise<Readonly<{ exitCode: number }>>((resolve) => { resolveEnded = resolve; }),
+      ended: new Promise<SessionHostCommandEnd>((resolve) => { resolveEnded = resolve; }),
     };
     sessions.set(request.trackingKey, session);
     let ended = false;
@@ -79,7 +80,8 @@ export async function startSessionHost(params: Readonly<{
       if (ended) return;
       ended = true;
       sessions.delete(request.trackingKey);
-      resolveEnded({ exitCode });
+      const failureCause = session.scope?.failureCause;
+      resolveEnded({ exitCode, ...(failureCause ? { failureCause } : {}) });
       endWhenIdle();
     };
     void runAddedHostedSession({ environment: { ...request.env }, workingDirectory: request.cwd, end }, async () => {

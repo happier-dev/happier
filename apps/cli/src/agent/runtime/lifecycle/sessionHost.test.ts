@@ -13,7 +13,9 @@ const testHome = vi.hoisted(() => {
 
 import { runBackendSessionCliCommand } from '@/cli/runBackendSessionCliCommand';
 
-import { endLocalSessionHostSession } from '@/session/transport/rpc/localSessionRpcChannel';
+import { addLocalSessionHostSession, endLocalSessionHostSession } from '@/session/transport/rpc/localSessionRpcChannel';
+import { reportSessionRunnerFailure } from '@/cli/resolveSessionRunnerFailureExitCode';
+import { endSessionCommand } from './runnerTerminationHandlers';
 
 import { onHostedSessionHandover } from './hostedSessionScope';
 import { bindHostedSessionStop, registerRunnerTerminationHandlers } from './runnerTerminationHandlers';
@@ -77,6 +79,29 @@ describe('session host', () => {
   beforeAll(async () => { await import('@/cli/resolveSessionRunnerFailureExitCode'); }, 120_000);
 
   const add = (trackingKey: string) => host!.addSession({ trackingKey, argv: [trackingKey], env: {}, cwd: testHome });
+
+  it('preserves the failing Session cause over its local endpoint without borrowing another Session stderr', async () => {
+    const failureCause = { code: 'RUNNER_AGENT_SESSION_RUNTIME_SOURCE_MISSING', phase: 'client_start' as const,
+      failureReason: 'unknown' as const };
+    const turn = deferred();
+    await startHost(async argv => {
+      if (argv[0] === 'healthy') return await turn.promise;
+      const error = Object.assign(new Error('PRIVATE_BODY'), { failureCause });
+      endSessionCommand(reportSessionRunnerFailure(error));
+    });
+    const healthy = add('healthy');
+    const failed = addLocalSessionHostSession({ hostPid: process.pid, request: {
+      trackingKey: 'failed-diagnostic', argv: ['failed'], env: {}, cwd: testHome,
+    } });
+    try {
+      expect(await failed.admitted).toBe(true);
+      expect(await failed.ended).toMatchObject({ exitCode: 1, failureCause });
+      expect(await settledWithin(healthy, 50)).toBe('pending');
+    } finally {
+      turn.resolve();
+      await healthy;
+    }
+  });
 
   afterEach(async () => {
     processExit.mockClear();

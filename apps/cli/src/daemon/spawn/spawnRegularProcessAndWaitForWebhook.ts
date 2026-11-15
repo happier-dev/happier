@@ -121,14 +121,17 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
       return added.result;
     }
     const hosted = added.session;
+    let failureCause: CapturedChildStderr['failureCause'];
     started = {
       pid: hosted.hostPid,
       hosted,
-      // The host's stderr is shared by its Sessions; a Session's end carries only its exit code, or
-      // the host process's exit code/signal when the host died (each of its Sessions ends with it).
-      readStderr: () => ({ head: '', tail: '' }),
+      // Host stderr is shared: retain only this Session's typed end diagnostic.
+      readStderr: () => ({ head: '', tail: '', ...(failureCause ? { failureCause } : {}) }),
       flushDiagnostics: () => {},
-      onExit: (listener) => { void hosted.ended.then(({ exitCode, signal }) => listener(exitCode, signal)); },
+      onExit: (listener) => { void hosted.ended.then(end => {
+        failureCause = end.failureCause;
+        listener(end.exitCode, end.signal);
+      }); },
       terminate: async () => {
         await hosted.end();
         await hosted.ended;

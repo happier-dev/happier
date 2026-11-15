@@ -1,3 +1,4 @@
+import { SessionRuntimeFailureCauseV1Schema, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
@@ -587,11 +588,11 @@ export type LocalSessionHostAdmission = Readonly<{
    * Start one Session. Throws `SessionHostClosingError` synchronously when the host no longer
    * admits; otherwise resolves with the Session's exit code when that Session ends.
    */
-  addSession(request: SessionHostAddRequest): Promise<Readonly<{ exitCode: number }>>;
+  addSession(request: SessionHostAddRequest): Promise<SessionHostCommandEnd>;
   /** Ask one hosted Session to end, distinguishing absence from unavailable termination. */
   endSession(trackingKey: string): LocalSessionHostEndResult;
   /** This running Session's end (same result as its add), or null when this host does not run it. */
-  watchSession(trackingKey: string): Promise<Readonly<{ exitCode: number }>> | null;
+  watchSession(trackingKey: string): Promise<SessionHostCommandEnd> | null;
   /**
    * Stop admitting, leave every Session's Agent in its holder and exit with
    * `SESSION_HOST_HANDOVER_EXIT_CODE`; false when the host is already ending.
@@ -643,7 +644,7 @@ async function handleSessionHostRequest(current: Ingress, request: IncomingMessa
     reply(response, 200, { handingOver: host.handOver() });
     return;
   }
-  let ended: Promise<Readonly<{ exitCode: number }>>;
+  let ended: Promise<SessionHostCommandEnd>;
   if (request.url === HOST_WATCH_PATH) {
     const watched = typeof trackingKey === 'string' ? host.watchSession(trackingKey) : null;
     if (!watched) {
@@ -669,8 +670,8 @@ async function handleSessionHostRequest(current: Ingress, request: IncomingMessa
   // that disconnects meanwhile (restart) does not end the Session.
   response.writeHead(200, { 'content-type': 'application/json' });
   response.flushHeaders();
-  const { exitCode } = await ended;
-  if (!response.writableEnded && !response.destroyed) response.end(JSON.stringify({ exitCode }));
+  const end = await ended;
+  if (!response.writableEnded && !response.destroyed) response.end(JSON.stringify(end));
 }
 
 /**
@@ -721,7 +722,8 @@ function readHostDescriptor(hostPid: number): LocalSessionHostDescriptorV1 | nul
  * refused (`closing`: the host no longer admits; `notHosted`: the live host does not run that
  * Session) or the connection broke.
  */
-export type LocalSessionHostSessionEnd = Readonly<{ exitCode: number | null; closing: boolean; notHosted: boolean }>;
+export type SessionHostCommandEnd = Readonly<{ exitCode: number; failureCause?: SessionRuntimeIssueV1['failureCause'] }>;
+export type LocalSessionHostSessionEnd = Readonly<{ exitCode: number | null; closing: boolean; notHosted: boolean; failureCause?: SessionRuntimeIssueV1['failureCause'] }>;
 
 /** A Session added to a session host, as its daemon observes it. */
 export type LocalSessionHostSession = Readonly<{
@@ -780,8 +782,10 @@ function openLocalSessionHostSession(input: Readonly<{ hostPid: number; path: st
     }
     resolveAdmitted(true);
     readBody(incoming).then(raw => {
-      const exitCode = (JSON.parse(raw) as { exitCode?: unknown }).exitCode;
-      resolveEnded({ exitCode: typeof exitCode === 'number' ? exitCode : null, closing: false, notHosted: false });
+      const end = JSON.parse(raw) as { exitCode?: unknown; failureCause?: unknown };
+      const cause = SessionRuntimeFailureCauseV1Schema.safeParse(end.failureCause);
+      resolveEnded({ exitCode: typeof end.exitCode === 'number' ? end.exitCode : null, closing: false, notHosted: false,
+        ...(cause.success ? { failureCause: cause.data } : {}) });
     }).catch(() => resolveEnded({ exitCode: null, closing: false, notHosted: false }));
   });
   outgoing.once('error', () => {

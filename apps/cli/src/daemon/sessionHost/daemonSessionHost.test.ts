@@ -125,6 +125,9 @@ import { waitForTrackedRunnerProcessesExit } from '../sessions/waitForTrackedRun
 import { readSessionMarker } from '../sessionRegistry';
 import { buildTrackedSessionFromMarker } from '../sessions/trackedSessionFromMarker';
 import { resolveSessionRunnerRestartEligibility } from '../sessionRunnerRuntime/resolveRestartEligibility';
+import { reportSessionRunnerFailure } from '@/cli/resolveSessionRunnerFailureExitCode';
+import { endSessionCommand } from '@/agent/runtime/lifecycle/runnerTerminationHandlers';
+import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
 
 function resolvePeerHelper(): string {
   const staged = resolveProcessCustodySupportExecutable(process.platform);
@@ -149,7 +152,7 @@ type InProcessHost = Readonly<{ process: EventEmitter; exit: ReturnType<typeof v
 /** In-process hosts still serving at the end of a test (a real host is its own process). */
 const liveInProcessHosts = new Set<InProcessHost>();
 
-async function createHarness() {
+async function createHarness(startupFailure?: Error) {
   peerHelper.path ??= resolvePeerHelper();
   const releaseSessions: Array<() => void> = [];
   const hostedEnvironments: Array<Readonly<Record<string, string | undefined>>> = [];
@@ -157,10 +160,21 @@ async function createHarness() {
   census.startHost = async () => {
     const hostProcess = new EventEmitter();
     // A host process that exits breaks every connection to it.
-    const hostExit = vi.fn<(code: number) => void>(() => { for (const socket of hostSockets) socket.destroy(); });
+    const hostExit = vi.fn<(code: number) => void>(code => {
+      for (const socket of hostSockets) socket.destroy();
+      if (startupFailure) {
+        const child = census.hostChildren.at(-1)!;
+        child.exitCode = code;
+        child.emit('exit', code, null);
+      }
+    });
     const host = await startSessionHost({
       runSessionCommand: async () => {
         hostedEnvironments.push({ ...sessionProcessEnvironment() });
+        if (startupFailure) {
+          endSessionCommand(reportSessionRunnerFailure(startupFailure));
+          return;
+        }
         const termination = registerRunnerTerminationHandlers({ process: hostProcess, exit: hostExit, onTerminate: () => undefined });
         await Promise.race([new Promise<void>((resolve) => { releaseSessions.push(resolve); }), termination.whenTerminated]);
         termination.dispose();
@@ -177,9 +191,12 @@ async function createHarness() {
   };
 
   const tracked = new Map<SessionTrackingKey, TrackedSession>();
+  const accepted: TrackedSession[] = [];
   const awaiters = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
   const exits: Array<Readonly<{ pid: number; exit: ChildExit }>> = [];
   let observeExit: (pid: number, exit: ChildExit) => Promise<void> = async () => {};
+  if (startupFailure) observeExit = createOnChildExited({ trackedSessionsByKey: tracked,
+    spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => null });
   const onChildExited = async (pid: number, exit: ChildExit) => {
     exits.push({ pid, exit });
     await observeExit(pid, exit);
@@ -190,7 +207,10 @@ async function createHarness() {
     hasConnectedServiceAuth: () => false, getSpawnResourceCleanupOnExit: () => null,
     onSpawnResourceCleanupArmed: () => {}, spawnResourceCleanupByKey: new Map(),
     getSessionAttachCleanup: () => null, setSessionAttachCleanup: () => {}, sessionAttachCleanupByKey: new Map(),
-    persistAcceptedSpawnMarker: async (session, options) => await persistAcceptedSpawnMarker({ trackedSession: session, deviceLocalSecretStorage, ...options }),
+    persistAcceptedSpawnMarker: async (session, options) => {
+      accepted.push(session);
+      await persistAcceptedSpawnMarker({ trackedSession: session, deviceLocalSecretStorage, ...options });
+    },
   });
   const sessionHost = createDaemonSessionHost({
     processEnv: { ...process.env, HAPPIER_HOME_DIR: configuration.happyHomeDir },
@@ -210,7 +230,7 @@ async function createHarness() {
     return run;
   };
   const spawnOneSession = async (sessionId: string, extraEnv: Record<string, string>) => {
-    const before = new Set(tracked.keys());
+    const before = new Set([...tracked.keys(), ...accepted.map(session => session.trackingKey)]);
     const pending = spawnRegularProcessAndWaitForWebhook({
       args: ['codex', '--happy-starting-mode', 'remote', '--started-by', 'daemon'], directory: testHome, options: { directory: testHome }, trackedSpawnOptions: { directory: testHome },
       normalizedExistingSessionId: '', effectiveResume: '', directoryCreated: false, extraEnvForChildWithMessage: extraEnv,
@@ -222,11 +242,12 @@ async function createHarness() {
       sessionHost,
     });
     const record = await vi.waitFor(() => {
-      const added = [...tracked.values()].find(session => !before.has(session.trackingKey));
+      const added = [...tracked.values(), ...accepted].find(session => !before.has(session.trackingKey));
       if (!added) throw new Error('Session not tracked yet');
       return added;
     }, { timeout: 60_000 });
     await record.acceptedSpawnMarkerGate;
+    if (startupFailure) return { record, result: await pending };
     await report(sessionId, { hostPid: record.pid, path: testHome, startedBy: 'daemon' } as Metadata, undefined, undefined, record.trackingKey);
     await record.reportMarkerCustody?.pending;
     return { record, result: await pending };
@@ -256,6 +277,17 @@ async function crashLatestHost(harness: Awaited<ReturnType<typeof createHarness>
 const HOST_COMMAND = '/runtime/bin/happier session-host';
 
 describe('session host launch', () => {
+  it('preserves a hosted runner startup cause through the public spawn failure', { timeout: 120_000 }, async () => {
+    const failureCause = { code: 'RUNNER_AGENT_SESSION_RUNTIME_SOURCE_MISSING',
+      phase: 'client_start' as const, failureReason: 'unknown' as const };
+    const harness = await createHarness(Object.assign(new Error('PRIVATE_BODY'), { failureCause }));
+    const { result } = await harness.spawnSession('failed-session');
+    if (result.type !== 'error') throw new Error('Expected startup failure');
+    const projected = projectSessionSpawnFailure({ errorCode: result.errorCode,
+      errorMessage: result.errorMessage, errorDetail: result.errorDetail });
+    expect(projected).toMatchObject({ type: 'error', code: 'spawn_failed', launchError: { failureCause } });
+    expect(JSON.stringify(projected)).not.toContain('PRIVATE_BODY');
+  });
   it('launches the host with the daemon\'s Home and server identity, even when the daemon environment lacks them', { timeout: 120_000 }, async () => {
     const harness = await createHarness();
     const launchesBefore = census.hostLaunchEnvironments.length;

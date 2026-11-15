@@ -5,13 +5,24 @@ import { expect, it } from 'vitest';
 
 import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { SessionHostBridge } from './SessionHostBridge';
+import { PLUGIN_MANIFEST as museManifest } from '../../../../../../../packages/plugins/muse/src/manifest';
 import { PLUGIN_MANIFEST as geminiManifest } from '../../../../../../../packages/plugins/gemini/src/manifest';
 import { PLUGIN_MANIFEST as codexManifest } from '../../../../../../../packages/plugins/codex/src/manifest';
 import { PluginAgentContributionV2Schema } from '@happier-dev/protocol';
 import { createRunnerAgentSessionBootstrapAuthorization } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
 import { configuration } from '@/configuration';
 
-it.each([codexManifest, geminiManifest])('resolves $id from its hosted Session environment', async manifest => {
+it('names the missing Muse bootstrap in its content-free startup cause', async () => {
+  await expect(runAddedHostedSession({ environment: {}, workingDirectory: process.cwd(), end: () => {} },
+    () => new SessionHostBridge().createSessionRuntime('muse', {
+      directory: process.cwd(), happyHomeDir: process.cwd(), startedBy: 'daemon',
+      credentials: { token: 'fixture-runner', encryption: null },
+    }))).rejects.toMatchObject({ code: 'RUNNER_AGENT_SESSION_RUNTIME_SOURCE_MISSING', failureCause: {
+      code: 'RUNNER_AGENT_SESSION_RUNTIME_SOURCE_MISSING', phase: 'client_start', failureReason: 'unknown',
+    } });
+});
+
+it.each([codexManifest, geminiManifest, museManifest])('resolves $id from its hosted Session environment', async manifest => {
   const home = await mkdtemp(join(tmpdir(), 'happier-hosted-bootstrap-'));
   try {
     // Real private-file admission and engine resolution; no bearer or Agent

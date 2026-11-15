@@ -12,6 +12,7 @@ import {
   removeExitedSessionHostDescriptor,
   watchLocalSessionHostSession,
   type LocalSessionHostSession,
+  type SessionHostCommandEnd,
   type SessionHostAddRequest,
 } from '@/session/transport/rpc/localSessionRpcChannel';
 import { logger } from '@/ui/logger';
@@ -42,7 +43,7 @@ export type HostedSessionHandle = Readonly<{
   end(): Promise<boolean>;
 }>;
 
-export type HostedSessionEnd = Readonly<{ exitCode: number | null; signal: NodeJS.Signals | null; hostLost: boolean }>;
+export type HostedSessionEnd = Readonly<{ exitCode: number | null; signal: NodeJS.Signals | null; hostLost: boolean; failureCause?: SessionHostCommandEnd['failureCause'] }>;
 
 export type DaemonSessionHost = Readonly<{
   /**
@@ -83,8 +84,8 @@ type RunningHost = Readonly<{
 function createHostedSessionHandle(host: RunningHost, trackingKey: string, session: LocalSessionHostSession): HostedSessionHandle {
   return {
     hostPid: host.pid,
-    ended: session.ended.then(async ({ exitCode }): Promise<HostedSessionEnd> => {
-      if (exitCode !== null) return { exitCode, signal: null, hostLost: false };
+    ended: session.ended.then(async ({ exitCode, failureCause }): Promise<HostedSessionEnd> => {
+      if (exitCode !== null) return { exitCode, signal: null, hostLost: false, ...(failureCause ? { failureCause } : {}) };
       // The host connection broke: the host process is gone, and its exit is this Session's end.
       const exit = host.exited ? await host.exited : null;
       return { exitCode: exit?.code ?? null, signal: exit?.signal ?? null, hostLost: true };
@@ -267,7 +268,8 @@ export function createDaemonSessionHost(params: Readonly<{
             // unexpected end of this Session (its respawn may adopt its held Agent).
             exit = end.hostLost
               ? { reason: 'process-missing', code: null, signal: null, trackingKey }
-              : { reason: 'process-exited', code: end.exitCode, signal: null, trackingKey };
+              : { reason: 'process-exited', code: end.exitCode, signal: null, trackingKey,
+                ...(end.failureCause ? { failureCause: end.failureCause } : {}) };
           }
           await observeExit(host.pid, exit);
         })().catch((error: unknown) => {
