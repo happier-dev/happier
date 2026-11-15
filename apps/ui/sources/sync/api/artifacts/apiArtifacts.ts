@@ -1,6 +1,6 @@
 import { pick } from 'zod/mini';
 import { ArtifactTemplateAcceptedVersionResponseV1Schema, type ArtifactTemplateAcceptedVersionInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
-import { ArtifactKindCoverageV1Schema, type ArtifactCoarseKindV1, type ArtifactKindCoverageV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
+import { ArtifactKindCoverageV1Schema, type ArtifactCoarseKindV1, type ArtifactKindCoverageV1, type ArtifactKindWriteBatchInputV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { requireArtifactKindCoverageV1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
 import type { ApprovalArtifactStateV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 import { MemoryDecisionSourceErrorCodeV1Schema } from '@happier-dev/protocol/prompts/library/memoryActionsV1';
@@ -365,6 +365,17 @@ export async function restoreArtifactRevision(credentials: AuthCredentials, inpu
             throw new HappyError('Artifact restore result is unavailable', false, { code: 'content_unavailable' });
         return revision.data;
     });
+}
+
+/** One query-hint batch through the canonical header CAS route; the shared writer validates the response. */
+export async function postArtifactKindWriteBatch(credentials: AuthCredentials, input: ArtifactKindWriteBatchInputV1,
+    opts: Pick<ArtifactApiOptions, 'request' | 'signal'> = {}): Promise<Readonly<{ status: number; data: unknown }>> {
+    const request = opts.request ?? createServerFetchForActiveServer(getActiveServerSnapshot());
+    const response = await request('/v1/artifacts/query-hints/batch', {
+        method: 'POST', headers: { Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(input), ...(opts.signal ? { signal: opts.signal } : {}),
+    }, { includeAuth: false, retry: 'none' });
+    return { status: response.status, data: await response.json().catch(() => null) };
 }
 
 /** The existing Artifact HTTP owner carries grants and fenced recipient keys. */

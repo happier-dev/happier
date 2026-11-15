@@ -2,7 +2,8 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { ArtifactIdScopeV1 } from '@happier-dev/protocol';
 import type { ArtifactInventoryPublication } from '@/sync/domains/artifacts/artifactInventory';
 import { resolveFileViewerKind } from '@/scm/utils/filePresentation';
-import { deriveArtifactKindV1, tryDeriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
+import { deriveArtifactKindV1, deriveArtifactKindWriteItemV1, tryDeriveArtifactStoredKindV1, writeArtifactKindBatchesV1,
+    type ArtifactKindWriteBatchInputV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { deriveApprovalArtifactQueryHintsV1, isApprovalArtifactKindV1, type ApprovalArtifactStateV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { readApprovalTranscriptVisualPublicationV1 } from '@happier-dev/protocol/sessions/board/transcriptReference';
@@ -29,6 +30,7 @@ import {
     fetchArtifactListPage,
     fetchArtifactReadBatch,
     encodeArtifactListCursor,
+    postArtifactKindWriteBatch,
     updateArtifact as updateArtifactApi,
     fetchArtifactRevisions,
     fetchArtifactBlob,
@@ -919,6 +921,7 @@ export async function fetchAndApplyArtifactsList(params: {
             log.log('📦 fetchArtifactsList: Fetching artifacts from server');
             const unreadable: DecryptedArtifact[] = [];
             const windowRead: DecryptedArtifact[] = [];
+            const kindLabels: ArtifactKindWriteBatchInputV1['items'] = [];
             let windowed = false;
             const selectionOptions = { signal: params.signal, ...(params.kinds ? { kinds: params.kinds } : {}),
                 ...(params.approvalStates ? { approvalStates: params.approvalStates } : {}),
@@ -938,6 +941,14 @@ export async function fetchAndApplyArtifactsList(params: {
                         previousArtifacts: params.inventoryReadStartedWith,
                         includeProvenance: params.includeProvenance === true });
                     if (!shouldContinue()) return { items: [] };
+                    // Released 0.2 rows carry no server kind, and a web/phone-only Account has no daemon
+                    // to label them. The legacy walk already opened them: label only the caller's own rows.
+                    if (options?.unclassified) for (const artifact of opened) {
+                        if (!artifact?.isDecrypted || artifact.access !== 'owner' || !artifact.rawHeader) continue;
+                        const label = deriveArtifactKindWriteItemV1({ artifactId: artifact.id, header: artifact.rawHeader,
+                            headerVersion: artifact.headerVersion, storedKindClassified: Object.hasOwn(artifact, 'kindHint') });
+                        if (label) kindLabels.push(label);
+                    }
                     // Preserve the same locked structural observations as the full read.
                     // The selector still owns which readable rows match and whether legacy discovery is required.
                     if (selected) for (const artifact of opened)
@@ -970,6 +981,13 @@ export async function fetchAndApplyArtifactsList(params: {
                 },
             });
             if (!shouldContinue()) return;
+            if (kindLabels.length > 0) {
+                // A written row leaves the legacy set, so later reads skip both the walk and the write.
+                const written = await writeArtifactKindBatchesV1(kindLabels, input => postArtifactKindWriteBatch(credentials, input,
+                    { request: params.request, signal: params.signal }), params.signal).catch(() => 'write_unavailable' as const);
+                if (written !== 'written' && written !== 'retired') log.log(`📦 fetchArtifactsList: Legacy kind labels not written (${written})`);
+                if (!shouldContinue()) return;
+            }
             if (windowed) return 'windowed';
             decryptedArtifacts = complete.items.map(item => item.artifact);
             // Exhausted typed selection can render like a full read with locked rows,

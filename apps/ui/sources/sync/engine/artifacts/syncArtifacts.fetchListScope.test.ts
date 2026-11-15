@@ -342,8 +342,11 @@ describe('fetchAndApplyArtifactsList', () => {
         });
         const requests: { unclassified: boolean; headers: number }[] = [];
         const store = createStore<ArtifactsDomain>((set, get) => createArtifactsDomain({ set, get }));
-        const request = async (path: string) => {
+        const request = async (path: string, init?: RequestInit) => {
             const url = new URL(path, 'https://context-legacy.test');
+            // Legacy labels are this read's own write; this fixture keeps the rows unclassified.
+            if (init?.method === 'POST') return json({ items: (JSON.parse(String(init.body)) as { items: { artifactId: string }[] }).items
+                .map(item => ({ artifactId: item.artifactId, success: true })) });
             const response = createArtifactListHttpResponse(url, legacy);
             const body = await response.clone().json();
             requests.push({ unclassified: url.searchParams.has('unclassified'), headers: body.items.length });
@@ -369,6 +372,39 @@ describe('fetchAndApplyArtifactsList', () => {
         expect(store.getState().artifactInventoryKindsPartial).toEqual(kinds);
         expect(store.getState().artifacts[legacy[1]!.id]?.isDecrypted).toBe(false);
         expect(store.getState().artifacts[legacy[0]!.id]?.rawHeader?.kind).toBe('memory_doc.v1');
+    });
+
+    it('classifies the caller\'s own legacy headers once at the selected read, never received ones', async () => {
+        const { fetchAndApplyArtifactsList } = await import('./syncArtifacts');
+        const home = createArtifactStoreBoundary({ ownerAccountId: () => 'owner', encryptionMode: 'plain' });
+        const legacy = (index: number, ownerAccountId: string): Artifact => {
+            const { kindHint: _hint, ...head } = plainHead(index);
+            return { ...head, kind: null, ownerAccountId, header: encodePlainArtifactStoredContent({ kind: 'prompt_doc.v2', title: 'Legacy' }) };
+        };
+        const own = Array.from({ length: 600 }, (_, index) => legacy(index + 1, 'owner'));
+        const received = [legacy(601, 'other'), legacy(602, 'other')];
+        for (const row of [...own, ...received]) home.replaceStoredRow(row);
+        for (const row of received) home.seedAccountGrant(row.id, 'owner', 'edit');
+        const calls: { method: string; path: string; body?: { items: { artifactId: string }[] } }[] = [];
+        const read = () => fetchAndApplyArtifactsList({ kinds: ['prompt_doc.v2'], credentials: { token: 'token' }, encryption: null,
+            artifactDataKeys: new Map(), applyArtifacts: () => {}, request: async (path, init) => {
+                calls.push({ method: init?.method ?? 'GET', path, ...(init?.method === 'POST' ? { body: JSON.parse(String(init.body)) } : {}) });
+                return await home.handle(path, init) ?? json({ error: 'not_found' });
+            } });
+        const writes = () => calls.filter(call => call.method === 'POST' && call.path === '/v1/artifacts/query-hints/batch');
+        const legacyPages = () => calls.filter(call => call.method === 'GET' && call.path.includes('unclassified='));
+
+        await read();
+        expect(writes()).toHaveLength(1);
+        expect(writes()[0]!.body!.items.map(item => item.artifactId).sort()).toEqual(own.map(row => row.id).sort());
+        expect(own.every(row => home.read(row.id)?.kindHint === 'prompt_doc.v2')).toBe(true);
+        expect(received.every(row => !Object.hasOwn(home.read(row.id)!, 'kindHint'))).toBe(true);
+        calls.length = 0;
+
+        await read();
+        expect(writes()).toHaveLength(0);
+        // Only the received rows remain for the owner's own key holder to classify.
+        expect(legacyPages()).toHaveLength(1);
     });
 
     it('never writes classification while repeatedly opening 35000 unclassified or stale inventory headers', async () => {

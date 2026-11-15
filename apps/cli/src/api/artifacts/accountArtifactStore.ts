@@ -34,8 +34,8 @@ import { ArtifactBodyV1Schema, ArtifactBodyEnvelopeV1StoredSchema, ArtifactPriva
 import { openResourceBinaryContent, sealResourceBinaryContent } from '@/api/encryption/resourceBinaryContent';
 import { artifactHtmlBundleFromBodyV1, isArtifactHtmlHeaderV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { listArtifactHeadersV1, type ArtifactListPageOptionsV1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
-import { tryDeriveArtifactStoredKindV1, ArtifactKindCoverageV1Schema, ArtifactKindWriteBatchResponseV1Schema,
-  frameArtifactKindWriteBatchesV1, type ArtifactKindCoverageV1, type ArtifactKindWriteBatchInputV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
+import { tryDeriveArtifactStoredKindV1, ArtifactKindCoverageV1Schema, deriveArtifactKindWriteItemV1,
+  writeArtifactKindBatchesV1, type ArtifactKindCoverageV1, type ArtifactKindWriteBatchInputV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 import { fetchServerFeaturesSnapshot, type CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
@@ -1458,21 +1458,17 @@ export function createAccountArtifactStore(params: Readonly<{
         if (options.signal.aborted) return { status: 'retired' };
         for (const item of items) {
           if (item.access !== 'owner' || item.ownerAccountId !== ownerAccountId) continue;
-          const kind = tryDeriveArtifactStoredKindV1(item.header);
-          if (kind !== undefined) labels.push({ artifactId: item.artifactId, kind, expectedHeaderVersion: item.headerVersion,
-            ...(isApprovalArtifactKindV1(item.header.kind) ? deriveApprovalArtifactQueryHintsV1(item.header) : {}) });
+          const label = deriveArtifactKindWriteItemV1(item);
+          if (label) labels.push(label);
         }
         cursor = page.nextCursor;
       } while (cursor);
-      for (const input of frameArtifactKindWriteBatchesV1(labels)) {
-        if (options.signal.aborted) return { status: 'retired' };
+      if (labels.length > 0) {
         phase = 'write_unavailable';
-        const response = await axios.post(`${resolveServerHttpBaseUrl()}/v1/artifacts/query-hints/batch`, input, accessConfig(options.signal));
-        if (options.signal.aborted) return { status: 'retired' };
-        const result = ArtifactKindWriteBatchResponseV1Schema.safeParse(response.data);
-        if (response.status < 200 || response.status >= 300 || !result.success || result.data.items.length !== input.items.length
-          || result.data.items.some((item, index) => item.artifactId !== input.items[index]?.artifactId)) return { status: 'unavailable', reason: phase };
-        if (result.data.items.some(item => !item.success)) return { status: 'unavailable', reason: 'write_refused' };
+        const written = await writeArtifactKindBatchesV1(labels, input =>
+          axios.post(`${resolveServerHttpBaseUrl()}/v1/artifacts/query-hints/batch`, input, accessConfig(options.signal)), options.signal);
+        if (written === 'retired') return { status: 'retired' };
+        if (written !== 'written') return { status: 'unavailable', reason: written };
       }
       phase = 'read_unavailable';
       if (options.signal.aborted) return { status: 'retired' };

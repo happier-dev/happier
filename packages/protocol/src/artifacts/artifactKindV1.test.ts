@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { deriveArtifactCoarseKindV1, deriveArtifactKindV1, deriveArtifactStoredKindV1, tryDeriveArtifactStoredKindV1, decodeArtifactKindV1, ArtifactStoredKindV1Schema,
   frameArtifactKindWriteBatchesV1, ArtifactKindWriteBatchInputV1Schema, ArtifactKindWriteBatchResponseV1Schema,
-  ArtifactKindCoverageV1Schema } from './artifactKindV1.js';
+  ArtifactKindCoverageV1Schema, deriveArtifactKindWriteItemV1, writeArtifactKindBatchesV1 } from './artifactKindV1.js';
 
 describe('Artifact coarse kind', () => {
   it('indexes library families without disclosing private header fields', () => {
@@ -55,6 +55,24 @@ describe('Artifact exact kind hints', () => {
     expect(ArtifactKindWriteBatchResponseV1Schema.safeParse({ items: [
       { artifactId: 'retained/2', success: false, error: 'version-mismatch', currentHeader: 'private' },
     ] }).success).toBe(false);
+  });
+  it('labels a legacy row once: an already-classified approval row without a known state is not rewritten', () => {
+    const approval = { kind: 'approval_request.v1', approvalStatus: 'executed', sessionId: 's1' };
+    expect(deriveArtifactKindWriteItemV1({ artifactId: 'a', header: { kind: 'prompt_doc.v2' }, headerVersion: 3 }))
+      .toEqual({ artifactId: 'a', kind: 'v1:prompt:prompt_doc.v2', expectedHeaderVersion: 3 });
+    expect(deriveArtifactKindWriteItemV1({ artifactId: 'a', header: approval, headerVersion: 1, storedKindClassified: true }))
+      .toMatchObject({ approvalState: 'executed', approvalSessionId: 's1' });
+    expect(deriveArtifactKindWriteItemV1({ artifactId: 'a', header: { kind: 'approval_request.v1' }, headerVersion: 1, storedKindClassified: true })).toBeUndefined();
+    expect(deriveArtifactKindWriteItemV1({ artifactId: 'a', header: { kind: 'approval_request.v1' }, headerVersion: 1 })).toBeDefined();
+  });
+  it('writes framed labels in order and stops on a refused or malformed batch', async () => {
+    const items = [{ artifactId: 'a', kind: 'v1:other:', expectedHeaderVersion: 1 }];
+    const answer = (data: unknown, status = 200) => async () => ({ status, data });
+    expect(await writeArtifactKindBatchesV1([], answer(null))).toBe('written');
+    expect(await writeArtifactKindBatchesV1(items, answer({ items: [{ artifactId: 'a', success: true }] }))).toBe('written');
+    expect(await writeArtifactKindBatchesV1(items, answer({ items: [{ artifactId: 'a', success: false, error: 'version-mismatch' }] }))).toBe('write_refused');
+    expect(await writeArtifactKindBatchesV1(items, answer({ items: [] }))).toBe('write_unavailable');
+    expect(await writeArtifactKindBatchesV1(items, answer({ error: 'not_found' }, 404))).toBe('write_unavailable');
   });
   it('keeps exact header kinds independent of coarse bundle priority and admits legacy writes', () => {
     expect(deriveArtifactKindV1({ kind: 'prompt_bundle.v2', bundleSchemaId: 'skills.skill_md_v1', title: 'Private' }))

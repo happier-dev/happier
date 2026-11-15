@@ -1,6 +1,6 @@
 import { z } from '../zodRuntimePolicy.js';
 import { createServerHttpRequestBodyItemBudgetV1 } from '../server/http/requestBodyBoundsV1.js';
-import { ApprovalArtifactQueryHintsV1Schema } from '../approvals/approvalArtifactKindV1.js';
+import { ApprovalArtifactQueryHintsV1Schema, deriveApprovalArtifactQueryHintsV1, isApprovalArtifactKindV1 } from '../approvals/approvalArtifactKindV1.js';
 
 /** Plaintext search hint only; access and content admission still open the private header. */
 export const ArtifactCoarseKindV1Schema = z.enum(['skill', 'prompt', 'plugin_ui', 'work_board', 'widget_area_layout', 'widget_definition', 'widget_layout_fragment', 'other']);
@@ -72,6 +72,36 @@ export function frameArtifactKindWriteBatchesV1(items: readonly ArtifactKindWrit
   }
   if (current.items.length > 0) batches.push(current);
   return batches;
+}
+
+/**
+ * The owner key holder's label for one opened legacy header. `storedKindClassified`
+ * (when the reader knows it) skips rows a write would leave unclassified, so a
+ * repeated read never rewrites the same row.
+ */
+export function deriveArtifactKindWriteItemV1(row: Readonly<{ artifactId: string; header: Readonly<Record<string, unknown>>;
+  headerVersion: number; storedKindClassified?: boolean }>): ArtifactKindWriteBatchInputV1['items'][number] | undefined {
+  const kind = tryDeriveArtifactStoredKindV1(row.header);
+  if (kind === undefined) return undefined;
+  const approval = isApprovalArtifactKindV1(row.header.kind) ? deriveApprovalArtifactQueryHintsV1(row.header) : undefined;
+  if (row.storedKindClassified && approval?.approvalState == null) return undefined;
+  return { artifactId: row.artifactId, kind, expectedHeaderVersion: row.headerVersion, ...approval };
+}
+
+/** Posts framed labels through the batch route; any refused or malformed batch stops the pass. */
+export async function writeArtifactKindBatchesV1(items: readonly ArtifactKindWriteBatchInputV1['items'][number][],
+  post: (input: ArtifactKindWriteBatchInputV1) => Promise<Readonly<{ status: number; data: unknown }>>,
+  signal?: AbortSignal): Promise<'written' | 'retired' | 'write_unavailable' | 'write_refused'> {
+  for (const input of frameArtifactKindWriteBatchesV1(items)) {
+    if (signal?.aborted) return 'retired';
+    const response = await post(input);
+    if (signal?.aborted) return 'retired';
+    const result = ArtifactKindWriteBatchResponseV1Schema.safeParse(response.data);
+    if (response.status < 200 || response.status >= 300 || !result.success || result.data.items.length !== input.items.length
+      || result.data.items.some((item, index) => item.artifactId !== input.items[index]?.artifactId)) return 'write_unavailable';
+    if (result.data.items.some(item => !item.success)) return 'write_refused';
+  }
+  return 'written';
 }
 
 export function encodeArtifactKindV1(value: ArtifactKindV1): string {
