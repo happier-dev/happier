@@ -2,7 +2,8 @@ import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createSessionMessagesFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
 import { getStorage } from '@/sync/domains/state/storage';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
@@ -125,6 +126,38 @@ describe('ActivityLocalNotificationRuntime settings subscriptions', () => {
 
         expect(updateCount).toBe(0);
     });
+    it('does not rerender while a Session streams a reply', async () => {
+        const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
+        const session = createSessionFixture({ id: 'session-streaming', active: true });
+        const transcriptAt = (text: string, messagesVersion: number) => createSessionMessagesFixture({
+            messageIdsOldestFirst: ['reply'],
+            messagesById: { reply: { kind: 'agent-text', id: 'reply', localId: null, createdAt: 1_000, text } },
+            messagesVersion,
+        });
+        getStorage().setState({ sessions: { [session.id]: session }, sessionMessages: { [session.id]: transcriptAt('', 1) } });
+        let updateCount = 0;
+
+        await renderScreen(
+            <React.Profiler
+                id="activity-local-notification-runtime"
+                onRender={(_, phase) => {
+                    if (phase === 'update') updateCount += 1;
+                }}
+            >
+                <ActivityLocalNotificationRuntime />
+            </React.Profiler>,
+        );
+
+        // Three streamed deltas of one reply: the transcript moves, no notification fact does.
+        for (const [index, text] of ['word0 ', 'word0 word1 ', 'word0 word1 word2 '].entries()) {
+            await act(async () => {
+                getStorage().setState({ sessionMessages: { [session.id]: transcriptAt(text, index + 2) } });
+            });
+        }
+
+        expect(updateCount).toBe(0);
+    });
+
     // The closed-app `session_changed` wake exists to hydrate the woken Home so
     // this runtime can present its Activity notification, and this runtime
     // mounts on every platform. Reconciling the registration from here — with

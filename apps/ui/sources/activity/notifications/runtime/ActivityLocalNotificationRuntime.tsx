@@ -1,5 +1,5 @@
 import { usePresentedAgentRequestSettlement } from './usePresentedAgentRequestSettlement';
-import { useActivityAttentionSource } from '@/activity/source/useActivityAttentionSource';
+import { useActivityAttentionSummarySource } from '@/activity/source/useActivityAttentionSource';
 import * as React from 'react';
 
 import { Platform } from 'react-native';
@@ -177,7 +177,9 @@ function SupportedActivityLocalNotificationRuntime(): React.ReactElement | null 
     useSessionRecordingVisibility();
     const reconcilePresentedRequests = usePresentedAgentRequestSettlement();
     const localSettings = useActivityLocalNotificationLocalSettings();
-    const audienceSource = useActivityAttentionSource();
+    // Always mounted: it reads audiences and Home currentness, never transcripts (an alert reads its one
+    // committed message from the store when it fires), so a streamed reply does not render it.
+    const audienceSource = useActivityAttentionSummarySource();
     const reminderServerIds = React.useMemo(() => [...audienceSource.audienceScopes.keys()], [audienceSource.audienceScopes]);
     const resolveAccountSettings = useExactHomeAccountSettings(audienceSource.audienceScopes);
     // A clicked browser notification opens its Session through the shared Home switch.
