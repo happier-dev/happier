@@ -22,10 +22,10 @@
  */
 export function createGuardedRuntimeView<T extends object>(params: Readonly<{
     owner: T;
-    guard(value: unknown): unknown;
+    guard(value: unknown, property: PropertyKey): unknown;
 }>): T {
     const readGuarded = (property: PropertyKey): unknown => params.guard(
-        Reflect.get(params.owner, property, params.owner),
+        Reflect.get(params.owner, property, params.owner), property,
     );
 
     return new Proxy({} as T, {
