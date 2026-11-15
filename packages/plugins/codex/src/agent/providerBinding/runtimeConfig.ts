@@ -15,13 +15,20 @@ export function buildCodexNativeUpstreamProvider(baseUrl: string) {
     requires_openai_auth: false, supports_websockets: false } as const;
 }
 
+/** ChatGPT Account apps do not belong to an explicitly selected upstream. */
+export function buildCodexNativeUpstreamConfig(
+  config: CodexProviderBindingEngineConfigV1 | null,
+): Record<string, CodexProviderBindingEngineConfigV1['config'][string] | boolean> {
+  return config ? { ...config.config, 'features.apps': false } : {};
+}
+
 /** Config overrides contain environment references, never credential values. */
 export function codexNativeUpstreamConfigOverrides(environment: Readonly<Record<string, string | undefined>>, modelId?: string): string[] {
   const config = readCodexNativeUpstreamConfig(environment);
   if (!config) return [];
   return [...(modelId && modelId !== 'default' ? [`model=${JSON.stringify(modelId)}`] : []),
-    `model_provider=${JSON.stringify(config.modelProvider)}`, ...Object.entries(config.config).flatMap(([path, value]) =>
-    typeof value === 'string' || typeof value === 'number' ? [`${path}=${JSON.stringify(value)}`]
+    `model_provider=${JSON.stringify(config.modelProvider)}`, ...Object.entries(buildCodexNativeUpstreamConfig(config)).flatMap(([path, value]) =>
+    typeof value !== 'object' ? [`${path}=${JSON.stringify(value)}`]
       : Object.entries(value).map(([key, field]) => `${path}.${key}=${JSON.stringify(field)}`))];
 }
 

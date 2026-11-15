@@ -170,7 +170,7 @@ import { handleTokenUsageNotification, type CodexTokenUsageRuntimeObservation } 
 import { buildCodexAppServerTokenCountObservationInput } from '../../usage/tokenCountMessage.js';
 import { isCodexRequestUsageIdentityContradicted, resolveCodexRequestUsageAttribution } from './requestUsageAttribution.js';
 import type { CodexProviderBindingEngineConfigV1 } from '../../providerBinding/runtimeConfig.js';
-import { CODEX_NATIVE_UPSTREAM_CONFIG_ENV } from '../../providerBinding/runtimeConfig.js';
+import { buildCodexNativeUpstreamConfig, CODEX_NATIVE_UPSTREAM_CONFIG_ENV } from '../../providerBinding/runtimeConfig.js';
 import { createCodexAppServerRealtimeConversation } from './realtime.js';
 import { registerCodexAppServerInteractionHandlers } from './interactions.js';
 
@@ -2686,7 +2686,7 @@ export function createCodexAppServerRuntime(
     });
     const effectiveReasoningEffort = providerDisablesReasoning ? 'none' : currentReasoningEffort;
     const reasoningConfig = buildThreadConfigOverrideParams(effectiveReasoningEffort).config ?? {};
-    const providerConfig = params.initialProviderBinding?.config ?? {};
+    const providerConfig = buildCodexNativeUpstreamConfig(params.initialProviderBinding ?? null);
     const threadConfig = {
       ...reasoningConfig,
       ...providerConfig,

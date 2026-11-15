@@ -1,6 +1,37 @@
 import { describe, expect, it } from 'vitest';
 
-import { CodexProviderBindingEngineConfigV1Schema } from './runtimeConfig.js';
+import {
+  buildCodexNativeUpstreamProvider,
+  CODEX_NATIVE_UPSTREAM_CONFIG_ENV,
+  CodexProviderBindingEngineConfigV1Schema,
+  codexNativeUpstreamConfigOverrides,
+} from './runtimeConfig.js';
+
+describe('Codex upstream launch config', () => {
+  it('excludes inherited ChatGPT apps from a selected custom endpoint', () => {
+    const baseUrl = 'https://gateway.example/v1';
+    const modelProvider = `happier_${'a'.repeat(32)}`;
+    const overrides = codexNativeUpstreamConfigOverrides({
+      [CODEX_NATIVE_UPSTREAM_CONFIG_ENV]: JSON.stringify({
+        v: 1, modelProvider,
+        config: { [`model_providers.${modelProvider}`]: buildCodexNativeUpstreamProvider(baseUrl) },
+      }),
+    });
+
+    expect(overrides).toContain('features.apps=false');
+    expect(overrides).toContain(`model_providers.${modelProvider}.base_url=${JSON.stringify(baseUrl)}`);
+  });
+
+  it('also excludes apps for a reserved local provider', () => {
+    expect(codexNativeUpstreamConfigOverrides({
+      [CODEX_NATIVE_UPSTREAM_CONFIG_ENV]: JSON.stringify({ v: 1, modelProvider: 'ollama', config: {} }),
+    })).toContain('features.apps=false');
+  });
+
+  it('retains native OpenAI account configuration when no upstream is selected', () => {
+    expect(codexNativeUpstreamConfigOverrides({})).toEqual([]);
+  });
+});
 
 const custom = {
   v: 1,

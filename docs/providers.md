@@ -2462,6 +2462,16 @@ a namespace as a dotted function name. Other namespaces retain their protocol
 shape; the dispatcher gains no alias. The codec is installed after SDK plugin
 initialization and before the managed listener starts.
 
+In 0.3 development, explicitly selected Codex upstreams disable the native
+ChatGPT Account apps server (`features.apps=false`). The Codex provider-config
+owner applies this to both per-thread app-server config and native/ACP launch
+overrides, including gateway families, selected API keys and local providers.
+The native OpenAI Account path keeps its own app configuration. Session-selected
+MCP servers and Happier Actions keep their existing exposure policy. Codex
+0.162.1 defers MCP tools only when the model metadata supports tool search;
+unknown custom models use eager schemas, and its removed tool-search feature
+flags cannot enable deferral.
+
 The managed-family owner is the plugin's
 `src/provider/managedContract.ts`. Its executable rows generate Go executor descriptors,
 registration seeds and static catalogs in the same pass; Provider contributions

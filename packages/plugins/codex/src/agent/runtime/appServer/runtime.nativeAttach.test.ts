@@ -721,6 +721,15 @@ describe('native Codex attachment preparation', () => {
     },
   );
 
+  it.each(['create', 'resume'] as const)('excludes inherited ChatGPT apps from a custom-provider %s Session', async kind => {
+    await withFixture(async ({ runtime, openConfiguredSession, requests }) => {
+      if (kind === 'resume') await runtime.prepareProviderCliAttach();
+      await openConfiguredSession(kind === 'resume' ? 'fresh-thread' : undefined);
+      const request = requests.findLast(row => row.method === (kind === 'resume' ? 'thread/resume' : 'thread/start'));
+      expect(request?.params.config).toMatchObject({ 'features.apps': false });
+    }, { providerBinding: codexNativeRetryProviderBinding() });
+  });
+
   it('preserves native connection retry policy for interactive Sessions', async () => {
     const logger = { debug: vi.fn(), warn: vi.fn() };
     await withFixture(
