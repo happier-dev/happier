@@ -12,7 +12,7 @@ import { collectExternalRuntimeDependencies, isInternalWorkspacePackageName, res
  * Package compilation also uses this closure's declaration-only projection
  * for development/peer inputs, without treating their JS tooling as runtime. */
 export function readSourceRuntimeDependencyIdentity({ imports: runtimeImports,
-  declarationsOnly = false, identityPathFor = path => path, signal }) {
+  declarationsOnly = false, identityPathFor = path => path, signal, onPackage }) {
   const hash = createHash('sha256');
   const visited = new Set();
   const entries = directory => existsSync(directory)
@@ -39,9 +39,10 @@ export function readSourceRuntimeDependencyIdentity({ imports: runtimeImports,
       else if (info.isFile() && (!declarationsOnly || /\.(?:ts|tsx|mts|cts|json)$/.test(entry.name))) file(child, childIdentityPath);
     }
   };
-  const installedPackage = (name, path, logicalPath = name) => {
+  const installedPackage = (name, path, logicalPath = name, resolveFrom) => {
     if (isInternalWorkspacePackageName(name)) return;
     const physical = realpathSync(path);
+    onPackage?.({ name, packageDir: physical, resolveFrom });
     // Runtime consumes physical topology. Declaration inputs use logical edges:
     // a pnpm JS-only patch can relocate an otherwise identical type package.
     hash.update(JSON.stringify(declarationsOnly ? [logicalPath] : [identityPathFor(path), identityPathFor(physical)]));
@@ -61,7 +62,7 @@ export function readSourceRuntimeDependencyIdentity({ imports: runtimeImports,
         hash.update(JSON.stringify([declarationsOnly ? logicalPath : identityPathFor(physical), dependency.name, 'absent']));
         continue;
       }
-      installedPackage(dependency.name, installed.packageDir, join(logicalPath, 'node_modules', dependency.name));
+      installedPackage(dependency.name, installed.packageDir, join(logicalPath, 'node_modules', dependency.name), packageJsonPath);
     }
 
   };
@@ -78,7 +79,7 @@ export function readSourceRuntimeDependencyIdentity({ imports: runtimeImports,
         hash.update(JSON.stringify([identityPathFor(resolveFrom), path, 'absent']));
         continue;
       }
-      installedPackage(name, installed.packageDir, `${identityPathFor(resolveFrom)}:${path}`);
+      installedPackage(name, installed.packageDir, `${identityPathFor(resolveFrom)}:${path}`, resolveFrom);
       continue;
     }
     // A removed import must refuse rather than accidentally inventorying an
@@ -100,7 +101,7 @@ export function readSourceRuntimeDependencyIdentity({ imports: runtimeImports,
       root = dirname(root);
     }
     if (!manifest?.name) file(path);
-    else installedPackage(manifest.name, root);
+    else installedPackage(manifest.name, root, manifest.name, resolveFrom);
   }
   return hash.digest('hex');
 }

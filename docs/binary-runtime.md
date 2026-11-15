@@ -1070,7 +1070,17 @@ Source daemon command-load probes share their enclosing preparation or recovery
 request's cancellation and add no separate default deadline. Installed CLI dist
 integrity checks retain their existing timeout contract.
 
-Retained source CLI/daemon readiness checks the installed dependency publication
+In current 0.3 development, revision-pinned and source-snapshot daemon bundles
+copy their emitted external dependency closure into the bundle, including runtime
+and peer dependencies. Packages are copied once per physical installed package;
+version and peer edges resolve within the capture. This closure contributes to
+the bundle identity. Agent children and plugin/runner entries therefore load
+captured first-party code and captured external packages. Shared checkout source
+or dependency publications cannot refuse a new Session on these bundles; an
+explicit reload selects a replacement. Existing bundles need one reload to adopt
+this capture behavior.
+
+Live source-development CLI/daemon readiness checks the installed dependency publication
 captured in `source-bundle.json` before probing or launching its selected graph.
 In current 0.3 development, new daemon captures also record the installed package
 closure selected by their emitted external imports, including executable sidecars.

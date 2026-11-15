@@ -10129,10 +10129,14 @@ payloads remain independently reusable daemon support. JavaScript sidecars and
 source-derived plugin failure diagnostics remain code-owned; linking static
 support preserves those diagnostics. The daemon manifest owns that support reference.
 
-Retained development exports borrow host dependencies through bare Node imports;
+Live source-development exports borrow host dependencies through bare Node imports;
 the source emitter bundles importer-local differences instead of retaining
-absolute installed-file paths. Plugin entries use the same host lookup tree as
-shared chunks, including after nested dependencies move to the checkout root.
+absolute installed-file paths. Revision-pinned and source-snapshot daemon bundles
+copy the external runtime/peer closure through the same dependency inventory owner.
+Plugin entries, shared chunks and fresh Agent children resolve those imports inside
+the bundle. Shared checkout movement cannot revoke their launch admission; live
+source-development exports retain the installed-publication guard. See
+[binary runtime](binary-runtime.md) for capture and reload behavior.
 
 Public npm/SDK publication is separate: CommonJS/ESM exports, checked declarations
 and their package-build admission/locks remain required. Native emission is not a

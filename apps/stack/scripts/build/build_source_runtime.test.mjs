@@ -147,7 +147,8 @@ test('source launch waits for an active dependency writer, loads its bundled gua
   } finally { releaseCancelled(); await cancelledWriter; }
 });
 
-test('source CLI launches across unrelated dependency refreshes and refuses changed transitive runtime inputs', async t => {
+for (const pinned of [false, 'snapshot', 'revision']) {
+test(`${pinned || 'source'} CLI launches across unrelated dependency refreshes and binds changed transitive runtime inputs to its loaded closure`, async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-cli-dependency-closure-', registerCleanup: false });
   t.after(async () => { await makeFixtureWritable(fixture.root); await fixture.cleanup(); });
   const repoDir = await createReloadDaemonRepo(fixture,
@@ -180,7 +181,17 @@ test('source CLI launches across unrelated dependency refreshes and refuses chan
   const native = process.platform === 'linux' ? await installSourceAdmissionFixture(fixture.root) : null;
   const env = { ...process.env, ...native?.env, HAPPIER_STACK_HOME_DIR: fixture.path('home') };
   const build = native?.build ?? buildSourceRuntimeBundle;
-  const retained = await build({ repoDir, stackBaseDir: fixture.path('stacks/consumer'), component: 'daemon', env });
+  let sourceRevision;
+  if (pinned === 'revision') {
+    const git = (...args) => promisify(execFile)('git', ['-C', repoDir, ...args]);
+    await writeFile(join(repoDir, '.gitignore'), 'node_modules/\n');
+    await git('init', '--quiet');
+    await git('add', '.');
+    await git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '--quiet', '-m', 'fixture');
+    sourceRevision = { rev: (await git('rev-parse', 'HEAD')).stdout.trim() };
+  }
+  const retained = await build({ repoDir, stackBaseDir: fixture.path('stacks/consumer'), component: 'daemon', sourceRevision,
+    env: { ...env, ...(pinned === 'snapshot' ? { HAPPIER_STACK_RUNTIME_MODE: 'source-snapshot' } : {}) } });
   assert.deepEqual(createRequire(import.meta.url)(join(retained.cliDir, 'scripts/claude_local_launcher.cjs')),
     { retained: true }, 'relative sidecar imports load from the retained bundle');
   const launch = async () => {
@@ -212,9 +223,19 @@ test('source CLI launches across unrelated dependency refreshes and refuses chan
   assert.deepEqual(await bundledCheck(), { current: true }, 'the emitted guard must load the real installed-input owner');
   await writeFile(join(peer, 'index.cjs'), 'exports.value = 2;');
   await writeFile(retained.dependencyPublication.markerPath, JSON.stringify({ identity: 'runtime-leaf-refresh' }));
-  await assert.rejects(launch(), { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', phase: 'dependencies', retryable: false });
-  assert.deepEqual(await bundledCheck(), { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', phase: 'dependencies', retryable: false });
+  if (pinned) {
+    assert.equal((await readdir(join(retained.cliDir, '../../runtime-dependencies'))).length, 3,
+      'capture work is proportional to distinct physical runtime packages');
+    await rm(join(repoDir, 'apps/cli/node_modules'), { recursive: true, force: true });
+    await rm(join(repoDir, 'node_modules'), { recursive: true, force: true });
+    assert.equal(await launch(), '1', 'a new child loads the captured transitive dependency after the shared installed tree is removed');
+    assert.deepEqual(await bundledCheck(), { current: true });
+  } else {
+    await assert.rejects(launch(), { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', phase: 'dependencies', retryable: false });
+    assert.deepEqual(await bundledCheck(), { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', phase: 'dependencies', retryable: false });
+  }
 });
+}
 
 for (const restart of [false, true, 'bootstrap']) {
 test(`dev daemon ${restart === 'bootstrap' ? 'bootstrap' : restart ? 'restart' : 'startup'} prepares current dependencies instead of refusing a stale retained generation`, async t => {

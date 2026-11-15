@@ -1,3 +1,4 @@
+import { captureRuntimeDependencies } from './captured_runtime_dependencies.mjs';
 import { removeOwnedDirectorySync } from '../utils/fs/fs.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, renameSync, statSync } from 'node:fs';
@@ -858,6 +859,10 @@ async function readCompletedProducerComponents({ repoDir, stackBaseDir, componen
       const record = await withSourceBundlePublicationCustody({ bundleRoot, signal, operation: 'producer-record' },
         () => readOptionalJson(join(outputDir, 'source-bundle.json')));
       if (record?.inputIdentity !== candidate.inputIdentity || record?.reuseFingerprint !== candidate.reuseFingerprint) break;
+      // A legacy linked product cannot satisfy a pinned capture, even when
+      // its authored revision is equal. The producer must materialize it once.
+      if (descriptor.component === 'daemon' && (revision || env.HAPPIER_STACK_RUNTIME_MODE === 'source-snapshot')
+        && record.runtimeDependencyClosure?.captured !== true) break;
       // Revision builds never adopt a dirty-checkout capture; the latest built
       // revision is never an overlay build.
       if (revision && !captureFingerprints && (exactRevision ? !sameSourceRevision(record.sourceCapture, revision)
@@ -1336,6 +1341,7 @@ async function consumeSourceRuntimeBuildInputs({ repoDir, outputDir, component, 
   process.once('SIGTERM', interrupt);
   try {
     const built = await emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles: captured.files, guestPayloadTargets,
+      captureDependencies: Boolean(captured.revision) || env.HAPPIER_STACK_RUNTIME_MODE === 'source-snapshot',
       outputDir, component, serverComponent, dbProvider, retainedPluginUiInventoryPath, retainedRuntime, projectDir, runtimeDir, manifest, requireFromProject, esbuild, env, signal });
     if (guestPayloadTargets) {
       built.guestPayload = await buildSourceGuestPayload({ repoDir, sourceRepoDir, outputDir, runtimeDir,
@@ -1420,7 +1426,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   }
 }
 
-async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, guestPayloadTargets, outputDir, component, serverComponent, dbProvider, retainedPluginUiInventoryPath, retainedRuntime,
+async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, guestPayloadTargets, captureDependencies, outputDir, component, serverComponent, dbProvider, retainedPluginUiInventoryPath, retainedRuntime,
   projectDir, runtimeDir, manifest, requireFromProject, esbuild, env, signal }) {
   let phaseStarted = performance.now();
   let activePhase = 'input-digests';
@@ -1648,7 +1654,7 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
     for (const scope of ['.prisma', '@prisma']) {
       await linkInstalledDirectory(join(outputDir, 'node_modules', scope), join(runtimeDir, 'node_modules', scope));
     }
-  } else {
+  } else if (!captureDependencies) {
     await linkInstalledDirectory(join(sourceRepoDir, 'node_modules'), join(outputDir, 'node_modules'));
     await linkInstalledDirectory(join(installedProjectDir, 'node_modules'), join(runtimeDir, 'node_modules'));
     // Plugin entries live outside apps/cli, but externalize against that same
@@ -1791,16 +1797,6 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
     .filter((item) => item.external && (item.path.startsWith('@happier-dev/') || workspacePackages.has(packageNameOfSpecifier(item.path))));
   if (externalFirstParty.length) throw new Error(`Source runtime left first-party code external: ${externalFirstParty.map((item) => item.path).join(', ')}`);
   await writeFile(join(runtimeDir, 'metafile.json'), JSON.stringify(result.metafile));
-  const hash = createHash('sha256');
-  for (const absolute of retainedCodeFiles.sort()) {
-    hash.update(relative(runtimeDir, absolute));
-    hash.update(await readFile(absolute));
-  }
-  // Native source changes select a new identity even when the compiler emits
-  // identical bytes (for example after an input-only Rust edit).
-  if (irohInputDigest) hash.update(irohInputDigest);
-  const identity = hash.digest('hex').slice(0, 16);
-  const entrypoint = join(runtimeDir, component === 'daemon' ? 'src/index.mjs' : 'sources/main.mjs');
   // Only installed external imports remain mutable after source emission. Keep
   // the full installation publication for finite build/reload admission, while
   // launch demand compares the closure this retained CLI actually imports.
@@ -1812,8 +1808,20 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
       const entry = { path: item.path, resolveFrom: join(sourceRepoDir, 'apps/cli/package.json') };
       return [JSON.stringify(entry), entry];
     })).values()] : null;
-  const runtimeDependencyClosure = runtimeImports ? { imports: runtimeImports,
-    identity: readSourceRuntimeDependencyIdentity({ imports: runtimeImports, signal }) } : null;
+  const runtimeDependencyClosure = runtimeImports ? (captureDependencies
+    ? captureRuntimeDependencies({ imports: runtimeImports, outputDir, sourceRepoDir, signal })
+    : { imports: runtimeImports, identity: readSourceRuntimeDependencyIdentity({ imports: runtimeImports, signal }) }) : null;
+  const hash = createHash('sha256');
+  for (const absolute of retainedCodeFiles.sort()) {
+    hash.update(relative(runtimeDir, absolute));
+    hash.update(await readFile(absolute));
+  }
+  // Native source changes select a new identity even when the compiler emits
+  // identical bytes (for example after an input-only Rust edit).
+  if (irohInputDigest) hash.update(irohInputDigest);
+  if (runtimeDependencyClosure?.captured) hash.update(runtimeDependencyClosure.identity);
+  const identity = hash.digest('hex').slice(0, 16);
+  const entrypoint = join(runtimeDir, component === 'daemon' ? 'src/index.mjs' : 'sources/main.mjs');
   phase('output-identity');
   return {
     identity, entrypoint, runtimeCommand: entrypoint, args: [], runtimeDir, sourceInputDigests,

@@ -70,6 +70,9 @@ async function checkSourceRuntimeDependenciesCurrent({ entrypoint, record, compo
   try {
     record ??= readOptionalJson(join(resolve(dirname(entrypoint), '../../..'), 'source-bundle.json'));
     if (!record) return;
+    // This closure is copied into the emitted bundle and included in its
+    // identity. Launches do not consume the checkout publication at all.
+    if (record.runtimeDependencyClosure?.captured === true) return;
     const captured = record.dependencyPublication;
     // Older source captures cannot prove their installed-tree binding. An
     // explicit current-source reload publishes the locators with that identity.
