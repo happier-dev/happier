@@ -35,7 +35,8 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { createUiAccountAction } from '@/sync/ops/actions/accountActionDeps';
 import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
-import { SessionSnapshotReadError } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
+import { readSessionSnapshotForAuthority, SessionSnapshotReadError } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
+import { resolveMachineControlTargetForSessionFromState } from '@/sync/domains/session/resolveMachineTargetForSessionFromState';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { isActionAccountScopeChangedError } from '@/sync/domains/scope/actionAccountScopeError';
 import { notifyExecutionRunActivity } from '@/sync/runtime/executionRuns/executionRunActivityBus';
@@ -282,12 +283,31 @@ export async function sessionExecutionRunStart(
         signal?: AbortSignal; onIssued?: () => void }>,
 ): Promise<SessionExecutionRunStartResult> {
     const protectedSelection = requiresProviderSafeExecutionRunStartRpc(request, true);
+    let account: LazyActionAccountContext | undefined;
     try {
         const serverId = resolveExecutionRunSessionServerId(sessionId, opts?.serverId);
         if (!serverId) return createExecutionRunHomeUnavailableResult();
         const expectedMachineId = opts?.expectedMachineId?.trim() || null;
         if (expectedMachineId) {
-            const currentTarget = readMachineControlTargetForSession({ serverId, sessionId });
+            let currentTarget = readMachineControlTargetForSession({ serverId, sessionId });
+            // A cold Action need not have opened the Session in the UI. Read its
+            // accepted metadata through the exact-Home reader, without a new cache.
+            if (!currentTarget && !storage.getState().sessions[sessionId]) {
+                account = await captureLazyActionAccountContext(serverId, opts?.signal);
+                account.assertCurrent();
+                const captured = account;
+                const { session } = await runWithServerRequestAuthorityForServerAccountScope({
+                    scope: opts?.scope ?? account.accountLifetime.scope, activeRequest: account.request, signal: opts?.signal,
+                }, authority => readSessionSnapshotForAuthority({ authority, sessionId, includeTurns: false,
+                    isCurrent: captured.accountLifetime.isCurrent, signal: opts?.signal }));
+                account.assertCurrent();
+                opts?.signal?.throwIfAborted();
+                if (session.active === false) return createInactiveSessionRpcUnavailableResult();
+                const state = storage.getState();
+                currentTarget = resolveMachineControlTargetForSessionFromState({ ...state,
+                    sessions: { [sessionId]: { ...session, serverId } },
+                }, { serverId, sessionId });
+            }
             if (currentTarget?.machineId !== expectedMachineId) {
                 return {
                     ok: false,
@@ -302,6 +322,7 @@ export async function sessionExecutionRunStart(
         const response = await executionRunSessionRpc<unknown, ExecutionRunStartRequest | ExecutionRunEnsureOrStartRequest>({
             sessionId,
             serverId,
+            ...(account ? { scope: account.accountLifetime.scope } : {}),
             ...(opts?.scope ? { scope: opts.scope } : {}),
             method: protectedSelection ? SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1 : SESSION_RPC_METHODS.EXECUTION_RUN_START,
             payload: protectedSelection ? { runId: null, resume: false, start: request } : request,
@@ -324,9 +345,11 @@ export async function sessionExecutionRunStart(
         return {
             ok: false,
             error: error instanceof Error ? error.message : 'Unknown error',
-            errorCode: readRpcErrorCode(error),
+            errorCode: error instanceof SessionSnapshotReadError ? error.errorCode : readRpcErrorCode(error),
             ...(details.success ? { details: details.data } : {}),
         };
+    } finally {
+        account?.dispose();
     }
 }
 
