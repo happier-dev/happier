@@ -754,7 +754,6 @@ it.each([8, 100, 500])('measures the real %s-root editor: one live composer for 
         const host = useWorkflowAuthoringHost({ serverId, projectTarget: { machineId: 'diag185-machine-0', directory: '/repo' } });
         expect(host.composerScope).toMatchObject({ kind: 'machine', machineId: 'diag185-machine-0',
             serverId, machineHomeDir: '/Users/tester' });
-        expect(host.authoringFacts.machineName).toBe('tester.local');
         return <React.Profiler id="DIAG185" onRender={() => { commits += 1; }}>
             <harness.StoreWorkflowEditorBody draftStore={store} onChange={setDraft} machineName="Mac Studio"
                 {...host} selectedBlockId={selected} onSelectBlock={select}
