@@ -134,6 +134,27 @@ class ObservedSetupPty implements PtyProcess {
 }
 
 describe('accepted Project Service declaration starter', () => {
+    it('starts the same declaration again after its original process is stopped', async () => {
+        const h = await fixture();
+        const review = await h.selectStart();
+        const request = { ...h.request, expectedEffectDigest: review.reviewedEffectDigest };
+        expect(await h.routes.startTarget!(request, h.ingress, h.context)).toMatchObject({ status: 'succeeded' });
+        const original = h.owner.listProjectServices()[0]!;
+        const actions = createLocalServiceActionRoutes({ machineId: 'machine', projectManagedServices: h.owner,
+            inventoryRegistry: createLocalServiceInventoryRegistry(),
+            verifyConfirmationNonce: request => request.confirmationNonce === createLocalServiceActionConfirmationNonceV1(request) });
+        const stop = { requestId: 'stop-before-start', action: 'stop_managed' as const, force: false,
+            target: { kind: 'managed_service' as const, machineId: 'machine', managedServiceId: original.instanceId,
+                workspaceId: h.workspace.id, declaration: h.request.declaration, cwd: h.root } };
+        expect(await actions.execute({ ...stop, confirmationNonce: createLocalServiceActionConfirmationNonceV1(stop) },
+            { ingress: h.ingress, actionContext: h.context })).toMatchObject({ status: 'succeeded' });
+        expect(original.snapshot().state).toBe('stopped');
+        const restarted = await h.routes.startTarget!(request, h.ingress,
+            { ...h.context, actionRequestId: 'start-after-stop' });
+        expect(restarted).toMatchObject({ status: 'succeeded' });
+        expect(h.owner.listProjectServices().some(service => service.snapshot().state === 'running')).toBe(true);
+    });
+
     it('starts with required Project Saved Secret bindings', async () => {
         const h = await fixture();
         const marker = join(h.targetRoot, 'secret-matched');

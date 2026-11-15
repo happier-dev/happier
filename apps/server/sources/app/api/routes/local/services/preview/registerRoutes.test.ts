@@ -66,8 +66,9 @@ const sharedSession: SessionAccessProjectionRow = {
     id: 'session_1', accountId: 'user_1', account: { status: 'active' }, primaryTeamId: null,
     seq: 0, currentStorageState: 'hosted', acceptedThroughServerSeq: 0,
     materializationPublicationId: null, materializedThroughSourceAt: null, publishedThroughServerSeq: null,
-    shares: [{ id: 'share_1', sharedWithUserId: 'viewer_1', accessLevel: 'view', canApprovePermissions: false }],
-    teamGrants: [], groupGrants: [],
+    grants: [{ id: 'share_1', principalKind: 'account', accountId: 'viewer_1', teamId: null, teamGroupId: null,
+        effectiveAt: new Date(0), accessLevel: 'view', canApprovePermissions: false, requiredByTeamPolicy: false,
+        account: { status: 'active' }, team: null, teamGroup: null }],
 };
 const HOST = 'preview-1.preview.happier.test';
 const DECODED_CRLF_PATH = 'foo\r\nX-Injected: yes\r\n\r\nGET /admin HTTP/1.1';
@@ -426,6 +427,27 @@ describe('local service preview routes', () => {
             expect(machineFindUnique).toHaveBeenCalledTimes(4);
             expect(publicReply.send.mock.calls[0]?.[0]).toMatchObject({ exposure: { serviceTarget: target, mode: 'secret_link' } });
             const exposed = publicReply.send.mock.calls[0]?.[0] as { exposure: { exposureId: string } };
+            if (relay) {
+                const exposure = LocalServicePublicExposureV1Schema.parse(publicReply.send.mock.calls[0]?.[0].exposure);
+                const link = new URL(exposure.publicUrl);
+                const params = { exposureId: exposure.exposureId, '*': '' };
+                const exchange = createReplyStub();
+                const documentRoute = getRouteHandler(app, 'GET', '/v1/local-services/public/:exposureId/*');
+                await documentRoute({ method: 'GET', params, query: Object.fromEntries(link.searchParams),
+                    headers: { host: link.host } }, exchange);
+                expect(exchange.statusCode).toBe(303);
+                const chunks: string[] = [];
+                const document = Object.assign(createReplyStub(), { raw: {
+                    writeHead(statusCode: number) { document.statusCode = statusCode; },
+                    write(bytes: Uint8Array) { chunks.push(new TextDecoder().decode(bytes)); return true; },
+                    end() {},
+                } });
+                await documentRoute({ method: 'GET', params, query: {}, headers: {
+                    host: link.host, cookie: String(exchange.headers['Set-Cookie']).split(';')[0],
+                } }, document);
+                expect(document.statusCode).toBe(200);
+                expect(chunks.join('')).toContain('<html>guest bytes</html>');
+            }
             const wrongPublic = createReplyStub();
             await getRouteHandler(app, 'POST', '/v1/local-services/public')({ userId: 'viewer_1', body: { machineId: resource.machineId,
                 previewId: resource.previewId, serviceTarget: { ...target, managedServiceId: 'another-instance' }, mode: 'secret_link', ttlMs: 60_000,
@@ -457,8 +479,9 @@ describe('local service preview routes', () => {
             // mode consumes a daemon admission per request; a people share is admitted once
             // at its admission URL (public/runtime.ts admitViewer), never on the data plane.
             if (observation === 'retired') {
-                const previousSecret = process.env.HANDY_MASTER_SECRET;
-                process.env.HANDY_MASTER_SECRET = 'route-auth-test-secret';
+                vi.stubEnv('HANDY_MASTER_SECRET', 'route-auth-test-secret');
+                // The database boundary above implements transactions, not a native SQLite connection.
+                vi.stubEnv('HAPPIER_DB_PROVIDER', 'postgres');
                 try {
                     await auth.init();
                     const bearer = await auth.createToken('viewer_1', undefined, { kind: 'account', authority: 'present_user' });
@@ -489,8 +512,7 @@ describe('local service preview routes', () => {
                         runtimes.public.revokeExposure(created.exposure.exposureId, { actorId: 'viewer_1' });
                     }
                 } finally {
-                    if (previousSecret === undefined) delete process.env.HANDY_MASTER_SECRET;
-                    else process.env.HANDY_MASTER_SECRET = previousSecret;
+                    vi.unstubAllEnvs();
                 }
             }
             if (observation === 'retired') {
