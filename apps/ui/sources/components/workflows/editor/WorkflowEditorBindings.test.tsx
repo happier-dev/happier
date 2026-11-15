@@ -25,7 +25,10 @@ vi.mock('socket.io-client', async (importOriginal) => (
     await import('@/dev/testkit/harness/serverAccountConnectionHarness')
 ).createSocketIoClientBoundary(importOriginal));
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
-vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({ translate: (key: string) => key }));
+vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
+    // The How-and-where sentence shows which Agent clause it was given; every other key reads as itself.
+    translate: (key: string, params?: Record<string, unknown>) => key.startsWith('workflows.page.sections.howWhere')
+        ? `${key}|agent=${params?.agent === null ? 'none' : String(params?.agent)}` : key }));
 vi.mock('@react-navigation/native', async () => (await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock());
 // Native/web portals are a platform boundary; retain the real menu and selection logic.
 vi.mock('@/components/ui/popover', async (importOriginal) => {
@@ -128,8 +131,9 @@ describe('workflow editor declared bindings', () => {
             draft={draft} machineName={null} testIDPrefix="label" onChange={() => {}}
             groupDisclosure={new Map([['agent', true]])} />);
         const agent = screen.findByTestId('label-group-agent')!;
+        // The group holds the fields beside the Agent; the Agent itself is on the "How and where it runs" card.
         expect(agent.findAll(node => String(node.type) === 'Text'
-            && node.children.includes('workflows.page.sections.agentTitle'))).toHaveLength(1);
+            && node.children.includes('workflows.page.sections.modelAndPermissionsTitle'))).toHaveLength(1);
     });
     it('offers the chosen Agent\'s connected service in the workflow\'s Agent and model', async () => {
         const claude = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
@@ -278,13 +282,19 @@ describe('workflow editor declared bindings', () => {
         } });
     });
 
-    it('reads an unselected workflow engine honestly in the closed Inspector', async () => {
+    it('reads a workflow that sets nothing as the default in the closed Model and permissions group', async () => {
         const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'empty-engine', name: 'Workflow',
             definition: createWorkflowDefinitionFixture({ defaults: {} }) });
         const screen = await renderScreen(<harness.WorkflowInspector subject={{ kind: 'workflow' }} presentation="pane"
             draft={draft} machineName={null} testIDPrefix="empty" onChange={() => {}} />);
         const header = screen.findByTestId('empty-group-agent-header')!;
-        expect(header.findAll((node) => String(node.type) === 'Text' && node.children.includes('agentInput.agent.unselected'))).not.toHaveLength(0);
+        // The Agent reads on the "How and where it runs" card; this group names only what the workflow sets.
+        expect(header.findAll((node) => String(node.type) === 'Text' && node.children.includes('common.default'))).not.toHaveLength(0);
+        const withPermissions = { ...draft, defaults: { ...draft.defaults, permissionMode: 'plan' as const } };
+        await screen.update(<harness.WorkflowInspector subject={{ kind: 'workflow' }} presentation="pane"
+            draft={withPermissions} machineName={null} testIDPrefix="empty" onChange={() => {}} />);
+        expect(screen.findByTestId('empty-group-agent-header')!.findAll((node) => String(node.type) === 'Text'
+            && node.children.includes('settingsSession.permissions.title'))).not.toHaveLength(0);
     });
     it('reads declared input titles rather than wire keys in a read-only settings pane', async () => {
         const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'builtin', name: 'Built-in',
@@ -293,8 +303,14 @@ describe('workflow editor declared bindings', () => {
                 { name: 'secondOpinion', valueType: 'boolean', required: false },
                 { name: 'customKey', valueType: 'string', required: false },
             ] }) });
-        const screen = await renderScreen(<harness.WorkflowInspector subject={{ kind: 'workflow' }} presentation="pane"
-            documentEditable={false} draft={draft} machineName={null} testIDPrefix="editor" onChange={() => {}} />);
+        // What a run asks for lives on the "How and where it runs" card (owner 2026-11-15).
+        const { WorkflowHowAndWhereCard } = await import('./WorkflowHowAndWhereCard');
+        const { createWorkflowEditorReadable } = await import('./workflowEditorDraftStore');
+        const screen = await renderScreen(<WorkflowHowAndWhereCard draftStore={createWorkflowEditorReadable(draft)} onChange={() => {}}
+            documentEditable={false} showsWorkflowAgent={false} accountLifetime={null} whereRef={React.createRef()}
+            projectTarget={null} machineName={null} projectMachines={undefined} onChangeProjectTarget={undefined}
+            executionTarget={undefined} runAsTargets={undefined} onChangeExecutionTarget={undefined} authoringFacts={undefined}
+            expanded onExpandedChange={() => {}} settingsAnchorRef={React.createRef()} onOpenSettings={() => {}} testIDPrefix="editor" />);
         const text = screen.getTextContent();
         expect(text).toContain('workflows.page.fields.maxRounds');
         expect(text).toContain('workflows.page.fields.secondOpinion');
@@ -504,5 +520,62 @@ describe('workflow editor declared bindings', () => {
         expect(screen.findByTestId('editor-action-plugin-field-topic')).not.toBeNull();
         expect(screen.findByTestId('editor-action-plugin-field-oldField')).not.toBeNull();
         expect(changed).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('How and where it runs sentence (QA-WAVE-1115)', () => {
+    const claude = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
+    const renderCard = async (defaults: Record<string, unknown>, showsWorkflowAgent: boolean) => {
+        const base = buildWorkflowEditorDraftFromDefinition({ draftId: 'sentence', name: 'Workflow', definition });
+        const { WorkflowHowAndWhereCard } = await import('./WorkflowHowAndWhereCard');
+        const { createWorkflowEditorReadable } = await import('./workflowEditorDraftStore');
+        return renderScreen(<WorkflowHowAndWhereCard draftStore={createWorkflowEditorReadable({ ...base, defaults: { ...base.defaults, ...defaults } })}
+            onChange={() => {}} documentEditable showsWorkflowAgent={showsWorkflowAgent} accountLifetime={null} whereRef={React.createRef()}
+            projectTarget={null} machineName={null} projectMachines={undefined} onChangeProjectTarget={undefined}
+            executionTarget={undefined} runAsTargets={undefined} onChangeExecutionTarget={undefined}
+            authoringFacts={{ agentTargets: [{ id: 'agent:happier.agent.claude/claude', label: 'Claude Code', target: claude, agentId: 'claude' }] }}
+            expanded={false} onExpandedChange={() => {}} settingsAnchorRef={React.createRef()} onOpenSettings={() => {}} testIDPrefix="sentence" />);
+    };
+    const summary = (screen: Awaited<ReturnType<typeof renderCard>>) => String(screen.findByTestId('sentence-how-where-summary')?.props.children);
+
+    it('leaves the Agent out until the workflow chooses one, and when no step uses it', async () => {
+        expect(summary(await renderCard({}, true))).toBe('workflows.page.sections.howWhereNoMachineSession|agent=none');
+        expect(summary(await renderCard({ agentTarget: claude }, false))).toBe('workflows.page.sections.howWhereNoMachineSession|agent=none');
+        const chosen = summary(await renderCard({ agentTarget: claude }, true));
+        expect(chosen).not.toContain('agent=none');
+        expect(chosen).not.toContain('agentInput.agent.unselected');
+    });
+});
+
+describe('workflow settings popover, two scopes (owner 2026-11-15)', () => {
+    const claude = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
+    const facts = () => ({ agentTargets: [{ id: 'agent:happier.agent.claude/claude', label: 'Claude Code', target: claude, agentId: 'claude' as const }],
+        connectedServices: { serverId } });
+    const draftWith = (stepExecution: Record<string, unknown> = {}) => {
+        const base = buildWorkflowEditorDraftFromDefinition({ draftId: 'scopes', name: 'Workflow', definition });
+        return { ...base, defaults: { ...base.defaults, agentTarget: claude },
+            blocks: base.blocks.map((block) => block.kind === 'step' ? { ...block, execution: stepExecution } : block) };
+    };
+
+    it('lists every Session field a step inherits in Workflow settings, the tool policy included', async () => {
+        const screen = await renderScreen(<harness.WorkflowInspector subject={{ kind: 'workflow' }} presentation="popover"
+            draft={draftWith()} testIDPrefix="scope" onChange={() => {}}
+            groupDisclosure={new Map([['agent', true]])} authoringFacts={facts()} />);
+        expect(screen.findByTestId('scope-defaults-allowedTools-row')).not.toBeNull();
+        expect(screen.findByTestId('scope-defaults-unlistedTools-row')).not.toBeNull();
+    });
+
+    it('shows a step its Agent and every field in one page, each saying where its value comes from', async () => {
+        const changed = vi.fn();
+        const screen = await renderScreen(<harness.WorkflowInspector subject={{ kind: 'block', blockId: 'analyze' }} presentation="popover"
+            draft={draftWith({ permissionMode: 'plan' })} testIDPrefix="step" onChange={changed} authoringFacts={facts()} />);
+        // No second level: the Agent and its fields sit in the step's settings page.
+        expect(screen.findByTestId('step-agent-row')).toBeNull();
+        expect(screen.findByTestId('step-allowedTools-state')?.props.children).toBe('workflows.page.fromTheWorkflow');
+        expect(screen.findByTestId('step-permissionMode-state')?.props.children).toBe('workflows.page.changedForStep');
+        await screen.pressByTestIdAsync('step-permissionMode-reset');
+        const next = changed.mock.calls.at(-1)?.[0];
+        const step = next.blocks.find((block: { id: string }) => block.id === 'analyze');
+        expect(Object.hasOwn(step.execution ?? {}, 'permissionMode')).toBe(false);
     });
 });

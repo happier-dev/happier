@@ -15,7 +15,6 @@ import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/
 import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
 import { PortableRuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import {
-    WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS,
     type WorkflowSessionAuthoringSelection,
     type WorkflowSessionAuthoringSelectionFieldId,
 } from '@happier-dev/protocol/workflows/workflowV1';
@@ -44,15 +43,6 @@ import type { SessionAuthoringControls } from './useSessionAuthoringControls';
  */
 
 export type SessionAuthoringFieldId = WorkflowSessionAuthoringSelectionFieldId;
-/**
- * The fields a Workflow step lists. The tool policy (`allowedTools`,
- * `unlistedTools`) has its controls here too, but only an unattended recipe
- * host asks for them by name; Workflow lists do not offer it yet.
- */
-export const SESSION_AUTHORING_CONTROL_FIELD_IDS = Object.freeze(
-    WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS.filter((field): field is SessionAuthoringFieldId =>
-        field !== 'allowedTools' && field !== 'unlistedTools'),
-);
 
 /** Option id meaning "no value", kept distinct from "inherit" (absence). */
 export const SESSION_AUTHORING_NONE_OPTION_ID = '__none__';

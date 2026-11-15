@@ -5,7 +5,7 @@ import {
   HappierPressable,
   HAPPIER_PRESS_FEEDBACK_V1,
 } from '@happier-dev/plugin-ui/presentation';
-import { resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
+import { readWorkflowEngineChoiceV1, resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 import { setWorkflowInputs } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { workflowInputToFieldHint } from '@happier-dev/protocol/workflows/workflowV1';
 
@@ -18,6 +18,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { workflowDefaultsChooseAgent } from '@/sync/domains/workflows/workflowAuthoring';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import type { WorkflowAuthoringTarget } from '@/sync/domains/workflows/workflowProjectTarget';
 import { t } from '@/text';
@@ -140,7 +141,7 @@ export function WorkflowHowAndWhereCard(
   );
   const agent = useSessionAuthoringEngineSummary({
     values,
-    engine: defaults.engine,
+    engine: readWorkflowEngineChoiceV1(defaults),
     workflowRoles: roles,
     ...(props.authoringFacts === undefined
       ? {}
@@ -154,6 +155,12 @@ export function WorkflowHowAndWhereCard(
         (machine) => machine.id === props.projectTarget?.machineId,
       )?.metadata?.homeDir ?? null,
   });
+  // The sentence names the workflow's Agent only once one is chosen and a step uses it; it never
+  // quotes the picker's "Choose an agent" placeholder (QA-WAVE-1115).
+  const agentClause =
+    props.showsWorkflowAgent && workflowDefaultsChooseAgent(defaults)
+      ? agent
+      : null;
   const executionTarget = props.executionTarget ?? 'session';
   const background = executionTarget === 'detached_run';
   const summary =
@@ -162,13 +169,13 @@ export function WorkflowHowAndWhereCard(
           background
             ? 'workflows.page.sections.howWhereNoMachineBackground'
             : 'workflows.page.sections.howWhereNoMachineSession',
-          { agent },
+          { agent: agentClause },
         )
       : t(
           background
             ? 'workflows.page.sections.howWhereBackground'
             : 'workflows.page.sections.howWhereSession',
-          { where, agent },
+          { where, agent: agentClause },
         );
   const { onOpenSettings } = props;
   const runsInTabs = React.useMemo(

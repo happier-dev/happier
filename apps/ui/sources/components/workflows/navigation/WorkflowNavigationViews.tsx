@@ -30,20 +30,35 @@ export async function openWorkflowNavigationCustomizer(model: WorkflowNavigation
     Modal.show({ component: DetailNavigationCustomizer, props: workflowNavigationCustomizer(model, 'desktop') });
 }
 
+/**
+ * What the page navigation shows: the phone strip of pages placed on top, the page tabs, or nothing.
+ * The one decision both the navigation and a row that holds it read, so an empty row never keeps its space.
+ */
+function useWorkflowPageNavigationContent(navigation: ReturnType<typeof useWorkflowNavigation>, phone: boolean) {
+    const experience = useSetting('mobileWorkspaceExperienceV1');
+    const { model } = navigation;
+    const placement = useDetailPhonePlacement(model.items, workflowNavigationAddress(model.pageKind, 'phone'), model.pageKind);
+    if (phone && experience === 'cockpit') return placement.topPages.length ? { kind: 'strip' as const, topPages: placement.topPages } : null;
+    return navigation.pages.length <= 1 ? null : { kind: 'tabs' as const };
+}
+
+export function useWorkflowPageNavigationShown(navigation: ReturnType<typeof useWorkflowNavigation>, phone: boolean): boolean {
+    return useWorkflowPageNavigationContent(navigation, phone) !== null;
+}
+
 export const WorkflowPageNavigation = React.memo(function WorkflowPageNavigation(props: Readonly<{
     navigation: ReturnType<typeof useWorkflowNavigation>; phone: boolean; onSelect: (id: string) => void; testIDPrefix: string;
 }>) {
     const { theme } = useUnistyles();
-    const experience = useSetting('mobileWorkspaceExperienceV1');
     const { model, placements } = props.navigation;
-    const phone = useDetailPhonePlacement(model.items, workflowNavigationAddress(model.pageKind, 'phone'), model.pageKind);
-    if (props.phone && experience === 'cockpit') return phone.topPages.length
-        ? <PhonePageStripView tabs={phone.topPages.map(detailNavigationTab)} activeId={model.activeId} onSelect={props.onSelect} testID={props.testIDPrefix} /> : null;
+    const content = useWorkflowPageNavigationContent(props.navigation, props.phone);
+    if (content === null) return null;
+    if (content.kind === 'strip') return <PhonePageStripView tabs={content.topPages.map(detailNavigationTab)}
+        activeId={model.activeId} onSelect={props.onSelect} testID={props.testIDPrefix} />;
     const tab = (item: WorkflowNavigationModel['items'][number]) => ({ id: item.id, label: item.title,
         icon: <Icon name={item.icon} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />,
         disabled: Boolean(item.disabledReason), unavailableReason: item.disabledReason ?? undefined });
     const pages = props.phone ? props.navigation.pages : placements.pinned;
-    if (props.navigation.pages.length <= 1) return null;
     return <SegmentedTabBar presentation="plain" segmentSizing="content" iconPlacement="leading"
         testIDPrefix={props.testIDPrefix} accessibilityLabel={t('navigationPlacement.pageTabsTitle')}
         tabs={pages.map(tab)} activeTabId={model.activeId} onSelectTab={props.onSelect}

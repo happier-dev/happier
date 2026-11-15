@@ -11,6 +11,11 @@ import { Text } from '@/components/ui/text/Text';
 import { WorkflowKindCardLabelTrack } from './WorkflowStepDataEditor';
 import { useWorkflowDocumentGridStyles, WorkflowDocumentGridContext, workflowEditorStyles } from './workflowEditorStyles';
 
+/** A stacked header's first line (mark, title and sentence, actions); other cards keep their single row. */
+function HeaderLine(props: Readonly<{ stacked: boolean; children: React.ReactNode }>): React.ReactElement {
+    return props.stacked ? <View style={workflowEditorStyles.kindCardHeaderLine}>{props.children}</View> : <>{props.children}</>;
+}
+
 /**
  * The editor's one card (lab `.uwe-kind`, `editor-S6`, round 1115 r16): every step — an Agent step,
  * an Action, a Run a workflow step — and the page's first cards ("When it runs", "How and where it
@@ -64,7 +69,11 @@ export function WorkflowKindCard(props: Readonly<{
     // stays; its wider action ("Workflow settings") moves beneath rather than squeezing the title to an
     // ellipsis (MOBILE-FIX H6). A step card's short "Open ›" keeps its place.
     const compactGrid = React.useContext(WorkflowDocumentGridContext) === 'compact';
-    const actionBelow = props.headerAction !== undefined && props.summary !== undefined && compactGrid;
+    // A card whose wide action can move beneath keeps one stacked header at every width, so crossing the
+    // breakpoint only moves the action. The stack is a column, never a wrapped row: iOS measured the
+    // wrapped multi-line sentence short and clipped the action under the card edge (QA-WAVE-1115).
+    const stacksAction = props.headerAction !== undefined && props.summary !== undefined;
+    const actionBelow = stacksAction && compactGrid;
     const caret = disclosure === undefined ? null : (
         <HappierPressable
             testID={`${props.testID}-caret`}
@@ -100,8 +109,9 @@ export function WorkflowKindCard(props: Readonly<{
         <View testID={props.testID} style={[workflowEditorStyles.kindCard, workflowEditorStyles.kindCardPaper, grid.blockCard]}>
             {props.header === false ? null : (
                 <View style={[workflowEditorStyles.kindCardHeader, props.summary === undefined ? null : workflowEditorStyles.kindCardHeaderTall,
-                    actionBelow ? workflowEditorStyles.kindCardHeaderWrapped : null,
+                    stacksAction ? workflowEditorStyles.kindCardHeaderStacked : null,
                     hasBody || hasFoot ? null : workflowEditorStyles.kindCardHeaderAlone]}>
+                    <HeaderLine stacked={stacksAction}>
                     {props.mark === undefined ? null
                         : <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{props.mark}</View>}
                     {disclosure === undefined ? titleBlock : (
@@ -124,6 +134,7 @@ export function WorkflowKindCard(props: Readonly<{
                             {caret}
                         </View>
                     )}
+                    </HeaderLine>
                     {actionBelow ? <View style={workflowEditorStyles.kindCardHeaderActionBelow}>{props.headerAction}</View> : null}
                 </View>
             )}

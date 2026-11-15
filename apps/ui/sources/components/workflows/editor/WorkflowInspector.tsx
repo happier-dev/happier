@@ -1,15 +1,12 @@
 import * as React from 'react';
 import { View } from 'react-native';
 
-import {
-    SessionAuthoringControls,
-    useSessionAuthoringEngineSummary,
-} from '@/components/sessions/authoring/controls/SessionAuthoringControls';
+import { SessionAuthoringControls } from '@/components/sessions/authoring/controls/SessionAuthoringControls';
 import {
     readSessionAuthoringAgentTargetValue,
+    resolveSessionAuthoringFieldTitle,
     retireUnavailableSessionAuthoringRuntimeDescriptor,
     type SessionAuthoringControlFacts,
-    type SessionAuthoringFieldId,
 } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -17,7 +14,6 @@ import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
-import { WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS } from '@happier-dev/protocol/workflows/workflowV1';
 import {
     applyWorkflowDefinitionEditsV1,
     findWorkflowBlock,
@@ -35,13 +31,14 @@ import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEdito
 import type { WorkflowRunAsTarget, WorkflowRunAsTargetKind } from '../run/workflowRunAsTargets';
 import { formatWorkflowContinuitySummary, useWorkflowContinuedSessionLabel, WorkflowContinuityControls } from './WorkflowContinuityControls';
 import { WorkflowFinalOutputEditor } from './WorkflowFinalOutputEditor';
+import { WORKFLOW_SESSION_FIELD_IDS_BESIDE_ENGINE } from './WorkflowStepInspector';
 import { WorkflowRolesEditor } from './WorkflowRolesEditor';
 import { WorkflowBlockOptions, WorkflowSettingsFrame } from './WorkflowBlockOptions';
 import { issuesUnder, NO_DISCLOSURE, WorkflowInspectorGroup } from './workflowInspectorGroup';
 import { workflowEditorStyles } from './workflowEditorStyles';
 import type { WorkflowSessionDrop } from './useWorkflowSessionBinding';
 import { withWorkflowAuthoringEngine, withWorkflowAuthoringEngineFields } from '@/sync/domains/workflows/workflowAuthoringEngineSelection';
-import { resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
+import { readWorkflowEngineChoiceV1, resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 import { WorkflowRecentRuns } from './WorkflowRecentRuns';
 
 /**
@@ -98,12 +95,6 @@ export type WorkflowInspectorProps = Readonly<{
     testIDPrefix: string;
 }>;
 
-/**
- * Workflow settings expose the shared engine picker, the chosen Agent's connected service and Permissions
- * (04 §5.2), the same choices a Session's composer offers (owner 25).
- */
-const WORKFLOW_AGENT_FIELDS: readonly SessionAuthoringFieldId[] = ['agentTarget', 'modelSelection', 'connectedServices', 'permissionMode'];
-
 
 export function WorkflowInspector(props: WorkflowInspectorProps): React.ReactElement | null {
     if (props.subject.kind === 'block') {
@@ -119,8 +110,9 @@ export function WorkflowInspector(props: WorkflowInspectorProps): React.ReactEle
 /**
  * Workflow subject: Workflow settings, the workflow scope of the one settings popover (owner
  * 2026-11-15). Where, what each step runs in, what a run asks for and when it runs are the page's
- * first cards; these are the rest — the workflow's Agent and its Session fields, roles, conversation
- * and workspace, the result and the description — each group a summary until it needs to be open.
+ * first cards; these are the rest — every Session field a step inherits (the same New Session chip
+ * owners a step's Agent page uses), roles, conversation and workspace, the result and the
+ * description — each group a summary until it needs to be open.
  */
 function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElement {
     const { draft, onChange, testIDPrefix } = props;
@@ -131,13 +123,9 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
     const disclosure = props.groupDisclosure ?? NO_DISCLOSURE;
     const groupProps = { disclosure, ...(props.onChangeGroupDisclosure === undefined ? {} : { onChangeDisclosure: props.onChangeGroupDisclosure }) };
 
-    const agentSummary = useSessionAuthoringEngineSummary({
-        engine: draft.defaults.engine,
-        workflowRoles: draft.roles,
-        values: defaultAuthoringValues,
-        ...(props.authoringFacts === undefined ? {} : { facts: props.authoringFacts }),
-    });
-    const agentValueSet = WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS.some((field) => Object.hasOwn(draft.defaults, field));
+    // Closed, the group names what the workflow sets for every step; nothing set reads as the Agent's default.
+    const setModelFields = WORKFLOW_SESSION_FIELD_IDS_BESIDE_ENGINE.filter((field) => Object.hasOwn(draft.defaults, field));
+    const modelSummary = setModelFields.map((field) => resolveSessionAuthoringFieldTitle(field) ?? field).join(' · ') || t('common.default');
 
     const finalOutputLabel = React.useMemo(() => {
         const finalOutput = draft.finalOutput;
@@ -152,20 +140,59 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
         <>
             <WorkflowInspectorGroup
                 {...groupProps}
+                groupId="conversation"
+                title={t('workflows.page.sections.conversationTitle')}
+                summary={formatWorkflowContinuitySummary({
+                    draft,
+                    conversation: draft.defaults.conversation,
+                    sessionLabel: continuedSessionLabel,
+                    workspace: draft.defaults.workspace,
+                    ...(props.existingSessions === undefined ? {} : { existingSessions: props.existingSessions }),
+                })}
+                attention={issuesUnder(issues, ['/defaults/conversation', '/defaults/workspace'])}
+                valueSet={draft.defaults.conversation !== undefined || draft.defaults.workspace !== undefined}
+                testID={`${testIDPrefix}-group-conversation`}
+            >
+                {/* Editing, the controls are page rows with their own inset; a content row around them would indent a second grid. */}
+                <View testID={`${testIDPrefix}-defaults-continuity-row`}>{readOnly ? <SectionContentRow><Text style={workflowEditorStyles.metaText}>{formatWorkflowContinuitySummary({
+                        draft, conversation: draft.defaults.conversation, workspace: draft.defaults.workspace,
+                        sessionLabel: continuedSessionLabel,
+                        existingSessions: props.existingSessions,
+                    })}</Text></SectionContentRow> : <WorkflowContinuityControls
+                        draft={draft}
+                        conversation={draft.defaults.conversation}
+                        workspace={draft.defaults.workspace}
+                        {...(props.existingSessions === undefined ? {} : { existingSessions: props.existingSessions })}
+                        onSessionOptionsDemandChange={props.onSessionOptionsDemandChange}
+                        sessionOptionsStatus={props.sessionOptionsStatus}
+                        onRetrySessionOptions={props.onRetrySessionOptions}
+                        onChangeConversation={(value) => onChange(setWorkflowDefaultField(draft, 'conversation', value))}
+                        {...(props.bindExistingSession === undefined ? {} : {
+                            onBindExistingSession: (sessionId: string) => props.bindExistingSession!(null, sessionId),
+                        })}
+                        onChangeWorkspace={(value) => onChange(setWorkflowDefaultField(draft, 'workspace', value))}
+                        testIDPrefix={`${testIDPrefix}-defaults-continuity`}
+                    />}</View>
+            </WorkflowInspectorGroup>
+
+            <WorkflowInspectorGroup
+                {...groupProps}
                 groupId="agent"
-                title={t('workflows.page.sections.agentTitle')}
-                summary={agentSummary}
+                title={t('workflows.page.sections.modelAndPermissionsTitle')}
+                summary={modelSummary}
                 description={t('workflows.page.sections.agentDescription')}
-                attention={issuesUnder(issues, WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS.map((field) => `/defaults/${field}`))}
-                valueSet={agentValueSet}
+                attention={issuesUnder(issues, WORKFLOW_SESSION_FIELD_IDS_BESIDE_ENGINE.map((field) => `/defaults/${field}`))}
+                valueSet={setModelFields.length > 0}
                 testID={`${testIDPrefix}-group-agent`}
             >
                 <SessionAuthoringControls
                     disabled={readOnly}
                     presentation="fields"
                     engineFieldTitle={null}
-                    fields={WORKFLOW_AGENT_FIELDS}
-                    values={defaultAuthoringValues} engine={draft.defaults.engine} workflowRoles={draft.roles}
+                    // Every field a step inherits beside its Agent (the Agent is on the "How and where it runs" card),
+                    // the same list a step's settings show: one field list, never a workflow subset.
+                    fields={WORKFLOW_SESSION_FIELD_IDS_BESIDE_ENGINE}
+                    values={defaultAuthoringValues} engine={readWorkflowEngineChoiceV1(draft.defaults)} workflowRoles={draft.roles}
                     onChangeEngine={(engine) => { if (!readOnly) onChange({ ...draft, defaults: withWorkflowAuthoringEngine(draft.defaults, engine) }); }}
                     onChangeFields={(fields) => {
                         if (readOnly) return;
@@ -207,43 +234,6 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
                     const result = applyWorkflowDefinitionEditsV1(draft, ops);
                     if (result.ok) onChange(result.draft);
                 }} prefix={testIDPrefix} editable={!readOnly} />
-            </WorkflowInspectorGroup>
-
-            <WorkflowInspectorGroup
-                {...groupProps}
-                groupId="conversation"
-                title={t('workflows.page.sections.conversationTitle')}
-                summary={formatWorkflowContinuitySummary({
-                    draft,
-                    conversation: draft.defaults.conversation,
-                    sessionLabel: continuedSessionLabel,
-                    workspace: draft.defaults.workspace,
-                    ...(props.existingSessions === undefined ? {} : { existingSessions: props.existingSessions }),
-                })}
-                attention={issuesUnder(issues, ['/defaults/conversation', '/defaults/workspace'])}
-                valueSet={draft.defaults.conversation !== undefined || draft.defaults.workspace !== undefined}
-                testID={`${testIDPrefix}-group-conversation`}
-            >
-                {/* Editing, the controls are page rows with their own inset; a content row around them would indent a second grid. */}
-                <View testID={`${testIDPrefix}-defaults-continuity-row`}>{readOnly ? <SectionContentRow><Text style={workflowEditorStyles.metaText}>{formatWorkflowContinuitySummary({
-                        draft, conversation: draft.defaults.conversation, workspace: draft.defaults.workspace,
-                        sessionLabel: continuedSessionLabel,
-                        existingSessions: props.existingSessions,
-                    })}</Text></SectionContentRow> : <WorkflowContinuityControls
-                        draft={draft}
-                        conversation={draft.defaults.conversation}
-                        workspace={draft.defaults.workspace}
-                        {...(props.existingSessions === undefined ? {} : { existingSessions: props.existingSessions })}
-                        onSessionOptionsDemandChange={props.onSessionOptionsDemandChange}
-                        sessionOptionsStatus={props.sessionOptionsStatus}
-                        onRetrySessionOptions={props.onRetrySessionOptions}
-                        onChangeConversation={(value) => onChange(setWorkflowDefaultField(draft, 'conversation', value))}
-                        {...(props.bindExistingSession === undefined ? {} : {
-                            onBindExistingSession: (sessionId: string) => props.bindExistingSession!(null, sessionId),
-                        })}
-                        onChangeWorkspace={(value) => onChange(setWorkflowDefaultField(draft, 'workspace', value))}
-                        testIDPrefix={`${testIDPrefix}-defaults-continuity`}
-                    />}</View>
             </WorkflowInspectorGroup>
 
             <WorkflowInspectorGroup

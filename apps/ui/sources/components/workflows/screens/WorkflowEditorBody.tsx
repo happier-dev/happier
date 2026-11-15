@@ -1,6 +1,6 @@
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { useWorkflowNavigation, selectWorkflowNavigationItem } from '../navigation/workflowNavigation';
-import { WorkflowPageNavigation, WorkflowCompanionNavigation } from '../navigation/WorkflowNavigationViews';
+import { useWorkflowPageNavigationShown, WorkflowPageNavigation, WorkflowCompanionNavigation } from '../navigation/WorkflowNavigationViews';
 import { useMountedScopeActionCommand } from '@/components/approvals/useMountedScopeActionCommand';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -437,6 +437,30 @@ export type WorkflowEditorBodyProps = Readonly<{
  */
 function joinReadOnlyDescription(parts: readonly (string | undefined)[]): string {
     return parts.filter((part): part is string => part !== undefined && part.length > 0).join('\u00A0·\u00A0');
+}
+
+/**
+ * Steps | Flow with Undo and Redo at the row's end. With neither (a phone whose pages live in the bottom
+ * bar, before the first edit) the row is not drawn, so it leaves no empty band under the header (QA-WAVE-1115).
+ */
+function WorkflowEditorPageTabs(props: Readonly<{
+    navigation: React.ComponentProps<typeof WorkflowPageNavigation>['navigation'];
+    phone: boolean;
+    onSelect: (id: string) => void;
+    history: WorkflowEditorHistoryControls | undefined;
+    onMark: boolean;
+    testIDPrefix: string;
+}>): React.ReactElement | null {
+    const navigationShown = useWorkflowPageNavigationShown(props.navigation, props.phone);
+    const labels = useWorkflowEditorHistoryLabels(props.history);
+    const historyShown = props.history !== undefined && (labels.undoLabel !== null || labels.redoLabel !== null);
+    if (!navigationShown && !historyShown) return null;
+    return (
+        <View testID={`${props.testIDPrefix}-page-tabs`} style={[styles.pageTabs, styles.pageTabsRow, props.onMark ? styles.pageTabsOnMark : null]}>
+            <WorkflowPageNavigation navigation={props.navigation} phone={props.phone} onSelect={props.onSelect} testIDPrefix={`${props.testIDPrefix}-view`} />
+            <WorkflowEditorHistoryIcons testIDPrefix={props.testIDPrefix} history={props.history} />
+        </View>
+    );
 }
 
 /** Undo and Redo as icon buttons. They subscribe to the history's labels, so an edit re-renders only them. */
@@ -1203,7 +1227,6 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
 
     // Undo and Redo are icon buttons: at the end of the chip line when wide (04 §4.1), at the document
     // foot on a phone. Only the commandless composition keeps the labelled pair.
-    const historyIcons = <WorkflowEditorHistoryIcons testIDPrefix={testIDPrefix} history={props.history} />;
     const historyActions = <WorkflowEditorHistoryActions testIDPrefix={testIDPrefix} history={props.history} />;
 
     const settingsWidth = settingsBlockKind === 'if' ? IF_OPTIONS_MAX_WIDTH_PX : STEP_OPTIONS_MAX_WIDTH_PX;
@@ -1527,10 +1550,8 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             <View style={[styles.bodyColumn, maxWidthStyle]}>
             {props.reviewNotice}
             {/* Steps | Flow, with Undo and Redo at the row's end (lab round 1115 r16). */}
-            <View style={[styles.pageTabs, styles.pageTabsRow, compactLayout ? null : styles.pageTabsOnMark]}>
-                <WorkflowPageNavigation navigation={navigation} phone={phoneNavigation} onSelect={selectNavigation} testIDPrefix={`${testIDPrefix}-view`} />
-                {historyIcons}
-            </View>
+            <WorkflowEditorPageTabs navigation={navigation} phone={phoneNavigation} onSelect={selectNavigation}
+                history={props.history} onMark={!compactLayout} testIDPrefix={testIDPrefix} />
             <View
                 testID={`${testIDPrefix}-steps-presentation`}
                 style={[styles.document, compactLayout ? null : styles.documentUnderTitle, stepsHidden ? { display: 'none' } : null]}

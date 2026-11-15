@@ -102,11 +102,11 @@ describe('workflow step inspector field controls', () => {
         await screen.unmount();
     });
 
-    it('leaves an inherited field without a state of its own; its group names the workflow defaults once', async () => {
+    it('says on an inherited field\'s own row that it comes from the workflow (owner 2026-11-15)', async () => {
         const harness = await loadHarness();
         const screen = await renderScreen(<InspectorHarness harness={harness} fields={['permissionMode']}
             draft={buildDraft(harness)} onChangeField={() => {}} />);
-        expect(screen.findByTestId('workflow-inspector-permissionMode-state')).toBeNull();
+        expect(screen.findByTestId('workflow-inspector-permissionMode-state')?.props.children).toBe('workflows.page.fromTheWorkflow');
         expect(screen.getTextContent()).not.toContain('workflows.page.blocks.workflowDefaults');
         expect(screen.getTextContent()).not.toContain('workflows.a11y.inherited');
         await screen.unmount();
@@ -135,7 +135,7 @@ describe('workflow step inspector field controls', () => {
         if (step.kind !== 'step') throw new Error('Invalid step fixture');
         const reset = vi.fn();
         const screen = await renderScreen(<inspector.WorkflowStepInspector draft={draft}
-            step={{ ...step, execution: { engine: { role: 'reviewer' } } }}
+            step={{ ...step, execution: { roleId: 'reviewer' } }}
             renderFieldControl={params => React.createElement('Control', { field: params.field }, params.stateAccessory)}
             onChangeFields={() => {}} onChangeEngine={() => {}} onResetEngine={reset}
             onResetField={() => {}} onChangeField={() => {}} />);
@@ -156,8 +156,9 @@ describe('workflow step inspector field controls', () => {
             />,
         );
 
-        // An inherited field shows its value control alone; only an override carries a state.
-        expect(screen.findByTestId('workflow-inspector-permissionMode-state')).toBeNull();
+        // An inherited field says where its value comes from, with no way back to offer (owner 2026-11-15).
+        expect(screen.findByTestId('workflow-inspector-permissionMode-state')?.props.children).toBe('workflows.page.fromTheWorkflow');
+        expect(screen.findByTestId('workflow-inspector-permissionMode-reset')).toBeNull();
         const chip = screen.findByTestId('workflow-inspector-control-permissionMode');
         expect(chip).toBeTruthy();
 

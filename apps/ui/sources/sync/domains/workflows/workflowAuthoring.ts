@@ -1,5 +1,5 @@
 import { validateWorkflowDefinition } from '@happier-dev/protocol/workflows/workflowValidationV1';
-import { resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
+import { readWorkflowEngineChoiceV1, resolveWorkflowStepSelectionV1, workflowSelectionChoosesEngineV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 import {
   WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS,
   type WorkflowBlock,
@@ -50,6 +50,11 @@ export function buildWorkflowDefinitionCandidate(draft: WorkflowEditorDraft): un
 
 export type WorkflowDraftValidation = WorkflowValidationResult;
 
+/** Whether the workflow's defaults choose an Agent (directly or as an engine choice) for the steps that inherit it. */
+export function workflowDefaultsChooseAgent(defaults: WorkflowDefinitionV1['defaults']): boolean {
+  return defaults.agentTarget !== undefined || readWorkflowEngineChoiceV1(defaults) !== undefined;
+}
+
 /** Shared page/review projection: the workflow Agent is meaningful only while an Agent step uses it. */
 export function readWorkflowBlockShape(definition: Pick<WorkflowDefinitionV1, 'blocks' | 'defaults'>): Readonly<{
   blockIds: readonly string[];
@@ -57,8 +62,8 @@ export function readWorkflowBlockShape(definition: Pick<WorkflowDefinitionV1, 'b
 }> {
   const blocks = walkWorkflowBlocks(definition.blocks);
   const steps = blocks.filter((block) => block.kind === 'step');
-  const defaultSet = definition.defaults.agentTarget !== undefined || definition.defaults.engine !== undefined;
-  const inherits = steps.some((step) => step.execution?.agentTarget === undefined && step.execution?.engine === undefined);
+  const defaultSet = workflowDefaultsChooseAgent(definition.defaults);
+  const inherits = steps.some((step) => !workflowSelectionChoosesEngineV1(step.execution));
   return { blockIds: blocks.map((block) => block.id), showsWorkflowAgent: steps.length > 0 && (defaultSet || inherits) };
 }
 

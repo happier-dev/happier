@@ -25,7 +25,7 @@ const { storage } = await import('@/sync/domains/state/storageStore');
 const catalog = await import('@/components/appShell/rightSidebar/detailNavigationItems');
 const { useWorkflowNavigation } = await import('./workflowNavigation');
 const { PresentedDetailNavigationProvider } = await import('@/components/appShell/rightSidebar/usePresentedDetailNavigation');
-const { useWorkflowCockpitBarPresentation, WorkflowPageNavigation } = await import('./WorkflowNavigationViews');
+const { useWorkflowCockpitBarPresentation, useWorkflowPageNavigationShown, WorkflowPageNavigation } = await import('./WorkflowNavigationViews');
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
 const { invokeScopeAction } = await import('@/sync/ops/actions/scopeActionFamily');
 
@@ -175,4 +175,30 @@ it('offers the authoring agent as the editor\'s one companion; settings are a po
     // A companion that cannot present is not offered (no authoring agent).
     const quiet = catalog.resolveDetailNavigationItems({ scope: 'workflowEditor' });
     expect(quiet.map(item => item.id)).toEqual(['steps', 'flow']);
+});
+
+it('reports the page navigation as shown exactly when it draws something, so its row never keeps an empty band (QA-WAVE-1115)', async () => {
+    storage.setState(state => ({ settings: { ...state.settings, mobileWorkspaceExperienceV1: 'cockpit' } }));
+    let shown: boolean | undefined;
+    function Fixture(props: Readonly<{ phone: boolean }>) {
+        const navigation = useWorkflowNavigation({ pageKind: 'workflowEditor', identity: 'one', scope: null, phone: props.phone, presented: true,
+            activeId: 'steps', agentAvailable: true, selectPage: () => {}, companion: { activeId: null, select: () => {}, close: () => {} } });
+        shown = useWorkflowPageNavigationShown(navigation, props.phone);
+        return <WorkflowPageNavigation navigation={navigation} phone={props.phone} onSelect={() => {}} testIDPrefix="workflow-pages" />;
+    }
+    const drawn = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.root.findAll(node => typeof node.props.testID === 'string' && node.props.testID.startsWith('workflow-pages')).length > 0;
+    // A cockpit phone keeps its pages in the bottom bar: nothing on top, and the row is told so.
+    const phone = await renderScreen(<PresentedDetailNavigationProvider><Fixture phone /></PresentedDetailNavigationProvider>);
+    expect(shown).toBe(false);
+    expect(drawn(phone)).toBe(false);
+    // Pages placed on top draw the strip, and the row is shown.
+    await act(async () => storage.setState(state => ({ localSettings: { ...state.localSettings,
+        navigationSurfacePlacementsV1: { pageTabs: { workflowEditor: 'top' } } } })));
+    expect(shown).toBe(drawn(phone));
+    await phone.unmount();
+    // Wide: the page tabs draw whenever there is more than one page.
+    const wide = await renderScreen(<PresentedDetailNavigationProvider><Fixture phone={false} /></PresentedDetailNavigationProvider>);
+    expect(shown).toBe(true);
+    expect(drawn(wide)).toBe(true);
+    await wide.unmount();
 });

@@ -609,14 +609,20 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         alignItems: 'flex-start',
         paddingVertical: theme.space.s12,
     },
-    /** Phone: the header wraps so its wider action takes its own line under the title. */
-    kindCardHeaderWrapped: {
-        flexWrap: 'wrap',
-        rowGap: theme.space.s4,
+    /** A header whose wider action can move beneath: a column of its first line and, on phones, that action. */
+    kindCardHeaderStacked: {
+        flexDirection: 'column',
+        alignItems: 'stretch',
+        gap: theme.space.s4,
+    },
+    /** The stacked header's first line: the same row a single-line header is. */
+    kindCardHeaderLine: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: theme.space.s8,
     },
     /** The header action on its own line, starting on the title's edge. */
     kindCardHeaderActionBelow: {
-        flexBasis: '100%',
         flexDirection: 'row',
         alignItems: 'center',
     },
