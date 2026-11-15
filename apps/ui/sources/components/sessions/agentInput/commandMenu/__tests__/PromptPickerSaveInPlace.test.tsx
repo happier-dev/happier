@@ -13,9 +13,15 @@ import type { UserMessageHistoryEntriesSnapshot } from '@/hooks/session/useUserM
 // Real save owner and Account writer (prompt_doc.create through the artifact boundary); only portal
 // and window measurement are replaced, so the real menu and selection list stay mounted.
 // Native platform: the keyboard provider's web window listeners have no DOM under this runner.
-vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+// The window size is the boundary the breakpoint test moves; other tests keep the runner's own.
+const viewport = vi.hoisted(() => ({ current: null as null | { width: number; height: number; scale: number; fontScale: number } }));
+vi.mock('react-native', async () => {
+    const stub = await vi.importActual<typeof import('@/dev/reactNativeStub')>('@/dev/reactNativeStub');
+    return (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
         Platform: { OS: 'ios', select: (value: Record<string, unknown>) => value.ios ?? value.native ?? value.default },
-    }));
+        useWindowDimensions: () => viewport.current ?? stub.Dimensions.get('window'),
+    });
+});
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
@@ -32,6 +38,7 @@ const { KeyboardShortcutProvider } = await import('@/keyboard/KeyboardShortcutPr
 
 beforeEach(async () => { await harness.reset(); });
 afterEach(async () => {
+    viewport.current = null;
     standardCleanup();
     const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
     await disconnectActiveServerConnection();
@@ -74,6 +81,20 @@ async function mount() {
 }
 
 describe('prompt picker: save what you sent in place (lab R1s)', () => {
+    // HUNT-UI-STATE C3: the preview beside the list comes and goes at 760 px; the name being typed stays.
+    it('keeps the favourite name being typed when the window crosses the preview breakpoint and back', async () => {
+        viewport.current = { width: 1280, height: 900, scale: 1, fontScale: 1 };
+        const { screen, serverId, onApply } = await mount();
+        await screen.pressByTestIdAsync(`prompt-picker-favorite:${HISTORY_ROW}`);
+        await act(async () => { screen.findByTestId('prompt-picker-save-name')!.props.onChangeText('E2E check'); });
+        const field = screen.findHostByTestId('prompt-picker-save-name');
+        expect(field?.props.value).toBe('E2E check');
+        for (const width of [700, 1280]) {
+            viewport.current = { width, height: 900, scale: 1, fontScale: 1 };
+            await screen.update(<Picker serverId={serverId} onApply={onApply} />);
+            expect(screen.findHostByTestId('prompt-picker-save-name')?.props.value).toBe('E2E check');
+        }
+    });
     it.each([
         { nativeEvent: { key: 'Escape', isComposing: true } },
         { nativeEvent: { key: 'Escape', keyCode: 229 } },

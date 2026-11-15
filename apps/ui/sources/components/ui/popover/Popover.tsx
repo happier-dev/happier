@@ -885,7 +885,10 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
         };
     }, [open]);
 
+    // Whether this close came through `requestClose`, which already decided where focus goes.
+    const closeRequested = React.useRef(false);
     const requestClose = React.useCallback((reason: PopoverCloseReason) => {
+        closeRequested.current = true;
         // A tooltip leaves focus on its trigger or another control. Returning it there
         // would steal focus and can reopen the tooltip through the trigger's focus handler.
         const ownsFocus = Platform.OS !== 'web' || (
@@ -899,6 +902,33 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
             }
         }
     }, [focusReturnFallbackRef, getContentDomElement, onRequestClose, resolvedFocusReturnRef]);
+
+    // Its content can close it too (a Done button turning `open` off or unmounting it). Focus then sits in the content
+    // or, once the content left, nowhere; it goes back to the opener exactly as a requested close returns it (L04).
+    React.useLayoutEffect(() => {
+        if (Platform.OS !== 'web' || !open || typeof document === 'undefined') return;
+        closeRequested.current = false;
+        return () => {
+            if (closeRequested.current) return;
+            const content = getContentDomElement();
+            const stranded = () => {
+                const focused = document.activeElement;
+                return focused === null || focused === document.body || content?.contains(focused) === true;
+            };
+            const restore = () => {
+                if (!stranded()) return;
+                if (!restoreFocusToBestTarget(resolvedFocusReturnRef, activationFocusReturnRef)) {
+                    restoreFocusToBestTarget(undefined, focusReturnFallbackRef);
+                }
+            };
+            restore();
+            // A content still in the document (leaving with its exit) gets its focus back from React after this
+            // commit; re-assert once the commit is done, as the overlay focus containment does.
+            queueMicrotask(restore);
+        };
+        // Read at close: the return targets and the content element are refs owned by this popover.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [open]);
 
     const requestAndroidBackClose = React.useCallback(() => {
         requestClose('back');

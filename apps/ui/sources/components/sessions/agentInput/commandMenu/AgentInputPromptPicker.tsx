@@ -304,14 +304,16 @@ export function PromptPickerView(props: PromptPickerViewProps) {
                     lineDensity="menu" kind="unavailable" accessibilitySemantics="status" title={t('agentInput.promptPicker.partialLibrary')} />
                 : null}
         </View>}
-        preview={wide ? {
-            content: selected ? <PromptPickerPreview row={selected} read={readRow} nowMs={openedAtMs}
+        // The preview slot stays when the window narrows (no preview content then), so the list and a history row
+        // being named keep their place across 760 px instead of remounting (HUNT-UI-STATE C3).
+        preview={{
+            content: wide && selected ? <PromptPickerPreview row={selected} read={readRow} nowMs={openedAtMs}
                 folderNames={props.folderNames} sessionNames={props.sessionNames} /> : null,
             resizeKey: 'promptPicker',
             minListWidthPx: PICKER_LIST_MIN_WIDTH_PX,
             minPreviewWidthPx: HAPPIER_PROMPT_PICKER_METRICS.previewWidthPx,
             preferredListRatio: PICKER_LIST_PREFERRED_RATIO,
-        } : undefined}
+        }}
         footer={<PromptPickerFooter history={history} hardwareKeyboard={hardwareKeyboard} wide={wide}
             canSend={props.canSend} applyError={applyError} libraryLoading={library.isLoading && rows.length > 0} />}
     />;

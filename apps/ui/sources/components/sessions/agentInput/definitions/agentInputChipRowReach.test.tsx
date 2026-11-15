@@ -2,7 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
-import { readHitFrameReach } from '@/dev/testkit/harness/hitFrameReach';
+import { readHitArea, readHitFrameReach } from '@/dev/testkit/harness/hitFrameReach';
 import { HappierUiPlatformProvider } from '@happier-dev/plugin-ui/environment';
 
 vi.mock('react-native', async () => {
@@ -16,6 +16,7 @@ vi.mock('react-native-unistyles', async () => {
 
 import { AgentInputChipRowReach, resolveAgentInputChipRailHitReach } from './agentInputChipRowReach';
 import { createPermissionActionChip } from './createPermissionActionChip';
+import { useWorkflowStepOptionsChip } from '@/components/workflows/editor/WorkflowStepOptionsChip';
 
 const CHIP_HEIGHT = 32;
 
@@ -49,5 +50,26 @@ describe('AgentInputChipRowReach', () => {
         );
         const lone = readHitFrameReach(alone.findByTestId('agent-input-permission-chip')!);
         expect(lone?.bottom).toBe(6);
+    });
+
+    // REVIEW-SDK-COMPONENTS-1115 finding 4: a Workflow step's composer rail carries Step options beside the engine and
+    // attach chips; it is the rail's chip and takes the same bounded reach, and still announces its popover.
+    it('gives the Workflow Step options rail chip its rail reach and popup semantics', async () => {
+        function StepOptions() {
+            const chip = useWorkflowStepOptionsChip({ label: 'Workflow defaults', changed: false, onOpen: () => {},
+                testID: 'step-options-chip', labelTestID: 'step-options-chip-label' });
+            return <>{chip.render({ chipStyle: () => ({ height: CHIP_HEIGHT, width: 120 }), showLabel: true, iconColor: '#000',
+                textStyle: {}, countTextStyle: {}, popoverAnchorRef: { current: null } })}</>;
+        }
+        const screen = await renderScreen(
+            <HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}>
+                <AgentInputChipRowReach reach={resolveAgentInputChipRailHitReach(6)}><StepOptions /></AgentInputChipRowReach>
+            </HappierUiPlatformProvider>,
+        );
+        const chip = screen.findHostByTestId('step-options-chip')!;
+        // A 32 px chip reaches past its edge by half the 1 px line gap, never its full target reach; it is wide enough
+        // that it reaches nothing sideways.
+        expect(readHitArea(chip).insets).toEqual({ top: 0.5, bottom: 0.5, left: 0, right: 0 });
+        expect(chip.props['aria-haspopup']).toBe('dialog');
     });
 });

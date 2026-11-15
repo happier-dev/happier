@@ -1,11 +1,7 @@
 import * as React from 'react';
-import { View } from 'react-native';
 
-import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
-import { StyleSheet } from 'react-native-unistyles';
 
 /**
  * A saved workflow this route cannot open.
@@ -17,23 +13,6 @@ import { StyleSheet } from 'react-native-unistyles';
  * This state knows only that the requested definition could not be opened, so
  * that is what it says, and it offers the way back the route never had.
  */
-
-const styles = StyleSheet.create((theme) => ({
-    root: {
-        padding: theme.space.s24,
-        gap: theme.space.s8,
-        alignItems: 'flex-start',
-    },
-    title: {
-        ...Typography.variant('heading'),
-        color: theme.colors.text.primary,
-    },
-    body: {
-        ...Typography.variant('body'),
-        color: theme.colors.text.secondary,
-    },
-}));
-
 export function WorkflowMissingDefinitionState(props: Readonly<{
     testID?: string;
     /** A lost in-memory copy is not evidence that its original definition is missing. */
@@ -42,19 +21,18 @@ export function WorkflowMissingDefinitionState(props: Readonly<{
     onOpenCollection?: () => void;
 }>): React.ReactElement {
     const testID = props.testID ?? 'workflow-missing-definition';
+    const draft = props.source === 'unsaved-copy';
+    // The shared state composition owns layout, glyph and the live region; this keeps only its domain copy and way back.
     return (
-        <View testID={testID} style={styles.root} accessibilityRole="alert">
-            <Text style={styles.title}>{t(props.source === 'unsaved-copy' ? 'workflows.empty.missingDraftTitle' : 'workflows.empty.missingTitle')}</Text>
-            <Text style={styles.body}>{t(props.source === 'unsaved-copy' ? 'workflows.empty.missingDraftBody' : 'workflows.empty.missingBody')}</Text>
-            {props.onOpenCollection === undefined ? null : (
-                <ToolbarButton
-                    testID={`${testID}-open-collection`}
-                    label={t('workflows.openCollection')}
-                    onPress={props.onOpenCollection}
-                    tone="primary"
-                    size="md"
-                />
-            )}
-        </View>
+        <SurfaceStateCard
+            testID={testID}
+            kind="unavailable"
+            title={t(draft ? 'workflows.empty.missingDraftTitle' : 'workflows.empty.missingTitle')}
+            reason={t(draft ? 'workflows.empty.missingDraftBody' : 'workflows.empty.missingBody')}
+            {...(props.onOpenCollection === undefined ? {} : {
+                action: { label: t('workflows.openCollection'), onPress: props.onOpenCollection, testID: `${testID}-open-collection` },
+            })}
+            accessibilitySemantics="alert"
+        />
     );
 }

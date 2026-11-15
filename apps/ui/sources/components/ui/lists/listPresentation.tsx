@@ -110,17 +110,17 @@ export function ListPresentationProvider(props: Readonly<{
     floating?: boolean;
     children: React.ReactNode;
 }>) {
+    const bodyEdge = React.useContext(HappierBodyEdgeContext);
     return (
         <HappierPageSectionContext.Provider value={null}>
             <PageListInsetsContext.Provider value={props.pageInsets ?? 'standard'}>
                 <PageNoticeActiveContext.Provider value={props.value === 'page' && props.pageNoticeActive === true}>
                     <FloatingListSurfaceContext.Provider value={props.floating === true}>
-                        {props.floating === true ? (
-                            // A floating surface opened from a widget body is off that body's edge: its rows keep their own inset.
-                            <HappierBodyEdgeContext.Provider value={false}>
-                                <ListPresentationContext.Provider value={props.value}>{props.children}</ListPresentationContext.Provider>
-                            </HappierBodyEdgeContext.Provider>
-                        ) : <ListPresentationContext.Provider value={props.value}>{props.children}</ListPresentationContext.Provider>}
+                        {/* A floating surface opened from a widget body is off that body's edge: its rows keep their own inset.
+                            One tree either way, so a scope that turns floating (a popover becoming a sheet) keeps its rows. */}
+                        <HappierBodyEdgeContext.Provider value={props.floating === true ? false : bodyEdge}>
+                            <ListPresentationContext.Provider value={props.value}>{props.children}</ListPresentationContext.Provider>
+                        </HappierBodyEdgeContext.Provider>
                     </FloatingListSurfaceContext.Provider>
                 </PageNoticeActiveContext.Provider>
             </PageListInsetsContext.Provider>

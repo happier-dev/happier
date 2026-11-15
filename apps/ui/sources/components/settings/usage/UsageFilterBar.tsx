@@ -196,8 +196,12 @@ export function UsageFilterBar(
   // Shown in Tokens and Cost alike (labs d2views, d2top, d2work): a Tokens page still shows basis-dependent
   // money, and a chip that came and went with the toggle reshaped the bar under the pointer (R135 call 2).
   const costChip = costFilter ? <SelectionListFilterChip filter={costFilter} currentUiContextCommandScope={costFilter.testID} /> : null;
-  // A phone's row wraps: Tokens/Cost stays on the first line and the basis follows it.
-  const trailing = <>{metricToggle}{costChip}</>;
+  // A phone's row wraps: Tokens/Cost stays on the first line and the basis follows it. On a wide screen the basis
+  // leads and Tokens/Cost holds the trailing edge. Keyed, so crossing the breakpoint moves the two instead of
+  // remounting them: an open basis chooser stays open (HUNT-UI-STATE C2).
+  const metricSlot = metricToggle ? <React.Fragment key="metric">{metricToggle}</React.Fragment> : null;
+  const costSlot = costChip ? <React.Fragment key="cost">{costChip}</React.Fragment> : null;
+  const trailing = phone ? [metricSlot, costSlot] : [costSlot, metricSlot];
   const period = (
     <View style={phone ? styles.periodPhone : styles.period}>
       <SegmentedTabBar
@@ -215,32 +219,22 @@ export function UsageFilterBar(
       />
     </View>
   );
-  if (phone)
-    return (
-      <View testID={props.testID} style={styles.phone}>
-        {period}
-        {/* The Filters chip on its line; Tokens/Cost and the basis on their own line, end edge. The basis arrives when
-            its read answers: sharing the Filters line it wrapped onto a new one late and pushed the page 38 px (sweep
-            1110 N4), so the line exists whenever these controls do and the basis only fills it (refines phone lab p5). */}
-        <View style={styles.phoneChips}>{chips}</View>
-        {props.onMetricChange || costFilter ? <View testID={`${props.testID}.trailing`} style={styles.phoneTrailing}>
-          {trailing}
-        </View> : null}
-      </View>
-    );
+  // One tree on every width: the bar recomposes by style, so a chooser opened on one side of the phone breakpoint
+  // is still open on the other.
   return (
-    <View testID={props.testID} style={styles.stack}>
-      <View style={styles.bar}>
+    <View testID={props.testID} style={phone ? styles.phone : styles.stack}>
+      <View style={phone ? styles.phone : styles.bar}>
         {period}
-        {props.scopeFilters.length > 0 ? <View style={styles.rule} /> : null}
-        <View style={styles.chips}>{chips}</View>
+        {!phone && props.scopeFilters.length > 0 ? <View style={styles.rule} /> : null}
+        {/* Phone: the Filters chip on its own line. */}
+        <View style={phone ? styles.phoneChips : styles.chips}>{chips}</View>
       </View>
-      {/* What the widgets show and in which money sit on their own right-aligned row on every view, so a view without
-          Tokens/Cost keeps the bar's shape and the page never moves on arrival (R138). */}
-      {/* The basis leads and Tokens/Cost holds the trailing edge: the basis arrives when its read answers (and leaves when
-          there is one basis), so it grows leftward and never moves the toggle under the pointer (sweep 1110 #26). */}
-      {props.onMetricChange || costFilter ? <View testID={`${props.testID}.trailing`} style={styles.trailing}>
-        {costChip}{metricToggle}
+      {/* What the widgets show and in which money sit on their own row, end edge, on every view, so a view without
+          Tokens/Cost keeps the bar's shape and the page never moves on arrival (R138). The basis arrives when its read
+          answers: on a phone sharing the Filters line it wrapped late and pushed the page 38 px (sweep 1110 N4); on a
+          wide screen it grows leftward and never moves the toggle under the pointer (sweep 1110 #26). */}
+      {props.onMetricChange || costFilter ? <View testID={`${props.testID}.trailing`} style={phone ? styles.phoneTrailing : styles.trailing}>
+        {trailing}
       </View> : null}
     </View>
   );

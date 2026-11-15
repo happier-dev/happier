@@ -131,12 +131,13 @@ export function InlinePluginEventEditor(props: Readonly<{
                     disabled={!props.model.createDraft}
                 /> : null}
             </View>}>
-            {insideSheet ? <View style={styles.content}><PluginEventAutomationComposerContent model={props.model} guidedPreset={props.guidedPreset} /></View>
-                : <ListPresentationProvider value="page"><ItemGroup surface="none" title={t('workflows.triggers.popover.configureEvent')}>
-                    <ListPresentationProvider value="grouped">
-                        <View style={styles.content}><PluginEventAutomationComposerContent model={props.model} guidedPreset={props.guidedPreset} /></View>
-                    </ListPresentationProvider>
-                </ItemGroup></ListPresentationProvider>}
+            {/* One tree in the popover and its phone sheet: crossing the breakpoint keeps the open pickers and their
+                search. The sheet's header already names the step, so its section repeats no title (as a pushed page's). */}
+            <ListPresentationProvider value="page"><ItemGroup surface="none" title={insideSheet ? undefined : t('workflows.triggers.popover.configureEvent')}>
+                <ListPresentationProvider value="grouped" floating={insideSheet}>
+                    <View style={styles.content}><PluginEventAutomationComposerContent model={props.model} guidedPreset={props.guidedPreset} /></View>
+                </ListPresentationProvider>
+            </ItemGroup></ListPresentationProvider>
         </FloatingOverlay>
     );
 }

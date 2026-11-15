@@ -291,6 +291,54 @@ it('keeps a page-owned body in the newest shell while the outgoing shell is stil
     }
 });
 
+// J18 (QA-LAYOUT-1114 F1): a focused field in the retained body keeps focus while the body moves pane → dialog → pane.
+it('keeps focus on the retained body\'s focused field as it moves between shells', async () => {
+    const { useRetainedPlacement } = await import('./components/RetainedModalFrame');
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    function Dialog(props: Readonly<{ body: React.ReactElement }> & import('./types').CustomModalInjectedProps) {
+        return props.body;
+    }
+    const renderDraft = () => <textarea data-testid="review-result" defaultValue="A reviewed result" />;
+    function Page(props: Readonly<{ docked: boolean }>) {
+        const retained = useRetainedPlacement<null>(renderDraft);
+        const slot = React.useMemo(() => retained.mount(null), [retained.mount]);
+        const dialog = React.useRef<string | null>(null);
+        React.useEffect(() => {
+            if (props.docked) {
+                if (dialog.current !== null) Modal.hide(dialog.current);
+                dialog.current = null;
+                return;
+            }
+            dialog.current ??= Modal.show({ component: Dialog, props: { body: slot }, chrome: { kind: 'card', title: 'Review' } });
+        }, [props.docked, slot]);
+        return <>{props.docked ? <div data-testid="page-pane">{slot}</div> : null}{retained.body}</>;
+    }
+    const render = async (docked: boolean) => {
+        await act(async () => root.render(<ModalProvider><Page docked={docked} /></ModalProvider>));
+    };
+    try {
+        await render(true);
+        const field = document.querySelector<HTMLTextAreaElement>('[data-testid="review-result"]')!;
+        field.focus();
+        field.setSelectionRange(2, 10);
+        expect(document.activeElement).toBe(field);
+        await render(false);
+        await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')?.contains(field)).toBe(true));
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+        expect(document.activeElement).toBe(field);
+        await render(true);
+        await vi.waitFor(() => expect(document.querySelector('[data-testid="page-pane"]')?.contains(field)).toBe(true));
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+        expect(document.activeElement).toBe(field);
+        expect([field.selectionStart, field.selectionEnd]).toEqual([2, 10]);
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
 it.each([390, 1440].flatMap(width => (['picker', 'confirm'] as const).map(kind => ({ width, kind }))))('keeps a $width px sheet presented while its nested $kind owns input', async ({ width, kind }) => {
     Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, value: width });
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });

@@ -13,8 +13,9 @@ import type {
 } from '../portableTypes.js';
 import type { HappierPressableProps } from './Pressable.js';
 import { useHappierHitArea } from './hitArea.js';
+import { isHappierFocusVisible } from './focusVisible.js';
 
-type WebToggleProps = Readonly<{ 'aria-pressed'?: boolean }>;
+type WebToggleProps = Readonly<{ 'aria-pressed'?: boolean; 'aria-haspopup'?: 'dialog' | 'menu' | 'listbox' }>;
 const ComposerChipPressable = Pressable as React.ComponentType<
   React.ComponentPropsWithRef<typeof Pressable> & WebToggleProps
 >;
@@ -36,10 +37,13 @@ export type HappierComposerChipProps = Readonly<{
   accessibilityLabel?: string;
   accessibilityHint?: string;
   accessibilityState?: HappierAccessibilityState;
+  /** The chip opens a popover of this kind (announced as `aria-haspopup`). */
+  hasPopup?: 'dialog' | 'menu' | 'listbox';
   hitSlop?: HappierPressableProps['hitSlop'];
   /** How far the chip's touch hit area may reach past it: half the rail gap ({@link HappierPressableProps.hitReach}). */
   hitReach?: HappierHitReach;
-  style?: (pressed: boolean) => HappierStyleProp;
+  /** `focused` is keyboard focus only (the browser's focus-visible decision), for a chip that draws its own ring. */
+  style?: (pressed: boolean, focused: boolean) => HappierStyleProp;
 }>;
 
 /**
@@ -56,8 +60,9 @@ export const HappierComposerChip = React.forwardRef<unknown, HappierComposerChip
       ...(disabled ? { disabled: true } : {}),
       ...(props.expressesSelection ? { selected: props.selected === true } : {}),
     } satisfies AccessibilityState;
+    const [focusVisible, setFocusVisible] = React.useState(false);
     const hitArea = useHappierHitArea({
-      restingStyle: () => props.style?.(false),
+      restingStyle: () => props.style?.(false, false),
       hitReach: props.hitReach,
       hitSlop: props.hitSlop,
     });
@@ -72,15 +77,17 @@ export const HappierComposerChip = React.forwardRef<unknown, HappierComposerChip
         accessibilityHint={props.accessibilityHint}
         accessibilityState={accessibilityState}
         {...(props.expressesSelection ? { 'aria-pressed': props.selected === true } : {})}
+        {...(props.hasPopup ? { 'aria-haspopup': props.hasPopup } : {})}
         disabled={disabled}
         hitSlop={hitArea.hitSlop}
         onLayout={hitArea.onLayout}
         onPress={props.onPress}
         onPressIn={props.onPressIn}
-        onFocus={props.onFocus}
+        onFocus={(event) => { setFocusVisible(isHappierFocusVisible((event as { target?: unknown }).target)); props.onFocus?.(); }}
+        onBlur={() => setFocusVisible(false)}
         onHoverIn={props.onHoverIn}
         {...props.webAttributes}
-        style={({ pressed }) => props.style?.(pressed)}
+        style={({ pressed }) => props.style?.(pressed, focusVisible)}
       >
         {hitArea.frame}
         {props.children}

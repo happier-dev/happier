@@ -4,6 +4,10 @@ import type { PopoverAnchor, PopoverBackdropOptions, PopoverPlacement } from '@/
 
 /** A preview pane beside the list and the split geometry the host's content needs. */
 export type CommandMenuPreview = Readonly<{
+    /**
+     * `null` shows the list alone. A preview that comes and goes (with the window width) keeps this object and
+     * passes `null`: dropping it swaps the split for a plain list and remounts every row.
+     */
     content: React.ReactNode | null;
     /** The device-local width preference's key (`useCollectionRailWidth`). */
     resizeKey: string;

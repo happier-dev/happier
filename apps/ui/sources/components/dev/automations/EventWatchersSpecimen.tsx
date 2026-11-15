@@ -62,7 +62,8 @@ const CANDIDATES: readonly PluginMachineExecutionOriginCandidateV1[] = [
     candidate('home-server', '2.4.1', { kind: 'rejected', reason: 'offline' }),
 ];
 
-const MODEL: PluginEventAutomationComposerModel = {
+/** Also the editor's breakpoint-retention test model: one Event, its watchers and a filterable payload. */
+export const EVENT_WATCHERS_SPECIMEN_MODEL: PluginEventAutomationComposerModel = {
     eligibleEvents: [EVENT],
     eventCatalogStatus: 'ready',
     selectedEvent: EVENT,
@@ -98,7 +99,7 @@ export function EventWatchersSpecimen() {
     return (
         <View style={styles.page} testID="event-watchers-specimen">
             <View style={styles.popover}>
-                <InlinePluginEventEditor model={MODEL} onComplete={noop} onCancel={noop} maxHeight={720} />
+                <InlinePluginEventEditor model={EVENT_WATCHERS_SPECIMEN_MODEL} onComplete={noop} onCancel={noop} maxHeight={720} />
             </View>
         </View>
     );

@@ -9,6 +9,7 @@ import {
     AGENT_INPUT_MENU_ICON_SIZE_PX,
 } from '@/components/sessions/agentInput/definitions/agentInputChipIconMetrics';
 import { Icon } from '@/components/ui/icons/Icon';
+import { AgentInputRailChip } from '@/components/sessions/agentInput/definitions/agentInputChipRowReach';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
@@ -129,26 +130,27 @@ function StepOptionsComposerChip(props: StepOptionsChipProps & Readonly<{
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const anchorRef = React.useRef<View>(null);
+    // The rail's own chip: it takes the reach its row declares, so it never overlaps its neighbours' targets.
     return (
         <View ref={anchorRef} collapsable={false} style={styles.chipAnchor}>
-            <HappierPressable
+            <AgentInputRailChip
                 testID={props.testID}
                 accessibilityRole="button"
                 accessibilityLabel={`${t('workflows.page.inspector.stepOptions')}: ${props.label}`}
                 hasPopup="dialog"
                 onPress={() => props.onOpen(anchorRef)}
-                style={(state) => [
-                    props.chipStyle(state.pressed) as never,
+                style={(pressed, focused) => [
+                    props.chipStyle(pressed) as never,
                     styles.chipFrame,
                     props.changed ? styles.chipChanged : null,
-                    focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
+                    focusRingStyle({ focused, color: theme.colors.border.focus }),
                 ]}
             >
                 <Icon name="sliders-horizontal" size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={props.iconColor} />
                 {props.showLabel ? (
                     <Text testID={props.labelTestID} numberOfLines={1} style={[props.textStyle as never, styles.chipLabel]}>{props.label}</Text>
                 ) : null}
-            </HappierPressable>
+            </AgentInputRailChip>
         </View>
     );
 }

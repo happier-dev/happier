@@ -207,4 +207,30 @@ describe('UsageFilterBar', () => {
     expect(settled.findAllByType(SelectionListFilterChip).map((chip) => chip.props.filter.id)).not.toContain('costBasis');
     await settled.unmount();
   });
+
+  // HUNT-UI-STATE C2: the bar recomposes at the phone breakpoint without remounting the cost basis chip, so a chooser
+  // open on one side is still open on the other. (Opening it needs the app's mounted command composition; the chip's
+  // open state lives in the chip, so its host node surviving is the contract.)
+  it('keeps the cost basis chip mounted when the window crosses the phone breakpoint and back', async () => {
+    const desktop = () => {
+      Object.assign(viewport, { width: 1280, height: 900 });
+      vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (X11; Linux x86_64)', maxTouchPoints: 0 });
+    };
+    desktop();
+    const props = { ...barProps([]), costBasisOptions: ['auto', 'reported'] as const, onMetricChange: () => {} };
+    const screen = await renderScreen(<UsageFilterBar {...props} />);
+    // The renderer keeps one test instance per mounted fiber: the same instance after a resize means no remount.
+    const chip = () => screen.findHostByTestId('filters.costBasis');
+    const wide = chip();
+    expect(wide).toBeTruthy();
+    Object.assign(viewport, { width: 390, height: 844 });
+    await screen.update(<UsageFilterBar {...props} />);
+    expect(screen.findAllByType(SelectionListFilterChip).map((entry) => entry.props.filter.id)).toContain('scope');
+    expect(chip()).toBe(wide);
+    desktop();
+    await screen.update(<UsageFilterBar {...props} />);
+    expect(screen.findAllByType(SelectionListFilterChip).map((entry) => entry.props.filter.id)).toContain('sources');
+    expect(chip()).toBe(wide);
+    await screen.unmount();
+  });
 });
