@@ -88,7 +88,8 @@ function ActiveHomeManagedWakeRow(props: Readonly<{ session: SessionPresentation
     const sentence = deliveryFailure?.message ?? (blockedReason ? blockedReason.message ?? t(blockedReason.labelKey) : null)
         ?? (managedWakeProjection ? describeManagedWakeLabel(managedWakeProjection, {
         controllerName: controllerName ?? t('common.machine'),
-        machineName: observation.machine?.launch.name ?? t('common.machine'),
+        machineName: observation.machine?.launch?.name ?? (observation.machine
+            ? getMachineSentenceName({ id: observation.machine.enrolledMachineId ?? observation.machine.id }) : t('common.machine')),
         homeName: resolveHomeDisplayLabel(getServerProfileById(serverId), serverId),
         agentName: agentCore ? t(agentCore.displayNameKey) : formatAgentLikeIdForDisplay(agentId),
     }) : null);

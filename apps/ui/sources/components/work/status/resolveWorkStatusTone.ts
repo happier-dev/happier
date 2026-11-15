@@ -1,4 +1,5 @@
 import { readUiSessionAwarenessWorkStatus } from '@/sync/domains/session/attention/runtimePresentation';
+import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { isInProgressAgentActivityStatus, isTerminalAgentActivityStatus, type AgentActivityStatusV1 } from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityStatusV1';
 import { isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
 import { readSessionManagedSessionsPresentationV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
@@ -199,7 +200,8 @@ export function resolveManagedMachineWorkStatus(facts: Pick<Extract<WorkStatusIn
     if (!(typeof facts.revokedAt === 'number' && facts.revokedAt > 0)) {
         if (nativeState === 'stopping') return workStatus('stopping', { bucket: 'working', tone: 'neutral' }, t('managedPower.stopPending'));
         if (nativeState === 'starting') return workStatus('starting', { bucket: 'working', tone: 'neutral' },
-            t('managedWake.starting', { machine: facts.machineName ?? managed?.launch.name ?? '' }));
+            t('managedWake.starting', { machine: facts.machineName ?? (managed
+                ? managed.launch?.name ?? getMachineDisplayName({ id: managed.enrolledMachineId ?? managed.id }) : '') }));
         if (nativeState === 'asleep') return workStatus('stopped', { bucket: 'idle', tone: 'neutral' }, t('managedPower.asleep'));
     }
     if (!hasManagedOwner) return null;

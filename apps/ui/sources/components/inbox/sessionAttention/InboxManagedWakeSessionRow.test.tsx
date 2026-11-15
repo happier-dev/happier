@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import { activateStorageAccountScope } from '@/dev/testkit/runtime/storageRuntime';
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
+import { ManagedOpaquePresetReadV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -46,7 +47,7 @@ const session = createSessionFixture({ id: 's1', serverId: 'home-a', active: fal
 let disposeScope: (() => void) | null = null;
 afterEach(() => { disposeScope?.(); disposeScope = null; execute.mockReset(); standardCleanup(); });
 
-async function renderRow(resumingAt: number | null, continuationRefused = false, targetUnavailable = false) {
+async function renderRow(resumingAt: number | null, continuationRefused = false, targetUnavailable = false, managedRead: unknown = runningGuest) {
     disposeScope = (await activateStorageAccountScope(scope)).dispose;
     storage.setState(state => ({
         sessions: { ...state.sessions, s1: { ...session, resumingAt, ...(continuationRefused ? {
@@ -63,7 +64,7 @@ async function renderRow(resumingAt: number | null, continuationRefused = false,
         machineListStatusByServerId: { ...state.machineListStatusByServerId, 'home-a': 'idle' },
     }) as never);
     execute.mockImplementation(async (actionId: string) => actionId === 'machines.managed.get'
-        ? { ok: true, result: runningGuest } : { ok: true, result: { status: 'opened' } });
+        ? { ok: true, result: managedRead } : { ok: true, result: { status: 'opened' } });
     const render = vi.fn((wake: Readonly<{ sentence: string | null; retry: React.ReactNode }>) =>
         <>{wake.sentence}{wake.retry}</>);
     const screen = await renderScreen(<InboxManagedWakeSessionRow session={storage.getState().sessions.s1!} serverId="home-a" render={render} />);
@@ -72,6 +73,15 @@ async function renderRow(resumingAt: number | null, continuationRefused = false,
 }
 
 describe('Inbox row for a failed managed wake', () => {
+    it('keeps recovery available when the protected Get returns an opaque enrolled record', async () => {
+        const { launch: _launch, resource: _resource, ...structural } = runningGuest;
+        const read = ManagedOpaquePresetReadV1Schema.parse({ machine: { ...structural,
+            preset: { id: 'sealed-preset', revision: 1, contentEncryptionMode: 'e2ee' },
+        }, presetContent: { content: { t: 'encrypted', c: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==' }, recipientEnvelope: null } });
+        const screen = await renderRow(null, false, false, read);
+        await vi.waitFor(() => expect(screen.findHostByTestId('inbox.session.s1.wake_retry')).toBeTruthy());
+        expect(screen.getTextContent().length).toBeGreaterThan(0);
+    });
     it('shows a cold blocked input cause and retries that exact retained input through the existing send confirmation', async () => {
         const screen = await renderRow(null, false, true);
         expect(hasInboxSessionRecovery(storage.getState().sessions.s1!)).toBe(true);

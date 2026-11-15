@@ -15,6 +15,7 @@ import { getMachineSentenceName, resolveMachineDisplayNames } from '@/utils/sess
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
+import { ManagedOpaquePresetReadV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
     params: { id: 'page-machine' },
@@ -23,6 +24,31 @@ vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).
 const { useMachinePageTarget } = await import('./useMachinePageTarget');
 
 afterEach(() => standardCleanup());
+
+it('keeps the enrolled Machine name when its admitted managed record stays opaque', async () => {
+    const read = ManagedOpaquePresetReadV1Schema.parse({ machine: {
+        id: 'opaque-created', homeId: 'srv_page_opaque', custodianAccountId: 'owner', enrolledMachineId: 'page-machine',
+        preset: { id: 'sealed-preset', revision: 1, contentEncryptionMode: 'e2ee' },
+        allocation: 'bound', creationState: 'active', desired: 'delete', desiredWhen: 'now', intentRevision: 1,
+        retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+        observation: { observedAt: 1, availability: 'present', power: 'stopped' },
+        cleanup: { disposition: 'pending', reason: 'cleanup_pending' },
+    }, presetContent: { content: { t: 'encrypted', c: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==' }, recipientEnvelope: null } });
+    const store = getStorage();
+    const previous = store.getState();
+    const homes = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://page-opaque.test',
+        serverIdentityId: read.machine.homeId, accountId: 'owner' }],
+        route: request => request.path === '/v1/machines/managed/actions/list' ? Response.json({ machines: [read] }) : undefined });
+    const serverId = homes.homes.a!.id;
+    const page = createMachineFixture({ id: 'page-machine', metadata: { ...createMachineFixture().metadata!, displayName: 'Retained box' } });
+    store.getState().applyMachines([page], true, { sourceServerId: serverId });
+    const hook = await renderHook(useMachinePageTarget);
+    try {
+        await waitForHomeGovernance(() => expect(homes.requests.some(request => request.path === '/v1/machines/managed/actions/list')).toBe(true));
+        expect(hook.getCurrent().machineName).toBe(resolveMachineDisplayNames([page]).get(page.id));
+        expect(hook.getCurrent().machineSentenceName).toBe(getMachineSentenceName(page));
+    } finally { await hook.unmount(); await homes.dispose(); store.setState(previous); }
+});
 
 it('pulls a known Machine last-active time once on page open without following later activity', async () => {
     const store = getStorage();

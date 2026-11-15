@@ -11,8 +11,25 @@ import { describeWorkflowInvocationLifecycle, describeWorkflowRunState } from '@
 import { describeWorkerUpdateState, resolveWorkStatusTone } from './resolveWorkStatusTone';
 import { t } from '@/text';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedOpaquePresetMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 
 describe('resolveWorkStatusTone', () => {
+    it('names an opaque enrolled Machine during its submitted start without private launch data', () => {
+        const controller = { machineId: 'controller', installationId: 'installation' };
+        const managed = ManagedOpaquePresetMachineV1Schema.parse({
+            id: 'opaque-starting', homeId: 'home', custodianAccountId: 'owner', enrolledMachineId: 'guest', controller,
+            preset: { id: 'sealed-preset', revision: 1, contentEncryptionMode: 'e2ee' },
+            allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            observation: { observedAt: 1, availability: 'present', power: 'stopped' },
+            submittedNativeEffect: { intent: 'start', intentRevision: 1, controller, requestId: 'start' },
+        });
+        expect(resolveWorkStatusTone({ kind: 'machine', facts: { online: false, machineId: 'guest', managedMachine: managed,
+            word: 'Offline', needsYouCount: 0, runningSessionCount: 0 } })).toMatchObject({
+            bucket: 'working', word: t('managedWake.starting', { machine: getMachineDisplayName({ id: 'guest' }) }),
+        });
+    });
     it('keeps classified managed sleep and wake on nonterminal runs without hiding outcomes or attention', () => {
         for (const nativeState of ['asleep', 'starting'] as const) {
             const machineStatus = resolveWorkStatusTone({ kind: 'machine', facts: {

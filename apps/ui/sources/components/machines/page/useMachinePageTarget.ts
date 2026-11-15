@@ -65,7 +65,7 @@ function useMachinePageNaming(input: Readonly<{ activeServerId: string; requeste
     }, [activeServerId, machineId]);
     const listedServerId = storage(selectServerId);
     const serverId = requestedServerId || listedServerId || activeServerId;
-    const managedName = useManagedEnrolledMachine({ serverId, enrolledMachineId: machineId || undefined }).machine?.launch.name;
+    const managedName = useManagedEnrolledMachine({ serverId, enrolledMachineId: machineId || undefined }).machine?.launch?.name;
     const listedName = useMachineListForServerSelection(serverId, React.useCallback((machines: readonly Machine[]) => (
         machines.some((candidate) => candidate.id === machineId) ? resolveMachineDisplayNames(machines.map(candidate =>
             candidate.id === machineId ? { ...candidate, managedName } : candidate)).get(machineId) ?? null : null
