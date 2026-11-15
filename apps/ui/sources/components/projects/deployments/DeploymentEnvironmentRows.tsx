@@ -164,16 +164,9 @@ export function DeploymentEnvironmentRows(
     const presentation = presentationByRow.get(row);
     return presentation ? deploymentActorLabel(presentation, row.actor, accountId) : null;
   }, [accountId, presentationByRow]);
-  // Runs on keeps its longest name whole (it never truncates at a desktop width); Address gives way first.
-  const runsOnWidth = React.useMemo(() => {
-    const longest = Math.max(0, ...rows.map((row) => row.runsOn?.length ?? 0));
-    return Math.min(RUNS_ON_MAX_PX, Math.max(RUNS_ON_MIN_PX, Math.round(longest * META_CHAR_PX)));
-  }, [rows]);
-  // The Address column stands only when an address is known on this page, sized to the longest one it shows.
-  const addressWidth = React.useMemo(() => {
-    const longest = Math.max(0, ...rows.map((row) => row.liveAddress ? formatDeploymentLiveAddress(row.liveAddress).length : 0));
-    return longest === 0 ? null : Math.min(ADDRESS_MAX_PX, Math.max(ADDRESS_MIN_PX, Math.round(longest * MONO_META_CHAR_PX)));
-  }, [rows]);
+  // The Address column stands only when an address is known on this page. Which columns fit the row at the reader's
+  // text size is the Collection's to decide (lowest priority first): Address gives way before Runs on.
+  const hasAddress = React.useMemo(() => rows.some((row) => Boolean(row.liveAddress)), [rows]);
   const anatomy = React.useMemo<CollectionAnatomy<Row>>(() => {
     const meta = {
       ...Typography.variant('meta'),
@@ -206,10 +199,10 @@ export function DeploymentEnvironmentRows(
           ),
       },
       // Where it answers (the collection's resolved live address), drawn as its host; the first column to give way.
-      ...(addressWidth === null ? [] : [{
+      ...(!hasAddress ? [] : [{
         key: 'address',
         title: t('projects.deployments.services.columnAddress'),
-        minWidth: addressWidth,
+        minWidth: 128,
         priority: 2,
         listColumn: true,
         render: (row: Row) => row.liveAddress ? (
@@ -224,7 +217,7 @@ export function DeploymentEnvironmentRows(
             {
               key: 'runsOn',
               title: t('projects.deployments.services.columnRunsOn'),
-              minWidth: runsOnWidth,
+              minWidth: 184,
               priority: 3,
               listColumn: true,
               // A long Machine name keeps its end, the short id that tells same-named Machines apart.
@@ -282,7 +275,7 @@ export function DeploymentEnvironmentRows(
         title: t('projects.deployments.services.columnEnvironment'),
       },
     };
-  }, [addressWidth, authorOf, hereMachine, props.testID, runsOnWidth, theme.colors.text.secondary, theme.space.s2, theme.space.s4]);
+  }, [hasAddress, authorOf, hereMachine, props.testID, theme.colors.text.secondary, theme.space.s2, theme.space.s4]);
   return (
     <ServicesPageList<Row>
       testID={props.testID}
@@ -294,13 +287,6 @@ export function DeploymentEnvironmentRows(
 }
 
 const NO_SCOPE: ServerAccountScope = Object.freeze({ serverId: '', accountId: '' });
-/** Column bounds from their text at meta size: Address (mono) gives way first, Runs on keeps its longest name whole. */
-const ADDRESS_MIN_PX = 96;
-const ADDRESS_MAX_PX = 128;
-const RUNS_ON_MIN_PX = 96;
-const RUNS_ON_MAX_PX = 184;
-const META_CHAR_PX = 7;
-const MONO_META_CHAR_PX = 7.4;
 
 type LineRow = Pick<Row, 'deploymentTitle' | 'runsOn' | 'detail' | 'steps' | 'stepCaption'>;
 

@@ -515,6 +515,8 @@ function mount(
     renderPopover?: PluginUiPresentationHost['renderPopover'];
     motion?: HappierCollectionMotionDriver;
     reducedMotion?: boolean;
+    /** The reader's text size (1 = normal). */
+    textScale?: number;
     dialog?: boolean;
     openKey?: string | null;
     pane?: ReturnType<typeof createPaneHost>;
@@ -527,6 +529,7 @@ function mount(
 ) {
   const context = createSurfaceContext({
     reducedMotion: options.reducedMotion ?? false,
+    ...(options.textScale === undefined ? {} : { textScale: options.textScale }),
   });
   const hostApi = createHostApiStub(context, options.hostApiOverrides);
   const openChanges: Array<string | null> = [];
@@ -3215,6 +3218,26 @@ describe('render scope', () => {
       expect([...renders]).toEqual([]);
     } finally { view.unmount(); }
   });
+  it.each([[1, ['low', 'mid', 'high']], [1.5, ['mid', 'high']]] as const)(
+    'admits listColumn fields by their total at text scale %s: the lowest priority gives way and the title keeps its minimum',
+    (textScale, shown) => {
+      const field = (key: string, priority: number) => ({ key, title: key, render: (entry: Entry) => entry.age, minWidth: 120, priority,
+        listColumn: true as const });
+      const view = mount({
+        presentation: 'list', scroll: 'page', textScale,
+        anatomy: { ...anatomy, byline: (entry) => entry.repo, fields: [field('low', 1), field('mid', 2), field('high', 3)] },
+        grouping: { ...groups, axis: groups.axis.map((group) => ({ ...group, section: { key: 'all', title: 'All work' } })) },
+      });
+      try {
+        // Wide enough for every column at normal text; at 1.5x the columns alone would leave the title no room.
+        view.measure(700);
+        expect(['low', 'mid', 'high'].filter((key) => view.query(`row:a:column:${key}`) !== null)).toEqual(shown);
+        // The bar names exactly the admitted columns.
+        const bar = view.query('collection:sheet-header')?.textContent ?? '';
+        for (const key of ['low', 'mid', 'high']) expect(bar.includes(key), key).toBe((shown as readonly string[]).includes(key));
+      } finally { view.unmount(); }
+    },
+  );
   it('draws listColumn fields as aligned end columns on a wide page-section list, named once, and leaves them to the byline on a phone', () => {
     const bylineLayouts: Array<boolean | undefined> = [];
     const columnsAnatomy: CollectionAnatomy<Entry> = {

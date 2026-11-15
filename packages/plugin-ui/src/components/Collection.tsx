@@ -748,6 +748,10 @@ const LIST_SINGLE_LINE_PADDING_Y = 6;
 const CATALOG_ROW = HAPPIER_COLLECTION_LIST_METRICS.catalogRow;
 /** A list row's title keeps this share of the table's title minimum before its title meta moves beneath it. */
 const LIST_TITLE_MIN_SHARE = 0.5;
+/** The narrowest a list row's title stays beside its meta or its end columns, at the reader's text size. */
+function listTitleMinWidth(textScale: number): number {
+  return TABLE.titleMinWidth * textScale * LIST_TITLE_MIN_SHARE;
+}
 /** The list row's action stands at the row's end inset, mirroring where its text starts. */
 const LIST_ACTION_INSET = TABLE.insetTrailing - TABLE.insetEnd;
 /** The place a row's own ⋯ takes after its meta, on every row of a collection whose rows carry actions. */
@@ -1432,7 +1436,7 @@ function ListCells<Item>(props: Readonly<{
   const [metaPlacement, setMetaPlacement] = useState<'inline' | 'beneath'>('inline');
   const measured = useRef({ row: 0, meta: 0 });
   const { textScale } = useHappierUiAccessibility();
-  const titleMinWidth = TABLE.titleMinWidth * textScale * LIST_TITLE_MIN_SHARE;
+  const titleMinWidth = listTitleMinWidth(textScale);
   const placeMeta = useCallback((next: Partial<{ row: number; meta: number }>) => {
     measured.current = { ...measured.current, ...next };
     setMetaPlacement(resolveHappierRowTitleMetaPlacement({
@@ -2235,10 +2239,29 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   // byline carries them); a page table keeps its own bar.
   const columnsShown = pageSections && !pageTable && !catalogDirectory && rowGeometry === 'list'
     && !isHappierPageRowNarrow(size?.width ?? null);
+  // Admitted by their total at the reader's text size, through the table's column owner: the lowest priority gives
+  // way first and the title keeps its list minimum, so a page never caps a column's width for large text itself.
+  const rowWidth = size?.width ?? null;
+  const textScale = accessibility.textScale;
   const listColumns = useMemo((): readonly CollectionField<Item>[] => {
     const declared = columnsShown ? (anatomy.fields ?? NO_FIELDS).filter((field) => field.listColumn === true) : NO_FIELDS;
-    return declared.length === 0 ? NO_FIELDS : declared;
-  }, [anatomy.fields, columnsShown]);
+    if (declared.length === 0) return NO_FIELDS;
+    if (rowWidth === null) return declared;
+    const admitted = resolveHappierCollectionTableColumns({
+      columns: [
+        { key: '', minWidth: listTitleMinWidth(textScale), priority: Number.POSITIVE_INFINITY, flex: true },
+        ...declared.map((field) => ({ key: field.key, minWidth: field.minWidth * textScale, priority: field.priority })),
+      ],
+      // The page row's insets and its leading mark column; every column after the title stands one leading gap on.
+      availableWidth: rowWidth - 2 * HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx
+        - HAPPIER_PAGE_METRICS.rowLeadingColumnPx - HAPPIER_PAGE_METRICS.rowLeadingGapPx,
+      gap: HAPPIER_PAGE_METRICS.rowLeadingGapPx,
+    });
+    if (admitted.length === declared.length + 1) return declared;
+    const keys = new Set(admitted.map((column) => column.key));
+    const shown = declared.filter((field) => keys.has(field.key));
+    return shown.length === 0 ? NO_FIELDS : shown;
+  }, [anatomy.fields, columnsShown, rowWidth, textScale]);
   const catalogList = rowRole === 'catalogRow' && rowGeometry === 'list' && !pageSections;
   const catalogSideList = catalogList && !wrapTitles;
   // Peeks exist in the resting table; while the table fades out (reduced motion) they stay and fade with it.
