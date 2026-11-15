@@ -32,7 +32,7 @@ import {
   type ServiceCheckStatus,
 } from './serviceCheckPresentation';
 import { SERVICES_ONE_SHEET, ServicesPageList } from './DeploymentEnvironmentRows';
-import { watchedServiceItems, type WatchedMachineRead, type WatchedServiceItem } from './watchedServiceItems';
+import { watchedServiceBands, watchedServiceItems, type WatchedMachineRead, type WatchedServiceItem } from './watchedServiceItems';
 import { useReportViewCount, type ServicesViewCount } from './ServicesViews';
 
 const NO_OPEN = () => {};
@@ -304,11 +304,24 @@ function WatchedList(props: Readonly<{
   }, []);
   const items = React.useMemo(() => watchedServiceItems(watches, reads), [reads, watches]);
   const hrefs = props.state.presentations;
+  // A Machine's read state is said once, on its band (with Retry when it failed); its rows keep name and purpose.
+  const bands = React.useMemo(() => watchedServiceBands(machineIds, reads, names), [machineIds, names, reads]);
   const groups = React.useMemo(() => ({
-    axis: machineIds.map((machineId) => ({ key: machineId, title: names[machineId] ?? t('machineServices.groups.watched'),
-      section: SERVICES_ONE_SHEET })),
+    axis: bands.map((band) => ({ key: band.key, title: band.title ?? t('machineServices.groups.watched'),
+      section: SERVICES_ONE_SHEET,
+      ...(band.read === 'failed' ? { description: t('machineServices.error.title'), tone: 'attention' as const }
+        : band.read === 'reading' ? { description: t('machineServices.loading') } : {}) })),
     groupOf: groupOfWatched,
-  }), [machineIds, names]);
+  }), [bands]);
+  const refreshers = React.useRef(new Map<string, () => void>());
+  const registerRefresh = React.useCallback((machineId: string, refresh: () => void) => {
+    refreshers.current.set(machineId, refresh);
+  }, []);
+  const groupAction = React.useCallback((machineId: string) => {
+    const band = bands.find((candidate) => candidate.key === machineId);
+    const refresh = refreshers.current.get(machineId);
+    return band?.read === 'failed' && refresh ? { label: t('common.retry'), onPress: refresh, kind: 'operation' as const } : null;
+  }, [bands]);
   const open = React.useCallback((key: string | number | null) => {
     const item = key === null ? undefined : items.find((candidate) => candidate.key === String(key));
     const href = item ? hrefs.get(item.key)?.home.href : undefined;
@@ -325,8 +338,7 @@ function WatchedList(props: Readonly<{
       ? <MachineServiceByline row={item.service} runFactsInColumns={layout?.fieldColumns === true}
           stateInColumn={layout?.fieldColumns === true} />
       : <Text style={{ ...Typography.variant('meta'), color: theme.colors.text.secondary, flexShrink: 1 }} numberOfLines={1}>
-          {[t(`machineServices.purpose.${item.lifecyclePurpose === 'infrastructure' ? 'infrastructure' : 'watched'}`),
-            item.read === 'failed' ? t('machineServices.error.title') : t('machineServices.loading')].join(' · ')}
+          {t(`machineServices.purpose.${item.lifecyclePurpose === 'infrastructure' ? 'infrastructure' : 'watched'}`)}
         </Text>,
     titleMeta: (item) => item.service ? renderMachineServicePort(item.service) : null,
     titleMetaAlign: 'row',
@@ -346,19 +358,22 @@ function WatchedList(props: Readonly<{
     <>
       {props.serverId ? machineIds.map((machineId) => (
         <WatchedMachineReader key={machineId} serverId={props.serverId!} machineId={machineId} active={props.presented}
-          onRead={report} />
+          onRead={report} onRefresh={registerRefresh} />
       )) : null}
       <ServicesPageList<WatchedItem> testID="services.watched" model={model} anatomy={anatomy}
-        accessibilityLabel={t('projects.deployments.services.watched')} />
+        accessibilityLabel={t('projects.deployments.services.watched')} groupAction={groupAction} />
     </>
   );
 }
 
 /** One Machine's service read (no UI of its own), reported up so the Watched rows draw its facts. */
 function WatchedMachineReader(props: Readonly<{ serverId: string; machineId: string; active: boolean;
-  onRead: (machineId: string, read: WatchedMachineRead) => void }>) {
+  onRead: (machineId: string, read: WatchedMachineRead) => void;
+  onRefresh: (machineId: string, refresh: () => void) => void }>) {
   const list = useMachineServicesList({ serverId: props.serverId, machineId: props.machineId, active: props.active });
-  const { onRead, machineId } = props;
+  const { onRead, onRefresh, machineId } = props;
+  const { refresh } = list;
+  React.useEffect(() => { onRefresh(machineId, () => { void refresh(); }); }, [machineId, onRefresh, refresh]);
   const failed = Boolean(list.error || list.unavailable);
   const rows = list.rows ?? null;
   React.useEffect(() => {

@@ -175,7 +175,10 @@ export function ServicesDatabasesView(
       const status = coverage.get(row.environmentId);
       return status === 'uncovered' ? <Status tone="warning" label={t('projects.deployments.notBackedUp')} presentation="inline" />
         : status === 'covered' ? t('projects.deployments.services.backupCovered')
-        : status === 'notNeeded' ? t('projects.deployments.services.backupNotNeeded') : null;
+        : status === 'notNeeded' ? t('projects.deployments.services.backupNotNeeded')
+        // Said as the coverage owner reports it: still reading, or its read failed (never a bare dash for either).
+        : status === 'unavailable' ? <Status tone="muted" label={t('projects.deployments.services.backupUnchecked')} presentation="inline" />
+        : status === 'loading' ? t('projects.deployments.services.backupChecking') : null;
     };
     return {
       glyph: () => <Icon name="stack" size={ICON_SIZE.md} color={theme.colors.text.secondary} />,

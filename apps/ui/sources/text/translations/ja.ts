@@ -18516,6 +18516,8 @@ settingsSession: {
           noChecksBody: "チェックはアプリやアドレスが応答しなくなったときに知らせます。環境のドメインや監視中のサービスから追加できます。",
           noWatched: "監視しているものはまだありません",
           noWatchedBody: "マシンですでに動いているサービスは、そのサービスタブから監視するとここに表示されます。",
+          backupChecking: "確認中…",
+          backupUnchecked: "確認できません",
           columnEvery: "間隔",
           columnAddress: "アドレス",
           needYou: ({ count }: { count: number }) => `${count} 件の対応が必要`,

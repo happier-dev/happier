@@ -83,3 +83,17 @@ describe('watchedServiceItems (Services → Watched, lab svcWatch)', () => {
     expect(items[0]!.service?.serviceId).toBe('svc');
   });
 });
+
+describe('watchedServiceBands (Services → Watched bands)', () => {
+  it('says a Machine-level read state once on its band, never on each of its rows', async () => {
+    const { watchedServiceBands } = await import('./watchedServiceItems');
+    const bands = watchedServiceBands(['m1', 'm2', 'm3'],
+      new Map([['m1', { status: 'failed' as const, rows: null }], ['m2', { status: 'listed' as const, rows: [] }]]),
+      { m1: 's0-guest-1101', m2: 'vps-ams' });
+    expect(bands.map((band) => [band.key, band.title, band.read])).toEqual([
+      ['m1', 's0-guest-1101', 'failed'],
+      ['m2', 'vps-ams', 'listed'],
+      ['m3', null, 'reading'],
+    ]);
+  });
+});

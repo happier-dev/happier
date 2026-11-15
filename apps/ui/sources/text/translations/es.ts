@@ -18602,6 +18602,8 @@ settingsSession: {
           noChecksBody: "Una comprobación te avisa cuando una app o dirección deja de responder. Añade una desde los Dominios de un entorno o un servicio vigilado.",
           noWatched: "Aún no vigilas nada",
           noWatchedBody: "Los servicios que ya se ejecutan en una Máquina aparecen aquí cuando los vigilas desde su pestaña Servicios.",
+          backupChecking: "Comprobando…",
+          backupUnchecked: "No se pudo comprobar",
           columnEvery: "Cada",
           columnAddress: "Dirección",
           needYou: ({ count }: { count: number }) => (count === 1 ? '1 te necesita' : `${count} te necesitan`),

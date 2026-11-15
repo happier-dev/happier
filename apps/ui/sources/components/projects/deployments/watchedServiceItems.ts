@@ -47,3 +47,22 @@ export function watchedServiceItems(
     };
   });
 }
+
+export type WatchedServiceBand = Readonly<{
+  key: string;
+  /** The Machine's name, when the reach owner has one. */
+  title: string | null;
+  read: WatchedServiceItem['read'];
+}>;
+
+/** One band per Machine with watches, carrying that Machine's read state once (its rows never repeat it). */
+export function watchedServiceBands(
+  machineIds: readonly string[],
+  reads: ReadonlyMap<string, WatchedMachineRead>,
+  names: Readonly<Record<string, string | undefined>>,
+): readonly WatchedServiceBand[] {
+  return machineIds.map((machineId) => {
+    const read = reads.get(machineId);
+    return { key: machineId, title: names[machineId] ?? null, read: !read ? 'reading' : read.status };
+  });
+}

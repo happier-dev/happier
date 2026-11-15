@@ -18221,6 +18221,8 @@ settingsSession: {
           noChecksBody: "检查会在应用或地址不再响应时通知你。可在环境的域名或已关注的服务中添加。",
           noWatched: "还没有关注任何服务",
           noWatchedBody: "机器上已在运行的服务，在其“服务”标签中关注后会显示在这里。",
+          backupChecking: "正在检查…",
+          backupUnchecked: "无法检查",
           columnEvery: "间隔",
           columnAddress: "地址",
           needYou: ({ count }: { count: number }) => `${count} 个需要你处理`,

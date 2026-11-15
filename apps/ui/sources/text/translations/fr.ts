@@ -18476,6 +18476,8 @@ settingsSession: {
           noChecksBody: "Une vérification vous prévient quand une app ou une adresse ne répond plus. Ajoutez-en une depuis les Domaines d’un environnement ou un service surveillé.",
           noWatched: "Rien de surveillé",
           noWatchedBody: "Les services qui tournent déjà sur une Machine apparaissent ici une fois surveillés depuis son onglet Services.",
+          backupChecking: "Vérification…",
+          backupUnchecked: "Vérification impossible",
           columnEvery: "Toutes les",
           columnAddress: "Adresse",
           needYou: ({ count }: { count: number }) => (count === 1 ? '1 a besoin de vous' : `${count} ont besoin de vous`),
