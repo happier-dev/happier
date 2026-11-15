@@ -11,9 +11,9 @@ export type MachineDataDisclosure = Readonly<{
 
 /**
  * Add a machine → What leaves this Machine (pfc-redesign dConnect #2), following the Account's persisted
- * `encryptionMode` (the one authority for end-to-end encryption, docs/encryption.md): what the daemon sends, what only
- * the person's devices can read on an end-to-end encrypted Account, and what the Happier server can read. Unknown mode
- * claims nothing. Wording is a draft awaiting the batched security review.
+ * `encryptionMode` (the one authority for end-to-end encryption, docs/encryption.md): what the daemon sends, who can
+ * read it on an end-to-end encrypted Account (the person's devices and whoever they share this Machine or a Session
+ * with), and what the Happier server can read. Unknown mode claims nothing. Wording reviewed by SEC-REVIEW-1115.
  */
 export function machineDataDisclosure(
   mode: 'e2ee' | 'plain' | null,
