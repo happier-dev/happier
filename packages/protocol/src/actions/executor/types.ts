@@ -3673,14 +3673,18 @@ export type ActionExecutorDeps = Readonly<{
   isActionEnabled?: (actionId: ActionId, ctx: ActionExecutorContext) => boolean;
 
   /**
-   * Optional approvals routing policy hook.
-   *
-   * When true, the executor will create an approval request instead of executing the action.
-   * Host-admitted consequence defaults are resolved against the hook's current persisted policy.
+   * Host facts for approval. The shared router (`resolveActionApprovalRouting`) decides; hosts never
+   * answer "approval required" themselves.
+   * - `readActionsSettings`: the host's current Actions settings for this invocation (falls back to the
+   *   invocation's stamped `actionsSettings`).
+   * - `readApprovalOwner`: `'receiver'` when a receiving signed root owns this invocation's Ask, so the
+   *   local host creates none.
+   * - `readSettingsDeclarationOperation`: an installed Settings declaration's operation, resolved like
+   *   the built-in declarations.
    */
-  isActionApprovalRequired?: (actionId: ActionId, ctx: ActionExecutorContext, input?: unknown, defaultUiConfirmation?: boolean,
-    approvedOperation?: Pick<WorkflowApprovedOperationV1, 'parent' | 'steps'> | null, approvalScope?: import('../actionApprovalPolicy.js').ActionApprovalPolicyScopeV1,
-    defaultSafety?: import('../actionSpecs.js').ActionSpec['safety']) => boolean;
+  readActionsSettings?: (ctx: ActionExecutorContext) => import('../actionSettings.js').ActionsSettingsV1 | undefined;
+  readApprovalOwner?: (actionId: ActionId, ctx: ActionExecutorContext) => 'receiver' | 'local';
+  readSettingsDeclarationOperation?: (anchor: string) => import('../settings/settingsDeclarations.js').SettingsDeclarationOperationV1 | undefined;
 
   /** Fresh owner read of exact approved effects; missing evidence never grants consent. */
   readApprovedOperation?: (args: Readonly<{

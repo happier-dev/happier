@@ -6,7 +6,6 @@ import { AppShellActionOutputSchemas, readNoticeInboxAccountIdV1 } from './appSh
 import { ExternalActionExecutionAuthorizationV1Schema } from './externalActionApi.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
-import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
 import { ActionIdSchema } from './actionIds.js';
 
 describe('app shell Actions', () => {
@@ -117,9 +116,7 @@ describe('app shell Actions', () => {
       let ownerRead = false;
       const settings = ActionsSettingsV1Schema.parse({ v: 1,
         actions: { [actionId]: { approvalRequiredSurfaces: ['voice'] } } });
-      const isActionApprovalRequired: NonNullable<ActionExecutorDeps['isActionApprovalRequired']> = (id, context) =>
-        isApprovalRequiredByActionsSettings(id, settings, context);
-      const executor = createActionExecutor({ isActionApprovalRequired,
+      const executor = createActionExecutor({ readActionsSettings: () => settings,
         appShellAction: async () => { ownerRead = true; throw new Error('Owner must not execute before approval'); },
       } as unknown as ActionExecutorDeps);
       const input = actionId === 'session.work.get' ? { sessionId: 'lead' }
@@ -140,7 +137,6 @@ describe('app shell Actions', () => {
           { serverId: 'home-b', sessionId: 'same-id', status: 'failed' },
         ] };
       },
-      isActionApprovalRequired: () => false,
     } as unknown as ActionExecutorDeps);
     const input = { targets: [
       { serverId: 'home-a', sessionId: 'same-id' },
@@ -159,7 +155,7 @@ describe('app shell Actions', () => {
   });
 
   it('refuses draft deletion when its client owner is unavailable', async () => {
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+    const executor = createActionExecutor({
       presentUserActionConfirmation: async () => true } as unknown as ActionExecutorDeps);
     await expect(executor.execute('session.draft.delete', { draftId: '00000000-0000-4000-8000-000000000001' }, {
       surface: 'ui', authority: 'present_user',

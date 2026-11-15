@@ -2,9 +2,9 @@ import { logger } from '@/ui/logger';
 import { StoredApprovalRequestSchema, isHistoricalPublishApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildActionExecuteResultFromRecordedApprovalExecution, createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { settleApprovalRequestReplayInputs } from '@happier-dev/protocol/approvals/approvalRequestTransition';
-import { isActionEnabledByActionsSettings, normalizeActionsSettingsV1, type ActionSettingsActionId, type ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { isActionEnabledByActionsSettings, normalizeActionsSettingsV1, tightenActionsSettingsV1, type ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { isActionEnabledWithSessionMemory } from '@happier-dev/protocol/actions/actionSurfaceAvailability';
-import { isApprovalRequiredByActionsSettings, resolveActionApprovalRouting } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { resolveActionApprovalRouting } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
 import { resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
@@ -141,29 +141,23 @@ export function createCliActionExecutorHarness(
         placement: ctx.placement ?? null,
       },
     );
-  const requiresOriginalCliFiniteAdmission = (id: string, ctx: Parameters<NonNullable<ActionExecutorDeps['isActionApprovalRequired']>>[1]) =>
+  const requiresOriginalCliFiniteAdmission = (id: string, ctx: ActionExecutorContext) =>
     Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, id)
       && params.credentials && !params.projectAction && !overrides?.projectAction && !params.machineActionDirectTargetTransport
       && (!params.actionsSettingsProvider || params.actionsSettingsProvider.getAccountSettings)
       && ctx.surface === 'cli' && !ctx.externalActionCredential && !ctx.externalActionExecutionAuthorization
       && !ctx.rpcSessionAuthorization && (!ctx.actionCaller || ctx.actionCaller.kind === 'host');
-  const readApprovalRequired: NonNullable<ActionExecutorDeps['isActionApprovalRequired']> = (id, ctx, input, defaultUiConfirmation, approvedOperation, approvalScope, defaultSafety) =>
-    // A contained Workflow invitation retains its admitted restrictions; a
-    // later provider waiver is not consent. Current restrictions still apply.
-    // Retain admitted caller provenance: the shared policy distinguishes a
-    // person's host UI intent from automation and unstamped invocations.
-    (hasAcceptedReservationPolicy(id, ctx) && isApprovalRequiredByActionsSettings(id, ctx.actionsSettings!, ctx, defaultSafety, undefined, input, defaultUiConfirmation, undefined, approvedOperation, approvalScope)) || isApprovalRequiredByActionsSettings(
-      id,
-      params.actionsSettingsProvider?.getActionsSettings()
-        ?? ctx.actionsSettings
-        ?? actionSettingsProvider.getActionsSettings(),
-      ctx,
-      defaultSafety, undefined, input, defaultUiConfirmation, undefined, approvedOperation, approvalScope,
-    );
-  const isActionApprovalRequired: NonNullable<ActionExecutorDeps['isActionApprovalRequired']> = (id, ctx, input, defaultUiConfirmation, approvedOperation, approvalScope, defaultSafety) =>
-    // projectAction refuses a policy that cannot survive admission before it
-    // sends anything. The receiver persists Ask with the signed Machine root.
-    requiresOriginalCliFiniteAdmission(id, ctx) ? false : readApprovalRequired(id, ctx, input, defaultUiConfirmation, approvedOperation, approvalScope, defaultSafety);
+  // Host facts for the shared approval router. A contained Workflow invitation keeps its admitted
+  // restrictions and every current restriction still applies (a later waiver is not consent).
+  const readActionsSettings = (ctx: ActionExecutorContext) => {
+    const current = readHostActionsSettings(ctx);
+    return ctx.actionCaller?.kind === 'workflowRun' && ctx.actionCaller.discussionModelReservation !== undefined
+      && ctx.actionsSettings !== undefined ? tightenActionsSettingsV1(ctx.actionsSettings, current) : current;
+  };
+  // Original CLI finite admission defers Ask to the receiving signed Machine root; projectAction
+  // refuses a host-only Ask that the Account cannot preserve before anything is sent.
+  const readApprovalOwner = (id: string, ctx: ActionExecutorContext) =>
+    requiresOriginalCliFiniteAdmission(id, ctx) ? 'receiver' as const : 'local' as const;
   const rawDeps: MutableActionExecutorDeps = {
     ...baseDepsForRuntime,
     prepareApprovalExecutionOriginContext: async () => {
@@ -263,7 +257,8 @@ export function createCliActionExecutorHarness(
       }));
     },
     isActionEnabled,
-    isActionApprovalRequired,
+    readActionsSettings,
+    readApprovalOwner,
     runtimeActionExecute: async args => {
       if (resolveRuntimeActionExecutionFamily(args.actionId) === 'localServices'
         && baseDepsForRuntime.runtimeActionExecute) return await baseDepsForRuntime.runtimeActionExecute(args);

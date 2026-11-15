@@ -1,4 +1,4 @@
-import type { ActionId} from '@happier-dev/protocol/actions/actionIds';
+import { SCM_REMOTE_PUSH_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionSettingsActionId } from '@happier-dev/protocol/actions/actionSettings';
 import { isActionEnabledByActionsSettings, normalizeActionsSettingsV1, type ActionEnablementContext, type ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
@@ -37,29 +37,48 @@ export function isActionEnabledInState(
 
 type ApprovalContext = Parameters<typeof isApprovalRequiredByActionsSettings>[2];
 
+/** The person's Source Control preference (`scmRemoteConfirmPolicy`, kept from 0.2) asks for this remote Action on the UI. */
+function scmRemotePreferenceDefaultAsk(actionId: ActionSettingsActionId, accountSettings: ActionSettingsAccountSnapshot | null | undefined): boolean {
+    const kind = actionId === 'scm.remote.pull' ? 'pull' : actionId === SCM_REMOTE_PUSH_ACTION_ID_V1 ? 'push' : null;
+    if (!kind) return false;
+    if (resolveActionsSettingsV1FromState({ settings: accountSettings }).approvalWaivedSurfaces?.[actionId]?.includes('ui')) return false;
+    return shouldConfirmRemoteOperation(normalizeScmRemoteConfirmPolicy(accountSettings?.scmRemoteConfirmPolicy), kind);
+}
+
 /**
- * The person's Source Control preference (`scmRemoteConfirmPolicy`, kept from 0.2) is the UI default
- * confirmation of the remote pull and push Actions. It is a default like the protocol's own: a present
- * person's UI press asks once, in place, unless the person already answered this exact press in a dialog
- * of their own (`presentUserConfirmation`) or set the Action to Allowed. An explicit Ask first stays the
- * Action policy's own approval, so the two never stack.
+ * The Source Control preference as the remote pull and push Actions' UI default, for Settings' inherited
+ * answer: a present person's UI press asks once, in place, unless the person already answered this exact
+ * press in a dialog of their own (`presentUserConfirmation`) or set the Action to Allowed.
  */
 export function scmRemotePreferenceAsks(
     actionId: ActionSettingsActionId,
     accountSettings: ActionSettingsAccountSnapshot | null | undefined,
     ctx: ApprovalContext,
 ): boolean {
-    const kind = actionId === 'scm.remote.pull' ? 'pull' : actionId === 'scm.remote.push' ? 'push' : null;
-    if (!kind || ctx?.surface !== 'ui' || ctx.authority !== 'present_user') return false;
+    if (ctx?.surface !== 'ui' || ctx.authority !== 'present_user') return false;
     if (ctx.presentUserConfirmation?.actionId === actionId) return false;
-    if (resolveActionsSettingsV1FromState({ settings: accountSettings }).approvalWaivedSurfaces?.[actionId]?.includes('ui')) return false;
-    return shouldConfirmRemoteOperation(normalizeScmRemoteConfirmPolicy(accountSettings?.scmRemoteConfirmPolicy), kind);
+    return scmRemotePreferenceDefaultAsk(actionId, accountSettings);
 }
 
 /**
- * Whether an Action invocation needs approval under the person's Account settings: the Action policy
- * (Settings → Actions) plus the Source Control preference as the remote Actions' UI default. The one
- * resolver for the executor's approval hook and every UI prediction of it.
+ * The Actions settings the UI host routes with: the person's Action policy plus the Source Control
+ * preference as a UI Ask on remote pull and push (the shared router answers it in place for the
+ * person's own press, and an exact confirmed press answers it).
+ */
+export function resolveExecutorActionsSettingsV1(accountSettings: ActionSettingsAccountSnapshot | null | undefined): ActionsSettingsV1 {
+    const withScmAsk = (settings: ActionsSettingsV1, actionId: ActionSettingsActionId): ActionsSettingsV1 => {
+        const row = settings.actions[actionId];
+        if (!scmRemotePreferenceDefaultAsk(actionId, accountSettings) || row?.approvalRequiredSurfaces.includes('ui')) return settings;
+        return normalizeActionsSettingsV1({ ...settings, actions: { ...settings.actions,
+            [actionId]: { ...(row ?? {}), approvalRequiredSurfaces: [...(row?.approvalRequiredSurfaces ?? []), 'ui'] } } });
+    };
+    return withScmAsk(withScmAsk(resolveActionsSettingsV1FromState({ settings: accountSettings }), 'scm.remote.pull'),
+        SCM_REMOTE_PUSH_ACTION_ID_V1);
+}
+
+/**
+ * Whether an Action invocation needs approval under the person's Account settings, as the UI host's
+ * router sees them (`resolveExecutorActionsSettingsV1`). The one resolver for every UI prediction.
  */
 export function isActionApprovalRequiredByAccountSettings(
     actionId: ActionSettingsActionId,
@@ -69,10 +88,10 @@ export function isActionApprovalRequiredByAccountSettings(
       approvedOperation?: Parameters<typeof isApprovalRequiredByActionsSettings>[8]; approvalScope?: Parameters<typeof isApprovalRequiredByActionsSettings>[9] }>,
 ): boolean {
     return isApprovalRequiredByActionsSettings(
-        actionId, resolveActionsSettingsV1FromState({ settings: accountSettings }), ctx,
+        actionId, resolveExecutorActionsSettingsV1(accountSettings), ctx,
         options?.defaultSafety, options?.contributedApprovalDefault, options?.input, options?.defaultUiConfirmation,
         undefined, options?.approvedOperation, options?.approvalScope,
-    ) || scmRemotePreferenceAsks(actionId, accountSettings, ctx);
+    );
 }
 
 /** The person's own Ask-first policy for one Action on one invoking surface. */

@@ -174,6 +174,7 @@ import { assertMemoryHomeV1, readMemoryWriteAdmissionV1, bindMemoryWriteApproval
 
 import { InputOptionsConsumerV1Schema, inputOptionsConsumerActionId } from '../inputs/inputOptionsConsumer.js';
 import { readRecord, readNonEmptyString, hasOwn } from '../inputs/inputRecords.js';
+import { resolveSettingsDeclarationOperationApprovalPolicyV1 } from './settings/settingsDeclarations.js';
 import { areServerProfileIdentifiersEquivalent } from '../features/payload/capabilities/serverIdentityCapabilities.js';
 import { ModelFavoriteMutationV1Schema } from '../providers/modelFavoritesV1.js';
 import {
@@ -3133,6 +3134,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         contextualUiConfirmation = machineAccessGrantSetRequiresUiConfirmation(admittedInput, current);
       }
     }
+    // An installed Settings declaration's operation is classified like the built-ins (specs/settings.ts).
+    const declaredAnchor = actionId === 'settings.invoke' && contextualSafety === undefined ? readRecord(admittedInput).anchor : undefined;
+    const declaredOperation = typeof declaredAnchor === 'string' ? deps.readSettingsDeclarationOperation?.(declaredAnchor) : undefined;
+    if (declaredOperation) {
+      const declared = resolveSettingsDeclarationOperationApprovalPolicyV1(declaredOperation, admittedInput);
+      contextualSafety = declared.requiresApproval ? 'danger' : 'safe';
+      contextualUiConfirmation ??= declared.uiConfirmationRequired;
+    }
     if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
     const scopeAdmission = existingAdmission ? { approvalScope: existingAdmission.approvalScope }
       : await readActionApprovalScopeAdmissionV1({ actionId, spec, input: admittedInput,
@@ -3211,7 +3220,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         spec,
         input: admittedInput,
         context,
-        settings: context.actionsSettings,
+        settings: deps.readActionsSettings?.(context) ?? context.actionsSettings,
         // Input-only in-flow consent answers its designed review; a newly discovered
         // mandatory consequence still needs this owner's exact carried review.
         reviewAdmitted: reviewAdmitted && !childReviewRequired
@@ -3227,13 +3236,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         ...(contextualSafety === undefined ? {} : { defaultSafety: contextualSafety }),
         ...(widgetNetworkChange ? { defaultUiConfirmation: contextualSafety === 'danger' }
           : contextualUiConfirmation === undefined ? {} : { defaultUiConfirmation: contextualUiConfirmation }),
-        // Pass the raw policy-hook result through (boolean | undefined). When the hook is unwired,
-        // `undefined` propagates so `resolveActionApprovalRouting` applies its centralized fail-safe
-        // default instead of coercing an unwired dependency to "no approval" here. (F7)
-        requiredByPolicy: childReviewRequired ? true : reviewAdmitted ? undefined : context.bypassApprovals ? false : visualAdmission?.networkCreationApprovalRequired === true
-          ? true : contextualUiConfirmation !== undefined
-          ? deps.isActionApprovalRequired?.(actionId, context, admittedInput, contextualUiConfirmation, approvedOperation, approvalScope, contextualSafety) : contextualSafety === undefined
-          ? deps.isActionApprovalRequired?.(actionId, context, admittedInput, undefined, approvedOperation, approvalScope, contextualSafety) : undefined,
+        // Only executor-proved consequences pass a boolean; settings and host facts reach the router,
+        // which applies its centralized default when a host supplies no settings. (F7)
+        requiredByPolicy: childReviewRequired ? true : reviewAdmitted ? undefined : context.bypassApprovals ? false
+          : visualAdmission?.networkCreationApprovalRequired === true ? true : undefined,
+        ...(deps.readApprovalOwner?.(actionId, context) === 'receiver' ? { approvalOwner: 'receiver' as const } : {}),
       });
     };
     const workflowRunId = ctx.externalActionExecutionAuthorization?.binding.workflowActionOrigin?.runId

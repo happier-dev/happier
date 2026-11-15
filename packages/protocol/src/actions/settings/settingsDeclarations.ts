@@ -61,10 +61,13 @@ export function readBuiltInSettingDeclarationV1(anchor: unknown): PortableSettin
   return typeof anchor === 'string' ? declarationsByAnchor.get(anchor) ?? null : null;
 }
 
-/** One declaration-owned default for static and activation-owned Settings operations. */
-export function resolveSettingsDeclarationOperationApprovalPolicyV1(operation: Readonly<{
+/** A declared Settings operation's approval facts, as authored by its (built-in or installed) declaration. */
+export type SettingsDeclarationOperationV1 = Readonly<{
   kind: 'interaction' | 'invoke'; requiresApproval?: boolean; uiConfirmation?: 'direct' | 'policy';
-}> | undefined, input?: unknown): Readonly<{ requiresApproval: boolean; uiConfirmationRequired: boolean }> {
+}>;
+
+/** One declaration-owned default for static and activation-owned Settings operations. */
+export function resolveSettingsDeclarationOperationApprovalPolicyV1(operation: SettingsDeclarationOperationV1 | undefined, input?: unknown): Readonly<{ requiresApproval: boolean; uiConfirmationRequired: boolean }> {
   const collectionDeletion = readCollectionSpaceDeletionApprovalV1(input);
   if (collectionDeletion) return { requiresApproval: collectionDeletion.requiresApproval, uiConfirmationRequired: collectionDeletion.uiConfirmationRequired };
   const requiresApproval = operation?.kind !== 'invoke' || operation.requiresApproval !== false;

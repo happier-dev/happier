@@ -150,7 +150,7 @@ import { RoleActionInputSchemasV1, RoleActionOutputSchemasV1 } from '@happier-de
 import { readUiPluginRoleSources } from '@/sync/ops/roles/roleSources';
 import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
-import { isActionApprovalRequiredByAccountSettings, resolveActionsSettingsV1FromState } from '@/sync/domains/settings/actionsSettings';
+import { resolveExecutorActionsSettingsV1, resolveActionsSettingsV1FromState } from '@/sync/domains/settings/actionsSettings';
 import { PluginWebhookActionHttpPathsV1, type PluginWebhookPresentUserActionIdV1 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
 import { projectPluginFailureText } from '@happier-dev/protocol/plugins/failureProjection';
 import { SessionModelTransitionRequestV1Schema, SessionModelTransitionResultV1Schema, type SessionModelTransitionRequestV1, type SessionModelTransitionResultV1 } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
@@ -263,7 +263,7 @@ import { resolveAgentIdForPermissionUi } from '@/agents/catalog/resolve';
 import { createUiSessionConfigOptionAction } from './sessionConfigOptionAction';
 import { resolveSessionPermissionBehavior } from '@/sync/ops/sessionPermissionAnswers';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { createSettingsDeclarationAction, isBuiltInLocalSettingMutation, resolveSettingsDeclarationOperationApprovalPolicy } from './settingsDeclarationAction';
+import { createSettingsDeclarationAction, isBuiltInLocalSettingMutation, readSettingsDeclarationOperation } from './settingsDeclarationAction';
 import { createAtmosphereSettingServices } from './atmosphereSettingServices';
 import { createSettingsOwnerActionExecutor } from './settingsOwnerActionExecutor';
 import { getAutomationSettings, updateAutomationSettings } from '@/sync/api/automations/apiAutomations';
@@ -2253,22 +2253,12 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       if (!metadata) return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
       return readSessionStateFieldFromMetadata(metadata, 'intent.approvalProfileId') ?? null;
     },
-    isActionApprovalRequired: (actionId, ctx, input, defaultUiConfirmation, approvedOperation, approvalScope, defaultSafety) => {
-      const operationSettings = actionId === 'settings.invoke' ? accountContext?.readLiveSettings() : null;
-      const anchor = input && typeof input === 'object' && 'anchor' in input && typeof input.anchor === 'string' ? input.anchor : '';
-      const operationPolicy = operationSettings ? resolveSettingsDeclarationOperationApprovalPolicy(anchor, operationSettings, input) : undefined;
-      const operationSafety = actionId === 'settings.invoke' ? operationPolicy?.requiresApproval === false ? 'safe' : 'danger' : undefined;
-      return isActionApprovalRequiredByAccountSettings(actionId, readAccountSettingsSnapshot(), {
-        surface: ctx.surface ?? null,
-        callerSurface: ctx.callerSurface,
-        authority: ctx.authority,
-        actionCaller: ctx.actionCaller,
-        presentUserConfirmation: ctx.presentUserConfirmation,
-        externalActionCredential: ctx.externalActionCredential,
-        externalActionExecutionAuthorization: ctx.externalActionExecutionAuthorization,
-        rpcSessionAuthorization: ctx.rpcSessionAuthorization,
-      }, { defaultSafety: operationSafety ?? defaultSafety, defaultUiConfirmation: defaultUiConfirmation ?? operationPolicy?.uiConfirmationRequired,
-        input, approvedOperation, approvalScope });
+    // Host facts for the shared approval router: the person's settings (with the Source Control
+    // preference) and installed Settings declarations' operations, classified like the built-ins.
+    readActionsSettings: () => resolveExecutorActionsSettingsV1(readAccountSettingsSnapshot()),
+    readSettingsDeclarationOperation: anchor => {
+      const settings = accountContext?.readLiveSettings();
+      return settings ? readSettingsDeclarationOperation(anchor, settings) : undefined;
     },
     ...createUiExecutionRunActionDeps(accountContext?.accountLifetime.scope, accountContext),
     resolveSessionSpawnAgentInventorySelection: args => resolveSessionSpawnAgentInventorySelectionForActions({ ...args,

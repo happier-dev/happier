@@ -93,10 +93,14 @@ type SettingsDeclarationActionResult = z.output<(typeof SettingsDeclarationActio
     | ReturnType<typeof refuse> | ActionApprovalRequestCreatedResult;
 class ConditionalSettingConflict extends Error {}
 
+/** The declared operation for an anchor across built-in and installed Settings pages. */
+export function readSettingsDeclarationOperation(anchor: string, settings: Settings) {
+    return findSettingDeclaration(getSettingsPageDeclarations(undefined, settings), anchor)?.ref?.operation;
+}
+
 /** The declaration is the operation's safety owner; unknown operations fail closed. */
 export function resolveSettingsDeclarationOperationApprovalPolicy(anchor: string, settings: Settings, input?: unknown): ReturnType<typeof resolveSettingsDeclarationOperationApprovalPolicyV1> {
-    const ref = findSettingDeclaration(getSettingsPageDeclarations(undefined, settings), anchor)?.ref;
-    return resolveSettingsDeclarationOperationApprovalPolicyV1(ref?.operation, input);
+    return resolveSettingsDeclarationOperationApprovalPolicyV1(readSettingsDeclarationOperation(anchor, settings), input);
 }
 
 /** Only existing writable built-in device preferences admit a local UI interaction without an Account. */

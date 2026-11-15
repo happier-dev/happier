@@ -325,6 +325,63 @@ export function readScopedActionApprovalPreference(settings: ActionsSettingsV1, 
   return settings.scopedApprovalPreferences?.find(row => actionScopedApprovalPreferenceKey(row.actionId, row.scope) === key);
 }
 
+/**
+ * An admission that retained its own Action restrictions (a Workflow invitation) stays bound by them,
+ * and every current restriction still applies: Off or Require in either side holds, Allowed holds only
+ * where both allow. Current settings supply everything else (profiles, tool exposure, placements).
+ */
+export function tightenActionsSettingsV1(retained: ActionsSettingsV1, current: ActionsSettingsV1): ActionsSettingsV1 {
+  const union = <T>(left: readonly T[] | undefined, right: readonly T[] | undefined): T[] =>
+    [...new Set([...(left ?? []), ...(right ?? [])])];
+  const both = <T>(left: readonly T[] | undefined, right: readonly T[] | undefined): T[] =>
+    (left ?? []).filter(value => right?.includes(value) === true);
+  const actions: Record<string, ActionSettingsOverride> = { ...current.actions };
+  for (const [id, row] of Object.entries(retained.actions)) {
+    const now = current.actions[id];
+    actions[id] = { ...(now ?? row),
+      ...(row.enabled === false || now?.enabled === false ? { enabled: false } : {}),
+      disabledSurfaces: union(row.disabledSurfaces, now?.disabledSurfaces),
+      approvalRequiredSurfaces: union(row.approvalRequiredSurfaces, now?.approvalRequiredSurfaces) };
+  }
+  const approvalWaivedSurfaces = Object.fromEntries(Object.keys(retained.approvalWaivedSurfaces ?? {})
+    .map(id => [id, both(retained.approvalWaivedSurfaces?.[id], current.approvalWaivedSurfaces?.[id])] as const)
+    .filter(([, surfaces]) => surfaces.length > 0));
+  const scopedRow = (settings: ActionsSettingsV1, key: string) => settings.scopedApprovalPreferences
+    ?.find(row => actionScopedApprovalPreferenceKey(row.actionId, row.scope) === key);
+  const scoped = new Map<string, ActionScopedApprovalPreferenceV1>();
+  for (const row of [...(retained.scopedApprovalPreferences ?? []), ...(current.scopedApprovalPreferences ?? [])]) {
+    const key = actionScopedApprovalPreferenceKey(row.actionId, row.scope);
+    if (scoped.has(key)) continue;
+    const kept = scopedRow(retained, key);
+    const now = scopedRow(current, key);
+    const required = union(kept?.approvalRequiredSurfaces, now?.approvalRequiredSurfaces);
+    scoped.set(key, { actionId: row.actionId, scope: row.scope, approvalRequiredSurfaces: required,
+      approvalWaivedSurfaces: both(kept?.approvalWaivedSurfaces, now?.approvalWaivedSurfaces)
+        .filter(surface => !required.includes(surface)) });
+  }
+  type ForeignChoice = NonNullable<NonNullable<ActionsSettingsV1['callerSurfacePolicies']>['foreign_session_html']>[string];
+  const keptForeign = retained.callerSurfacePolicies?.foreign_session_html ?? {};
+  const nowForeign = current.callerSurfacePolicies?.foreign_session_html ?? {};
+  // Allowed only when both sides allow; a choice only one side made otherwise falls back to the default.
+  const strictest = (left: ForeignChoice | undefined, right: ForeignChoice | undefined): ForeignChoice | undefined =>
+    left === 'off' || right === 'off' ? 'off' : left === 'ask_first' || right === 'ask_first' ? 'ask_first'
+      : left === 'allowed' && right === 'allowed' ? 'allowed' : undefined;
+  const foreignEntries = union(Object.keys(keptForeign), Object.keys(nowForeign))
+    .flatMap(id => { const choice = strictest(keptForeign[id], nowForeign[id]); return choice ? [[id, choice] as const] : []; });
+  const pluginWaivers = both(retained.pluginHostCaptureApprovalWaived, current.pluginHostCaptureApprovalWaived);
+  const { approvalWaivedSurfaces: _waived, pluginHostCaptureApprovalWaived: _pluginWaived,
+    scopedApprovalPreferences: _scoped, callerSurfacePolicies, ...rest } = current;
+  return {
+    ...rest,
+    actions,
+    ...(Object.keys(approvalWaivedSurfaces).length > 0 ? { approvalWaivedSurfaces } : {}),
+    ...(pluginWaivers.length > 0 ? { pluginHostCaptureApprovalWaived: pluginWaivers } : {}),
+    ...(scoped.size > 0 ? { scopedApprovalPreferences: [...scoped.values()] } : {}),
+    ...(callerSurfacePolicies || foreignEntries.length > 0 ? { callerSurfacePolicies: { ...callerSurfacePolicies,
+      foreign_session_html: Object.fromEntries(foreignEntries) } } : {}),
+  };
+}
+
 /** Only a deliberate scoped edit writes or clears this preference. */
 export function setScopedActionApprovalPreference(params: Readonly<{
   settings: ActionsSettingsV1; actionId: string; scope: ActionApprovalScopeV1;

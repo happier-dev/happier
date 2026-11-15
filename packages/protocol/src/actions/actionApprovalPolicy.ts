@@ -69,6 +69,8 @@ export type ResolveActionApprovalRoutingArgs = Readonly<{
   approvalScope?: ActionApprovalPolicyScopeV1;
   context?: ApprovalInvocationContext & Pick<ActionExecutorContext, 'bypassApprovals' | 'isPluginSettingsIntentCurrent' | 'machineServiceLogsResource' | 'approvalProfileId' | 'approvalProfileChange'> | null;
   requiredByPolicy?: boolean;
+  /** Host fact: the receiving signed root owns this invocation's Ask, so the local host creates none. */
+  approvalOwner?: 'receiver' | 'local';
   /** Explicit Artifact creation requests approval, independently of target execution defaults. */
   explicitApprovalRequest?: true;
   /** Prepared child review belongs to this parent; a parent waiver does not answer it. */
@@ -399,6 +401,8 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
       args.defaultSafety, args.defaultConfirmation, args.input, args.defaultUiConfirmation, true, args.approvedOperation, args.approvalScope) : true
     : typeof args.requiredByPolicy === 'boolean'
     ? args.requiredByPolicy
+    : args.approvalOwner === 'receiver'
+    ? false
     : hasPolicyContext
       ? isApprovalRequiredByActionsSettings(policyActionId, args.settings ?? { v: 1, actions: {} }, args.context, args.defaultSafety, args.defaultConfirmation, args.input, args.defaultUiConfirmation, undefined, args.approvedOperation, args.approvalScope)
       : presentUserRequest || (args.defaultSafety !== undefined || args.defaultUiConfirmation !== undefined

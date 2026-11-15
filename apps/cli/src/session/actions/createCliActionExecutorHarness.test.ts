@@ -502,14 +502,17 @@ describe('createCliActionExecutorHarness', () => {
     expect(posts).not.toHaveBeenCalled();
   });
   it.each([
-    { mode: 'allow', retainedRequire: false, held: false },
-    { mode: 'require', retainedRequire: false, held: true },
-    { mode: 'allow', retainedRequire: true, held: true },
-  ] as const)('uses current approval profiles while retaining Workflow invitation restrictions ($mode, $retainedRequire)', async ({ mode, retainedRequire, held }) => {
+    { mode: 'allow', retainedRequire: false, currentRequire: false, held: false },
+    { mode: 'require', retainedRequire: false, currentRequire: false, held: true },
+    { mode: 'allow', retainedRequire: true, currentRequire: false, held: true },
+    // A later Account Require still applies over the invitation's retained waiver.
+    { mode: 'allow', retainedRequire: false, currentRequire: true, held: true },
+  ] as const)('uses current approval profiles while retaining Workflow invitation restrictions ($mode, $retainedRequire, $currentRequire)', async ({ mode, retainedRequire, currentRequire, held }) => {
     let effects = 0;
     let approval: ReturnType<typeof ApprovalRequestV2Schema.parse> | undefined;
     const waived = { 'discussion.invite': ['agent'] };
-    const settings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: waived,
+    const settings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: currentRequire ? {} : waived,
+      ...(currentRequire ? { actions: { 'discussion.invite': { approvalRequiredSurfaces: ['agent'] } } } : {}),
       approvalProfiles: [{ id: 'profile:current', name: 'Current', defaultMode: mode }] });
     const { executor } = createCliActionExecutorHarness({ token: 'token', mode: 'plain', ctx: null,
       sessionId: 'origin', serverId: 'home', serverHttpBaseUrl: 'https://workflow-home.example.invalid',
