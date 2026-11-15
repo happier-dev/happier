@@ -951,6 +951,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         cancelRequested: props.cancelRequested,
         machineReachable: props.machineReachable,
         machineName: props.machineName ?? props.run.machineId,
+        machineStatus: props.machineStatus,
         coverage,
         historyComplete: props.invocationHistoryComplete,
         inAttentionWindow: props.run.attentionRequired === true || attentionRows.length > 0,
@@ -1317,7 +1318,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                         state={props.run.state}
                         context={{ workflowCustodyState: props.run.workflowCustodyState,
                             cancelRequested: props.cancelRequested, machineReachable: props.machineReachable,
-                            machineName: props.machineName ?? props.run.machineId }}
+                            machineName: props.machineName ?? props.run.machineId, machineStatus: props.machineStatus }}
                         // Amber only when the outcome is the hold itself; a Paused or Running Run whose hold
                         // Needs you lists keeps its own calm mark (FIN-DESIGN-REVIEW L2).
                         inAttentionWindow={workflowRunOutcomeIsAttention({
@@ -1523,11 +1524,14 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             {/* The view switch: Map · Steps · Activity (07 §2.1, §3 control table). `flow` stays the
                 route's view id; the person reads the one map as Map. */}
             <View style={[styles.viewSwitch, phone ? styles.viewSwitchPhone : styles.viewSwitchOnMark]}>
-                <View style={phone ? null : styles.viewTabs}>
-                    <WorkflowPageNavigation navigation={navigation} phone={phone}
+                {/* A phone's pages usually live in the bottom bar; no wrapper, so an absent strip leaves no gap. */}
+                {phone ? <WorkflowPageNavigation navigation={navigation} phone
+                    testIDPrefix={`${testIDPrefix}-view`}
+                    onSelect={selectNavigation} /> : <View style={styles.viewTabs}>
+                    <WorkflowPageNavigation navigation={navigation} phone={false}
                         testIDPrefix={`${testIDPrefix}-view`}
                         onSelect={selectNavigation} />
-                </View>
+                </View>}
                 {/* A phone folds the source action into ⋯, so a settled Run's phone page has no row here to reserve. */}
                 {sourceFolded && isTerminalWorkflowRunState(props.run.state) ? null : <View style={[styles.viewActions, phone ? styles.viewActionsPhone : styles.viewActionsTrailing]}>
                     {/* A quiet way back to what is happening now; the source action stays the bordered one (lab run-A). */}

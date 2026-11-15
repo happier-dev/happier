@@ -10,6 +10,7 @@ import type { WorkflowActionFieldBindingV1 } from '@happier-dev/protocol/workflo
 import type { WorkflowResultContract, WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
 import { projectWorkflowResultFields } from '@happier-dev/protocol/workflows/workflowResultFieldsV1';
 
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -397,7 +398,6 @@ export function WorkflowValueReferenceEditor(props: Readonly<{
     renderLiteral?: (value: unknown, onChange: (next: unknown) => void) => React.ReactNode;
     testIDPrefix: string;
 }>): React.ReactElement {
-    const { theme } = useUnistyles();
     const rowId = `${props.testIDPrefix}-input-${props.index}`;
     const reference = props.reference;
     return (
@@ -434,14 +434,12 @@ export function WorkflowValueReferenceEditor(props: Readonly<{
                     onChangeText={(value) => props.onChange({ kind: 'literal', value: parseLiteral(value) })}
                 />
             ) : null}
+            {/* Removing a value is the editor's quiet trailing x on its line (as a condition's value), so it
+                keeps the picker's line on a phone instead of a lone word beneath it. */}
             {props.onRemove === undefined ? null : (
-                <HappierPressable
-                    accessibilityRole="button"
-                    onPress={props.onRemove}
-                    style={(state) => [workflowEditorStyles.actionTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
-                >
-                    <Text style={workflowEditorStyles.footAction}>{t('workflows.editor.remove')}</Text>
-                </HappierPressable>
+                <IconButton testID={`${rowId}-remove`} variant="plain" iconName="x"
+                    accessibilityLabel={t('workflows.editor.remove')} tooltip={t('workflows.editor.remove')}
+                    onPress={props.onRemove} />
             )}
         </View>
     );
