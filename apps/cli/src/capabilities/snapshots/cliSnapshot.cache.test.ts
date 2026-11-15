@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setImmediate as nextIoTurn } from 'node:timers/promises';
 import { projectMachineAgentsDetectResponse } from '@happier-dev/protocol';
@@ -197,6 +197,46 @@ describe('detectCliSnapshotOnDaemonPath (cache)', () => {
     expect(await invocations()).toBe(first);
     await detect(request('opencode', true));
     expect(await invocations()).toBeGreaterThan(first);
+  }, 20_000);
+
+  const signedInClaude = [
+    'if (process.argv.includes("--version")) process.stdout.write("2.1.292\\n");',
+    'else process.stdout.write(JSON.stringify({ loggedIn: true, authMethod: "claude.ai", apiProvider: "firstParty" }));',
+  ].join('\n');
+
+  it('starts no process for picker opens after the first detection, across request shapes and time', async () => {
+    await cli('claude', signedInClaude);
+    nativeRuntime ??= await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    expect((await detect(request('claude', true))).clis.claude).toMatchObject({ available: true, isLoggedIn: true });
+    const afterFirst = await invocations();
+    // Opening a picker is not a detection input: only install/update, PATH/environment,
+    // an explicit refresh, a daemon start or a changed executable are.
+    for (let open = 0; open < 3; open++) {
+      vi.setSystemTime(Date.now() + 31_000);
+      expect((await detect(request('claude', true))).clis.claude)
+        .toMatchObject({ available: true, isLoggedIn: true, version: '2.1.292' });
+      expect((await detect({ requestedCliNames: ['claude', 'codex'] })).clis.claude.version).toBe('2.1.292');
+    }
+    expect(await invocations()).toBe(afterFirst);
+  }, 20_000);
+
+  it('probes an updated script CLI exactly once', async () => {
+    const launcher = await cli('claude', signedInClaude);
+    expect((await detect(request('claude'))).clis.claude.version).toBe('2.1.292');
+    const afterFirst = await invocations();
+    // An external `npm i -g` or vendor update rewrites the launcher's target.
+    await writeFile(join(binDir, 'claude.js'), [
+      'const fs = require("node:fs");',
+      'fs.appendFileSync(' + JSON.stringify(countFile) + ', "1");',
+      'process.stdout.write("2.1.300\\n");',
+    ].join('\n'));
+    const later = new Date(Date.now() + 60_000);
+    await utimes(join(binDir, 'claude.js'), later, later);
+    expect((await detect(request('claude'))).clis.claude.version).toBe('2.1.300');
+    expect((await detect(request('claude'))).clis.claude.version).toBe('2.1.300');
+    expect(await invocations()).toBe(afterFirst + 1);
+    expect(launcher).toBeTruthy();
   }, 20_000);
 
   it('reports what is installed now after an update invalidates the cached snapshots', async () => {

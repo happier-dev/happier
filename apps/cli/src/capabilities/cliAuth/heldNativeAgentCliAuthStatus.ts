@@ -27,6 +27,8 @@ export async function readHeldNativeAgentCliAuthStatus(params: Parameters<typeof
   nativeHome?: Parameters<typeof resolveConfiguredNativeHomePath>[0];
   /** Declared auth environment variable names; only their presence joins the key. */
   authEnvironmentVariables: readonly string[];
+  /** An explicit refresh probes even a held signed-in fact, and records what it observes. */
+  fresh?: boolean;
 }>): Promise<CliAuthStatus | null> {
   const env = params.processEnv ?? {};
   const presentAuthVariables = params.authEnvironmentVariables.filter((name) => Boolean(env[name]?.trim())).sort();
@@ -35,8 +37,8 @@ export async function readHeldNativeAgentCliAuthStatus(params: Parameters<typeof
     .then((file) => `${file.size}:${file.mtimeMs}:${file.ino}`)
     .catch(() => null);
   const held = heldSignedInBySlot.get(slot);
-  if (binary !== null && held?.binary === binary) return { state: 'logged_in', checkedAt: held.checkedAt };
-  const { nativeHome: _nativeHome, authEnvironmentVariables: _authEnvironmentVariables, ...probe } = params;
+  if (!params.fresh && binary !== null && held?.binary === binary) return { state: 'logged_in', checkedAt: held.checkedAt };
+  const { nativeHome: _nativeHome, authEnvironmentVariables: _authEnvironmentVariables, fresh: _fresh, ...probe } = params;
   const status = await detectNativeAgentCliAuthStatus(probe);
   if (binary !== null && status?.state === 'logged_in') heldSignedInBySlot.set(slot, { binary, checkedAt: status.checkedAt });
   else heldSignedInBySlot.delete(slot);

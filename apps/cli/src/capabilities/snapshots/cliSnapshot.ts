@@ -1,23 +1,19 @@
-import { constants as fsConstants } from 'fs';
-import { access } from 'fs/promises';
-import { join, delimiter as PATH_DELIMITER } from 'path';
-
 import { AGENTS } from '@/agent/catalog/registry';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
-import { observeCurrentAgentSessionFactory, type AgentSessionFactorySource } from '@/agent/catalog/runtimeEntry';
+import { observeCurrentAgentSessionFactory, readCurrentCatalogHook, type AgentSessionFactorySource } from '@/agent/catalog/runtimeEntry';
 import type { AgentCliLaunchSpec } from '@/packagedRuntime/managedTools/agentCliLaunchSpec';
 import type { CliDetectSpec } from '@/agent/catalog/types';
 import type { CliAuthStatus } from '@/capabilities/cliAuth/types';
 import { CapabilityError } from '@/capabilities/errors';
 import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
-import { detectNativeAgentCliAuthStatus } from '@/capabilities/cliAuth/detectNativeAgentCliAuthStatus';
+import { readHeldNativeAgentCliAuthStatus } from '@/capabilities/cliAuth/heldNativeAgentCliAuthStatus';
 import { resolveCliSnapshotProbeTimeoutMs } from './cliSnapshotProbeTimeout';
+import { CliVersionCache, type CliVersionProbeResult } from './cliVersionCache';
 import {
     resolveAgentCliCommandForRuntime,
     resolveAgentCliJavaScriptRuntimeOnDaemonPath as resolveJavaScriptRuntimeExecutableForCliSnapshot,
 } from '@/packagedRuntime/managedTools/agentCliResolution';
 import { resolveAgentCliRuntimeSpecForLookupId } from '@/packagedRuntime/managedTools/requireAgentCliCommand';
-import { AsyncTtlCache } from '@happier-dev/protocol/common/asyncTtlCache';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { MachineAgentInventoryItem } from '@happier-dev/protocol';
 import { resolveAgentSetupInstall, resolveAgentSetupPlatform } from '@happier-dev/protocol/agents/setup';
@@ -37,11 +33,13 @@ import {
     resolvePlatformFromNodePlatform,
 } from '@happier-dev/cli-common/agents';
 import { buildMemberAgentCliResolutionEnvironment } from '@/capabilities/installJobs/memberResolveEffect';
+import { sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { hashStableJsonIdentity } from '@/utils/stableJsonIdentity';
 import {
     execFileWithDeadline,
     ExecFileTerminationError,
     resolveWindowsCommandInvocation,
-    resolveWindowsCommandOnPath,
+    resolveExecutableCommand,
     type ExecFileWithDeadlineOptions,
 } from '@happier-dev/cli-common/process';
 
@@ -136,11 +134,12 @@ export interface DetectCliSnapshot {
     windowsTerminal: DetectWindowsTerminalEntry;
 }
 
-const CLI_SNAPSHOT_TTL_MS = 30_000;
-const cliSnapshotCache = new AsyncTtlCache<DetectCliSnapshot>({
-    successTtlMs: CLI_SNAPSHOT_TTL_MS,
-    errorTtlMs: 2_000,
-});
+// Detection follows its inputs, not UI demand. Each Agent's facts are re-derived per request
+// from the filesystem (resolution, install class, launch command); the process-backed facts are
+// held by their owners until their inputs change: versions per executable identity
+// (cliVersionCache) and the signed-in fact per binary/config/auth env (heldNativeAgentCliAuthStatus).
+// Facts are per Agent, so one Agent's failure never affects another or another request shape.
+const cliVersionCache = new CliVersionCache();
 
 const CLI_SNAPSHOT_PROBE_TIMEOUT = Symbol('CLI_SNAPSHOT_PROBE_TIMEOUT');
 
@@ -160,81 +159,10 @@ async function withCliSnapshotProbeTimeout<T>(promise: Promise<T>, timeoutMs: nu
     }
 }
 
-function buildCliSnapshotCacheKey(params: DetectCliRequest, pathEnv: string | null): string {
-    const includeLoginStatus = params.includeLoginStatus === true ? '1' : '0';
-    const includeVersion = params.includeVersion !== false || params.verifyVersion === true ? '1' : '0';
-    const verifyVersion = params.verifyVersion === true ? '1' : '0';
-    const requestedCliNames = Array.isArray(params.requestedCliNames)
-        ? params.requestedCliNames.map((value) => String(value)).sort().join(',')
-        : '';
-    const requestedTools = params.requestedTools?.slice().sort().join(',') ?? 'all';
-    const path = String(pathEnv ?? '');
-    const pathExt = process.platform === 'win32' ? String(process.env.PATHEXT ?? '') : '';
-    const home = String(process.env.HOME ?? '');
-    const userProfile = String(process.env.USERPROFILE ?? '');
-
-    // Include environment variables that affect CLI resolution and auth.
-    // Provider resolution can fall back to HOME/USERPROFILE when HAPPIER_HOME_DIR is unset,
-    // and auth probes also read provider files from HOME/USERPROFILE.
-    const happierHomeDir = String(process.env.HAPPIER_HOME_DIR ?? '');
-    const sourcePrefs = String(process.env.HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON ?? '');
-    const registry = readCurrentContributionRegistry();
-    const probeEnvKeys = new Set<string>();
-    for (const agent of registry.agents) {
-        if (params.requestedCliNames?.length && !params.requestedCliNames.includes(agent.id)) continue;
-        // Executable lookup consumes these manifest facts even without an auth probe.
-        for (const directory of agent.cliMetadata?.executable.knownEnvironmentBinDirs ?? []) {
-            probeEnvKeys.add(directory.envVar);
-        }
-        const alternativeFallbackEnvVar = agent.cliMetadata?.executable.alternativeBinaryFallbackEnabledEnvVar;
-        if (alternativeFallbackEnvVar) probeEnvKeys.add(alternativeFallbackEnvVar);
-        if (params.includeLoginStatus === true) {
-            for (const key of agent.cliMetadata?.auth.environmentVariables ?? []) probeEnvKeys.add(key);
-            // Declared process environment includes status-command homes such as CODEX_HOME.
-            for (const request of [...(agent.hostAccess?.required ?? []), ...(agent.hostAccess?.optional ?? [])]) {
-                if (request.capability === 'process') {
-                    for (const key of request.scope.envKeys ?? []) probeEnvKeys.add(key);
-                }
-            }
-        }
-    }
-    const probeEnvFingerprint = JSON.stringify([...probeEnvKeys].sort().map((key) => [key, process.env[key] ?? '']));
-
-    // Include all HAPPIER_*_PATH overrides for known agents
-    const agentIds = Object.keys(AGENTS);
-    const pathOverrides = agentIds
-        .map((id) => {
-            const envKey = `HAPPIER_${id.toUpperCase()}_PATH`;
-            return String(process.env[envKey] ?? '');
-        })
-        .join(':');
-
-    return `${JSON.stringify(params.resolution ?? {})}:${includeLoginStatus}:${includeVersion}:${verifyVersion}:${requestedCliNames}:${requestedTools}:${pathExt}:${path}:${home}:${userProfile}:${happierHomeDir}:${sourcePrefs}:${probeEnvFingerprint}:${pathOverrides}`;
-}
-
-async function resolveCommandOnPath(command: string, pathEnv: string | null): Promise<string | null> {
-    if (!pathEnv) return null;
-
-    if (process.platform === 'win32') {
-        return resolveWindowsCommandOnPath(command, { ...process.env, PATH: pathEnv });
-    }
-
-    const segments = pathEnv
-        .split(PATH_DELIMITER)
-        .map((p) => p.trim())
-        .filter(Boolean);
-
-    for (const dir of segments) {
-        const candidate = join(dir, command);
-        try {
-            await access(candidate, fsConstants.X_OK);
-            return candidate;
-        } catch {
-            // continue
-        }
-    }
-
-    return null;
+function buildCliSnapshotEnvironmentKey(params: DetectCliRequest, environment: NodeJS.ProcessEnv, cwd: string): string {
+    // Resolution, native runtimes and auth consume the same admitted environment.
+    // Hash it through the existing identity owner instead of copying their selectors.
+    return JSON.stringify([params.resolution ?? {}, hashStableJsonIdentity(environment), cwd]);
 }
 
 function getFirstLine(value: string): string | null {
@@ -265,14 +193,14 @@ function quoteShellArgument(value: string): string {
     return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
-async function resolveCliLaunchCommand(params: { resolvedPath: string; env?: NodeJS.ProcessEnv }): Promise<string> {
+async function resolveCliLaunchCommand(params: { resolvedPath: string; env?: NodeJS.ProcessEnv; cwd?: string }): Promise<string> {
     if (!agentCliPathRequiresJavaScriptRuntime(params.resolvedPath)) {
         return quoteShellArgument(params.resolvedPath);
     }
 
     const runtimeExecutable = params.env
         ? resolveAgentCliJavaScriptRuntimeCommand(params.resolvedPath, params.env,
-            { isBunRuntime: typeof process.versions.bun === 'string', currentExecPath: process.execPath })
+            { isBunRuntime: typeof process.versions.bun === 'string', currentExecPath: process.execPath, cwd: params.cwd })
         : await resolveJavaScriptRuntimeExecutableForCliSnapshot(params.resolvedPath);
     if (!runtimeExecutable) return quoteShellArgument(params.resolvedPath);
     return `${quoteShellArgument(runtimeExecutable)} ${quoteShellArgument(params.resolvedPath)}`;
@@ -314,13 +242,13 @@ export type RunResolvedAgentCliVersionCommand = (input: Readonly<{
     signal?: AbortSignal;
 }>) => Promise<Readonly<{ stdout: string; stderr: string }>>;
 
-async function probeCliExecution(params: { name: DetectCliName; resolvedPath: string; timeoutMs: number; env?: NodeJS.ProcessEnv; signal?: AbortSignal; execFile?: typeof execFileWithDeadline; launch?: AgentCliLaunchSpec; runVersionCommand?: RunResolvedAgentCliVersionCommand }): Promise<Readonly<{ installed?: boolean; version: string | null; detectionError?: DetectCliEntry['detectionError'] }>> {
+async function probeCliExecution(params: { name: DetectCliName; resolvedPath: string; timeoutMs: number; env?: NodeJS.ProcessEnv; cwd?: string; signal?: AbortSignal; execFile?: typeof execFileWithDeadline; launch?: AgentCliLaunchSpec; runVersionCommand?: RunResolvedAgentCliVersionCommand }): Promise<CliVersionProbeResult & Readonly<{ installed?: boolean; detectionError?: DetectCliEntry['detectionError'] }>> {
     let installed = false;
     let interrupted = false;
-    let detectedVersion: string | null = null;
-    const result = (version: string | null) => !installed && interrupted
-        ? { version, detectionError: { code: 'cli-detection-timeout' as const, message: 'Agent CLI detection did not complete' } }
-        : { installed, version };
+    let detectedVersion: CliVersionProbeResult = { version: null, successful: false };
+    const result = (observation: CliVersionProbeResult) => !installed && interrupted
+        ? { ...observation, detectionError: { code: 'cli-detection-timeout' as const, message: 'Agent CLI detection did not complete' } }
+        : { installed, ...observation };
     // Ordinary probe failures are best-effort; cancellation and failed containment must escape.
     try {
         // Keep this within the outer snapshot probe budget. JS-backed CLIs can take
@@ -402,48 +330,49 @@ async function probeCliExecution(params: { name: DetectCliName; resolvedPath: st
             file: string,
             args: string[],
             options: ExecFileBestEffortOptions,
-	        ): Promise<string | null> => {
+	        ): Promise<CliVersionProbeResult> => {
 	            const first = await probeSemverOnce(file, args, options);
-	            if (first.semver) return first.semver;
+	            if (first.semver) return { version: first.semver, successful: first.error === null };
 
 	            const shouldRetry =
 	                (first.error && isTransientExecFileError(first.error))
 	                || (!first.error && first.combinedTrimmed.length === 0);
-	            if (!shouldRetry) return null;
+	            if (!shouldRetry) return { version: null, successful: false };
 
 	            // Best-effort retry for transient spawn/timeout failures (can happen under load).
 	            await new Promise((resolve) => setTimeout(resolve, 0));
 	            const second = await probeSemverOnce(file, args, options);
-	            return second.semver;
+	            return { version: second.semver, successful: second.error === null };
         };
 
         if (params.launch && params.runVersionCommand) {
             for (const args of argsToTry) {
-                const semver = await probeSemverWithRetry(params.launch.command, [...params.launch.args, ...args], {
+                const observation = await probeSemverWithRetry(params.launch.command, [...params.launch.args, ...args], {
                     timeout: timeoutMs,
                     windowsHide: true,
                     signal: params.signal,
                 });
-                detectedVersion = semver ?? detectedVersion;
-                if (semver && installed) return result(semver);
+                detectedVersion = observation.version ? observation : detectedVersion;
+                if (observation.version && installed) return result(observation);
             }
             return result(detectedVersion);
         }
 
         if (needsJavaScriptRuntime) {
             const runtimeExecutable = params.env
-                ? resolveAgentCliJavaScriptRuntimeCommand(params.resolvedPath, params.env, { isBunRuntime: typeof process.versions.bun === 'string', currentExecPath: process.execPath })
+                ? resolveAgentCliJavaScriptRuntimeCommand(params.resolvedPath, params.env, { isBunRuntime: typeof process.versions.bun === 'string', currentExecPath: process.execPath, cwd: params.cwd })
                 : await resolveJavaScriptRuntimeExecutableForCliSnapshot(params.resolvedPath);
-            if (!runtimeExecutable) return result(null);
+            if (!runtimeExecutable) return result({ version: null, successful: false });
             for (const args of argsToTry) {
-                const semver = await probeSemverWithRetry(runtimeExecutable, [params.resolvedPath, ...args], {
+                const observation = await probeSemverWithRetry(runtimeExecutable, [params.resolvedPath, ...args], {
                     timeout: timeoutMs,
                     windowsHide: true,
                     env: params.env,
+                    cwd: params.cwd,
                     signal: params.signal,
                 });
-                detectedVersion = semver ?? detectedVersion;
-                if (semver && installed) return result(semver);
+                detectedVersion = observation.version ? observation : detectedVersion;
+                if (observation.version && installed) return result(observation);
             }
             return result(detectedVersion);
         }
@@ -456,28 +385,30 @@ async function probeCliExecution(params: { name: DetectCliName; resolvedPath: st
                     args,
                     resolveCommandOnPath: false,
                 });
-                const semver = await probeSemverWithRetry(invocation.command, invocation.args, {
+                const observation = await probeSemverWithRetry(invocation.command, invocation.args, {
                     timeout: timeoutMs,
                     windowsHide: true,
                     windowsVerbatimArguments: invocation.windowsVerbatimArguments,
                     env: params.env,
+                    cwd: params.cwd,
                     signal: params.signal,
                 });
-                detectedVersion = semver ?? detectedVersion;
-                if (semver && installed) return result(semver);
+                detectedVersion = observation.version ? observation : detectedVersion;
+                if (observation.version && installed) return result(observation);
             }
             return result(detectedVersion);
         }
 
         for (const args of argsToTry) {
-            const semver = await probeSemverWithRetry(params.resolvedPath, args, {
+            const observation = await probeSemverWithRetry(params.resolvedPath, args, {
                 timeout: timeoutMs,
                 windowsHide: true,
                 env: params.env,
+                cwd: params.cwd,
                 signal: params.signal,
             });
-            detectedVersion = semver ?? detectedVersion;
-            if (semver && installed) return result(semver);
+            detectedVersion = observation.version ? observation : detectedVersion;
+            if (observation.version && installed) return result(observation);
         }
 
         return result(detectedVersion);
@@ -485,7 +416,7 @@ async function probeCliExecution(params: { name: DetectCliName; resolvedPath: st
         if (params.runVersionCommand) throw error;
         if (error instanceof ExecFileTerminationError) throw error;
         params.signal?.throwIfAborted();
-        return result(null);
+        return result({ version: null, successful: false });
     }
 }
 
@@ -503,7 +434,7 @@ export async function probeResolvedAgentCliVersion(params: Readonly<{
         resolvedPath: params.launch.resolvedPath,
         launch: params.launch,
         runVersionCommand: params.runVersionCommand,
-        timeoutMs: resolveCliSnapshotProbeTimeoutMs(true),
+        timeoutMs: resolveCliSnapshotProbeTimeoutMs(true, params.env),
         env: params.env,
         signal: params.signal,
     });
@@ -531,7 +462,7 @@ export async function probeAgentCliForInstall(params: Readonly<{
     const probe = await probeCliExecution({
         name: params.runtimeSpec.id,
         resolvedPath: resolution.command,
-        timeoutMs: resolveCliSnapshotProbeTimeoutMs(true),
+        timeoutMs: resolveCliSnapshotProbeTimeoutMs(true, environment),
         env: environment,
         signal: params.signal,
         execFile: params.execFile,
@@ -548,7 +479,7 @@ export async function probeAgentCliForInstall(params: Readonly<{
     };
 }
 
-async function detectTmuxVersion(params: { resolvedPath: string }): Promise<string | null> {
+async function detectTmuxVersion(params: { resolvedPath: string; env: NodeJS.ProcessEnv; cwd: string }): Promise<string | null> {
     // Best-effort, must never throw.
     try {
         const timeoutMs = 1500;
@@ -582,6 +513,8 @@ async function detectTmuxVersion(params: { resolvedPath: string }): Promise<stri
                 timeout: timeoutMs,
                 windowsHide: true,
                 windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+                env: params.env,
+                cwd: params.cwd,
             });
             return extractTmuxVersion(getFirstLine(`${stdout}\n${stderr}`));
         }
@@ -589,6 +522,8 @@ async function detectTmuxVersion(params: { resolvedPath: string }): Promise<stri
         const { stdout, stderr } = await execFileBestEffort(params.resolvedPath, ['-V'], {
             timeout: timeoutMs,
             windowsHide: true,
+            env: params.env,
+            cwd: params.cwd,
         });
         return extractTmuxVersion(getFirstLine(`${stdout}\n${stderr}`));
     } catch {
@@ -596,11 +531,23 @@ async function detectTmuxVersion(params: { resolvedPath: string }): Promise<stri
     }
 }
 
-async function detectCliAuthStatus(params: { name: DetectCliName; resolvedPath: string; timeoutMs: number }): Promise<CliAuthStatus | null> {
-    return detectNativeAgentCliAuthStatus({
+/** Sign-in for detection is the same held fact the spawn path reads (P03 S4), never a second probe path. */
+async function detectCliAuthStatus(params: { name: DetectCliName; resolvedPath: string; timeoutMs: number; env: NodeJS.ProcessEnv; cwd: string; fresh: boolean }): Promise<CliAuthStatus | null> {
+    const agent = readCurrentContributionRegistry().agentDefinitionsById.get(params.name);
+    const declared = await readCurrentCatalogHook(params.name, async (entry) => ({
+        nativeHome: (await entry.getConnectedServiceStateSharingDescriptor?.())?.nativeHome,
+        authSpec: await entry.getCliAuthSpec?.() ?? null,
+    })).catch(() => null);
+    return await readHeldNativeAgentCliAuthStatus({
         agentId: params.name,
         resolvedPath: params.resolvedPath,
         timeoutMs: params.timeoutMs,
+        processEnv: params.env,
+        cwd: params.cwd,
+        ...(declared?.nativeHome ? { nativeHome: declared.nativeHome } : {}),
+        ...(declared ? { authSpec: declared.authSpec } : {}),
+        authEnvironmentVariables: agent?.cliMetadata?.auth.environmentVariables ?? [],
+        fresh: params.fresh,
     });
 }
 
@@ -616,7 +563,7 @@ async function resolveCliPathForName(
     } : null;
 }
 
-export async function detectAgentSetupFacts(name: DetectCliName, includeVersion: boolean, memberNotPrepared = false): Promise<Pick<MachineAgentInventoryItem, 'platform' | 'install' | 'dependencies' | 'signIn'>> {
+export async function detectAgentSetupFacts(name: DetectCliName, includeVersion: boolean, memberNotPrepared = false, environment: NodeJS.ProcessEnv = sessionProcessEnvironment()): Promise<Pick<MachineAgentInventoryItem, 'platform' | 'install' | 'dependencies' | 'signIn'>> {
     const registry = readCurrentContributionRegistry();
     const agent = registry.agentDefinitionsById.get(name);
     const dependencyId = agent ? resolveAgentRuntimeManagedDependencyId(agent) : null;
@@ -634,9 +581,9 @@ export async function detectAgentSetupFacts(name: DetectCliName, includeVersion:
         const installablesRegistry = resolveExecutableManagedDependenciesRegistry(declarations);
         const candidates = await Promise.all(selectExecutableManagedDependencies(declarations).map(async ({ definition }) => {
             const adapter = await getRuntimeInstallableAdapter(definition.key, { installablesRegistry });
-            const launch = await adapter.detectLaunchResolution({ env: process.env });
+            const launch = await adapter.detectLaunchResolution({ env: environment });
             const status = includeVersion && launch.availability.ok && adapter.detectCapabilityStatus
-                ? await adapter.detectCapabilityStatus({ env: process.env, onlyIfInstalled: true })
+                ? await adapter.detectCapabilityStatus({ env: environment, onlyIfInstalled: true })
                 : null;
             const version = status && typeof status === 'object'
                 ? Reflect.get(status, 'version') ?? Reflect.get(status, 'installedVersion')
@@ -660,7 +607,7 @@ export async function detectAgentSetupFacts(name: DetectCliName, includeVersion:
  * so the next ordinary detect reports what is installed now rather than a pre-change snapshot.
  */
 export function invalidateCliSnapshots(): void {
-    cliSnapshotCache.clear();
+    cliVersionCache.clear();
 }
 
 /**
@@ -670,41 +617,34 @@ export function invalidateCliSnapshots(): void {
  * - does not rely on a login shell (no ~/.zshrc, ~/.profile, etc)
  * - matches how the daemon itself will resolve binaries when spawning
  */
-export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest, factorySource?: AgentSessionFactorySource): Promise<DetectCliSnapshot> {
-    const pathEnv = typeof process.env.PATH === 'string' ? process.env.PATH : null;
+export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest, factorySource?: AgentSessionFactorySource, environment: NodeJS.ProcessEnv = sessionProcessEnvironment(), cwd: string = sessionWorkingDirectory()): Promise<DetectCliSnapshot> {
+    const pathEnv = typeof environment.PATH === 'string' ? environment.PATH : null;
     const includeLoginStatus = Boolean(data?.includeLoginStatus);
     const verifyVersion = data?.verifyVersion === true;
     const includeVersion = data?.includeVersion !== false || verifyVersion;
     const requestedCliNames = Array.isArray(data?.requestedCliNames)
         ? data.requestedCliNames.filter((name): name is DetectCliName => typeof name === 'string' && Object.prototype.hasOwnProperty.call(AGENTS, name))
         : [];
-    const probeTimeoutMs = resolveCliSnapshotProbeTimeoutMs(includeLoginStatus || verifyVersion);
+    const probeTimeoutMs = resolveCliSnapshotProbeTimeoutMs(includeLoginStatus || verifyVersion, environment);
     const names = requestedCliNames.length > 0 ? requestedCliNames : Object.keys(AGENTS) as DetectCliName[];
     const nativeFactoryObservations = await Promise.allSettled(names.map(name => observeCurrentAgentSessionFactory(name, factorySource)));
     const nativeFactories = new Map(names.map((name, index) => [name, nativeFactoryObservations[index]!] as const));
-    // Runtime readiness is a live binding fact, not a CLI installation with a TTL.
-    const observesNativeFactory = [...nativeFactories.values()].some((observation) =>
-        observation.status === 'fulfilled' && observation.value !== null);
     const resolutionEnvironment = data.resolution?.sourcePolicy === 'member'
-        ? buildMemberAgentCliResolutionEnvironment(process.env, data.resolution.memberSharedManagedToolsRoot) : undefined;
-    const cacheKey = buildCliSnapshotCacheKey({ includeLoginStatus, includeVersion, requestedCliNames, verifyVersion,
-        requestedTools: data.requestedTools, resolution: data.resolution }, pathEnv);
-    const cached = data?.bypassCache || observesNativeFactory ? null : cliSnapshotCache.get(cacheKey);
-    if (!data?.bypassCache && cached?.kind === 'success' && cliSnapshotCache.isFresh(cached)) return cached.value;
+        ? buildMemberAgentCliResolutionEnvironment(environment, data.resolution.memberSharedManagedToolsRoot) : environment;
+    // Explicit refresh and verification re-probe; ordinary reads reuse facts whose inputs are unchanged.
+    const fresh = data.bypassCache === true || verifyVersion;
+    const resolveCommand = (command: string) => resolveExecutableCommand(command, { env: resolutionEnvironment, cwd });
 
-    return await cliSnapshotCache.runDedupe(cacheKey, async () => {
-        const cached2 = cliSnapshotCache.get(cacheKey);
-        if (!data?.bypassCache && !observesNativeFactory && cached2?.kind === 'success' && cliSnapshotCache.isFresh(cached2)) return cached2.value;
-
+    try {
     const observations = await Promise.allSettled(
         names.map(async (name) => {
             const factoryObservation = nativeFactories.get(name)!;
             const factory = factoryObservation.status === 'fulfilled' ? factoryObservation.value : null;
             const [resolved, setupFacts] = await Promise.all([
                 factory?.isCurrent() ? Promise.resolve(null) : resolveCliPathForName(name, {
-                    ...data.resolution, ...(resolutionEnvironment ? { processEnv: resolutionEnvironment } : {}),
+                    ...data.resolution, processEnv: resolutionEnvironment, cwd,
                 }),
-                detectAgentSetupFacts(name, includeVersion),
+                detectAgentSetupFacts(name, includeVersion, false, resolutionEnvironment),
             ]);
             if (!resolved) {
                 // A successful physical CLI probe is independent of native runtime admission;
@@ -719,21 +659,33 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest, fact
                 return [name, entry] as const;
             }
             const { resolvedPath, resolutionSource, readOnly } = resolved;
+            const runtimeSpec = resolveAgentCliRuntimeSpecForLookupId(name);
+            const platform = resolvePlatformFromNodePlatform(process.platform);
+            const update = platform
+                ? classifyAgentCliInstall({ runtimeSpec, command: resolvedPath, source: resolutionSource,
+                    ...(readOnly ? { readOnly } : {}), platform, env: resolutionEnvironment })
+                : null;
 
             const [versionResult, authStatusResult, resolvedCommandResult] = await Promise.all([
                 // The process boundary owns the deadline and drains finished output after a
                 // stalled loop. A competing timer here would discard that successful result.
-                includeVersion ? probeCliExecution({ name, resolvedPath, timeoutMs: probeTimeoutMs,
-                    ...(resolutionEnvironment ? { env: resolutionEnvironment } : {}),
-                }) : Promise.resolve({ version: null }),
+                includeVersion ? cliVersionCache.read({ name, resolvedPath, fresh, resolveCommand,
+                    // The environment projection, scoped to this Agent: request shape (requested set,
+                    // login status, tools, probe budget) never splits one executable's version fact.
+                    probeKey: buildCliSnapshotEnvironmentKey({ requestedCliNames: [name],
+                        resolution: data.resolution }, resolutionEnvironment, cwd),
+                    probe: () => probeCliExecution({ name, resolvedPath, timeoutMs: probeTimeoutMs,
+                        env: resolutionEnvironment, cwd,
+                    }),
+                }).then(version => ({ version })) : Promise.resolve({ version: null }),
                 includeLoginStatus
                     ? withCliSnapshotProbeTimeout(
-                        detectCliAuthStatus({ name, resolvedPath, timeoutMs: probeTimeoutMs }),
+                        detectCliAuthStatus({ name, resolvedPath, timeoutMs: probeTimeoutMs, env: resolutionEnvironment, cwd, fresh }),
                         probeTimeoutMs,
                     )
                     : Promise.resolve(null),
                 withCliSnapshotProbeTimeout(
-                    resolveCliLaunchCommand({ resolvedPath, ...(resolutionEnvironment ? { env: resolutionEnvironment } : {}) }),
+                    resolveCliLaunchCommand({ resolvedPath, env: resolutionEnvironment, cwd }),
                     probeTimeoutMs,
                 ),
             ]);
@@ -759,11 +711,6 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest, fact
                         : null)
                 : null;
 
-            const platform = resolvePlatformFromNodePlatform(process.platform);
-            const update = platform
-                ? classifyAgentCliInstall({ runtimeSpec: resolveAgentCliRuntimeSpecForLookupId(name), command: resolvedPath,
-                    source: resolutionSource, ...(readOnly ? { readOnly } : {}), platform, env: process.env })
-                : null;
 
             const entry: DetectCliEntry = {
                 available: true,
@@ -795,21 +742,26 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest, fact
     );
 
     const tmuxResolvedPath = !data.requestedTools || data.requestedTools.includes('tmux')
-        ? await resolveCommandOnPath('tmux', pathEnv) : null;
+        ? resolveExecutableCommand('tmux', { env: environment, cwd }) : null;
     const tmux: DetectTmuxEntry = (() => {
         if (!tmuxResolvedPath) return { available: false };
         return { available: true, resolvedPath: tmuxResolvedPath };
     })();
 
     const windowsTerminalResolvedPath = !data.requestedTools || data.requestedTools.includes('windowsTerminal')
-        ? await resolveCommandOnPath('wt.exe', pathEnv) : null;
+        ? resolveExecutableCommand('wt.exe', { env: environment, cwd }) : null;
     const windowsTerminal: DetectWindowsTerminalEntry = (() => {
         if (!windowsTerminalResolvedPath) return { available: false };
         return { available: true, resolvedPath: windowsTerminalResolvedPath };
     })();
 
     if (tmux.available && tmuxResolvedPath) {
-        const version = await detectTmuxVersion({ resolvedPath: tmuxResolvedPath });
+        const version = await cliVersionCache.read({ name: 'tool:tmux', resolvedPath: tmuxResolvedPath, fresh, resolveCommand,
+            probeKey: buildCliSnapshotEnvironmentKey({ requestedCliNames: [] }, environment, cwd),
+            probe: async () => {
+                const observed = await detectTmuxVersion({ resolvedPath: tmuxResolvedPath, env: environment, cwd });
+                return { version: observed, successful: observed !== null };
+            } });
         if (typeof version === 'string') {
             tmux.version = version;
         }
@@ -840,23 +792,13 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest, fact
         tmux,
         windowsTerminal,
     };
-    }).then((snapshot) => {
-        // Incomplete observations must be retried when the loop/process recovers. They are
-        // not a successful negative install fact and must not acquire the success TTL.
-        if (observesNativeFactory || Object.values(snapshot.clis).some((entry) => entry.detectionError)) {
-            cliSnapshotCache.setError(cacheKey);
-        } else {
-            cliSnapshotCache.setSuccess(cacheKey, snapshot);
-        }
-        return snapshot;
-    }).catch(() => {
+    } catch {
         // Best-effort: never throw from a snapshot helper.
-        cliSnapshotCache.setError(cacheKey);
         const names = Object.keys(AGENTS) as DetectCliName[];
         const clis = Object.fromEntries(names.map((name) => [name, {
             available: false,
             detectionError: { code: 'cli-detection-failed', message: 'Agent CLI detection failed' },
         } satisfies DetectCliEntry])) as Record<DetectCliName, DetectCliEntry>;
         return { path: pathEnv, clis, tmux: { available: false }, windowsTerminal: { available: false } };
-    });
+    }
 }

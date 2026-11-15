@@ -18,8 +18,7 @@ describe('detectCliSnapshotOnDaemonPath (Windows cmd shim)', () => {
       Object.defineProperty(process, 'platform', ORIGINAL_PLATFORM_DESCRIPTOR);
     }
     restoreEnvValues(envBaseline);
-    vi.doUnmock('child_process');
-    vi.doUnmock('@/agent/catalog/registry');
+    vi.doUnmock('@happier-dev/cli-common/process');
     vi.resetModules();
     vi.restoreAllMocks();
     if (workDir) removeTempDirSync(workDir);
@@ -34,12 +33,6 @@ describe('detectCliSnapshotOnDaemonPath (Windows cmd shim)', () => {
 
     vi.resetModules();
 
-    vi.doMock('@/agent/catalog/registry', () => ({
-      AGENTS: {
-        codex: { id: 'codex' },
-      },
-    }));
-
     workDir = createTempDirSync('happier-cliSnapshot-win32-');
     const binDir = join(workDir, 'bin');
     mkdirSync(binDir, { recursive: true });
@@ -52,21 +45,19 @@ describe('detectCliSnapshotOnDaemonPath (Windows cmd shim)', () => {
     process.env.HAPPIER_CODEX_PATH = codexCmd;
     process.env.PATH = binDir;
     process.env.PATHEXT = '.CMD';
-    delete (process.env as any).ComSpec;
+    delete process.env.ComSpec;
 
-    const execFileMock = vi.fn((file: any, args: any, options: any, cb: any) => {
-      if (typeof options === 'function') {
-        cb = options;
-        options = undefined;
-      }
-      cb(null, 'codex 0.43.0\n', '');
-      return { pid: 1 } as any;
-    });
+    const execFileMock = vi.fn<typeof import('@happier-dev/cli-common/process').execFileWithDeadline>()
+      .mockResolvedValue({ stdout: 'codex 0.43.0\n', stderr: '' });
 
-    vi.doMock('child_process', () => ({ execFile: execFileMock }));
+    // Preserve real catalog and command resolution; replace only the OS execution boundary.
+    vi.doMock('@happier-dev/cli-common/process', async (importOriginal) => ({
+      ...await importOriginal<typeof import('@happier-dev/cli-common/process')>(),
+      execFileWithDeadline: execFileMock,
+    }));
 
     const { detectCliSnapshotOnDaemonPath } = await import('./cliSnapshot');
-    const snapshot = await detectCliSnapshotOnDaemonPath({ includeLoginStatus: false });
+    const snapshot = await detectCliSnapshotOnDaemonPath({ requestedCliNames: ['codex'], requestedTools: [], includeLoginStatus: false });
 
     expect(snapshot.clis.codex.available).toBe(true);
 
