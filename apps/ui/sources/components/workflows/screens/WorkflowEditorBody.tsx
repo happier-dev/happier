@@ -22,15 +22,11 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
-import { SelectionListFilterChip } from '@/components/ui/selectionList/SelectionListFilterChips';
-import { workflowInputToFieldHint } from '@happier-dev/protocol/workflows/workflowV1';
-import { formatWorkflowFieldLabel } from '@/components/workflows/presentation/workflowValuePresentation';
 import { KeyboardAwareScrollView } from '@/components/ui/keyboardAvoidance/KeyboardAwareScrollView';
 import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { useOptionalAppPaneScopeLayout } from '@/components/appShell/panes/hooks/useAppPaneScopeLayout';
-import { HorizontalScrollableRow } from '@/components/ui/scroll/HorizontalScrollableRow';
 import { useRunSessionModels } from '@/components/sessions/runs/useRunSessionModels';
 import { resolveSessionModelLabel } from '@/sync/domains/models/modelOptions';
 import { useSessionSelector } from '@/sync/store/hooks';
@@ -41,11 +37,8 @@ import { NavigationBackChromeProvider, useNavigationBackControl } from '@/compon
 import { usePageBackControl } from '@/components/ui/layout/usePageBackControl';
 import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
-import { Item } from '@/components/ui/lists/Item';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Text } from '@/components/ui/text/Text';
-import { useSessionAuthoringEngineSummary } from '@/components/sessions/authoring/controls/SessionAuthoringControls';
 import type { SessionAuthoringControlFacts } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import type { AuthoringComposerScope } from '@/components/sessions/authoring/ScopedAuthoringComposer';
 import {
@@ -54,8 +47,6 @@ import {
 import { Typography } from '@/constants/Typography';
 import { useKeyboardShortcutHandlers } from '@/keyboard';
 import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
-import { Modal, type CustomModalInjectedProps } from '@/modal';
-import { useRetainedPlacement } from '@/modal/components/RetainedModalFrame';
 import { t, tLoose } from '@/text';
 
 import {
@@ -72,14 +63,15 @@ import {
     type WorkflowExistingSessionOption,
 } from '@/sync/domains/workflows/workflowAuthoring';
 import type { WorkflowValidationIssue } from '@happier-dev/protocol/workflows/workflowV1';
-import { WorkflowDefaultEngineControls } from '../editor/WorkflowDefaultEngineControls';
-import { resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
+import { WorkflowHowAndWhereCard } from '../editor/WorkflowHowAndWhereCard';
+import { WorkflowWhenItRunsCard } from '../editor/WorkflowWhenItRunsCard';
+import { NO_DISCLOSURE, resolveWorkflowInspectorGroupExpanded } from '../editor/workflowInspectorGroup';
+import { formatWorkflowSummaryLine } from '../presentation/workflowSummaryLine';
 import type { WorkflowAuthoringTarget } from '@/sync/domains/workflows/workflowProjectTarget';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
 import {
     findWorkflowBlock,
-    setWorkflowStepExecutionField,
     walkWorkflowBlocks,
 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { insertWorkflowStarterExample, type WorkflowEditorDraft, type WorkflowStarterExampleInsertion } from '@/sync/domains/workflows/workflowEditorDraft';
@@ -101,11 +93,7 @@ import { useWorkflowSessionBinding } from '../editor/useWorkflowSessionBinding';
 import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropHooks';
 import type { EntityDragScopeV1 } from '@happier-dev/protocol/plugins/ui';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
-import {
-    WorkflowProjectTargetControl,
-    formatWorkflowWhereSummary,
-    type WorkflowProjectTargetControlHandle,
-} from '../editor/WorkflowProjectTargetControl';
+import type { WorkflowProjectTargetControlHandle } from '../editor/WorkflowProjectTargetControl';
 import {
     WorkflowSaveStatus,
     WorkflowStatusReadout,
@@ -130,19 +118,20 @@ import { WORKFLOW_DOCUMENT_INSET_PX, WORKFLOW_PAGE_MARK_EDGE_PX, WorkflowDocumen
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 
 /**
- * The workflow editor page (04 §4, lab `editor-E1`).
+ * The workflow editor page (04 §4, lab `editor-E1`, round 1115 r16).
  *
- * Identity first: the glyph mark, the name and description edited in place,
- * one primary **Run now**, and under it the save status that is its own
- * receipt. The header chips (Where, Agent & model) and the Workflow settings
- * sections render one owner each. The document is the execution order.
+ * Identity first: the glyph mark, the name edited in place with the line the
+ * workflow generates under it, one primary **Run now**, and under it the save
+ * status that is its own receipt. The document opens with two cards — **When it
+ * runs** (triggers) and **How and where it runs** (Where, the workflow's Agent,
+ * what each step runs in, what a run asks for) — then the steps in execution order.
  *
- * Panes are the one pane primitive's slots (INT §3.1 #5): **Flow** is the
- * editor scope's right pane, rendered through `rightPaneBuiltinAdapter`;
- * **Workflow settings** is the destination-owned details pane. Where each docks
- * or overlays is `resolvePaneLayout`'s decision — this page passes no Details
- * opener and adds no placement rule of its own. On a phone there are no side
- * slots: Flow is the **Steps | Flow** switch and settings open in `@/modal`.
+ * Workflow settings and Step options are one settings popover in two scopes,
+ * anchored beside the control that opened it (a sheet on a phone); there is no
+ * settings sidebar (owner 2026-11-15). **Flow** is the editor scope's right
+ * pane (`rightPaneBuiltinAdapter`) and Edit with an agent its details companion;
+ * where each docks or overlays is `resolvePaneLayout`'s decision. On a phone
+ * Flow is the **Steps | Flow** switch.
  *
  * It owns no route, no persistence and no admission: the host supplies the
  * draft and the explicit Run now / Save effects.
@@ -154,8 +143,6 @@ import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerS
  */
 export const WORKFLOW_EDITOR_PANE_SCOPE_ID = 'workflow-editor';
 const WORKFLOW_FLOW_PANE_DESTINATION_ID = 'workflow-flow';
-
-/** The Agent & model chips the header shows; every field is in Workflow settings. */
 
 /** Starting from an example replaces nothing only while there is nothing to replace. */
 function documentIsUntouched(draft: WorkflowEditorDraft): boolean {
@@ -200,48 +187,24 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         marginLeft: 'auto',
     },
-    /**
-     * One row measured against the main column, never the window (F5, M6): beside a companion the
-     * chips keep their row and scroll sideways instead of breaking onto a second line, while undo and
-     * redo stay pinned at the row's end, never scrolled or clipped away.
-     */
-    chipsRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s8,
-        paddingRight: HAPPIER_PAGE_METRICS.pageTextInsetPx,
-    },
-    chipsScroll: {
-        flex: 1,
-        minWidth: 0,
-    },
-    chipsLine: {
-        flexGrow: 1,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s8,
-        // On the mark edge (owner 2026-11-06): the header's mark, these controls, the page tabs and the
-        // steps' marks share one left edge; the title and every step name share the text edge after it.
-        paddingLeft: WORKFLOW_PAGE_MARK_EDGE_PX,
-        paddingRight: HAPPIER_PAGE_METRICS.pageTextInsetPx,
-    },
     /** The view switch belongs to neither the header above it nor the steps below it. */
     pageTabs: {
         paddingTop: HAPPIER_PAGE_METRICS.pageTabsGapPx,
         paddingBottom: HAPPIER_PAGE_METRICS.pageTabsGapPx,
         paddingHorizontal: HAPPIER_PAGE_METRICS.pageTextInsetPx,
     },
+    /** Steps | Flow with Undo and Redo at the row's end. */
+    pageTabsRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    /** The page's first cards above the steps, one block gap apart. */
+    firstCards: {
+        gap: theme.space.s16,
+    },
     /** Wide: the tabs start on the mark edge, under the header's mark (owner 2026-11-06). */
     pageTabsOnMark: {
         paddingLeft: WORKFLOW_PAGE_MARK_EDGE_PX,
-    },
-    whereChip: {
-        flexShrink: 0,
-        minWidth: 0,
-    },
-    engineChip: {
-        flexShrink: 0,
-        minWidth: 0,
     },
     /**
      * The steps share the header's column (lab round 1105 P1), so a card ends where the header's actions
@@ -277,10 +240,6 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.variant('label', 'semiBold'),
         color: theme.colors.text.primary,
     },
-    phoneViewSwitch: {
-        paddingHorizontal: theme.space.s16,
-        paddingTop: theme.space.s12,
-    },
     paneBody: {
         flex: 1,
         minHeight: 0,
@@ -288,10 +247,6 @@ const styles = StyleSheet.create((theme) => ({
     },
     flowBody: {
         padding: theme.space.s12,
-    },
-    /** Settings | Agent, with the open-in-Sessions control beside it while a Session exists. */
-    settingsModalBody: {
-        paddingHorizontal: theme.space.s16,
     },
     /** The seeded composer at the foot of the Agent tab, where the Session's own composer will sit. */
     agentDraft: {
@@ -317,16 +272,6 @@ export type WorkflowEditorCommands = Readonly<{
     focusPrompt: (blockId: string) => void;
 }>;
 
-type WorkflowSettingsModalProps = Readonly<{
-    /** The page's one settings inspector, presented here (see `useRetainedPlacement`). */
-    inspector: React.ReactElement;
-}>;
-
-/** Workflow settings on a phone: the page's same mounted inspector, in `@/modal`. */
-function WorkflowSettingsModal(props: WorkflowSettingsModalProps & CustomModalInjectedProps): React.ReactElement {
-    return props.inspector;
-}
-
 /**
  * The document column's floor (07 §3 width contract): the composer's minimum.
  * The composer has no intrinsic width of its own (its chips wrap, its field
@@ -345,7 +290,12 @@ const STEP_OPTIONS_MAX_HEIGHT_PX = 640;
 
 export type WorkflowEditorView = 'steps' | 'flow';
 
-type WorkflowEditorCompanion = 'settings' | 'agent' | 'step';
+type WorkflowEditorCompanion = 'agent';
+
+/** The page's first cards' disclosure ids, in the editor view state's disclosure map. */
+const WORKFLOW_WHEN_CARD_ID = 'card:when';
+const WORKFLOW_HOW_WHERE_CARD_ID = 'card:howWhere';
+type WorkflowFirstCardId = typeof WORKFLOW_WHEN_CARD_ID | typeof WORKFLOW_HOW_WHERE_CARD_ID;
 
 export type WorkflowEditorBodyProps = Readonly<{
     accountLifetime?: import('@/sync/domains/scope/serverAccountScope').ServerAccountScopeLifetime | null;
@@ -400,6 +350,8 @@ export type WorkflowEditorBodyProps = Readonly<{
     /** A catalog's Session-scoped Run action uses the canonical Session chooser. */
     runNowAction?: React.ReactNode;
     runNowAnchorRef?: React.RefObject<View | null>;
+    /** The save line under the header's actions: what Run review opens below, so it never covers it. */
+    runNowPlacementRef?: React.RefObject<View | null>;
     testRunAnchorRef?: React.RefObject<View | null>;
     onSave?: () => void;
     /** The host's guarded exit, shared with its menu and surrounding navigation. */
@@ -521,19 +473,11 @@ function WorkflowEditorHistoryActions(props: Readonly<{ testIDPrefix: string; hi
 
 const readDraftId = (draft: WorkflowEditorDraft) => draft.draftId;
 const readDraftName = (draft: WorkflowEditorDraft) => draft.name;
-const readDraftDefaults = (draft: WorkflowEditorDraft) => draft.defaults;
-const readDraftRoles = (draft: WorkflowEditorDraft) => draft.roles;
 const readWholeDraft = (draft: WorkflowEditorDraft) => draft;
 /** While its fact is not shown, a reader keeps the value it last showed. */
 const keepShownValue = (): boolean => true;
 /** Equal content keeps the previous value (and identity). */
 const sameRetainedValue = <T,>(left: T, right: T): boolean => retainDeep(left, right) === left;
-
-/** What a run asks the person for, in the settings' own field words; an input with a default asks nothing. */
-function readAsksSummary(draft: WorkflowEditorDraft): string {
-    return draft.inputs.filter((input) => input.required && input.default === undefined && input.defaultFrom === undefined)
-        .map((input) => formatWorkflowFieldLabel(input.name, workflowInputToFieldHint(input).title)).join(', ');
-}
 
 /** One validation per draft, shared by every reader of that draft (commands, list, settings, Flow). */
 type ReadWorkflowEditorValidation = (draft: WorkflowEditorDraft) => WorkflowDraftValidation;
@@ -614,107 +558,6 @@ function readWorkflowCommandFacts(draft: WorkflowEditorDraft, validation: Workfl
     };
 }
 
-/**
- * The wide page's value line: Where, the workflow's Agent and model, Triggers, what a run asks for, and
- * Undo/Redo. Each reads its own fact, so a keystroke in a step leaves it still.
- */
-type ChipsLineProps = Readonly<{
-    testIDPrefix: string;
-    draftStore: WorkflowEditorDraftStore;
-    accountLifetime: WorkflowEditorBodyProps['accountLifetime'];
-    whereRef: React.RefObject<WorkflowProjectTargetControlHandle | null>;
-    projectTarget: WorkflowEditorBodyProps['projectTarget'];
-    machineName: WorkflowEditorBodyProps['machineName'];
-    projectMachines: WorkflowEditorBodyProps['projectMachines'];
-    onChangeProjectTarget: WorkflowEditorBodyProps['onChangeProjectTarget'];
-    showsWorkflowAgent: boolean;
-    documentEditable: boolean;
-    defaults: WorkflowEditorDraft['defaults'];
-    roles: WorkflowEditorDraft['roles'];
-    onChange: (next: WorkflowEditorDraft) => void;
-    authoringFacts: WorkflowEditorBodyProps['authoringFacts'];
-    triggersSummary: string | undefined;
-    openSettings: () => void;
-    history: WorkflowEditorHistoryControls | undefined;
-}>;
-function WorkflowEditorChipsLine(props: ChipsLineProps) {
-    const { testIDPrefix, openSettings } = props;
-    const asksSummary = useWorkflowEditorSelector(props.draftStore, readAsksSummary);
-    const { theme } = useUnistyles();
-    return (
-        <View style={styles.chipsRow}>
-        <HorizontalScrollableRow contentTestID={`${testIDPrefix}-chips`} containerStyle={styles.chipsScroll} contentStyle={styles.chipsLine}
-            fadeColor={theme.colors.surface.base} indicatorColor={theme.colors.text.tertiary}>
-            <View style={styles.whereChip}>
-            <WorkflowProjectTargetControl
-                accountLifetime={props.accountLifetime}
-                purpose="workflow"
-                ref={props.whereRef}
-                presentation="chip"
-                target={props.projectTarget}
-                machineName={props.machineName}
-                {...(props.projectMachines === undefined ? {} : { machines: props.projectMachines })}
-                {...(props.onChangeProjectTarget === undefined ? {} : { onChange: props.onChangeProjectTarget })}
-                testIDPrefix={testIDPrefix}
-            />
-            </View>
-            {props.showsWorkflowAgent ? <View style={styles.engineChip}>
-            <WorkflowDefaultEngineControls defaults={props.defaults} roles={props.roles} readDraft={props.draftStore.get}
-                onChange={props.onChange} editable={props.documentEditable}
-                {...(props.authoringFacts === undefined ? {} : { facts: props.authoringFacts })}
-                testIDPrefix={`${testIDPrefix}-header-engine`}
-            />
-            </View> : null}
-            {props.triggersSummary === undefined ? null : (
-                <SelectionListFilterChip
-                    filter={{
-                        id: 'triggers',
-                        testID: `${testIDPrefix}-triggers-chip`,
-                        label: t('workflows.triggers.section.title'),
-                        valueLabel: props.triggersSummary,
-                        icon: <Icon name="lightning" size={16} />,
-                        // The chip reveals Runs automatically in Workflow settings, never a popover of its own.
-                        open: false,
-                        onOpenChange: (next) => { if (next) openSettings(); },
-                        renderPopoverContent: () => null,
-                    }}
-                />
-            )}
-            {asksSummary.length === 0 ? null : (
-                <SelectionListFilterChip
-                    filter={{
-                        id: 'asks',
-                        testID: `${testIDPrefix}-asks-chip`,
-                        label: t('workflows.page.blocks.asksLabel'),
-                        valueLabel: asksSummary,
-                        icon: <Icon name="list-checks" size={16} />,
-                        // Like Triggers: it reveals the inputs in Workflow settings, no popover of its own.
-                        open: false,
-                        onOpenChange: (next) => { if (next) openSettings(); },
-                        renderPopoverContent: () => null,
-                    }}
-                />
-            )}
-        </HorizontalScrollableRow>
-        <WorkflowEditorHistoryIcons testIDPrefix={testIDPrefix} history={props.history} />
-        </View>
-    );
-}
-
-/** The phone's "What a run asks for" value row, reading only that summary. */
-function WorkflowEditorAsksRow(props: Readonly<{ draftStore: WorkflowEditorDraftStore; testIDPrefix: string; openSettings: () => void }>) {
-    const asksSummary = useWorkflowEditorSelector(props.draftStore, readAsksSummary);
-    return asksSummary.length === 0 ? null : (
-        <Item
-            testID={`${props.testIDPrefix}-asks-chip`}
-            title={t('workflows.page.blocks.asksLabel')}
-            subtitle={asksSummary}
-            showChevron
-            onPress={props.openSettings}
-        />
-    );
-}
-
 /** The document: the one region that reads the whole draft, so its rows resolve their own edits. */
 function WorkflowEditorBlockList(props: Omit<React.ComponentProps<typeof WorkflowBlockListEditor>, 'draft' | 'blocks' | 'validation' | 'onUseExample'> & Readonly<{
     draftStore: WorkflowEditorDraftStore;
@@ -749,10 +592,18 @@ function WorkflowEditorIdentity(props: Readonly<{
     chromeOptions: Readonly<{ headerTitle: string }>;
     backControl: React.ComponentProps<typeof NavigationBackChromeProvider>['control'];
     entityItem: React.ComponentProps<typeof WorkspaceDestinationRow>['entityItem'];
-    header: Omit<React.ComponentProps<typeof PageHeader>, 'title' | 'titleEditor'>;
+    header: Omit<React.ComponentProps<typeof PageHeader>, 'title' | 'titleEditor' | 'description' | 'descriptionEditor'>;
     titleEditor: Omit<NonNullable<React.ComponentProps<typeof PageHeader>['titleEditor']>, 'value'> | null;
+    /** When it runs, as the summary line's first part; `null` when nothing starts it automatically. */
+    summaryTrigger: string | null;
+    /** A read-only page's facts ("Built-in"), after the summary line. */
+    readOnlyFacts: readonly string[] | null;
 }>) {
     const name = useWorkflowEditorSelector(props.draftStore, readDraftName);
+    const { summaryTrigger } = props;
+    const trigger = summaryTrigger === null || summaryTrigger === t('workflows.triggers.summary.manual') ? null : summaryTrigger;
+    const summary = useWorkflowEditorSelector(props.draftStore, (draft) => formatWorkflowSummaryLine(draft, { trigger }));
+    const description = joinReadOnlyDescription([summary ?? undefined, ...(props.readOnlyFacts ?? [])]);
     return (
         <>
         {props.hasPageCommands ? <Stack.Screen options={props.chromeOptions} /> : null}
@@ -761,6 +612,7 @@ function WorkflowEditorIdentity(props: Readonly<{
         <PageHeader
             {...props.header}
             title={name.trim().length > 0 ? name : t('workflows.page.untitled')}
+            {...(description.length === 0 ? {} : { description })}
             {...(props.titleEditor === null ? {} : { titleEditor: { ...props.titleEditor, value: name } })}
         />
         </WorkspaceDestinationRow>
@@ -927,15 +779,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
     // The page itself reads only the facts it decides on; handlers read the draft when they run.
     const readDraft = draftStore.get;
     const draftId = useWorkflowEditorSelector(draftStore, readDraftId);
-    const defaults = useWorkflowEditorSelector(draftStore, readDraftDefaults);
-    const roles = useWorkflowEditorSelector(draftStore, readDraftRoles);
     const documentEditable = props.documentPresentation?.editable !== false;
-    const defaultAuthoringValues = React.useMemo(() => resolveWorkflowStepSelectionV1({ defaults, purpose: 'authoring' }).selection, [defaults]);
-    const canOpenSettings = true;
-    const engineSummary = useSessionAuthoringEngineSummary({
-        values: defaultAuthoringValues, engine: defaults.engine, workflowRoles: roles,
-        ...(props.authoringFacts === undefined ? {} : { facts: props.authoringFacts }),
-    });
     const sessionDrop = useWorkflowSessionBinding({
         draftActions: props.mountedDraftActions,
         context: { scope: props.sessionBindingScope ?? null, get draft() { return readDraft(); }, editable: documentEditable,
@@ -982,11 +826,10 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         ? onEditorBack()
         : safeRouterBack({ router, navigation: backNavigation, fallbackHref: '/workflows' }));
     const whereRef = React.useRef<WorkflowProjectTargetControlHandle | null>(null);
-    // A phone's Triggers row opens the trigger section in place (owner 25), anchored to the row.
-    const triggersAnchorRef = React.useRef<View>(null);
-    const [triggersOpen, setTriggersOpen] = React.useState(false);
-    // One details companion beside the page at a time (Plan T U5, owner 2026-11-06): Workflow settings,
-    // the authoring agent, or the selected step's inspector. Each is its own rail item.
+    /** "How and where it runs"'s Workflow settings control: the workflow-scope settings sit beside it. */
+    const workflowSettingsAnchorRef = React.useRef<View | null>(null);
+    // One details companion beside the page: the authoring agent (Plan T U5). Workflow settings and
+    // Step options are the one settings popover, never a sidebar (owner 2026-11-15).
     const [detailsCompanion, setDetailsCompanion] = React.useState<WorkflowEditorCompanion | null>(null);
     const authoringDraftId = props.authoringDraft?.draftId ?? null;
     const hasAgentTab = Boolean(props.authoringSessionId) || authoringDraftId !== null;
@@ -1007,12 +850,16 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         }
         props.onEditWithAgent?.();
     }, [hasAgentTab, props.onEditWithAgent]);
-    const settingsModalRef = React.useRef<string | null>(null);
     /** Field-level issues stay silent until an explicit Run or Save is refused (B3). */
     const [issuesRevealed, setIssuesRevealed] = React.useState(false);
-    /** Step options: an anchored popover beside the step's control; a phone shows it as the shared sheet. */
-    const [stepOptionsPopover, setStepOptionsPopover] = React.useState<Readonly<{
-        blockId: string;
+    /**
+     * The one settings popover (owner 2026-11-15), in two scopes: the workflow's (Workflow settings)
+     * or a block's (Step options). Anchored beside the control that opened it; a phone shows the
+     * shared sheet.
+     */
+    const [settingsPopover, setSettingsPopover] = React.useState<Readonly<{
+        /** `null`: the workflow scope. */
+        blockId: string | null;
         /** The control that opened it: focus returns here. */
         anchorRef: React.RefObject<View | null>;
         /** What the panel sits beside: the step's card when it has one, else the control. */
@@ -1129,26 +976,56 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             requestPromptFocus(blockId);
         }
     }, [blockingIssueBlockId, props.onSelectBlock, readDraft, requestPromptFocus]);
-    const openSettings = React.useCallback(() => {
-        if (canOpenSettings) setDetailsCompanion('settings');
-    }, [canOpenSettings]);
+    /**
+     * The page's first cards (owner 2026-11-15): open for a new workflow, closed once it is saved, and
+     * otherwise as the person left them (the editor view state's disclosure, like settings groups). A
+     * Where the workflow still needs keeps its card open.
+     */
+    const [localCardDisclosure, setLocalCardDisclosure] = React.useState<ReadonlyMap<string, boolean>>(NO_DISCLOSURE);
+    const cardDisclosure = props.onChangeInspectorGroup === undefined ? localCardDisclosure : props.inspectorGroupDisclosure ?? NO_DISCLOSURE;
+    const { onChangeInspectorGroup } = props;
+    const setCardExpanded = React.useCallback((cardId: WorkflowFirstCardId, expanded: boolean) => {
+        if (onChangeInspectorGroup !== undefined) onChangeInspectorGroup(cardId, expanded);
+        else setLocalCardDisclosure((current) => new Map(current).set(cardId, expanded));
+    }, [onChangeInspectorGroup]);
+    const newWorkflow = props.currentWorkflowRef === null || props.currentWorkflowRef === undefined;
+    const whenExpanded = resolveWorkflowInspectorGroupExpanded({
+        attention: false, recorded: cardDisclosure.get(WORKFLOW_WHEN_CARD_ID), initialValueSet: newWorkflow,
+    });
+    const howWhereExpanded = resolveWorkflowInspectorGroupExpanded({
+        attention: documentEditable && projectUnresolved && props.onChangeProjectTarget !== undefined,
+        recorded: cardDisclosure.get(WORKFLOW_HOW_WHERE_CARD_ID), initialValueSet: newWorkflow,
+    });
+    const openWorkflowSettings = React.useCallback(() => {
+        setSettingsPopover({ blockId: null, anchorRef: workflowSettingsAnchorRef, placementRef: workflowSettingsAnchorRef });
+    }, []);
+    // Run now with no Machine opens the Where picker; a closed card opens first, then its picker.
+    const pendingWherePickerRef = React.useRef(false);
+    React.useEffect(() => {
+        if (!howWhereExpanded || !pendingWherePickerRef.current || whereRef.current === null) return;
+        pendingWherePickerRef.current = false;
+        whereRef.current.openPicker();
+    }, [howWhereExpanded]);
     const submitRun = React.useCallback(() => {
         // Run now is never a dead end for a missing machine: it opens the Where
-        // owner's picker (the settings on a phone), and choosing continues here.
+        // owner's picker in How and where it runs, and choosing continues here.
         if (documentEditable && projectUnresolved && props.onChangeProjectTarget !== undefined && runPending !== true) {
             if (whereRef.current !== null) whereRef.current.openPicker();
-            else openSettings();
+            else {
+                pendingWherePickerRef.current = true;
+                setCardExpanded(WORKFLOW_HOW_WHERE_CARD_ID, true);
+            }
             return;
         }
         if (runDisabled) { refuse(runReason); return; }
         onRunNow?.();
-    }, [compactLayout, documentEditable, onRunNow, openSettings, projectUnresolved, props.onChangeProjectTarget, refuse, runDisabled, runPending, runReason]);
+    }, [documentEditable, onRunNow, projectUnresolved, props.onChangeProjectTarget, refuse, runDisabled, runPending, runReason, setCardExpanded]);
     const submitSave = React.useCallback(() => {
         if (saveDisabled) { refuse(saveReason); return; }
         onSave?.();
     }, [onSave, refuse, saveDisabled, saveReason]);
-    // Triggers are part of this page's draft (04 §5.4): "schedule" reveals them, never a handoff.
-    const submitSchedule = openSettings;
+    // Triggers are part of this page's draft (04 §5.4): "schedule" opens When it runs, never a handoff.
+    const submitSchedule = React.useCallback(() => setCardExpanded(WORKFLOW_WHEN_CARD_ID, true), [setCardExpanded]);
     const submitExport = React.useCallback(() => {
         if (exportDisabled) { refuse(exportReason); return; }
         onExportJson?.();
@@ -1201,11 +1078,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
     const closeFlowPane = pane.closeRight;
     React.useEffect(() => { if (compactLayout && flowOpen) closeFlowPane(); }, [closeFlowPane, compactLayout, flowOpen]);
     const closeSettings = React.useCallback(() => setDetailsCompanion(null), []);
-    // The Step companion follows the selected block; with none selected it has nothing to show.
-    const selectedBlockExists = useWorkflowEditorSelector(draftStore, (draft) => props.selectedBlockId !== null
-        && findWorkflowBlock(draft, props.selectedBlockId) !== null);
-    const stepCompanionBlockId = selectedBlockExists ? props.selectedBlockId : null;
-    const shownCompanion = detailsCompanion === 'step' && stepCompanionBlockId === null ? null : detailsCompanion;
+    const shownCompanion = detailsCompanion;
     const settingsOpen = shownCompanion !== null;
     const agentCompanionAvailable = hasAgentTab && (!compactLayout || Boolean(props.authoringSessionId));
     const phoneNavigation = useDeviceType() === 'phone';
@@ -1228,16 +1101,9 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             pane.openRight();
             return;
         }
-        if (id !== 'settings' && id !== 'agent' && id !== 'step') return;
-        // A phone keeps its existing presenters: the step's options sheet, the agent's own Session.
-        if (compactLayout && id === 'step') {
-            if (stepCompanionBlockId !== null) {
-                const anchor = stepCardRefs.current.get(stepCompanionBlockId);
-                if (anchor !== undefined) openInspector(stepCompanionBlockId, anchor, anchor);
-            }
-            return;
-        }
-        if (compactLayout && id === 'agent') {
+        if (id !== 'agent') return;
+        // A phone keeps the agent's own Session as its presenter.
+        if (compactLayout) {
             if (props.authoringSessionId) router.push(buildScopedSessionRouteHref({ sessionId: props.authoringSessionId, serverId: props.authoringServerId }) as never);
             return;
         }
@@ -1250,8 +1116,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
     const activeCompanions = React.useMemo(() => [...(shownCompanion !== null ? [shownCompanion] : []), ...(flowOpen ? ['flow'] : [])], [shownCompanion, flowOpen]);
     const navigation = useWorkflowNavigation({ pageKind: 'workflowEditor', identity: draftId, scope: navigationScope,
         activeId: props.view,
-        phone: phoneNavigation, presented: hasPageCommands, settingsAvailable: canOpenSettings,
-        stepAvailable: stepCompanionBlockId !== null, agentAvailable: agentCompanionAvailable,
+        phone: phoneNavigation, presented: hasPageCommands, agentAvailable: agentCompanionAvailable,
         selectPage, companion: { activeId: activeCompanions[0] ?? null, activeIds: activeCompanions, select: selectCompanion, close: closeCompanion } });
     const executeNavigation = useMountedScopeActionCommand(navigationScope);
     const selectNavigation = React.useCallback((id: string) => selectWorkflowNavigationItem(executeNavigation, navigation.model, id),
@@ -1286,17 +1151,14 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         sessionOptionsStatus: props.sessionOptionsStatus,
         onRetrySessionOptions: props.onRetrySessionOptions,
         ...(sessionDrop === undefined ? {} : { bindExistingSession: sessionDrop.bind }),
-        ...(props.projectTarget === undefined ? {} : { projectTarget: props.projectTarget }),
-        machineName: props.machineName,
-        ...(props.projectMachines === undefined ? {} : { projectMachines: props.projectMachines }),
-        ...(props.onChangeProjectTarget === undefined ? {} : { onChangeProjectTarget: props.onChangeProjectTarget }),
         ...(props.executionTarget === undefined ? {} : { executionTarget: props.executionTarget }),
         ...(props.runAsTargets === undefined ? {} : { runAsTargets: props.runAsTargets }),
-        ...(props.onChangeExecutionTarget === undefined ? {} : { onChangeExecutionTarget: props.onChangeExecutionTarget }),
-        ...(props.triggersSection === undefined ? {} : { runsAutomatically: props.triggersSection }),
+        ...(props.description === undefined ? {} : { description: props.description }),
+        ...(props.onChangeDescription === undefined ? {} : { onChangeDescription: props.onChangeDescription }),
     }), [
-        props.triggersSection,
         props.currentWorkflowRef,
+        props.description,
+        props.onChangeDescription,
         documentEditable,
         draftStore,
         readValidation,
@@ -1311,40 +1173,18 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         sessionDrop,
         props.executionTarget,
         props.inspectorGroupDisclosure,
-        props.machineName,
-        props.onChangeExecutionTarget,
         props.onChangeInspectorGroup,
-        props.onChangeProjectTarget,
-        props.projectMachines,
-        props.projectTarget,
         props.runAsTargets,
     ]);
-    const inspectorProps = React.useMemo((): WorkflowEditorInspectorProps => ({
+    const buildSettingsProps = React.useCallback((blockId: string | null): WorkflowEditorInspectorProps => ({
         ...inspectorBaseProps,
-        subject: { kind: 'workflow' },
-        presentation: 'pane',
-        testIDPrefix,
-    }), [inspectorBaseProps, testIDPrefix]);
-    // Workflow settings is one inspector whether it docks beside the page or opens as the phone's dialog,
-    // so a width change keeps its open operations and unsubmitted fields (E09).
-    const renderSettingsInspector = React.useCallback(() => (
-        // In the dialog the card body is a contained page: it owns the edge its sections sit on (the header's),
-        // as the docked pane's does.
-        <ItemList containerStyle={compactLayout ? styles.settingsModalBody : undefined}>
-            <WorkflowEditorInspector {...inspectorProps} />
-        </ItemList>
-    ), [compactLayout, inspectorProps]);
-    const settingsInspector = useRetainedPlacement<null>(renderSettingsInspector);
-    const settingsInspectorSlot = React.useMemo(() => settingsInspector.mount(null), [settingsInspector.mount]);
-    const buildStepOptionsProps = React.useCallback((blockId: string): WorkflowEditorInspectorProps => ({
-        ...inspectorBaseProps,
-        subject: { kind: 'block', blockId },
+        subject: blockId === null ? { kind: 'workflow' } : { kind: 'block', blockId },
         presentation: 'popover',
-        testIDPrefix: `${testIDPrefix}-inspector`,
+        testIDPrefix: blockId === null ? testIDPrefix : `${testIDPrefix}-inspector`,
     }), [inspectorBaseProps, testIDPrefix]);
 
-    const closeStepOptions = React.useCallback(() => setStepOptionsPopover(null), []);
-    // Step options: one presentation owner, the anchored popover beside the step's control.
+    const closeSettingsPopover = React.useCallback(() => setSettingsPopover(null), []);
+    // Step options: the one settings popover in a block's scope, anchored beside the step's control.
     // The popover itself presents as the shared bottom sheet on a phone.
     const openInspector = React.useCallback((
         blockId: string,
@@ -1354,76 +1194,37 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         props.onCustomizeBlock(blockId);
         // Every block kind has Step options (04 §5.2): a step's, a leaf's or a container's.
         if (findWorkflowBlock(readDraft(), blockId) === null) return;
-        setStepOptionsPopover({ blockId, anchorRef, placementRef: cardRef ?? anchorRef });
+        setSettingsPopover({ blockId, anchorRef, placementRef: cardRef ?? anchorRef });
     }, [props.onCustomizeBlock, readDraft]);
     // Step options stay open while their block exists; the page reads that block's kind only.
-    const stepOptionsBlockKind = useWorkflowEditorSelector(draftStore, (draft) => stepOptionsPopover === null ? null
-        : findWorkflowBlock(draft, stepOptionsPopover.blockId)?.kind ?? null);
-    const stepOptionsPopoverBlockId = stepOptionsPopover !== null && stepOptionsBlockKind !== null ? stepOptionsPopover.blockId : null;
-
-    // Phone: Workflow settings is the same content in `@/modal`, kept current
-    // while open and closed with the page.
-    React.useEffect(() => {
-        if (!compactLayout || !canOpenSettings) {
-            if (settingsModalRef.current !== null) {
-                Modal.hide(settingsModalRef.current);
-                settingsModalRef.current = null;
-            }
-            return;
-        }
-        if (detailsCompanion !== 'settings') return;
-        if (settingsModalRef.current === null) {
-            settingsModalRef.current = Modal.show({
-                component: WorkflowSettingsModal,
-                props: { inspector: settingsInspectorSlot },
-                onRequestClose: () => {
-                    settingsModalRef.current = null;
-                    setDetailsCompanion(null);
-                },
-                closeOnBackdrop: true,
-                chrome: {
-                    kind: 'card',
-                    title: t('workflows.page.settings'),
-                    testID: `${testIDPrefix}-settings-modal`,
-                    phonePresentation: 'sheet',
-                    material: 'solid',
-                    bodyScroll: 'auto',
-                    dimensions: { width: HAPPIER_PAGE_METRICS.dialogWidthPx.wide, maxHeightRatio: 0.92, size: 'md' },
-                },
-            });
-            return;
-        }
-        Modal.update(settingsModalRef.current, { inspector: settingsInspectorSlot });
-    }, [compactLayout, canOpenSettings, settingsInspectorSlot, detailsCompanion, testIDPrefix]);
-    React.useEffect(() => () => {
-        if (settingsModalRef.current !== null) Modal.hide(settingsModalRef.current);
-    }, []);
+    const settingsBlockKind = useWorkflowEditorSelector(draftStore, (draft) => settingsPopover === null || settingsPopover.blockId === null ? null
+        : findWorkflowBlock(draft, settingsPopover.blockId)?.kind ?? null);
+    const settingsPopoverShown = settingsPopover !== null && (settingsPopover.blockId === null || settingsBlockKind !== null);
 
     // Undo and Redo are icon buttons: at the end of the chip line when wide (04 §4.1), at the document
     // foot on a phone. Only the commandless composition keeps the labelled pair.
     const historyIcons = <WorkflowEditorHistoryIcons testIDPrefix={testIDPrefix} history={props.history} />;
     const historyActions = <WorkflowEditorHistoryActions testIDPrefix={testIDPrefix} history={props.history} />;
 
-    const stepOptionsWidth = stepOptionsPopoverBlockId !== null && stepOptionsBlockKind === 'if'
-        ? IF_OPTIONS_MAX_WIDTH_PX : STEP_OPTIONS_MAX_WIDTH_PX;
-    const stepOptionsPopoverNode = stepOptionsPopover === null || stepOptionsPopoverBlockId === null ? null : (
+    const settingsWidth = settingsBlockKind === 'if' ? IF_OPTIONS_MAX_WIDTH_PX : STEP_OPTIONS_MAX_WIDTH_PX;
+    const settingsPopoverNode = settingsPopover === null || !settingsPopoverShown ? null : (
         <Popover
             open
-            // Below (or, when there is no room, above) the step's card, so it never covers the card it edits.
-            anchorRef={stepOptionsPopover.placementRef}
-            focusReturnRef={stepOptionsPopover.anchorRef}
+            // Below (or, when there is no room, above) the card or control, so it never covers what it edits.
+            anchorRef={settingsPopover.placementRef}
+            focusReturnRef={settingsPopover.anchorRef}
             boundaryRef={null}
             placement="auto-vertical"
             placementMinSpace={POPOVER_PREFERRED_ROOM_PX}
             phonePresentation="sheet"
             sheetHeader="none"
             sheetMaterial="solid"
-            accessibilityLabel={t('workflows.page.inspector.stepOptions')}
+            accessibilityLabel={settingsPopover.blockId === null ? t('workflows.page.settings') : t('workflows.page.inspector.stepOptions')}
             edgePadding={{ horizontal: 12, vertical: 12 }}
             portal={{ web: { target: 'body' }, native: true, matchAnchorWidth: false }}
-            maxWidthCap={stepOptionsWidth}
+            maxWidthCap={settingsWidth}
             maxHeightCap={STEP_OPTIONS_MAX_HEIGHT_PX}
-            onRequestClose={closeStepOptions}
+            onRequestClose={closeSettingsPopover}
         >
             {({ maxHeight, maxWidth }) => (
                 <FloatingOverlay
@@ -1432,11 +1233,13 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                     // The options own their scroll below a pinned header (Back / title / Done).
                     scrollEnabled={false}
                     scrollViewStyle={{ flexShrink: 1, minHeight: 0 }}
-                    containerStyle={{ width: Math.min(maxWidth, stepOptionsWidth) }}
+                    containerStyle={{ width: Math.min(maxWidth, settingsWidth) }}
                 >
                     <WorkflowEditorInspector
-                        {...buildStepOptionsProps(stepOptionsPopoverBlockId)}
-                        onDone={closeStepOptions}
+                        // One mounted surface per scope: switching scope starts that scope's pages fresh.
+                        key={settingsPopover.blockId ?? 'workflow'}
+                        {...buildSettingsProps(settingsPopover.blockId)}
+                        onDone={closeSettingsPopover}
                     />
                 </FloatingOverlay>
             )}
@@ -1577,13 +1380,16 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             } : null}
             header={{
                 testID: `${testIDPrefix}-header`,
-                // The editable identity keeps one parent layout across widths;
-                // phone navigation already owns the compact page commands.
-                actionsLayout: 'inline',
+                // Wide, the controls keep the title's row. A phone recomposes (DESIGN.md "Phones recompose", owner
+                // 11-15 H2): the name and its summary keep the full width and the controls the page still draws (a
+                // built-in's Duplicate and session chooser) wrap beneath them, as the run page does.
+                ...(compactLayout ? {} : { actionsLayout: 'inline' as const }),
                 // The save line is the actions' own row, so its changing words never reflow the name
                 // (DESIGN-9 N52). A page without a save line (a built-in's Duplicate) still says what to fix.
                 // On a phone the actions live in the navigation bar, so the line sits beside the name (owner 25).
-                ...(!hasPageCommands ? {} : { status: saveStatusNode ?? validityNode }),
+                ...(!hasPageCommands ? {} : { status: (saveStatusNode ?? validityNode) === null ? null : (
+                    <View ref={props.runNowPlacementRef} collapsable={false}>{saveStatusNode ?? validityNode}</View>
+                ) }),
                 alwaysShowTitle: true,
                 // Beside a companion the header is measured against the main column it shares (F5):
                 // the name keeps one line, as the chips keep one row.
@@ -1592,18 +1398,6 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                 // A phone's page gives its width to the editable name (lab `editor-P1`: no mark); wide
                 // pages lead with the workflow's mark, its steps' ordinals hanging under it.
                 ...(compactLayout ? {} : { leading: <PageHeaderMarkIcon name="tree-structure" /> }),
-                ...(!documentEditable ? { description: joinReadOnlyDescription([props.description, ...(props.headerMeta?.map((fact) => fact.text) ?? [])]) } : {}),
-                ...(!nameEditable || (props.onChangeDescription === undefined && props.description === undefined) ? {} : {
-                    descriptionEditor: {
-                        value: props.description ?? '',
-                        placeholder: t('workflows.page.descriptionPlaceholder'),
-                        accessibilityLabel: t('workflows.page.descriptionLabel'),
-                        onChangeText: (description: string) => props.onChangeDescription?.(description),
-                        onCommit: props.onCommitChange,
-                        editable: props.onChangeDescription !== undefined,
-                        testID: `${testIDPrefix}-description`,
-                    },
-                }),
                 // A phone's navigation bar carries what it can describe (Run now, the menu); a host-drawn
                 // control (a built-in's session chooser) and Duplicate stay on the page's title row.
                 ...(phoneRunNowAction === undefined ? {} : { primaryAction: phoneRunNowAction }),
@@ -1638,6 +1432,10 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                     </View>
                 ),
             }}
+            // The line under the title says what the workflow does, generated from it (owner 2026-11-15);
+            // the description itself is edited in Workflow settings.
+            summaryTrigger={props.triggersSection === undefined || props.triggersSummary === undefined ? null : props.triggersSummary}
+            readOnlyFacts={documentEditable ? null : props.headerMeta?.map((fact) => fact.text) ?? null}
             titleEditor={!nameEditable ? null : {
                 controlRef: nameInputRef,
                 placeholder: t('workflows.page.untitled'),
@@ -1649,106 +1447,64 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         />
     );
 
+    // The page's first cards (owner 2026-11-15): When it runs (the trigger owner's section, where the
+    // host has one) and How and where it runs. Both read as one sentence while closed.
+    const firstCards = (
+        <View style={styles.firstCards}>
+            {props.triggersSection === undefined ? null : (
+                <WorkflowWhenItRunsCard
+                    summary={props.triggersSummary ?? ''}
+                    expanded={whenExpanded}
+                    onExpandedChange={(expanded) => setCardExpanded(WORKFLOW_WHEN_CARD_ID, expanded)}
+                    testIDPrefix={testIDPrefix}
+                >
+                    {props.triggersSection}
+                </WorkflowWhenItRunsCard>
+            )}
+            <WorkflowHowAndWhereCard
+                draftStore={draftStore}
+                onChange={onChange}
+                documentEditable={documentEditable}
+                showsWorkflowAgent={showsWorkflowAgent}
+                accountLifetime={props.accountLifetime}
+                whereRef={whereRef}
+                projectTarget={props.projectTarget}
+                machineName={props.machineName}
+                projectMachines={props.projectMachines}
+                onChangeProjectTarget={props.onChangeProjectTarget}
+                executionTarget={props.executionTarget}
+                runAsTargets={props.runAsTargets}
+                onChangeExecutionTarget={props.onChangeExecutionTarget}
+                authoringFacts={props.authoringFacts}
+                expanded={howWhereExpanded}
+                onExpandedChange={(expanded) => setCardExpanded(WORKFLOW_HOW_WHERE_CARD_ID, expanded)}
+                settingsAnchorRef={workflowSettingsAnchorRef}
+                // A composition without page commands shows Workflow settings in place, below the cards.
+                {...(hasPageCommands ? { onOpenSettings: openWorkflowSettings } : {})}
+                testIDPrefix={testIDPrefix}
+            />
+        </View>
+    );
+
     // A composition without page commands (the authored Automation wrapper,
     // retired with U-16) keeps its own single scroll owner and receives the
-    // identity, the settings and the document without a page or panes.
+    // identity, the first cards and the document without a page or panes.
     if (!hasPageCommands) {
         return (
             <View testID={testIDPrefix} style={{ gap: theme.space.s16 }}>
                 {props.showNameField === false && props.onBackToRun === undefined ? null : identity}
+                <WorkflowDocumentGridContext.Provider value={compactLayout ? 'compact' : 'wide'}>{firstCards}</WorkflowDocumentGridContext.Provider>
                 <ItemList scrollEnabled={false}>
-                    {!canOpenSettings ? null : <WorkflowEditorInspector {...inspectorProps} />}
+                    <WorkflowEditorInspector {...buildSettingsProps(null)} presentation="pane" />
                 </ItemList>
-                {blockList}
+                <WorkflowDocumentGridContext.Provider value={compactLayout ? 'compact' : 'wide'}>{blockList}</WorkflowDocumentGridContext.Provider>
                 {historyActions}
-                {stepOptionsPopoverNode}
+                {settingsPopoverNode}
                 {validationPublisher}
             </View>
         );
     }
 
-    const whereSummary = formatWorkflowWhereSummary({
-        target: props.projectTarget,
-        machineName: props.machineName,
-        machineHomeDir: props.projectMachines?.find((machine) => machine.id === props.projectTarget?.machineId)
-            ?.metadata?.homeDir ?? null,
-    });
-
-    // One tree serves every width (R110C-F1): crossing the phone breakpoint recomposes the
-    // value line and the bottom bar around the same scroll owner and document, so every
-    // composer keeps its focus, caret, selection and the page its scroll. Only siblings that
-    // never shift the document's position differ between the forms.
-    const valueLine = compactLayout ? (
-        // Phone (lab `editor-P1`, corrected): the chips recompose as stacked value rows, the
-        // save status sits under them and Steps | Flow switches the document.
-        <>
-        <ItemGroup>
-            {documentEditable && props.onChangeProjectTarget !== undefined && props.projectMachines !== undefined ? (
-                // Chosen in place (owner 25): the Where owner's field select, Machine then folder.
-                <View testID={`${testIDPrefix}-where-row`}>
-                    <WorkflowProjectTargetControl ref={whereRef} accountLifetime={props.accountLifetime} purpose="workflow"
-                        presentation="field" title={t('workflows.page.where.label')} target={props.projectTarget}
-                        machineName={props.machineName} machines={props.projectMachines}
-                        onChange={props.onChangeProjectTarget} testIDPrefix={testIDPrefix} />
-                </View>
-            ) : (
-                <Item
-                    testID={`${testIDPrefix}-where-row`}
-                    title={t('workflows.page.where.label')}
-                    subtitle={whereSummary ?? t('workflows.page.where.choose')}
-                    showChevron
-                    onPress={documentEditable ? openSettings : submitRun}
-                />
-            )}
-            {props.triggersSummary === undefined ? null : (
-                <View ref={triggersAnchorRef} collapsable={false}>
-                    <Item
-                        testID={`${testIDPrefix}-triggers-row`}
-                        title={t('workflows.triggers.section.title')}
-                        subtitle={props.triggersSummary}
-                        showChevron
-                        onPress={props.triggersSection === undefined ? openSettings : () => setTriggersOpen(true)}
-                    />
-                </View>
-            )}
-            <WorkflowEditorAsksRow draftStore={draftStore} testIDPrefix={testIDPrefix} openSettings={openSettings} />
-            {/* Chosen in place like Where (owner 25): the shared engine field, the composer's own picker. */}
-            {!showsWorkflowAgent ? null : documentEditable ? (
-                <View testID={`${testIDPrefix}-agent-row`}>
-                    <WorkflowDefaultEngineControls presentation="fields" engineFieldTitle={t('workflows.page.sections.agentTitle')}
-                        defaults={defaults} roles={roles} readDraft={draftStore.get} onChange={onChange} editable
-                        {...(props.authoringFacts === undefined ? {} : { facts: props.authoringFacts })}
-                        testIDPrefix={`${testIDPrefix}-agent`} />
-                </View>
-            ) : (
-                // Read-only, its value opens the settings where the field is shown (04 §4.10).
-                <Item
-                    testID={`${testIDPrefix}-agent-row`}
-                    title={t('workflows.page.sections.agentTitle')}
-                    subtitle={engineSummary}
-                    showChevron
-                    onPress={openSettings}
-                />
-            )}
-        </ItemGroup>
-        {triggersOpen && props.triggersSection !== undefined ? (
-            <Popover open anchorRef={triggersAnchorRef} onRequestClose={() => setTriggersOpen(false)} placement="auto"
-                phonePresentation="sheet" accessibilityLabel={t('workflows.triggers.section.title')}
-                portal={{ web: true, native: true, matchAnchorWidth: false }}>
-                {({ maxHeight }) => <FloatingOverlay maxHeight={maxHeight} scrollEnabled>
-                    <View testID={`${testIDPrefix}-triggers-popover`}>{props.triggersSection}</View>
-                </FloatingOverlay>}
-            </Popover>
-        ) : null}
-        </>
-    ) : (
-        <WorkflowEditorChipsLine testIDPrefix={testIDPrefix} draftStore={draftStore} accountLifetime={props.accountLifetime} whereRef={whereRef}
-            projectTarget={props.projectTarget} machineName={props.machineName} projectMachines={props.projectMachines}
-            onChangeProjectTarget={props.onChangeProjectTarget} showsWorkflowAgent={showsWorkflowAgent} documentEditable={documentEditable}
-            defaults={defaults} roles={roles} onChange={onChange}
-            authoringFacts={props.authoringFacts} triggersSummary={props.triggersSummary}
-            openSettings={openSettings} history={props.history} />
-    );
     // Steps stays mounted across the phone's Steps | Flow switch so every composer keeps its
     // caret, selection and any live IME or dictation binding; Flow holds no editing state and
     // mounts on demand. The same Flow can also be opened beside Steps.
@@ -1770,9 +1526,10 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             {/* The header measures the pane for Back's gutter; only the document is column-capped. */}
             <View style={[styles.bodyColumn, maxWidthStyle]}>
             {props.reviewNotice}
-            {valueLine}
-            <View style={[styles.pageTabs, compactLayout ? null : styles.pageTabsOnMark]}>
+            {/* Steps | Flow, with Undo and Redo at the row's end (lab round 1115 r16). */}
+            <View style={[styles.pageTabs, styles.pageTabsRow, compactLayout ? null : styles.pageTabsOnMark]}>
                 <WorkflowPageNavigation navigation={navigation} phone={phoneNavigation} onSelect={selectNavigation} testIDPrefix={`${testIDPrefix}-view`} />
+                {historyIcons}
             </View>
             <View
                 testID={`${testIDPrefix}-steps-presentation`}
@@ -1784,11 +1541,12 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                 } : {})}
             >
                 {/* A phone's document has no header mark to hang under: its numbers take the mark's place. */}
-                <WorkflowDocumentGridContext.Provider value={compactLayout ? 'compact' : 'wide'}>{blockList}</WorkflowDocumentGridContext.Provider>
-                {/* Icon controls on a phone too: the change's label is their accessible name (DESIGN-6 N20). */}
-                {compactLayout ? historyIcons : null}
+                <WorkflowDocumentGridContext.Provider value={compactLayout ? 'compact' : 'wide'}>
+                    {firstCards}
+                    {blockList}
+                </WorkflowDocumentGridContext.Provider>
             </View>
-            {stepOptionsPopoverNode}
+            {settingsPopoverNode}
             {props.view === 'flow' ? <View style={styles.document}>{flowContent}</View> : null}
             </View>
         </KeyboardAwareScrollView>
@@ -1811,7 +1569,6 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             </View>
         ),
     };
-    // A phone presents Workflow settings as the `@/modal` sheet instead of the details pane.
     const agentSessionPane = props.authoringSessionId ? (
         // Kept mounted while another companion shows, so the conversation keeps its place.
         <WorkflowAuthoringSessionPane sessionId={props.authoringSessionId} serverId={props.authoringServerId}
@@ -1831,18 +1588,8 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                 onPress={() => router.push(buildScopedSessionRouteHref({ sessionId: props.authoringSessionId!, serverId: props.authoringServerId }) as never)} /> } : {})}
             onClose={closeSettings}
         />
-    ) : shownCompanion === 'step' && stepCompanionBlockId !== null ? (
-        // The inspector leads with the step it edits (its name, and Back on a sub-page), so the pane only names itself.
-        <PaneHeader testID={`${testIDPrefix}-step-pane-header`} title={t('workflows.page.inspector.stepOptions')} onClose={closeSettings} />
-    ) : (
-        <PaneHeader
-            testID={`${testIDPrefix}-settings-pane-header`}
-            title={t('workflows.page.settings')}
-            subtitle={t('workflows.page.settingsSubtitle')}
-            onClose={closeSettings}
-        />
-    );
-    const settingsDetails: AppPaneDestinationDetails | null = compactLayout || !canOpenSettings || shownCompanion === null ? null : {
+    ) : null;
+    const companionDetails: AppPaneDestinationDetails | null = compactLayout || shownCompanion === null ? null : {
         pane: (
             <View testID={`${testIDPrefix}-${shownCompanion}-pane`} style={styles.paneBody}>
                 {companionHeader}
@@ -1851,12 +1598,6 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                     <View testID={`${testIDPrefix}-agent-draft`} style={styles.agentDraft}>
                         <WorkflowAgentAuthoringDraft {...props.authoringDraft} />
                     </View>
-                ) : null}
-                {shownCompanion === 'settings' ? settingsInspectorSlot : null}
-                {/* Step options own their scroll below their pinned subject header, as in the popover. */}
-                {shownCompanion === 'step' && stepCompanionBlockId !== null ? (
-                    <WorkflowEditorInspector {...inspectorBaseProps} subject={{ kind: 'block', blockId: stepCompanionBlockId }}
-                        presentation="pane" testIDPrefix={`${testIDPrefix}-step`} />
                 ) : null}
             </View>
         ),
@@ -1873,14 +1614,12 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                 rightSidebarAdapter={{ available: true, render: () => null, renderActionRail: () => <WorkflowCompanionNavigation model={navigation.model} onSelect={id => selectWorkflowNavigationItem(executeNavigation, navigation.model, id, 'side')} /> }}
                 main={page}
                 rightPaneBuiltinAdapter={flowAdapter}
-                destinationDetails={settingsDetails}
+                destinationDetails={companionDetails}
                 // A companion beside the document, not the files drawer: the Run's narrower default.
                 detailsPreferredWidthPx={DEFAULT_SESSION_WIDTH_PX}
                 mainMinWidthPx={WORKFLOW_EDITOR_MAIN_MIN_WIDTH_PX}
             />
             {validationPublisher}
-            {/* Workflow settings renders here, the one position both its pane and its dialog outlive; closing it retires it. */}
-            {detailsCompanion === 'settings' && canOpenSettings ? settingsInspector.body : null}
         </View>
     );
 }

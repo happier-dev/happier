@@ -51,6 +51,11 @@ export function useWorkflowRunComposerModal(params: Readonly<{
     props: WorkflowRunComposerModalProps | null;
     testID?: string;
     anchorRef?: React.RefObject<View | null>;
+    /**
+     * What the sheet opens below when that differs from the control that opened it: the editor's
+     * header hangs it under its save line, never over it (FIN QA-DESIGN-R3). Focus returns to `anchorRef`.
+     */
+    placementRef?: React.RefObject<View | null>;
     accountLifetime?: ServerAccountScopeLifetime | null;
 }>): React.ReactElement | null {
     const keyboardContext = useKeyboardShortcutContextSnapshot();
@@ -82,7 +87,8 @@ export function useWorkflowRunComposerModal(params: Readonly<{
         chrome: { ...createAnchoredSheetChrome({
             title: params.props?.workflowName ?? t('workflows.start.workflow'),
             testID: params.testID ?? 'workflow-run-inputs-modal',
-            ...(params.anchorRef?.current ? { anchor: { kind: 'view', ref: params.anchorRef } as const } : {}),
+            ...(params.placementRef?.current ? { anchor: { kind: 'view', ref: params.placementRef } as const }
+                : params.anchorRef?.current ? { anchor: { kind: 'view', ref: params.anchorRef } as const } : {}),
         }), header: 'none', bodyScroll: 'auto' },
         focusReturnRef: params.anchorRef,
         ...(params.props === null ? {} : { onRequestClose: cancelHostedIntent }),

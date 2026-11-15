@@ -1,7 +1,7 @@
 import { createContext, isValidElement, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
 import { View } from 'react-native';
 
-import { useOptionalHappierUiTheme, useOptionalHappierUiTypography } from '../../environment/context.js';
+import { useOptionalHappierUiLocalization, useOptionalHappierUiTheme, useOptionalHappierUiTypography } from '../../environment/context.js';
 import type { HappierFocusable, HappierLayoutChangeEvent, HappierStyleProp } from '../portableTypes.js';
 import { HappierMiddleEllipsisText, HappierPageHeaderMetaId, HappierPageHeaderMetaIdAnchor, type HappierPageHeaderMetaIdCopy } from './PageHeaderMetaId.js';
 import { HappierText, useHappierTextPresentation } from '../text/Text.js';
@@ -47,7 +47,8 @@ export type HappierPageHeaderProps = Readonly<{
   /** Whether the title is drawn. `false` when navigation chrome already shows it (the purpose line stays). */
   showTitle?: boolean;
   /**
-   * Navigation leaves the page's name to the page (a phone tab's top level): it draws the large title. Every other
+   * Navigation leaves the page's name to the page (a phone tab's top level, or a pushed phone page whose bar holds
+   * only Back and the page's controls, as a Project's): it draws the large title. Every other
    * page, and any entity with a `leading` mark, draws the page title. This is the whole rule (DESIGN.md "One title
    * rule"); hosts state this fact and pages never choose a title size.
    */
@@ -146,6 +147,10 @@ function useDefaultPageTextRender(metaIdCopy: HappierPageHeaderMetaIdCopy | unde
   const headingRef = useContext(HappierPageHeadingBindingContext);
   const theme = useOptionalHappierUiTheme();
   const typography = useOptionalHappierUiTypography();
+  // The header's words start on the page's edge, beside their mark: a title whose first word is Arabic or Hebrew
+  // keeps its own reading order (the text's direction) but not the far side of an LTR page (the page's direction).
+  const localization = useOptionalHappierUiLocalization();
+  const align = localization?.direction === 'rtl' ? PAGE_TEXT_RIGHT : PAGE_TEXT_LEFT;
   return useCallback((input) => {
     const color = theme === null
       ? undefined
@@ -166,6 +171,7 @@ function useDefaultPageTextRender(metaIdCopy: HappierPageHeaderMetaIdCopy | unde
         accessibilityRole={input.header ? 'header' : undefined}
         style={[
           resolveHappierPageTextStyle(input.role, typography),
+          align,
           input.mono && theme?.typography.code.fontFamily ? { fontFamily: theme.typography.code.fontFamily } : null,
           color === undefined ? null : { color },
         ]}
@@ -173,8 +179,11 @@ function useDefaultPageTextRender(metaIdCopy: HappierPageHeaderMetaIdCopy | unde
         {input.text}
       </HappierText>
     );
-  }, [headingRef, metaIdCopy, theme, typography]);
+  }, [align, headingRef, metaIdCopy, theme, typography]);
 }
+
+const PAGE_TEXT_LEFT = Object.freeze({ textAlign: 'left' as const });
+const PAGE_TEXT_RIGHT = Object.freeze({ textAlign: 'right' as const });
 
 function renderPageText(
   slot: ReactNode,
@@ -513,7 +522,10 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
                   style={{ position: 'relative', flexGrow: centered ? 0 : 1, flexShrink: shrinkActions ? 0 : 1, flexBasis: splitTitleLine || centered || shrinkActions ? 'auto' : hangsFromTitle ? 0 : HAPPIER_PAGE_METRICS.sectionTextMinWidthPx, minWidth: 0, ...(centered ? { width: '100%', alignItems: 'center' } : {}), ...(splitTitleLine ? { minHeight: HAPPIER_PAGE_METRICS.controlHeightPx, justifyContent: 'center' } : {}) }}
                 >
                   {props.leading ? null : gutterBack}
-                  {splitTitleLine ? <View onLayout={handleTitleNaturalLayout} style={{ alignSelf: 'flex-start', maxWidth: '100%' }}>{titleLine}</View> : titleLine}
+                  {/* One wrapper at every layout: switching between inline and wrapped controls (a phone
+                      recomposing) keeps the title's element, so an editable name keeps focus and caret. */}
+                  <View onLayout={splitTitleLine ? handleTitleNaturalLayout : undefined}
+                    style={splitTitleLine ? { alignSelf: 'flex-start', maxWidth: '100%' } : undefined}>{titleLine}</View>
                   {splitTitleLine || hangsFromTitle || markOnTitleRow ? null : textBelowTitle}
                 </View>
                 {actionsBlock ? (

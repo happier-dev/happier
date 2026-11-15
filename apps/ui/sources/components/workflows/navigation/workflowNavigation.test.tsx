@@ -56,7 +56,7 @@ it.each(['workflowEditor', 'workflowRun'] as const)('detail-navigation.%s resolv
         const [, bump] = React.useReducer(n => n + 1, 0);
         rerender = bump;
         const navigation = useWorkflowNavigation({ pageKind, identity: 'one', scope: null, phone: true, presented: true,
-            activeId, settingsAvailable: pageKind === 'workflowEditor', selectPage, companion: pageKind === 'workflowEditor' ? { activeId: null, select: selectCompanion, close: closeCompanion } : undefined });
+            activeId, agentAvailable: pageKind === 'workflowEditor', selectPage, companion: pageKind === 'workflowEditor' ? { activeId: null, select: selectCompanion, close: closeCompanion } : undefined });
         model = navigation.model;
         presentation = useWorkflowCockpitBarPresentation({ model, onSelect: () => {} }, true);
         return <WorkflowPageNavigation navigation={navigation} phone onSelect={() => {}} testIDPrefix="workflow-pages" />;
@@ -102,7 +102,7 @@ it.each(['workflowEditor', 'workflowRun'] as const)('detail-navigation.%s floati
     } }));
     function Fixture() {
         const { model } = useWorkflowNavigation({ pageKind, identity: 'menu', scope: null, phone: true, presented: true,
-            activeId: 'flow', settingsAvailable: pageKind === 'workflowEditor', selectPage,
+            activeId: 'flow', agentAvailable: pageKind === 'workflowEditor', selectPage,
             companion: pageKind === 'workflowEditor' ? { activeId: null, select: selectCompanion, close: () => {} } : undefined });
         floating = useWorkflowCockpitBarPresentation({ model, onSelect: selectPage });
         native = useWorkflowCockpitBarPresentation({ model, onSelect: selectPage }, true);
@@ -151,7 +151,7 @@ it('keeps the desktop page tabs still while the page around them re-renders for 
         rerender = bump;
         // A Workflow name keystroke re-renders the editor page with the same navigation facts.
         const navigation = useWorkflowNavigation({ pageKind: 'workflowEditor', identity: 'rename', scope: null,
-            phone: false, presented: true, activeId: 'steps', settingsAvailable: true, selectPage: select });
+            phone: false, presented: true, activeId: 'steps', selectPage: select });
         return <WorkflowPageNavigation navigation={navigation} phone={false} onSelect={select} testIDPrefix="workflow-pages" />;
     }
     const screen = await renderScreen(<PresentedDetailNavigationProvider><Fixture /></PresentedDetailNavigationProvider>);
@@ -166,13 +166,13 @@ it('keeps the desktop page tabs still while the page around them re-renders for 
     await screen.unmount();
 });
 
-it('offers the selected step and the authoring agent as editor companions beside Workflow settings (Plan T U5)', async () => {
-    const all = catalog.resolveDetailNavigationItems({ scope: 'workflowEditor', settingsAvailable: true, stepAvailable: true, agentAvailable: true });
-    // Steps is the page; Flow is both a page and a companion; the rest are companions on the rail and in More.
+it('offers the authoring agent as the editor\'s one companion; settings are a popover, never a sidebar (owner 2026-11-15)', async () => {
+    const all = catalog.resolveDetailNavigationItems({ scope: 'workflowEditor', agentAvailable: true });
+    // Steps is the page; Flow is both a page and a companion; the agent is a companion on the rail and in More.
     expect(all.find(item => item.id === 'flow')?.navigation.kind).toBe('both');
-    expect(all.filter(item => item.navigation.kind === 'companion').map(item => item.id)).toEqual(['step', 'settings', 'agent']);
+    expect(all.filter(item => item.navigation.kind === 'companion').map(item => item.id)).toEqual(['agent']);
     expect(all.filter(item => item.navigation.kind === 'companion').every(item => item.phonePlacement === 'more')).toBe(true);
-    // A companion that cannot present is not offered (no selected step, no authoring agent).
-    const quiet = catalog.resolveDetailNavigationItems({ scope: 'workflowEditor', settingsAvailable: true });
-    expect(quiet.map(item => item.id)).toEqual(['steps', 'flow', 'settings']);
+    // A companion that cannot present is not offered (no authoring agent).
+    const quiet = catalog.resolveDetailNavigationItems({ scope: 'workflowEditor' });
+    expect(quiet.map(item => item.id)).toEqual(['steps', 'flow']);
 });

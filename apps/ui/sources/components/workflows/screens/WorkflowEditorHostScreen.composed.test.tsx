@@ -27,7 +27,6 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { readNewSessionDraftProjectionFromRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
 import { createMachineFixture, createReadyMachineAgentInventoryFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { refreshMachineAgents } from '@/agents/machineAgents/useMachineAgents';
-import { WorkflowPageNavigation } from '../navigation/WorkflowNavigationViews';
 import { createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { createSessionMessagesFixture, createToolCallMessageFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
 import { createPlainSessionByIdResponseFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -804,7 +803,7 @@ it('types in a step and in the name without re-rendering the page header, Add me
     const chrome = (pattern: RegExp) => [...nativeViewRenders].filter(([id]) => pattern.test(id)).reduce((sum, [, count]) => sum + count, 0);
     const measure = () => ({
         header: chrome(/^workflow-editor-header/),
-        valueLine: chrome(/^workflow-editor-(chips|undo|redo|triggers-chip|asks-chip)/),
+        valueLine: chrome(/^workflow-editor-(how-where|when|undo|redo)/),
         addMenus: chrome(/add/i),
         otherSteps: chrome(/(second|third)/),
         all: [...nativeViewRenders.values()].reduce((sum, count) => sum + count, 0),
@@ -1180,19 +1179,15 @@ describe('WorkflowEditorHostScreen composition', () => {
             .toMatchObject({ ok: true, result: { status: 'unavailable' } });
     });
 
-    it.each([false, true])('presents Settings from the mounted editor navigation (phone=%s)', async phone => {
+    it.each([false, true])('presents Workflow settings as the one settings popover from How and where it runs (phone=%s)', async phone => {
         await serveMountedDraftActionHome();
         nativeRouteBoundary.width = phone ? 390 : 1280;
         const screen = await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
-        if (phone) {
-            // Where chooses the target in place; Settings belongs to the mounted navigation.
-            await act(async () => screen.findByType(WorkflowPageNavigation).props.onSelect('settings'));
-        } else {
-            await screen.pressByTestIdAsync('workflowEditor-companion:settings');
-        }
-        await vi.waitFor(() => expect(screen.findHostByTestId(phone
-            ? 'workflow-editor-settings-modal' : 'workflow-editor-settings-pane')).not.toBeNull());
-        await screen.pressByTestIdAsync('workflow-editor-group-inputs-header');
+        // No settings companion on the rail or in More (owner 2026-11-15): the card's control opens it.
+        expect(screen.findByTestId('workflowEditor-companion:settings')).toBeNull();
+        await screen.pressByTestIdAsync('workflow-editor-how-where-settings');
+        await vi.waitFor(() => expect(screen.findHostByTestId('workflow-editor-options')).not.toBeNull());
+        await screen.pressByTestIdAsync('workflow-editor-group-result-header');
         expect(screen.findHostByTestId('workflow-editor-final-output-row')).not.toBeNull();
         await screen.pressByTestIdAsync('workflow-editor-group-roles-header');
         expect(screen.findHostByTestId('workflow-editor-add-role-trigger')).not.toBeNull();

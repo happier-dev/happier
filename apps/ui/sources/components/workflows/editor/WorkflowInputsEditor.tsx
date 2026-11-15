@@ -232,13 +232,15 @@ function WorkflowInputRow(props: Readonly<{
 export function WorkflowInputsEditor(props: Readonly<{
     inputs: readonly WorkflowInputDefinition[];
     onChange: (inputs: readonly WorkflowInputDefinition[]) => void;
+    /** The heading in its host's words ("Asks for" in How and where it runs). */
+    title?: string;
     testIDPrefix: string;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     return (
         <View testID={`${props.testIDPrefix}-inputs`} style={styles.root}>
             <View style={styles.heading}>
-                <Text style={styles.title}>{t('workflows.inputs.title')}</Text>
+                <Text style={styles.title}>{props.title ?? t('workflows.inputs.title')}</Text>
                 <HappierPressable
                     testID={`${props.testIDPrefix}-inputs-add`}
                     accessibilityRole="button"

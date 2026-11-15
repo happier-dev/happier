@@ -276,6 +276,17 @@ describe('WorkflowStepDataEditor field selects', () => {
         expect(select.props.selectedId).toBe(items.find((item) => item.title === 'Tone')!.id);
     });
 
+    it('puts a typed value\'s field before the value picker, so one press on Set lands in it (owner G1, 11-15)', async () => {
+        const draft = createWorkflowEditorDraft({ draftId: 'draft-1', name: 'Review', blocks: [stepBlock('step-a', [])] });
+        const screen = await renderScreen(<WorkflowValueReferenceEditor reference={{ kind: 'literal', value: '' }} index={0}
+            draft={draft} stepId="step-a" onChange={() => {}} testIDPrefix="row" />);
+        const order = screen.findAll((node) => typeof node.type === 'string' && typeof node.props?.testID === 'string'
+            && (node.props.testID === 'row-input-0-literal' || node.props.testID.startsWith('row-input-0-value')))
+            .map((node) => node.props.testID as string);
+        expect(order[0]).toBe('row-input-0-literal');
+        expect(order.some((id) => id.startsWith('row-input-0-value'))).toBe(true);
+    });
+
     it('keeps the whole result and a path into it reachable beside a step\'s named fields', async () => {
         const producer = { ...stepBlock('producer-a', []), result: { kind: 'json' as const, schema: { type: 'object' as const, properties: { verdict: { type: 'string' as const } } } } };
         const initial: WorkflowValueReference = { kind: 'result', producer: { blockId: 'producer-a', scope: { kind: 'current' } }, path: ['verdict'] };

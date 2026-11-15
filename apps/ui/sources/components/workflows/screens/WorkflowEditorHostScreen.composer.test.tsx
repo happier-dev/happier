@@ -166,9 +166,14 @@ async function readCompanionIds(screen: Awaited<ReturnType<typeof renderScreen>>
     return (await readWorkflowCompanionRail(screen)).props.model.items.map((item: { id: string }) => item.id);
 }
 
+/** Workflow settings: the one settings popover, opened from How and where it runs (owner 2026-11-15). */
 async function openWorkflowSettings(screen: Awaited<ReturnType<typeof renderScreen>>) {
-    const rail = await readWorkflowCompanionRail(screen);
-    await act(async () => rail.props.onSelect('settings'));
+    await screen.pressByTestIdAsync(screen.findByTestId('workflow-builtin-how-where-settings') ? 'workflow-builtin-how-where-settings' : 'workflow-editor-how-where-settings');
+}
+
+/** When it runs: the page's trigger card, opened in place when a saved workflow shows it closed. */
+async function openWhenItRuns(screen: Awaited<ReturnType<typeof renderScreen>>) {
+    if (screen.findByTestId('workflow-editor-when-body') === null) await screen.pressByTestIdAsync('workflow-editor-when-caret');
 }
 
 function expectEnabledAccessibleButton(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string) {
@@ -719,7 +724,7 @@ describe('editor workflow composer', () => {
         const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
         const body = screen.root.findByType(WorkflowEditorBody);
         expect(body.props.projectTarget).toEqual({ machineId: 'machine-1', directory: '/Users/tester/project' });
-        await openWorkflowSettings(screen);
+        await openWhenItRuns(screen);
         const section = screen.root.findByType(WorkflowTriggerSection);
         expect(section.props.draft.adds).toMatchObject([{ trigger: { sourceSessionId: session.id, events: ['userActionRequired'] } }]);
         await act(async () => screen.update(<AppPaneProvider><WorkflowEditorHostScreen source={{ ...source }} /></AppPaneProvider>));
@@ -752,7 +757,7 @@ describe('editor workflow composer', () => {
                 events: ['parentTurnCompleted', 'parentTurnFailed', 'parentTurnCancelled'], policy: { kind: 'everyMatch' } },
             sessionTarget: { sessionId: session.id, machineId: 'machine-1' } }));
         expect(body.props.projectTarget).toEqual({ machineId: 'machine-1', directory: '/Users/tester/project' });
-        await openWorkflowSettings(screen);
+        await openWhenItRuns(screen);
         const section = screen.root.findByType(WorkflowTriggerSection);
         expect(section.props.draft.adds).toHaveLength(1);
         await act(async () => readHistory().undo());
@@ -1226,7 +1231,8 @@ describe('editor workflow composer', () => {
         expect(body.props.documentPresentation).toMatchObject({ editable: false });
         expect(body.props.onSave).toBeUndefined();
         expect(body.props.onDuplicate).toBeTypeOf('function');
-        expect(await readCompanionIds(screen)).toContain('settings');
+        expect(await readCompanionIds(screen)).not.toContain('settings');
+        expect(screen.findByTestId('workflow-builtin-how-where-settings')).not.toBeNull();
         expect(screen.findByTestId('workflow-builtin-duplicate')).not.toBeNull();
         expect(screen.findByTestId('workflow-builtin-run-now')).not.toBeNull();
         const { WorkflowRunComposer } = await import('../run/WorkflowRunComposer');
@@ -1370,10 +1376,9 @@ describe('editor workflow composer', () => {
         expectNoWorkflowWrites();
         expect(home.requests.filter(request => request.path === '/v1/actions/session.spawn_new')).toHaveLength(0);
         await screen.pressByTestIdAsync(`workflow-editor-step-${readStep().id}-customize`);
-        // Step options lead with the step; engine overrides live on its Agent subpage.
-        await screen.pressByTestIdAsync('workflow-editor-inspector-agent-row');
+        // Step settings are one page: the engine override and its way back sit under "Agent and where it runs".
         const { WorkflowStepInspector } = await import('../editor/WorkflowStepInspector');
-        const inspector = screen.root.findByType(WorkflowStepInspector);
+        const inspector = screen.root.findAllByType(WorkflowStepInspector).find(node => node.props.fields?.includes('agentTarget'))!;
         await screen.pressByTestIdAsync(`${inspector.props.testIDPrefix}-agentTarget-reset`);
         expect(readStep().execution?.engine).toBeUndefined();
         expect(readStep().execution?.acpSessionModeId).toBeUndefined();
@@ -1476,8 +1481,8 @@ describe('editor workflow composer', () => {
         // the person's trigger draft and surfaces a failed save.
         home.answer(appliedHome.serverId, 'POST /v3/automations', { status: 503, body: { error: 'target_unavailable' } });
         const screen = await renderScreen(<AppPaneProvider><WorkflowEditorHostScreen source={{ kind: 'saved', definitionId }} /></AppPaneProvider>);
-        expect(await readCompanionIds(screen)).toContain('settings');
-        await openWorkflowSettings(screen);
+        expect(screen.findByTestId('workflow-editor-when')).not.toBeNull();
+        await openWhenItRuns(screen);
         const section = screen.root.findByType(WorkflowTriggerSection);
         await act(async () => section.props.onChangeDraft(editWorkflowTriggerDraft(section.props.draft, {
             kind: 'add', clientId: 'personal', trigger: { kind: 'schedule', enabled: true,
@@ -1532,8 +1537,7 @@ describe('editor workflow composer', () => {
             expect(prompts[0]?.props).toMatchObject({ value: 'Read the complete shared prompt', disabled: true });
             expect(prompts[0]?.props.onChangeText).toBeUndefined();
             expect(prompts[0]?.props.onStructuredInputMentionsChange).toBeUndefined();
-            if (width === 390) expect(screen.findByTestId('workflow-editor-where-row')).not.toBeNull();
-            else expect(await readCompanionIds(screen)).toContain('settings');
+            expect(screen.findByTestId('workflow-editor-how-where')).not.toBeNull();
             expect(screen.root.findAllByType(SessionAuthoringControls).every((controls) => controls.props.disabled === true)).toBe(true);
             const menuActions = body.props.menuActions;
             if (!menuActions) throw new Error('Missing read-only workflow menu actions');

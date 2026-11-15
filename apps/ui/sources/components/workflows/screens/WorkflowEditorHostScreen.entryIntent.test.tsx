@@ -88,9 +88,9 @@ let serverId: string;
 let modals: ReturnType<typeof useModal>['state']['modals'] = [];
 function ObserveModals() { modals = useModal().state.modals; return null; }
 function visibleModals() { return modals.filter(modal => 'visible' in modal && modal.visible === true); }
-function settingsModal() {
-    return visibleModals().find((modal): modal is Extract<(typeof modals)[number], { type: 'custom' }> =>
-        modal.type === 'custom' && modal.chrome?.testID === 'workflow-editor-settings-modal');
+/** Schedule opens When it runs, the page's trigger card (owner 2026-11-15), never a dialog. */
+function whenItRunsOpen(screen: Awaited<ReturnType<typeof renderScreen>>): boolean | undefined {
+    return screen.findByTestId('workflow-editor-when') === null ? undefined : screen.findByTestId('workflow-editor-when-body') !== null;
 }
 
 function expectNoWorkflowWrites(): void {
@@ -502,14 +502,15 @@ describe('WorkflowEditorHostScreen saved-entry intents', () => {
         expect(pushSpy()).not.toHaveBeenCalled();
     });
 
-    it('opens the page settings for a Schedule intent without creating an Automation', async () => {
+    it('opens When it runs for a Schedule intent without creating an Automation', async () => {
         const { WorkflowEditorHostScreen } = await import('./WorkflowEditorHostScreen');
         const source = { kind: 'saved', definitionId: DEFINITION_ID, intent: 'schedule' } as const;
         const screen = await renderScreen(<WorkflowEditorHostScreen source={source} />, { wrapper: EditorPaneWrapper });
         await act(async () => {});
 
         expect(pushSpy()).not.toHaveBeenCalled();
-        expect(settingsModal()).toBeDefined();
+        expect(whenItRunsOpen(screen)).toBe(true);
+        expect(visibleModals()).toEqual([]);
         expectNoWorkflowWrites();
 
         // A rerender of the same logical source is not a second Schedule.
@@ -525,9 +526,9 @@ describe('WorkflowEditorHostScreen saved-entry intents', () => {
             { wrapper: EditorPaneWrapper },
         );
         await act(async () => {});
-        expect(settingsModal()).toBeDefined();
-        await screen.pressByTestIdAsync('modal-card-close');
-        expect(settingsModal()).toBeUndefined();
+        expect(whenItRunsOpen(screen)).toBe(true);
+        await screen.pressByTestIdAsync('workflow-editor-when-caret');
+        expect(whenItRunsOpen(screen)).toBe(false);
 
         await createWorkflowDefinition({ definitionId: SECOND_DEFINITION_ID, definition: savedDefinition().definition,
             metadata: { title: 'Second release check' } });
@@ -539,7 +540,7 @@ describe('WorkflowEditorHostScreen saved-entry intents', () => {
         // A route rerender is not another press, but a different definition is
         // a distinct row action and must reach the Schedule owner once.
         expect(screen.findByTestId('workflow-editor-name')?.props.value).toBe('Second release check');
-        expect(settingsModal()).toBeDefined();
+        expect(whenItRunsOpen(screen)).toBe(true);
         expect(pushSpy()).not.toHaveBeenCalled();
     });
 });

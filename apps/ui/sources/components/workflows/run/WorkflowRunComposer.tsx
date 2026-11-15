@@ -1032,6 +1032,9 @@ export function WorkflowRunComposer(
         <PluginContextualResourceStoreProvider>
           <AgentInput
             placementContext="workflow"
+            // A Run review card is narrower than its window: its chips wrap rather than clip under Start
+            // on a phone (FIN QA-DESIGN-R3), as a step card's do.
+            hostActionBarLayout="wrap"
             panelPresentation="document"
             trailingAccessory={startControl}
             {...(props.contentPaddingHorizontal === undefined

@@ -431,20 +431,8 @@ export function WorkflowValueReferenceEditor(props: Readonly<{
     const reference = props.reference;
     return (
         <View style={[workflowEditorStyles.inlineControl, workflowEditorStyles.bindingLine]}>
-            {props.literalOnly === true && reference.kind === 'literal' ? null : <WorkflowValuePicker
-                draft={props.draft}
-                consumerBlockId={props.stepId}
-                {...(props.continuation === true ? { continuation: true } : {})}
-                {...(props.literalOnly === true ? { fixedOnly: true } : {})}
-                reference={reference}
-                label={t('workflows.input.valueKindGroup')}
-                // Moving between inputs keeps the path into them; every other choice names its own.
-                onChange={(next) => props.onChange(next.kind === 'input' && reference.kind === 'input' && next.path === undefined && reference.path !== undefined
-                    ? { ...next, path: reference.path } : next)}
-                onChooseFixedValue={() => props.onChange({ kind: 'literal', value: '' })}
-                testID={`${rowId}-value`}
-                pathTestID={`${rowId}-path`}
-            />}
+            {/* A typed value is the field itself, first, so one press on "+ Set" lands in it and typing
+                starts (owner G1, 11-15); choosing a value from elsewhere is the picker after it. */}
             {reference.kind === 'literal' && props.renderLiteral !== undefined
                 // The consumer's own field sits on the binding's line, like the plain value entry.
                 ? <View style={workflowEditorStyles.inlineLiteral}>{props.renderLiteral(reference.value, (next) => props.onChange({
@@ -463,6 +451,20 @@ export function WorkflowValueReferenceEditor(props: Readonly<{
                     onChangeText={(value) => props.onChange({ kind: 'literal', value: parseLiteral(value) })}
                 />
             ) : null}
+            {props.literalOnly === true && reference.kind === 'literal' ? null : <WorkflowValuePicker
+                draft={props.draft}
+                consumerBlockId={props.stepId}
+                {...(props.continuation === true ? { continuation: true } : {})}
+                {...(props.literalOnly === true ? { fixedOnly: true } : {})}
+                reference={reference}
+                label={t('workflows.input.valueKindGroup')}
+                // Moving between inputs keeps the path into them; every other choice names its own.
+                onChange={(next) => props.onChange(next.kind === 'input' && reference.kind === 'input' && next.path === undefined && reference.path !== undefined
+                    ? { ...next, path: reference.path } : next)}
+                onChooseFixedValue={() => props.onChange({ kind: 'literal', value: '' })}
+                testID={`${rowId}-value`}
+                pathTestID={`${rowId}-path`}
+            />}
             {/* Removing a value is the editor's quiet trailing x on its line (as a condition's value), so it
                 keeps the picker's line on a phone instead of a lone word beneath it. */}
             {props.onRemove === undefined ? null : (

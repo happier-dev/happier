@@ -143,8 +143,11 @@ type WorkflowProjectTargetControlProps = Readonly<{
      * Both open the one content-sized popover with the Machine, folder and
      * checkout choices. `inline` (the default): those choices in place, for a
      * host that is already that popover (a run composer's Where chip).
+     * `value`: the value of a label/value row that already names it (How and
+     * where it runs' "Machine and folder"): the bordered chips while editable,
+     * otherwise what the field's read-only value says.
      */
-    presentation?: 'chip' | 'field' | 'inline';
+    presentation?: 'chip' | 'field' | 'inline' | 'value';
     /** The field row's label; `field` only. */
     title?: string;
     /** The field row's description (its consequence), wrapping; `field` only. */
@@ -188,7 +191,7 @@ export const WorkflowProjectTargetControl = React.forwardRef<
                 title: props.title ?? t('workflows.page.sections.machineAndProject'),
                 ...(props.subtitle === undefined ? {} : { subtitle: props.subtitle }),
                 rowTestID: `${testIDPrefix}-machine-row`,
-            } : props.presentation === 'chip' ? { chipVariant: 'bordered' as const } : {})}
+            } : props.presentation === 'chip' || props.presentation === 'value' ? { chipVariant: 'bordered' as const } : {})}
         />
     ) : null;
     const scope = props.currentUiContextCommandScope;
@@ -221,6 +224,22 @@ export const WorkflowProjectTargetControl = React.forwardRef<
         );
     }
 
+    // What a person who can't edit reads: what is, never an ask to choose (FIN-DESIGN-REVIEW M7).
+    const readOnlyValue = target === undefined || target === null || props.machineName === null ? (
+        <Text testID={`${testIDPrefix}-machine`} style={styles.unresolved}>
+            {props.machineName ?? (target === undefined || target === null
+                ? t('workflows.editor.targetNotChosen') : t('workflows.editor.targetOtherMachine'))}
+        </Text>
+    ) : (
+        <Text testID={`${testIDPrefix}-project-directory-readonly`} style={styles.value}>
+            {formatWorkflowWhereSummary({ target, machineName: props.machineName, machineHomeDir })}
+        </Text>
+    );
+
+    if (props.presentation === 'value') {
+        return <View testID={`${testIDPrefix}-where-chips`} style={styles.row}>{editor ?? readOnlyValue}</View>;
+    }
+
     if (props.presentation !== 'field') {
         return (
             <View testID={`${testIDPrefix}-machine-row`} style={styles.row}>
@@ -247,23 +266,12 @@ export const WorkflowProjectTargetControl = React.forwardRef<
     }
 
     if (editor) return editor;
-    const summary = formatWorkflowWhereSummary({ target, machineName: props.machineName, machineHomeDir });
     return (
         <WhereField
             title={props.title ?? t('workflows.page.sections.machineAndProject')}
             accessoryLayout={props.accessoryLayout}
             {...(props.subtitle === undefined ? {} : { subtitle: props.subtitle })}
-            readOnlyValue={(
-                target === undefined || target === null || props.machineName === null ? (
-                    // Someone who can't edit is never told to choose: they read what is (FIN-DESIGN-REVIEW M7).
-                    <Text testID={`${testIDPrefix}-machine`} style={styles.unresolved}>
-                        {props.machineName ?? (target === undefined || target === null
-                            ? t('workflows.editor.targetNotChosen') : t('workflows.editor.targetOtherMachine'))}
-                    </Text>
-                ) : (
-                    <Text testID={`${testIDPrefix}-project-directory-readonly`} style={styles.value}>{summary}</Text>
-                )
-            )}
+            readOnlyValue={readOnlyValue}
             testIDPrefix={testIDPrefix}
         />
     );

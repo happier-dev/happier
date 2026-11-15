@@ -76,3 +76,25 @@ it('leaves a checked header menu row\'s check to the menu', async () => {
   expect(menu.props.items).toEqual([expect.objectContaining({ id: 'pause', checked: true })]);
   expect(menu.props.items[0].rightElement).toBeUndefined();
 });
+
+// A phone recomposes the header (controls on a row below the name) without remounting the name's
+// field, so its focus, caret and selection survive the breakpoint (owner 11-15 H2).
+it('keeps the title editor mounted when the actions move between the title row and a row below', async () => {
+  const header = (actionsLayout: 'inline' | 'wrap') => (
+    <PageHeader
+      testID="header"
+      title="Release check"
+      alwaysShowTitle
+      actionsLayout={actionsLayout}
+      titleEditor={{ value: 'Release check', onChangeText: () => {}, accessibilityLabel: 'Name', testID: 'name' }}
+      actions={<RoundButton testID="run" title="Run now" />}
+    />
+  );
+  screen = await renderScreen(header('inline'));
+  const name = screen.findHostByTestId('name');
+  expect(name).not.toBeNull();
+  await screen.update(header('wrap'));
+  expect(screen.findHostByTestId('name') === name).toBe(true);
+  await screen.update(header('inline'));
+  expect(screen.findHostByTestId('name') === name).toBe(true);
+});

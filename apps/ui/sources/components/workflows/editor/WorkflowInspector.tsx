@@ -12,22 +12,17 @@ import {
     type SessionAuthoringFieldId,
 } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
-import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
-import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
-import type { WorkflowAuthoringTarget } from '@/sync/domains/workflows/workflowProjectTarget';
-import {
-    WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS,
-    workflowInputToFieldHint,
-} from '@happier-dev/protocol/workflows/workflowV1';
+import { WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS } from '@happier-dev/protocol/workflows/workflowV1';
 import {
     applyWorkflowDefinitionEditsV1,
     findWorkflowBlock,
     setWorkflowDefaultField,
     setWorkflowFinalOutput,
-    setWorkflowInputs,
 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import {
     listWorkflowFinalOutputOptions,
@@ -36,16 +31,12 @@ import {
 } from '@/sync/domains/workflows/workflowAuthoring';
 import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
-import type { Machine } from '@/sync/domains/state/storageTypes';
 
 import type { WorkflowRunAsTarget, WorkflowRunAsTargetKind } from '../run/workflowRunAsTargets';
 import { formatWorkflowContinuitySummary, useWorkflowContinuedSessionLabel, WorkflowContinuityControls } from './WorkflowContinuityControls';
 import { WorkflowFinalOutputEditor } from './WorkflowFinalOutputEditor';
-import { WorkflowInputsEditor } from './WorkflowInputsEditor';
-import { formatWorkflowFieldLabel } from '../presentation/workflowValuePresentation';
 import { WorkflowRolesEditor } from './WorkflowRolesEditor';
-import { formatWorkflowWhereSummary, WorkflowProjectTargetControl } from './WorkflowProjectTargetControl';
-import { WorkflowBlockOptions } from './WorkflowBlockOptions';
+import { WorkflowBlockOptions, WorkflowSettingsFrame } from './WorkflowBlockOptions';
 import { issuesUnder, NO_DISCLOSURE, WorkflowInspectorGroup } from './workflowInspectorGroup';
 import { workflowEditorStyles } from './workflowEditorStyles';
 import type { WorkflowSessionDrop } from './useWorkflowSessionBinding';
@@ -98,20 +89,12 @@ export type WorkflowInspectorProps = Readonly<{
     onRetrySessionOptions?: () => void;
     onSessionOptionsDemandChange?: (demanded: boolean) => void;
     bindExistingSession?: WorkflowSessionDrop['bind'];
-    /** Where it runs: the host's placement, edited through the Where owner. */
-    projectTarget?: WorkflowAuthoringTarget | null;
-    machineName: string | null;
-    projectMachines?: readonly Machine[];
-    onChangeProjectTarget?: (target: WorkflowAuthoringTarget) => void;
-    /** "Each step runs in": the run default (U5 precedence 4) and each class's availability. */
+    /** "Each step runs in": a step's Runs in reads the workflow's default from here. */
     executionTarget?: WorkflowRunAsTargetKind;
     runAsTargets?: readonly WorkflowRunAsTarget[];
-    onChangeExecutionTarget?: (kind: WorkflowRunAsTargetKind) => void;
-    /**
-     * The workflow subject's first section, **Runs automatically** (07 S10, S4): the trigger owner's
-     * `WorkflowTriggerSection`, supplied by the host that owns the trigger draft.
-     */
-    runsAutomatically?: React.ReactNode;
+    /** The workflow's description (Artifact metadata the host owns); absent change handler: read-only. */
+    description?: string;
+    onChangeDescription?: (next: string) => void;
     testIDPrefix: string;
 }>;
 
@@ -133,27 +116,20 @@ export function WorkflowInspector(props: WorkflowInspectorProps): React.ReactEle
     return <WorkflowSettingsContent {...props} />;
 }
 
-/** Workflow subject: the Workflow settings groups, each a summary until it needs to be open. */
+/**
+ * Workflow subject: Workflow settings, the workflow scope of the one settings popover (owner
+ * 2026-11-15). Where, what each step runs in, what a run asks for and when it runs are the page's
+ * first cards; these are the rest — the workflow's Agent and its Session fields, roles, conversation
+ * and workspace, the result and the description — each group a summary until it needs to be open.
+ */
 function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElement {
     const { draft, onChange, testIDPrefix } = props;
     const continuedSessionLabel = useWorkflowContinuedSessionLabel(draft.defaults.conversation);
     const readOnly = props.documentEditable === false;
     const defaultAuthoringValues = React.useMemo(() => resolveWorkflowStepSelectionV1({ defaults: draft.defaults, purpose: 'authoring' }).selection, [draft.defaults]);
-    const executionTarget = props.executionTarget ?? 'session';
     const issues = props.validation?.issues ?? [];
     const disclosure = props.groupDisclosure ?? NO_DISCLOSURE;
     const groupProps = { disclosure, ...(props.onChangeGroupDisclosure === undefined ? {} : { onChangeDisclosure: props.onChangeGroupDisclosure }) };
-
-    const runsInLabel = executionTarget === 'detached_run'
-        ? t('workflows.page.sections.aBackgroundRun')
-        : t('workflows.page.sections.aSession');
-    const machineHomeDir = props.projectMachines?.find((machine) => machine.id === props.projectTarget?.machineId)
-        ?.metadata?.homeDir ?? null;
-    const whereSummary = formatWorkflowWhereSummary({
-        target: props.projectTarget,
-        machineName: props.machineName,
-        machineHomeDir,
-    }) ?? t('workflows.page.inspector.whereMissing');
 
     const agentSummary = useSessionAuthoringEngineSummary({
         engine: draft.defaults.engine,
@@ -171,71 +147,9 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
         const label = option?.label ?? (block === null ? finalOutput.producer.blockId : workflowBlockReferenceLabel(block));
         return t('workflows.page.inspector.finalOutput', { output: label });
     }, [draft]);
-    const inputsLabel = draft.inputs.length === 0
-        ? t('workflows.page.inspector.none')
-        : t('workflows.page.inspector.inputCount', { count: draft.inputs.length });
 
-    return (
+    const content = (
         <>
-            {props.runsAutomatically ?? null}
-            <WorkflowInspectorGroup
-                {...groupProps}
-                groupId="where"
-                title={t('workflows.page.sections.whereTitle')}
-                summary={props.runAsTargets === undefined ? whereSummary : `${whereSummary} · ${runsInLabel}`}
-                // The machine is required: while it is missing the group stays open
-                // (its placeholder says so; no error text before the person acts).
-                attention={props.projectTarget === null || props.projectTarget === undefined}
-                valueSet
-                testID={`${testIDPrefix}-group-where`}
-            >
-                {/* One row, one field select (lab E1 "Machine and project"); the Where owner draws it. */}
-                <View testID={`${testIDPrefix}-where-field`}>
-                    <WorkflowProjectTargetControl
-                        purpose="workflow"
-                        presentation="field"
-                        title={t('workflows.page.sections.machineAndProject')}
-                        target={props.projectTarget}
-                        machineName={props.machineName}
-                        {...(props.projectMachines === undefined ? {} : { machines: props.projectMachines })}
-                        {...(readOnly || props.onChangeProjectTarget === undefined ? {} : { onChange: props.onChangeProjectTarget })}
-                        testIDPrefix={testIDPrefix}
-                    />
-                </View>
-                {props.runAsTargets === undefined || props.onChangeExecutionTarget === undefined ? null : readOnly ? (
-                    // A read-only value, not a disabled choice with a reason that asks to choose (M7).
-                    <Item testID={`${testIDPrefix}-run-as-readonly`} title={t('workflows.page.sections.eachStepRunsIn')}
-                        showChevron={false} subtitleLines={0}
-                        subtitle={executionTarget === 'detached_run'
-                            ? t('workflows.page.sections.aBackgroundRun') : t('workflows.page.sections.aSession')} />
-                ) : (
-                    <SegmentedChoiceItem<WorkflowRunAsTargetKind>
-                        accessoryLayout="stacked"
-                        labelSize="field"
-                        disabled={readOnly}
-                        testIDPrefix={`${testIDPrefix}-run-as`}
-                        title={t('workflows.page.sections.eachStepRunsIn')}
-                        // The consequence wraps; it is never cut to an ellipsis.
-                        subtitleLines={0}
-                        subtitle={executionTarget === 'detached_run'
-                            ? t('workflows.page.sections.eachStepBackground')
-                            : t('workflows.page.sections.eachStepSession')}
-                        value={executionTarget}
-                        onChange={(next) => props.onChangeExecutionTarget?.(next)}
-                        options={props.runAsTargets.map((target) => ({
-                            id: target.kind,
-                            label: target.kind === 'detached_run'
-                                ? t('workflows.page.sections.aBackgroundRun')
-                                : t('workflows.page.sections.aSession'),
-                            // An unavailable class stays visible with its reason; never downgraded.
-                            ...(target.available
-                                ? {}
-                                : { unavailableReason: t(`workflows.page.unavailable.${target.unavailableReason}`) }),
-                        }))}
-                    />
-                )}
-            </WorkflowInspectorGroup>
-
             <WorkflowInspectorGroup
                 {...groupProps}
                 groupId="agent"
@@ -334,22 +248,13 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
 
             <WorkflowInspectorGroup
                 {...groupProps}
-                groupId="inputs"
-                title={t('workflows.page.sections.inputsTitle')}
-                summary={`${inputsLabel} · ${finalOutputLabel}`}
-                attention={issuesUnder(issues, ['/inputs', '/finalOutput'])}
-                valueSet={draft.inputs.length > 0 || draft.finalOutput !== undefined}
-                testID={`${testIDPrefix}-group-inputs`}
+                groupId="result"
+                title={t('workflows.page.inspector.resultTitle')}
+                summary={finalOutputLabel}
+                attention={issuesUnder(issues, ['/finalOutput'])}
+                valueSet={draft.finalOutput !== undefined}
+                testID={`${testIDPrefix}-group-result`}
             >
-                <SectionContentRow testID={`${testIDPrefix}-inputs-row`}>
-                    {readOnly ? draft.inputs.map(input => <Text key={input.name} style={workflowEditorStyles.metaText}>
-                        {formatWorkflowFieldLabel(input.name, workflowInputToFieldHint(input).title)}
-                    </Text>) : <WorkflowInputsEditor
-                        inputs={draft.inputs}
-                        onChange={(inputs) => onChange(setWorkflowInputs(draft, inputs))}
-                        testIDPrefix={testIDPrefix}
-                    />}
-                </SectionContentRow>
                 {readOnly ? (
                     <SectionContentRow testID={`${testIDPrefix}-final-output-row`}>
                         <Text style={workflowEditorStyles.metaText}>{finalOutputLabel}</Text>
@@ -364,9 +269,37 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
                     </View>
                 )}
             </WorkflowInspectorGroup>
+
+            {props.description === undefined && props.onChangeDescription === undefined ? null : (
+                <ItemGroup title={t('workflows.page.descriptionLabel')}>
+                    <SectionContentRow testID={`${testIDPrefix}-description-row`}>
+                        <FieldTextInput
+                            value={props.description ?? ''}
+                            multiline
+                            editable={!readOnly && props.onChangeDescription !== undefined}
+                            placeholder={t('workflows.page.descriptionPlaceholder')}
+                            accessibilityLabel={t('workflows.page.descriptionLabel')}
+                            onChangeText={(next) => props.onChangeDescription?.(next)}
+                            testID={`${testIDPrefix}-description`}
+                        />
+                    </SectionContentRow>
+                </ItemGroup>
+            )}
             {props.workflowDefinitionId === undefined ? null : <WorkflowRecentRuns
                 definitionId={props.workflowDefinitionId} workflowName={draft.name}
                 {...groupProps} testIDPrefix={testIDPrefix} />}
         </>
+    );
+    if (props.presentation !== 'popover') return content;
+    return (
+        <WorkflowSettingsFrame
+            title={t('workflows.page.settings')}
+            location={t('workflows.page.settingsSubtitle')}
+            {...(props.onDone === undefined ? {} : { onDone: props.onDone })}
+            pageKey="workflow"
+            testIDPrefix={testIDPrefix}
+        >
+            {content}
+        </WorkflowSettingsFrame>
     );
 }

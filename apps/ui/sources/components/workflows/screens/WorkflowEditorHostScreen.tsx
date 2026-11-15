@@ -532,6 +532,8 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     // it can never bypass the reason the page shows beside the visible action.
     const editorCommandsRef = React.useRef<WorkflowEditorCommands | null>(null);
     const runNowAnchorRef = React.useRef<View | null>(null);
+    /** The header's save line: Run review opens below it rather than over it. */
+    const runNowPlacementRef = React.useRef<View | null>(null);
     const testRunAnchorRef = React.useRef<View | null>(null);
     // The contextual default comes from the canonical New Session resolver, and
     // only when it produces a genuinely valid choice (UX §2.3). A reviewed copy
@@ -1094,7 +1096,8 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     }), [activeAccountScope?.serverId, definitionDraftDirty, descriptionDraftDirty, description, dismissInputSheet, executionTarget, runReviewDraft, inputRawTextValues, inputValues, machineName, machines, pendingRunId, projectTarget, retainedDefinition, whereHomeDir, whereMachineName, runNow, runRetained, saved?.definitionId, startRun, planReview, ownedPlanOriginId, planOriginName, reportShown, planPending, retainedTest, testSource, canEditDefinition, bodyDraftStore, changeReviewedEngine, authoringHost.authoringFacts]);
 
     const runComposer = useWorkflowRunComposerModal({ open: inputSheetOpen, props: inputModalProps,
-        anchorRef: testSource === null && !retainedTest ? runNowAnchorRef : testRunAnchorRef });
+        anchorRef: testSource === null && !retainedTest ? runNowAnchorRef : testRunAnchorRef,
+        ...(testSource === null && !retainedTest ? { placementRef: runNowPlacementRef } : {}) });
     const testRunPresentation = useWorkflowTestRunPresentation({ runId: testRun?.runId ?? null, definition: testRun?.definition ?? null, editable: canEditDefinition });
 
     const handleSave = React.useCallback(async (caller?: WorkflowActionCallerContext, asCopy = false): Promise<WorkflowDraftMutationResultV1> => {
@@ -2038,6 +2041,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                 onRunNow={handleRunNow}
                 {...(saved === null ? {} : { onTestRun: handleTestRun, testRunPending: testSourcePending })}
                 runNowAnchorRef={runNowAnchorRef}
+                runNowPlacementRef={runNowPlacementRef}
                 testRunAnchorRef={testRunAnchorRef}
                 runPending={testSourcePending || runNow.isPending(pendingRunId ?? '')}
                 {...(canManagePersonalTriggers ? { onSave: saveFromUi, triggersSummary: triggers.summary,

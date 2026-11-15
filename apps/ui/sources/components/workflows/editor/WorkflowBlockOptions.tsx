@@ -174,38 +174,45 @@ function blockCondition(block: WorkflowBlock): WorkflowCondition | undefined {
     return block.kind === 'if' ? block.when : block.onlyWhen;
 }
 
-export function WorkflowBlockOptions(props: WorkflowInspectorProps & Readonly<{ block: WorkflowBlock }>): React.ReactElement {
-    const { block, draft, onChange, testIDPrefix } = props;
-    const [page, setPageState] = React.useState<OptionsPage>('main');
-    const showBack = page !== 'main';
+/**
+ * The one settings surface's frame (owner 2026-11-15: one settings popover, two scopes): a pinned
+ * header — Back on a sub-page, what it edits and where, Done in the popover — over the page that
+ * scrolls. Workflow settings and Step options both draw it.
+ */
+export function WorkflowSettingsFrame(props: Readonly<{
+    title: string;
+    /** Under the title: a sub-page's subject, or what the settings change. */
+    location?: string;
+    onBack?: () => void;
+    onDone?: () => void;
+    /** Changes with each page, so a page opens at its top. */
+    pageKey: string;
+    testIDPrefix: string;
+    children: React.ReactNode;
+}>): React.ReactElement {
+    const { testIDPrefix } = props;
     const [scrolled, setScrolled] = React.useState(false);
     // Each page opens at its top, so the header starts without its divider.
-    const setPage = React.useCallback((next: OptionsPage) => { setScrolled(false); setPageState(next); }, []);
-
+    const [shownPage, setShownPage] = React.useState(props.pageKey);
+    if (shownPage !== props.pageKey) { setShownPage(props.pageKey); setScrolled(false); }
     return (
         <View testID={`${testIDPrefix}-options`} style={styles.root}>
             <View style={[styles.subjectHeader, scrolled ? styles.subjectHeaderScrolled : null]}>
-                {showBack ? (
-                    <HeaderAction label={t('workflows.page.inspector.back')} onPress={() => setPage('main')} testID={`${testIDPrefix}-back`} />
-                ) : null}
-                {/* A sub-page leads with what it edits; the block it belongs to becomes its location, under the title (lab I1). */}
+                {props.onBack === undefined ? null : (
+                    <HeaderAction label={t('workflows.page.inspector.back')} onPress={props.onBack} testID={`${testIDPrefix}-back`} />
+                )}
                 <View style={styles.subjectText}>
-                    <Text style={styles.subjectTitle} numberOfLines={1}>{subPageTitle(page, block) ?? (block.kind === 'if' ? t('workflows.condition.whenTitle') : blockTitle(block))}</Text>
-                    {subPageTitle(page, block) !== null ? (
-                        <Text style={styles.subjectLocation} numberOfLines={1}>{blockTitle(block)}</Text>
-                    ) : block.kind === 'step' ? (
-                        <Text style={styles.subjectLocation} numberOfLines={1}>
-                            {stepDiffers(block) ? t('workflows.page.inspector.differsFromWorkflow') : t('workflows.page.inspector.followsWorkflow')}
-                        </Text>
-                    ) : null}
+                    <Text style={styles.subjectTitle} numberOfLines={1}>{props.title}</Text>
+                    {props.location === undefined ? null : (
+                        <Text style={styles.subjectLocation} numberOfLines={1}>{props.location}</Text>
+                    )}
                 </View>
-                {props.presentation === 'popover' && props.onDone !== undefined ? (
+                {props.onDone === undefined ? null : (
                     <HeaderAction label={t('common.done')} onPress={props.onDone} testID={`${testIDPrefix}-done`} trailing />
-                ) : null}
+                )}
             </View>
-
             <ScrollView
-                key={page}
+                key={props.pageKey}
                 testID={`${testIDPrefix}-options-page`}
                 style={styles.page}
                 keyboardShouldPersistTaps="handled"
@@ -213,6 +220,29 @@ export function WorkflowBlockOptions(props: WorkflowInspectorProps & Readonly<{ 
                 scrollEventThrottle={64}
                 onScroll={(event) => setScrolled(event.nativeEvent.contentOffset.y > 0)}
             >
+                {props.children}
+            </ScrollView>
+        </View>
+    );
+}
+
+export function WorkflowBlockOptions(props: WorkflowInspectorProps & Readonly<{ block: WorkflowBlock }>): React.ReactElement {
+    const { block, draft, onChange, testIDPrefix } = props;
+    const [page, setPage] = React.useState<OptionsPage>('main');
+    const subPage = subPageTitle(page, block);
+
+    return (
+        <WorkflowSettingsFrame
+            // A sub-page leads with what it edits; the block it belongs to becomes its location, under the title (lab I1).
+            title={subPage ?? (block.kind === 'if' ? t('workflows.condition.whenTitle') : blockTitle(block))}
+            {...(subPage !== null ? { location: blockTitle(block) }
+                : block.kind === 'step' ? { location: stepDiffers(block) ? t('workflows.page.inspector.differsFromWorkflow') : t('workflows.page.inspector.followsWorkflow') }
+                    : {})}
+            {...(page === 'main' ? {} : { onBack: () => setPage('main') })}
+            {...(props.presentation === 'popover' && props.onDone !== undefined ? { onDone: props.onDone } : {})}
+            pageKey={page}
+            testIDPrefix={testIDPrefix}
+        >
             {page === 'condition' ? (
                 <ItemGroup>
                     <SectionContentRow testID={`${testIDPrefix}-condition-row`}>
@@ -244,8 +274,7 @@ export function WorkflowBlockOptions(props: WorkflowInspectorProps & Readonly<{ 
             ) : (
                 <MainPage {...props} onOpenPage={setPage} />
             )}
-            </ScrollView>
-        </View>
+        </WorkflowSettingsFrame>
     );
 }
 

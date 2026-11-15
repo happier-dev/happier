@@ -87,11 +87,12 @@ export type DetailPageNavigationDescriptor = Pick<ProjectDetailNavigationItem, '
 export type DetailPageNavigationItem = Omit<ProjectDetailNavigationItem, 'page' | 'companion'> & Readonly<{ count?: string }>;
 type MachineNavigationInput = Readonly<{ scope: 'machine'; pages: readonly DetailPageNavigationDescriptor[] }>;
 /**
- * Editor companions present only when they have something to show: Step needs a selected block,
- * Agent needs an authoring conversation or draft (Plan T U5; owner 2026-11-06).
+ * The editor's one companion, Edit with an agent, presents only with an authoring conversation or draft
+ * (Plan T U5; owner 2026-11-06). Workflow settings and Step options are a popover, never a companion
+ * (owner 2026-11-15).
  */
 type WorkflowNavigationInput = Readonly<({ scope: 'workflowEditor' } | { scope: 'workflowRun' }) & {
-    settingsAvailable?: boolean; stepAvailable?: boolean; agentAvailable?: boolean;
+    agentAvailable?: boolean;
 }>;
 /**
  * Host companions an Environment page offers beside itself (DEPLOY-COMPOSE R2). The page names the ones it can show
@@ -162,8 +163,6 @@ export function resolveDetailNavigationItems(input: MachineNavigationInput | Wor
         const descriptors: DetailPageNavigationItem[] = input.scope === 'workflowEditor'
             ? [page('steps', t('workflows.tabs.steps'), 'list'),
                 { ...page('flow', t('workflows.tabs.flow'), 'graph'), navigation: { kind: 'both', page: 'flow', companion: 'flow', desktop: 'tabs' } },
-                ...(input.stepAvailable ? [companion('step', t('workflows.page.inspector.stepOptions'), 'info')] : []),
-                ...(input.settingsAvailable ? [companion('settings', t('workflows.page.settings'), 'sliders-horizontal')] : []),
                 ...(input.agentAvailable ? [companion('agent', t('workflows.authoring.agent'), 'sparkle')] : [])]
             : [page('flow', t('workflows.tabs.map'), 'graph'), page('steps', t('workflows.tabs.steps'), 'list'),
                 page('activity', t('workflows.tabs.activity'), 'pulse')];
