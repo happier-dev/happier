@@ -158,7 +158,6 @@ import type { CurrentSessionPresentationAuthorIntentV1 } from "@happier-dev/prot
 import type { SessionPresentationMutationOutcome } from "@/components/sessions/companion/presentation/sessionCompanionPresentationAdapter";
 import { createSessionCompanionPanePresentation } from "@/components/sessions/companion/presentation/sessionCompanionPanePresentation";
 import type { PaneMainColumnState } from "@/components/appShell/panes/mainColumn/usePaneMainColumn";
-import { resolveSessionRoutePathForSurface } from "@/components/workspaceCockpit/session/sessionCockpitState";
 import { ComposerAuxiliaryFrame } from "./view/ComposerAuxiliaryFrame";
 import { SessionStartFailureBanner } from "@/components/sessions/startFailure/SessionStartFailureBanner";
 import { resolveSessionStartFailureNotice } from "@/components/sessions/startFailure/sessionStartFailureNotice";
@@ -2649,24 +2648,23 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
         </PaneMainComposerAnchor>
     ) : null;
 
+    const companionCockpit = useSessionCockpitChromeRegistration();
+    const companionCockpitRef = React.useRef(companionCockpit);
+    companionCockpitRef.current = companionCockpit;
     const openCompanionFullSurface = React.useCallback((): SessionPresentationMutationOutcome => {
         if (routeMobileSurface === 'companion') return { status: 'unchanged' };
-        // Beside the chat, the Companion opens in its own panel; only a phone, which has no room beside the
-        // chat, takes the full Companion page (QA-RERUN-1113 R2-2).
-        if (deviceType !== 'phone') {
-            pane.openRight({ tabId: 'companion' });
-            pane.setRightTab('companion');
+        // A mounted Cockpit (a phone, or a window narrowed to one) presents the Companion as its own surface,
+        // through the same switch its bottom bar uses. Beside the chat, the Companion is the side panel's
+        // Companion tab, opened through the pane owner like Work (QA-RERUN-1113 R2-2, QA-SHELL C4).
+        const cockpit = companionCockpitRef.current;
+        if (cockpit?.sessionId === sessionId) {
+            cockpit.switchSurface('companion');
             return { status: 'applied' };
         }
-        try {
-            router.push(resolveSessionRoutePathForSurface(sessionId, 'companion', {
-                serverId: routeServerId,
-            }));
-            return { status: 'applied' };
-        } catch {
-            return { status: 'unavailable' };
-        }
-    }, [deviceType, pane, routeMobileSurface, routeServerId, router, sessionId]);
+        pane.openRight({ tabId: 'companion' });
+        pane.setRightTab('companion');
+        return { status: 'applied' };
+    }, [pane, routeMobileSurface, sessionId]);
     const {
         openBoard: openCompanionBoardForPresentation,
         revealBoardItem: revealCompanionBoardItem,

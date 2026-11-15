@@ -54,6 +54,8 @@ export type SessionCompanionPlacementInput = Readonly<{
     fontScale: number;
     /** Required outer rail bounds derived from card layout. `null` means fit is unproven. */
     cardBounds: Readonly<{ widthPx: number; heightPx: number }> | null;
+    /** The Session's side panel is open on its Companion tab: the Companion is already on screen there. */
+    presentedInSidePanel?: boolean;
 }>;
 
 const HIDDEN: SessionCompanionPlacement = Object.freeze({ kind: 'hidden' });
@@ -101,6 +103,8 @@ export function resolveSessionCompanionPlacement(
 ): SessionCompanionPlacement {
     const { preference, paneLayout } = input;
     if (!preference.visible) return HIDDEN;
+    // One Companion on screen: while the side panel presents it, the main region draws no second copy.
+    if (input.presentedInSidePanel === true) return HIDDEN;
 
     // A pane overlay owns z-order and the focus boundary, and a hidden main region
     // must not keep an inert card mounted behind the active surface.

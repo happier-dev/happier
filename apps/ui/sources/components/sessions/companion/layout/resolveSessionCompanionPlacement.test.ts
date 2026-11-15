@@ -117,6 +117,11 @@ describe('resolveSessionCompanionPlacement', () => {
             .toEqual({ kind: 'hidden' });
     });
 
+    it('draws no rail while the docked side panel already presents the Companion', () => {
+        const docked = paneLayout({ layout: { main: 'docked', kind: 'twoPane', right: 'docked', details: 'hidden' } });
+        expect(placement({ paneLayout: docked }).kind).toBe('reserved_rail');
+        expect(placement({ paneLayout: docked, presentedInSidePanel: true })).toEqual({ kind: 'hidden' });
+    });
     it('keeps a rail beside a docked pane', () => {
         expect(placement({
             paneLayout: paneLayout({

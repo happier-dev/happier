@@ -109,6 +109,8 @@ import { retainShallow } from '@/sync/domains/state/structuralSharing';
 
 const loadSessionCollaborationSurface = async () => (await import('@/components/sessions/collaboration/SessionCollaborationSurface')).SessionCollaborationSurface;
 const loadSessionSkillsPane = async () => (await import('@/components/sessions/capabilities/SessionSkillsPane')).SessionSkillsPane;
+// The one Companion body (the same screen the phone Cockpit shows), presented as this panel's Companion tab.
+const loadSessionCompanionPane = async () => (await import('@/components/sessions/companion/SessionCompanionScreen')).SessionCompanionScreen;
 
 export type SessionRightPanelProps = Readonly<{
     sessionId: string;
@@ -330,14 +332,21 @@ function useSessionRightSidebarModel(props: SessionRightPanelProps & SessionRigh
     // Page-only entries and external presenters never select this retained sidebar body.
     const bodyTabs = React.useMemo(() => rightPanelTabs.filter(tab => tab.navigation.kind !== 'page'
         && tab.id !== 'companion' && tab.id !== 'review' && tab.id !== 'computer'), [rightPanelTabs]);
+    // The Companion keeps its own entries (Session ⋯, the header control) and joins no tab strip, but once
+    // opened it is this panel's body: selection and the header's title also accept it, last, so the
+    // first-tab fallback is unchanged.
+    const presentableTabs = React.useMemo(() => {
+        const companionTab = rightPanelTabs.find(tab => tab.id === 'companion');
+        return companionTab ? [...bodyTabs, companionTab] : bodyTabs;
+    }, [bodyTabs, rightPanelTabs]);
     const rightTabSelection = React.useMemo(() => resolveRightSidebarTabSelection<RightTabId>({
         activeTabId: scopeState?.right.activeTabId,
         selectedDestination: scopeState?.right.selectedDestination,
-        tabs: bodyTabs,
+        tabs: presentableTabs,
         projectionPhase: pluginRuntime.phase,
     }), [
         pluginRuntime.phase,
-        bodyTabs,
+        presentableTabs,
         scopeState?.right.activeTabId,
         scopeState?.right.selectedDestination,
     ]);
@@ -543,6 +552,7 @@ function useSessionRightSidebarModel(props: SessionRightPanelProps & SessionRigh
         /** Read when Customize opens: each device's list resolves through the same owner. */
         detailInput,
         bodyTabs,
+        presentableTabs,
         rightTabSelection,
         activeTab,
         mainTabId,
@@ -674,7 +684,7 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps & Rea
     const deviceType = useDeviceType();
     const stateSize = props.presentation === 'screen' && deviceType === 'phone' ? 'phone' : 'pane';
     const model = useSessionRightSidebar();
-    const { pane, scopeState, rightPanelTabs, bodyTabs, collaborationAddress, pluginRuntime, activePaneLaunch, activeInstanceKey, pluginBinding, availableTabIds, callerHostedHtmlRuntime, session, projectCheckout, openBoardItemInDetails, openBoardInDetails, openServiceInBrowser, openFileInDetails, openFileInDetailsPinned } = model;
+    const { pane, scopeState, rightPanelTabs, bodyTabs, presentableTabs, collaborationAddress, pluginRuntime, activePaneLaunch, activeInstanceKey, pluginBinding, availableTabIds, callerHostedHtmlRuntime, session, projectCheckout, openBoardItemInDetails, openBoardInDetails, openServiceInBrowser, openFileInDetails, openFileInDetailsPinned } = model;
     const bodyTab = props.bodyTabId ? bodyTabs.find(tab => tab.id === props.bodyTabId) : null;
     const rightTabSelection = bodyTab ? { kind: 'available' as const, tab: bodyTab } : model.rightTabSelection;
     const activeTab = props.bodyTabId ? props.surfacePlacement === 'hidden' ? null : props.bodyTabId : model.activeTab;
@@ -688,6 +698,10 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps & Rea
     const presentation = useSessionRightSidebarPresentation();
     const infoPresented = activeTab === 'info' && (inSessionColumn || scopeState?.right.isOpen !== false && !rightPaneHiddenByDetails);
     const pageStrip = useSessionPageStrip(inSessionColumn ? model : null);
+    const companionPaneProps = React.useMemo(() => collaborationAddress ? {
+        sessionId: props.sessionId, address: collaborationAddress,
+        onRevealBoardItem: openBoardItemInDetails, onRequestClose: closeNavigationPane,
+    } : null, [closeNavigationPane, collaborationAddress, openBoardItemInDetails, props.sessionId]);
     // A pane can be kept in the Companion as one link row (lab WC3); the header's ⋯ offers it.
     const paneCompanionActions = usePaneCompanionActions({
         sessionId: props.sessionId,
@@ -733,7 +747,7 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps & Rea
             </View> : null}
             <RightSidebarPaneHeader
                 scopeId={props.scopeId}
-                tabs={bodyTabs}
+                tabs={presentableTabs}
                 activeTabId={activeTab}
                 // Info's header is its name and Close only (lab csinfo I2); every other pane keeps its ⋯.
                 menuActions={activeTab === 'info' ? undefined : paneCompanionActions}
@@ -764,6 +778,18 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps & Rea
                                 testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-rightpanel-surface-info')}
                             >
                                 <SessionInfoBody address={collaborationAddress} presentation="pane" onRequestClose={closeNavigationPane} />
+                            </SessionRetainedPane>
+                        ) : null}
+                        {availableTabIds.has('companion') && companionPaneProps ? (
+                            <SessionRetainedPane
+                                tabId="companion"
+                                isActive={activeTab === 'companion'}
+                                hiddenMode="activity"
+                                mode="absolute-overlay"
+                                testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-rightpanel-surface-companion')}
+                            >
+                                <SessionPaneLazyLoader load={loadSessionCompanionPane} props={companionPaneProps}
+                                    testID="session-companion-pane-loading" />
                             </SessionRetainedPane>
                         ) : null}
                         {availableTabIds.has('skills') ? (

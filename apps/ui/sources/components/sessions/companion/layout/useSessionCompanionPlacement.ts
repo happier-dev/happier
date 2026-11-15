@@ -67,6 +67,7 @@ export function useResolveSessionCompanionPlacementForDensity(
     // overlay is modal. A docked bottom pane reserves main-region height instead.
     const accessibilityModalPaneActive = scopeState?.bottom?.isOpen === true
         && paneLayout?.bottomPresentation === 'overlay';
+    const presentedInSidePanel = scopeState?.right?.isOpen === true && scopeState.right.activeTabId === 'companion';
     const mainVisible = input.sessionId !== null
         && isSessionSurfaceVisible(input.sessionId, input.serverId ?? null);
 
@@ -92,8 +93,10 @@ export function useResolveSessionCompanionPlacementForDensity(
         accessibilityModalPaneActive,
         fontScale,
         cardBounds,
+        presentedInSidePanel,
     }), [
         accessibilityModalPaneActive,
+        presentedInSidePanel,
         bottomObstructionPx,
         cardBounds,
         fontScale,

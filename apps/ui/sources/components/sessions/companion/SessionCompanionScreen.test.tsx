@@ -106,6 +106,7 @@ import {
 } from '@/sync/domains/session/board';
 
 import { PaneHeader } from '@/components/appShell/panes/PaneHeader';
+import { PaneHeaderActions } from '@/components/appShell/panes/PaneHeaderActions';
 import {
     PaneHeaderSlotProvider,
     PaneHeaderSlotScope,
@@ -123,7 +124,7 @@ function HeaderProbe(): React.ReactElement {
             size="large"
             title="Companion"
             line={published?.line ?? null}
-            actions={published?.action}
+            actions={<PaneHeaderActions published={published} title="Companion" testID="probe-header" />}
         />
     );
 }
@@ -327,9 +328,11 @@ describe('SessionCompanionScreen (mounted, mobile Cockpit)', () => {
             />,
         ));
 
-        const [menu] = renderer.findAll((node) => Array.isArray(node.props?.actions)
-            && node.props?.overflowTriggerTestID === 'session-companion-screen-menu');
-        const ids = (menu?.props.actions as ReadonlyArray<{ id: string }>).map((action) => action.id);
+        // The header folds the Companion's options into its one ⋯; the Companion draws no second one.
+        expect(renderer.findAll((node) => node.props?.overflowTriggerTestID === 'session-companion-screen-menu')).toHaveLength(0);
+        const menus = renderer.findAll((node) => node.props?.testID === 'probe-header.menu' && Array.isArray(node.props?.actions));
+        expect(menus).toHaveLength(1);
+        const ids = (menus[0]!.props.actions as ReadonlyArray<{ id: string }>).map((action) => action.id);
 
         expect(ids).toContain('edge-leading');
         expect(ids).toContain('density-comfortable');

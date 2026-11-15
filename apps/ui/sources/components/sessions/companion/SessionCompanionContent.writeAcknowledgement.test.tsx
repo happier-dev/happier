@@ -23,6 +23,7 @@ const { SessionCompanionScreen } = await import('./SessionCompanionScreen');
 const { SessionHeaderActionMenu } = await import('@/components/sessions/actions/SessionHeaderActionMenu');
 const { SessionCompanionRevealPortProvider } = await import('./presentation/SessionCompanionRevealPort');
 const { PaneHeaderSlotProvider, PaneHeaderSlotScope, usePublishedPaneHeaderContent } = await import('@/components/appShell/panes/paneHeaderSlot');
+const { PaneHeaderActions } = await import('@/components/appShell/panes/PaneHeaderActions');
 const { SessionCompanionAddControl } = await import('./picker/SessionCompanionAddControl');
 const { useSessionCompanionController } = await import('./state/useSessionCompanionController');
 const { SessionCompanionPresentationBridge } = await import('./presentation/SessionCompanionPresentationBridge');
@@ -57,7 +58,7 @@ function PresentationOwner({ serverId, sessionId }: { serverId: string; sessionI
 }
 
 function HeaderActions() {
-    return <>{usePublishedPaneHeaderContent('companion')?.action}</>;
+    return <PaneHeaderActions published={usePublishedPaneHeaderContent('companion')} title="Companion" testID="companion-header" />;
 }
 
 // These control tests mount no Board body or primary host.
@@ -184,21 +185,28 @@ describe('Companion widget write acknowledgement', () => {
         await act(async () => { companion!.show({ kind: 'builtin', id: 'session_summary' }); companion!.addItem({ kind: 'builtin', id: 'agent_plan' }); });
         const press = (testID: string, actionId: string) => screen.root.findAll(node => node.props.overflowTriggerTestID === testID
             && Array.isArray(node.props.actions))[0]!.props.actions.find((action: { id: string }) => action.id === actionId).onPress();
+        // The Companion's options live in its pane header's one ⋯ menu.
+        const pressHeaderMenu = (actionId: string) => {
+            // The pane header's one ⋯ menu ('companion-header.menu') carries the Companion's options.
+            const menus = screen.root.findAll(node => node.props.testID === 'companion-header.menu' && Array.isArray(node.props.actions));
+            expect(menus).toHaveLength(1);
+            menus[0]!.props.actions.find((action: { id: string }) => action.id === actionId).onPress();
+        };
         await setActionEnabled(boundary, false, 'session.presentation.apply');
         const before = storage.getState().localSettings.sessionCompanionPreferencesBySessionV1;
-        await act(async () => { press('session-companion-screen-menu', 'hide'); });
+        await act(async () => { pressHeaderMenu('hide'); });
         await vi.waitFor(() => expect(readPresentationNotice()).toMatchObject({ severity: 'error' }));
         expect(storage.getState().localSettings.sessionCompanionPreferencesBySessionV1).toBe(before);
         expect(close).not.toHaveBeenCalled();
         await setActionEnabled(boundary, true, 'session.presentation.apply');
         vi.mocked(Modal.confirm).mockClear();
-        await act(async () => { press('session-companion-screen-menu', 'edge-leading'); });
+        await act(async () => { pressHeaderMenu('edge-leading'); });
         await vi.waitFor(() => expect(companion!.preference.edge).toBe('leading'));
         retirePresentationNotice();
-        await act(async () => { press('session-companion-screen-menu', 'density-compact'); });
+        await act(async () => { pressHeaderMenu('density-compact'); });
         await flushHookEffects({ cycles: 3 });
         expect(readPresentationNotice()).toBeNull();
-        await act(async () => { press('session-companion-screen-menu', 'density-comfortable'); });
+        await act(async () => { pressHeaderMenu('density-comfortable'); });
         await vi.waitFor(() => expect(companion!.preference.density).toBe('comfortable'));
         await act(async () => { press('session-companion-content-item-builtin:session_summary-actions', 'move-down'); });
         await vi.waitFor(() => expect(companion!.preference.items).toEqual([{ kind: 'builtin', id: 'agent_plan' }, { kind: 'builtin', id: 'session_summary' }]));
@@ -213,7 +221,7 @@ describe('Companion widget write acknowledgement', () => {
         expect(undoRemove).toBeDefined();
         await act(async () => { undoRemove!.run(); });
         expect(companion!.preference.items).toHaveLength(3);
-        await act(async () => { press('session-companion-screen-menu', 'hide'); });
+        await act(async () => { pressHeaderMenu('hide'); });
         await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
         expect(companion!.preference.visible).toBe(false);
         expect(Modal.confirm).not.toHaveBeenCalled();

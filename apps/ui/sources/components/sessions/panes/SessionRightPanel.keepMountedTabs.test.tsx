@@ -2,7 +2,7 @@ import { act } from 'react-test-renderer';
 import * as React from 'react';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { renderScreen as renderPanelScreen } from '@/dev/testkit';
+import { flushHookEffects, renderScreen as renderPanelScreen } from '@/dev/testkit';
 import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 
 installSessionDetailsPanelCommonModuleMocks({
@@ -89,6 +89,42 @@ describe('SessionRightPanel (keep mounted tabs)', () => {
         expect(screen.findByType(PluginSurfacePlacementHost)).toBe(retainedHost);
         expect(screen.findByType(PluginSurfacePlacementHost).props.placement).toMatchObject({ occurrenceId: 'review#2',
             executionOrigin: { materializationRef: { materializationId: 'review#2' } } });
+    });
+
+    it('presents the Companion when its opener selects the Companion tab beside an open Git panel', async () => {
+        const { SessionRightPanel } = await import('./SessionRightPanel');
+        const { SessionCompanionScreen } = await import('@/components/sessions/companion/SessionCompanionScreen');
+        const { SessionCompanionRevealPortProvider } = await import('@/components/sessions/companion/presentation/SessionCompanionRevealPort');
+        const noop = () => {};
+        // The Session shell's reveal port, as SessionView mounts it around the panel.
+        const screen = await renderScreen(<SessionCompanionRevealPortProvider address={{ serverId: runtime.serverId, sessionId: 's1' }}
+            openFullSurface={noop} revealAfterMutation={noop} revealBoardItem={noop}>
+            <SessionRightPanel sessionId="s1" scopeId="session:s1" />
+        </SessionCompanionRevealPortProvider>);
+        const opacity = (testID: string) => {
+            const node = screen.findByTestId(testID)!;
+            const styles = Array.isArray(node.props.style) ? node.props.style : [node.props.style];
+            return styles.find((entry: unknown) => entry && typeof entry === 'object' && 'opacity' in entry)?.opacity;
+        };
+        expect(screen.findAllByType(SessionCompanionScreen)).toHaveLength(0);
+
+        // The pane call the Session ⋯ → Companion opener makes (SessionView openCompanionFullSurface).
+        await act(async () => runtime.pane.openRight({ tabId: 'companion' }));
+        await flushHookEffects({ cycles: 10 });
+
+        expect(runtime.pane.scopeState?.right).toMatchObject({ isOpen: true, activeTabId: 'companion' });
+        expect(screen.findAllByType(SessionCompanionScreen)).toHaveLength(1);
+        expect(screen.findByTestId('session-rightpanel-surface-companion')!.props.pointerEvents).toBe('auto');
+        expect(opacity('session-rightpanel-surface-companion')).toBe(1);
+        expect(screen.findByTestId('session-rightpanel-surface-git')!.props.pointerEvents).toBe('none');
+        expect(opacity('session-rightpanel-surface-git')).toBe(0);
+        // One ⋯ in the panel header: the Companion's own options, and no "Add to Companion" for the Companion itself.
+        const menus = screen.findAll((node) => node.props.testID === 'session-rightpanel-header.menu' && Array.isArray(node.props.actions));
+        expect(menus).toHaveLength(1);
+        const ids = (menus[0]!.props.actions as ReadonlyArray<{ id: string }>).map((action) => action.id);
+        expect(ids).toContain('hide');
+        expect(ids).not.toContain('add-to-companion');
+        expect(screen.findAll((node) => node.props.overflowTriggerTestID === 'session-companion-screen-menu')).toHaveLength(0);
     });
 
     it('keeps Git and Files tab surfaces mounted so switching tabs preserves state', async () => {

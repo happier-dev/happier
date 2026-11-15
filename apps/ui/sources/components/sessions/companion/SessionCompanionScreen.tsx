@@ -5,7 +5,6 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { usePaneHeaderSlotContent } from '@/components/appShell/panes/paneHeaderSlot';
 import { useMountedSessionBoardController } from '@/components/sessions/board/SessionBoardControllerProvider';
-import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
@@ -22,7 +21,6 @@ import type { SessionSummaryDestinationHandlers } from './summary/SessionSummary
 
 const stylesheet = StyleSheet.create(() => ({
     root: { flex: 1, minHeight: 0 },
-    headerActions: { flexDirection: 'row', alignItems: 'center', gap: 2 },
 }));
 
 /**
@@ -102,34 +100,25 @@ export const SessionCompanionScreen = React.memo(function SessionCompanionScreen
     // The screen counts what its body shows. A hidden Companion's Show preview (the header toggle's
     // projected count) is not shown here, where the body invites adding the summary instead.
     const itemCount = controller.preference.items.length;
-    // Phone (lab CAp): + in the navigation bar opens the same picker as the rail's
-    // "Add to Companion" row, beside the one options menu.
-    const headerAction = React.useMemo(() => (controller.availability === 'ready' ? (
-        <View style={styles.headerActions}>
-            <SessionCompanionAddControl
-                binding={navAddBinding}
-                variant="icon"
-                testID="session-companion-screen-add"
-            />
-            <ItemRowActions
-                title={t('sessionBoard.companion.title')}
-                actions={menuActions}
-                compactThreshold={Number.POSITIVE_INFINITY}
-                overflowTriggerTestID="session-companion-screen-menu"
-                overflowTriggerAccessibilityLabel={t('sessionBoard.companion.actions.menuA11y')}
-                iconSize={18}
-                gap={6}
-            />
-        </View>
-    ) : null), [controller.availability, menuActions, navAddBinding, styles.headerActions]);
+    // Phone (lab CAp): + in the header opens the same picker as the rail's "Add to Companion" row.
+    // The side, size and Hide options go to the header's one ⋯ (pane header slot contract), so a
+    // Companion beside the chat (side panel) or on a phone never draws a second ⋯.
+    const ready = controller.availability === 'ready';
+    const headerAction = React.useMemo(() => (ready ? (
+        <SessionCompanionAddControl
+            binding={navAddBinding}
+            variant="icon"
+            testID="session-companion-screen-add"
+        />
+    ) : null), [navAddBinding, ready]);
     const headerLine = React.useMemo(() => ({
         segments: itemCount > 0
             ? [t('sessionBoard.companion.pane.besideChat'), t('sessionBoard.companion.pane.itemCount', { count: itemCount })]
             : [t('sessionBoard.companion.pane.justForYou')],
     }), [itemCount]);
     usePaneHeaderSlotContent(React.useMemo(
-        () => ({ line: headerLine, action: headerAction }),
-        [headerAction, headerLine],
+        () => ({ line: headerLine, action: headerAction, ...(ready ? { menuActions } : {}) }),
+        [headerAction, headerLine, menuActions, ready],
     ));
 
     if (!session) {

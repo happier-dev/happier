@@ -35,7 +35,8 @@ export function usePaneCompanionActions(input: Readonly<{
     const paneId = input.paneId;
     const kept = paneId !== null && companion.preference.items.some((item) => item.kind === 'pane' && item.paneId === paneId);
     return React.useMemo<readonly ItemAction[]>(() => {
-        if (paneId === null || kept || !reveal || companion.availability !== 'ready') return [];
+        // The Companion's own pane (its side-panel tab) is the Companion; it cannot be kept inside itself.
+        if (paneId === null || paneId === 'companion' || kept || !reveal || companion.availability !== 'ready') return [];
         return [{
             id: 'add-to-companion',
             title: t('sessionBoard.companion.actions.addToCompanion'),
