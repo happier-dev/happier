@@ -403,8 +403,10 @@ export function describeMachineSetupAllOffline(failure: ActionExecuteFailure, na
 export function describeMachineSetupPlanFailure(failure: ActionExecuteFailure, nameOf: (machineId: string) => string): string {
   const offline = describeMachineSetupAllOffline(failure, nameOf);
   if (offline) return offline;
+  const technical = describeManagedOperationDiagnostic({ errorCode: failure.errorCode, error: failure.error });
+  // A diagnostic that is only the refusal code says nothing to the person; the shared sentence does.
   const diagnostic = resolveActionExecutionFailureMessage(failure,
-    describeManagedOperationDiagnostic({ errorCode: failure.errorCode, error: failure.error })) ?? t('common.requestFailed');
+    technical === failure.errorCode ? t('common.requestFailed') : technical) ?? t('common.requestFailed');
   const details = failure.details;
   const target = details && typeof details === 'object' && 'target' in details ? details.target : undefined;
   return target && typeof target === 'object' && 'machineId' in target && typeof target.machineId === 'string'

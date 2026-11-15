@@ -27,6 +27,17 @@ it('presents a refused setup read with the shared Action sentence instead of a r
   expect(describeMachineSetupPlanFailure(failure, () => 'shop-prod')).toBe(`shop-prod · ${t('common.requestFailed')}`);
 });
 
+// QA-DEPLOY-1114 #27: the Deploy an app draft read "Machine setup · target_unavailable" for an offline Machine.
+it('never presents a refusal code as its sentence, when the error text is only that code', async () => {
+  const { describeMachineSetupPlanFailure } = await import('./MachineSetupPlanReview');
+  const { t } = await import('@/text');
+  const failure = { ok: false as const, errorCode: 'target_unavailable', error: 'target_unavailable',
+    details: { code: 'target_unavailable', diagnostic: { reason: 'own_reachable_machine_absent' } } };
+  const description = describeMachineSetupPlanFailure(failure, id => id);
+  expect(description).not.toContain('target_unavailable');
+  expect(description).toBe(t('common.requestFailed'));
+});
+
 it('keeps the administrator repair in the shared native Setup review presentation', async () => {
   const { describeMachineSetupPlanFailure } = await import('./MachineSetupPlanReview');
   const remedy = 'Choose an administrator with its own sudo-to-root right, then retry.';

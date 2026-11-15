@@ -206,10 +206,11 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     if (code === 'credential_unavailable') return t('session.startFailure.cause.credential_unavailable');
     const deploymentRefusal = code === 'template_domain_required' ? readDeploymentRefusalRecoveryV1(code, record.details) : null;
     if (deploymentRefusal) return deploymentRefusal.remedy;
+    // An error text that only repeats its code ("target_unavailable") is not a sentence: the caller's fallback speaks.
     const error = typeof record.error === 'string' ? record.error.trim() : '';
-    if (error.length > 0) return error;
+    if (error.length > 0 && error !== code) return error;
     const errorMessage = typeof record.errorMessage === 'string' ? record.errorMessage.trim() : '';
-    if (errorMessage.length > 0) return errorMessage;
+    if (errorMessage.length > 0 && errorMessage !== code) return errorMessage;
     return null;
 }
 
