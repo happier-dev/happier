@@ -375,6 +375,34 @@ describe('WorkspaceShell retained member layer', () => {
         expect(layers()).toEqual(['restored-0', last].sort());
     });
 
+    it('renders only the two switched tabs per tab switch, leaving a third parked tab quiet', async () => {
+        let initial = createWorkspaceState(restoredTab('a'));
+        for (const id of ['b', 'c']) initial = reduceWorkspaceState(initial, { type: 'openTab', groupId: 'group:1', tab: restoredTab(id) });
+        const screen = await renderWorkspace(initial);
+        const { navigation } = screen.root.findByType('WorkspaceStateProbe').props;
+        for (const id of ['a', 'b', 'c']) await act(async () => { navigation.activateTab('group:1', id); });
+        await settle(() => { expect(screen.root.findAllByType('StatefulRouteBodyProbe')).toHaveLength(3); });
+        const commits = createRenderCommitCounter();
+        const stop = screen.subscribe(commits.commit);
+        // A host whose parent did not re-render keeps the props object it was committed with.
+        const parkedHostProps = () => screen.root.findAll(node => node.type === DestinationInstanceHost && node.props.tabId === 'a')[0]?.props;
+        const perSwitch: { a: number; aHost: number; b: number; c: number; commits: number }[] = [];
+        for (const id of ['b', 'c', 'b', 'c']) {
+            const before = new Map(bodyRenders);
+            const hostBefore = parkedHostProps();
+            commits.reset();
+            await act(async () => { navigation.activateTab('group:1', id); });
+            await settle(() => { expect(stateOf(screen).groups['group:1'].activeTabId).toBe(id); });
+            const delta = (tabId: string) => (bodyRenders.get(tabId) ?? 0) - (before.get(tabId) ?? 0);
+            perSwitch.push({ a: delta('a'), aHost: parkedHostProps() === hostBefore ? 0 : 1, b: delta('b'), c: delta('c'), commits: commits.read().commits });
+        }
+        stop();
+        // Budget measured on 2026-11-15 (P03-REGRESSION-GUARDS): the parked tab 'a' is neither shown nor hidden by
+        // these switches, so neither its retained host nor its body renders; the shown and hidden bodies render once each (focus/visibility),
+        // in 4 shell commits. Growth in any count is a regression in the retained-tab owner, not noise.
+        expect(perSwitch).toEqual(Array.from({ length: 4 }, () => ({ a: 0, aHost: 0, b: 1, c: 1, commits: 4 })));
+    });
+
     it('re-renders a member layer when its tab changes', async () => {
         const screen = await renderWorkspace(initialState());
         const { navigation } = screen.root.findByType('WorkspaceStateProbe').props;
