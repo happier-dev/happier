@@ -1,5 +1,6 @@
 import { reconcileSessionTupleProjection } from '@/sync/domains/session/sessionTupleApplyCurrentness';
 import { reconcileSessionLifecycleProjection } from '@/sync/domains/session/sessionLifecycleProjection';
+import { socketApplyFrame, type SocketApplyFrameScheduler } from './socketApplyFrame';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 
@@ -13,16 +14,21 @@ export type SessionApplyCoalescerSession = Omit<Session, 'presence'> & {
     presence?: 'online' | number;
 };
 
-type TimerHandle = ReturnType<typeof setTimeout>;
+type ApplySessionBatch = (sessions: SessionApplyCoalescerSession[]) => void;
 
 type SessionApplyOptions = Readonly<{
     shouldContinue?: () => boolean;
-    deferLeadingBatch?: boolean;
+    /**
+     * Applies this enqueue's sessions; defaults to `applyBatch`. A queued session keeps the
+     * callback of its latest enqueue, so per-update callers still share one frame flush.
+     */
+    apply?: ApplySessionBatch;
 }>;
 
 type QueuedSession = Readonly<{
     session: SessionApplyCoalescerSession;
     shouldContinue: () => boolean;
+    apply: ApplySessionBatch;
 }>;
 
 function clampPositiveInt(value: number): number {
@@ -32,7 +38,8 @@ function clampPositiveInt(value: number): number {
 
 export function createSessionApplyCoalescer(params: Readonly<{
     getConfig: () => SessionApplyCoalescerConfig;
-    applyBatch: (sessions: SessionApplyCoalescerSession[]) => void;
+    applyBatch: ApplySessionBatch;
+    frame?: SocketApplyFrameScheduler;
 }>): Readonly<{
     enqueue: (sessions: SessionApplyCoalescerSession[], options?: SessionApplyOptions) => void;
     flushSessionIds: (sessionIds: readonly string[]) => void;
@@ -41,22 +48,19 @@ export function createSessionApplyCoalescer(params: Readonly<{
     getQueuedSession: (sessionId: string) => SessionApplyCoalescerSession | undefined;
 }> {
     const queuedSessions = new Map<string, QueuedSession>();
-    let timer: TimerHandle | null = null;
-    let leadingWindowStartedAt = 0;
-    let leadingWindowExpiresAt = 0;
+    const frame = params.frame ?? socketApplyFrame;
+    let cancelScheduledFlush: (() => void) | null = null;
 
     function clearFlushTimer(): void {
-        if (!timer) return;
-        clearTimeout(timer);
-        timer = null;
+        if (!cancelScheduledFlush) return;
+        cancelScheduledFlush();
+        cancelScheduledFlush = null;
     }
 
     function scheduleFlush(windowMs: number): void {
-        if (timer) return;
-        timer = setTimeout(() => {
-            timer = null;
-            leadingWindowStartedAt = 0;
-            leadingWindowExpiresAt = 0;
+        if (cancelScheduledFlush) return;
+        cancelScheduledFlush = frame.schedule(() => {
+            cancelScheduledFlush = null;
             flushAll();
         }, windowMs);
     }
@@ -68,34 +72,38 @@ export function createSessionApplyCoalescer(params: Readonly<{
             syncPerformanceTelemetry.measure(
                 'sync.socket.sessions.coalesce.immediate',
                 { sessions: batch.length },
-                () => params.applyBatch(batch),
+                () => (options?.apply ?? params.applyBatch)(batch),
             );
         }
     }
 
     function applyQueuedBatch(batch: QueuedSession[]): void {
-        const sessions: SessionApplyCoalescerSession[] = [];
-        for (const entry of batch) {
-            if (entry.shouldContinue()) {
-                sessions.push(entry.session);
-            }
-        }
-        if (sessions.length === 0) return;
+        const current = batch.filter((entry) => entry.shouldContinue());
+        if (current.length === 0) return;
         syncPerformanceTelemetry.measure(
             'sync.socket.sessions.coalesce.flush',
-            { sessions: sessions.length, remaining: queuedSessions.size },
-            () => params.applyBatch(sessions),
+            { sessions: current.length, remaining: queuedSessions.size },
+            () => {
+                // One call per callback, in queue order.
+                let start = 0;
+                for (let index = 1; index <= current.length; index += 1) {
+                    if (index < current.length && current[index]!.apply === current[start]!.apply) continue;
+                    current[start]!.apply(current.slice(start, index).map((entry) => entry.session));
+                    start = index;
+                }
+            },
         );
     }
 
     function upsertQueued(sessions: readonly SessionApplyCoalescerSession[], options?: SessionApplyOptions): void {
         const shouldContinue = options?.shouldContinue ?? (() => true);
+        const apply = options?.apply ?? params.applyBatch;
         for (const session of sessions) {
             const previous = queuedSessions.get(session.id);
             const nextSession = previous?.shouldContinue()
                 ? reconcileSessionLifecycleProjection(previous.session, reconcileSessionTupleProjection(previous.session, session))
                 : session;
-            queuedSessions.set(session.id, { session: nextSession, shouldContinue });
+            queuedSessions.set(session.id, { session: nextSession, shouldContinue, apply });
         }
     }
 
@@ -111,8 +119,6 @@ export function createSessionApplyCoalescer(params: Readonly<{
 
     function flushAll(): void {
         clearFlushTimer();
-        leadingWindowStartedAt = 0;
-        leadingWindowExpiresAt = 0;
         const maxBatchSize = clampPositiveInt(params.getConfig().maxBatchSize);
         while (queuedSessions.size > 0) {
             applyQueuedBatch(takeQueuedBatch(maxBatchSize));
@@ -140,8 +146,6 @@ export function createSessionApplyCoalescer(params: Readonly<{
 
         if (queuedSessions.size === 0) {
             clearFlushTimer();
-            leadingWindowStartedAt = 0;
-            leadingWindowExpiresAt = 0;
         }
     }
 
@@ -162,8 +166,6 @@ export function createSessionApplyCoalescer(params: Readonly<{
         });
         if (queuedSessions.size === 0) {
             clearFlushTimer();
-            leadingWindowStartedAt = 0;
-            leadingWindowExpiresAt = 0;
         }
     }
 
@@ -181,33 +183,6 @@ export function createSessionApplyCoalescer(params: Readonly<{
 
         if (!config.enabled || windowMs <= 0) {
             applyImmediate(sessions, maxBatchSize, options);
-            return;
-        }
-
-        const nowMs = Date.now();
-        const isInsideLeadingWindow = nowMs >= leadingWindowStartedAt && leadingWindowExpiresAt > nowMs;
-        if (timer === null && queuedSessions.size === 0 && !isInsideLeadingWindow) {
-            leadingWindowStartedAt = nowMs;
-            leadingWindowExpiresAt = nowMs + windowMs;
-            if (options?.deferLeadingBatch === true) {
-                upsertQueued(sessions, options);
-                syncPerformanceTelemetry.count('sync.socket.sessions.coalesce.queued', {
-                    sessions: sessions.length,
-                    queued: queuedSessions.size,
-                    windowMs,
-                    maxBatchSize,
-                });
-                scheduleFlush(windowMs);
-                return;
-            }
-
-            const leadingBatch = sessions.slice(0, maxBatchSize);
-            const trailingSessions = sessions.slice(maxBatchSize);
-            applyImmediate(leadingBatch, maxBatchSize, options);
-            upsertQueued(trailingSessions, options);
-            if (queuedSessions.size > 0) {
-                scheduleFlush(windowMs);
-            }
             return;
         }
 

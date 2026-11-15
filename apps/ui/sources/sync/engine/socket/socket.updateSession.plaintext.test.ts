@@ -1,3 +1,4 @@
+import { socketApplyFrame } from '@/sync/engine/sessions/socketApplyFrame';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 
@@ -123,6 +124,74 @@ function buildBaseParams(overrides: Partial<HandleUpdateContainerBaseParams> = {
 }
 
 describe('socket update handling: plaintext update-session', () => {
+    it('publishes a streamed Session once per frame when every socket update brings its own apply callback', async () => {
+        vi.useFakeTimers();
+        try {
+            const session = buildSession('s_frame_per_update_handler');
+            storage.getState().applySessions([session]);
+            markSessionSurfaceVisible(session.id);
+            let publishes = 0;
+            const unsubscribe = storage.subscribe((state, previous) => {
+                if (state.sessions[session.id] !== previous.sessions[session.id]) publishes += 1;
+            });
+            try {
+                for (const seq of [2, 3, 4]) {
+                    // The Sync wiring builds a fresh callback per update (it records that update's observation).
+                    const params = buildBaseParams({ applySessions: (rows) => storage.getState().applySessions(rows) });
+                    await handleSocketUpdate({ ...params, update: { id: `streamed-${seq}`, seq, createdAt: seq * 100,
+                        body: { t: 'update-session', id: session.id, active: true, activeAt: seq * 100 } } });
+                }
+                expect(publishes).toBe(0);
+                await vi.advanceTimersByTimeAsync(16);
+                expect(publishes).toBe(1);
+                expect(storage.getState().sessions[session.id].activeAt).toBe(400);
+            } finally {
+                unsubscribe();
+            }
+        } finally {
+            socketApplyFrame.flushNow();
+            vi.useRealTimers();
+        }
+    });
+
+    it.each(['permission request', 'turn end'] as const)('applies a %s at once instead of holding it for the streaming frame', async (boundary) => {
+        vi.useFakeTimers();
+        try {
+            vi.setSystemTime(10_000);
+            const session = {
+                ...buildSession(`s_frame_boundary_${boundary.replace(' ', '_')}`),
+                thinking: true, thinkingAt: 100, latestReadyEventSeq: 1, latestReadyEventAt: 100,
+            };
+            storage.getState().applySessions([session]);
+            markSessionSurfaceVisible(session.id);
+            const params = buildBaseParams({ applySessions: (rows) => storage.getState().applySessions(rows) });
+            // A streamed update that only needs to reach the screen with its frame.
+            await handleSocketUpdate({ ...params, update: { id: 'streamed', seq: 2, createdAt: 200,
+                body: { t: 'update-session', id: session.id, active: true, activeAt: 200 } } });
+            await handleSocketUpdate({ ...params, update: { id: 'boundary', seq: 3, createdAt: 300,
+                body: boundary === 'permission request'
+                    ? { t: 'update-session', id: session.id, pendingPermissionRequestCount: 1, pendingUserActionRequestCount: 0,
+                        pendingRequestObservedAt: 300,
+                        agentState: { version: 2, value: JSON.stringify({ requests: { r1: {
+                            tool: 'Bash', kind: 'permission', arguments: { command: 'ls' }, createdAt: 299,
+                        } } }) } }
+                    : { t: 'update-session', id: session.id, active: true, activeAt: 300, thinking: false, thinkingAt: 300,
+                        latestReadyEventSeq: 2, latestReadyEventAt: 300 } } });
+
+            // No frame has run: the boundary and the update queued before it are both already applied.
+            const applied = storage.getState().sessions[session.id];
+            expect(applied.activeAt).toBe(boundary === 'permission request' ? 200 : 300);
+            if (boundary === 'permission request') {
+                expect(Object.keys(applied.agentState?.requests ?? {})).toEqual(['r1']);
+            } else {
+                expect(applied.latestReadyEventSeq).toBe(2);
+            }
+        } finally {
+            socketApplyFrame.flushNow();
+            vi.useRealTimers();
+        }
+    });
+
     it.each([false, true])('observes omitted metadata without opening it or refreshing the list and retains Agent-state request delivery (full consumer: %s)', async (fullConsumer) => {
         const session = { ...buildSession('metadata-hint'), pendingPermissionRequestCount: 0,
             pendingUserActionRequestCount: 0, [SESSION_LIST_DOCUMENT_ADMISSION]: {
@@ -169,6 +238,7 @@ describe('socket update handling: plaintext update-session', () => {
         const params = buildBaseParams({ applySessions: rows => storage.getState().applySessions(rows) });
         await handleSocketUpdate({ ...params, update: { id: 'layout-hint', seq: 2, createdAt: 2,
             body: { t: 'update-session', id: session.id, metadataDocument: 'omitted', metadataLayoutVersion: 1, metadataVersion: 1 } } });
+        socketApplyFrame.flushNow();
         const next = storage.getState().sessions[session.id];
         expect(next.metadataVersion).toBe(99);
         expect(next.metadataLayoutVersion ?? 0).toBe(0);
@@ -658,6 +728,7 @@ describe('socket update handling: plaintext update-session', () => {
     });
 
     afterEach(() => {
+        socketApplyFrame.flushNow();
         syncPerformanceTelemetry.configure({ enabled: false });
         syncPerformanceTelemetry.reset();
         resetSessionSurfaceVisibilityForTests();
@@ -1054,6 +1125,7 @@ describe('socket update handling: plaintext update-session', () => {
                 },
             },
         });
+        socketApplyFrame.flushNow();
         const equalSpy = equalParams.applySessions as unknown as ReturnType<typeof vi.fn>;
         const equalSession = equalSpy.mock.calls[0]?.[0]?.[0] as Session;
         expect(equalSession.metadata).toEqual({ path: '/tmp', host: 'localhost', name: 'Original title' });
@@ -1074,6 +1146,7 @@ describe('socket update handling: plaintext update-session', () => {
                 },
             },
         });
+        socketApplyFrame.flushNow();
         const higherSpy = higherParams.applySessions as unknown as ReturnType<typeof vi.fn>;
         const higherSession = higherSpy.mock.calls[0]?.[0]?.[0] as Session;
         expect(higherSession.metadata).toEqual({ path: '/new', host: 'newbox', name: 'Newer title' });
@@ -1390,6 +1463,7 @@ describe('socket update handling: plaintext update-session', () => {
                 ...params,
                 updateData,
             });
+            socketApplyFrame.flushNow();
 
             expect(consoleError).not.toHaveBeenCalled();
             const applySessionsSpy = params.applySessions as unknown as ReturnType<typeof vi.fn>;
@@ -1465,6 +1539,7 @@ describe('socket update handling: plaintext update-session', () => {
                 ...params,
                 updateData,
             });
+            socketApplyFrame.flushNow();
 
             expect(consoleError).not.toHaveBeenCalled();
             const applySessionsSpy = params.applySessions as unknown as ReturnType<typeof vi.fn>;
@@ -1830,6 +1905,7 @@ describe('socket update handling: plaintext update-session', () => {
                 },
             },
         });
+        socketApplyFrame.flushNow();
 
         const applySessionsSpy = params.applySessions as unknown as ReturnType<typeof vi.fn>;
         expect(applySessionsSpy).toHaveBeenCalledTimes(1);
@@ -1877,6 +1953,7 @@ describe('socket update handling: plaintext update-session', () => {
                 },
             },
         });
+        socketApplyFrame.flushNow();
 
         const applySessionsSpy = params.applySessions as unknown as ReturnType<typeof vi.fn>;
         expect(applySessionsSpy.mock.calls[0]?.[0]?.[0]).toEqual(expect.objectContaining({
@@ -2057,6 +2134,7 @@ describe('socket update handling: plaintext update-session', () => {
                 },
             },
         });
+        socketApplyFrame.flushNow();
 
         expect(hydrateSessionById).not.toHaveBeenCalled();
         const appliedSession = (
@@ -2105,6 +2183,7 @@ describe('socket update handling: plaintext update-session', () => {
                 },
             },
         });
+        socketApplyFrame.flushNow();
 
         expect(hydrateSessionById).toHaveBeenCalledWith(
             sessionId,
@@ -2220,6 +2299,7 @@ describe('socket update handling: plaintext update-session', () => {
                     },
                 },
             });
+            socketApplyFrame.flushNow();
 
             expect(hydrateSessionById).not.toHaveBeenCalled();
             const appliedSession = (
@@ -2278,6 +2358,7 @@ describe('socket update handling: plaintext update-session', () => {
                 },
             },
         });
+        socketApplyFrame.flushNow();
 
         expect(hydrateSessionById).toHaveBeenCalledTimes(1);
         expect(hydrateSessionById).toHaveBeenCalledWith(
@@ -3130,6 +3211,7 @@ describe('socket update handling: plaintext update-session', () => {
                 },
             } as ApiUpdateContainer,
         });
+        socketApplyFrame.flushNow();
 
         const applySessionsSpy = params.applySessions as unknown as ReturnType<typeof vi.fn>;
         expect(applySessionsSpy).toHaveBeenCalledTimes(1);
@@ -3182,6 +3264,7 @@ describe('socket update handling: plaintext update-session', () => {
                 },
             } as ApiUpdateContainer,
         });
+        socketApplyFrame.flushNow();
 
         const applySessionsSpy = params.applySessions as unknown as ReturnType<typeof vi.fn>;
         expect(applySessionsSpy.mock.calls[0]?.[0]?.[0]).toEqual(expect.objectContaining({
@@ -3216,6 +3299,7 @@ describe('socket update handling: plaintext update-session', () => {
                 },
             } as ApiUpdateContainer,
         });
+        socketApplyFrame.flushNow();
 
         const applySessionsSpy = params.applySessions as unknown as ReturnType<typeof vi.fn>;
         expect(applySessionsSpy).toHaveBeenCalledTimes(1);
@@ -3540,6 +3624,7 @@ describe('socket update handling: plaintext update-session', () => {
         };
 
         await handleUpdateContainer({ ...params, updateData });
+        socketApplyFrame.flushNow();
 
         expect(decryptAgentState).not.toHaveBeenCalled();
         const applySessionsSpy = params.applySessions as unknown as ReturnType<typeof vi.fn>;
@@ -3585,6 +3670,7 @@ describe('socket update handling: plaintext update-session', () => {
         };
 
         await handleUpdateContainer({ ...params, updateData });
+        socketApplyFrame.flushNow();
 
         expect(decryptAgentState).not.toHaveBeenCalled();
         const applySessionsSpy = params.applySessions as unknown as ReturnType<typeof vi.fn>;

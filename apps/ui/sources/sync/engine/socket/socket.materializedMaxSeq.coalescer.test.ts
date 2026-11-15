@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { socketApplyFrame } from '@/sync/engine/sessions/socketApplyFrame';
 
 import type { ApiUpdateContainer } from '@/sync/api/types/apiTypes';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -239,13 +240,14 @@ describe('socket new-message + coalescer: materialized max seq', () => {
     });
 
     afterEach(async () => {
+        socketApplyFrame.flushNow();
         resetSessionSurfaceVisibilityForTests();
         vi.useRealTimers();
         await account.dispose();
         vi.restoreAllMocks();
     });
 
-    it('marks materializedMaxSeq for the active session leading batch immediately and waits for queued trailing batches', async () => {
+    it('marks materializedMaxSeq for the active session once its frame batch is applied', async () => {
         const sessionId = 's1';
         storage.getState().applySessions([createSessionFixture({
             id: sessionId, serverId: account.serverId, active: true,
@@ -288,25 +290,26 @@ describe('socket new-message + coalescer: materialized max seq', () => {
             await socketOwner.handleUpdate(buildPlainNewMessageUpdate({
                 sessionId, messageId: 'm2', messageSeq: 2, text: 'leading',
             }));
-            expect(readMessageSeqs()).toEqual([1, 2]);
-            expect(socketOwner.readSessionMessagesCatchUpAfterSeq(sessionId)).toBe(2);
+            // Queued for its frame: not materialized, so the catch-up cursor stays put.
+            expect(readMessageSeqs()).toEqual([1]);
+            expect(socketOwner.readSessionMessagesCatchUpAfterSeq(sessionId)).toBe(1);
 
             await socketOwner.handleUpdate(buildPlainNewMessageUpdate({
                 sessionId, messageId: 'm3', messageSeq: 3, text: 'trailing',
             }));
-            expect(readMessageSeqs()).toEqual([1, 2]);
-            expect(socketOwner.readSessionMessagesCatchUpAfterSeq(sessionId)).toBe(2);
-            await vi.advanceTimersByTimeAsync(899);
-            expect(readMessageSeqs()).toEqual([1, 2]);
-            expect(socketOwner.readSessionMessagesCatchUpAfterSeq(sessionId)).toBe(2);
-            await vi.advanceTimersByTimeAsync(1);
+            expect(readMessageSeqs()).toEqual([1]);
+            expect(socketOwner.readSessionMessagesCatchUpAfterSeq(sessionId)).toBe(1);
+            // The 900 ms window holds the batch until the frame that ends it.
+            await vi.advanceTimersByTimeAsync(883);
+            expect(readMessageSeqs()).toEqual([1]);
+            expect(socketOwner.readSessionMessagesCatchUpAfterSeq(sessionId)).toBe(1);
+            await vi.advanceTimersByTimeAsync(17);
             expect(readMessageSeqs()).toEqual([1, 2, 3]);
             expect(socketOwner.readSessionMessagesCatchUpAfterSeq(sessionId)).toBe(3);
-            // Each transcript publication precedes its materialized-currentness
-            // advance; no synthetic marker or callback count supplies this proof.
+            // One frame publishes both rows, and the transcript publication precedes its
+            // materialized-currentness advance; no synthetic marker or callback count supplies this proof.
             expect(publicationOrder).toEqual([
-                { seqs: [1, 2], materialized: 1 },
-                { seqs: [1, 2, 3], materialized: 2 },
+                { seqs: [1, 2, 3], materialized: 1 },
             ]);
             expect(transcriptRequests).toEqual([]);
         } finally {
@@ -329,6 +332,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
         await socketOwner.handleUpdate(buildPlainNewMessageUpdate({
             sessionId, messageId: 'primary-leading', messageSeq: 1, text: 'already applied',
         }));
+        socketApplyFrame.flushNow();
         await socketOwner.handleUpdate(buildPlainNewMessageUpdate({
             sessionId, messageId: 'primary-held', messageSeq: 2, text: 'must not cross Home',
         }));
@@ -1457,6 +1461,7 @@ it('does not mark cache-only renderables unread or meaningful when a hidden dura
             ...baseParams,
             updateData: buildPlainNewMessageUpdate({ sessionId: 's1', messageId: 'm2', messageSeq: 2, text: 'leading' }),
         });
+        socketApplyFrame.flushNow();
         await handleUpdateContainer({
             ...baseParams,
             updateData: buildPlainNewMessageUpdate({ sessionId: 's1', messageId: 'm3', messageSeq: 3, text: 'queued' }),
@@ -1470,7 +1475,7 @@ it('does not mark cache-only renderables unread or meaningful when a hidden dura
         expect(applyMessages).toHaveBeenCalledTimes(1);
     });
 
-    it('does not let a queued new-message overwrite a newer immediate message-updated payload', async () => {
+    it('does not let a queued new-message overwrite a newer message-updated payload', async () => {
         markSessionSurfaceVisible('s1');
         storage.setState((prev) => ({
             ...prev,
@@ -1551,6 +1556,7 @@ it('does not mark cache-only renderables unread or meaningful when a hidden dura
                 },
             } as ApiUpdateContainer,
         });
+        socketApplyFrame.flushNow();
         expect(appliedTexts.get('m1')).toBe('leading text');
         expect(applyMessages).toHaveBeenCalledTimes(1);
 

@@ -154,6 +154,8 @@ import {
 } from '@/sync/domains/session/organization';
 import { removeAuthoritativelyDeletedSessionListTagsForAccount } from '@/components/sessions/shell/search/useSessionListViewFilters';
 import { createSessionListOrganizationSnapshotRequest } from '@/sync/engine/sessions/sessionListOrganizationSnapshotRequest';
+import { socketApplyFrame } from '@/sync/engine/sessions/socketApplyFrame';
+import { settleReceivedSessionMessages } from '@/sync/engine/sessions/sessionMessageMaterializationBarrier';
 import {
     fetchAndApplySessionFolderAssignments,
     fetchAndApplySessionOrganizationSnapshot,
@@ -3843,6 +3845,8 @@ class Sync {
             if (this.embedSessionScope && (sessionId !== this.embedSessionScope.scope.sessionId || !this.embedSessionScope.isCurrent())) return;
             for (const repository of this.sessionSystemRecordRepositories.values()) repository.refreshObserved();
             if (isDemoModeActive()) return;
+            // Entering a Session presents its current state, not the state one frame behind.
+            socketApplyFrame.flushNow();
             // Opening a session grows the hydrated working set; bound it (coalesced sweep).
             this.sessionTranscriptRetention.scheduleSweep();
             this.ensureSessionViewportHydrated();
@@ -4645,6 +4649,9 @@ class Sync {
             allowedPermissionModes?: readonly PermissionMode[] | null;
         }>
     ): Promise<DirectMessageSubmitResult> {
+        // The send reads the Session from the store: publish socket updates still waiting for
+        // their frame first, so it never builds on a frame-old snapshot.
+        socketApplyFrame.flushNow();
         const embedScope = this.embedSessionScope;
         const exactAccountLifetime = options?.accountLifetime;
         const exactScopeError = () => Object.assign(
@@ -5615,6 +5622,9 @@ class Sync {
             onOutboundHandoff?: (handoff: SubmitSessionOutboundHandoff) => void;
         }>,
     ): Promise<SubmitSessionUserMessageResult> {
+        // The person's send decides from the stored Session: publish socket updates still waiting
+        // for their frame first, so it never decides from a frame-old snapshot.
+        socketApplyFrame.flushNow();
         let state = storage.getState();
         let session = state.sessions[sessionId] ?? null;
         if (!session) {
@@ -10761,6 +10771,10 @@ class Sync {
         };
 
     private fetchMessagesInternal = async (sessionId: string) => {
+        // Decide what to fetch from the transcript this client has already received: live rows
+        // still waiting for their frame are applied first, so a gap fetch starts at the covered prefix.
+        const settling = settleReceivedSessionMessages(sessionId);
+        if (settling) await settling;
         const initialSession = storage.getState().sessions[sessionId] ?? null;
         // A queued InvalidateSync callback can run after local deletion. It
         // must not recreate an empty loaded transcript for an absent session.

@@ -93,6 +93,7 @@ import {
 import { createSessionListRenderableProjectionPatchCoalescer } from '@/sync/engine/sessions/sessionListRenderableProjectionPatchCoalescer';
 import type { SessionListRowPatchOperation } from '@/sync/store/domains/sessions';
 import { createSessionMessageApplyCoalescer, type SessionMessageApplyCallbacks } from '@/sync/engine/sessions/sessionMessageApplyCoalescer';
+import { socketApplyFrame } from '@/sync/engine/sessions/socketApplyFrame';
 import {
     setReceivedSessionMessageApplier,
     settleReceivedSessionMessages,
@@ -333,9 +334,6 @@ function getSocketMessageApplyConfig() {
 }
 
 function setSocketSessionApplyHandler(applySessions: ApplySessions): void {
-    if (socketSessionApplyHandlers && socketSessionApplyHandlers.applySessions !== applySessions) {
-        socketSessionApplyCoalescer.flushAll();
-    }
     socketSessionApplyHandlers = { applySessions };
 }
 
@@ -353,13 +351,29 @@ function enqueueSocketSessionApplyGuarded(
     applySessions: ApplySessions,
     sessions: SessionApplyCoalescerSession[],
     shouldContinue: () => boolean,
-    options?: Readonly<{ deferLeadingBatch?: boolean }>,
 ): void {
     setSocketSessionApplyHandler(applySessions);
-    socketSessionApplyCoalescer.enqueue(sessions, {
-        shouldContinue,
-        deferLeadingBatch: options?.deferLeadingBatch,
-    });
+    // Each update's own callback applies its sessions (it carries that update's context), so a
+    // new callback per update still shares the frame flush instead of flushing what is queued.
+    socketSessionApplyCoalescer.enqueue(sessions, { shouldContinue, apply: applySessions });
+}
+
+function countSessionRequests(session: Pick<Session, 'agentState' | 'pendingPermissionRequestCount' | 'pendingUserActionRequestCount'>): Readonly<{
+    ids: readonly string[];
+    pending: number;
+}> {
+    return {
+        ids: Object.keys(session.agentState?.requests ?? {}),
+        pending: (session.pendingPermissionRequestCount ?? 0) + (session.pendingUserActionRequestCount ?? 0),
+    };
+}
+
+function isTurnEndOrNewRequest(previous: Session, next: Session): boolean {
+    if (previous.thinking === true && next.thinking === false) return true;
+    const before = countSessionRequests(previous);
+    const after = countSessionRequests(next);
+    if (after.pending > before.pending) return true;
+    return after.ids.some((id) => !before.ids.includes(id));
 }
 
 function flushQueuedSocketSessionApplies(applySessions: ApplySessions, sessionIds: readonly string[]): void {
@@ -1402,9 +1416,7 @@ export async function handleUpdateContainer(params: {
             getSessionProjection,
             applySessions: (sessions) => {
                 if (!shouldContinueMessage()) return;
-                enqueueSocketSessionApplyGuarded(applySessions, sessions, shouldContinueMessage, {
-                    deferLeadingBatch: sessions.every((session) => !isSessionFullContentConsumerActiveForRealtime(session.id, sourceServerId)),
-                });
+                enqueueSocketSessionApplyGuarded(applySessions, sessions, shouldContinueMessage);
             },
             fetchSessions: () => {
                 if (!shouldContinue()) return;
@@ -1432,7 +1444,6 @@ export async function handleUpdateContainer(params: {
                 applyMessages(sessionId, messages);
             },
             enqueueMessages: (sessionId, messages) => socketMessageApplyCoalescer.enqueue(sessionId, messages, {
-                deferLeadingBatch: !isSessionFullContentConsumerActiveForRealtime(sessionId, sourceServerId),
                 shouldContinue: shouldContinueMessage,
                 callbacks: messageApplyCallbacks,
             }),
@@ -1486,20 +1497,7 @@ export async function handleUpdateContainer(params: {
             getSessionProjection,
             applySessions: (sessions) => {
                 if (!shouldContinueMessage()) return;
-                const hiddenProjectionSessions = sessions.filter((session) => (
-                    !isSessionFullContentConsumerActiveForRealtime(session.id, sourceServerId)
-                ));
-                const liveTranscriptSessions = sessions.filter((session) => (
-                    isSessionFullContentConsumerActiveForRealtime(session.id, sourceServerId)
-                ));
-                if (hiddenProjectionSessions.length > 0) {
-                    enqueueSocketSessionApplyGuarded(applySessions, hiddenProjectionSessions, shouldContinueMessage, {
-                        deferLeadingBatch: true,
-                    });
-                }
-                if (liveTranscriptSessions.length > 0) {
-                    applySessionsAfterFlushingQueued(applySessions, liveTranscriptSessions);
-                }
+                enqueueSocketSessionApplyGuarded(applySessions, sessions, shouldContinueMessage);
             },
             fetchSessions: () => {
                 if (!shouldContinue()) return;
@@ -1956,6 +1954,11 @@ export async function handleUpdateContainer(params: {
         const agentState = nextSession.agentState;
         const readySeq = shouldReportReadyProjectionAdvance(currentSession, nextSession.latestReadyEventSeq);
         enqueueSocketSessionApplyGuarded(applySessions, [nextSession], shouldContinue);
+        if (readySeq !== null || isTurnEndOrNewRequest(currentSession, nextSession)) {
+            // The user acts on these at once: publish them, and everything queued before them,
+            // without waiting for the streaming frame.
+            socketApplyFrame.flushNow();
+        }
         // An omitted owner envelope carried forward at the next revision is already current.
         const shouldRefreshLayout1OwnerMetadata =
             updateData.body.metadata != null

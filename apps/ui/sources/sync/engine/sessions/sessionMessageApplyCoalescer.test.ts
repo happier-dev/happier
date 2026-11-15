@@ -4,6 +4,7 @@ import type { NormalizedMessage } from "@happier-dev/session-core/raw";
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { flushRealtimeFanoutTelemetry, resetRealtimeFanoutTelemetry } from '@/sync/runtime/performance/realtimeFanoutTelemetry';
 import { createSessionMessageApplyCoalescer } from './sessionMessageApplyCoalescer';
+import { socketApplyFrame } from './socketApplyFrame';
 
 function buildUserTextMessage(id: string, createdAt: number): NormalizedMessage {
     return {
@@ -28,6 +29,7 @@ describe('createSessionMessageApplyCoalescer', () => {
     });
 
     afterEach(() => {
+        socketApplyFrame.flushNow();
         vi.useRealTimers();
         resetRealtimeFanoutTelemetry();
         syncPerformanceTelemetry.configure({ enabled: false });
@@ -42,7 +44,7 @@ describe('createSessionMessageApplyCoalescer', () => {
             applyBatch: (_sessionId, messages) => applied.push(...messages.map((message) => message.id)),
         });
         try {
-            coalescer.enqueue('long-window', [buildUserTextMessage('deferred', 1)], { deferLeadingBatch: true });
+            coalescer.enqueue('long-window', [buildUserTextMessage('deferred', 1)]);
             await new Promise((resolve) => setTimeout(resolve, 25));
             expect(applied).toEqual([]);
             coalescer.flush('long-window');
@@ -52,30 +54,25 @@ describe('createSessionMessageApplyCoalescer', () => {
         }
     });
 
-    it('applies the first enqueue immediately and coalesces trailing enqueues per session', async () => {
+    it('applies every enqueue that arrives within one frame as one ordered batch at that frame', async () => {
         const applied: Array<{ sessionId: string; messageIds: string[] }> = [];
-        const applyBatch = vi.fn((sessionId: string, messages: NormalizedMessage[]) => {
-            applied.push({ sessionId, messageIds: messages.map((m) => m.id) });
-        });
-
         const coalescer = createSessionMessageApplyCoalescer({
             getConfig: () => ({ enabled: true, windowMs: 16, maxBatchSize: 200 }),
-            applyBatch,
+            applyBatch: (sessionId, messages) => {
+                applied.push({ sessionId, messageIds: messages.map((m) => m.id) });
+            },
         });
 
-        coalescer.enqueue('s1', [buildUserTextMessage('m1', 1)]);
-        coalescer.enqueue('s1', [buildUserTextMessage('m2', 2)]);
+        for (let i = 1; i <= 5; i += 1) {
+            coalescer.enqueue('s1', [buildUserTextMessage(`m${i}`, i)]);
+        }
+        expect(applied).toEqual([]);
 
-        expect(applyBatch).toHaveBeenCalledTimes(1);
-        expect(applied).toEqual([{ sessionId: 's1', messageIds: ['m1'] }]);
+        await vi.advanceTimersByTimeAsync(16);
 
+        expect(applied).toEqual([{ sessionId: 's1', messageIds: ['m1', 'm2', 'm3', 'm4', 'm5'] }]);
         await vi.runAllTimersAsync();
-
-        expect(applyBatch).toHaveBeenCalledTimes(2);
-        expect(applied).toEqual([
-            { sessionId: 's1', messageIds: ['m1'] },
-            { sessionId: 's1', messageIds: ['m2'] },
-        ]);
+        expect(applied).toHaveLength(1);
     });
 
     it('applies immediately when disabled', () => {
@@ -92,7 +89,7 @@ describe('createSessionMessageApplyCoalescer', () => {
         expect((applyBatch.mock.calls[0]?.[1] as NormalizedMessage[]).map((m) => m.id)).toEqual(['m1']);
     });
 
-    it('respects maxBatchSize and preserves order across leading and trailing flushes', async () => {
+    it('respects maxBatchSize and preserves order across bounded and frame flushes', async () => {
         const batches: string[][] = [];
         const applyBatch = vi.fn((_sessionId: string, messages: NormalizedMessage[]) => {
             batches.push(messages.map((m) => m.id));
@@ -107,10 +104,10 @@ describe('createSessionMessageApplyCoalescer', () => {
         coalescer.enqueue('s1', [buildUserTextMessage('m2', 2)]);
         coalescer.enqueue('s1', [buildUserTextMessage('m3', 3)]);
 
-        expect(batches).toEqual([['m1'], ['m2', 'm3']]);
+        expect(batches).toEqual([['m1', 'm2']]);
 
         await vi.runAllTimersAsync();
-        expect(batches).toEqual([['m1'], ['m2', 'm3']]);
+        expect(batches).toEqual([['m1', 'm2'], ['m3']]);
     });
 
     it('exposes queued max seq for in-flight batches', async () => {
@@ -156,27 +153,6 @@ describe('createSessionMessageApplyCoalescer', () => {
         expect(applyBatch).toHaveBeenCalledTimes(1);
     });
 
-    it('promotes queued hidden work before a later visible enqueue applies immediately', async () => {
-        const applied: string[][] = [];
-        const coalescer = createSessionMessageApplyCoalescer({
-            getConfig: () => ({ enabled: true, windowMs: 16, maxBatchSize: 200 }),
-            applyBatch: vi.fn((_sessionId: string, messages: NormalizedMessage[]) => {
-                applied.push(messages.map((message) => message.id));
-            }),
-        });
-
-        coalescer.enqueue('s1', [buildUserTextMessage('hidden', 1)], { deferLeadingBatch: true });
-        expect(applied).toEqual([]);
-
-        coalescer.enqueue('s1', [buildUserTextMessage('visible', 2)]);
-
-        expect(applied).toEqual([['hidden'], ['visible']]);
-
-        await vi.runAllTimersAsync();
-
-        expect(applied).toEqual([['hidden'], ['visible']]);
-    });
-
     it('drops queued messages by id before a delayed flush', async () => {
         const applyBatch = vi.fn();
         const coalescer = createSessionMessageApplyCoalescer({
@@ -212,20 +188,17 @@ describe('createSessionMessageApplyCoalescer', () => {
         coalescer.enqueue('s1', [buildUserTextMessage('m1', 1)]);
         coalescer.enqueue('s1', [buildUserTextMessage('m2', 2)]);
 
-        expect(findEvent('sync.socket.messages.coalesce.immediate')).toMatchObject({
-            count: 1,
-            fields: { messages: 1 },
-        });
+        expect(findEvent('sync.socket.messages.coalesce.immediate')).toBeUndefined();
         expect(findEvent('sync.socket.messages.coalesce.queued')).toMatchObject({
-            count: 1,
-            fields: { messages: 1, queued: 1 },
+            count: 2,
+            fields: { messages: 2, queued: 3 },
         });
 
         await vi.runAllTimersAsync();
 
         expect(findEvent('sync.socket.messages.coalesce.flush')).toMatchObject({
             count: 1,
-            fields: { messages: 1, remaining: 0 },
+            fields: { messages: 2, remaining: 0 },
         });
     });
 
@@ -243,8 +216,8 @@ describe('createSessionMessageApplyCoalescer', () => {
             applyBatch: vi.fn(),
         });
 
-        coalescer.enqueue('s1', [buildUserTextMessage('m1', 1)], { deferLeadingBatch: true });
-        coalescer.enqueue('s1', [buildUserTextMessage('m2', 2)], { deferLeadingBatch: true });
+        coalescer.enqueue('s1', [buildUserTextMessage('m1', 1)]);
+        coalescer.enqueue('s1', [buildUserTextMessage('m2', 2)]);
         flushRealtimeFanoutTelemetry();
 
         expect(findEvent('sync.sessions.realtime.fanout.window')).toMatchObject({
@@ -259,7 +232,7 @@ describe('createSessionMessageApplyCoalescer', () => {
         await vi.runAllTimersAsync();
     });
 
-    it('does not count coalescer drops for sessions with no queued messages', () => {
+    it('does not count coalescer drops for sessions with no queued messages', async () => {
         syncPerformanceTelemetry.configure({
             enabled: true,
             slowThresholdMs: 1_000_000,
@@ -274,6 +247,7 @@ describe('createSessionMessageApplyCoalescer', () => {
         });
 
         coalescer.enqueue('s1', [buildUserTextMessage('m1', 1)]);
+        await vi.runAllTimersAsync();
         coalescer.dropSessionIds(['s1']);
         flushRealtimeFanoutTelemetry();
 

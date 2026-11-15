@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { socketApplyFrame } from '@/sync/engine/sessions/socketApplyFrame';
 import { buildSessionMessageObservationFactsV1 } from '@happier-dev/protocol/sessions';
 import type { DecryptedMessage, Session } from '@/sync/domains/state/storageTypes';
 import { handleNewMessageSocketUpdate } from './sessionSocketUpdate';
@@ -204,6 +205,7 @@ describe('handleNewMessageSocketUpdate', () => {
     });
 
     afterEach(() => {
+        socketApplyFrame.flushNow();
         sessionRuntimeObservations.clear();
         vi.useRealTimers();
         resetRealtimeFanoutTelemetry();
@@ -1228,15 +1230,13 @@ describe('handleNewMessageSocketUpdate', () => {
             updateData: buildUpdate({ sid: 's1', messageId: 'm3', messageSeq: 3 }),
         });
 
-        expect(applied).toEqual([{ sessionId: 's1', ids: ['m2'] }]);
-        expect(onNormalizedMessagesApplied).toHaveBeenCalledTimes(1);
+        // Both arrivals wait for one frame and are applied together, in order.
+        expect(applied).toEqual([]);
+        expect(onNormalizedMessagesApplied).not.toHaveBeenCalled();
 
         await vi.runAllTimersAsync();
 
-        expect(applied).toEqual([
-            { sessionId: 's1', ids: ['m2'] },
-            { sessionId: 's1', ids: ['m3'] },
-        ]);
-        expect(onNormalizedMessagesApplied).toHaveBeenCalledTimes(2);
+        expect(applied).toEqual([{ sessionId: 's1', ids: ['m2', 'm3'] }]);
+        expect(onNormalizedMessagesApplied).toHaveBeenCalledTimes(1);
     });
 });

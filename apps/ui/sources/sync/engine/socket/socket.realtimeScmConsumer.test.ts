@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { socketApplyFrame } from '@/sync/engine/sessions/socketApplyFrame';
 
 vi.mock('@/sync/runtime/syncTuning', () => ({
   loadSyncTuning: () => ({
@@ -222,6 +223,7 @@ describe('socket realtime SCM transcript consumers', () => {
   });
 
   afterEach(() => {
+    socketApplyFrame.flushNow();
     vi.useRealTimers();
     vi.restoreAllMocks();
     unregisterScmConsumer?.();
@@ -332,6 +334,7 @@ describe('socket realtime SCM transcript consumers', () => {
       update: buildTranscriptStreamSegmentUpdate(scmConsumerSessionId, 'segment-visible'),
       ...buildEphemeralParams(),
     });
+    socketApplyFrame.flushNow();
     expect(applyMessages).toHaveBeenCalledTimes(1);
     expect(applyMessages.mock.calls[0]?.[0]).toBe(scmConsumerSessionId);
   });

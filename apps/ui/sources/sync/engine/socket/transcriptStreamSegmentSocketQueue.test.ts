@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { socketApplyFrame } from '@/sync/engine/sessions/socketApplyFrame';
 
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { EncryptionCache } from '@/sync/encryption/encryptionCache';
@@ -104,6 +105,7 @@ describe('createTranscriptStreamSegmentSocketQueueController', () => {
     });
 
     afterEach(() => {
+        socketApplyFrame.flushNow();
         vi.useRealTimers();
     });
 
@@ -225,9 +227,8 @@ describe('createTranscriptStreamSegmentSocketQueueController', () => {
         }));
 
         expect(decryptPayloads).toHaveBeenCalledTimes(1);
-        expect(applied.map((messages) => messages.map((message) => message.localId))).toEqual([
-            ['segment-visible'],
-        ]);
+        // The consumed checkpoint waits for its frame.
+        expect(applied).toEqual([]);
 
         await vi.runAllTimersAsync();
 
@@ -379,6 +380,7 @@ describe('createTranscriptStreamSegmentSocketQueueController', () => {
         });
 
         afterEach(() => {
+            socketApplyFrame.flushNow();
 
         });
 
@@ -489,6 +491,7 @@ describe('createTranscriptStreamSegmentSocketQueueController', () => {
 
             expect(extractAppliedTexts(applied)).toEqual([]);
             await controller.handle(buildPlainSnapshotEntry(sessionId, 'Hello world', { tick: 3 }));
+            coalescer.flush(sessionId);
             await controller.handle(buildPlainDeltaEntry(sessionId, '!', { tick: 4, baseLength: 11 }));
             coalescer.flush(sessionId);
             expect(extractAppliedTexts(applied)).toEqual(['Hello world', 'Hello world!']);
