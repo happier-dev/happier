@@ -11,7 +11,6 @@ import { SIDEBAR_NEW_SESSION_INSET_PX, TabBarNewSessionButton } from '@/componen
 import { InboxView } from '@/components/navigation/shell/InboxView';
 import { SessionsListWrapper } from '@/components/sessions/shell/SessionsListWrapper';
 import { ProjectsListView } from '@/components/projects/ProjectsListView';
-import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
 import { ExternalSessionsEmptyState } from '@/components/sessions/shell/ExternalSessionsEmptyState';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -37,15 +36,6 @@ import { collectionSpaceSettingRefs } from '@/components/settings/session/collec
  * title leads the column on the shell's title row. One element, so the list's memo boundaries hold across renders.
  */
 const SIDEBAR_COLUMN_ROWS = <SessionsListStorageChrome column="sessions" />;
-
-/**
- * The phone's home-route tab bodies take no props from the tab host, so each is one element: a switch then leaves the
- * suspended tabs' memo boundaries untouched. Rebuilt elements re-suspended both frozen tabs while a third first
- * mounted, which cascaded ~500 empty commits (web phone viewport) and never drained under act.
- */
-const PHONE_SESSIONS_TAB = <SessionsListWrapper pathname="/" />;
-const PHONE_PROJECTS_TAB = <ProjectsListView />;
-const PHONE_INBOX_TAB = <InboxView />;
 
 interface MainViewProps {
     variant: 'phone' | 'sidebar';
@@ -174,6 +164,18 @@ const PhoneMainView = React.memo((props: Readonly<{
     // Workflows is its own route, so the home route shows Sessions for it.
     const headerTab: ActiveTabType = activeTab === 'projects' ? 'projects' : activeTab === 'inbox' && inboxEnabled ? 'inbox' : 'sessions';
 
+    const renderTabContent = React.useCallback(() => {
+        switch (headerTab) {
+            case 'inbox':
+                return <InboxView />;
+            case 'projects':
+                return <ProjectsListView />;
+            case 'sessions':
+            default:
+                return <SessionsListWrapper pathname="/" />;
+        }
+    }, [headerTab]);
+
     if (props.isTablet) {
         return <TabletSessionHome backgroundColor={backgroundColor} />;
     }
@@ -183,13 +185,7 @@ const PhoneMainView = React.memo((props: Readonly<{
             <PhoneMainTabShell>
                 {/* My work and Projects open on the line through their main-screen head; the Inbox draws it here. */}
                 {headerTab === 'inbox' ? <PhoneMainTabLine /> : null}
-                {/* A visited tab stays mounted and suspended while another is shown: returning to it (Sessions, and the
-                    Home it holds on an empty Account) re-presents it instead of rebuilding it from nothing. */}
-                <RetainedPanelSurface isActive={headerTab === 'sessions'} suspendWhenHidden>{PHONE_SESSIONS_TAB}</RetainedPanelSurface>
-                <RetainedPanelSurface isActive={headerTab === 'projects'} suspendWhenHidden>{PHONE_PROJECTS_TAB}</RetainedPanelSurface>
-                {inboxEnabled ? (
-                    <RetainedPanelSurface isActive={headerTab === 'inbox'} suspendWhenHidden>{PHONE_INBOX_TAB}</RetainedPanelSurface>
-                ) : null}
+                {renderTabContent()}
             </PhoneMainTabShell>
         </View>
     );
