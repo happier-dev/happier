@@ -10637,6 +10637,7 @@ const it: SecretsSettingsCopy = {
     linkReference: "Riferimento al campo",
     linkReferencePlaceholder: "op://Cassaforte/Elemento/campo",
     vaultShow: "Mostra le casseforti",
+    vaultReadOn: "Leggi su",
     vaultTitle: "Cassaforte",
     vaultLoading: ({ provider }: { provider: string }) => `Lettura di ${provider}…`,
     vaultEmpty: ({ provider }: { provider: string }) => `Questo account ${provider} non ha elementi che Happier possa collegare.`,

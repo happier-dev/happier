@@ -10620,6 +10620,7 @@ const zhHant: SecretsSettingsCopy = {
     linkReference: "欄位參照",
     linkReferencePlaceholder: "op://保管庫/項目/欄位",
     vaultShow: "顯示保險庫",
+    vaultReadOn: "讀取於",
     vaultTitle: "保險庫",
     vaultLoading: ({ provider }: { provider: string }) => `正在讀取 ${provider}…`,
     vaultEmpty: ({ provider }: { provider: string }) => `此 ${provider} 帳號中沒有 Happier 可以連結的項目。`,

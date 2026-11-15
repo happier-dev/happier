@@ -72,6 +72,8 @@ export const MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 = Object.freeze({
     providers: 'providers.settings',
     actions: 'actions.settings',
     managedMachines: 'machines.managed',
+    /** Which Machine a vault source installed on several is read from (Saved Secrets). */
+    secretVaults: 'secrets.vault',
 } as const);
 
 export function readMachineAdministrationTargetPreference(

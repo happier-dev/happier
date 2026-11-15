@@ -48,6 +48,7 @@ export const en = {
     linkReference: "Field reference",
     linkReferencePlaceholder: "op://Vault/Item/field",
     vaultShow: "Show vaults",
+    vaultReadOn: "Read on",
     vaultTitle: "Vault",
     vaultLoading: ({ provider }: { provider: string }) => `Reading ${provider}…`,
     vaultEmpty: ({ provider }: { provider: string }) => `This ${provider} account has no items Happier can link.`,

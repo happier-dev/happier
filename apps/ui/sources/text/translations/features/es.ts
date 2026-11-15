@@ -10641,6 +10641,7 @@ const es: SecretsSettingsCopy = {
     linkReference: "Referencia del campo",
     linkReferencePlaceholder: "op://Bóveda/Elemento/campo",
     vaultShow: "Mostrar bóvedas",
+    vaultReadOn: "Leer en",
     vaultTitle: "Bóveda",
     vaultLoading: ({ provider }: { provider: string }) => `Leyendo ${provider}…`,
     vaultEmpty: ({ provider }: { provider: string }) => `Esta cuenta de ${provider} no tiene elementos que Happier pueda vincular.`,

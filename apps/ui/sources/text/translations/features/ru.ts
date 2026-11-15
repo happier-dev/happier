@@ -10662,6 +10662,7 @@ const ru: SecretsSettingsCopy = {
     linkReference: "Ссылка на поле",
     linkReferencePlaceholder: "op://Хранилище/Запись/поле",
     vaultShow: "Показать хранилища",
+    vaultReadOn: "Читать на",
     vaultTitle: "Хранилище",
     vaultLoading: ({ provider }: { provider: string }) => `Читаем ${provider}…`,
     vaultEmpty: ({ provider }: { provider: string }) => `В этой учётной записи ${provider} нет элементов, которые Happier может связать.`,

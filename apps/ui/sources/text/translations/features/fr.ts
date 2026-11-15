@@ -10638,6 +10638,7 @@ const fr: SecretsSettingsCopy = {
     linkReference: "Référence du champ",
     linkReferencePlaceholder: "op://Coffre/Élément/champ",
     vaultShow: "Afficher les coffres",
+    vaultReadOn: "Lire sur",
     vaultTitle: "Coffre",
     vaultLoading: ({ provider }: { provider: string }) => `Lecture de ${provider}…`,
     vaultEmpty: ({ provider }: { provider: string }) => `Ce compte ${provider} n'a aucun élément que Happier peut lier.`,

@@ -10637,6 +10637,7 @@ const ca: SecretsSettingsCopy = {
     linkReference: "Referència del camp",
     linkReferencePlaceholder: "op://Caixa/Element/camp",
     vaultShow: "Mostra les caixes fortes",
+    vaultReadOn: "Llegeix a",
     vaultTitle: "Caixa forta",
     vaultLoading: ({ provider }: { provider: string }) => `S'està llegint ${provider}…`,
     vaultEmpty: ({ provider }: { provider: string }) => `Aquest compte de ${provider} no té elements que Happier pugui vincular.`,

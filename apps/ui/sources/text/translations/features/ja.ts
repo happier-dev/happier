@@ -10626,6 +10626,7 @@ const ja: SecretsSettingsCopy = {
     linkReference: "フィールド参照",
     linkReferencePlaceholder: "op://保管庫/アイテム/フィールド",
     vaultShow: "保管庫を表示",
+    vaultReadOn: "読み取り先",
     vaultTitle: "保管庫",
     vaultLoading: ({ provider }: { provider: string }) => `${provider} を読み込んでいます…`,
     vaultEmpty: ({ provider }: { provider: string }) => `この ${provider} アカウントには、Happier がリンクできる項目がありません。`,

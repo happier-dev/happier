@@ -10622,6 +10622,7 @@ const de: SecretsSettingsCopy = {
     linkReference: "Feldreferenz",
     linkReferencePlaceholder: "op://Tresor/Eintrag/Feld",
     vaultShow: "Tresore anzeigen",
+    vaultReadOn: "Lesen auf",
     vaultTitle: "Tresor",
     vaultLoading: ({ provider }: { provider: string }) => `${provider} wird gelesen…`,
     vaultEmpty: ({ provider }: { provider: string }) => `Dieses ${provider}-Konto hat keine Einträge, die Happier verknüpfen kann.`,

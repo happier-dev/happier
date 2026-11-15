@@ -10621,6 +10621,7 @@ const zhHans: SecretsSettingsCopy = {
     linkReference: "字段引用",
     linkReferencePlaceholder: "op://保管库/项目/字段",
     vaultShow: "显示保险库",
+    vaultReadOn: "读取于",
     vaultTitle: "保险库",
     vaultLoading: ({ provider }: { provider: string }) => `正在读取 ${provider}…`,
     vaultEmpty: ({ provider }: { provider: string }) => `此 ${provider} 账户中没有 Happier 可以关联的项目。`,

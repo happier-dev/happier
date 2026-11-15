@@ -15,6 +15,10 @@ import {
 } from '@/components/ui/navigation/SegmentedTabBar';
 import { SelectionCheckGlyph } from '@/components/ui/selection/SelectionCheckGlyph';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
+import { useMachineAdministrationTargetSelection } from '@/sync/domains/machines/administration/useTargetSelection';
+import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
+import type { MachineAdministrationCandidateV1 } from '@/sync/domains/machines/administration/targetSelection';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { SavedSecretSourceOption } from '@/sync/api/account/savedSecretCatalogPresentation';
 import { Text } from '@/components/ui/text/Text';
@@ -51,12 +55,25 @@ export function useSavedSecretVaultChoice(
   const [chosenVaultId, setChosenVaultId] = React.useState<string | null>(null);
   const contribution = input.source?.contribution;
   const machineIds = input.source?.machineIds;
-  // A sole installed source identifies its Machine; several installations require the person's selection.
-  const machineId = input.machineId === undefined ? (machineIds?.length === 1 ? machineIds[0] : undefined) : input.machineId;
+  // A sole installed source identifies its Machine; several installations require the person's selection, made
+  // through the shared Machine selector (only the Machines this source is installed on are offered).
+  const severalMachines = input.machineId === undefined && (machineIds?.length ?? 0) > 1;
+  const machineSelection = useMachineAdministrationTargetSelection(MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.secretVaults, {
+    enabled: severalMachines, allowSoleCandidate: false, ...(input.scope ? { accountScope: input.scope } : {}),
+  });
+  const selectedMachineId = machineSelection.selectedTarget?.machineId;
+  const machineId = input.machineId !== undefined ? input.machineId
+    : machineIds?.length === 1 ? machineIds[0]
+    : severalMachines && selectedMachineId && machineIds!.includes(selectedMachineId) ? selectedMachineId : undefined;
+  const needsMachine = severalMachines && !machineId;
+  // The Machine is part of this draft: choosing it never asks to discard the editor's other fields.
+  const machineChoice = React.useMemo(() => severalMachines && machineIds
+    ? { selection: { ...machineSelection, changeIntent: 'draft' as const }, machineIds } : null,
+  [severalMachines, machineIds, machineSelection]);
   const query = React.useMemo(
     () =>
-      contribution && committed ? { contribution, account: committed, ...(machineId ? { machineId } : {}) } : null,
-    [contribution, committed, machineId],
+      contribution && committed && !needsMachine ? { contribution, account: committed, ...(machineId ? { machineId } : {}) } : null,
+    [contribution, committed, machineId, needsMachine],
   );
   const picker = useSavedSecretVaultPicker({
     scope: input.scope,
@@ -83,15 +100,15 @@ export function useSavedSecretVaultChoice(
   );
   const commit = React.useCallback(() => {
     const trimmed = account.trim();
-    if (!trimmed) return;
+    if (!trimmed || needsMachine) return;
     if (trimmed === committed) picker.reload();
     else setCommitted(trimmed);
-  }, [account, committed, picker.reload]);
+  }, [account, committed, needsMachine, picker.reload]);
   const changeAccount = React.useCallback((next: string) => {
     setAccount(next);
   }, []);
   // The read answers for the account it was asked about; an edited account waits for Show vaults again.
-  const current = committed !== null && committed === account.trim();
+  const current = committed !== null && committed === account.trim() && !needsMachine;
   const target =
     current && vault && input.source
       ? {
@@ -114,6 +131,9 @@ export function useSavedSecretVaultChoice(
     items,
     target,
     dirty: account.length > 0,
+    /** Present when the source is installed on several Machines: the person picks the one to read. */
+    machineChoice,
+    needsMachine,
   };
 }
 
@@ -186,8 +206,27 @@ export function SavedSecretVaultFields(
       { kind: 'select', value: choice.vault?.id ?? null, multiple: false },
       tabs,
     ) === 'segmented';
+  const machineIds = choice.machineChoice?.machineIds;
+  const resolveCandidateAvailability = React.useCallback(
+    (candidate: MachineAdministrationCandidateV1) => machineIds?.includes(candidate.target.machineId)
+      ? undefined : { detail: '', selectable: false, hidden: true },
+    [machineIds],
+  );
   return (
     <>
+      {choice.machineChoice ? (
+        <View style={styles.machineChip}>
+          <MachineAdministrationTargetSelector
+            selection={choice.machineChoice.selection}
+            // Where the vault is read, chosen like the Connect sheet's sign-in Machine: one chip over the account.
+            presentation="chip"
+            chipLabel={t('secretsSettings.vaultReadOn')}
+            testIDPrefix={`${props.testID}-machine`}
+            disabled={props.disabled}
+            resolveCandidateAvailability={resolveCandidateAvailability}
+          />
+        </View>
+      ) : null}
       <FieldItem label={t('secretsSettings.linkAccount')}>
         <View style={styles.accountRow}>
           <View style={styles.accountField}>
@@ -209,7 +248,7 @@ export function SavedSecretVaultFields(
               size="normal"
               display="secondary"
               title={t('secretsSettings.vaultShow')}
-              disabled={props.disabled || choice.account.trim().length === 0}
+              disabled={props.disabled || choice.account.trim().length === 0 || choice.needsMachine}
               onPress={choice.commit}
             />
           ) : null}
@@ -356,4 +395,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   accountField: { flex: 1, minWidth: 0 },
   items: { width: '100%' },
+  // The chip keeps its own width, like the Connect sheet's sign-in Machine.
+  machineChip: { alignSelf: 'flex-start' },
 }));

@@ -10637,6 +10637,7 @@ const pt: SecretsSettingsCopy = {
     linkReference: "Referência do campo",
     linkReferencePlaceholder: "op://Cofre/Item/campo",
     vaultShow: "Mostrar cofres",
+    vaultReadOn: "Ler em",
     vaultTitle: "Cofre",
     vaultLoading: ({ provider }: { provider: string }) => `Lendo ${provider}…`,
     vaultEmpty: ({ provider }: { provider: string }) => `Esta conta do ${provider} não tem itens que o Happier possa vincular.`,

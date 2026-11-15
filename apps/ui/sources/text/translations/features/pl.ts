@@ -10651,6 +10651,7 @@ const pl: SecretsSettingsCopy = {
     linkReference: "Odwołanie do pola",
     linkReferencePlaceholder: "op://Sejf/Element/pole",
     vaultShow: "Pokaż sejfy",
+    vaultReadOn: "Odczyt na",
     vaultTitle: "Sejf",
     vaultLoading: ({ provider }: { provider: string }) => `Odczytywanie ${provider}…`,
     vaultEmpty: ({ provider }: { provider: string }) => `To konto ${provider} nie ma elementów, które Happier może połączyć.`,
