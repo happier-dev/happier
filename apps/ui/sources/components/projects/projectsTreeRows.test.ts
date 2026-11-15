@@ -216,10 +216,10 @@ describe('buildProjectsTreeRows (lab p-projects RULES)', () => {
 
     it('lists a Project\'s Environments under it, opening each Environment and rolling its trouble up (pfc-redesign dProject tree)', () => {
         const environment = (environmentId: string, title: string, extra: Partial<ProjectsTreeEnvironment> = {}): ProjectsTreeEnvironment => ({
-            serverId: 'home', projectSourceId: 'source-b', environmentId, title, titleQualifier: null, fact: 'v1.42', attention: null, ...extra,
+            serverId: 'home', projectSourceId: 'source-b', environmentId, title, titleQualifier: null, fact: 'v1.42', state: null, platform: false, attention: null, ...extra,
         });
         const billing: ProjectsTreeProject = { ...project('billing-api', [checkout('b1', 'mbp', 'main')]),
-            environments: [environment('prod', 'Production'), environment('stg', 'Staging', { fact: 'Failed', attention: 'needs-you' })] };
+            environments: [environment('prod', 'Production'), environment('stg', 'Staging', { state: { tone: 'danger', text: 'Failed' }, attention: 'needs-you' })] };
         // A one-checkout Project keeps its row and opens its checkout; its Environments make it a disclosure.
         const collapsed = buildProjectsTreeRows({ projects: [billing], openRefId: null, expandedKeys: new Set() });
         expect(shape(collapsed)).toEqual(['billing-api >']);
@@ -227,8 +227,9 @@ describe('buildProjectsTreeRows (lab p-projects RULES)', () => {
         const open = buildProjectsTreeRows({ projects: [billing], openRefId: null, expandedKeys: new Set(['billing-api']) });
         expect(shape(open)).toEqual(['billing-api v', '  Production', '  Staging']);
         // One line each (lab rdProj): no second line, the fact at the row's end.
-        expect(open.slice(1).map(row => [row.kind, row.glyph, row.subtitle ?? null, row.fact, row.attention])).toEqual([
-            ['environment', 'environment', null, 'v1.42', null], ['environment', 'environment', null, 'Failed', 'needs-you']]);
+        // The end is the state when one speaks (the one Environment state mark), else the quiet fact.
+        expect(open.slice(1).map(row => [row.kind, row.glyph, row.subtitle ?? null, row.fact, row.state?.text ?? null, row.attention])).toEqual([
+            ['environment', 'environment', null, 'v1.42', null, null], ['environment', 'environment', null, 'v1.42', 'Failed', 'needs-you']]);
         // An Environment opens on its Project's Deployments page: the Project's checkout, then that Environment.
         expect(projectsTreeRowOpenTarget(open[1]!)).toEqual({ refId: 'b1' });
         expect(projectsTreeRowEnvironment(open[1]!)).toEqual({ serverId: 'home', projectSourceId: 'source-b', environmentId: 'prod' });
@@ -254,7 +255,7 @@ describe('buildProjectsTreeRows (lab p-projects RULES)', () => {
 
     it('discloses an Environment on a Machine into what runs there and its databases, folded until opened (lab rdProj tree)', () => {
         const production: ProjectsTreeEnvironment = { serverId: 'home', projectSourceId: 'source-b', environmentId: 'prod', title: 'Production',
-            titleQualifier: null, fact: 'v1.42', attention: null, machineId: 'fsn1' };
+            titleQualifier: null, fact: 'v1.42', state: null, platform: false, attention: null, machineId: 'fsn1' };
         const staging: ProjectsTreeEnvironment = { ...production, environmentId: 'stg', title: 'Staging', machineId: null };
         const billing: ProjectsTreeProject = { ...project('billing-api', [checkout('b1', 'mbp', 'main')]), environments: [production, staging] };
         const environmentKey = 'billing-api/environment/prod';
@@ -284,7 +285,7 @@ describe('buildProjectsTreeRows (lab p-projects RULES)', () => {
 
     it('lists a Project that only deploys (no checkout on this Home) with its Environments, each opening its own page (lab rdProj: plausible, status)', () => {
         const production: ProjectsTreeEnvironment = { serverId: 'home', projectSourceId: 'src-q', environmentId: 'e1', title: 'Production',
-            titleQualifier: null, fact: 'Failed', attention: 'needs-you', machineId: 'm1' };
+            titleQualifier: null, fact: null, state: { tone: 'danger', text: 'Failed' }, platform: false, attention: 'needs-you', machineId: 'm1' };
         const demo: ProjectsTreeProject = { key: 'deployments:src-q', name: 'Billing demo', checkouts: [], environments: [production],
             deploymentSource: { serverId: 'home', projectSourceId: 'src-q' } };
         const collapsed = buildProjectsTreeRows({ projects: [demo], openRefId: null, expandedKeys: new Set() });

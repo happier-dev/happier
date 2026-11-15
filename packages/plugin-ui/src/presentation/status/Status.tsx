@@ -118,7 +118,8 @@ export function HappierStatus(props: HappierStatusProps) {
       accessibilityLiveRegion={inline ? undefined : accessibilityLiveRegion}
       aria-live={inline ? undefined : ariaLive}
       style={inline
-        ? { minWidth: 0, maxWidth: '100%', flexDirection: 'row', alignItems: 'center', gap: props.theme.spacing.xsmall }
+        // Inline, it is a row's quiet end: it gives way in the row (its word truncates) before what follows it.
+        ? { flexShrink: 1, minWidth: 0, maxWidth: '100%', flexDirection: 'row', alignItems: 'center', gap: props.theme.spacing.xsmall }
         : props.action === undefined || props.action === null
         ? { flexDirection: 'row', alignItems: 'center', gap: props.theme.spacing.small }
         : actionBelow

@@ -18,12 +18,15 @@ import {
   collectionListStyles,
 } from '@/components/ui/lists/collection/CollectionList';
 import { useCollectionTreeKeyboard, type CollectionTreeRow } from '@/components/ui/lists/collection/useCollectionTreeKeyboard';
+import { resolveHappierCollectionTreeChildIndentPx } from '@happier-dev/plugin-ui/presentation';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
 import { t } from '@/text';
 
 import { useOpenNewApp } from '../starters/newAppPresentation';
+import { ProjectsTreeEnvironmentRead, useProjectsTreeEnvironmentChildren } from '../ProjectsTreeEnvironmentReads';
+import type { ProjectsTreeEnvironmentChild } from '../projectsTreeRows';
 import type { AllDeploymentsRead } from './AllDeploymentsScreen';
 import {
   isSameDeploymentName,
@@ -32,6 +35,8 @@ import {
 import { groupDeploymentRowsByProject } from './deploymentProjectGroups';
 import { buildDeploymentEnvironmentHref, buildDeploymentProjectHref, SERVICES_ROUTE } from './deploymentNavigation';
 import { useDeploymentInventory } from './useDeploymentProject';
+import { DeploymentEnvironmentStateMark, DeploymentTreeRow } from './rows/DeploymentEnvironmentRow';
+import { deploymentEnvironmentRowFact, deploymentEnvironmentRunsOnMachine } from './rows/deploymentEnvironmentRowFact';
 
 /** What the open route has selected in the Services column. */
 export type ServicesColumnSelection =
@@ -84,7 +89,7 @@ const COLUMN_DEMAND: DeploymentReadDemandV1 = Object.freeze({
 const NO_KEYS: ReadonlySet<string> = new Set();
 
 /** A Services column row as the tree reads it, with what a press (or Enter) opens and the Project it discloses. */
-type ServicesTreeRow = CollectionTreeRow & Readonly<{ href: string | null; groupKey?: string }>;
+type ServicesTreeRow = CollectionTreeRow & Readonly<{ href: string | null; groupKey?: string; environmentId?: string }>;
 
 /**
  * The Services destination's column (lab pfc-redesign `sideSvc`, variant A): the page's views stay its tab bar, and the
@@ -195,6 +200,17 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
       open ? new Set([...current, key]) : without(current),
     );
   };
+  // An Environment opens onto what it runs (lab sideSvc level 3), read only while it is open; folded by default.
+  const [openEnvironments, setOpenEnvironments] = React.useState<ReadonlySet<string>>(NO_KEYS);
+  const toggleEnvironment = (environmentId: string) => setOpenEnvironments((current) => {
+    const next = new Set(current);
+    if (next.has(environmentId)) next.delete(environmentId); else next.add(environmentId);
+    return next;
+  });
+  const [children, publishChildren] = useProjectsTreeEnvironmentChildren();
+  const itemById = React.useMemo(() => new Map(items.map((item) => [item.environment.id, item] as const)), [items]);
+  const machineOf = (environmentId: string) => deploymentEnvironmentRunsOnMachine(itemById.get(environmentId));
+  const environmentOpen = (environmentId: string) => openEnvironments.has(environmentId) && machineOf(environmentId) !== null;
   const environmentHref = (projectSourceId: string, environmentId: string) =>
     serverId
       ? buildDeploymentEnvironmentHref({
@@ -212,6 +228,11 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
     !read.hasPreviousPage;
   const searchable = items.length > 0;
   const status = read.snapshot;
+  // Where a service or database under an opened Environment goes (the tree below reads it while it builds).
+  const childHref = (row: (typeof rows)[number], child: ProjectsTreeEnvironmentChild) => child.opens.kind === 'href'
+    ? child.opens.href
+    : serverId ? buildDeploymentEnvironmentHref({ serverId, projectSourceId: row.projectSourceId, environmentId: row.environmentId,
+      database: child.opens.database }) : null;
   // The column's rows in drawing order, as the shared tree reads them: one roving tab stop, arrows move, Right/Left
   // disclose a Project, Enter opens what a press opens (`useCollectionTreeKeyboard`, as the Projects tree).
   const tree = React.useMemo(() => {
@@ -224,18 +245,30 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
           : null;
       return { group, only, open: only === null && isOpen(group.key) };
     });
-    const environmentRow = (row: (typeof rows)[number], level: number): ServicesTreeRow => ({
-      key: `environment:${row.environmentId}`,
-      level,
-      expandable: false,
-      expanded: false,
-      href: environmentHref(row.projectSourceId, row.environmentId),
-    });
+    const environmentRow = (row: (typeof rows)[number], level: number): ServicesTreeRow[] => {
+      const open = environmentOpen(row.environmentId);
+      const own: ServicesTreeRow = {
+        key: `environment:${row.environmentId}`,
+        level,
+        expandable: machineOf(row.environmentId) !== null,
+        expanded: open,
+        href: environmentHref(row.projectSourceId, row.environmentId),
+        environmentId: row.environmentId,
+      };
+      const under = open ? children.get(row.environmentId) ?? [] : [];
+      return [own, ...under.map((child): ServicesTreeRow => ({
+        key: `environment:${row.environmentId}/${child.key}`,
+        level: level + 1,
+        expandable: false,
+        expanded: false,
+        href: childHref(row, child),
+      }))];
+    };
     const treeRows: ServicesTreeRow[] = [
       { key: 'all', level: 0, expandable: false, expanded: false, href: SERVICES_ROUTE },
       ...presented.flatMap(({ group, only, open }) =>
         only
-          ? [environmentRow(only, 0)]
+          ? environmentRow(only, 0)
           : [
               {
                 key: `project:${group.key}`,
@@ -245,18 +278,19 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
                 href: group.key === 'unnamed' ? null : projectHref(group.key),
                 groupKey: group.key,
               },
-              ...(open ? group.rows.map((row) => environmentRow(row, 1)) : []),
+              ...(open ? group.rows.flatMap((row) => environmentRow(row, 1)) : []),
             ],
       ),
     ];
     return { presented, rows: treeRows, byKey: new Map(treeRows.map((row) => [row.key, row])) };
     // isOpen, environmentHref and projectHref read exactly these inputs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groups, expanded, collapsed, routeProject, needle, serverId]);
+  }, [groups, expanded, collapsed, routeProject, needle, serverId, openEnvironments, children, itemById]);
   const keyboard = useCollectionTreeKeyboard(tree.rows, {
     onToggle: (key) => {
-      const groupKey = tree.byKey.get(key)?.groupKey;
-      if (groupKey !== undefined) toggle(groupKey, isOpen(groupKey));
+      const row = tree.byKey.get(key);
+      if (row?.groupKey !== undefined) toggle(row.groupKey, isOpen(row.groupKey));
+      else if (row?.environmentId !== undefined) toggleEnvironment(row.environmentId);
     },
     onOpenRow: (row) => {
       if (row.href) onNavigate(row.href);
@@ -268,37 +302,46 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
     return row ? keyboard.getRowProps(row) : undefined;
   };
 
-  const renderEnvironment = (
-    row: (typeof rows)[number],
-    child: boolean,
-    title?: string,
-  ) => {
+  // The one Environment row (UI refinements ruling 2026-11-15 08:57Z): the Projects tree's row, one line, its end the
+  // shared state mark or its one quiet fact; opened, the services and databases it runs under it.
+  const renderEnvironment = (row: (typeof rows)[number], child: boolean, title?: string) => {
     const href = environmentHref(row.projectSourceId, row.environmentId);
+    const testID = `services-column:environment:${row.environmentId}`;
+    const expandable = machineOf(row.environmentId) !== null;
+    const open = environmentOpen(row.environmentId);
+    const under = open ? children.get(row.environmentId) ?? [] : [];
     return (
-      <CollectionNavigationRow
-        key={row.environmentId}
-        testID={`services-column:environment:${row.environmentId}`}
-        href={href}
-        title={title ?? row.title}
-        titleQualifier={title ? null : row.titleQualifier}
-        // A folded Project keeps its Project mark, so every top-level row starts on one edge (lab `sideSvc`).
-        icon={title ? <Icon name="folder" /> : undefined}
-        // Quiet when healthy: the row speaks only while a deploy works or something needs the person; where it runs and
-        // what is live are the Environment page's (the row owner's `rail` reading).
-        subtitle={row.subtitleLeading ? row.subtitle : undefined}
-        subtitleLeading={row.subtitleLeading}
-        needsYouStatus={row.needsYouStatus}
-        treeItem={treeItemOf(`environment:${row.environmentId}`)}
-        child={child}
-        disclosure={null}
-        selected={
-          selection?.kind === 'environment' &&
-          selection.environmentId === row.environmentId
-        }
-        onPress={() => {
-          if (href) onNavigate(href);
-        }}
-      />
+      <React.Fragment key={row.environmentId}>
+        <DeploymentTreeRow
+          testID={testID}
+          // A folded Project keeps its Project mark, so every top-level row starts on one edge (lab `sideSvc`).
+          row={{ kind: title ? 'project' : 'environment', title: title ?? row.title, titleQualifier: title ? null : row.titleQualifier,
+            platform: row.platform, state: row.state, fact: deploymentEnvironmentRowFact(row, itemById.get(row.environmentId)) }}
+          href={href}
+          treeItem={treeItemOf(`environment:${row.environmentId}`)}
+          child={child}
+          disclosure={expandable ? { expanded: open, onToggle: () => toggleEnvironment(row.environmentId) } : null}
+          selected={selection?.kind === 'environment' && selection.environmentId === row.environmentId}
+          onPress={() => { if (href) onNavigate(href); }}
+        />
+        {under.map((item) => {
+          const key = `environment:${row.environmentId}/${item.key}`;
+          const target = childHref(row, item);
+          return (
+            <DeploymentTreeRow
+              key={key}
+              testID={`services-column:${key}`}
+              row={{ kind: item.kind, title: item.title, fact: item.subtitle }}
+              href={target}
+              treeItem={treeItemOf(key)}
+              child
+              indentPx={resolveHappierCollectionTreeChildIndentPx()}
+              selected={false}
+              onPress={() => { if (target) onNavigate(target); }}
+            />
+          );
+        })}
+      </React.Fragment>
     );
   };
 
@@ -363,13 +406,16 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
         {groups.length > 0 ? (
           <CollectionListGroupLabel title={t('tabs.projects')} />
         ) : null}
+        {[...openEnvironments].flatMap((environmentId) => {
+          const machineId = machineOf(environmentId);
+          return machineId && serverId ? [<ProjectsTreeEnvironmentRead key={environmentId} onChildren={publishChildren}
+            environment={{ environmentId, serverId, machineId }} />] : [];
+        })}
         {tree.presented.map(({ group, only, open }) => {
           // A Project whose one Environment carries its name folds into that Environment's row.
           if (only) return renderEnvironment(only, false, group.title);
-          const trouble = open
-            ? null
-            : (group.rows.find((row) => row.needsYouStatus)?.needsYouStatus ??
-              null);
+          // Folded, the Project says the first state that needs the person, with the one Environment state mark.
+          const trouble = open ? null : group.rows.find((row) => row.state && row.state.tone !== null)?.state ?? null;
           const href = group.key === 'unnamed' ? null : projectHref(group.key);
           return (
             <React.Fragment key={group.key}>
@@ -378,7 +424,8 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
                 href={href}
                 title={group.title}
                 icon={<Icon name="folder" />}
-                needsYouStatus={trouble}
+                status={trouble ? <DeploymentEnvironmentStateMark state={trouble}
+                  testID={`services-column:project:${group.key}:end`} /> : undefined}
                 treeItem={treeItemOf(`project:${group.key}`)}
                 count={open ? null : group.rows.length}
                 disclosure={{

@@ -94,9 +94,13 @@ export const ProjectsTreeEnvironmentReads = React.memo(
   },
 );
 
-function ProjectsTreeEnvironmentRead(
+/**
+ * One opened Environment's read of what it runs (its Machine's services, its declared databases), published to the
+ * caller's children state. The Projects tree and the Services column both read an opened Environment through here.
+ */
+export function ProjectsTreeEnvironmentRead(
   props: Readonly<{
-    environment: ProjectsTreeEnvironment;
+    environment: Pick<ProjectsTreeEnvironment, 'environmentId' | 'serverId' | 'machineId'>;
     onChildren: (
       environmentId: string,
       children: readonly ProjectsTreeEnvironmentChild[] | null,

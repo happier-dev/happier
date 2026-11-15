@@ -12,7 +12,7 @@ import {
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { StatusDot } from '@/components/ui/status/StatusDot';
+import { InlineStatus } from '@/components/ui/status/InlineStatus';
 import { t } from '@/text';
 import { resolveMachineKindGlyph } from '@/components/machines/machineKindGlyph';
 
@@ -92,12 +92,8 @@ export const ProjectOpenWhereRow = React.memo(function ProjectOpenWhereRow(
           <Item
             testID="projects.open.where.row"
             title={props.machineName ?? t('projects.open.chooseMachine')}
-            subtitle={subtitle}
-            subtitleLeading={
-              status.kind === 'online' ? (
-                <StatusDot color={theme.colors.status.connected} size={6} />
-              ) : undefined
-            }
+            // An online Machine says so through the one inline Status (UI refinements 2026-11-15 08:57Z).
+            subtitle={status.kind === 'online' ? <InlineStatus tone="success" label={subtitle} /> : subtitle}
             icon={
               <Icon
                 name={resolveMachineKindGlyph({ isThisComputer: props.isThisComputer, platform: props.platform })}

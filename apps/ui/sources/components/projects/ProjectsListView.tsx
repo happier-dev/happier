@@ -11,7 +11,6 @@ import type { PageCreateAction } from '@/components/navigation/mobile/chrome/pag
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
@@ -19,7 +18,6 @@ import { ProjectsListItemMenu } from './ProjectsListItemMenu';
 import { Icon } from '@/components/ui/icons/Icon';
 import { HappierTreeDisclosure } from '@happier-dev/plugin-ui/presentation';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import { StatusDot } from '@/components/ui/status/StatusDot';
 import { useProjectsListModel } from './useProjectsListModel';
 import { applyProjectsTreeCheckoutFacts, buildProjectsPhoneTreeRows, filterProjectsTreeByQuery, projectsTreeCheckoutKey, projectsTreeGlyphIcon, projectsTreeRowSubtitle, type ProjectsTreeEnvironmentChild, type ProjectsTreeProject, type ProjectsTreeRow } from './projectsTreeRows';
 import { ProjectsTreeEnvironmentReads, useProjectsTreeEnvironmentChildren } from './ProjectsTreeEnvironmentReads';
@@ -29,7 +27,8 @@ import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceR
 import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces';
 import { useCollectionTreeKeyboard } from '@/components/ui/lists/collection/useCollectionTreeKeyboard';
 import { ProjectsTree, openProjectsTreeRow } from './ProjectsTree';
-import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
+import { DeploymentEnvironmentStateMark } from './deployments/rows/DeploymentEnvironmentRow';
+import { ProjectsTreeRowAttention } from './ProjectsTreeRowAttention';
 import { ProjectHideUndoNotice } from './ProjectHideUndoNotice';
 import { ProjectsAddMenu } from './ProjectsAddMenu';
 import { useOpenNewApp } from './starters/newAppPresentation';
@@ -287,18 +286,16 @@ function ProjectsListRow(props: Readonly<{
             onSeparate: leaf && ref && checkouts.length > 1 ? () => { void groupCheckouts([ref], 'self'); } : null,
         };
     }, [checkouts, groupCheckouts, leaf, projectKey, props.refsById, readGroupTargets, ref]);
-    // A phone row keeps only a short value beside its label (DESIGN "Phones recompose"): an Environment's fact, a state
-    // word as often as a version, moves beneath its name, its trouble mark leading it.
-    const environmentFact = row.kind === 'environment' ? row.fact ?? null : null;
-    const subtitle = environmentFact ?? [projectsTreeRowSubtitle(row, t('projects.identity.newFromSession')), attentionLabel].filter((part): part is string => Boolean(part)).join(' · ');
+    // A phone row keeps only a short value beside its label (DESIGN "Phones recompose"): an Environment's end moves
+    // beneath its name: its state through the one Environment state mark, else its one quiet fact.
+    const environmentEnd = row.kind === 'environment'
+        ? (row.state ? <DeploymentEnvironmentStateMark state={row.state} testID={`projects-list-project-${row.key}-state`} /> : row.fact ?? null)
+        : null;
+    const subtitle = environmentEnd ?? [projectsTreeRowSubtitle(row, t('projects.identity.newFromSession')), attentionLabel].filter((part): part is string => Boolean(part)).join(' · ');
     const trailing = (
         <View style={styles.trailing}>
             {row.count != null ? <Text style={styles.count}>{String(row.count)}</Text> : null}
-            {row.kind === 'environment' ? null : row.attention === 'needs-you' ? (
-                <StatusDot color={theme.colors.state.warning.foreground} size={6} accessibilityLabel={t('projects.checkouts.needsYou')} />
-            ) : row.attention === 'working' ? (
-                <ActivitySpinner size="small" color={theme.colors.text.tertiary} />
-            ) : null}
+            {row.kind === 'environment' ? null : <ProjectsTreeRowAttention row={row} />}
             {row.expandable ? (
                 <HappierTreeDisclosure
                     testID={`projects-list-project-${row.key}:disclosure`}
@@ -336,8 +333,6 @@ function ProjectsListRow(props: Readonly<{
             title={row.title}
             titleQualifier={row.titleQualifier}
             subtitle={subtitle || undefined}
-            subtitleLeading={row.kind === 'environment' && row.needsYouStatus
-                ? <WorkStatusRowMark status={row.needsYouStatus} testIDSuffix={`projects-list-project-${row.key}`} /> : undefined}
             subtitleLines={ref ? model.workspaceSubtitleLines(ref) : 1}
             icon={<Icon name={projectsTreeGlyphIcon(row.glyph)} size={20} color={theme.colors.text.secondary} />}
             accessibilityExpanded={row.expandable ? row.expanded : undefined}

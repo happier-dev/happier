@@ -7,11 +7,9 @@ import {
 } from '@happier-dev/plugin-ui/presentation';
 
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon } from '@/components/ui/icons/Icon';
-import { StatusDot } from '@/components/ui/status/StatusDot';
-import { StatusPill } from '@/components/ui/status/StatusPill';
-import { WORK_STATUS_PILL_VARIANT } from '@/components/work/status/resolveWorkStatusTone';
+import { DeploymentTreeRow } from './deployments/rows/DeploymentEnvironmentRow';
+import { ProjectsTreeRowAttention } from './ProjectsTreeRowAttention';
 import { CollectionListGroupLabel, CollectionNavigationRow } from '@/components/ui/lists/collection/CollectionList';
 import { useCollectionTreeKeyboard } from '@/components/ui/lists/collection/useCollectionTreeKeyboard';
 import {
@@ -337,14 +335,26 @@ function ProjectsTreeRowList(props: ProjectsTreeRowListProps & Readonly<{ rows: 
         <>
             {props.rows.map((row) => {
                 const target = projectsTreeRowOpenTarget(row);
-                // An Environment row is one line: its one fact stands at its end (lab rdProj).
-                const status = row.kind === 'environment' ? <ProjectsTreeRowFact row={row} testID={`${props.testID}-${row.key}-fact`} />
-                    : row.attention === 'needs-you' ? (
-                    <StatusDot testID={`${props.testID}-${row.key}-needs-you`} color={theme.colors.state.warning.foreground} size={6}
-                        accessibilityLabel={t('projects.checkouts.needsYou')} />
-                ) : row.attention === 'working' ? (
-                    <ActivitySpinner size="small" color={theme.colors.text.tertiary} />
-                ) : undefined;
+                // An Environment and what it runs: the one Environment row (UI refinements ruling 2026-11-15 08:57Z),
+                // shared with the Services column; the tree keeps its structure, selection, keyboard and where a press goes.
+                if (row.kind === 'environment' || row.kind === 'service' || row.kind === 'database') {
+                    return (
+                        <DeploymentTreeRow
+                            key={row.key}
+                            testID={`${props.testID}-row-${row.key}`}
+                            row={{ kind: row.kind, title: row.title, titleQualifier: row.titleQualifier ?? null, platform: row.platform === true,
+                                state: row.state ?? null, fact: row.kind === 'environment' ? row.fact ?? null : row.subtitle ?? null }}
+                            href={row.child?.kind === 'href' ? row.child.href : null}
+                            disclosure={row.expandable ? { expanded: row.expanded, onToggle: () => props.onToggle(row.key) } : null}
+                            selected={row.selected}
+                            indentPx={row.level * resolveHappierCollectionTreeChildIndentPx()}
+                            treeItem={props.getRowProps(row, props.activeKey)}
+                            rightElement={props.renderRowMenu?.(row) ?? null}
+                            onPress={() => openProjectsTreeRow(row, props.onOpenRef, props.onToggle, props.onOpenHref)}
+                        />
+                    );
+                }
+                const status = row.attention || row.state ? <ProjectsTreeRowAttention row={row} testID={`${props.testID}-${row.key}`} /> : undefined;
                 return (
                     <CollectionNavigationRow
                         key={row.key}
@@ -376,19 +386,6 @@ function ProjectsTreeRowList(props: ProjectsTreeRowListProps & Readonly<{ rows: 
             })}
         </>
     );
-}
-
-/**
- * An Environment row's one fact at its end (lab rdProj: "v1.42", "● Deploy failed"): trouble as the plain status pill
- * (its dot and word in the work tone); otherwise the quiet fact. The column and the phone list both draw it.
- */
-export function ProjectsTreeRowFact(props: Readonly<{ row: Pick<ProjectsTreeRow, 'fact' | 'needsYouStatus'>; testID?: string }>) {
-    const status = props.row.needsYouStatus;
-    const testID = props.testID === undefined ? {} : { testID: props.testID };
-    // A long state word ("Running, not verified") shortens before it leaves the row's end inset.
-    if (status) return <StatusPill chrome="plain" labelVariant="phrase" labelNumberOfLines={1} style={styles.fact}
-        variant={WORK_STATUS_PILL_VARIANT[status.tone]} label={status.word} {...testID} />;
-    return props.row.fact ? <Text {...testID} numberOfLines={1} style={styles.count}>{props.row.fact}</Text> : null;
 }
 
 /** The structural rows (level 0 starts a Project) grouped per Project. */
@@ -503,10 +500,6 @@ const styles = StyleSheet.create((theme) => ({
     list: {
         flex: 1,
         minHeight: 0,
-    },
-    fact: {
-        flexShrink: 1,
-        minWidth: 0,
     },
     hidden: {
         marginTop: theme.space.s12,

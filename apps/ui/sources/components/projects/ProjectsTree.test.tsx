@@ -177,23 +177,49 @@ describe('ProjectsTree (lab p-projects TREE/HIDDEN)', () => {
         expect(padding('projects-tree-hidden-h')).toBe(padding('projects-tree-row-plugins'));
     });
 
-    it('draws an Environment row on one line with its fact at the end: trouble in its tone, else the quiet fact (lab rdProj)', async () => {
-        const { deploymentWorkStatus } = await import('./deployments/deploymentPresentation');
-        const env = (environmentId: string, title: string, fact: string, needsYouStatus: ReturnType<typeof deploymentWorkStatus> | null) => ({
-            serverId: 'home', projectSourceId: 'src', environmentId, title, titleQualifier: null, fact, needsYouStatus,
-            attention: needsYouStatus ? 'needs-you' as const : null });
+    it('draws an Environment row on one line with its end: the one Environment state mark in trouble, else the quiet fact (lab rdProj)', async () => {
+        const env = (environmentId: string, title: string, fact: string, state: Readonly<{ tone: 'danger' | 'warning' | null; text: string }> | null) => ({
+            serverId: 'home', projectSourceId: 'src', environmentId, title, titleQualifier: null, fact, state, platform: false,
+            attention: state ? 'needs-you' as const : null });
         const billing = buildProjectsTreeRows({ projects: [{ key: 'billing', name: 'billing', checkouts: [
             { refId: 'b1', machineId: 'devbox', machineName: 'devbox', label: 'main', path: '~/billing', attention: null },
-        ], environments: [env('prod', 'Production', 'v1.42', null), env('stg', 'Staging', 'Failed', deploymentWorkStatus('failed'))] }],
+        ], environments: [env('prod', 'Production', 'v1.42', null), env('stg', 'Staging', '2h', { tone: 'danger', text: 'Deploy failed' })] }],
         openRefId: null, expandedKeys: new Set(['billing']) });
         const screen = await renderScreen(<ProjectsTree rows={billing} onToggle={() => {}} onOpenRef={() => {}} />);
-        // Every string drawn under the fact's node.
+        // Every string drawn under the row end's node.
         const text = (testID: string) => screen.findAll(node => node.props?.testID === testID).slice(0, 1)
             .flatMap(node => [node, ...node.findAll(() => true)]).map(node => node.props?.children).flat(Infinity)
             .filter((part: unknown) => typeof part === 'string').join('');
-        expect(text('projects-tree-billing/environment/prod-fact')).toContain('v1.42');
-        expect(screen.findAll(node => node.props?.testID === 'projects-tree-billing/environment/stg-fact').length).toBeGreaterThan(0);
-        expect(text('projects-tree-billing/environment/stg-fact')).toContain(deploymentWorkStatus('failed').word);
+        expect(text('projects-tree-row-billing/environment/prod:end')).toContain('v1.42');
+        // The trouble is the shared plugin-ui Status, inline, in its tone; the quiet fact gives way to it.
+        const stg = screen.findAll(node => node.props?.testID === 'projects-tree-row-billing/environment/stg:end' && node.props?.presentation === 'inline')[0]!;
+        expect(stg.props).toMatchObject({ label: 'Deploy failed', tone: 'danger', presentation: 'inline' });
+        expect(text('projects-tree-row-billing/environment/stg:end')).not.toContain('2h');
+    });
+
+    it('says a folded Project\'s Environment trouble with that Environment\'s state mark, not a hand-drawn dot (LIVE-FID-1115)', async () => {
+        const env = (environmentId: string, state: Readonly<{ tone: 'danger' | 'warning' | null; text: string }> | null) => ({
+            serverId: 'home', projectSourceId: 'src', environmentId, title: environmentId, titleQualifier: null, fact: 'v1', state,
+            platform: false, attention: state ? (state.tone ? 'needs-you' as const : 'working' as const) : null });
+        const folded = (environments: ReturnType<typeof env>[], checkoutAttention: 'needs-you' | null = null) => buildProjectsTreeRows({
+            projects: [{ key: 'billing', name: 'billing', checkouts: [
+                { refId: 'b1', machineId: 'devbox', machineName: 'devbox', label: 'main', path: '~/billing', attention: checkoutAttention },
+            ], environments }], openRefId: null, expandedKeys: new Set() });
+        const end = async (rows: ReturnType<typeof buildProjectsTreeRows>) => {
+            const screen = await renderScreen(<ProjectsTree rows={rows} onToggle={() => {}} onOpenRef={() => {}} />);
+            return {
+                mark: screen.findAll(node => node.props?.presentation === 'inline' && node.props?.tone !== undefined
+                    && typeof node.type !== 'string')[0]?.props ?? null,
+                dot: screen.findByTestId('projects-tree-billing-needs-you'),
+            };
+        };
+        const failed = await end(folded([env('prod', null), env('stg', { tone: 'danger', text: 'Deploy failed' })]));
+        expect(failed.mark).toMatchObject({ label: 'Deploy failed', tone: 'danger' });
+        expect(failed.dot).toBeNull();
+        // A working deploy yields to a checkout that needs the person (that is a Session's fact, not the Environment's).
+        const deploying = await end(folded([env('prod', { tone: null, text: 'Deploying' })], 'needs-you'));
+        expect(deploying.mark).toBeNull();
+        expect(deploying.dot).not.toBeNull();
     });
 
     it('is one keyboard tree: roving stop, arrows move, Space/Right disclose, Enter opens', async () => {

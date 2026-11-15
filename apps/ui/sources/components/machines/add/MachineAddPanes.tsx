@@ -11,6 +11,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceCard } from '@/components/ui/cards/SurfaceCard';
 import { Icon } from '@/components/ui/icons/Icon';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { InlineStatus } from '@/components/ui/status/InlineStatus';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { SetupSteps, setupStepTestID, type SetupStep } from '@/components/ui/setupBlocks/SetupSteps';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -227,10 +228,8 @@ export const MachineArrivedCard = React.memo(function MachineArrivedCard(props: 
                         <Icon name="desktop" size={22} color={theme.colors.text.secondary} />
                         <View style={styles.cardCopy}>
                             <Text style={styles.cardName} numberOfLines={1}>{props.name}</Text>
-                            <View style={styles.cardFacts}>
-                                <StatusDot color={theme.colors.status.connected} size={6} />
-                                <Text style={styles.cardFact} numberOfLines={1}>{props.facts}</Text>
-                            </View>
+                            {/* The arrived Machine is online: its facts through the one inline Status (UI refinements 2026-11-15). */}
+                            <InlineStatus tone="success" label={props.facts} />
                         </View>
                         <MachineCliGlyphs machineId={props.machineId} serverId={props.serverId} isOnline />
                     </View>
@@ -357,11 +356,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     cardName: {
         ...Typography.variant('heading'),
         color: theme.colors.text.primary,
-    },
-    cardFacts: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s6,
     },
     cardFact: {
         ...Typography.variant('meta'),

@@ -10,7 +10,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
-import { StatusDot } from '@/components/ui/status/StatusDot';
+import { InlineStatus } from '@/components/ui/status/InlineStatus';
 import { t } from '@/text';
 
 import {
@@ -212,16 +212,7 @@ export const ManagedMachineControllerSection = React.memo(
         ) : <Item
           testID={props.testID}
           title={controller.name}
-          subtitle={controller.presence}
-          subtitleLeading={
-            <StatusDot
-              color={
-                controller.online
-                  ? theme.colors.status.connected
-                  : theme.colors.status.disconnected
-              }
-            />
-          }
+          subtitle={<InlineStatus tone={controller.online ? 'success' : 'muted'} label={controller.presence} />}
           icon={controller.icon}
           mode="info"
           showChevron={false}
@@ -273,18 +264,9 @@ export const ManagedControllerMoveList = React.memo(
               key={candidate.id}
               testID={`${props.testID}.${candidate.id}`}
               title={candidate.name}
-              subtitle={candidate.subtitle}
-              subtitleLeading={
-                candidate.current ? (
-                  <StatusDot
-                    color={
-                      candidate.online
-                        ? theme.colors.status.connected
-                        : theme.colors.status.disconnected
-                    }
-                  />
-                ) : undefined
-              }
+              subtitle={candidate.current
+                ? <InlineStatus tone={candidate.online ? 'success' : 'muted'} label={candidate.subtitle} />
+                : candidate.subtitle}
               icon={candidate.icon}
               titleStyle={
                 !candidate.current && !candidate.reachable

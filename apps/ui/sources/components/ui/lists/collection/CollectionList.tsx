@@ -134,13 +134,17 @@ const styles = StyleSheet.create((theme) => ({
     treeMarkLeading: {
         alignItems: 'flex-start',
     },
-    // The row's end column: the status slot, then the quiet count, on one right edge.
+    // The row's end column: the status slot, then the quiet count, on one right edge. It shrinks inside the row's
+    // end cap so a long state word truncates there; the count and the disclosure keep their width.
     trailing: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s6,
+        flexShrink: 1,
+        minWidth: 0,
     },
     trailingCount: {
+        flexShrink: 0,
         ...Typography.variant('meta'),
         color: theme.colors.text.tertiary,
         fontVariant: ['tabular-nums'],
@@ -438,6 +442,11 @@ export type CollectionNavigationRowProps = Readonly<{
     subtitleLeading?: React.ReactNode;
     /** Trouble already decided by the work owner: the shared mark and opt-in needs-you treatment. */
     needsYouStatus?: WorkStatusPresentation | null;
+    /**
+     * The row needs the person and says why itself (its state in its `status` slot, an Environment's): the shared
+     * needs-you row treatment alone, without the work-status mark `needsYouStatus` adds.
+     */
+    needsYou?: boolean;
     /** An inline mark on the title's line, after the title and its qualifier. */
     titleAccessory?: React.ReactNode;
     /** A quiet qualifier on the title's line, after the title (a project's Team, a folded machine). */
@@ -541,8 +550,9 @@ const CollectionColumnRow = React.memo(function CollectionColumnRow(props: Colle
     const onPlane = props.surface !== 'page';
     const selectedFill = useCollectionRowSelectedOnPlaneFill();
     const rowRole = props.rowRole ?? 'item';
-    const needsYouFacts = React.useMemo(() => props.needsYouStatus
-        ? { unopened: !props.selected, visible: true } : null, [props.needsYouStatus, props.selected]);
+    const needsYou = Boolean(props.needsYouStatus) || props.needsYou === true;
+    const needsYouFacts = React.useMemo(() => needsYou
+        ? { unopened: !props.selected, visible: true } : null, [needsYou, props.selected]);
     // A disclosure's count speaks for rows it hides: while it is open its rows are listed and the count says
     // nothing more, so the end column keeps only what the row adds ("+", a state) (owner 11-01).
     const hasCount = props.count !== undefined && props.count !== null && props.count !== ''

@@ -5,7 +5,7 @@ import { readSourceTeamId } from './sources/projectSourceGroups';
 import { shallow } from 'zustand/vanilla/shallow';
 import type { ProjectSurfaceTargetV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 import { readProjectSourceLink } from '@/sync/domains/workspaces/projectSourceLink';
-import type { WorkStatusPresentation } from '@/components/work/status/resolveWorkStatusTone';
+import type { DeploymentEnvironmentState } from './deployments/rows/DeploymentEnvironmentRow';
 import { buildDeploymentEnvironmentHref, buildDeploymentProjectHref } from './deployments/deploymentNavigation';
 
 /**
@@ -85,8 +85,10 @@ export type ProjectsTreeEnvironment = ProjectsTreeEnvironmentAddress & Readonly<
      */
     fact: string | null;
     attention: ProjectsTreeAttention;
-    /** The one environment row's trouble mark (failed rose, unverified amber), drawn before its state word. */
-    needsYouStatus?: WorkStatusPresentation | null;
+    /** Its state while it needs the person or deploys (the one Environment state mark draws it); healthy has none. */
+    state: DeploymentEnvironmentState | null;
+    /** On a platform target (Vercel, Cloudflare): its mark is a cloud. */
+    platform: boolean;
     /** The Machine it runs on: an Environment on a Machine discloses what runs there; without one it has nothing beneath. */
     machineId?: string | null;
 }>;
@@ -140,10 +142,11 @@ export type ProjectsTreeRow = Readonly<{
     newFromSession?: boolean;
     /** An Environment row: the Environment page it opens. Read through `projectsTreeRowEnvironment`. */
     environment?: ProjectsTreeEnvironmentAddress;
-    /** An Environment row's one fact at its end; with `needsYouStatus`, that status's word in its tone. */
+    /** An Environment row's one quiet fact at its end, when it has no state to say. */
     fact?: string | null;
-    /** An Environment row in trouble: its mark leads the state word, so the row needs no second dot. */
-    needsYouStatus?: WorkStatusPresentation | null;
+    /** An Environment row's state: the one Environment state mark at its end, in place of the fact. */
+    state?: DeploymentEnvironmentState | null;
+    platform?: boolean;
     /** A service or database under an Environment: where it opens. Read through `projectsTreeRowChild`. */
     child?: ProjectsTreeChildTarget;
 }>;
@@ -233,8 +236,9 @@ function environmentRows(project: ProjectsTreeProject, context: EnvironmentRowsC
             expanded,
             refId: null,
             opens,
-            attention: environment.needsYouStatus ? null : environment.attention,
-            needsYouStatus: environment.needsYouStatus ?? null,
+            attention: environment.attention,
+            state: environment.state,
+            platform: environment.platform,
             selected: environment.environmentId === context.openEnvironmentId,
             environment: address,
             ...(routed ? { child: { kind: 'href' as const, href: buildDeploymentEnvironmentHref(address) } } : {}),
@@ -279,6 +283,7 @@ function deploymentProjectRows(project: ProjectsTreeProject, open: boolean, cont
         refId: null,
         opens: null,
         attention: open ? null : mostUrgent(environments),
+        state: open ? null : foldedEnvironmentState(environments),
         selected: false,
         child: { kind: 'href', href: buildDeploymentProjectHref(project.deploymentSource) },
     };
@@ -302,6 +307,12 @@ function projectOpenTarget(project: ProjectsTreeProject): ProjectsTreeOpenTarget
 export function projectsTreeRowSubtitle(row: Pick<ProjectsTreeRow, 'subtitle' | 'newFromSession'>, newFromSessionLabel: string): string | null {
     if (row.newFromSession !== true) return row.subtitle ?? null;
     return [newFromSessionLabel, row.subtitle].filter((part): part is string => Boolean(part)).join(' · ');
+}
+
+/** A folded parent's Environment state (its row end says it): the first that needs the person, else the first deploying. */
+function foldedEnvironmentState(environments: readonly ProjectsTreeEnvironment[]): DeploymentEnvironmentState | null {
+    return environments.find((environment) => environment.state?.tone)?.state
+        ?? environments.find((environment) => environment.state)?.state ?? null;
 }
 
 function mostUrgent(checkouts: readonly Readonly<{ attention: ProjectsTreeAttention }>[]): ProjectsTreeAttention {
@@ -402,6 +413,7 @@ export function buildProjectsTreeRows(input: Readonly<{
                 refId: only.refId,
                 workspaceAddress: only.workspaceAddress,
                 attention: open ? only.attention : mostUrgent([only, ...environments]),
+                state: open ? null : foldedEnvironmentState(environments),
                 offline: only.offline,
                 selected,
                 newFromSession: project.newFromSession === true,
@@ -431,6 +443,7 @@ export function buildProjectsTreeRows(input: Readonly<{
             opens: projectOpenTarget(project),
             count: projectOpen ? null : checkouts.length,
             attention: projectOpen ? null : mostUrgent([...checkouts, ...environments]),
+            state: projectOpen ? null : foldedEnvironmentState(environments),
             selected: false,
             newFromSession: project.newFromSession === true,
         });
@@ -695,6 +708,7 @@ export function buildProjectsPhoneTreeRows(input: Readonly<{
             // Collapsed, the second line already says how many; the count beside it belongs to the open Project.
             count: single || !expanded ? null : checkouts.length,
             attention: expanded ? (single ? single.attention : null) : mostUrgent([...checkouts, ...environments]),
+            state: expanded ? null : foldedEnvironmentState(environments),
             offline: single?.offline,
             selected: single?.refId === input.openRefId && !holdsEnvironment(project, input.openEnvironmentId),
             newFromSession: project.newFromSession === true,

@@ -102,6 +102,8 @@ async function render(
   controller: DeploymentReadControllerV1,
   selection: Selection,
   onNavigate = vi.fn(),
+  /** The row whose arrival says the column's read has landed. */
+  ready = 'services-column:project:unnamed',
 ) {
   const screen = await renderScreen(
     <Column
@@ -118,7 +120,7 @@ async function render(
     );
     await waitForTestEvent(
       screen.subscribe,
-      () => screen.findByTestId('services-column:project:unnamed'),
+      () => screen.findByTestId(ready),
       (node) => node !== null,
     );
   });
@@ -278,5 +280,35 @@ describe('readServicesColumnSelection', () => {
       environmentId: 'env-1',
     });
     expect(readServicesColumnSelection('/projects/ws-1', null)).toBeNull();
+  });
+});
+
+describe('Services column draws the one Environment row (UI refinements 2026-11-15 08:57Z)', () => {
+  it('ends a failed Environment with the shared Status mark, lets it open onto what it runs, and says the trouble once on its folded Project', async () => {
+    const { createDeploymentReceiptHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const failed = {
+      ...environment('env-shop-staging', 'source-shop', 'Staging', 'storefront'),
+      currentDeployment: createDeploymentReceiptHeaderV1({ id: 'receipt-1', environmentId: 'env-shop-staging', state: 'failed' }),
+    };
+    const items = [failed, environment('env-shop-production', 'source-shop', 'Production', 'storefront')];
+    const folded = controllerFor(items);
+    const { screen: closed } = await render(folded, { kind: 'all' }, vi.fn(), 'services-column:project:source-shop');
+    const projectEnd = closed.root.findAll((node) => node.props.presentation === 'inline'
+      && String(node.props.testID ?? '').startsWith('services-column:project:source-shop'))[0];
+    expect(projectEnd?.props.tone).toBe('danger');
+    folded.retire();
+
+    const opened = controllerFor(items);
+    const { screen } = await render(opened, { kind: 'environment', projectSourceId: 'source-shop', environmentId: 'env-shop-staging' },
+      vi.fn(), 'services-column:project:source-shop');
+    const end = screen.root.findAll((node) => node.props.testID === 'services-column:environment:env-shop-staging:end'
+      && node.props.presentation === 'inline')[0]!;
+    expect(end.props).toMatchObject({ tone: 'danger', presentation: 'inline' });
+    // A deployed Environment discloses what it runs (level 3, lab sideSvc); one never deployed has nothing beneath.
+    const row = (id: string) => screen.root.findAll((node) => node.props.testID === `services-column:environment:${id}`
+      && 'disclosure' in node.props)[0]!;
+    expect(row('env-shop-staging').props.disclosure).toMatchObject({ expanded: false });
+    expect(row('env-shop-production').props.disclosure).toBeNull();
+    opened.retire();
   });
 });

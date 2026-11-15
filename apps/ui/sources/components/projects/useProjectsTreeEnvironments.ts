@@ -6,8 +6,8 @@ import { useLayoutPresentationActive } from '@/components/ui/presentation/Plugin
 import { retainDeep, retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
 
-import { isSameDeploymentName, useDeploymentEnvironmentRowParts } from './deployments/DeploymentEnvironmentCollection';
-import { deploymentWorkStatus } from './deployments/deploymentPresentation';
+import { useDeploymentEnvironmentRowParts } from './deployments/DeploymentEnvironmentCollection';
+import { deploymentEnvironmentRowFact, deploymentEnvironmentRunsOnMachine } from './deployments/rows/deploymentEnvironmentRowFact';
 import { useDeploymentPresentationDemand } from './deployments/useDeploymentPresentationDemand';
 import { groupDeploymentRowsByProject } from './deployments/deploymentProjectGroups';
 import { useDeploymentInventory } from './deployments/useDeploymentProject';
@@ -43,10 +43,6 @@ export function useProjectsTreeEnvironments(
       const id = project.source?.source.id;
       if (id && !projectBySource.has(id)) projectBySource.set(id, project);
     }
-    // The Machine each deployed Environment runs on, as the read says: opened, it reads what runs there. One never
-    // deployed runs nothing yet, so it has nothing to disclose.
-    const machineByEnvironment = new Map(items.flatMap((item) => item.currentDeployment
-      ? [[item.environment.id, item.environment.controllerMachineId] as const] : []));
     const itemById = new Map(items.map((item) => [item.environment.id, item] as const));
     const bySource = new Map<string, ProjectsTreeEnvironment[]>();
     const deployOnly: Array<Readonly<{ projectSourceId: string; projectName: string | null; environment: ProjectsTreeEnvironment }>> = [];
@@ -60,13 +56,14 @@ export function useProjectsTreeEnvironments(
         environmentId: part.environmentId,
         title: part.title,
         titleQualifier: part.titleQualifier ?? null,
-        // One fact at the row's end (lab rdProj): trouble's own word, a running deploy's state word, else the live
-        // version when it says more than the name, else the one row's own age.
-        fact: environmentFact(part, itemById.get(part.environmentId)),
-        // The one row's own reading: trouble needs you; a deploy's step glyph means it is working.
-        attention: part.needsYouStatus ? 'needs-you' : part.subtitleLeading ? 'working' : null,
-        needsYouStatus: part.needsYouStatus,
-        machineId: machineByEnvironment.get(part.environmentId) ?? null,
+        // The row's end (lab rdProj): its state through the one Environment state mark, else its one quiet fact.
+        fact: deploymentEnvironmentRowFact(part, itemById.get(part.environmentId)),
+        state: part.state,
+        platform: part.platform,
+        // A collapsed Project's rollup: a state that speaks needs you; a deploy at work is working.
+        attention: part.state ? (part.state.tone === null ? 'working' : 'needs-you') : null,
+        // Opened, a deployed Environment reads what runs on its Machine; one never deployed has nothing beneath.
+        machineId: deploymentEnvironmentRunsOnMachine(itemById.get(part.environmentId)),
       };
       if (!project) { deployOnly.push({ projectSourceId: part.projectSourceId, projectName: part.projectName, environment }); continue; }
       const list = bySource.get(part.projectSourceId);
@@ -92,15 +89,6 @@ export function useProjectsTreeEnvironments(
     previous.current = output;
     return output;
   }, [items, parts, projects, serverId]);
-}
-
-function environmentFact(part: Readonly<{ title: string; detail: string; needsYouStatus: Readonly<{ word: string }> | null }>,
-  item: EnvironmentItem | undefined): string | null {
-  if (part.needsYouStatus) return part.needsYouStatus.word;
-  const deployment = item?.currentDeployment;
-  if (deployment && (deployment.state === 'queued' || deployment.state === 'running')) return deploymentWorkStatus(deployment.state).word;
-  const version = item?.liveVersionTitle;
-  return version && !isSameDeploymentName(version, part.title) ? version : part.detail || null;
 }
 
 const selectOpenEnvironmentId = (params: Readonly<Record<string, string | string[] | undefined>>): string | null =>

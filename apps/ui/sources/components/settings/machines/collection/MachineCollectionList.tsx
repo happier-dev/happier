@@ -50,7 +50,7 @@ import { CollectionDraftRow, CollectionList, CollectionListGroupLabel, Collectio
 import { CollectionIndexRow } from '@/components/ui/lists/collection/CollectionIndexRow';
 import { useRevealSelectedRow } from '@/components/ui/lists/collection/useRevealSelectedRow';
 import { HappierCollectionListMark } from '@happier-dev/plugin-ui/presentation';
-import { StatusDot } from '@/components/ui/status/StatusDot';
+import { InlineStatus } from '@/components/ui/status/InlineStatus';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
@@ -256,11 +256,12 @@ const MachineListRow = React.memo(function MachineListRow(props: Readonly<{
                 key={machineCollectionRowKey(row)}
                 testID={row.kind === 'managed' ? `settings.machines.managed.${row.serverId}.${row.managedId}` : `settings.machines.row.${row.serverId}.${row.machineId}`}
                 title={row.title}
-                subtitle={statusLine(row, !rail)}
-                subtitleLeading={row.kind === 'managed' ? undefined : (
-                    <StatusDot
+                // A Machine's presence is its state line through the one inline Status (UI refinements 2026-11-15 08:57Z).
+                subtitle={row.kind === 'managed' ? statusLine(row, !rail) : (
+                    <InlineStatus
                         testID={`settings.machines.row.${row.serverId}.${row.machineId}.presence`}
-                        color={row.online ? theme.colors.status.connected : theme.colors.status.disconnected}
+                        tone={row.online ? 'success' : 'muted'}
+                        label={statusLine(row, !rail)}
                     />
                 )}
                 subtitleAccessory={rail || row.kind === 'managed' ? undefined : (
@@ -833,11 +834,11 @@ const MachineDraftRow = React.memo(function MachineDraftRow(props: Readonly<{ se
             rowRole="item"
             testID="settings.machines.rail.draft"
             title={row?.title ?? t('machineAdd.newMachine')}
-            subtitle={row?.status ?? undefined}
-            subtitleLeading={row ? (
-                <StatusDot
-                    color={tone === 'failed' ? theme.colors.status.error : tone === 'arrived' ? theme.colors.status.connected : theme.colors.status.connecting}
-                    isPulsing={tone === 'waiting' || tone === 'running'}
+            subtitle={row?.status ? (
+                <InlineStatus
+                    tone={tone === 'failed' ? 'danger' : tone === 'arrived' ? 'success' : 'info'}
+                    pulsing={tone === 'waiting' || tone === 'running'}
+                    label={row.status}
                 />
             ) : undefined}
             icon={(
@@ -872,8 +873,9 @@ const ThisComputerCollectionRow = React.memo(function ThisComputerCollectionRow(
             rowRole="catalogRow"
             testID="settings.machines.thisComputer"
             title={t('settingsMachines.thisComputerTitle')}
-            subtitle={needsYou ? summary.title ?? undefined : t('settingsMachines.thisComputerRowSubtitle')}
-            subtitleLeading={needsYou ? <StatusDot testID="settings.machines.thisComputer.attention" color={theme.colors.status.actionRequired} /> : undefined}
+            subtitle={needsYou && summary.title
+                ? <InlineStatus testID="settings.machines.thisComputer.attention" tone="warning" label={summary.title} />
+                : needsYou ? undefined : t('settingsMachines.thisComputerRowSubtitle')}
             icon={(
                 <HappierCollectionListMark rowRole="catalogRow">
                     <Icon name="laptop" size={20} color={theme.colors.text.secondary} />
