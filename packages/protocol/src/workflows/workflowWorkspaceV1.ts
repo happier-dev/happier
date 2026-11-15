@@ -4,6 +4,7 @@ import { z } from '../zodRuntimePolicy.js';
 
 import { preservedBoundedNfcString } from '../strings/preservedBoundedNfcString.js';
 import { WorkflowAuthoredProducerRefSchema } from './workflowReferenceV1.js';
+import { MachinePoolSelectionOriginV1Schema } from '../machines/pools/v1.js';
 
 /**
  * Authored workspace **selection** for a workflow definition (SPACE §3.2).
@@ -67,6 +68,17 @@ export const WorkflowProjectTargetV1Schema = lazyZodSchema(() => z.strictObject(
   workspaceRefId: zMini.optional(preservedBoundedNfcString(191, 'Workspace ids')),
 }));
 export type WorkflowProjectTargetV1 = z.infer<typeof WorkflowProjectTargetV1Schema>;
+
+/**
+ * What a person picks for "Runs on": a Machine, or a Machine pool that the existing pool
+ * placement owner (`machines.pools.resolve`) resolves to one Machine once, when the Run starts.
+ * Every step then runs on that Run's Machine.
+ */
+export const WorkflowRunsOnTargetV1Schema = lazyZodSchema(() => z.union([
+  WorkflowProjectTargetV1Schema,
+  z.strictObject({ pool: MachinePoolSelectionOriginV1Schema, directory: WorkflowWorkspacePathSchema }),
+]));
+export type WorkflowRunsOnTargetV1 = z.infer<typeof WorkflowRunsOnTargetV1Schema>;
 
 export const WorkflowResolvedInvocationRefV1Schema = lazyZodSchema(() => z.strictObject({
   producer: WorkflowAuthoredProducerRefSchema,

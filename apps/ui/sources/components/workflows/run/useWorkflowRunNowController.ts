@@ -1,7 +1,7 @@
 import React from 'react';
 
 import { WorkflowRunStartRequestV1Schema, WorkflowRunStartResultV1Schema, WorkflowRunGetResultV1Schema, type WorkflowRunStartRequestV1, type WorkflowRunStartResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
-import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
+import type { WorkflowProjectTargetV1, WorkflowRunsOnTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import { projectNativeJsonValueForTransport, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
@@ -23,6 +23,7 @@ import { areServerAccountScopesEqual, serverAccountScopeKeySuffix } from '@/sync
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
+import { resolveMachinePool } from '@/sync/ops/machinePools';
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import { workflowRunRowFromSummary } from '@/sync/store/domains/workflowRuns';
 
@@ -62,8 +63,11 @@ export type WorkflowRunNowRequest = Readonly<{
     onComplete?: WorkflowRunStartRequestV1['onComplete'];
     /** Exact committed Discussion question; admission derives its frontier. */
     origin?: WorkflowRunStartRequestV1['origin'];
-    /** Exact page-selected project, stamped as host context rather than Action input. */
-    project?: WorkflowProjectTargetV1;
+    /**
+     * Exact page-selected "Runs on", stamped as host context rather than Action input. A pool
+     * resolves to one Machine through the pool placement owner once, before admission.
+     */
+    project?: WorkflowRunsOnTargetV1;
     /**
      * The definition the person reviewed when the source names it only by
      * reference (a saved revision or a catalog entry). It is never sent; it is
@@ -124,7 +128,21 @@ export type WorkflowRunNowController = Readonly<{
     clearRefusal: () => void;
 }>;
 
-function prepareWorkflowRunNowRequest(request: WorkflowRunNowRequest & Readonly<{ runId: string }>) {
+/** A pool "Runs on" picks its Machine once per Run id; a retry re-sends the retained request. */
+async function resolveWorkflowRunNowPlacement(request: WorkflowRunNowRequest & Readonly<{ runId: string }>,
+    lifetime: ActiveServerAccountScopeLifetime): Promise<WorkflowRunNowRequest & Readonly<{ runId: string; project?: WorkflowProjectTargetV1 }>> {
+    const project = request.project;
+    if (project === undefined || !('pool' in project)) return { ...request, project };
+    const resolved = await resolveMachinePool(lifetime.scope.serverId,
+        { poolId: project.pool.poolId, requestKey: request.runId, purpose: 'session' },
+        { expectedAccountId: lifetime.scope.accountId });
+    if (resolved.kind !== 'resolved') {
+        throw new WorkflowActionError({ message: 'target_unavailable', rawCode: 'target_unavailable', rawDetails: { reason: resolved.reason } });
+    }
+    return { ...request, project: { machineId: resolved.machineId, directory: project.directory } };
+}
+
+function prepareWorkflowRunNowRequest(request: WorkflowRunNowRequest & Readonly<{ runId: string; project?: WorkflowProjectTargetV1 }>) {
     // Retain the exact transport snapshot, including permissive ingress data,
     // rather than the composer's mutable objects across an unknown outcome.
     const input = WorkflowRunStartRequestV1Schema.parse(projectNativeJsonValueForTransport({
@@ -393,9 +411,9 @@ export function useWorkflowRunNowController(
                 commandId: runId,
                 submit: async () => {
                     didSubmit = true;
-                    submitted = admission.request ?? prepareWorkflowRunNowRequest({
+                    submitted = admission.request ?? prepareWorkflowRunNowRequest(await resolveWorkflowRunNowPlacement({
                         ...('prepareRequest' in request ? await request.prepareRequest(runId) : request), runId,
-                    });
+                    }, requestLifetime));
                     if (admission.request !== submitted) {
                         admission.request = submitted;
                         requestState.publish(key);

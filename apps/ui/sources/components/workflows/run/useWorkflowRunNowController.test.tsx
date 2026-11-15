@@ -186,6 +186,46 @@ describe('useWorkflowRunNowController', () => {
     });
     expect(executeMock.mock.calls[0]?.[0].input).toMatchObject({ origin });
   });
+  async function enableMachinePools() {
+    homes.answer(homeA, '/v1/features', { body: createRootLayoutFeaturesResponse({
+      features: { workflows: { enabled: true }, machines: { pools: { enabled: true } } } }) });
+    const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    await getServerFeaturesSnapshot({ serverId: homeA, force: true });
+  }
+  it('starts a pool-targeted Run on the Machine the pool placement owner resolves, once', async () => {
+    const poolId = '00000000-0000-4000-8000-0000000000aa';
+    await enableMachinePools();
+    const resolves: unknown[] = [];
+    homes.answer(homeA, 'POST /v1/machines/pools/resolve', { select: (input) => {
+      resolves.push(input);
+      return { body: { kind: 'resolved', poolId, machineId: 'machine-1', priorityTier: 0 } };
+    } });
+    executeMock.mockResolvedValueOnce(admitted('created'));
+    const { useWorkflowRunNowController } = await import('./useWorkflowRunNowController');
+    const hook = await renderHook(() => useWorkflowRunNowController());
+    await act(async () => {
+      await hook.getCurrent().runNow({ runId: RUN_ID, source,
+        project: { pool: { kind: 'machine_pool', poolId }, directory: '/repo' } });
+    });
+    expect(resolves).toEqual([expect.objectContaining({ poolId, requestKey: RUN_ID, purpose: 'session' })]);
+    expect(executeMock).toHaveBeenCalledTimes(1);
+    expect(executeMock.mock.calls[0]?.[0].target).toMatchObject({ kind: 'machine', machineId: 'machine-1',
+      project: { machineId: 'machine-1', directory: '/repo' } });
+  });
+  it('refuses a pool-targeted Run without starting it when the pool has no available Machine', async () => {
+    const poolId = '00000000-0000-4000-8000-0000000000ab';
+    await enableMachinePools();
+    homes.answer(homeA, 'POST /v1/machines/pools/resolve', {
+      body: { kind: 'unavailable', poolId, reason: 'no_available_machine' } });
+    const { useWorkflowRunNowController } = await import('./useWorkflowRunNowController');
+    const hook = await renderHook(() => useWorkflowRunNowController());
+    await act(async () => {
+      await hook.getCurrent().runNow({ runId: RUN_ID, source, refusal: 'inline',
+        project: { pool: { kind: 'machine_pool', poolId }, directory: '/repo' } });
+    });
+    expect(executeMock).not.toHaveBeenCalled();
+    expect(hook.getCurrent().refusal).not.toBeNull();
+  });
   it('admits the reviewed role overrides rather than silently using the Account roles', async () => {
     executeMock.mockResolvedValueOnce(admitted('created'));
     const { useWorkflowRunNowController } =
