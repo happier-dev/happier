@@ -469,6 +469,47 @@ test('head pledges survive older waiter achievable-memory flips', linux, async t
   older.socket.destroy();
 });
 
+// Systemic 18:47Z: the shared runtime producer and the blocking commit compiler
+// unblock every lane, so they are served before ordinary waiters (the producer
+// first). The broker derives this from the admitted command identity; a caller
+// flag grants nothing.
+const priorityIdentity = (root, kind) => ({
+  ordinary: { className: 'compilation', component: '.', entry: 'node scripts/build.mjs' },
+  commit: { className: 'compilation', component: '.', entry: `node ${root}/scripts/workspaces/checkCommitTypeCoherence.mjs` },
+  producer: { className: 'source-bundle', component: '.', entry: `node ${root}/apps/stack/scripts/build/build_source_runtime.mjs` },
+  claimed: { className: 'compilation', component: '.', entry: `node ${root}/scripts/run-tests.mjs`, headPriority: true },
+})[kind];
+for (const [scenario, earlier, later, laterFirst] of [
+  ['commit compiler before an earlier ordinary job', 'ordinary', 'commit', true],
+  ['runtime producer before an earlier ordinary job', 'ordinary', 'producer', true],
+  ['runtime producer before an earlier commit compiler', 'commit', 'producer', true],
+  ['an ordinary caller cannot claim priority', 'ordinary', 'claimed', false],
+]) {
+  test(`head priority: ${scenario}`, linux, async t => {
+    const { root } = await fixture(t);
+    const large = await (await acquire(root, 70, t)).admit();
+    const small = await (await acquire(root, 30, t)).admit();
+    const first = await acquire(root, 60, t, priorityIdentity(root, earlier));
+    const second = await acquire(root, 60, t, priorityIdentity(root, later));
+    const pledging = laterFirst || earlier !== 'ordinary';
+    await small.release();
+    const pledged = await requestAdmissionSample(root);
+    assert.equal(pledged.head.headPriority > 0, pledging, 'the sample names a priority head');
+    assert.equal(pledged.head.reservationActive, pledging, 'a priority head pledges releases at once, without the aging bound');
+    assert.equal(pledged.head.reservationKiB, pledging ? 30 : 0);
+    assert.equal(pledged.waitingCount, 2, 'floors still apply: neither 60-unit waiter starts in 30 free units');
+    const follower = await acquire(root, 5, t, { noWait: true });
+    if (pledging) assert.equal((await follower.next()).reason, 'HSTACK_MEMORY_BUSY', 'ordinary backfills cannot spend the priority pledge');
+    else await follower.admit();
+    await large.release();
+    const [admittedFirst, waiting] = laterFirst ? [second, first] : [first, second];
+    const started = await admittedFirst.admit();
+    assert.equal((await requestAdmissionSample(root)).waitingCount, 1, 'only one 60-unit job fits; the other keeps waiting');
+    await started.release();
+    await waiting.admit();
+  });
+}
+
 // Coordination 2026-11-13 11:22Z: host-bound reloads may use a relocatable head's pledge.
 for (const scenario of ['nl3 reload', 'head resumes', 'relocatable order', 'host-bound head']) {
   test(`host-bound pledge priority: ${scenario}`, linux, async t => {
@@ -857,6 +898,8 @@ test('native compiler admission tags completion peaks with canonical projects', 
   });
   const script = `${renderNativeCommandPolicy()}
 repo_root=$1; invoked_cwd=$1; script_dir=$1/apps/stack/bin; launcher_path=$3
+. "$1/apps/stack/scripts/utils/proc/native_process_identity.sh"
+. "$1/apps/stack/scripts/utils/proc/native_process_priority.sh"
 . "$1/apps/stack/scripts/utils/proc/native_admission_client.sh"
 resolve_native_command_policy node scripts/workspaces/runTypeScriptCli.mjs -p packages/brand/tsconfig.json -p packages/agents/tsconfig.json
 run_heavyweight_admission "$2" compilation fixture "$4" --input-type=module -e "$5" "$2"

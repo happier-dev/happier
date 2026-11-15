@@ -10,6 +10,16 @@ exec_in_jobs_slice() {
   case "$(sed -n 's/^0:://p' /proc/self/cgroup 2>/dev/null)" in
     *'/happier-jobs.slice/'*) exec "$@" ;;
   esac
+  exec_in_jobs_scope "$@"
+}
+
+# An admission client reports its payload's kernel peak (memory.peak) only from
+# its own per-dispatch scope. A shared jobs-slice scope (an agent's tmux session)
+# is not one: the client takes its own scope there, and its payload reenters it.
+exec_in_jobs_scope() {
+  case "$(sed -n 's/^0:://p' /proc/self/cgroup 2>/dev/null)" in
+    *'/happier-jobs.slice/happier-jobs-'*'.scope') exec "$@" ;;
+  esac
   jobs_slice_current_nice=$(ps -o ni= -p "$$") || return
   jobs_slice_current_nice=$((jobs_slice_current_nice))
   jobs_slice_nice=$jobs_slice_current_nice

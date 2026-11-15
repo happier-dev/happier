@@ -262,6 +262,7 @@ if [ "${1-}" = --heavyweight-admission ] || [ "${1-}" = --heavyweight-admission-
   heavyweight_require_inherited=0
   heavyweight_failure_id=
   heavyweight_workspace_locks=
+  heavyweight_admission_projects=
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --admission-root=*) heavyweight_admission_root=${1#--admission-root=} ;;
@@ -270,6 +271,9 @@ if [ "${1-}" = --heavyweight-admission ] || [ "${1-}" = --heavyweight-admission-
       --cpu-cores=*) heavyweight_admission_requested_cpu=${1#--cpu-cores=} ;;
       --failure-id=*) heavyweight_failure_id=${1#--failure-id=} ;;
       --workspace-locks=*) heavyweight_workspace_locks=${1#--workspace-locks=} ;;
+      # The admission identity's project set (newline-separated), e.g. the owner
+      # programs a commit compiler checks; the broker sizes each set by its own peak.
+      --projects=*) heavyweight_admission_projects=${1#--projects=} ;;
       --required-tools=*)
         # The generated policy owns declaration validation and stable unions;
         # ordinary admission invocations do no additional classification.

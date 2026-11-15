@@ -605,6 +605,17 @@ as soon as it fits. Its pledge clears on admission, refusal, withdrawal or
 replacement by another head. Status and read-only admission checks deduct the
 same pledge from unreserved memory and CPU. The sample exposes head age,
 `reservationDelayMs` and `reservationActive` alongside `reservationKiB`.
+Two kinds of work unblock every lane and are served before ordinary waiters
+(Systemic, 2026-11-15): first the shared runtime producer (`source-bundle` running
+`apps/stack/scripts/build/build_source_runtime.mjs`), then the blocking commit
+compiler (`compilation` running `scripts/workspaces/checkCommitTypeCoherence.mjs`;
+every commit gate, because whether a candidate repairs HEAD is known only after its
+gate). The broker derives the rank from the admitted command identity that the
+canonical client builds from the payload argv; a request field claiming priority is
+ignored. Priority waiters keep arrival order within their rank, a priority head
+pledges releases at once instead of after the 22m24s bound, and ordinary source
+bundles cannot borrow its pledge. Floors, capacity checks and EASY lending are
+unchanged. The sample's `head.headPriority` is the head's rank (0 = ordinary).
 Each admitted client retains a pathname socket listener
 for its payload's lifetime; closure of the broker's peer connection releases its reservation.
 Waiting clients block on their control sockets without polling or process walks.
@@ -854,6 +865,14 @@ set, never the argument list. When the payload ends, the outermost admission cli
 reads its dispatch scope's cgroup `memory.peak` in `happier-jobs.slice` and sends it
 on the slot socket; every payload phase runs inside that scope, so the value is
 never below the payload's true peak (it can include preparation and page cache).
+A local client takes its own `happier-jobs-*.scope` unless it already runs in one
+(`exec_in_jobs_scope`); a shared jobs-slice scope such as an agent's tmux session
+does not count, because its peak is not the payload's. Before 2026-11-15 local
+clients stayed in that shared scope, so the controller recorded no local
+compilation identity and every one kept the 38 GiB class floor (sampled peaks that
+day: median 1.5 GiB, p90 17.9 GiB, max 35.9 GiB over 270 completions). The commit
+compiler names the owner programs it will compile (changed files plus importers)
+as its project set, so each program set is sized by its own recorded peak.
 Event-sampled RSS peaks never size a reservation. An unrecorded identity reserves
 its class's maximum kernel peak; a class without kernel history keeps the client's
 floor, as do dynamic export floors. Maxima live in the broker root's

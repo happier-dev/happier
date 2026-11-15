@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { appendFileSync, closeSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, unlinkSync, watch, writeFileSync } from 'node:fs';
 import { createConnection, createServer } from 'node:net';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, posix, relative } from 'node:path';
 import { availableParallelism } from 'node:os';
 import { HEAVYWEIGHT_COMMAND_RESOURCES, resolveAdmissionCpuCores } from '../dev_targets/command_resources.mjs';
 import { createInterface } from 'node:readline';
@@ -19,6 +19,23 @@ export { brokerAddress } from './admission_socket.mjs';
 // (2026-11-13 provenance census; includes preparation/admission). Give backfills
 // this measured opportunity window, then accumulate releases for the old head.
 const HEAD_RESERVATION_DELAY_MS = 1_344_000;
+
+// Systemic 18:47Z: work that unblocks every lane is served before ordinary
+// waiters: first the shared runtime producer (one build at a time under its
+// lock), then the blocking commit compiler (every commit gate: whether a
+// candidate repairs HEAD is only known after its gate). Derived from the admitted
+// command identity, which the canonical client builds from the payload argv; a
+// caller-supplied flag grants nothing.
+const HEAD_PRIORITY_RANKS = new Map([
+  ['source-bundle apps/stack/scripts/build/build_source_runtime.mjs', 2],
+  ['compilation scripts/workspaces/checkCommitTypeCoherence.mjs', 1],
+]);
+function headPriorityRank(request) {
+  const script = typeof request.entry === 'string' ? request.entry.split(' ')[1] : undefined;
+  if (!script || typeof request.repoDir !== 'string') return 0;
+  const path = isAbsolute(script) ? relative(request.repoDir, script) : posix.normalize(script);
+  return HEAD_PRIORITY_RANKS.get(`${request.resourceClass ?? request.className} ${path}`) ?? 0;
+}
 
 // Coordination 2026-11-14 18:21Z (Systemic) and the coordinator's follow-up:
 // a recorded job identity reserves its maximum kernel-observed peak (the
@@ -190,7 +207,9 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     renameSync(`${target}.tmp`, target);
   }
 
-  const compareArrival = (left, right) => left.arrivedAt - right.arrivedAt || left.arrivalOrder - right.arrivalOrder;
+  // Higher priority ranks go first; arrival orders waiters within a rank.
+  const compareArrival = (left, right) => right.headPriority - left.headPriority
+    || left.arrivedAt - right.arrivedAt || left.arrivalOrder - right.arrivalOrder;
 
   function slotResourceBudget() {
     let reservedMemoryKiB = 0;
@@ -232,7 +251,8 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     headPledge = head ? (head.headPledge ??= { item: head, memoryKiB: 0, cpuCores: 0 }) : undefined;
   }
   function headReservation(head) {
-    const active = Boolean(head && Date.now() - head.arrivedAt >= HEAD_RESERVATION_DELAY_MS);
+    // A priority head pledges releases at once; ordinary heads after the aging bound.
+    const active = Boolean(head && (head.headPriority > 0 || Date.now() - head.arrivedAt >= HEAD_RESERVATION_DELAY_MS));
     const pledged = active && headPledge?.item === head;
     return {
       active,
@@ -288,7 +308,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     return { ...sample, ...budget, overruns, nextOverrunAt, durationHistoryUnavailableCount,
       head: head ? { className: symbolicClass(head), minimumFloorKiB: minimumFloor(head),
         ageMs: Math.max(0, Date.now() - head.arrivedAt), reservationKiB: reservation.memoryKiB,
-        reservationActive: reservation.active, reservationDelayMs: HEAD_RESERVATION_DELAY_MS,
+        reservationActive: reservation.active, reservationDelayMs: HEAD_RESERVATION_DELAY_MS, headPriority: head.headPriority,
         ...(headPledge?.item === head && headPledge.lastHostBoundAdmissionKiB !== undefined
           ? { lastHostBoundAdmissionKiB: headPledge.lastHostBoundAdmissionKiB } : {}) } : null,
       waitingByClassAndFloor: [...buckets.values()],
@@ -551,7 +571,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     // Coordination 2026-11-13 11:22Z: source bundles (including stack reloads)
     // cannot move hosts. Let fitting ones use a relocatable head's pledge first.
     // Reorder only this pass, never the arrival queue or the retained pledge.
-    const hostBoundFirst = new Set(pledgingHead?.className !== 'source-bundle' && reservation.memoryKiB > 0
+    const hostBoundFirst = new Set(pledgingHead?.className !== 'source-bundle' && !(pledgingHead?.headPriority > 0) && reservation.memoryKiB > 0
       ? waiting.filter(item => item.className === 'source-bundle' && canReserveHead(item)
         && item.floorKiB <= Math.min(reservation.memoryKiB, availableMemoryKiB)
         && minimumCpuCores(item) <= availableCpuCores) : []);
@@ -749,7 +769,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
         send(socket, { kind: 'refused', reason: 'HSTACK_INVALID_ADMISSION' }); socket.end(); return;
       }
       item = { ...request, socket, locks: request.locks ?? [], env: request.env ?? {}, settled: false,
-        arrivedAt: request.arrivedAt ?? Date.now(), arrivalOrder: ++arrivalOrder };
+        arrivedAt: request.arrivedAt ?? Date.now(), arrivalOrder: ++arrivalOrder, headPriority: headPriorityRank(request) };
       item.floorKiB = recordedIdentityFloorKiB(item);
       item.observation = createWorkspaceBuildResourceObservation({ locks: item.locks });
       if (item.floorOptions) item.floorOptions = [...item.floorOptions].sort((left, right) => right.floorKiB - left.floorKiB || right.workers - left.workers);
