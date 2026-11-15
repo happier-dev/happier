@@ -30,6 +30,7 @@ import { getBundledVoiceProviderEntry } from '@/voice/registry/internalContribut
 import { resolveVoiceConversationAdapterMachineReadiness } from '@/voice/registry/readiness';
 import { projectVoiceExecutionMachineReadiness, resolveVoiceExecutionMachineSelectionFromState } from '@/voice/settings/executionMachine';
 import { recoverVoiceExecutionMachine } from '@/voice/runtime/execution/recoverVoiceExecutionMachine';
+import { VOICE_AGENT_SELECTION_UNAVAILABLE_ERROR_CODE, type ResolvedVoiceConfiguredAgentTarget } from '@/voice/agent/projectVoiceConfiguredAgentTarget';
 import { createVoicePlaybackController } from '@/voice/runtime/playback/VoicePlaybackController';
 import { playWaitingCue } from '@/voice/output/playWaitingCue';
 import { resolveVoiceSurfaceState } from '@/components/voice/surface/resolveVoiceSurfaceState';
@@ -53,6 +54,7 @@ export type VoiceSessionLifecycleController = Readonly<{
         exactSessionAccountScopeChanged?: boolean;
         globalBindingAuthorityChanged?: boolean;
         agentDefaultAuthorityChanged?: boolean;
+        configuredAgentTarget?: ResolvedVoiceConfiguredAgentTarget | null;
         /** False for a default-only change: speech/provider credentials are independent. */
         providerCredentialAuthorityChanged?: boolean;
     }>) => void;
@@ -1427,7 +1429,12 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                 && publishedSnapshot.errorMessage === 'agent_signed_out';
             const providerAuthRepaired = options?.providerCredentialAuthorityChanged !== false
                 && isTerminalProviderAuthFailure(publishedSnapshot);
-            if (!providerAuthRepaired && !fixedAgentAuthRepaired) return;
+            const agentSelectionRepaired = options?.configuredAgentTarget?.ok === true
+                && publishedSnapshot.adapterId === 'local_conversation'
+                && canDismissVoiceSessionFailedAttempt(publishedSnapshot)
+                && publishedSnapshot.errorCode === 'provider_setup_required'
+                && publishedSnapshot.errorMessage?.toLowerCase() === VOICE_AGENT_SELECTION_UNAVAILABLE_ERROR_CODE;
+            if (!providerAuthRepaired && !fixedAgentAuthRepaired && !agentSelectionRepaired) return;
             suppressedTerminalFailureAdapterId = publishedSnapshot.adapterId;
             publishSnapshot();
         },

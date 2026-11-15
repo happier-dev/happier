@@ -63,6 +63,7 @@ import { resolveLocalDeviceLabel } from '@/utils/platform/resolveLocalDeviceLabe
 import { readVoiceConversationScopeMetadata } from '@/voice/persistence/voiceConversationScopeMetadata';
 import { VoiceSetupFirstSuccessRuntime } from '@/voice/settings/setup/VoiceSetupFirstSuccessRuntime';
 import { useAppShellPluginUiDeclarationSources } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { useVoiceConfiguredAgentRecovery } from './useVoiceConfiguredAgentRecovery';
 
 const voiceProviderRegistry = createDefaultVoiceProviderRegistry();
 
@@ -191,6 +192,7 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
     }
   })();
   const controllerRef = React.useRef<ReturnType<typeof createVoiceSessionLifecycleController> | null>(null);
+  useVoiceConfiguredAgentRecovery(controllerRef);
   const accountLifetimeRetirementRef = React.useRef<Readonly<{ dispose(): void }> | null>(null);
   const accountScopeAtLastLayoutCommitRef = React.useRef<typeof accountScope | undefined>(undefined);
   const credentialAuthorityRef = React.useRef<(VoiceCredentialRuntimeAuthoritySnapshot & Readonly<{ agentDefaultKey: string | null }>) | null>(null);

@@ -1297,6 +1297,38 @@ describe('VoiceSessionRuntime', () => {
     }
   });
 
+  it('clears an unavailable Agent attempt after re-enable without starting capture', async () => {
+    const mounted = await prepareGeneratedVoiceRuntime({ local: true, selectedProviderId: 'local_conversation', localPlatform: 'web' });
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { normalizeVoiceSettingsLocalDelta } = await import('@/sync/domains/settings/voiceSettingsPersistence');
+    const { getVoiceSessionSnapshot } = await import('./voiceSessionStore');
+    const key = 'agent:happier.agent.codex/codex';
+    await act(async () => {
+      const voice = writeVoiceProviderSettingsConfig(storage.getState().settings.voice, 'local_conversation',
+        VoiceLocalConversationSchema.parse({ conversationMode: 'agent', agent: { agentSource: 'agent', agentId: 'codex',
+          agentTargetKey: key, agentIdentity: { pluginId: 'happier.agent.codex', localId: 'codex' } } }));
+      storage.getState().applySettingsLocal({ ...normalizeVoiceSettingsLocalDelta({ voice }, storage.getState().settings),
+        backendEnabledByTargetKey: { ...storage.getState().settings.backendEnabledByTargetKey, [key]: false } });
+      await mounted.screen.update(mounted.runtime);
+    });
+    await act(async () => { await expect(mounted.lifecycle.toggle(null)).rejects.toMatchObject({ code: 'VOICE_AGENT_SELECTION_UNAVAILABLE' }); });
+    expect(getVoiceSessionSnapshot()).toMatchObject({ errorCode: 'provider_setup_required', errorMessage: 'VOICE_AGENT_SELECTION_UNAVAILABLE' });
+    const requestsAfterFailure = mounted.httpRequests.length;
+    // An unrelated settings edit cannot acknowledge the failed attempt.
+    await act(async () => { storage.getState().applySettingsLocal({ preferredLanguage: 'fr',
+      backendEnabledByTargetKey: { ...storage.getState().settings.backendEnabledByTargetKey, 'agent:happier.agent.claude/claude': true },
+    }); });
+    expect(getVoiceSessionSnapshot().errorCode).toBe('provider_setup_required');
+    await act(async () => {
+      storage.getState().applySettingsLocal({ backendEnabledByTargetKey: { ...storage.getState().settings.backendEnabledByTargetKey, [key]: true } });
+      await mounted.screen.update(mounted.runtime);
+    });
+    expect(getVoiceSessionSnapshot().errorCode).toBeUndefined();
+    expect(getVoiceSessionSnapshot()).toMatchObject({ status: 'disconnected', canStop: false });
+    expect(recognizer.start).not.toHaveBeenCalled();
+    expect(mounted.httpRequests).toHaveLength(requestsAfterFailure);
+  });
+
   it('publishes the active adapter snapshot into the voice session store', async () => {
     const { lifecycle } = await mountGeneratedElevenLabsRuntime();
     const { getVoiceSessionSnapshot } = await import('./voiceSessionStore');
