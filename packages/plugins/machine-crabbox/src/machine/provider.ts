@@ -49,7 +49,7 @@ export function createCrabboxProvider(options: Readonly<{
         // A native lease exists independently of guest readiness. Preserve
         // even a confirmed-ended lease so ordinary Inspect can show its loss.
         if (observed.leaseState === 'active' || observed.leaseState === 'pending' || observed.cleanup === 'confirmed') {
-          return { kind: 'bound', resource: { origin: 'created' as const,  contributionRef, schemaVersion: 1, value: observed.resource } };
+          return { kind: 'bound', resource: { origin: 'created' as const, contributionRef, schemaVersion: 1, value: observed.resource } };
         }
         return { ...pending(), ...(observed.nativeCause ? { nativeCause: observed.nativeCause } : {}) };
       } catch (error) { return projectMachineProvisionerActionFailure(error, () => {

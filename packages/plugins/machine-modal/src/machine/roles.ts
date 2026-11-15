@@ -78,7 +78,7 @@ export function createModalProvisionerRoles(client: ModalNativeClient, observedA
       const parsed = MODAL_ROLE_SCHEMAS.acquireInput.safeParse(input);
       if (!parsed.success) return { kind: 'rejected' as const, code: 'invalid_request' as const };
       const result = await native.acquire(parsed.data.launch, signal, parsed.data.managedId);
-      if (result.ok) return { kind: 'bound' as const, resource: { origin: 'created' as const,  contributionRef: MODAL_CONTRIBUTION_REF, schemaVersion: 1, value: result.resource } };
+      if (result.ok) return { kind: 'bound' as const, resource: { origin: 'created' as const, contributionRef: MODAL_CONTRIBUTION_REF, schemaVersion: 1, value: result.resource } };
       if (result.code === 'modal_acquisition_unknown') return parsed.data.managedId ? pending({
         appReference: parsed.data.launch.appReference, managedId: parsed.data.managedId,
       }, result.nativeCause) : { kind: 'unknown' as const, recovery: { reference: parsed.data.launch.appReference, reason: result.code },

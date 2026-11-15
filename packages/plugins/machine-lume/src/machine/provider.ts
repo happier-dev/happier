@@ -83,7 +83,7 @@ export function createLumeProvider({ native, observedAt, signal, warn }: Readonl
     // capacity refuses Start. Rejected is reserved for pre-effect refusals.
     if (started.kind === 'refused') return pending(resource, started.nativeCause);
     return started.kind !== 'start-accepted' ? pending(resource, nativeCauseOf(started))
-      : { kind: 'bound', resource: { origin: 'created' as const,  contributionRef, schemaVersion: 1, value: resource }, startPending: true };
+      : { kind: 'bound', resource: { origin: 'created' as const, contributionRef, schemaVersion: 1, value: resource }, startPending: true };
   }
 
   return {
@@ -178,7 +178,7 @@ export function createLumeProvider({ native, observedAt, signal, warn }: Readonl
         // must be verified from native facts; do not stop it to change sizing.
         if (observed.vendorStatus === 'running') {
           return observed.cpu === launch.cpu && observed.memoryBytes === launch.memoryBytes && observed.diskBytes === launch.diskBytes
-            ? { kind: 'bound', resource: { origin: 'created' as const,  contributionRef, schemaVersion: 1, value: resource } } : pending(resource);
+            ? { kind: 'bound', resource: { origin: 'created' as const, contributionRef, schemaVersion: 1, value: resource } } : pending(resource);
         }
         return observed.vendorStatus === 'stopped' ? configureAndStart(launch, resource, observed) : pending(resource);
       }
@@ -216,7 +216,7 @@ export function createLumeProvider({ native, observedAt, signal, warn }: Readonl
       if (observed.kind === 'absent') return { kind: 'rejected', code: 'managed_not_found' };
       // Existence establishes custody even before provisioning finishes; power and disk readiness remain observations.
       return observed.kind === 'present'
-        ? { kind: 'bound', resource: { origin: 'created' as const,  contributionRef, schemaVersion: 1, value: parsed.data } }
+        ? { kind: 'bound', resource: { origin: 'created' as const, contributionRef, schemaVersion: 1, value: parsed.data } }
         : pending(parsed.data, nativeCauseOf(observed));
     },
     async inspect(rawResource: unknown): Promise<MachineProvisionerObservationV1> {
