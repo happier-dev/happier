@@ -65,6 +65,35 @@ it.each([
     }
 });
 
+it.each([
+    { wake: { kind: 'available' }, disabled: false, hintKey: null },
+    { wake: { kind: 'unavailable', reason: 'controller_unavailable' }, disabled: true, hintKey: 'managedMachines.controller.requiredUnnamed' },
+] as const)('decides Start session on an asleep created Machine as the composer does: $wake.kind', async ({ wake, disabled, hintKey }) => {
+    const homes = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://machine-wake-start.test',
+        accountId: 'owner', currentAccount: true }], route: () => undefined });
+    const serverId = homes.homes.a!.id;
+    const store = getStorage();
+    const previous = store.getState();
+    // Asleep: no live presence; the Home says whether a new Session can wake it (one owner for picker and page).
+    const machine = createMachineFixture({ id: 'asleep', active: false, activeAt: 1_000, isShared: false,
+        managedInputRuntime: { nativeReady: false, wakeState: 'asleep', state: 'asleep', acceptedInputWakeOwner: 'home', newSessionWake: wake } });
+    store.getState().applyMachines([machine], true, { sourceServerId: serverId,
+        activityUpdates: [{ id: machine.id, active: false, activeAt: machine.activeAt }] });
+    const screen = await renderScreen(<ModalProvider><MachinePageHeader target={{ machineId: machine.id,
+        requestedServerId: serverId, serverId, activeServerId: serverId, machine, machineName: 'Lima',
+        machineSentenceName: 'Lima', isServerSwitching: false, isHydratingMachine: false, switchReady: true }}
+        managedIdentity={null} renaming={false} onRename={() => {}} /></ModalProvider>);
+    try {
+        const start = screen.findByTestId('machine-detail-start-session');
+        expect(start?.props.accessibilityState?.disabled).toBe(disabled);
+        expect(start?.props.accessibilityHint).toBe(hintKey ? t(hintKey) : undefined);
+    } finally {
+        await screen.unmount();
+        await homes.dispose();
+        store.setState(previous);
+    }
+});
+
 it('keeps unobserved presence unknown, then follows offline and ready activity answers', async () => {
     const homes = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://machine-presence-answer.test',
         accountId: 'owner', currentAccount: true }], route: () => undefined });

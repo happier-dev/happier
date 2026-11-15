@@ -41,13 +41,28 @@ export function canCreateNewSession(params: Readonly<{
     if (params.directoryKind !== 'managed' && !params.selectedPath.trim()) return false;
     if (isHostBoundNewSessionMachine(params)) return true;
     if (!params.selectedMachine) return false;
-    const eligibility = resolveMachineDestinationPurposeEligibility('session', undefined, params.selectedMachine, params.scope);
-    if (!eligibility.eligible) return false;
-    if (eligibility.managedWake) return params.selectedMachine.id === params.selectedMachineId;
-    return canAttemptMachineSpawn({
+    return resolveMachineSessionStart({ machine: params.selectedMachine, selectedMachineId: params.selectedMachineId,
+        scope: params.scope, spawnReadiness: params.spawnReadiness }).canStart;
+}
+
+/**
+ * Whether a new Session can start on this Machine now: the one decider for the composer's Send and the Machine page's
+ * Start session. A wakeable asleep created Machine starts when you send; anything else needs current spawn readiness.
+ * `eligibility` carries the destination owner's refusal (and its wake cause) for the words beside a disabled control.
+ */
+export function resolveMachineSessionStart(params: Readonly<{
+    machine: Machine;
+    selectedMachineId: string | null;
+    scope?: MachineReachabilityScope | null;
+    spawnReadiness?: MachineSpawnReadiness | null;
+}>): Readonly<{ canStart: boolean; eligibility: ReturnType<typeof resolveMachineDestinationPurposeEligibility> }> {
+    const eligibility = resolveMachineDestinationPurposeEligibility('session', undefined, params.machine, params.scope);
+    if (!eligibility.eligible) return { canStart: false, eligibility };
+    if (eligibility.managedWake) return { canStart: params.machine.id === params.selectedMachineId, eligibility };
+    return { canStart: canAttemptMachineSpawn({
         selectedMachineId: params.selectedMachineId,
-        machine: params.selectedMachine,
+        machine: params.machine,
         scope: params.scope,
         spawnReadiness: params.spawnReadiness,
-    });
+    }), eligibility };
 }

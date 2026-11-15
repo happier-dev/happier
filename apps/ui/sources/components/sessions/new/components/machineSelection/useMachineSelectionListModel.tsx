@@ -744,10 +744,10 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
             }
             : null;
         // No machine yet (58d AF1): the picker asks where to run in two groups, creating one in the cloud and
-        // using one you have; once a machine exists, New machine closes with "Connect a machine…" (lab m-pick).
+        // using one you have; once a machine exists, "Connect a machine…" is the list's last row, its own group (lab m-pick).
         const noMachineYet = purpose === 'session' && !hasPools
             && params.groups.every((group) => !group.loading && !group.signedOut && !group.error && group.machines.length === 0);
-        const managedMachineSection: SelectionListSectionDescriptor | null = managedMachines.length > 0 || (connectMachineOption && !noMachineYet)
+        const managedMachineSection: SelectionListSectionDescriptor | null = managedMachines.length > 0
             ? {
                 kind: 'static',
                 id: 'managed-machines',
@@ -770,14 +770,12 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                         ? !hasSelectManagedMachine
                         : !offer.onSelect),
                     onSelect: () => selectManagedMachine(offer.id),
-                } satisfies SelectionListOption)), ...(connectMachineOption && !noMachineYet ? [connectMachineOption] : [])],
+                } satisfies SelectionListOption))],
             }
             : null;
-        const useOneYouHaveSection: SelectionListSectionDescriptor | null = noMachineYet && connectMachineOption
-            ? { kind: 'static', id: 'use-one-you-have', title: t('managedMachines.picker.useOneYouHave'), options: [connectMachineOption] }
-            : null;
-        const addedMachineSections = [managedMachineSection, useOneYouHaveSection]
-            .filter((section): section is NonNullable<typeof section> => section !== null);
+        const connectSection: SelectionListSectionDescriptor | null = !connectMachineOption ? null
+            : noMachineYet ? { kind: 'static', id: 'use-one-you-have', title: t('managedMachines.picker.useOneYouHave'), options: [connectMachineOption] }
+            : { kind: 'static', id: 'connect', options: [connectMachineOption] };
         const temporaryComputer = temporaryComputers.find((candidate) => candidate.selected) ?? null;
         const temporaryComputerRowKey = (candidate: TemporaryComputerSelection): string => (
             candidate.artifactTarget ?? 'unavailable'
@@ -965,7 +963,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                     id: 'machine-root',
                     inputPlaceholder,
                     emptyStateLabel: params.emptyStateLabel ?? t('newSession.noMachinesFound'),
-                    sections: [...addedMachineSections, temporaryComputerSection].filter(
+                    sections: [managedMachineSection, temporaryComputerSection, connectSection].filter(
                         (section) => section !== null,
                     ),
                 },
@@ -1057,9 +1055,8 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                 });
             }
             // Machines that exist come first; machines that don't exist yet follow: New machine
-            // (presets, a one-off, connecting one), then a Temporary computer (lab m-pick).
-            sections.push(...addedMachineSections);
-            if (temporaryComputerSection) sections.push(temporaryComputerSection);
+            // (presets, a one-off), a Temporary computer, then connecting one closes the list (lab m-pick).
+            for (const section of [managedMachineSection, temporaryComputerSection, connectSection]) if (section) sections.push(section);
 
             return {
                 selectedOptionId: managedOptionId ?? (temporaryComputer?.selected
@@ -1186,8 +1183,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
             };
             return [poolSection, ...machineSections];
         });
-        sections.push(...addedMachineSections);
-        if (temporaryComputerSection) sections.push(temporaryComputerSection);
+        for (const section of [managedMachineSection, temporaryComputerSection, connectSection]) if (section) sections.push(section);
 
         const selectedOptionId = managedOptionId ?? (temporaryComputer?.selected
             ? temporaryComputerOptionId

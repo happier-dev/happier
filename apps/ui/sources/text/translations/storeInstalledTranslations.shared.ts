@@ -101,7 +101,7 @@ export const storeInstalledTranslations = {
     noMatchFilters: 'Nothing matches these filters',
     clear: 'Clear',
     unavailable: 'Installed can’t be shown for this account right now.',
-    machineTitle: 'What’s on this Machine',
+    machineTitle: 'What’s on this machine',
     machineBody: 'Everything Happier manages here.',
     openInInstalled: 'Open in Installed',
   },

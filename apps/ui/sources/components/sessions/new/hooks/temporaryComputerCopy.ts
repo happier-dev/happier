@@ -1,4 +1,5 @@
 import { t } from '@/text';
+import { formatResetAtTime } from '@/utils/time/formatResetAtTime';
 
 import type { TemporaryComputerLaunchBlock } from './temporaryComputerLaunchReadiness';
 import type { TemporaryComputerAvailability } from './useTemporaryComputerAvailability';
@@ -20,7 +21,8 @@ export function describeTemporaryComputerUnavailability(
         return resetAtMs == null
             ? t('newSession.temporaryComputer.unavailable.rateLimited')
             : t('newSession.temporaryComputer.unavailable.rateLimitedUntil', {
-                time: new Date(resetAtMs).toLocaleString(),
+                // The shared reset-time owner: "10:32" today, a weekday this week, else a date (never a full timestamp).
+                time: formatResetAtTime(resetAtMs),
             });
     }
     switch (availability.reason) {

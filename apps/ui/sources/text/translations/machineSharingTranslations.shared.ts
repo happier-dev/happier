@@ -4,7 +4,7 @@ export type MachineSharingCopy = Readonly<{
     title: string; description: string; recipientDescription: string; trustedOsLead: string; trustedOsDetail: string;
     memberUsersLead: string; memberUsersDetail: string; memberUsersPendingLead: string; memberUsersPendingDetail: string;
     recipientTrustLead: string; recipientTrustDetail: string; manageHelp: string; recipientEncryptionIncompatible: string;
-    loading: string; readError: string; offline: string; offlineRecipient: string; approvalPending: string; denied: string; use: string; manage: string;
+    loading: string; readError: string; offline: string; offlineRecipient: string; asleep: string; asleepRecipient: string; approvalPending: string; denied: string; use: string; manage: string;
     allMembers: string; pending: string; incompatible: string; incompatibleHelp: string; plain: string;
     saved: string; yourAccess: string; ownHistory: string; through: string; leave: string; inherited: string; unavailable: string; saveFailed: string;
     unsupportedOperation: string; outcomeUnknown: string;
@@ -34,7 +34,7 @@ export function createMachineSharingTranslations(copy: MachineSharingCopy) {
         memberUsersPendingLead: machine(copy.memberUsersPendingLead), memberUsersPendingDetail: machine(copy.memberUsersPendingDetail),
         recipientTrustLead: machine(copy.recipientTrustLead), recipientTrustDetail: machine(copy.recipientTrustDetail),
         manageHelp: machine(copy.manageHelp), loading: machine(copy.loading),
-        readError: machine(copy.readError), offline: machine(copy.offline), offlineRecipient: machine(copy.offlineRecipient), approvalPending: copy.approvalPending, denied: machine(copy.denied),
+        readError: machine(copy.readError), offline: machine(copy.offline), offlineRecipient: machine(copy.offlineRecipient), asleep: machine(copy.asleep), asleepRecipient: machine(copy.asleepRecipient), approvalPending: copy.approvalPending, denied: machine(copy.denied),
         use: copy.use, manage: copy.manage, allMembers: copy.allMembers, pending: machine(copy.pending),
         incompatible: (parameters: Readonly<{ machine: string; person: string }>) => format(copy.incompatible, parameters),
         incompatibleHelp: (parameters: Readonly<{ person: string }>) => format(copy.incompatibleHelp, parameters),

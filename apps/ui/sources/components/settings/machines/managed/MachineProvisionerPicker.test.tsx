@@ -1198,6 +1198,35 @@ describe('provisioner picker demand', () => {
     } finally { await hook.unmount(); }
   });
 
+  it('keeps the controller catalog failure on its one page line, not as a Retry on every card', async () => {
+    const { serverId } = await arrangeCatalog({ home: 'failed-controller-card-actions' });
+    const { clearPluginAccountAvailabilityProjection, replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+    const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+    clearPluginAccountAvailabilityProjection();
+    replacePluginAccountAvailabilityProjection({
+      scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner' },
+      snapshot: { availabilityCursor: 2, inventoryComplete: false, intentReads: [], materializations: [], snapshots: [] },
+    });
+    await answerControllerAction(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
+      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+      return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId,
+        execution: { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' } }) };
+    } });
+    const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
+    const screen = await renderPicker(<MachineProvisionerPicker serverId={serverId} onSelectProvisioner={vi.fn()} />);
+    const cards = () => [...new Map(screen.tree.findAll(node => Array.isArray(node.props.cards))
+      .flatMap(node => node.props.cards as { id: string; action: { kind: string } }[]).map(card => [card.id, card])).values()];
+    try {
+      await waitForHomeGovernance(() => {
+        expect(screen.findByTestId('managed-picker.unavailable-action')).not.toBeNull();
+        expect(cards().some(card => card.id.startsWith('happier.machine.vercel/'))).toBe(true);
+      });
+      // The Account offer answered for itself: the controller's failure is said once, by the page line and its Retry.
+      const accountOffer = cards().find(card => card.id.startsWith('happier.machine.vercel/'))!;
+      expect(accountOffer.action.kind).not.toBe('retry');
+    } finally { await screen.unmount(); }
+  });
+
   it('recovers a cold controller catalog when Account availability arrives without Retry', async () => {
     const { serverId, reads } = await arrangeCatalog({});
     const { clearPluginAccountAvailabilityProjection, replacePluginAccountAvailabilityProjection } =
@@ -1517,8 +1546,8 @@ describe('provisioner picker demand', () => {
     expect(screen.findByTestId('managed-picker.unavailable')).not.toBeNull();
     const retained = cards().find(card => card.title === 'Alpha');
     expect(retained?.status.label).toBe('License required');
-    expect(retained?.action.disabled).not.toBe(true);
-    await act(async () => retained?.action.onPress());
+    // The failed catalog is said once, by the page line and its Retry: the retained card offers no step of its own.
+    expect(retained?.action.disabled).toBe(true);
     expect(onSelect).not.toHaveBeenCalled();
     await answerControllerAction(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
       const request = ExternalActionRequestEnvelopeV1Schema.parse(value);

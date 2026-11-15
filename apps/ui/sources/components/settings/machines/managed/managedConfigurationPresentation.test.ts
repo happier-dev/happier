@@ -277,7 +277,8 @@ describe('one managed configuration receipt projection', () => {
         expect(receipt.facts.find(fact => fact.id === 'home')?.value).toBe('Build Home');
         expect(receipt.facts.find(fact => fact.id === 'preset')?.value).toContain('3');
         expect(receipt.facts.find(fact => fact.id === 'retention')?.value).toBe('Defaults');
-        expect(receipt.facts.find(fact => fact.id === 'wake')?.value).toBe('wake on');
+        // The row's label already says what is started: its value is only the state.
+        expect(receipt.facts.find(fact => fact.id === 'wake')?.value).toBe(t('common.on'));
         expect(receipt.keep).toBeUndefined();
     });
     const localFacts = { ...reviewedFacts, prices: [], billing: { location: 'local' as const, stoppedBilling: 'not-billed' as const },

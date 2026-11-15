@@ -18,7 +18,7 @@ export const machineSharing = createMachineSharingTranslations({
     trustedOsLead: "请信任使用 {machine} 共享 Agent 用户的所有人。",
     trustedOsDetail: "成员和所有者的隔离 Agent 目前共用同一 Linux 用户，因此任何一方都可以复制所选凭据、直接交付的密钥和可读的 Session 上下文。即使成员使用独立用户，所有者仍能查看交付的资料。请使用团队专用机器。",
     manageHelp: "共享这台机器，并更改代理在其上的运行方式。",
-    loading: '正在加载 {machine} 的访问权限。', readError: '无法加载 {machine} 的访问权限。', offline: '{machine} 已离线。访问权限更改会保存在这里。', offlineRecipient: "{machine} 已离线。", approvalPending: '此访问权限更改正在等待你的批准。',
+    loading: '正在加载 {machine} 的访问权限。', readError: '无法加载 {machine} 的访问权限。', offline: '{machine} 已离线。访问权限更改会保存在这里。', offlineRecipient: "{machine} 已离线。", asleep: "{machine} 处于休眠。访问更改已保存，会在它唤醒时生效。", asleepRecipient: "{machine} 处于休眠。", approvalPending: '此访问权限更改正在等待你的批准。',
     denied: '只有可以管理 {machine} 的人才能更改共享设置。', use: '可以使用', manage: '可以管理', allMembers: '所有当前成员，包括以后加入的成员',
     pending: '正在等待有权限的密钥持有者为 {machine} 准备访问权限。', incompatible: '{machine} 已启用端到端加密，但 {person} 的账户没有启用，因此 {person} 无法打开它。',
     incompatibleHelp: '共享未加密的机器，或请 {person} 在账户设置中启用端到端加密。',

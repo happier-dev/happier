@@ -500,7 +500,7 @@ export const english = {
         offlineListCount: ({ count }: { count: number }) => count === 1 ? `1 offline machine in this list` : `${count} offline machines in this list`,
         showOffline: "Show",
         hideOffline: "Hide",
-        machinesCount: ({ count }: { count: number }) => count === 1 ? `1 Machine` : `${count} Machines`,
+        machinesCount: ({ count }: { count: number }) => count === 1 ? `1 machine` : `${count} machines`,
         sessionsWorking: ({ count }: { count: number }) => count === 1 ? `1 session working` : `${count} sessions working`,
     },
     machineSummary: {

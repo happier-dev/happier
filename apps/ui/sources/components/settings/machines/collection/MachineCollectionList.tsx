@@ -469,8 +469,8 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
     const noMatches = searchable && query.trim().length > 0 && collection.count === 0;
     // A long list keeps its offline machines under one fold after the ones that can work (real fleets carry
     // dozens of retired or sleeping machines); a short list shows them inline, as the lab's rail does.
-    const renderRailSectionRows = (section: MachineCollectionSection) => {
-        return <RailSectionRows section={section} foldOffline={searchable} selectedKey={selectedKey}
+    const renderRailSectionRows = (section: MachineCollectionSection, counted: boolean) => {
+        return <RailSectionRows section={section} foldOffline={searchable} counted={counted} selectedKey={selectedKey}
             query={query} renderRow={renderMachineRow} />;
     };
     const sectionStatusLabel = (section: MachineCollectionSection): string | undefined => {
@@ -614,14 +614,10 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
                     selectedKey={selectedKey} query={searchable ? query : ''} renderRow={renderMachineRow} />
             ) : (
                 <React.Fragment key={section.key}>
-                    {section.title ? (
-                        <CollectionListGroupLabel
-                            // A Home's machines are a group inside the Machines section.
-                            level="subgroup"
-                            title={section.title}
-                            // One group already has its count in the header: say it once.
-                            count={collection.sections.length > 1 ? section.rows.length : undefined}
-                        />
+                    {/* A group with rows draws its label with them, counting what it lists inline (RailSectionRows). */}
+                    {section.title && section.rows.length === 0 ? (
+                        <CollectionListGroupLabel level="subgroup" title={section.title}
+                            count={collection.sections.length > 1 ? 0 : undefined} />
                     ) : null}
                     {section.rows.length === 0 && !noMatches && section.status === 'error' ? (
                         renderUnreadable({ serverId: section.serverId, serverName: section.title ?? '' }, true)
@@ -632,7 +628,7 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
                             showChevron={false}
                             mode="info"
                         />
-                    ) : renderRailSectionRows(section)}
+                    ) : renderRailSectionRows(section, collection.sections.length > 1)}
                 </React.Fragment>
             ))}
             {/* The column fills top-down: what follows the machines waits for them, so nothing lands above them and moves. */}
@@ -706,6 +702,8 @@ function ArchivedMachineSection(props: Readonly<{
 function RailSectionRows(props: Readonly<{
     section: MachineCollectionSection;
     foldOffline: boolean;
+    /** Several groups: each label says its count (one group already has its count in the header: say it once). */
+    counted: boolean;
     selectedKey: string | null;
     query: string;
     renderRow: (row: MachineCollectionRow) => React.ReactElement;
@@ -713,6 +711,10 @@ function RailSectionRows(props: Readonly<{
     const rows = useMachineCollectionPresenceRows(props.section.rows);
     const { inline, offline } = partitionMachineCollectionRailRows(rows, props.foldOffline);
     return <>
+        {/* A Home's machines are a group inside the Machines section. Its count is what it lists inline, as the
+            Machines table counts: the Offline fold below says its own count. */}
+        {props.section.title ? <CollectionListGroupLabel level="subgroup" title={props.section.title}
+            count={props.counted ? inline.length : undefined} /> : null}
         {inline.map(props.renderRow)}
         {offline.length > 0 ? <MachineRowsFold testID={`settings.machines.offline.${props.section.key}`}
             title={t('machineDetailPage.offline')} rows={offline} rail selectedKey={props.selectedKey}

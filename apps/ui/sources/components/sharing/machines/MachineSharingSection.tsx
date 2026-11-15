@@ -30,7 +30,8 @@ function ScopedMachineShareSheet(props: MachineShareSheetProps) {
     const online = !currentScope || presence.reachability === 'unknown' ? null : presence.reachability === 'reachable';
     const nativeWord = currentScope ? describeMachinePresenceSummary(presence).nativeWord : null;
     const controller = useMachineShareController({ ...props, online });
-    const adapter = createMachineShareAdapter({ machineName: props.machineName, online, nativeWord, controller, shared: props.shared,
+    const adapter = createMachineShareAdapter({ machineName: props.machineName, online, nativeWord,
+        nativeAsleep: presence.nativeState === 'asleep', controller, shared: props.shared,
         openApproval: artifactId => router.push(`/inbox/approvals/${encodeURIComponent(artifactId)}?serverId=${encodeURIComponent(props.scope.serverId)}`),
     });
     return <ShareSheet model={controller.model} actions={controller.actions} adapter={adapter}

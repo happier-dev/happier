@@ -1,9 +1,8 @@
 import { PaneMainHideButton, usePaneMainHideAvailable } from '@/components/appShell/panes/mainColumn/PaneMainColumnControls';
 import * as React from 'react';
-import { Dimensions, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Dimensions, Platform, View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
-    HAPPIER_BALANCED_TEXT_WRAP,
     HappierPageHeader,
     HappierPageHeaderPlaceholder,
     HappierPageHeaderMetaId,
@@ -32,6 +31,9 @@ import { useNavigationChromeShowsBack, useNavigationLeavesLargeTitle, useNavigat
 import { useClaimedStackHeaderActions } from '@/components/navigation/stackHeaderActions';
 
 export { NavigationTitleChromeProvider, useNavigationTitleChromeShowsTitle } from './navigationTitleChrome';
+
+/** Web only: body copy avoids a lone last word without balancing (which narrows every two-line paragraph). */
+const PRETTY_TEXT_WRAP = Platform.OS === 'web' ? ({ textWrap: 'pretty' } as const) : null;
 
 /** One fact on a page header's meta line: "@handle", "Personal Home", "🔒 End-to-end encrypted". */
 export type PageHeaderMetaFact = Readonly<{
@@ -404,8 +406,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.default('regular'),
         ...happierPageTextMetrics('pageDescription'),
         color: theme.colors.text.secondary,
-        // A purpose that needs a second line splits evenly instead of leaving one word alone on it.
-        ...HAPPIER_BALANCED_TEXT_WRAP,
+        // A purpose fills the page's measure; a second line never leaves one word alone on it. Balanced wrapping
+        // halved the line (a two-line purpose wrapped at about 420 px under a full-width page), so body copy wraps pretty.
+        ...PRETTY_TEXT_WRAP,
     },
     actions: {
         flexDirection: 'row',

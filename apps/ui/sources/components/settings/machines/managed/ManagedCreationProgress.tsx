@@ -53,11 +53,14 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
     /** Start is running: its button shows the work. */
     starting?: boolean;
     /** The controller's current guest payload differs from the enrolled guest identity. */
-    guestPayloadStale?: boolean }>) {
+    guestPayloadStale?: boolean;
+    /** What starts it again once asleep, from the wake owner. */
+    asleepWake?: ManagedCreationContext['asleepWake'] }>) {
     const { machine } = props;
     const name = props.title ?? machine.launch.name;
     const state = managedCreationState(machine, { controller: props.controller, provider: props.provider,
-        providerAvailable: props.providerAvailable, operation: props.operation, enrolledMachine: props.enrolledMachine });
+        providerAvailable: props.providerAvailable, operation: props.operation, enrolledMachine: props.enrolledMachine,
+        asleepWake: props.asleepWake });
     const lifecycle = describeManagedLifecycleState(state);
     const nothingCreated = state.kind === 'notCreated' || state.kind === 'creationCanceled';
     const checkNow = nothingCreated ? undefined : props.handlers?.checkNow;

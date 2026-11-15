@@ -1,3 +1,4 @@
+import { createPlainManagedMachinePresetFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
 import * as React from 'react';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
@@ -565,9 +566,9 @@ describe('useMachineSelectionListModel', () => {
         const fixture = createFixture();
         const handlers = makeHandlers();
         const configure = vi.fn();
-        const preset = { id: 'recipe', homeId: 'home-a', revision: 2, name: 'Guest',
-            owner: { kind: 'account' as const, accountId: 'owner' },
-            launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} } };
+        const preset = createPlainManagedMachinePresetFixture({ id: 'recipe', homeId: 'home-a', revision: 2, name: 'Guest',
+            owner: { kind: 'account', accountId: 'owner' },
+            launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} } }).opened;
         const managedMachines = ['home-a', 'home-b'].flatMap(homeId => buildManagedMachineSelectionOffers({
             homeId, presets: [{ ...preset, homeId }], oneOffTitle: 'One-off', onConfigure: configure,
         }));
@@ -1690,14 +1691,16 @@ describe('useMachineSelectionListModel · Run on order (lab m-pick)', () => {
         const ids = rendered.getCurrent().rootStep.sections.map((section) => section.id);
         const firstNew = ids.indexOf('managed-machines');
         expect(firstNew).toBeGreaterThan(0);
-        // Every machine section (recent, favorites, yours, shared) precedes the not-yet-machines.
-        expect(ids.slice(firstNew)).toEqual(['managed-machines', 'temporary-computer']);
+        // Every machine section (recent, favorites, yours, shared) precedes the not-yet-machines; Connect closes the list.
+        expect(ids.slice(firstNew)).toEqual(['managed-machines', 'temporary-computer', 'connect']);
 
-        // "Connect a computer…" closes the New machine group, after the presets and the one-off.
+        // "Connect a computer…" is the list's last row, its own group after New machine and temporary computers.
         const newMachine = rendered.getCurrent().rootStep.sections[firstNew];
         if (newMachine?.kind !== 'static') throw new Error('expected the New machine section');
-        expect(newMachine.options.map((option) => option.id)).toEqual(['managed-machine:server-a:one-off', 'connect-machine']);
-        const connect = newMachine.options.at(-1);
+        expect(newMachine.options.map((option) => option.id)).toEqual(['managed-machine:server-a:one-off']);
+        const last = rendered.getCurrent().rootStep.sections.at(-1);
+        if (last?.kind !== 'static') throw new Error('expected the Connect section');
+        const connect = last.options.at(-1);
         expect(connect).toMatchObject({
             label: 'managedMachines.picker.connectComputer',
             subtitle: 'managedMachines.picker.connectComputerHelp',

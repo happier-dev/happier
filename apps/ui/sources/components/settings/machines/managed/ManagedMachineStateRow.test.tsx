@@ -350,9 +350,21 @@ describe('created machine resource rows (UIR5)', () => {
     const screen = await renderScreen(<ManagedCreationProgress machine={machine} handlers={{ start }} />);
     expect(testIds(screen, 'managed-machine.progress:start')).toHaveLength(1);
     await expectFreshnessOnStateRow(screen);
-    // The header already says Asleep: the joined machine's row leads with its line, never the word again.
+    // The row leads with its line: the header's own word (Asleep), then what starts it again, from the wake owner.
     const { t: translate } = await import('@/text');
-    expect((await stateRowItem(screen))?.props.title).toBe(translate('managedPower.stoppedStorage'));
+    expect((await stateRowItem(screen))?.props.title).toBe(translate('managedPower.asleep'));
+    const { resolveManagedAsleepWake } = await import('@/sync/domains/pending/managedWakeProjection');
+    for (const [input, line] of [
+      [{ wakeOnAcceptedMessage: true, availability: { kind: 'available' } }, translate('managedPower.asleepWakesOnSend')],
+      [{ wakeOnAcceptedMessage: true, availability: { kind: 'unavailable', reason: 'controller_unavailable' } },
+        translate('managedPower.asleepWaitsForController', { controller: 'Studio' })],
+      [{ wakeOnAcceptedMessage: false, availability: { kind: 'available' } }, translate('managedPower.asleepNoWake')],
+    ] as const) {
+      const wake = resolveManagedAsleepWake({ ...input, controllerName: 'Studio' });
+      const waking = await renderScreen(<ManagedCreationProgress machine={machine} handlers={{ start }} asleepWake={wake} />);
+      expect((await stateRowItem(waking))?.props.title).toBe(line);
+      await waking.unmount();
+    }
     await screen.update(<ManagedCreationProgress machine={machine} handlers={{ start }} starting />);
     expect(screen.findByTestId('managed-machine.progress:start')?.props.accessibilityState?.busy).toBe(true);
     await screen.update(<ManagedCreationProgress machine={machine} handlers={{ start }} starting={false} />);

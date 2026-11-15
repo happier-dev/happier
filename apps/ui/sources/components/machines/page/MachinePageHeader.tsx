@@ -25,7 +25,9 @@ import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layou
 import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { Modal, type CustomModalInjectedProps } from '@/modal';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { canAttemptMachineSpawn, resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
+import { resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
+import { resolveMachineSessionStart } from '@/components/sessions/new/modules/canCreateNewSession';
+import { describeMachineDestinationEligibility } from '@/components/sessions/new/components/machineSelection/buildMachineDestinationModel';
 import { describeMachineStartUnavailable, machineEditRolesHref, machineHeaderPrimary } from './machineStartAvailability';
 import { useMachinesDoor } from './machinesDoor';
 import { executeWorkspaceUiAction } from '@/components/appShell/workspace/workspaceActionRuntime';
@@ -199,14 +201,17 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
     const activeAccountScope = useActiveServerAccountScope();
     const { binding } = useServerCredentialAccountScopeBinding(target.serverId);
     const machineAccountScope = binding?.isCurrent() ? binding.scope : null;
-    const machineCanSpawn = React.useMemo(
-        () => target.online === true && canAttemptMachineSpawn({ machine: machine ?? undefined, selectedMachineId: target.machineId, scope: machineAccountScope }),
-        [machine, target.machineId, target.online, machineAccountScope],
-    );
-    // Why Start session is disabled, said at the button (MR6), from the same readiness owner that disabled it.
-    const startReadiness = machineCanSpawn || !machine ? null
+    // The composer's own decider (an asleep created Machine that wakes on send can start one), re-read on presence changes.
+    const sessionStart = React.useMemo(() => machine ? resolveMachineSessionStart({ machine, selectedMachineId: target.machineId ?? null,
+        scope: machineAccountScope }) : null, [machine, target.machineId, target.online, machineAccountScope]);
+    const machineCanSpawn = sessionStart?.canStart === true;
+    // Why Start session is disabled, said at the button (MR6), from the same owners that disabled it: the wake cause, else readiness.
+    const wakeRefusal = machine && sessionStart && !sessionStart.eligibility.eligible
+        && sessionStart.eligibility.reason === 'new_session_wake_unavailable'
+        ? describeMachineDestinationEligibility(sessionStart.eligibility, machine) : undefined;
+    const startReadiness = machineCanSpawn || !machine || wakeRefusal ? null
         : resolveMachineSpawnReadiness({ machine, selectedMachineId: target.machineId, scope: machineAccountScope });
-    const startUnavailableReason = startReadiness ? describeMachineStartUnavailable(startReadiness, target.machineSentenceName) : undefined;
+    const startUnavailableReason = wakeRefusal ?? (startReadiness ? describeMachineStartUnavailable(startReadiness, target.machineSentenceName) : undefined);
     // Sessions are off on this Machine: the recovery is one tap away, through the canonical tab Action (machine roles).
     const door = useMachinesDoor();
     const editRolesHref = startReadiness?.status === 'roleInactive' && target.machineId

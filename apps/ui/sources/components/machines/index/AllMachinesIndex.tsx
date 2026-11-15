@@ -452,7 +452,8 @@ const AllMachinesHeader = React.memo(function AllMachinesHeader(props: Readonly<
             // One description sentence; the Homes it covers lead the facts line below.
             description={props.sentence === null ? props.description ?? t('settingsMachines.pageDescription')
                 : [props.sentence, props.description].filter(Boolean).join('. ')}
-            meta={liveWord === null ? freshness : undefined}
+            // Only stale or slow freshness (with its Retry) stands as its own line; nothing reserves an empty one.
+            meta={liveWord === null && freshness.length > 0 ? freshness : undefined}
             {...(count === undefined ? {} : { count })}
             search={props.search}
             actions={props.phone ? undefined : viewSwitch}

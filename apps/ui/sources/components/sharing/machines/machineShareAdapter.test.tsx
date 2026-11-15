@@ -285,8 +285,9 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             getStorage().getState().applyMachines([machine], true, { sourceServerId: scope.serverId });
             screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
             await act(async () => showMachineShareSheet({ machineId: machine.id, machineName: 'Devbox', scope, shared: false }));
+            // Asleep says what it means for an access change (saved, applies when it wakes), not the bare word.
             await vi.waitFor(() => expect(screen!.getTextContent()).toContain(state === 'asleep'
-                ? t('managedPower.asleep') : t('managedWake.starting', { machine: 'Devbox' })));
+                ? t('machines.sharing.asleep', { machine: 'Devbox' }) : t('managedWake.starting', { machine: 'Devbox' })));
             expect(screen.findByTestId('machine-share-offline')).toBeNull();
             await act(async () => getStorage().getState().applyMachines([
                 { ...machine, managedInputRuntime: { nativeReady: false, wakeState: null, state: null } },

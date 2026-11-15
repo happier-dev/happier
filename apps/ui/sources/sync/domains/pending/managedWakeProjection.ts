@@ -1,9 +1,23 @@
-import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachineNewSessionWakeV1, ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { resolveManagedMachinePendingPowerIntentV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import type { PendingActivationAuthorizationV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import type { PendingMessage, Session } from '@/sync/domains/state/storageTypes';
 
 export { resolveManagedWakeAvailabilityV1 as resolveManagedWakeAvailability } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
+
+/** What wakes an asleep created Machine, as its state card says it: its wake rule, then the readiness classifier above. */
+export type ManagedAsleepWake = Readonly<{ kind: 'onSend' }> | Readonly<{ kind: 'waitsForController'; controller: string | null }> | Readonly<{ kind: 'off' }>;
+
+export function resolveManagedAsleepWake(input: Readonly<{
+    wakeOnAcceptedMessage: boolean;
+    availability: ManagedMachineNewSessionWakeV1;
+    /** Null while its name is still being read. */
+    controllerName: string | null;
+}>): ManagedAsleepWake {
+    if (!input.wakeOnAcceptedMessage) return { kind: 'off' };
+    return input.availability.kind === 'unavailable' && input.availability.reason === 'controller_unavailable'
+        ? { kind: 'waitsForController', controller: input.controllerName } : { kind: 'onSend' };
+}
 
 /** Held managed input recovers through its existing activation Action, not a second immediate send. */
 export function isManagedPendingInputAwaitingWake(

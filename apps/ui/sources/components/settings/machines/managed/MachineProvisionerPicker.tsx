@@ -201,7 +201,9 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
                 label: [statusLabel, location === 'unknown' ? t('managedMachines.add.status.billingUnknown') : null].filter(Boolean).join(' · ') },
             action: needsApp ? { kind: 'handoff', label: t('managedMachines.add.action.getTheApp'),
                 onPress: () => showManagedGetTheAppModal(title) }
-            : unreadable || catalog.error ? { kind: 'retry', label: t('common.retry'), onPress: catalog.refresh }
+            // Only the card's own failed check offers Retry here; a failed controller catalog is said once, by the
+            // page line and its Retry, while each card keeps the step its own answer gives (Connect pairs with No account).
+            : unreadable ? { kind: 'retry', label: t('common.retry'), onPress: catalog.refresh }
             : repairAction && repairOpened?.id === id && repairOpened.binding === catalog.binding
                 && repairOpened.controller?.machineId === controller?.machineId
                 && repairOpened.controller?.installationId === controller?.installationId

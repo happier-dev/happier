@@ -18,7 +18,7 @@ export const machineSharing = createMachineSharingTranslations({
     trustedOsLead: "{machine} の共有 Agent ユーザーを使う全員を信頼してください。",
     trustedOsDetail: "メンバーと所有者の隔離された Agent は現在同じ Linux ユーザーを共有しているため、どちらも選択済み認証情報、直接配信されたキー、読み取り可能な Session コンテキストをコピーできます。所有者は、ユーザー分離後も提供された情報を確認できます。チーム専用マシンを使ってください。",
     manageHelp: "このマシンを共有し、エージェントの実行方法を変更できます。",
-    loading: '{machine} のアクセス権を読み込んでいます。', readError: '{machine} のアクセス権を読み込めませんでした。', offline: '{machine} はオフラインです。アクセス権の変更はここに保存されます。', offlineRecipient: "{machine} はオフラインです。", approvalPending: 'このアクセス権の変更はあなたの承認を待っています。',
+    loading: '{machine} のアクセス権を読み込んでいます。', readError: '{machine} のアクセス権を読み込めませんでした。', offline: '{machine} はオフラインです。アクセス権の変更はここに保存されます。', offlineRecipient: "{machine} はオフラインです。", asleep: "{machine} はスリープ中です。アクセスの変更は保存され、起動時に適用されます。", asleepRecipient: "{machine} はスリープ中です。", approvalPending: 'このアクセス権の変更はあなたの承認を待っています。',
     denied: '{machine} を管理できる人だけが共有を変更できます。', use: '使用可能', manage: '管理可能', allMembers: '現在の全メンバー（後から参加する人も含む）',
     pending: '権限のあるキー保有者が {machine} のアクセスを準備するのを待っています。', incompatible: '{machine} はエンドツーエンド暗号化されていますが、{person} のアカウントは暗号化されていないため、{person} は開けません。',
     incompatibleHelp: '暗号化されていないマシンを共有するか、{person} にアカウント設定でエンドツーエンド暗号化を有効にするよう依頼してください。',

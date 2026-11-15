@@ -19,7 +19,7 @@ export const machineSharing = createMachineSharingTranslations({
     trustedOsDetail: "Members and the owner's isolated Agent currently share one Linux user, so any of them can copy selected credentials, Direct-delivered keys and readable Session context. The Machine owner can inspect material delivered here even after members have separate users. Use a dedicated team machine.",
     manageHelp: "share this machine and change how agents run on it.",
     loading: 'Loading access to {machine}.', readError: 'Could not load access to {machine}.',
-    offline: '{machine} is offline. Access changes are saved here.', offlineRecipient: "{machine} is offline.", approvalPending: 'This access change is waiting for your approval.', denied: 'Only people who can manage {machine} can change sharing.',
+    offline: '{machine} is offline. Access changes are saved here.', offlineRecipient: "{machine} is offline.", asleep: "{machine} is asleep. Access changes are saved and apply when it wakes.", asleepRecipient: "{machine} is asleep.", approvalPending: 'This access change is waiting for your approval.', denied: 'Only people who can manage {machine} can change sharing.',
     use: 'Can use', manage: 'Can manage', allMembers: 'All current members, including people who join later',
     pending: 'Waiting for an authorized key holder to prepare access to {machine}.',
     incompatible: "{machine} is end-to-end encrypted and {person}'s account is not, so {person} cannot open it.",

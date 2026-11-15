@@ -4,6 +4,7 @@ import type { RetentionCapabilitiesV1 } from '@happier-dev/protocol/machines/man
 import { t } from '@/text';
 import { describeManagedLifecycleState, type ManagedLifecycleState } from './managedLifecyclePresentation';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
+import type { ManagedAsleepWake } from '@/sync/domains/pending/managedWakeProjection';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveMachineWakeNativeIntentV1, resolveManagedMachinePendingPowerIntentV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { resolveSystemTaskFailureMessage } from '@/components/systemTasks/resolveSystemTaskFailureMessage';
@@ -55,6 +56,8 @@ export type ManagedCreationContext = Readonly<{
     operation?: ActionOperationProjection | null;
     /** The controller has a newer guest payload than the enrolled guest reports. */
     guestPayloadStale?: boolean;
+    /** What starts this machine again once asleep (the wake owner's answer), said on its state row. */
+    asleepWake?: ManagedAsleepWake;
 }>;
 
 /** Compare the two identities already published by the controller and enrolled guest. */
@@ -122,7 +125,7 @@ export function managedCreationState(machine: ManagedMachineReadSnapshotV1, cont
         return { kind: 'powerPending', provider: context.provider ?? t('common.machine'), state: t(`managedMachines.actions.${pendingIntent}`) };
     }
     if (machine.observation?.power === 'stopped') return machine.observation.storage === 'retained'
-        ? { kind: 'stoppedStorage' } : { kind: 'storageUnknown' };
+        ? { kind: 'stoppedStorage', ...(context.asleepWake ? { wake: context.asleepWake } : {}) } : { kind: 'storageUnknown' };
     if (machine.allocation !== 'unsubmitted') return { kind: 'resourceReady' };
     // Provider calls run where the account lives: an offline controller is what nothing waits on but the user.
     return context.controller && !context.controller.online && context.provider

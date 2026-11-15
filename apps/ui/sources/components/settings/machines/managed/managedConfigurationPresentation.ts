@@ -219,7 +219,8 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
         rows.push({ id: 'retention', label: t('managedRetention.keepIt'),
             value: input.presetPolicy.retention ? describeRetention(input.presetPolicy.retention) : t('managedRetention.defaults') });
         if (input.presetPolicy.wakeOnAcceptedMessage !== undefined) rows.push({ id: 'wake', label: t('managedRetention.wake'),
-            value: t(input.presetPolicy.wakeOnAcceptedMessage ? 'managedRetention.wakeOn' : 'managedRetention.wakeOff') });
+            // The label already says what is started; the value is only its state.
+            value: t(input.presetPolicy.wakeOnAcceptedMessage ? 'common.on' : 'common.off') });
     }
     // Stopped storage is not a receipt row: Keep it's consequence says the stopped cost once, as a short rate (R6).
     const presentPrice = (price: NonNullable<ManagedConfigurationFactsV1['prices']>[number]) => ({ ...price,

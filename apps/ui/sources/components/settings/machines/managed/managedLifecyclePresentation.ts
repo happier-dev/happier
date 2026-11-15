@@ -2,6 +2,7 @@ import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import type { ManagedCost } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import type { ProviderNativeOptionFactsV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+import type { ManagedAsleepWake } from '@/sync/domains/pending/managedWakeProjection';
 import { formatRetentionDuration } from './managedRetentionPresentation';
 
 /**
@@ -31,7 +32,8 @@ export type ManagedLifecycleState =
   | Readonly<{ kind: 'notCreated' }>
   | Readonly<{ kind: 'stopPending' }>
   | Readonly<{ kind: 'powerPending'; provider: string; state: string }>
-  | Readonly<{ kind: 'stoppedStorage' }>
+  /** Asleep with its storage kept; `wake` says what starts it again, from the wake owner. */
+  | Readonly<{ kind: 'stoppedStorage'; wake?: ManagedAsleepWake }>
   | Readonly<{ kind: 'storageUnknown' }>
   | Readonly<{ kind: 'absent' }>
   | Readonly<{ kind: 'expired' }>
@@ -199,7 +201,7 @@ export function describeManagedLifecycleState(
     case 'stoppedStorage':
       return { ...present(
         'neutral',
-        { detail: t('managedPower.stoppedStorage') },
+        { detail: describeAsleepLine(state.wake) },
         ['start'],
       ), word: t('managedPower.asleep') };
     case 'storageUnknown':
@@ -398,5 +400,16 @@ export function managedLifecycleActionLabel(
       return t('common.cancel');
     case 'change':
       return t('managedMachines.actions.change');
+  }
+}
+
+/** One word for the state everywhere ("Asleep", as the header and rail say it), then what starts it again. */
+function describeAsleepLine(wake: ManagedAsleepWake | undefined): string {
+  switch (wake?.kind) {
+    case 'onSend': return t('managedPower.asleepWakesOnSend');
+    case 'waitsForController': return wake.controller === null ? t('managedPower.asleepWaitsForControllerUnnamed')
+      : t('managedPower.asleepWaitsForController', { controller: wake.controller });
+    case 'off': return t('managedPower.asleepNoWake');
+    case undefined: return t('managedPower.asleep');
   }
 }

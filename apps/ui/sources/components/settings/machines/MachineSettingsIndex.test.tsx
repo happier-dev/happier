@@ -1231,6 +1231,26 @@ describe('the machine list column in the rail door', () => {
     });
     expect(visible('settings.machines.row.srv_a.old-0')).toBe(true);
   });
+
+  it('counts what each group lists inline, as the Machines table does; the Offline fold says its own count', async () => {
+    // A long fleet's offline machines fold (as above); a short one lists them inline.
+    const offline = Array.from({ length: 9 }, (_, index) => ({
+      ...machine(`gone-${index}`, `Gone ${index}`, `gone${index}.local`),
+      active: false,
+      activeAt: 1,
+    }));
+    await setMachines([
+      { serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [machine('machine-a1', 'Machine A1', 'a.local'), ...offline] },
+      { serverId: 'srv_b', serverName: 'Home B', status: 'idle', machines: [machine('machine-b1', 'Machine B1', 'b.local')] },
+    ]);
+    const { MachinesColumn } =
+      await import('@/components/machines/collection/MachinesColumn');
+    const tree = (await renderScreen(React.createElement(MachinesColumn))).tree;
+    const label = (title: string) => tree.findAll((node) => node.props?.title === title && 'count' in (node.props ?? {})
+      && node.props.level === 'subgroup')[0];
+    await waitForHomeGovernance(() => expect(label('Home A')?.props.count).toBe(1));
+    expect(label('Home B')?.props.count).toBe(1);
+  });
 });
 
 describe('the presets group in the rail', () => {

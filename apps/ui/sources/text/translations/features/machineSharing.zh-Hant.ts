@@ -18,7 +18,7 @@ export const machineSharing = createMachineSharingTranslations({
     trustedOsLead: "請信任使用 {machine} 共用 Agent 使用者的所有人。",
     trustedOsDetail: "成員和擁有者的隔離 Agent 目前共用同一 Linux 使用者，因此任何一方都可以複製所選憑證、直接交付的金鑰和可讀的 Session 上下文。即使成員使用獨立使用者，擁有者仍能查看交付的資料。請使用團隊專用機器。",
     manageHelp: "共用這台機器，並變更代理在其上的執行方式。",
-    loading: '正在載入 {machine} 的存取權。', readError: '無法載入 {machine} 的存取權。', offline: '{machine} 已離線。存取權變更會儲存在這裡。', offlineRecipient: "{machine} 已離線。", approvalPending: '此存取權變更正在等待你的核准。',
+    loading: '正在載入 {machine} 的存取權。', readError: '無法載入 {machine} 的存取權。', offline: '{machine} 已離線。存取權變更會儲存在這裡。', offlineRecipient: "{machine} 已離線。", asleep: "{machine} 處於休眠。存取變更已儲存，會在它喚醒時生效。", asleepRecipient: "{machine} 處於休眠。", approvalPending: '此存取權變更正在等待你的核准。',
     denied: '只有可以管理 {machine} 的人才能變更共享設定。', use: '可以使用', manage: '可以管理', allMembers: '所有目前成員，包括之後加入的成員',
     pending: '正在等候有權限的金鑰持有者為 {machine} 準備存取權。', incompatible: '{machine} 已啟用端對端加密，但 {person} 的帳戶尚未啟用，因此 {person} 無法開啟它。',
     incompatibleHelp: '共享未加密的機器，或請 {person} 在帳戶設定中啟用端對端加密。',

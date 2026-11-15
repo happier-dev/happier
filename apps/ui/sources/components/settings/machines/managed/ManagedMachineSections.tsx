@@ -44,7 +44,7 @@ import { observeHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
 import { homeDomainFailureCode, homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { describeMachinePresenceLine } from '@/utils/sessions/machinePresenceLine';
-import { resolveManagedWakeAvailability } from '@/sync/domains/pending/managedWakeProjection';
+import { resolveManagedAsleepWake, resolveManagedWakeAvailability } from '@/sync/domains/pending/managedWakeProjection';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
 import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
 import { useMachineActivity } from '@/hooks/machine/useMachineActivity';
@@ -728,7 +728,9 @@ function ManagedMachineFullSections(props: FullSectionProps) {
             activeAt: (enrolledActivity ?? readMachineActivity(enrolledMachine)).activeAt ?? undefined,
         } } : {}),
         providerAvailable: (!machine.controller || requiredController) && provisionerPresentation.projectionReady ? provisionerPresentation.title !== null : undefined,
-        ...(controller && controllerPresence && typeof controllerName === 'string' ? { controller: { name: controllerName, online: controllerPresence.online } } : {}) };
+        ...(controller && controllerPresence && typeof controllerName === 'string' ? { controller: { name: controllerName, online: controllerPresence.online } } : {}),
+        asleepWake: resolveManagedAsleepWake({ wakeOnAcceptedMessage: policy.wakeOnAcceptedMessage, availability: wakeAvailability,
+            controllerName: controllerName ?? null }) };
     // Asleep with its disk kept, Start is the next step: it moves to the state row that opens the page, the same action
     // and the same offer, so it is one press from where the person looks on every width.
     const startAction = allReceiptActions.find(action => action.testID === 'managed-machine.start' && !action.disabled);
@@ -855,7 +857,7 @@ function ManagedMachineFullSections(props: FullSectionProps) {
                 action={{ label: t('approvals.details'), onPress: () => openApproval(approvalPresentation.artifactId) }} />
             : null}
         <ManagedCreationProgress machine={machine} operation={operation} setupRecovery={setupRecovery} provider={providerName}
-            enrolledMachine={creationContext.enrolledMachine} title={machineName}
+            enrolledMachine={creationContext.enrolledMachine} asleepWake={creationContext.asleepWake} title={machineName}
             guestPayloadStale={guestPayloadStale}
             {...(props.staleRead ? { staleRead: props.staleRead } : {})}
             {...(!pendingDeleteApprovalId ? { reviewApproval: (artifactId: string) => router.push(
