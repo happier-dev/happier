@@ -66,8 +66,8 @@ describe('opaque preset reviewed child issuer', () => {
   });
 
   it.each([
+    // An unlisted child of an approved parent inherits too (owner ruling 2026-11-15; covered below).
     ['consumes the approved parent policy for a listed child once', 'power', true],
-    ['still decides a child the approved parent did not list', 'acquire', false],
   ] as const)('%s', async (_caseName, listedRole, admitted) => {
     const childAction = { pluginId: 'fixture.compute', localId: 'power' };
     const childId = formatQualifiedPluginActionId(childAction);
@@ -101,6 +101,48 @@ describe('opaque preset reviewed child issuer', () => {
     expect(runs).toHaveLength(1);
     expect(isHostAdmittedReviewedChildPolicyV1(readHostReviewedChildOperationV1(runs[0], childId, { power: 'stop' }),
       childId, { power: 'stop' })).toBe(true);
+  });
+
+  it.each([
+    ['admits an unlisted child of a person-approved parent despite its own Require', 'approved', true],
+    ['refuses the same child under an unapproved parent port', 'unapproved', false],
+    ['refuses the same child under a forged parent claim', 'forged', false],
+    ['refuses the same child when the approved port belongs to another parent', 'other-parent', false],
+  ] as const)('%s', async (_caseName, parentKind, admitted) => {
+    const childAction = { pluginId: 'fixture.compute', localId: 'acquire' };
+    const childId = formatQualifiedPluginActionId(childAction);
+    // Guest Update dea7de30: the person approved the parent in the app; the
+    // opened acquire child carries the Account's own Require on surface ui.
+    const context: ActionExecutorContext = { surface: 'ui',
+      actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: { [childId]: { approvalRequiredSurfaces: ['ui'] } } }) };
+    const parentInput = { homeId: 'home', managedId: 'managed', expectedIntentRevision: 0 };
+    const parentActionId = parentKind === 'other-parent' ? 'machines.managed.power.set' : 'machines.managed.bootstrap.retry';
+    const hostReviewedChild = parentKind === 'forged'
+      ? { parent: { actionId: 'machines.managed.bootstrap.retry', input: parentInput },
+        invoke: async (): Promise<ActionExecuteResult> => ({ ok: true, result: {} }) }
+      : createHostReviewedChildPortV1({ actionId: parentActionId, input: parentInput, context,
+        ...(parentKind === 'unapproved' ? {} : { reviewAdmitted: true as const }) });
+    const runs: ActionExecutorContext[] = [];
+    const port = createManagedOpaquePresetReviewedChildPortV1({
+      parent: { actionId: 'machines.managed.bootstrap.retry', input: parentInput },
+      context: { ...context, hostReviewedChild },
+      launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Private', choices: {} },
+      provisioner, localId: 'acquire', role: 'acquire', execute: async (_input, childContext): Promise<ActionExecuteResult> => {
+        runs.push(childContext);
+        return { ok: true, result: { acquired: true } };
+      },
+    });
+
+    const result = await port!.invoke({ action: childAction, role: 'acquire', input: { choice: 'x' } });
+    if (!admitted) {
+      expect(result).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+      expect(runs).toHaveLength(0);
+      return;
+    }
+    expect(result).toEqual({ ok: true, result: { acquired: true } });
+    expect(runs).toHaveLength(1);
+    expect(isHostAdmittedReviewedChildPolicyV1(readHostReviewedChildOperationV1(runs[0], childId, { choice: 'x' }),
+      childId, { choice: 'x' })).toBe(true);
   });
 
   it('refuses an action absent from the authenticated opened declaration', () => {

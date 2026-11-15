@@ -1,4 +1,4 @@
-import { createHostReviewedChildPortV1, readHostAdmittedReviewedChildPlanV1, retainManagedOpaquePresetCustodianAdmissionV1, type ActionExecutorContext,
+import { createHostReviewedChildPortV1, readHostAdmittedReviewedChildPlanV1, readHostAdmittedReviewedParentV1, retainManagedOpaquePresetCustodianAdmissionV1, type ActionExecutorContext,
   type ActionExecuteResult, type HostReviewedChildPortV1, type ManagedOpaquePresetCustodianAdmissionV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { prepareHostReviewedChildPolicyV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleApproval';
 import { readMachineProvisionerActionRolesV1, type MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
@@ -29,7 +29,10 @@ export function createManagedOpaquePresetReviewedChildPortV1(params: Readonly<{
   // it; consume that decision. Only a child the parent could not list before
   // the custodian opened it is decided here, by the canonical policy owner.
   const listed = readHostAdmittedReviewedChildPlanV1(params.context.hostReviewedChild, child);
-  const prepared = listed ? null : prepareHostReviewedChildPolicyV1(child, params.context);
+  // A person-approved parent's internal steps inherit that approval (owner
+  // ruling 2026-11-15): the policy owner then answers the child's own Require.
+  const parentApproved = readHostAdmittedReviewedParentV1(params.context.hostReviewedChild)?.actionId === params.parent.actionId;
+  const prepared = listed ? null : prepareHostReviewedChildPolicyV1(child, params.context, undefined, parentApproved);
   const decided = listed ? listed.policy
     : prepared && prepared.requiredActionIds.length === 0 ? { ...child, surface: params.context.surface } : null;
   const custodyAdmitted = params.custody === undefined
