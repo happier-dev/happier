@@ -1,37 +1,20 @@
 # Compatibility and version skew
 
-## Managed Machine creation provenance (unreleased 0.3)
-
-Provider-authored bound acquire results carry optional `resource.origin: 'created'`
-through the existing retained resource, including opaque preset content. Creation
-enrollment seeds Machine metadata `isolationV1: { environment: 'managed-guest',
-provisionerId }` only while the field is absent, in the same metadata CAS as default
-roles. `provisionerId` is the qualified plugin contribution identity. Created Lume
-VMs receive the fact even with personal/existing-user enrollment; adopted hosts and
-Account-native or SSH enrollment of existing hosts carry no origin and gain no fact.
-
-`readMachineIsolationV1` in Protocol `machines/metadataUpdate` reads opened Machine
-metadata and returns the fact or `null` for missing/unreadable provenance. Missing
-provenance retains the host sandbox default. Matching Protocol, SDK projections,
-provisioners and daemon Action hosts reload together under the unreleased 0.3 direct
-cut. The optional field reuses existing resource/metadata persistence; it adds no
-table, migration, settings key or compatibility epoch.
-
 ## Home guest CLI source (unreleased 0.3)
 
 `/v1/features` advertises optional `capabilities.guestCli` with the closed identity
-`{ source: 'home-payload' | 'public-release', line: 'major.minor' }`. This selects
+`{ source: 'home-payload' | 'public-release', line: 'major.minor', channel: 'stable' | 'preview' | 'publicdev' }`. This selects
 installation artifacts; it is independent of feature enablement and the server's
 diagnostic package version. The current program line is explicitly `0.3`.
 Development source builds select Home payloads; released server binaries and
 Docker images select public releases. Updated managed installers require this
-identity, choose the newest published CLI on its line through exact signed
-acquisition, and refuse an installed-version downgrade. Missing or malformed
+identity, choose the newest published CLI on its line and channel through exact
+signed acquisition, and refuse an installed-version downgrade. Missing or malformed
 identity refuses with `guest_cli_identity_unavailable`, including on an older
 Home that has not gained the producer; no version-based fallback is inferred.
 
 The capability root is additive: released 0.2 readers discard the unknown family.
-The new identity itself is closed because its source and line select executable
+The new identity itself is closed because its source, line and channel select executable
 artifacts. Matching 0.3 server and controller/app consumers must reload together;
 this adds no persisted state, migration, endpoint or SDK epoch.
 
@@ -70,18 +53,18 @@ table, migration, settings key or compatibility epoch.
 ## Home guest CLI source (unreleased 0.3)
 
 `/v1/features` advertises optional `capabilities.guestCli` with the closed identity
-`{ source: 'home-payload' | 'public-release', line: 'major.minor' }`. This selects
+`{ source: 'home-payload' | 'public-release', line: 'major.minor', channel: 'stable' | 'preview' | 'publicdev' }`. This selects
 installation artifacts; it is independent of feature enablement and the server's
 diagnostic package version. The current program line is explicitly `0.3`.
 Development source builds select Home payloads; released server binaries and
 Docker images select public releases. Updated managed installers require this
-identity, choose the newest published CLI on its line through exact signed
-acquisition, and refuse an installed-version downgrade. Missing or malformed
+identity, choose the newest published CLI on its line and channel through exact
+signed acquisition, and refuse an installed-version downgrade. Missing or malformed
 identity refuses with `guest_cli_identity_unavailable`, including on an older
 Home that has not gained the producer; no version-based fallback is inferred.
 
 The capability root is additive: released 0.2 readers discard the unknown family.
-The new identity itself is closed because its source and line select executable
+The new identity itself is closed because its source, line and channel select executable
 artifacts. Matching 0.3 server and controller/app consumers must reload together;
 this adds no persisted state, migration, endpoint or SDK epoch.
 
