@@ -7,9 +7,7 @@ import Foundation
 //   --daemon-json   long-running NDJSON loop: emit status/diagnostic/frame/control_ack,
 //                   read control commands from stdin
 //
-// Fail-closed: if the private simulator frameworks are unavailable / incompatible, --health-json
-// emits status:"unavailable" with a typed reasonCode and exits non-zero, which the daemon resolver
-// surfaces as ios_private_helper_unavailable / private_framework_symbol_mismatch.
+// Both modes report unavailable while capture and input have no native producer.
 
 let helperVersion = HelperBuildInfo.version
 
@@ -17,55 +15,29 @@ func emitLine(_ value: String) {
     FileHandle.standardOutput.write(Data((value + "\n").utf8))
 }
 
+// The transport scaffold has no framebuffer or HID producer. Signing and framework loading
+// cannot turn it into one; both modes must describe that same unavailable implementation.
 func runHealthJson() -> Int32 {
-    switch SimulatorBridge.probe() {
-    case let .ready(xcodeVersion):
-        let health = HelperHealth.available(helperVersion: helperVersion, xcodeVersion: xcodeVersion)
-        if let line = WireCodec.line(health) {
-            emitLine(line)
-            return 0
-        }
-        emitLine(WireCodec.line(HelperHealth.unavailable(
-            reasonCode: "ios_private_helper_unavailable",
-            code: "health_serialization_failed"
-        )) ?? "{}")
-        return 1
-    case let .unavailable(reasonCode, code):
-        emitLine(WireCodec.line(HelperHealth.unavailable(reasonCode: reasonCode, code: code)) ?? "{}")
-        return 1
-    }
+    emitLine(WireCodec.line(HelperHealth.unavailable(
+        reasonCode: "ios_private_helper_unavailable",
+        code: "ios_capture_producer_unimplemented"
+    )) ?? "{}")
+    return 1
 }
 
 func runDaemonJson() -> Int32 {
-    let probe = SimulatorBridge.probe()
-    guard case .ready = probe else {
-        let reasonCode: String
-        if case let .unavailable(rc, _) = probe { reasonCode = rc } else { reasonCode = "ios_private_helper_unavailable" }
-        let status = HelperStatusMessage(
-            status: "unavailable",
-            helperVersion: helperVersion,
-            supportedCodecs: HelperWire.supportedCodecs,
-            supportedInputKinds: [],
-            diagnostics: [["reasonCode": reasonCode]]
-        )
-        emitLine(WireCodec.line(status) ?? "{}")
-        return 1
-    }
-
-    // Ready: announce status, then run the capture/control loop. The streaming/input dispatch
-    // implementation links CoreSimulator/SimulatorKit and is exercised by the native test target
-    // + the live argent QA gate; the daemon-side TS contract is driven by helperProtocol.test.ts.
     let status = HelperStatusMessage(
-        status: "ready",
+        status: "unavailable",
         helperVersion: helperVersion,
-        supportedCodecs: HelperWire.supportedCodecs,
-        supportedInputKinds: HelperWire.supportedInputKinds,
-        diagnostics: []
+        supportedCodecs: [],
+        supportedInputKinds: [],
+        diagnostics: [[
+            "reasonCode": "ios_private_helper_unavailable",
+            "code": "ios_capture_producer_unimplemented"
+        ]]
     )
     emitLine(WireCodec.line(status) ?? "{}")
-
-    let session = SimulatorCaptureSession()
-    return session.run()
+    return 1
 }
 
 let arguments = Array(CommandLine.arguments.dropFirst())

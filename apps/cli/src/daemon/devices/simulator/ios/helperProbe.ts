@@ -52,12 +52,6 @@ export async function probeIosSimulatorHelperHealth(
         });
     }
 
-    if (result.exitCode !== 0) {
-        return unavailable('helper_health_probe_failed', {
-            exitCode: result.exitCode,
-        });
-    }
-
     let parsed: unknown;
     try {
         parsed = JSON.parse(result.stdout);
@@ -72,6 +66,14 @@ export async function probeIosSimulatorHelperHealth(
         return unavailable('helper_health_malformed_output', {
             issueCount: health.error.issues.length,
         });
+    }
+    if (result.exitCode !== 0 && health.data.status === 'available') {
+        return unavailable('helper_health_probe_failed', { exitCode: result.exitCode });
+    }
+    // The current native helper has no framebuffer/HID producer. Older local scaffold builds
+    // reported available after framework loading alone; do not promote that claim to capability.
+    if (health.data.status === 'available') {
+        return unavailable('ios_capture_producer_unimplemented');
     }
     return health.data;
 }

@@ -3,7 +3,7 @@ import XCTest
 
 // Native-side wire contract tests. These guard that the helper's JSON output stays byte-compatible
 // with the daemon-side TypeScript parser (helperProtocol.ts) and Zod schema (iosV1.ts). The live
-// private-framebuffer capture path is verified by the build smoke run + argent QA, not here.
+// private-framebuffer capture path is unimplemented; these are transport-shape tests only.
 final class WireProtocolTests: XCTestCase {
     func testAvailableHealthSerializesToSchemaShape() throws {
         let health = HelperHealth.available(helperVersion: "1.0.0", xcodeVersion: "16.0")
@@ -74,9 +74,4 @@ final class WireProtocolTests: XCTestCase {
         XCTAssertEqual(object["commandId"] as? String, "cmd_1")
     }
 
-    func testInputDispatcherAcceptsSupportedKinds() {
-        XCTAssertTrue(InputDispatcher.dispatch(command: ["control": ["kind": "tap"]]))
-        XCTAssertFalse(InputDispatcher.dispatch(command: ["control": ["kind": "unknown"]]))
-        XCTAssertFalse(InputDispatcher.dispatch(command: [:]))
-    }
 }

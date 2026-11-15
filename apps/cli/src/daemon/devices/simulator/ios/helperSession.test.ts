@@ -151,6 +151,29 @@ describe('iOS simulator helper session owner', () => {
         expect(parseProcessOwnerTag(environment?.HAPPIER_PROCESS_OWNER)?.owner)
             .toEqual({ kind: 'happier', component: 'device_helper' });
     });
+    it('settles pending input with the native unavailable cause before process close', async () => {
+        const mod = await import(modulePath);
+        const fake = createFakeHelperProcess();
+        const session = mod.createIosSimulatorHelperSession({ startHelper: async () => fake });
+        const result = session.sendCommand({
+            v: 1, kind: 'control', commandId: 'unimplemented',
+            target: { sourceId: SOURCE_ID, simulatorId: 'A1B2-C3D4' },
+            control: { v: 1, kind: 'tap', streamId: STREAM_ID, sourceId: SOURCE_ID, eventId: 'unimplemented', x: 0.5, y: 0.5 },
+        });
+        await flushMicrotasks();
+        fake.emitStdout({
+            v: 1, kind: 'status', status: 'unavailable',
+            supportedCodecs: [], supportedInputKinds: [],
+            diagnostics: [{ reasonCode: 'ios_private_helper_unavailable', code: 'ios_capture_producer_unimplemented' }],
+        });
+        fake.emitClose({ exitCode: 1, signal: null });
+        await expect(result).resolves.toMatchObject({
+            ok: false, status: 'unavailable', reasonCode: 'ios_private_helper_unavailable',
+            diagnostics: [{ reasonCode: 'ios_private_helper_unavailable', code: 'ios_capture_producer_unimplemented' }],
+        });
+        await session.stop();
+    });
+
     it('bridges helper stdout frame lines to the active openStream consumer', async () => {
         const mod = await import(modulePath);
         const fake = createFakeHelperProcess();

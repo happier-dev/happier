@@ -1,23 +1,13 @@
 import Foundation
 
-// SimulatorCaptureSession — the `--daemon-json` capture + control loop.
-//
-// Reads control commands (IosSimulatorHelperControlCommand) line-delimited from stdin and emits
-// frame / control_ack / diagnostic messages line-delimited to stdout. The frame payloads are
-// MJPEG keyframes sourced from CoreSimulator/SimulatorKit's framebuffer service for the booted
-// device, base64-encoded per the wire contract.
-//
-// NOTE: the concrete framebuffer attach + JPEG encode path is implemented against the private
-// SimulatorKit framebuffer service. That native path is verified by the build script's smoke run
-// and the live argent QA gate (a unit test cannot drive the private framebuffer). The wire-level
-// framing is what the daemon-side helperProtocol/helperFrameProducer tests assert.
+// NDJSON transport scaffold only. There is no framebuffer or HID producer; the entrypoint
+// reports unavailable until those native effects are implemented and verified.
 final class SimulatorCaptureSession {
     private var sequence = 0
     private var running = true
 
     func run() -> Int32 {
-        // Drive the inbound control loop on stdin; the framebuffer producer pushes frames out as
-        // they arrive. We keep the process alive until stdin closes or a stop is requested.
+        // Transport loop retained for the eventual native producer.
         let stdin = FileHandle.standardInput
         while running {
             guard let line = readLine(from: stdin) else { break }
@@ -38,19 +28,12 @@ final class SimulatorCaptureSession {
         }
         guard kind == "control" else { return }
         let commandId = (object["commandId"] as? String) ?? ""
-        // Dispatch the native input (tap/swipe/keyboard_text/hardware_button) through SimulatorKit.
-        // Acknowledge accepted; concrete dispatch is the private-framework path verified by argent QA.
-        let dispatched = InputDispatcher.dispatch(command: object)
-        if dispatched {
-            emit(HelperControlAck(commandId: commandId, status: "accepted",
-                                  reasonCode: nil, diagnostics: []))
-        } else {
-            emit(HelperControlAck(commandId: commandId, status: "unavailable",
-                                  reasonCode: "ios_input_dispatch_unavailable", diagnostics: []))
-        }
+        emit(HelperControlAck(commandId: commandId, status: "unavailable",
+                              reasonCode: "ios_private_helper_unavailable",
+                              diagnostics: [["code": "ios_capture_producer_unimplemented"]]))
     }
 
-    /// Emit a frame to stdout. Called by the framebuffer producer when a new keyframe is ready.
+    /// Wire encoder scaffold; no framebuffer producer currently calls this method.
     func emitFrame(streamId: String, sourceId: String, jpeg: Data, timestampMs: Int) {
         sequence += 1
         let frame = HelperFrameMessage(
@@ -87,17 +70,5 @@ final class SimulatorCaptureSession {
             }
             buffer.append(chunk)
         }
-    }
-}
-
-enum InputDispatcher {
-    /// Dispatch a control command's native input action via SimulatorKit. Returns true when the
-    /// action was accepted. The concrete private-framework dispatch is verified by argent QA.
-    static func dispatch(command: [String: Any]) -> Bool {
-        guard let control = command["control"] as? [String: Any],
-              let kind = control["kind"] as? String else {
-            return false
-        }
-        return HelperWire.supportedInputKinds.contains(kind)
     }
 }

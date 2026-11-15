@@ -256,6 +256,17 @@ export function createIosSimulatorHelperSession(
             handleAck(message);
             return;
         }
+        if (message.kind === 'status' && message.status === 'unavailable') {
+            const reason = message.diagnostics.find((entry) => typeof entry.reasonCode === 'string');
+            failAllPending({
+                ok: false,
+                status: 'unavailable',
+                reasonCode: typeof reason?.reasonCode === 'string'
+                    ? reason.reasonCode : 'ios_private_helper_unavailable',
+                diagnostics: message.diagnostics,
+            });
+            return;
+        }
         if (message.kind !== 'frame') return;
         for (const consumer of streamConsumers) {
             if (consumer.sourceId === message.sourceId && consumer.streamId === message.streamId) {

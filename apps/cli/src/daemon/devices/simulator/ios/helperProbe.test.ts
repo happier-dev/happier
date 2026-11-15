@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 describe('probeIosSimulatorHelperHealth', () => {
-    it('parses strict helper health JSON', async () => {
+    it('does not mistake a scaffold helper availability claim for a backed producer', async () => {
         const mod = await import('./helperProbe').catch(() => null);
 
         expect(mod?.probeIosSimulatorHelperHealth).toBeTypeOf('function');
@@ -25,8 +25,27 @@ describe('probeIosSimulatorHelperHealth', () => {
                 stderr: '',
             }),
         })).resolves.toMatchObject({
-            status: 'available',
-            helperVersion: '1.2.3',
+            status: 'unavailable',
+            reasonCode: 'ios_private_helper_unavailable',
+            diagnostics: [{ code: 'ios_capture_producer_unimplemented' }],
+        });
+    });
+
+    it('preserves the producer unavailable cause when native health exits nonzero', async () => {
+        const { probeIosSimulatorHelperHealth } = await import('./helperProbe');
+        await expect(probeIosSimulatorHelperHealth({
+            helperPath: '/tmp/helper',
+            runHelper: async () => ({
+                exitCode: 1, stderr: '',
+                stdout: JSON.stringify({
+                    v: 1, platform: 'ios', status: 'unavailable',
+                    reasonCode: 'ios_private_helper_unavailable',
+                    diagnostics: [{ code: 'ios_capture_producer_unimplemented' }],
+                }),
+            }),
+        })).resolves.toMatchObject({
+            status: 'unavailable', reasonCode: 'ios_private_helper_unavailable',
+            diagnostics: [{ code: 'ios_capture_producer_unimplemented' }],
         });
     });
 

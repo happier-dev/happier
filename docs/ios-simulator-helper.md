@@ -1,9 +1,18 @@
 # iOS Simulator Helper — architecture & legal/TOS posture
 
-This documents the first-party `happier-ios-simulator-helper`: the out-of-process macOS binary that
-powers the iOS branch of the device-preview tier (live screen stream + native input). It is the iOS
+This documents the first-party `happier-ios-simulator-helper`: the out-of-process macOS scaffold for
+the iOS branch of the device-preview tier (live screen stream + native input). It is the iOS
 analog of the vendored Android scrcpy server. It also records the **App Store / Apple TOS posture**
 for its dependency on Apple's private CoreSimulator/SimulatorKit frameworks (finding #59).
+
+**Development status:** the native framebuffer and HID producers are unimplemented. The helper
+reports `ios_private_helper_unavailable` with diagnostic code
+`ios_capture_producer_unimplemented`; it advertises no capture or input and never acknowledges an
+input effect as accepted. Booted devices remain discoverable. Building, signing and notarizing this
+scaffold cannot enable preview; implementing and verifying the native producer is a separate owner
+decision. The transport and trust-chain descriptions below describe the intended integration.
+The daemon health owner also withdraws older local scaffold builds that report `available` after
+framework loading alone, so an unrecompiled helper cannot restore a false capability claim.
 
 ## Why a separate, out-of-process, signed binary
 
@@ -95,7 +104,7 @@ through `helperProtocol.ts`'s serializer and the helper's `InputDispatcher`.
 
 If any step fails, iOS capture stays `unavailable` with a precise typed reason and no helper runs.
 
-## Producing the signed artifact (the one external step)
+## Producing the signed artifact (after native producer implementation)
 
 Code-signing/notarization requires the user's Apple Developer ID and cannot be performed in this
 repo's automation. On macOS, with the same Developer ID identity used for the desktop DMG:
@@ -110,7 +119,8 @@ node apps/cli/scripts/buildIosSimulatorHelper.mjs \
 This builds (universal arm64+x86_64), codesigns (hardened runtime + secure timestamp), notarizes
 (`xcrun notarytool submit --wait`), staples, vendors the binary + sidecar, and rewrites
 `manifest.json`. The daemon pin is then derived from that manifest automatically — no source edit.
-Run the iOS argent QA gate on a booted simulator before relying on the flip.
+The current scaffold remains unavailable after this build. Once a real producer is implemented,
+run the iOS argent QA gate on a booted simulator before relying on availability.
 
 ## Local development build (0.3 source/dev runtimes)
 
