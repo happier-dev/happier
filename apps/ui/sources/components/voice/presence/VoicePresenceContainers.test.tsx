@@ -634,6 +634,15 @@ describe('the ended conversation', () => {
         expect(voice.onPrimaryAction).toHaveBeenCalledTimes(1);
     });
 
+    it('keeps a reading and its Stop in the top bar after End even when Voice cannot start again here', async () => {
+        const voice: VoiceAttemptControlProjection = { ...ended(), availability: 'unavailable', canStart: false, primaryAction: null };
+        const stop = vi.fn();
+        screen = await renderScreen(<VoiceTopBarPresence voice={voice} readAloud={{ phase: 'speaking', stop }} />);
+        expect(screen.getTextContent()).toContain(t('voicePresence.readAloud.speaking'));
+        screen.pressByTestId('voice-top-bar-read-aloud-stop');
+        expect(stop).toHaveBeenCalledTimes(1);
+    });
+
     it('is the microphone at rest again once nothing has just ended', async () => {
         const voice = projection('idle');
         screen = await renderScreen(<VoiceTopBarPresence voice={voice} />);

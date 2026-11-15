@@ -56,7 +56,8 @@ export const VoiceTopBarPresence = React.memo(function VoiceTopBarPresence(props
     const { voice, readAloud } = props;
     const testID = props.testID ?? 'voice-top-bar';
     const shortcutLabel = useKeyboardShortcutLabel('voice.toggle');
-    if (voice.availability === 'unavailable') return null;
+    // A reading is presented with its Stop whatever the call can do next; only the call's own pill
+    // and the rest mic depend on Voice being available here.
     const reading = resolveVoicePresenceReadAloud(voice, readAloud);
     if (reading?.alone) {
         return (
@@ -68,6 +69,7 @@ export const VoiceTopBarPresence = React.memo(function VoiceTopBarPresence(props
             />
         );
     }
+    if (voice.availability === 'unavailable') return null;
     if (!voice.live && !voice.ended) {
         return (
             <IconButton

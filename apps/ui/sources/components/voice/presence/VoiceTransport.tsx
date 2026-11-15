@@ -8,8 +8,9 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import type { VoiceAttemptControlProjection } from '@/components/voice/attempt/useVoiceAttemptControl';
 import { t } from '@/text';
+import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 
-import { VoiceReadAloudStop, type VoiceReadAloud } from './VoiceReadAloud';
+import { VoiceReadAloudStop, VoiceReadAloudStopPill, type VoiceReadAloud } from './VoiceReadAloud';
 
 /**
  * How large the transport is drawn, by the container that hosts it.
@@ -204,7 +205,15 @@ const VoiceTransportLabelled = React.memo(function VoiceTransportLabelled(props:
         const next = Math.round(event.nativeEvent.layout.width);
         setRowWidth((current) => (current === next ? current : next));
     }, []);
-    const compact = !sheet && (rowWidth === null ? props.narrowByDefault === true : rowWidth < LABELLED_MIN_WIDTH);
+    const reading = props.readAloud !== undefined && props.readAloud.phase !== 'idle';
+    const hasSend = voice.canCommitInput === true && Boolean(voice.commitInputLabel) && Boolean(voice.onCommitInput);
+    // The sheet shares its row three-up; a fourth control (the reading's Stop beside Mute, Send and End)
+    // steps Mute down to its named well so the others keep their words.
+    const labelledCount = [reading, controls.recovery !== null, controls.mute, hasSend, turn?.canBargeIn === true,
+        turn?.canCancelTurn === true && !turn.canBargeIn, controls.end, controls.dismiss !== undefined].filter(Boolean).length;
+    const compact = sheet
+        ? labelledCount > 3
+        : rowWidth === null ? props.narrowByDefault === true : rowWidth < LABELLED_MIN_WIDTH;
     const control = sheet ? styles.sheetControl : undefined;
     const glyph = (name: IconName, color: string = theme.colors.text.secondary) => <Icon name={name} size={icon} color={color} />;
     const secondary = (key: string, title: string, iconName: IconName, onPress: () => unknown, accessibilityLabel?: string) => (
@@ -238,7 +247,7 @@ const VoiceTransportLabelled = React.memo(function VoiceTransportLabelled(props:
             iconName={voice.muted ? 'microphone-slash' : 'microphone'}
             accessibilityLabel={muteLabel}
             tooltip={muteLabel}
-            size={COMPACT_WELL_SIZE}
+            size={sheet ? HAPPIER_PAGE_METRICS.controlHeightPx : COMPACT_WELL_SIZE}
             iconSize={icon}
             selected={voice.muted}
             disabled={!voice.canMute}
@@ -258,7 +267,7 @@ const VoiceTransportLabelled = React.memo(function VoiceTransportLabelled(props:
         />
     );
     // While the call is waiting on it, Send is the one filled control of the row.
-    const send = voice.canCommitInput && voice.commitInputLabel && voice.onCommitInput
+    const send = hasSend && voice.commitInputLabel && voice.onCommitInput
         ? voice.awaitingSend ? (
             <RoundButton
                 testID={`${testID}-send`}
@@ -270,10 +279,9 @@ const VoiceTransportLabelled = React.memo(function VoiceTransportLabelled(props:
             />
         ) : secondary('send', voice.commitInputLabel, 'arrow-up', voice.onCommitInput)
         : null;
-    // Stop reading, drawn like Cancel reply: the short verb keeps the sheet's row three-up beside Mute
-    // and End; "Stop reading" stays its accessible name. It is the read-aloud Action, never the call's.
+    // Stop reading keeps the sheet's row three-up beside Mute and End.
     const readAloudStop = props.readAloud && props.readAloud.phase !== 'idle'
-        ? secondary('read-aloud-stop', t('common.stop'), 'stop', props.readAloud.stop, t('voicePresence.readAloud.stop'))
+        ? <VoiceReadAloudStopPill readAloud={props.readAloud} size={button} iconSize={icon} style={control} testID={`${testID}-read-aloud-stop`} />
         : null;
     const interrupt = turn?.canBargeIn ? secondary('interrupt', t('voicePresence.interrupt'), 'hand', turn.onBargeIn) : null;
     // A reply can be cancelled without ending the call (thinking, or speaking without barge-in).

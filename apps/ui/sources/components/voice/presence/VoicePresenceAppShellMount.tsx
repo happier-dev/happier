@@ -32,6 +32,7 @@ import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRun
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { useVoicePresenceContainer } from './useVoicePresenceContainer';
+import { resolveVoicePresenceReadAloud } from './resolveVoicePresenceReadAloud';
 import { resolveVoiceOrbInteractionPadding } from './voicePresenceAnatomy';
 import {
     VOICE_ORB_PET_GAP,
@@ -96,8 +97,9 @@ function VoiceFloatingPresenceRuntime(props: Readonly<{ container: 'island' | 'o
     const orb = props.container === 'orb';
     // One visibility fact governs both the container and its measured composer clearance.
     // Keyboard-open moves the same presence above measured keyboard chrome; transport stays reachable.
-    const visible = voice.availability !== 'unavailable'
-        && (orb || voice.live || Boolean(voice.ended) || readAloud.phase !== 'idle');
+    // A reading stays presented with its Stop whatever the call can do next.
+    const visible = resolveVoicePresenceReadAloud(voice, readAloud) !== null
+        || (voice.availability !== 'unavailable' && (orb || voice.live || Boolean(voice.ended)));
     // The keyboard scaffold already lifts the composer. In that state the float clears the
     // measured composer instead of reporting the keyboard height back as composer reservation.
     const reservesComposerSpace = visible && phone && !orb && keyboardHeight === 0;

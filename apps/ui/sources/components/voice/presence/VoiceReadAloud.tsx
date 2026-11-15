@@ -2,6 +2,7 @@ import * as React from 'react';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -118,6 +119,36 @@ export function VoiceReadAloudStop(
         ? { fill: 'neutral' as const }
         : { variant: 'plain' as const })}
       onPress={props.readAloud.stop}
+    />
+  );
+}
+
+/**
+ * Stop reading in the Voice section's labelled rows (the transport during a call, the ended row
+ * after one): drawn like Cancel reply, the short verb keeping the row compact and "Stop reading" its
+ * accessible name. It is the read-aloud Action, never the call's.
+ */
+export function VoiceReadAloudStopPill(
+  props: Readonly<{
+    readAloud: VoiceReadAloud;
+    size: 'small' | 'normal';
+    /** The row's glyph size, so Stop sits level with its neighbours. */
+    iconSize: number;
+    style?: React.ComponentProps<typeof RoundButton>['style'];
+    testID?: string;
+  }>,
+): React.ReactElement {
+  const { theme } = useUnistyles();
+  return (
+    <RoundButton
+      testID={props.testID ?? 'voice-read-aloud-stop'}
+      display="secondary"
+      size={props.size}
+      style={props.style}
+      title={t('common.stop')}
+      accessibilityLabel={t('voicePresence.readAloud.stop')}
+      onPress={props.readAloud.stop}
+      leading={<Icon name="stop" size={props.iconSize} color={theme.colors.text.secondary} />}
     />
   );
 }

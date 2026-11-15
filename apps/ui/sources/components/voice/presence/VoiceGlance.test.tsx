@@ -320,6 +320,21 @@ describe('VoiceGlance', () => {
         expect(screen.getTextContent()).not.toContain(mutedLabel);
     });
 
+    it('keeps the phone sheet to one readable row when the reading Stop joins Mute, Send and End', async () => {
+        const voice = { ...attempt(), canCommitInput: true, awaitingSend: true, commitInputLabel: 'Send', onCommitInput: vi.fn() };
+        screen = await renderScreen(<VoiceGlance model={surface(voice, { canBargeIn: false })} presentation="sheet"
+            readAloud={{ phase: 'speaking', stop: vi.fn() }} />);
+        // Four controls: Mute steps down to its named well so Stop, Send and End keep their words.
+        expect(screen.getTextContent()).not.toContain(t('voicePresence.mute'));
+        expect(screen.findByTestId('voice-glance-transport-mute')?.props.accessibilityLabel).toBeTruthy();
+        screen.pressByTestId('voice-glance-transport-mute');
+        expect(voice.onToggleMute).toHaveBeenCalledTimes(1);
+        await screen.unmount();
+        // Three controls keep the labelled Mute.
+        screen = await renderScreen(<VoiceGlance model={surface(voice, { canBargeIn: false })} presentation="sheet" />);
+        expect(screen.getTextContent()).toContain(t('voicePresence.mute'));
+    });
+
     it('offers the admitted recovery in Mute’s place while End stays reachable', async () => {
         const voice = attempt({ reconnecting: true });
         screen = await renderScreen(<VoiceGlance model={surface(voice, { canBargeIn: false })} presentation="popover" />);
@@ -430,6 +445,8 @@ describe('VoiceGlance', () => {
         expect(screen.getTextContent()).toContain('4:12');
         const readingStop = screen.findByTestId('voice-glance-read-aloud-stop')!;
         expect(readingStop.props.accessibilityLabel).toBe(t('voicePresence.readAloud.stop'));
+        // While it reads, the row offers its Stop beside the way back; starting again waits (the mark still starts).
+        expect(screen.findByTestId('voice-glance-start-again')).toBeNull();
         screen.pressByTestId('voice-glance-read-aloud-stop');
         expect(stop).toHaveBeenCalledTimes(1);
         expect(voice.onPrimaryAction).not.toHaveBeenCalled();

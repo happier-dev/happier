@@ -29,7 +29,7 @@ import { VoiceEndedPendingApproval } from './VoiceEndedPendingApproval';
 import { presentVoiceContinuation } from '@/voice/transcript/voiceTranscriptNotePresentation';
 import { VoiceStatusCell } from './VoiceStatusCell';
 import { VoiceTransport } from './VoiceTransport';
-import { VoiceReadAloudStatus, VoiceReadAloudStop, type VoiceReadAloud } from './VoiceReadAloud';
+import { VoiceReadAloudStatus, VoiceReadAloudStopPill, type VoiceReadAloud } from './VoiceReadAloud';
 import { resolveVoicePresenceReadAloud, type VoicePresenceReading } from './resolveVoicePresenceReadAloud';
 import { useVoiceTargetName, VoiceTargetIdentity } from './VoiceTargetIdentity';
 import {
@@ -299,8 +299,9 @@ const VoiceSpeaksFrom = React.memo(function VoiceSpeaksFrom(
 /**
  * After a clean End (lab ST "ended"): the dots have regathered into the microphone, the call's
  * length, the reassurance that it is saved, and the two next steps — back to the conversation, or
- * talk again. A reading that outlives the call takes the status word, with its own Stop beside it
- * (the island's reading form), so the next steps below keep their row.
+ * talk again. A reading that outlives the call takes the status word and its Stop leads the row,
+ * beside the way back; talking again waits for it (the hero mark still starts), so the narrow
+ * Companion row keeps two controls instead of four.
  */
 const VoiceGlanceEnded = React.memo(function VoiceGlanceEnded(
   props: Readonly<{
@@ -351,13 +352,6 @@ const VoiceGlanceEnded = React.memo(function VoiceGlanceEnded(
             </Text>
           ) : null}
         </View>
-        {readAloud ? (
-          <VoiceReadAloudStop
-            readAloud={readAloud}
-            size="island"
-            testID={`${props.testID}-read-aloud-stop`}
-          />
-        ) : null}
       </View>
       <VoiceEndedPendingApproval
         ended={ended}
@@ -367,6 +361,15 @@ const VoiceGlanceEnded = React.memo(function VoiceGlanceEnded(
                 action beside it — the hero mark above is already the start control. They share one
                 row at every width: the bordered action is the one that gives way. */}
       <View style={styles.endedControls}>
+        {readAloud ? (
+          <VoiceReadAloudStopPill
+            readAloud={readAloud}
+            size={size}
+            iconSize={iconSize}
+            style={styles.endedQuiet}
+            testID={`${props.testID}-read-aloud-stop`}
+          />
+        ) : null}
         {voice.canOpenConversation ? (
           <RoundButton
             testID={`${props.testID}-open-conversation`}
@@ -386,7 +389,7 @@ const VoiceGlanceEnded = React.memo(function VoiceGlanceEnded(
         ) : null}
         {/* While New is offered, Start resumes this conversation, so it says Continue. Starting fresh
             is the least-used of the three, so it is the one that needs no word. */}
-        {voice.canStart ? (
+        {voice.canStart && !readAloud ? (
           <RoundButton
             testID={`${props.testID}-start-again`}
             display="inverted"
@@ -397,7 +400,7 @@ const VoiceGlanceEnded = React.memo(function VoiceGlanceEnded(
             onPress={voice.onPrimaryAction}
           />
         ) : null}
-        {voice.canStart && voice.onNewConversation ? (
+        {voice.canStart && voice.onNewConversation && !readAloud ? (
           <IconButton
             testID={`${props.testID}-new-conversation`}
             iconName="plus"
