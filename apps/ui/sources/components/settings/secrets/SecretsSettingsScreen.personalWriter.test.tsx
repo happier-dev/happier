@@ -58,6 +58,29 @@ afterEach(async () => {
     home = null;
 });
 
+it.each(['personal', 'shared'] as const)('saves a fresh %s secret through the editor and retires its draft', async (storage) => {
+    home = await createSecretSettingsTestHarness({ settings: settingsParse({ secrets: [],
+        actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+            approvalWaivedSurfaces: { 'secrets.shared.create': ['ui'] },
+        }),
+    }) });
+    const { SecretsSettingsScreen } = await import('./SecretsSettingsScreen');
+    const screen = await renderScreen(<SecretsSettingsScreen />);
+    await screen.pressByTestIdAsync('saved-secret-add');
+    await act(async () => {
+        screen.changeTextByTestId('saved-secret-create-name', 'Deployment credential');
+        screen.changeTextByTestId('saved-secret-create-value', 'synthetic-creation-fixture');
+    });
+    if (storage === 'shared') await screen.pressByTestIdAsync('saved-secret-create-storage:shared');
+    await screen.pressByTestIdAsync('saved-secret-create-submit');
+    await vi.waitFor(() => expect(home?.creations).toHaveLength(1));
+    await vi.waitFor(() => expect(screen.findByTestId('saved-secret-create-editor')).toBeNull());
+    const created = home.creations[0]!;
+    expect(openSavedSecretResourceStoredContentV1({ resourceId: created.resourceId, mode: 'plain', storedContent: created.storedContent }))
+        .toMatchObject({ name: 'Deployment credential', value: 'synthetic-creation-fixture' });
+    expect(alert).not.toHaveBeenCalled();
+});
+
 it('renames and replaces an imported private resource directly, but confirms deletion once', async () => {
     const secret = { id: 'personal-inline', name: 'Personal key', kind: 'apiKey' as const,
         encryptedValue: { _isSecretValue: true as const, value: 'original-personal-secret' }, createdAt: 1, updatedAt: 1 };
