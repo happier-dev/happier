@@ -839,6 +839,11 @@ export type SelectionListFilter = Readonly<{
      */
     onToggle?: (context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => void;
     selected?: boolean;
+    /**
+     * A destination, not a filter (a phone Store's Installed, Updates and kinds): pressing the chip opens that
+     * page. It has no chooser and no caret; `count` follows its name and joins its accessible name.
+     */
+    onPress?: () => void;
     /** The chip's testID; its popover list is `<testID>.list` and each option `<testID>:<optionId>`. */
     testID?: string;
     /** What else the chip's value means ("Changed for this step"), announced after its name. */

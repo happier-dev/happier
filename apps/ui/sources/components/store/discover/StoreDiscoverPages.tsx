@@ -2,7 +2,6 @@ import * as React from 'react';
 import { MainScreenHeader } from '@/components/navigation/shell/MainScreenHeader';
 import { RegistrySourcesUnavailable } from '@/components/capabilities/add/RegistrySourcesUnavailable';
 import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
-import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { View } from 'react-native';
 import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -18,10 +17,9 @@ import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/plugi
 import { useStoreOpenReference, useOpenStoreCategory } from '../catalog/useStoreOpenReference';
 import { StoreDiscoverRegistryIdentityScope } from '../catalog/StoreDiscoverRegistryIdentityScope';
 import { StoreListingPaneHost, useOpenStoreListing } from '../StoreListing';
-import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { ICON_SIZE, Icon, type IconName } from '@/components/ui/icons/Icon';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
-import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import {
@@ -31,6 +29,8 @@ import {
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
+import type { SelectionListFilter } from '@/components/ui/selectionList/_types';
+import { SelectionListFilterChips } from '@/components/ui/selectionList/SelectionListFilterChips';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { RegistryCuration } from '@/registries/useRegistrySuggestions';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
@@ -293,64 +293,32 @@ function DiscoverFrame(
   );
 }
 
-function PhoneInstalledRow(props: Readonly<{ onOpen: () => void; onOpenUpdates: () => void; onOpenKind: (kind: string) => void }>) {
+/**
+ * A phone has no Store column: Installed, Updates and every kind stand under the title as one row of chips, each
+ * one press to its page. They are destinations, not filters.
+ */
+function PhoneStoreChips(props: Readonly<{ onOpen: () => void; onOpenUpdates: () => void; onOpenKind: (kind: string) => void }>) {
   const { theme } = useUnistyles();
   const contributedKinds = useContributedStoreKinds();
   const localize = useProjectedPluginLocalizedTextResolver();
-  const [kindsOpen, setKindsOpen] = React.useState(false);
-  // Last complete check only; unknown (null) and nothing waiting (0) both draw no badge.
+  // Last complete check only; unknown (null) and nothing waiting (0) both draw no count.
   const waiting = useStoreUpdatesCount(useAccountSettingsScope());
-  return (
-    <ItemGroup testID="store.discover.pinned">
-      <Item
-        testID="store.discover.pinned.installed"
-        title={t('settingsPlugins.surfaces.installed')}
-        icon={<Icon name="check" size={20} color={theme.colors.text.secondary} />}
-        onPress={props.onOpen}
-      />
-      <Item
-        testID="store.discover.pinned.updates"
-        title={t('capabilities.store.updates.title')}
-        icon={<Icon name="arrow-up" size={20} color={theme.colors.text.secondary} />}
-        detail={waiting ? String(waiting) : undefined}
-        onPress={props.onOpenUpdates}
-      />
-      {/* A phone has no Store column: every kind is one tap under the search, not nine sections down. */}
-      <ExpandableItem
-        testID="store.discover.pinned.kinds"
-        expanded={kindsOpen}
-        onExpandedChange={setKindsOpen}
-        header={({ headerProps }) => (
-          <Item
-            {...headerProps}
-            testID="store.discover.pinned.kinds.row"
-            title={t('capabilities.store.discover.kindsTitle')}
-            icon={<Icon name="squares-four" size={20} color={theme.colors.text.secondary} />}
-          />
-        )}
-      >
-        {KINDS.map((kind) => (
-          <Item
-            key={kind}
-            testID={`store.discover.kinds.${kind}`}
-            title={kindPlural(kind)}
-            icon={<Icon name={STORE_KIND_GLYPHS[kind]} size={20} color={theme.colors.text.secondary} />}
-            onPress={() => props.onOpenKind(kind)}
-          />
-        ))}
-        {contributedKinds.map((kind) => (
-          <Item
-            key={kind.key}
-            testID={`store.discover.kinds.${kind.key}`}
-            title={localize(kind.pluginId, kind.definition.title)}
-            onPress={() => props.onOpenKind(kind.key)}
-          />
-        ))}
-      </ExpandableItem>
-    </ItemGroup>
-  );
+  const { onOpen, onOpenUpdates, onOpenKind } = props;
+  const filters = React.useMemo((): readonly SelectionListFilter[] => {
+    const glyph = (name: IconName) => <Icon name={name} size={ICON_SIZE.xs} color={theme.colors.text.secondary} />;
+    const destination = (id: string, label: string, onPress: () => void, testID: string): SelectionListFilter =>
+      ({ id, label, valueLabel: label, onPress, testID });
+    return [
+      { ...destination('installed', t('settingsPlugins.surfaces.installed'), onOpen, 'store.discover.chips.installed'), icon: glyph('check') },
+      { ...destination('updates', t('capabilities.store.updates.title'), onOpenUpdates, 'store.discover.chips.updates'),
+        icon: glyph('arrow-up'), ...(waiting ? { count: String(waiting) } : {}) },
+      ...KINDS.map(kind => destination(`kind:${kind}`, kindPlural(kind), () => onOpenKind(kind), `store.discover.chips.kind.${kind}`)),
+      ...contributedKinds.map(kind => destination(`kind:${kind.key}`, localize(kind.pluginId, kind.definition.title),
+        () => onOpenKind(kind.key), `store.discover.chips.kind.${kind.key}`)),
+    ];
+  }, [theme, contributedKinds, localize, waiting, onOpen, onOpenUpdates, onOpenKind]);
+  return <SelectionListFilterChips placement="row" edge="page" filters={filters} testID="store.discover.chips" />;
 }
-
 
 /** The curated sources' one quiet outage line with its Retry (the shared owner); the rest of the page stays useful. */
 function CurationUnavailable(
@@ -367,11 +335,9 @@ function CurationUnavailable(
     }, sourceId => props.curation.sources.find(source => source.id === sourceId)?.title);
     return state ? [{ ...state, sourceId: failure?.sourceId ?? null }] : [];
   });
-  // On a phone the line follows the pinned Installed group, so it starts one section gap below it like any block.
-  const phone = !useAppShellColumn().columnVisible;
   if (!unavailable.length) return null;
   return (
-    <View style={[styles.stateLines, phone ? styles.afterGroup : null]}>
+    <View style={styles.stateLines}>
       <RegistrySourcesUnavailable
         testID={props.testID}
         failures={unavailable.map(state => ({ key: state.sourceId ?? 'sources', message: state.message,
@@ -497,9 +463,10 @@ export const StoreDiscoverView = React.memo(function StoreDiscoverView(props: Re
             testID: 'store.discover.search',
             onSubmitEditing: submitQuery,
           }}
+          {...(columnVisible ? {} : {
+            band: <PhoneStoreChips onOpen={nav.openInstalled} onOpenUpdates={nav.openUpdates} onOpenKind={nav.openKind} />,
+          })}
         />
-        {/* A phone has no Store column: Installed, Updates and the kinds are pinned under the search. */}
-        {columnVisible ? null : <PhoneInstalledRow onOpen={nav.openInstalled} onOpenUpdates={nav.openUpdates} onOpenKind={nav.openKind} />}
         <DiscoverBody curation={props.curation} page={page} nav={nav} presented={props.presented === true} />
     </DiscoverFrame>
     </View>
@@ -604,7 +571,7 @@ const DiscoverBody = React.memo(function DiscoverBody(
         onOpen={nav.openItem}
         onAdd={nav.addItem}
       />
-      {/* No kinds here: the Store column (or a phone's pinned Browse by kind) already lists every kind. */}
+      {/* No kinds here: the Store column (or a phone's chip row) already lists every kind. */}
     </>
   );
 });
@@ -859,7 +826,6 @@ const styles = StyleSheet.create((theme) => ({
   // A phone's scope chip sits on the page gutter beside nothing, hugging its label (as in a page header).
   // A source's state line sits where every Store page puts it: on the page edge, its Try again right after the words.
   stateLines: { marginBottom: theme.space.s8 },
-  afterGroup: { paddingTop: PAGE_LIST_METRICS.sectionGapPx },
   inset: {
     paddingHorizontal: resolveItemGroupContentHorizontalInsetPx(),
     alignItems: 'flex-start',

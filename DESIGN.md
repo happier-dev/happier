@@ -681,7 +681,9 @@ live in the page-presentation owners in code.
   What is on is said once, as removable tokens on one quiet line under the field, drawn only while something
   is on. A saved-space list's title menu offers its common filters in place, one press each. A short either-or
   that is the whole filter (a scope) may stay a segmented control in the row. A filter only offers values that
-  exist as filter facts; it never counts or filters by anything its list cannot back.
+  exist as filter facts; it never counts or filters by anything its list cannot back. Chips that navigate (a
+  Store's Installed, Updates and kinds on a phone) are destinations, not filters, so they may stand under the
+  header at rest.
 - **Sections read before their controls.** A sentence-case section title with its explanation above
   the rows, then one card sheet. Row dividers use the divider ink and run from the rows' text edge
   (past the leading column when the section reserves one) to the sheet's trailing edge; the last row

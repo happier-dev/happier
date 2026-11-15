@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Platform, View, type LayoutChangeEvent } from 'react-native';
 import {
   HAPPIER_COLLECTION_SPACES_STRIP_METRICS,
   HappierCollectionSpacesStrip,
@@ -25,12 +24,7 @@ import {
 import { useHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
 
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
-import { HorizontalScrollEdgeMask } from '@/components/ui/scroll/HorizontalScrollEdgeMask';
-import {
-  resolveHorizontalScrollEdgeMaskRamps,
-  resolveHorizontalScrollEdgeMaskStyle,
-} from '@/components/ui/scroll/resolveScrollEdgeMaskStyle';
+import { useHorizontalScrollEdgeMask } from '@/components/ui/scroll/useHorizontalScrollEdgeMask';
 
 import { CollectionSpaceIcon } from './CollectionSpaceIcon';
 
@@ -59,7 +53,6 @@ export function resolveCollectionSpaceIconName(
 const rejectReorder = async () => false;
 
 /** An overflowing strip fades the tabs at the edge that hides more (the composer chip rail's mask), so a cut-off space reads as more, not as the end. */
-const STRIP_FADE_EDGES = { left: true, right: true } as const;
 const STRIP_FADE_PX = HAPPIER_COLLECTION_SPACES_STRIP_METRICS.fadePx;
 
 /** The + hit area stays out of the list title above it (`top: 0`), splits the strip's 2 px gap to the last tab (`leading: 1`) and ends at its drawn edge below (`bottom: 0`: the group label's own controls under the strip already reach up to it). */
@@ -75,32 +68,7 @@ const stylesheet = StyleSheet.create(() => ({
 
 /** The strip's fades: the mask fades the tabs themselves, so it reads on every surface the strip sits on (column chrome, page, glass). */
 export function useCollectionSpacesStripEdgeMask(): HappierCollectionSpacesStripEdgeMask {
-  const fades = useScrollEdgeFades({ enabledEdges: STRIP_FADE_EDGES, overflowThreshold: 4, edgeThreshold: 2 });
-  const [nativeViewportWidth, setNativeViewportWidth] = React.useState(0);
-  const webMask = React.useMemo(
-    () => (Platform.OS === 'web' ? resolveHorizontalScrollEdgeMaskStyle(fades.visibility, { fadeSize: STRIP_FADE_PX }) : null),
-    [fades.visibility],
-  );
-  const nativeRamps = React.useMemo(
-    () => (Platform.OS === 'web' ? null : resolveHorizontalScrollEdgeMaskRamps(fades.visibility, { fadeSize: STRIP_FADE_PX })),
-    [fades.visibility],
-  );
-  const { onScroll, onViewportLayout, onContentSizeChange } = fades;
-  const handleViewportLayout = React.useCallback((event: LayoutChangeEvent) => {
-    onViewportLayout(event);
-    if (Platform.OS !== 'web') setNativeViewportWidth(event.nativeEvent.layout.width);
-  }, [onViewportLayout]);
-  const maskedNatively = Platform.OS !== 'web' && fades.canScrollX;
-  return React.useMemo(() => ({
-    scrollerStyle: maskedNatively ? null : [stylesheet.tabs, webMask],
-    // Only an overflowing strip has an edge to mask; the wrapper changes with overflow alone, never while scrolling.
-    wrapScroller: (scroller) => (maskedNatively
-      ? <HorizontalScrollEdgeMask ramps={nativeRamps} width={nativeViewportWidth} style={stylesheet.tabs}>{scroller}</HorizontalScrollEdgeMask>
-      : scroller),
-    onScroll,
-    onViewportLayout: handleViewportLayout,
-    onContentSizeChange,
-  }), [handleViewportLayout, maskedNatively, nativeRamps, nativeViewportWidth, onContentSizeChange, onScroll, webMask]);
+  return useHorizontalScrollEdgeMask({ fadePx: STRIP_FADE_PX, style: stylesheet.tabs });
 }
 
 /** The host's tab bar on a strip: the sliding ink selection fill, its glyphs named for hover and assistive technology. */

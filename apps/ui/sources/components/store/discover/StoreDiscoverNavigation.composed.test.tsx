@@ -283,19 +283,48 @@ it.each(['discover', 'jobs', 'job', 'category'])('withdraws %s acquisition for r
   expect(itemReads).toHaveLength(activeItemReads);
 });
 
-it('keeps Software in the phone Browse by kind entry alongside the other supported kinds', async () => {
+/** What a chip draws: its label, then its count when it has one. */
+const chipText = (screen: Awaited<ReturnType<typeof renderScreen>>, testID: string) =>
+  screen.findHostByTestId(testID)!.findAll(node => typeof node.props?.children === 'string')
+    .map(node => node.props.children as string).join(' ');
+
+it('puts Installed, Updates and every kind on the phone chip row, each one press to its page, with no Browse by kind', async () => {
   const { screen } = await renderDiscoverWithOneJob();
-  await waitForHomeGovernance(() => expect(screen.findAllHostsByTestId('store.discover.pinned.kinds.row').length).toBeGreaterThan(0));
-  // One row under the search opens every kind in place, so a phone never scrolls past the page to reach them.
-  await act(async () => { screen.findAllHostsByTestId('store.discover.pinned.kinds.row')[0]!.props.onPress?.(); });
-  await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('capabilities.store.kinds.software.title'));
+  await waitForHomeGovernance(() => expect(screen.findAllHostsByTestId('store.discover.chips.installed').length).toBeGreaterThan(0));
+  expect(screen.findAllHostsByTestId('store.discover.pinned.kinds.row')).toHaveLength(0);
+  expect(screen.findAllByTestId('store.discover.kinds')).toHaveLength(0);
+  const opens = async (testID: string) => {
+    await press(screen, testID);
+    const top = { ...nav.top() };
+    await act(async () => { nav.back(); });
+    return top;
+  };
+  expect((await opens('store.discover.chips.installed')).params.view).toBe('installed');
+  expect((await opens('store.discover.chips.updates')).params.view).toBe('updates');
+  expect((await opens('store.discover.chips.kind.software')).params).toMatchObject({ view: 'kind', kind: 'software' });
+  expect((await opens('store.discover.chips.kind.bot')).pathname).toBe('/plugins/bots');
 });
 
-it('offers the kinds once when the curated catalog cannot be reached: the Browse entry, never a second copy in the page', async () => {
+it('counts Updates on its chip only after a completed check found some', async () => {
+  const { screen } = await renderDiscoverWithOneJob();
+  await waitForHomeGovernance(() => expect(screen.findAllHostsByTestId('store.discover.chips.updates').length).toBeGreaterThan(0));
+  // No check has completed: unknown draws no count.
+  expect(chipText(screen, 'store.discover.chips.updates')).not.toMatch(/\d/);
+  const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+  const { publishStoreUpdatesCount } = await import('../updates/storeUpdatesSummary');
+  const lifetime = captureActiveServerAccountScopeLifetime()!;
+  await act(async () => { publishStoreUpdatesCount(lifetime, 3); });
+  expect(chipText(screen, 'store.discover.chips.updates')).toMatch(/\b3\b/);
+  expect(screen.findHostByTestId('store.discover.chips.updates')!.props.accessibilityLabel).toContain('3');
+  await act(async () => { publishStoreUpdatesCount(lifetime, 0); });
+  expect(chipText(screen, 'store.discover.chips.updates')).not.toMatch(/\d/);
+});
+
+it('offers the kinds once when the curated catalog cannot be reached: the chip row, never a second copy in the page', async () => {
   const { screen, catalogReads } = await renderDiscoverWithOneJob({ view: 'discover', focused: true, visible: true, curatedUnavailable: true });
   await waitForHomeGovernance(() => expect(catalogReads.length).toBeGreaterThan(0));
   await waitForHomeGovernance(() => expect(screen.findAllByTestId('store.kind.search.failure').length).toBeGreaterThan(0));
-  expect(screen.findAllHostsByTestId('store.discover.pinned.kinds.row').length).toBeGreaterThan(0);
+  expect(screen.findAllHostsByTestId('store.discover.chips.kind.software').length).toBeGreaterThan(0);
   expect(screen.findAllByTestId('store.discover.kinds')).toHaveLength(0);
 });
 

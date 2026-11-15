@@ -3,11 +3,13 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 import type { CurrentUiContextCommandInvocation, CurrentUiContextLocalCommand } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierFilterChip, HappierPageRowFieldLayoutContext, resolveHappierFocusRingVisible, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_PAGE_METRICS, HappierFilterChip, HappierPageRowFieldLayoutContext, resolveHappierFocusRingVisible, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
+import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
+import { useHorizontalScrollEdgeMask } from '@/components/ui/scroll/useHorizontalScrollEdgeMask';
 import { MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS, Popover } from '@/components/ui/popover';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -62,6 +64,8 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
     const phoneSheet = filter.renderPopoverContent !== undefined || filter.selectedIds !== undefined;
     const clearable = !hasChooser && filter.onClear !== undefined && filter.disabled !== true;
     const toggleable = !hasChooser && !clearable && filter.onToggle !== undefined && filter.disabled !== true;
+    // A destination, not a filter: one press opens its page.
+    const navigates = !hasChooser && !clearable && !toggleable && filter.onPress !== undefined && filter.disabled !== true;
     // An on/off chip that is on takes the selection fill (lab dk-checks); off, it reads quieter.
     const toggledOn = toggleable && filter.selected === true;
     const testID = filter.testID ?? `selection-list-filter:${filter.id}`;
@@ -97,10 +101,12 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
             description: `${commandScope}.clear`, invoke: (_input, context, invocation) => filter.onClear?.(context, invocation) }];
         if (toggleable) return [{ key: 'toggle', title: filter.label,
             description: `${commandScope}.toggle`, invoke: (_input, context, invocation) => filter.onToggle?.(context, invocation) }];
+        if (navigates) return [{ key: 'open', title: filter.label,
+            description: `${commandScope}.open`, invoke: () => filter.onPress?.() }];
         if (!canOpen) return [];
         return [{ key: open ? 'close' : 'open', title: filter.label,
             description: `${commandScope}.${open ? 'close' : 'open'}`, invoke: () => setOpen(!open) }];
-    }, [commandScope, canOpen, clearable, toggleable, filter.clearAccessibilityLabel, filter.label, filter.onClear, filter.onToggle, open, setOpen]);
+    }, [commandScope, canOpen, clearable, toggleable, navigates, filter.clearAccessibilityLabel, filter.label, filter.onClear, filter.onToggle, filter.onPress, open, setOpen]);
     const closeFromUi = React.useCallback((context?: ActionExecutorContext) => {
         if (commandScope) { void commandInvokeRef.current?.('close', undefined, context); return; }
         close();
@@ -112,8 +118,9 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
         }
         if (clearable) filter.onClear?.();
         else if (toggleable) filter.onToggle?.();
+        else if (navigates) filter.onPress?.();
         else setOpen(!open);
-    }, [commandScope, clearable, toggleable, open, filter.onClear, filter.onToggle, setOpen]);
+    }, [commandScope, clearable, toggleable, navigates, open, filter.onClear, filter.onToggle, filter.onPress, setOpen]);
 
     return (
         <>
@@ -128,11 +135,12 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
                     {...(toggleable ? { checked: filter.selected === true } : {})}
                     accessibilityLabel={clearable
                         ? [valueLabel, filter.count, filter.clearAccessibilityLabel].filter(Boolean).join(', ')
+                        : navigates ? [filter.label, filter.count].filter(Boolean).join(', ')
                         : [announcedValue && announcedValue !== filter.label ? `${filter.label}: ${announcedValue}` : filter.label, filter.note].filter(Boolean).join(', ')}
                     {...(filter.accessibilityHint === undefined ? {} : { accessibilityHint: filter.accessibilityHint })}
                     expanded={canOpen ? open : undefined}
                     hasPopup={canOpen ? filter.renderPopoverContent ? 'dialog' : 'listbox' : undefined}
-                    disabled={!canOpen && !clearable && !toggleable}
+                    disabled={!canOpen && !clearable && !toggleable && !navigates}
                     // The row of chips scrolls sideways, so its viewport clips: a chip's reach stops at the row's own top padding.
                     hitReach={props.placement === 'row' ? { top: theme.space.s2 } : undefined}
                     onPress={pressFromUi}
@@ -223,6 +231,11 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
 export const SelectionListFilterChips = React.memo(function SelectionListFilterChips(props: Readonly<{
     filters: ReadonlyArray<SelectionListFilter>;
     placement: 'inline' | 'row';
+    /**
+     * Where a row's first chip stands: level with the search field above it (`field`, the default), or on the
+     * page's own edge when the row is a page header's band (`page`).
+     */
+    edge?: 'field' | 'page';
     testID?: string;
 }>): React.ReactElement | null {
     const styles = stylesheet;
@@ -231,19 +244,33 @@ export const SelectionListFilterChips = React.memo(function SelectionListFilterC
     if (props.placement === 'inline') {
         return <View style={styles.inline}>{chips}</View>;
     }
-    return (
+    return <SelectionListFilterChipRow testID={props.testID} edge={props.edge ?? 'field'}>{chips}</SelectionListFilterChipRow>;
+});
+
+/** The row scrolls sideways; a chip cut at an edge that hides more fades out, so it reads as more, not as the end. */
+function SelectionListFilterChipRow(props: Readonly<{ children: React.ReactNode; edge: 'field' | 'page'; testID?: string }>) {
+    const styles = stylesheet;
+    const mask = useHorizontalScrollEdgeMask({ fadePx: CHIP_ROW_FADE_PX, style: styles.row });
+    return mask.wrapScroller(
         <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
             testID={props.testID}
-            style={styles.row}
-            contentContainerStyle={styles.rowContent}
+            style={mask.scrollerStyle}
+            contentContainerStyle={[styles.rowContent, props.edge === 'page' ? styles.rowContentPageEdge : null]}
+            onScroll={mask.onScroll}
+            onLayout={mask.onViewportLayout}
+            onContentSizeChange={mask.onContentSizeChange}
+            scrollEventThrottle={16}
         >
-            {chips}
-        </ScrollView>
+            {props.children}
+        </ScrollView>,
     );
-});
+}
+
+/** The composer chip rail's fade. */
+const CHIP_ROW_FADE_PX = 24;
 
 /** A figure space is as wide as a tabular digit, so the slot keeps two digits' width whatever the count. */
 const COUNT_SLOT_DIGITS = 2;
@@ -329,5 +356,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: theme.space.s8,
         paddingTop: theme.space.s2,
         paddingBottom: theme.space.s8,
+    },
+    // A header's band stands on the sheets' edge; its first chip stands on the page text's edge, under the title.
+    rowContentPageEdge: {
+        paddingHorizontal: Math.max(0, HAPPIER_PAGE_METRICS.pageTextInsetPx - resolveItemGroupContentHorizontalInsetPx()),
     },
 }));
