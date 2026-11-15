@@ -77,6 +77,13 @@ type SessionPermissionChoicesInput = Readonly<{
     nativeChoiceAvailability?: readonly NativePermissionChoiceAvailabilityV1[];
 }>;
 
+/** The producer's words, in the sentence case every Happier label uses (an ACP agent may name its options in lowercase). */
+function toSentenceCase(label: string): string {
+    const first = label.charAt(0);
+    return first === first.toLocaleLowerCase() && first !== first.toLocaleUpperCase()
+        ? first.toLocaleUpperCase() + label.slice(1) : label;
+}
+
 export function resolveSessionPermissionChoices(input: SessionPermissionChoicesInput): readonly SessionPermissionChoice[] {
     if (input.nativeChoices !== undefined) {
         const native = NativePermissionChoicesV1Schema.safeParse(input.nativeChoices);
@@ -84,7 +91,7 @@ export function resolveSessionPermissionChoices(input: SessionPermissionChoicesI
         const { requirementId, choices } = native.data;
         const availability = new Map(input.nativeChoiceAvailability?.map(value => [value.choiceId, value]));
         return choices.map(choice => ({
-            id: choice.id, label: choice.label, decision: choice.decision, scope: choice.scope,
+            id: choice.id, label: toSentenceCase(choice.label), decision: choice.decision, scope: choice.scope,
             ...(choice.rulePreview !== undefined ? { rulePreview: choice.rulePreview } : {}),
             ...(choice.allowsFeedback !== undefined ? { allowsFeedback: choice.allowsFeedback } : {}),
             ...(choice.followUp !== undefined ? { followUp: choice.followUp } : {}),

@@ -20,6 +20,17 @@ describe('Session permission offered choices', () => {
             .toEqual([{ id: 'muse:once', label: 'Allow once', decision: 'approved', scope: 'once',
                 response: { nativeChoice: { requirementId: 'muse-approval', choiceId: 'muse:once' } } }]);
     });
+    // QA-DESIGN-R3 R5: an ACP agent (Grok) names its options in lowercase; every presenter shows them in sentence case.
+    it('presents a native choice label in sentence case and keeps its words', () => {
+        const nativeChoices = { requirementId: 'acp-1', source: 'acp', choices: [
+            { id: 'always', label: 'always allow', decision: 'approved' as const, scope: 'localPersistent' as const, response: { approved: true } },
+            { id: 'once', label: 'allow once', decision: 'approved' as const, scope: 'once' as const, response: { approved: true } },
+            { id: 'reject', label: 'reject once', decision: 'denied' as const, scope: 'once' as const, response: { approved: false } },
+            { id: 'cmd', label: 'Always allow `npm test`', decision: 'approved' as const, scope: 'localPersistent' as const, response: { approved: true } },
+        ] };
+        expect(resolveSessionPermissionChoices({ toolName: 'Bash', nativeChoices }).map(choice => choice.label))
+            .toEqual(['Always allow', 'Allow once', 'Reject once', 'Always allow `npm test`']);
+    });
     it('keeps the existing catalog consent reachable for a live external Claude MCP request', async () => {
         // The plugin's host permission service is the external SDK boundary.
         const requestDecision = vi.fn(async (_request: Parameters<ClaudePermissionContext['sessions']['current']['permissions']['requestDecision']>[0],

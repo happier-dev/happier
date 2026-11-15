@@ -188,7 +188,9 @@ export function WorkflowReviewValue({ value, contract, blockKind, testIDPrefix: 
     const titles = contract?.kind === 'json' ? Object.fromEntries(Object.entries(contract.schema.properties ?? {})
         .map(([name, schema]) => [name, schema.title])) : undefined;
     const rows = readWorkflowResultRows(value, titles, blockKind);
-    return rows ? <VirtualizedList data={rows} keyExtractor={row => row.key} style={styles.previewScroll} {...scrollProps}
+    // Rows sit at their own height in the page or sheet that scrolls them (lab run-A_completed); only a caller
+    // that bounds the reading (the review card's pane, with its edge fades) passes a viewport style.
+    return rows ? <VirtualizedList data={rows} keyExtractor={row => row.key} {...scrollProps}
         renderItem={({ item: row }) => <Item key={row.key} title={row.label} showChevron={false} accessoryLayout="stacked"
             rightElement={<Text selectable variant="reading" style={styles.primary} testID={`${prefix}-value-${row.key}`}>{row.text}</Text>} />} />
         : reading(<SectionContentRow><Text selectable variant="reading" style={styles.primary} testID={`${prefix}-value`}>{serializeWorkflowReviewValue(value, contract)}</Text></SectionContentRow>);

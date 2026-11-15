@@ -339,6 +339,116 @@ it('keeps focus on the retained body\'s focused field as it moves between shells
     }
 });
 
+// QA-DESIGN-R3 R2: a Run's step is a retained body and its review card a retained body inside it. At the phone
+// breakpoint both move in one commit (the step to the phone page, the card into a sheet); the outer host leaves
+// first, so the inner one sees focus already gone. Focus still lands back on the field, not on the sheet.
+it('keeps focus on a field whose retained body moves inside another moving retained body', async () => {
+    const { useRetainedPlacement } = await import('./components/RetainedModalFrame');
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    function Dialog(props: Readonly<{ body: React.ReactElement }> & import('./types').CustomModalInjectedProps) {
+        return props.body;
+    }
+    const renderDraft = () => <textarea data-testid="review-draft" defaultValue="Which cache layer" />;
+    function Step(props: Readonly<{ phone: boolean }>) {
+        const retained = useRetainedPlacement<null>(renderDraft);
+        const slot = React.useMemo(() => retained.mount(null), [retained.mount]);
+        const dialog = React.useRef<string | null>(null);
+        React.useEffect(() => {
+            if (!props.phone) {
+                if (dialog.current !== null) Modal.hide(dialog.current);
+                dialog.current = null;
+                return;
+            }
+            dialog.current ??= Modal.show({ component: Dialog, props: { body: slot },
+                chrome: { kind: 'card', title: 'Review', phonePresentation: 'sheet' } });
+        }, [props.phone, slot]);
+        return <>{props.phone ? null : <div data-testid="step-pane">{slot}</div>}{retained.body}</>;
+    }
+    function Run(props: Readonly<{ phone: boolean }>) {
+        const renderStep = React.useCallback(() => <Step phone={props.phone} />, [props.phone]);
+        const retained = useRetainedPlacement<null>(renderStep);
+        const slot = React.useMemo(() => retained.mount(null), [retained.mount]);
+        return <>
+            {props.phone ? <section data-testid="phone-page">{slot}</section> : <aside data-testid="docked">{slot}</aside>}
+            {retained.body}
+        </>;
+    }
+    const render = async (phone: boolean) => {
+        await act(async () => root.render(<ModalProvider><Run phone={phone} /></ModalProvider>));
+    };
+    try {
+        await render(false);
+        const field = document.querySelector<HTMLTextAreaElement>('[data-testid="review-draft"]')!;
+        field.focus();
+        expect(document.activeElement).toBe(field);
+        await render(true);
+        await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')?.contains(field)).toBe(true));
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+        expect(document.activeElement).toBe(field);
+        await render(false);
+        await vi.waitFor(() => expect(document.querySelector('[data-testid="step-pane"]')?.contains(field)).toBe(true));
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+        expect(document.activeElement).toBe(field);
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
+// QA-DESIGN-R3 R2, phone → wide: the details pane activates as an overlay and focuses itself a commit before the
+// review body leaves the phone sheet for it. The field it blurred still gets focus back once the body is in the pane.
+it('gives focus back to a field a shell took focus from before the body moved into that shell', async () => {
+    const { useRetainedPlacement } = await import('./components/RetainedModalFrame');
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    function Dialog(props: Readonly<{ body: React.ReactElement }> & import('./types').CustomModalInjectedProps) {
+        return props.body;
+    }
+    function Pane(props: Readonly<{ slot: React.ReactElement }>) {
+        const shell = React.useRef<HTMLDivElement>(null);
+        const [placed, setPlaced] = React.useState(false);
+        React.useLayoutEffect(() => { shell.current?.focus(); setPlaced(true); }, []);
+        return <div ref={shell} tabIndex={-1} data-testid="details-pane">{placed ? props.slot : null}</div>;
+    }
+    const renderDraft = () => <textarea data-testid="review-draft" defaultValue="Which cache layer" />;
+    function Step(props: Readonly<{ phone: boolean }>) {
+        const retained = useRetainedPlacement<null>(renderDraft);
+        const slot = React.useMemo(() => retained.mount(null), [retained.mount]);
+        const dialog = React.useRef<string | null>(null);
+        React.useEffect(() => {
+            if (!props.phone) {
+                if (dialog.current !== null) Modal.hide(dialog.current);
+                dialog.current = null;
+                return;
+            }
+            dialog.current ??= Modal.show({ component: Dialog, props: { body: slot },
+                chrome: { kind: 'card', title: 'Review', phonePresentation: 'sheet' } });
+        }, [props.phone, slot]);
+        return <>{props.phone ? null : <Pane slot={slot} />}{retained.body}</>;
+    }
+    const render = async (phone: boolean) => {
+        await act(async () => root.render(<ModalProvider><Step phone={phone} /></ModalProvider>));
+    };
+    try {
+        await render(false);
+        await render(true);
+        await vi.waitFor(() => expect(document.querySelector('[data-testid="review-draft"]')?.closest('[role="dialog"]')).toBeTruthy());
+        const field = document.querySelector<HTMLTextAreaElement>('[data-testid="review-draft"]')!;
+        field.focus();
+        expect(document.activeElement).toBe(field);
+        await render(false);
+        await vi.waitFor(() => expect(document.querySelector('[data-testid="details-pane"]')?.contains(field)).toBe(true));
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+        expect(document.activeElement).toBe(field);
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
 it.each([390, 1440].flatMap(width => (['picker', 'confirm'] as const).map(kind => ({ width, kind }))))('keeps a $width px sheet presented while its nested $kind owns input', async ({ width, kind }) => {
     Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, value: width });
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });

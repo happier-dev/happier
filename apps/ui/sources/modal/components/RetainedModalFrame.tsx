@@ -73,8 +73,17 @@ export function useRetainedPlacement<TArgs>(
     // out after the next one mounted (a docked pane folding away under the phone's dialog); it neither speaks
     // for the body nor takes its DOM host with it when it finally unmounts.
     const owner = React.useRef<object | null>(null);
-    // The body's focused element while its host is between shells (a leaving shell took the host out first).
-    const heldFocus = React.useRef<Element | null>(null);
+    // A shell can take focus for itself before the body moves into it (a pane activating as an overlay for a
+    // frame while a phone sheet still holds the body): the field it blurred is the one to give focus back to.
+    React.useEffect(() => {
+        if (!host) return;
+        const onFocusOut = (event: FocusEvent) => {
+            const next = event.relatedTarget;
+            if (!(next instanceof Node) || !host.contains(next)) blurredByMove = event.target as Element;
+        };
+        host.addEventListener('focusout', onFocusOut);
+        return () => host.removeEventListener('focusout', onFocusOut);
+    }, [host]);
     const publish = React.useCallback((next: Placement<TArgs>) => setPlacement(previous => {
         const args = retainDeep(previous?.args, next.args);
         return retainShallow(previous ?? undefined, { ...next, args });
@@ -86,7 +95,7 @@ export function useRetainedPlacement<TArgs>(
     const retire = React.useCallback(() => setPlacement(previous =>
         owner.current === null && retireWithoutShell.current ? null : previous), []);
     const mount = React.useCallback((args: TArgs) => host
-        ? <RetainedPlacementSlot host={host} owner={owner} heldFocus={heldFocus} args={args} publish={publish} retire={retire} />
+        ? <RetainedPlacementSlot host={host} owner={owner} args={args} publish={publish} retire={retire} />
         : <>{render(args)}</>, [host, publish, retire, host ? null : render]);
     if (!host) return { mount, body: null };
     // The portal's React parent and target never change. Only its DOM host moves between shells.
@@ -126,10 +135,29 @@ export function useRetainedPlacement<TArgs>(
     return { mount, body: reactDOM.createPortal(presented, host) };
 }
 
+/**
+ * The element focus last left a retained body from, or that a moving host blurred. One record for every retained
+ * body: bodies nest (a Run's review card inside its retained step), both move in one commit, and whichever host
+ * leaves first takes the focused element with it, so the inner host sees focus already gone (QA-DESIGN-R3 R2).
+ * The element regains focus when the host that now holds it is placed, but only while focus is nowhere or on
+ * that host's own shell: focus a person moved to another control stays there.
+ */
+let blurredByMove: Element | null = null;
+
+function restoreFocusBlurredByMove(host: HTMLElement): void {
+    const target = blurredByMove;
+    if (!target || !host.contains(target) || !host.isConnected) return;
+    blurredByMove = null;
+    const active = document.activeElement;
+    if (active === target) return;
+    // A shell that placed focus on itself (a dialog taking focus as it opened) yields to the moved field.
+    const unclaimed = !active || active === document.body || active.contains(host);
+    if (unclaimed) (target as HTMLElement).focus?.({ preventScroll: true });
+}
+
 function RetainedPlacementSlot<TArgs>(props: Readonly<{
     host: HTMLDivElement;
     owner: React.MutableRefObject<object | null>;
-    heldFocus: React.MutableRefObject<Element | null>;
     args: TArgs;
     publish: (placement: Placement<TArgs>) => void;
     retire: () => void;
@@ -156,28 +184,25 @@ function RetainedPlacementSlot<TArgs>(props: Readonly<{
     const onFloatingSheet = React.useContext(FloatingOverlaySheetContext);
     const pushStack = React.useContext(PhoneSheetPushContext);
     const pushedView = React.useContext(PhonePushedViewContext);
-    const { host, owner, heldFocus, publish, retire, args } = props;
+    const { host, owner, publish, retire, args } = props;
     React.useLayoutEffect(() => {
         owner.current = token;
         host.style.display = 'contents';
-        // Moving the host out of the document blurs whatever the body had focused. Give that element focus back in
-        // its new shell: the shell's own focus placement sees focus already inside it and keeps it (J18).
+        // Moving the host blurs whatever the body had focused. Give that element focus back once it is in a
+        // placed shell again: the shell's own focus placement sees focus already inside it and keeps it (J18).
         const active = document.activeElement;
-        const focused = heldFocus.current ?? (active && host.contains(active) ? active : null);
-        heldFocus.current = null;
+        if (active && host.contains(active)) blurredByMove = active;
         slot.current?.appendChild(host);
-        if (focused && focused !== document.activeElement && host.contains(focused)) {
-            (focused as HTMLElement).focus?.({ preventScroll: true });
-        }
+        restoreFocusBlurredByMove(host);
         return () => {
             if (owner.current !== token) return;
             owner.current = null;
             const leaving = document.activeElement;
-            heldFocus.current = leaving && host.contains(leaving) ? leaving : null;
+            if (leaving && host.contains(leaving)) blurredByMove = leaving;
             host.remove();
             retire();
         };
-    }, [host, owner, heldFocus, token, retire]);
+    }, [host, owner, token, retire]);
     React.useLayoutEffect(() => { shellDismissRef.current = shellDismiss; }, [shellDismiss]);
     React.useLayoutEffect(() => {
         if (owner.current !== token) return;

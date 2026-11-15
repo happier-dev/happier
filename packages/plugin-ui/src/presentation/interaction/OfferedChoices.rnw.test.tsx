@@ -22,6 +22,8 @@ it('gives a listed choice a second line only when it says something its label do
     choices={[
       { id: 'remember', label: 'Always allow in this workspace: touch …', description: 'Always allow in this workspace: touch …', refusal: false, available: true },
       { id: 'once', label: 'Allow once', description: 'Runs it this time only', refusal: false, available: true },
+      // A primary between two approvals lists (the row keeps the agent order only from either end).
+      { id: 'session', label: 'Allow this session', refusal: false, available: true },
       { id: 'reject', label: 'Reject', description: ' Reject ', refusal: true, available: true },
     ]}
     primaryId="once" disabled={false} busyChoiceId={null} unavailableReason="Ask the owner"

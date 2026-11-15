@@ -10,8 +10,8 @@ export type OfferedChoice = Readonly<{
 
 /**
  * Row or list. A phone (a narrow column) always lists; otherwise the decisions share one line only when their
- * measured natural width fits the column. The row puts the primary at its end edge only when the primary is
- * the agent's first approval: otherwise it lists, since the agent's order is never rearranged. Before both
+ * measured natural width fits the column. The row ends on the primary only when the primary is the agent's
+ * first or last approval: otherwise it lists, since the agent's order is never rearranged. Before both
  * widths are known the row is the first paint, like every other page row.
  */
 export function resolveOfferedChoiceLayout(
@@ -29,12 +29,14 @@ export function resolveOfferedChoiceLayout(
 }
 
 /**
- * The row reads inward from its end edge in the agent's order (the first approval sits at the end edge), with
- * refusals at the start. The list keeps the agent's order exactly; refusals that all come after the approvals
- * sit after a hairline.
+ * The row keeps the agent's order and ends on the primary, with refusals at the start: it reads inward from its
+ * end edge when the primary is the first approval, and in reading order when the primary is the last one (an
+ * agent that offers its broadest choice first). The list keeps the agent's order exactly; refusals that all come
+ * after the approvals sit after a hairline.
  */
 export function arrangeOfferedChoices(
   choices: readonly OfferedChoice[],
+  primaryId: string | null = null,
 ): Readonly<{
   rowStart: readonly OfferedChoice[];
   rowEnd: readonly OfferedChoice[];
@@ -49,9 +51,10 @@ export function arrangeOfferedChoices(
     refusals.length > 0 &&
     approvals.length > 0 &&
     choices.slice(firstRefusal).every(choice => choice.refusal);
+  const primaryLast = approvals.length > 1 && approvals[approvals.length - 1]!.id === primaryId;
   return {
     rowStart: refusals,
-    rowEnd: [...approvals].reverse(),
+    rowEnd: primaryLast ? approvals : [...approvals].reverse(),
     refusalsTrail,
   };
 }

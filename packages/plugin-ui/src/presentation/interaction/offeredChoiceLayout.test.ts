@@ -20,4 +20,17 @@ describe('offered choice presentation layout', () => {
     expect(arranged.refusalsTrail).toBe(true);
     expect(arrangeOfferedChoices([choice('reject', true), choice('once')]).refusalsTrail).toBe(false);
   });
+
+  // QA-DESIGN-R3 R5: an agent that offers its broadest choice first ("Always allow", then "Allow once") gets the
+  // same row as one that offers the narrowest first, instead of a second, listed composition in the same Inbox.
+  it('keeps the primary at the row end when the agent offers it last, in the agent order', () => {
+    const choices = [choice('always'), choice('once'), choice('reject', true)];
+    const arranged = arrangeOfferedChoices(choices, 'once');
+    expect(arranged.rowEnd.map(c => c.id)).toEqual(['always', 'once']);
+    expect(arranged.rowStart.map(c => c.id)).toEqual(['reject']);
+    expect(arrangeOfferedChoices([choice('once'), choice('always')], 'once').rowEnd.map(c => c.id)).toEqual(['always', 'once']);
+    // A primary between other approvals has no end edge that keeps the agent order: it lists.
+    const between = arrangeOfferedChoices([choice('always'), choice('once'), choice('session')], 'once');
+    expect(between.rowEnd[between.rowEnd.length - 1]?.id).not.toBe('once');
+  });
 });

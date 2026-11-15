@@ -126,7 +126,7 @@ export const OfferedChoices = React.memo(
     }, []);
     // The shared narrow-row rule on this view's own column: a phone always lists.
     const narrow = isHappierPageRowNarrow(containerWidthPx);
-    const arranged = arrangeOfferedChoices(props.choices);
+    const arranged = arrangeOfferedChoices(props.choices, props.primaryId);
     const endEdge = arranged.rowEnd[arranged.rowEnd.length - 1];
     const layout = resolveOfferedChoiceLayout({
       narrow,

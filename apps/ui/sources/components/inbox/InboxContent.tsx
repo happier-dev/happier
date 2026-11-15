@@ -8,6 +8,8 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { UsageNoticeInboxRow } from '@/components/inbox/cards/UsageNoticeInboxRow';
+import { AccountNoticeRecoveryChoices } from '@/components/inbox/cards/AccountNoticeRecoveryChoices';
+import type { AccountNoticeArtifact } from '@/sync/domains/artifacts/usageNoticeArtifacts';
 import { MachineVitalsNoticeInboxRow, readMachineVitalsNotice } from '@/components/inbox/cards/MachineVitalsNoticeInboxRow';
 import { InboxReadySessionRow } from '@/components/inbox/InboxReadySessionRow';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
@@ -97,6 +99,9 @@ const InboxItemRow = React.memo(function InboxItemRow(props: Readonly<{
     /** A stored notice's one quick action, the same Dismiss every Inbox notice row carries. */
     dismissNotice: (item: InboxItem) => Promise<void>;
     invokePluginSessionControl: InboxModel['invokePluginSessionControl'];
+    /** A stored notice's own recovery choices (roll back, or keep and fix forward), when it offers any. */
+    noticeEntry?: AccountNoticeArtifact;
+    noticeRecovery?: InboxModel['noticeInvestigation'];
 }>) {
     const { theme } = useUnistyles();
     const { item, navigate, onSelectItem, markOpened, dismissNotice } = props;
@@ -137,6 +142,9 @@ const InboxItemRow = React.memo(function InboxItemRow(props: Readonly<{
         belowAccessory={item.pluginSessionRows?.length ? (
             <InboxPluginSessionLines rows={item.pluginSessionRows} invoke={props.invokePluginSessionControl}
                 testID={`inbox.item.${item.key}.plugin_rows`} />
+        ) : props.noticeEntry && props.noticeRecovery ? (
+            <AccountNoticeRecoveryChoices entry={props.noticeEntry} recovery={props.noticeRecovery}
+                testID={`inbox.item.${item.key}.recovery`} />
         ) : undefined}
         onPress={open} />;
 });
@@ -249,10 +257,12 @@ function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
     }, [viewItems]);
     const focusedRouteKey = props.focusedItem ? createInboxItemRoute(props.focusedItem).params.item : null;
     const { accountNotices, dismissAccountNotice } = model;
+    const accountNoticesById = React.useMemo(() => new Map(accountNotices.map(notice => [notice.artifact.id, notice])),
+        [accountNotices]);
     const dismissNotice = React.useCallback(async (item: InboxItem) => {
-        const entry = accountNotices.find((notice) => notice.artifact.id === item.source.id);
+        const entry = accountNoticesById.get(item.source.id);
         if (entry) await dismissAccountNotice(entry);
-    }, [accountNotices, dismissAccountNotice]);
+    }, [accountNoticesById, dismissAccountNotice]);
 
     const renderRow = (item: InboxItem, index: number, count: number) => {
         const showDivider = index < count - 1;
@@ -309,7 +319,9 @@ function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
             <InboxItemRow key={item.key} item={item} narrow={!(page && wide)} showDivider={showDivider}
                 selected={focusedRouteKey !== null && createInboxItemRoute(item.focus).params.item === focusedRouteKey}
                 navigate={navigate} onSelectItem={props.onSelectItem} markOpened={model.markItemOpened} dismissNotice={dismissNotice}
-                invokePluginSessionControl={model.invokePluginSessionControl} />
+                invokePluginSessionControl={model.invokePluginSessionControl}
+                noticeEntry={item.producer === 'notice' ? accountNoticesById.get(item.source.id) : undefined}
+                noticeRecovery={model.noticeInvestigation} />
         );
     };
 
