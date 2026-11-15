@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import type { Settings } from '@/sync/domains/settings/settings';
@@ -84,6 +84,9 @@ vi.mock('@/components/sessions/agentInput/subscribeToIosHardwareShiftEnter', () 
 }));
 
 describe('KeyboardShortcutProvider', () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
     beforeEach(() => {
         vi.resetModules();
         vi.clearAllMocks();
@@ -129,16 +132,14 @@ describe('KeyboardShortcutProvider', () => {
 
         // macOS Option types characters such as "{" on a French layout.
         vi.stubGlobal('navigator', { platform: 'MacIntel' });
-        try {
-            focused = '';
-            window.dispatchEvent(createKeyboardEvent({ key: '{', altKey: true }));
-            expect(focused).toBe('second');
-        } finally {
-            vi.unstubAllGlobals();
-        }
+        focused = '';
+        window.dispatchEvent(createKeyboardEvent({ key: '{', altKey: true }));
+        expect(focused).toBe('second');
     });
 
     it('leaves typing alone in editors, open overlays, IME, shortcuts, Space scrolling and when turned off', async () => {
+        // Alt+letter is a shortcut, not typing, outside Apple platforms.
+        vi.stubGlobal('navigator', { platform: 'Win32' });
         const focus = vi.fn();
         const { renderScreen } = await import('@/dev/testkit');
         const { KeyboardShortcutProvider } = await import('./KeyboardShortcutProvider');
