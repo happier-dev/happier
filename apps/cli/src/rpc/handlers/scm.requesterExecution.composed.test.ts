@@ -225,33 +225,29 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
       .toBe(git(f.ownerRepository, 'rev-parse', 'main').trim());
   });
 
-  it('runs a Can use local repository read as the member user, inside the member folder', async () => {
+  // SEC-FORKC-1115F F1: the daemon still reads member-controlled .git state files in process, so
+  // a Can use member's local read is refused at ingress until the whole read runs as the member.
+  it('refuses a Can use local repository read before any Git process or daemon state read', async () => {
     const f = await fixture();
     for (const [method, params] of [
       [RPC_METHODS.SCM_STATUS_SNAPSHOT, { cwd: f.memberRepository }],
       [RPC_METHODS.SCM_LOG_LIST, { cwd: f.memberRepository, limit: 5 }],
     ] as const) {
-      const response = await f.invoke(method, params, 'member-account', 'use');
-      expect(response, JSON.stringify(response)).toMatchObject({ success: true });
+      expect(await f.invoke(method, params, 'member-account', 'use')).toMatchObject({ errorCode: 'machine_manage_required' });
     }
     expect(gitLaunches()).toEqual([]);
-    expect(os.runAs.length).toBeGreaterThan(0);
-    expect(os.runAs.every(frame => frame.username === `${f.member.username}:${f.member.username}` && frame.agentUid === 2401
-      && frame.executable.endsWith('git') && (frame.cwd === f.memberRepository || frame.cwd.startsWith(`${f.memberRepository}/`)))).toBe(true);
+    expect(os.runAs).toEqual([]);
   });
 
-  it('refuses a Can use read outside the member folder and forge methods before any Git process', async () => {
+  it('refuses Can use reads of another folder, forge methods and captured evidence before any Git process', async () => {
     const f = await fixture();
     expect(await f.invoke(RPC_METHODS.SCM_STATUS_SNAPSHOT, { cwd: f.ownerRepository }, 'member-account', 'use'))
-      .toMatchObject({ success: false, errorCode: 'INVALID_PATH' });
-    expect(await f.invoke(RPC_METHODS.SCM_STATUS_SNAPSHOT, {}, 'member-account', 'use'))
-      .not.toMatchObject({ snapshot: { repo: { isRepo: true } } });
+      .toMatchObject({ errorCode: 'machine_manage_required' });
     expect(await f.invoke(RPC_METHODS.SCM_PULL_REQUEST_LIST, { cwd: f.memberRepository }, 'member-account', 'use'))
       .toMatchObject({ errorCode: 'machine_manage_required' });
-    // Captured evidence is admitted through the daemon's own Account executor: never lent to a member.
     expect(await f.invoke(RPC_METHODS.SCM_DIFF_FILE, { cwd: f.memberRepository,
       captured: { comparisonId: 'a'.repeat(64), source: { kind: 'workingTree' }, path: 'x' } }, 'member-account', 'use'))
-      .toMatchObject({ success: false, actionErrorCode: 'machine_manage_required' });
+      .toMatchObject({ errorCode: 'machine_manage_required' });
     expect(gitLaunches()).toEqual([]);
     expect(os.runAs.filter(frame => !frame.cwd.startsWith(f.member.workspaceRoot))).toEqual([]);
   });
