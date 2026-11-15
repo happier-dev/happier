@@ -120,7 +120,7 @@ type SlotProps = Readonly<{
     widgetDrag: Pick<SessionSurfaceEntityBinding, 'scope' | 'isCurrent' | 'admitWidgetMovement'> | null;
     /** Customize is open: a lone grouped widget keeps its half beside an empty slot. */
     customizing: boolean;
-    /** Move handles show only while Home is being customized; in view mode a card shows ⋯ on hover and nothing else. */
+    /** Move handles show only while Home is being customized; in view mode a widget's ⋯ is its frame's to show (WidgetFrame). */
     showGrips: boolean;
     groupOperations: WidgetGroupOperations;
     /** The carried widget's current placement on its own surface, for a group's width admission. */
@@ -210,7 +210,6 @@ function homeCardTarget(input: Readonly<{ surface: WidgetSurfaceRefV1; items: re
  * entity owner's admission (width fit, no nesting).
  */
 function HubGroupSlot(props: SlotProps & Readonly<{ section: HubGroupSection }>) {
-    const hover = useRowActionHoverHost();
     const phone = !useIsTablet();
     const { section, layout } = props;
     const group = section.group;
@@ -256,7 +255,7 @@ function HubGroupSlot(props: SlotProps & Readonly<{ section: HubGroupSection }>)
         return <HubWidgetSlot {...props} section={child} index={index} parent={{ group: section, index, wide: placement.wide, labels }} />;
     }, [labels, props, section]);
     return (
-        <View {...hover.hoverProps} style={styles.card}>
+        <View style={styles.card}>
             <WidgetGroupFrame
                 testID={testID}
                 group={group}
@@ -270,7 +269,7 @@ function HubGroupSlot(props: SlotProps & Readonly<{ section: HubGroupSection }>)
                 addAnchorRef={slotAnchorRef}
                 title={props.customizing ? null : menu.renameField ?? readWidgetGroupTitle(group) ?? null}
                 source={sourceValue ? widgetGroupPinnedSource(sourceValue) : undefined}
-                menu={props.customizing ? null : <WidgetGroupMenuButton input={menu.menuInput} visible={hover.isHovered} anchorRef={menu.anchorRef} testID={`${testID}.menu`} />}
+                menu={props.customizing ? null : <WidgetGroupMenuButton input={menu.menuInput} anchorRef={menu.anchorRef} testID={`${testID}.menu`} />}
                 accessibilityLabel={t('widgetFrame.groupA11y', { name })}
                 renderChild={renderChild}
                 dropRef={drop.ref}
@@ -294,7 +293,6 @@ function HubWidgetSlot(props: SlotProps & Readonly<{
     /** Leads Home's cards on its own row (no machine yet, 58d AF1). */
     leads?: boolean;
 }>) {
-    const hover = useRowActionHoverHost();
     const frameStyle = useWidgetFrameStyle('home', props.section.frameStyle);
     const testID = `home-hub.section.${props.section.id}`;
     const { instance, widget } = props.section;
@@ -342,7 +340,6 @@ function HubWidgetSlot(props: SlotProps & Readonly<{
             section={props.section}
             index={props.index}
             layout={props.layout}
-            hovered={hover.isHovered}
             onCustomize={props.onCustomize}
             anchorRef={edit.anchorRef}
             {...(edit.editInputs ? { editInputs: edit.editInputs } : {})}
@@ -368,7 +365,6 @@ function HubWidgetSlot(props: SlotProps & Readonly<{
                 menu={menu}
                 frameStyle={frameStyle}
                 tracker={props.tracker}
-                hoverProps={hover.hoverProps}
                 titleEditor={renaming.field}
                 grouped={parent !== undefined}
                 showGrip={props.showGrips}

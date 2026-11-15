@@ -28,6 +28,7 @@ import { getHomeHubDefaultLayoutV1, type HomeHubLayoutValue } from '@happier-dev
 import type { WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
 import { CardGridCell } from '@/components/ui/cardGrid/CardGrid';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
+import { StyleSheet } from 'react-native';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { WidgetAddSurface } from '@/components/widgets/add/WidgetAddSurface';
 import type { WidgetAddSection } from '@/components/widgets/add/widgetAddModel';
@@ -949,6 +950,33 @@ describe('HomeHub plugin widgets', () => {
             await vi.waitFor(() => expect(artifact.layout().items).toEqual([]));
             expect(artifact.layout().hidden).not.toContain(instance.id);
         }
+    });
+
+    it('lets the widget frame alone decide the ⋯: a card shows it at rest on a hover pointer, a plain widget rests it unseen', async () => {
+        widgets.projection = widgetProjectionOf([{ pluginId: 'acme.ci', localId: 'checks', title: 'Checks', target: 'app' }],
+            { 'acme.ci': widgetInstalledPackage('acme.ci', 'CI') });
+        const copy = (id: string): WidgetInstanceV1 => ({ v: 1, id, definition: { kind: 'installed', surface: { pluginId: 'acme.ci', localId: 'checks' } }, bindings: {} });
+        const card = copy('card-copy'); const plain = copy('plain-copy'); const inGroup = copy('group-copy');
+        settings.layout = { order: ['start', 'attention', 'setup', card.id, plain.id, 'checks-group'], hidden: [], items: [
+            { kind: 'widget', instance: card, frameStyle: 'card' },
+            { kind: 'widget', instance: plain, frameStyle: 'plain' },
+            { kind: 'group', id: 'checks-group', title: 'Checks group', width: 'full', frameStyle: 'card', dividers: 'hairline',
+                children: [{ kind: 'widget', instance: inGroup, size: 'small' }] }] };
+        const screen = await renderHome();
+        await lay(screen, { [card.id]: 300, [plain.id]: 520, [inGroup.id]: 740 });
+        // Hidden means some ancestor of the trigger draws it transparent at rest.
+        const hiddenAtRest = (triggerTestID: string) => {
+            const menu = screen.findAllByType(ItemRowActions).find(node => node.props.overflowTriggerTestID === triggerTestID);
+            expect(menu, triggerTestID).toBeDefined();
+            for (let node = menu!.parent; node; node = node.parent) {
+                const style = StyleSheet.flatten(node.props?.style as never) as { opacity?: number } | undefined;
+                if (style?.opacity === 0) return true;
+            }
+            return false;
+        };
+        expect(hiddenAtRest(`home-hub.${card.id}.menuTrigger`)).toBe(false);
+        expect(hiddenAtRest('home-hub.section.checks-group.menu.trigger')).toBe(false);
+        expect(hiddenAtRest(`home-hub.${plain.id}.menuTrigger`)).toBe(true);
     });
 
     it('draws a group as one frame around its widgets; a grouped widget offers group entries, never its own frame', async () => {

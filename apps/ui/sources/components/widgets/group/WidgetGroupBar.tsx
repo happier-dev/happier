@@ -111,7 +111,6 @@ export function WidgetGroupBar(
       <WidgetGroupMenuButton
         input={menuInput}
         anchorRef={props.anchorRef}
-        visible
         testID={`${props.testID}.menu`}
       />
     </View>

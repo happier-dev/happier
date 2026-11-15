@@ -219,7 +219,7 @@ export function GroupSpecimen(
       customizing={props.customizing === true}
       title={props.customizing ? null : value.title ?? null}
       source={pinned ? widgetGroupPinnedSource(pinned) : undefined}
-      menu={<WidgetGroupMenuButton visible testID={props.menuTestID ?? `group-specimen.${props.id}.menu`} input={menuInput(value, byId, { showWidth: !props.phone, ...props.menuInputExtra })} />}
+      menu={<WidgetGroupMenuButton testID={props.menuTestID ?? `group-specimen.${props.id}.menu`} input={menuInput(value, byId, { showWidth: !props.phone, ...props.menuInputExtra })} />}
       {...(props.bar
         ? {
             bar: (

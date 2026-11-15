@@ -30,14 +30,15 @@ const ALWAYS_OVERFLOW = Number.POSITIVE_INFINITY;
 
 /**
  * A home section's "⋯": open a widget's page, hide or remove the section, move it, or customize
- * the whole home. With a fine pointer it appears while the section is hovered or the menu has
- * keyboard focus; touch always shows it.
+ * the whole home. In a widget frame the frame shows it (a card always; a plain section on hover or focus);
+ * a frameless built-in shows it while hovered or focused with a fine pointer, and always on touch.
  */
 export function HubSectionMenu(props: Readonly<{
     section: HomeHubSection<WidgetCandidate>;
     index: number;
     layout: HomeHubLayout;
-    hovered: boolean;
+    /** A frameless built-in's row is hovered (its only reveal); a framed section's frame decides. */
+    hovered?: boolean;
     onCustomize: () => void;
     /** A widget whose plugin has one page opens it from here. */
     onOpen?: () => void;
@@ -62,14 +63,16 @@ export function HubSectionMenu(props: Readonly<{
     /** Inside a half group: the sizes it cannot take there, and why. */
     sizeLimit?: WidgetSizeControl['unavailable'];
 }>) {
-    // The shared reveal owner fades the ⋯ in, and shows it by itself while it has keyboard focus.
-    const revealed = useWidgetMenuAlwaysShown() || props.hovered;
     const { section, layout } = props;
+    // A section drawn in the widget frame leaves its ⋯ to the frame (card: shown; plain: rests unseen on a hover
+    // pointer). Only a frameless built-in (Attention, Setup) reveals it here: with the hovered row, on touch, or on focus.
+    const framed = isHomeHubCardSection(section);
+    const revealed = useWidgetMenuAlwaysShown() || props.hovered === true;
     const title = homeHubSectionTitle(section);
     const surfaceDefault = useWidgetFrameSurfaceDefault('home');
     // Menu events consume rejection; the layout queue retains the failed intent for Customize's Retry.
     // Only sections drawn in the widget frame have a frame to show or hide.
-    const frameActions = isHomeHubCardSection(section) && !props.inGroup
+    const frameActions = framed && !props.inGroup
         ? buildWidgetFrameStyleActions({
             placement: 'home',
             surfaceDefault,
@@ -87,13 +90,7 @@ export function HubSectionMenu(props: Readonly<{
         ...(props.sizeLimit ? { unavailable: props.sizeLimit } : {}),
     } : undefined;
 
-    return (
-        <View
-            ref={props.anchorRef}
-            collapsable={false}
-            testID={`home-hub.${section.id}.menu`}
-        >
-            <RowActionRevealSlot revealed={revealed}>
+    const actions = (
             <ItemRowActions
                 title={title}
                 compactThreshold={ALWAYS_OVERFLOW}
@@ -131,7 +128,14 @@ export function HubSectionMenu(props: Readonly<{
                     }] : [],
                 })}
             />
-            </RowActionRevealSlot>
+    );
+    return (
+        <View
+            ref={props.anchorRef}
+            collapsable={false}
+            testID={`home-hub.${section.id}.menu`}
+        >
+            {framed ? actions : <RowActionRevealSlot revealed={revealed}>{actions}</RowActionRevealSlot>}
         </View>
     );
 }

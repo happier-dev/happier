@@ -33,8 +33,7 @@ import { getWidgetSizeFootprintV1 } from '@happier-dev/protocol/widgets';
 import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useAppShellPluginUiProjectionCurrentness } from '@/components/appShell/plugins/AppShellPluginUiProjection';
-import { useCoarsePrimaryPointer, useRowActionHoverHost } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
-import { RowActionRevealSlot } from '@/components/ui/lists/RowActionRevealSlot';
+import { useCoarsePrimaryPointer } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { CardGrid, CardGridCell } from '@/components/ui/cardGrid/CardGrid';
@@ -57,7 +56,6 @@ import {
     buildWidgetMoveActions,
     buildWidgetSizeActions,
     orderWidgetMenu,
-    useWidgetMenuAlwaysShown,
     WIDGET_MENU_MAX_HEIGHT_PX,
 } from '@/components/widgets/frame/widgetFrameMenu';
 import { useWidgetAreaFrame } from '@/components/widgets/frame/useWidgetFrameStyle';
@@ -641,7 +639,6 @@ function WidgetAreaGroup(props: PlacementsProps & Readonly<{
     renderChild: (instanceId: string, placement: WidgetGroupChildPlacement, labels: WidgetBindingValueLabels) => React.ReactNode;
 }>) {
     const { group, write } = props;
-    const hover = useRowActionHoverHost();
     const phone = useDeviceType() === 'phone';
     const testID = `${props.testID}.group.${group.id}`;
     const name = describeWidgetGroupAmong(props.items, group, props.childTitle);
@@ -681,7 +678,7 @@ function WidgetAreaGroup(props: PlacementsProps & Readonly<{
         description: `${testID}.slotAdd.close`, invoke: () => setSlotAddOpen(false) }] : [], { contextKey: `${testID}.slotAdd`, unbound: 'local' });
     const source = describeWidgetGroupContext(group.context, labels);
     return (
-        <View style={styles.cell} {...hover.hoverProps}>
+        <View style={styles.cell}>
             <WidgetGroupFrame
                 testID={testID}
                 group={group}
@@ -693,7 +690,7 @@ function WidgetAreaGroup(props: PlacementsProps & Readonly<{
                 {...(props.canEdit ? { onAddToGroup: () => setSlotAddOpen(true), addAnchorRef: slotAnchorRef } : {})}
                 title={props.organizing && props.canEdit ? null : menu.renameField ?? readWidgetGroupTitle(group) ?? null}
                 source={source ? widgetGroupPinnedSource(source) : undefined}
-                menu={props.canEdit && !props.organizing ? <WidgetGroupMenuButton input={menu.menuInput} visible={hover.isHovered} anchorRef={menu.anchorRef} testID={`${testID}.menu`} /> : null}
+                menu={props.canEdit && !props.organizing ? <WidgetGroupMenuButton input={menu.menuInput} anchorRef={menu.anchorRef} testID={`${testID}.menu`} /> : null}
                 accessibilityLabel={t('widgetFrame.groupA11y', { name })}
                 renderChild={(instanceId, placement) => props.renderChild(instanceId, placement, labels)}
                 dropRef={drop.ref}
@@ -752,7 +749,6 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
     const frameStyle = props.parent ? 'plain' : frame.style;
     const providedContext = React.useMemo(() => widgetProvidedContext(context), [context]);
     const focused = useIsFocused();
-    const hover = useRowActionHoverHost();
     const tracker = useOptionalPluginUiScrollActivityTracker();
     const sectionRef = React.useRef<View | null>(null);
     // Proximity admits the body once. Loaded content stays mounted on scroll return,
@@ -864,7 +860,6 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
         } } : {}),
     });
 
-    const alwaysVisible = useWidgetMenuAlwaysShown();
     const menuSurface = useWidgetMenuSurface({ title, testID: `${testID}.menu` });
     const choices = resolveWidgetSizeChoicesV1(surface.owner.kind, candidate?.sizeDeclaration);
     const sizeLimit = parent ? resolveWidgetGroupChildSizeLimit({ group: parent.group, groupName: describeWidgetGroup(parent.group, props.childTitle),
@@ -881,8 +876,7 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
             collapsable={false}
             testID={`${testID}.menu`}
         >
-            {/* The shared reveal owner: it fades, and shows itself while the ⋯ or grip has keyboard focus. */}
-            <RowActionRevealSlot revealed={alwaysVisible || hover.isHovered}>
+            {/* The frame shows the ⋯ and grip: a card always, a plain widget on hover or focus (WidgetFrame). */}
             <SessionSurfaceEntityDragHandle drag={drag} title={title} testID={`${testID}.move`}
                 renderTrigger={({ toggle, grip }) => <View style={styles.header}>
                     {props.canEdit && props.organizing ? grip : null}
@@ -935,7 +929,6 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
                 })}
                     />
                 </View>} />
-            </RowActionRevealSlot>
         </View>
     ) : null;
 
@@ -984,7 +977,7 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
     if (switchedOff) return null;
     return (
         <View ref={node => { sectionRef.current = node; drag.ref(node); }} collapsable={false}
-            onLayout={() => { measure(); drag.onLayout(); }} testID={testID} style={[styles.cell, carriedStyle]} {...hover.hoverProps}>
+            onLayout={() => { measure(); drag.onLayout(); }} testID={testID} style={[styles.cell, carriedStyle]}>
             <WidgetFrame
                 testID={`${testID}.frame`}
                 frameStyle={frameStyle}

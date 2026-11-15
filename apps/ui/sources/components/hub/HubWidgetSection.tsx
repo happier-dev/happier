@@ -58,7 +58,6 @@ export const HubWidgetSection = React.memo(function HubWidgetSection(props: Read
     /** The page's scroll host; without one the body is always built. */
     tracker: Pick<NearViewportTracker, 'subscribe' | 'getWindow' | 'measureSpan' | 'getLayoutRevision'> | null;
     testID: string;
-    hoverProps?: Readonly<Record<string, unknown>>;
     /** While renaming, the field takes the title's place. */
     titleEditor?: React.ReactElement | null;
     /** The card's repair line opens this copy's Edit inputs (lab dagent ST). */
@@ -164,7 +163,7 @@ export const HubWidgetSection = React.memo(function HubWidgetSection(props: Read
     }), [props.instance.id]);
     if (switchedOff) return null;
     return (
-        <View ref={node => { sectionRef.current = node; drag.ref(node); }} collapsable={false} testID={props.testID} onLayout={() => { measure(); drag.onLayout(); }} style={[styles.cell, carriedStyle]} {...props.hoverProps}>
+        <View ref={node => { sectionRef.current = node; drag.ref(node); }} collapsable={false} testID={props.testID} onLayout={() => { measure(); drag.onLayout(); }} style={[styles.cell, carriedStyle]}>
             {/* A released move that came back keeps its one line under this card, where it was let go. */}
             <EntityDropSettledFeedback runtime={drag.runtime} match={settledMatch} fill testID={`${props.testID}.drop-feedback`}>
             <WidgetFrame
