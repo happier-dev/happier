@@ -135,7 +135,21 @@ test('stack info lists only running shared database co-writers and compares load
   withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: fixture.storageDir });
   const sourceStack = 'database-source';
   const sourceEnvPath = join(fixture.storageDir, sourceStack, 'env');
-  async function writeStack(name, { identity, time, source = sourceStack, status = 'running', selected = identity }) {
+  // Live peers are recorded by a live, stack-owned lifecycle process (the real process boundary).
+  const ownedLifecycle = name => {
+    const child = spawnTestProcess(process.execPath, ['-e', 'setInterval(() => {}, 60000)'],
+      { env: { ...process.env, HAPPIER_STACK_STACK: name, HAPPIER_STACK_ENV_FILE: join(fixture.storageDir, name, 'env'),
+        HAPPIER_STACK_PROCESS_KIND: 'infra' } });
+    t.after(() => child.kill('SIGKILL'));
+    return child.pid;
+  };
+  const exitedPid = async () => {
+    const child = spawnTestProcess(process.execPath, ['-e', '']);
+    await once(child, 'exit');
+    return child.pid;
+  };
+  async function writeStack(name, { identity, time, source = sourceStack, status = 'running', selected = identity,
+    ownerPid = ownedLifecycle(name) }) {
     const baseDir = join(fixture.storageDir, name);
     const bundleDir = join(baseDir, 'bundle');
     const entrypoint = join(bundleDir, 'apps/server/sources/main.mjs');
@@ -148,15 +162,19 @@ test('stack info lists only running shared database co-writers and compares load
     await writeFile(join(baseDir, 'source-runtime/selected-server.json'), JSON.stringify({ entrypoint }));
     await writeFile(join(baseDir, 'env'), 'HAPPIER_STACK_RUNTIME_MODE=source-snapshot\nHAPPIER_STACK_SERVE_UI=0\nHAPPIER_STACK_DAEMON=0\nHAPPIER_DB_PROVIDER=sqlite\n'
       + (source ? `HAPPIER_STACK_SHARED_DB_SOURCE_STACK=${source}\nHAPPIER_STACK_SHARED_DB_SOURCE_ENV_FILE=${sourceEnvPath}\n` : ''));
-    await writeFile(join(baseDir, 'stack.runtime.json'), JSON.stringify({ version: 1, stackName: name,
-      startedAt: time, sourceRuntimeIdentities: { server: { selected, loaded: identity } },
-      placement: { server: 'worker' }, remoteTargets: { worker: { services: { server: true },
+    await writeFile(join(baseDir, 'stack.runtime.json'), JSON.stringify({ version: 1, stackName: name, ownerPid,
+      startedAt: new Date().toISOString(), sourceRuntimeIdentities: { server: { selected, loaded: identity } },
+      placement: { server: 'worker' }, remoteTargets: { worker: { services: { server: true }, startedAt: time,
         status, serviceStatus: { server: status }, sourceRuntimeIdentities: { server: { selected, loaded: identity, sourceTime: time } } } } }));
   }
   await writeStack(sourceStack, { identity: 'source-build', time: '2026-10-26T12:00:00.000Z', source: null });
   await writeStack(fixture.stackName, { identity: 'new-build', time: '2026-10-28T12:00:00.000Z' });
   await writeStack('older-consumer', { identity: 'old-build', time: '2026-10-27T12:00:00.000Z', selected: 'pending-build' });
   await writeStack('stopped-consumer', { identity: 'stopped-build', time: '2026-10-25T12:00:00.000Z', status: 'stopped' });
+  // A remote record still saying "running" after the controller lifecycle that wrote it exited is a
+  // ghost (agent-qa-capabilities/-coord-n2/-changes-walkthrough on 2026-11-15), not a co-writer.
+  await writeStack('abandoned-consumer', { identity: 'abandoned-build', time: '2026-10-24T12:00:00.000Z',
+    ownerPid: await exitedPid() });
   await writeStack('unrelated-stack', { identity: 'unrelated-build', time: '2026-10-24T12:00:00.000Z', source: null });
   let remoteReads = 0;
   const readInfo = stackName => readStackInfoSnapshot({ rootDir: process.cwd(), stackName,

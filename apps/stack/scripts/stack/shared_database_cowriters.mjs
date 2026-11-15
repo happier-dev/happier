@@ -5,7 +5,7 @@ import { parseEnvToObject } from '../utils/env/dotenv.mjs';
 import { readTextOrEmpty } from '../utils/fs/ops.mjs';
 import { resolveStackEnvPath } from '../utils/paths/paths.mjs';
 import { listAllStackNames } from '../utils/stack/stacks.mjs';
-import { isStackRuntimeProcessTrusted, readStackRuntimeStateFile } from '../utils/stack/runtime_state.mjs';
+import { hasTrustedStackRuntimeLifecycle, isStackRuntimeProcessTrusted, readStackRuntimeStateFile } from '../utils/stack/runtime_state.mjs';
 import { resolveRuntimeRemoteServiceObservation } from '../utils/tui/runtime_placement_summary.mjs';
 import { readRuntimeManifest, readRuntimePointer } from '../runtime/shared/runtime_manifest.mjs';
 import { resolveStackRuntimePaths } from '../runtime/shared/runtime_paths.mjs';
@@ -34,8 +34,13 @@ async function readRecordedServer(stackName) {
   const remote = resolveRuntimeRemoteServiceObservation(state, 'server');
   const remoteState = state?.remoteTargets?.[remote.target];
   const processKey = state?.serverProxy?.mode === 'proxy' ? 'serverBackendPid' : 'serverPid';
-  const running = remote.target ? remote.running : await isStackRuntimeProcessTrusted(state?.processes?.[processKey],
-    { stackName, envPath, cliHomeDir: join(baseDir, 'cli'), key: processKey }, { throwOnInconclusive: false });
+  const trust = { stackName, envPath, cliHomeDir: join(baseDir, 'cli') };
+  // A remote "running" record holds only while the lifecycle that recorded it is still trusted
+  // (the same rule as resolveTrustedStackRuntimeServerPort); records left by exited lifecycles are ghosts.
+  const running = remote.target
+    ? remote.running && await hasTrustedStackRuntimeLifecycle(state, trust, { throwOnInconclusive: false })
+    : await isStackRuntimeProcessTrusted(state?.processes?.[processKey], { ...trust, key: processKey },
+      { throwOnInconclusive: false });
   if (!running) return null;
   const sourceSnapshot = Boolean(state?.sourceRuntimeIdentities) || remoteState?.runtimeMode === 'source-snapshot';
   const sourceIdentities = await readLoadedSourceRuntimeIdentities({ stackBaseDir: baseDir, runtimeState: state, sourceSnapshot,
