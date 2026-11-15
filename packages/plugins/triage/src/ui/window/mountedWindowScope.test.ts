@@ -11,7 +11,7 @@ import {
 } from '../../actions/listEntriesProtocol.js';
 import { INTERNAL_TASK_SOURCE_V1 } from '../../internalTasks/identity.js';
 import { testkitLocator, testkitSnapshot, testkitViewer } from '../../corpus/testkit/observations.test-support.js';
-import { TRIAGE_LIST_DEFAULT_LENS_V1 } from '../../projection/listWindow.js';
+import { TRIAGE_LIST_DEFAULT_LENS_V1, MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../../projection/listWindow.js';
 import { createTriageListWindowStore, type TriageListWindowStoreV1 } from '../../projection/listWindowStore.js';
 import {
   acquireTriageListWindow,
@@ -656,9 +656,11 @@ it.each(['viewer', 'owner'])('reconciles qualified %s Task pushes beyond page on
   const exactReads: string[] = [];
   let absent = false;
   let changed = false;
+  let completed = true;
+  const retainedIds = Array.from({ length: 200 }, (_, index) => index === 199 ? 'task-a' : `retained-${index}`);
   const ref = (id: string) => ({ source: INTERNAL_TASK_SOURCE_V1, kindId: 'task', collisionScope: ownerAccountId === 'viewer' ? 'personal' : `account:${ownerAccountId}`, entryId: id });
-  const outcome = (completed: boolean) => ({ kind: 'present' as const, locator: testkitLocator(),
-    snapshot: testkitSnapshot({ title: 'Matching task', state: completed
+  const outcome = (completed: boolean, title = 'Matching task') => ({ kind: 'present' as const, locator: testkitLocator(),
+    snapshot: testkitSnapshot({ title, state: completed
       ? { presentation: 'resolved', completionReason: 'completed', nativeLabel: 'Done' }
       : { presentation: 'active', stage: 'unstarted', nativeLabel: 'To do' } }), viewer: testkitViewer() });
   const host: TriageListWindowHostV1 = { async executeAction(action, input) {
@@ -666,16 +668,23 @@ it.each(['viewer', 'owner'])('reconciles qualified %s Task pushes beyond page on
       const id = (input as { entryRef: { entryId: string } }).entryRef.entryId;
       exactReads.push(id);
       return { kind: 'observed', entryRef: ref(id), observation: { sourceInstanceId: INSTANCE_A,
-        observedAtMs: 2, outcome: absent ? { kind: 'absent' } : outcome(true) } };
+        observedAtMs: 2, outcome: absent ? { kind: 'absent' } : outcome(completed) } };
     }
     pageReads++;
+    const requested = TriageListEntriesInputV1Schema.parse(input);
+    const offset = Number(requested.resume?.[0]?.continuation.token ?? 0);
+    const ids = changed ? retainedIds.filter(id => id !== 'task-a') : retainedIds;
+    const exhausted = offset + MAX_TRIAGE_LIST_WINDOW_ROWS_V1 >= ids.length;
     return TriageListEntriesResultV1Schema.parse({ v: 1,
       configuredSources: [{ sourceInstanceId: INSTANCE_A, configurationRowId: INSTANCE_A, source: INTERNAL_TASK_SOURCE_V1, available: true }],
       configuredSourcesStatus: 'complete', window: { v: 1, coverage: 'partial', assembledAtMs: 1,
-        rows: !changed ? [{ entryRef: ref('task-a'), lane: '1-open', sortAtMs: 1,
+        rows: ids.slice(offset, offset + MAX_TRIAGE_LIST_WINDOW_ROWS_V1).map(id => ({ entryRef: ref(id), lane: '1-open', sortAtMs: 1,
           presence: { kind: 'present', observedAtMs: 1 }, selected: { kind: 'selected', sourceInstanceId: INSTANCE_A, reason: 'onlyPresent' },
-          observation: { sourceInstanceId: INSTANCE_A, observedAtMs: 1, outcome: outcome(false) }, otherObservations: [], observedByCount: 1 }] : [],
-        lanes: [{ sourceInstanceId: INSTANCE_A, source: INTERNAL_TASK_SOURCE_V1, health: { kind: 'partial', reason: 'pageLimit' }, exhausted: false }],
+          observation: { sourceInstanceId: INSTANCE_A, observedAtMs: 1, outcome: outcome(false, id === 'task-a' ? 'Matching task' : `Other ${id}`) }, otherObservations: [], observedByCount: 1 })),
+        lanes: [{ sourceInstanceId: INSTANCE_A, source: INTERNAL_TASK_SOURCE_V1,
+          health: exhausted ? { kind: 'walkFinished' } : { kind: 'partial', reason: 'pageLimit' }, exhausted }],
+        ...(exhausted ? {} : { continuations: [{ sourceInstanceId: INSTANCE_A, pageLimit: MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
+          continuation: { v: 1, token: String(offset + MAX_TRIAGE_LIST_WINDOW_ROWS_V1) } }] }),
       } });
   } };
   const otherHost = { executeAction: host.executeAction };
@@ -689,25 +698,33 @@ it.each(['viewer', 'owner'])('reconciles qualified %s Task pushes beyond page on
   const push = (taskId: string) => { changed = true; listener?.({ kind: 'internalTasks', accountId: 'viewer', tasks: [{ ownerAccountId, taskId }] }); };
   try {
     await refreshTriageListWindow('view', host, scope);
+    while (rows().length < 200) await loadMoreTriageListWindow(host, scope);
     setTriageListWindowLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, query: 'Matching task' }, host, scope);
     expect(rows()[0]?.content?.outcome.snapshot.state).toMatchObject({ stage: 'unstarted' });
     const before = pageReads;
     push('task-a');
     await vi.waitFor(() => expect(rows()[0]?.content?.outcome.snapshot.state).toMatchObject({ completionReason: 'completed' }));
     expect(exactReads).toEqual(['task-a']);
-    expect(projectTriageListWindow(TRIAGE_LIST_DEFAULT_LENS_V1, otherHost, scope)?.rows[0]?.content?.outcome.snapshot.state)
+    expect(projectTriageListWindow({ ...TRIAGE_LIST_DEFAULT_LENS_V1, limit: 200 }, otherHost, scope)?.rows.find(row => row.entryRef.entryId === 'task-a')?.content?.outcome.snapshot.state)
       .toMatchObject({ completionReason: 'completed' });
     expect(projectTriageListWindow({ ...TRIAGE_LIST_DEFAULT_LENS_V1, query: 'No match' }, otherHost, scope)?.rows).toEqual([]);
     expect(pageReads).toBe(before);
     expect(readTriageListWindowSnapshot(otherHost, scope)).toBe(readTriageListWindowSnapshot(host, scope));
+    completed = false;
+    push('task-a');
+    await vi.waitFor(() => expect(rows()[0]?.content?.outcome.snapshot.state).toMatchObject({ stage: 'unstarted' }));
+    setTriageListWindowLens(TRIAGE_LIST_DEFAULT_LENS_V1, host, scope);
+    expect(rows()).toHaveLength(200);
+    expect(pageReads).toBe(before);
+    setTriageListWindowLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, query: 'Matching task' }, host, scope);
     push('task-b'); // not in the retained page; exact admission discovers a new matching row
     await vi.waitFor(() => expect(rows().map(row => row.entryRef.entryId).sort()).toEqual(['task-a', 'task-b']));
-    expect(exactReads).toEqual(['task-a', 'task-b']);
+    expect(exactReads).toEqual(['task-a', 'task-a', 'task-b']);
     absent = true;
     push('task-a');
     await vi.waitFor(() => expect(rows().map(row => row.entryRef.entryId)).toEqual(['task-b']));
-    expect(exactReads).toEqual(['task-a', 'task-b', 'task-a']);
-    expect(projectTriageListWindow(TRIAGE_LIST_DEFAULT_LENS_V1, otherHost, scope)?.rows.map(row => row.entryRef.entryId))
+    expect(exactReads).toEqual(['task-a', 'task-a', 'task-b', 'task-a']);
+    expect(projectTriageListWindow({ ...TRIAGE_LIST_DEFAULT_LENS_V1, query: 'Matching task' }, otherHost, scope)?.rows.map(row => row.entryRef.entryId))
       .toEqual(['task-b']);
     expect(pageReads).toBe(before);
   } finally { first.release(); second.release(); }

@@ -441,11 +441,11 @@ describe('the selected entry once the window stops holding it', () => {
         await expect(shell.getByText('These details could not be read')).resolves.toBeDefined();
         await expect(shell.queryByRole('button', { name: 'Retry' })).resolves.toBeUndefined();
     });
-    it.each([3, 1_000])('publishes one Task title in %i retained rows without rendering unaffected rows and refreshes referenced blocker names', async (count) => {
+    it.each([3, 200, 1_000])('keeps %i retained Tasks through exact publications and local title edits', async (count) => {
         const sourceInstanceId = INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance.sourceInstanceId;
         const refs = ['edited', 'dependent', 'blocker', ...Array.from({ length: count - 3 }, (_, index) => `task-${index}`)].map(entryId => ({ source: INTERNAL_TASK_SOURCE_V1,
             kindId: 'task', collisionScope: 'personal', entryId }));
-        const titles = refs.map((_, index) => ['Independent task', 'Waiting task', 'Required task'][index] ?? `Other task ${index}`);
+        const titles = refs.map((_, index) => [count === 200 ? 'Task 001' : 'Independent task', 'Waiting task', 'Required task'][index] ?? `Other task ${index}`);
         const { attention: _attention, ...taskRow } = listResult(true).window.rows[0]!;
         const resultPage = (offset: number) => TriageListEntriesResultV1Schema.parse({ ...listResult(true),
             configuredSources: [{ sourceInstanceId, configurationRowId: INTERNAL_TASK_SOURCE_RECORD_V1.rowId, source: INTERNAL_TASK_SOURCE_V1, displayLabel: 'Happier tasks', available: true }],
@@ -473,6 +473,7 @@ describe('the selected entry once the window stops holding it', () => {
             },
         });
         const result = resultPage(0);
+        let listReads = 0;
         const protocol = { id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 };
         const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
         const admittedSurface = createSurfaceContextFixture({
@@ -492,12 +493,13 @@ describe('the selected entry once the window stops holding it', () => {
             shell = await createPluginUiTestkit({
                 identity: { instanceId: 'task-title-locality', mountNonce: 'task-title-locality' },
                 authorPlugin: { id: 'happier.triage', version: '0.0.0' },
-                // A retained inactive host surface observes publications without issuing a new view demand.
-                surface: context => showTasks ? renderTasksSurface({ ...context, activity: { active: false } }) : null,
+                // The query-clear replay exercises an active page; locality-only cases observe a retained inactive surface.
+                surface: context => showTasks ? renderTasksSurface({ ...context, activity: { active: count === 200 } }) : null,
                 surfaceContext: admittedSurface,
                 adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope, detailsPane: { available: true } }),
                 handlers: { executeAction: async ({ action, input }) => {
                     if (action === TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1 || action === TRIAGE_TASKS_LIST_ACTION_LOCAL_ID_V1) {
+                        listReads++;
                         const requested = TriageListEntriesInputV1Schema.parse(input);
                         return resultPage(Number(requested.resume?.[0]?.continuation?.token ?? 0)) as unknown as JsonValue;
                     }
@@ -532,7 +534,36 @@ describe('the selected entry once the window stops holding it', () => {
             await act(async () => { onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 1440, height: 800 } } }); });
         };
         await measureTable();
+        if (count === 200) await act(async () => {
+            await refreshTriageListWindow('view', shell.context.hostApi, ephemeralSharedScope);
+            while ((store.getSnapshot().window?.rows.length ?? 0) < count) await store.loadMore();
+        });
         expect(document.body.textContent).toContain('Blocked by Required task');
+        if (count === 200) {
+            let input = document.querySelector<HTMLInputElement>('input[aria-label="Search tasks"]');
+            if (!input) throw new Error('Expected mounted Tasks search');
+            const setInput = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+            const editQuery = async (query: string) => { await act(async () => {
+                input = document.querySelector<HTMLInputElement>('input[aria-label="Search tasks"]')!;
+                setInput.call(input, query);
+                input.dispatchEvent(new InputEvent('input', { bubbles: true }));
+            }); };
+            const readsBeforeQuery = listReads;
+            await editQuery('001');
+            expect(store.getSnapshot().window?.rows).toHaveLength(1);
+            const row = store.getRow(triageEntryRowKey(refs[0]!))!;
+            const observation = row.observations[0]!;
+            if (observation.outcome.kind !== 'present') throw new Error('Expected Task');
+            for (const state of [{ presentation: 'resolved', completionReason: 'completed', nativeLabel: 'Done' },
+                { presentation: 'active', stage: 'unstarted', nativeLabel: 'To do' }] as const) {
+                await act(async () => { store.publishObservation({ ...observation, entryRef: row.entryRef,
+                    outcome: { ...observation.outcome, snapshot: { ...observation.outcome.snapshot, state } } }, false, { reconcileMembership: true }); });
+            }
+            await editQuery('');
+            expect(store.getSnapshot().window?.rows).toHaveLength(200);
+            expect(document.querySelector('[role="grid"][aria-label="Tasks"]')?.getAttribute('aria-rowcount')).toBe('201');
+            expect(listReads).toBe(readsBeforeQuery);
+        }
         await act(async () => { await shell.press(await shell.getByRole('button', { name: titles[0]! })); });
         expect(store.getSnapshot().window?.rows).toHaveLength(count);
         const publishTitle = async (index: number, title: string) => {

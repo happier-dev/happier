@@ -3342,3 +3342,38 @@ it('admits a newly matching exact observation into a sorted retained window with
   expect(reads).toBe(before);
  } finally { store.dispose(); }
 });
+
+it('keeps all 200 retained rows when clearing an exact query after pushed completion and restoration', async () => {
+ let reads = 0;
+ const harness = createHarness({ configureSourceB: false, scanA: async input => {
+  reads++;
+  const offset = input.page.kind === 'initial' ? 0 : Number(input.page.continuation.token);
+  const count = Math.min(MAX_TRIAGE_LIST_WINDOW_ROWS_V1, 200 - offset);
+  const observations = Array.from({ length: count }, (_, index) => presentObservation({
+   entryId: `entry-${offset + index}`, title: `Task ${String(offset + index).padStart(3, '0')}`, sourceUpdatedAtMs: 10_000 - offset - index,
+  }));
+  return offset + count === 200 ? { kind: 'complete', evidence: { kind: 'walkFinished' }, observations }
+   : { kind: 'page', evidence: { kind: 'partial', reason: 'more-pages' }, observations, continuation: { v: 1, token: `${offset + count}` } };
+ } });
+ const store = createTriageListWindowStore({ readEntries: harness.readEntries, nowMs: () => harness.clock.nowMs });
+ try {
+  await store.refresh('view');
+  while ((store.getSnapshot().window?.rows.length ?? 0) < 200) await store.loadMore();
+  const before = reads;
+  store.setLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, query: '001' });
+  const row = store.getSnapshot().window?.rows[0];
+  expect(store.getSnapshot().window?.rows).toHaveLength(1);
+  if (!row) throw new Error('Expected matching row');
+  const observation = row.observations[0]!;
+  if (observation.outcome.kind !== 'present') throw new Error('Expected present Task');
+  for (const state of [{ presentation: 'resolved', completionReason: 'completed', nativeLabel: 'Done' },
+   { presentation: 'active', stage: 'unstarted', nativeLabel: 'To do' }] as const) {
+   store.publishObservation({ ...observation, entryRef: row.entryRef, observedAtMs: 20_000,
+    outcome: { ...observation.outcome, snapshot: { ...observation.outcome.snapshot, state } } }, false, { reconcileMembership: true });
+   expect(store.getSnapshot().window?.rows).toHaveLength(1);
+  }
+  store.setLens(TRIAGE_LIST_DEFAULT_LENS_V1);
+  expect(store.getSnapshot().window?.rows).toHaveLength(200);
+  expect(reads).toBe(before);
+ } finally { store.dispose(); }
+});
