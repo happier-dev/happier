@@ -105,7 +105,21 @@ const singleIntent = defineProtocolUnion([
 ]);
 
 /** One public operand; exact entry destinations delegate to the incumbent controllers. */
-export const TriageRunConfiguredActionInputV1Schema = defineProtocolObject({
+type ConfiguredReviewResumeSchema = ReturnType<typeof defineProtocolObject<{
+    result: typeof TriageStartEntrySessionResultV1Schema;
+    instructions: typeof TriagePullRequestReviewInstructionsV1Schema;
+}, { readonly policy: 'closed' }>>;
+type ConfiguredActionInputMembers = {
+    v: ReturnType<typeof defineProtocolLiteral<1>>;
+    handoff: typeof TriageSessionHandoffInputV1Schema;
+    singleIntent: ReturnType<typeof singleIntent.optional>;
+    drafts: ReturnType<ReturnType<typeof defineProtocolArray<typeof TriageStartEntrySessionSettledDraftV1Schema>>['optional']>;
+    reviewChoices: ReturnType<typeof TriagePullRequestReviewChoiceV1Schema.optional>;
+    resumeStart: ReturnType<typeof TriageConfiguredStartRecoveryV1Schema.optional>;
+    resumeReview: ReturnType<ConfiguredReviewResumeSchema['optional']>;
+};
+type ConfiguredActionInputSchema = ReturnType<typeof defineProtocolObject<ConfiguredActionInputMembers, { readonly policy: 'closed' }>>;
+export const TriageRunConfiguredActionInputV1Schema: ConfiguredActionInputSchema = defineProtocolObject({
     v: defineProtocolLiteral(1), handoff: TriageSessionHandoffInputV1Schema,
     singleIntent: singleIntent.optional(),
     /** Shared destination uses one draft; per-entry destinations carry drafts in entry order. */
@@ -122,7 +136,21 @@ export const TriageRunConfiguredActionInputV1Schema = defineProtocolObject({
 }, { policy: 'closed' });
 export type TriageRunConfiguredActionInputV1 = ReturnType<typeof TriageRunConfiguredActionInputV1Schema.parse>;
 
-const configuredEntryResultMembers = {
+type ConfiguredEntryResultMembers = {
+    reason: ReturnType<typeof text.optional>;
+    failure: ReturnType<typeof TriageNewSessionFailureV1Schema.optional>;
+    result: ReturnType<typeof TriageStartEntrySessionResultV1Schema.optional>;
+    reviewInstructions: ReturnType<typeof text.optional>;
+    reviewResult: ReturnType<typeof TriageStartPullRequestReviewResultV1Schema.optional>;
+    sessionOpen: ReturnType<ReturnType<typeof defineProtocolUnion<readonly [
+        ReturnType<typeof defineProtocolLiteral<'opened'>>, ReturnType<typeof defineProtocolLiteral<'failed'>>
+    ]>>['optional']>;
+    results: ReturnType<ReturnType<typeof defineProtocolArray<typeof bulkResult>>['optional']>;
+    entries: ReturnType<ReturnType<typeof defineProtocolArray<typeof entryOutcome>>['optional']>;
+    refusals: ReturnType<ReturnType<typeof defineProtocolArray<typeof refusal>>['optional']>;
+    unavailableKeys: ReturnType<ReturnType<typeof defineProtocolArray<typeof text>>['optional']>;
+};
+const configuredEntryResultMembers: ConfiguredEntryResultMembers = {
     reason: text.optional(),
     failure: TriageNewSessionFailureV1Schema.optional(),
     result: TriageStartEntrySessionResultV1Schema.optional(),
