@@ -126,6 +126,21 @@ describe('schema-derived Action input hints', () => {
     ]);
   });
 
+  it('presents the root-union arm the authored fields choose, with its own widgets, and leaves the other arms to complete inputs', () => {
+    const hints = normalizePluginActionInputHintsV2({
+      fields: [{ path: 'query', title: 'Search for', widget: 'text', required: true }],
+    }, { anyOf: [
+      { type: 'object', additionalProperties: false, required: ['connectionId', 'query'],
+        properties: { connectionId: { type: 'string', minLength: 1 }, query: { type: 'string', minLength: 1 } } },
+      { type: 'object', additionalProperties: false, required: ['destination'],
+        properties: { destination: { type: 'object', additionalProperties: false } } },
+    ] });
+    expect(hints?.fields).toEqual([
+      { path: 'query', title: 'Search for', widget: 'text', required: true },
+      { path: 'connectionId', title: 'Connection Id', widget: 'text', required: true },
+    ]);
+  });
+
   it('keeps empty inputs empty and refuses to reinterpret literal dotted keys as nested paths', () => {
     expect(normalizePluginActionInputHintsV2(undefined, { type: 'object', additionalProperties: false }))
       .toBeUndefined();

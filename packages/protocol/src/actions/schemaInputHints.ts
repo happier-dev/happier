@@ -56,7 +56,14 @@ export function deriveActionInputHints(
   const authoredFields = authored?.fields ?? [];
   const fields = [...authoredFields];
   const appendFields = (position: JsonSchemaObject, prefix: string, parentRequired: boolean): void => {
-    const alternatives = objectAlternatives(position);
+    // Authored fields that name one union arm's properties choose that arm: the form is that shape, with its own
+    // widgets, and the other arms stay for callers that pass complete inputs.
+    const authoredHere = new Set(authoredFields.filter(field => !prefix || field.path.startsWith(`${prefix}.`))
+      .map(field => (prefix ? field.path.slice(prefix.length + 1) : field.path).split('.')[0]!));
+    const allAlternatives = objectAlternatives(position);
+    const chosen = authoredHere.size === 0 ? [] : allAlternatives.filter(arm => isSchema(arm.properties)
+      && [...authoredHere].every(key => Object.prototype.hasOwnProperty.call(arm.properties, key)));
+    const alternatives = chosen.length > 0 ? chosen : allAlternatives;
     const properties = new Map<string, JsonSchemaObject[]>();
     for (const alternative of alternatives) {
       if (!isSchema(alternative.properties)) continue;

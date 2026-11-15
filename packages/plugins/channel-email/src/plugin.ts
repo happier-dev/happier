@@ -70,6 +70,10 @@ export const emailPlugin = definePlugin({
       dangerLevel: providers.operations.notificationDestinationSetup.declaration.dangerLevel,
       inputSchema: providers.operations.notificationDestinationSetup.declaration.input.schema.jsonSchema,
       resultSchema: providers.operations.notificationDestinationSetup.declaration.resultSchema.jsonSchema,
+      // The form a person sees through the Channels picker: the picker supplies the connection, they search for the place.
+      inputHints: { description: 'Find the mailbox Happier sends notifications to.', submitLabel: 'Search',
+        fields: [{ path: 'connectionId', title: 'Connection', widget: 'text', required: true, visibleWhen: { op: 'not', predicate: { op: 'truthy', path: 'destination' } } },
+          { path: 'query', title: 'Address', description: 'The email address to notify.', placeholder: 'team@example.com', widget: 'text', required: true, visibleWhen: { op: 'not', predicate: { op: 'truthy', path: 'destination' } } }] },
       run: setupEmailNotificationDestination,
     },
     ...imapSmtpActions,
