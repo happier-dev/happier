@@ -199,7 +199,7 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                 ...(params.executeEnvironmentSetup ? { runEnvironmentSetup: async ({ machine, isCurrent }) => {
                     if (!machine.enrolledMachineId || !machine.preset) throw Object.assign(new Error('intent_changed'), { code: 'intent_changed' });
                     const setup = await params.executeEnvironmentSetup!(machine, context, isCurrent);
-                    if (!setup.ok) throw Object.assign(new Error(setup.errorCode), { code: setup.errorCode });
+                    if (!setup.ok) throw ManagedMachineControllerError.fromActionFailure(setup, 'machines.setup.apply');
                     const read = ManagedGetOutputV1Schema.parse(await driver.execute('machines.managed.get',
                         { homeId: machine.homeId, managedId: machine.id }, { requestId, context, signal }));
                     return await openManagedMachineRead({ credentials: controllerCredentials, serverHttpBaseUrl: params.serverBaseUrl,
@@ -214,7 +214,7 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                         executionTarget: { serverId: params.serverId, machineId: machine.enrolledMachineId },
                         managedCreation: { homeId: machine.homeId, managedId: machine.id, controller: machine.controller },
                     }, context, machine);
-                    if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
+                    if (!result.ok) throw ManagedMachineControllerError.fromActionFailure(result, 'session.spawn_new');
                     const spawn = SessionSpawnNewActionResultV1Schema.safeParse(result.result);
                     if (!spawn.success) throw Object.assign(new Error('invalid_action_output'), { code: 'invalid_action_output' });
                     if (spawn.success && spawn.data.type === 'error') {

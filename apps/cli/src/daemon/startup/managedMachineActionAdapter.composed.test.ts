@@ -102,6 +102,14 @@ import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, parseExternalActionDaemonDispatch
 import { sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { ManagedPendingActivationFailureRequestV1Schema, PendingActivationAuthorizationV1Schema } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { CUA_PLUGIN } from '../../../../../packages/plugins/machine-cua/src/manifest';
+import { CuaLocalLaunchV1Schema } from '../../../../../packages/plugins/machine-cua/src/machine/schemas';
+import { projectMachineProvisionerSelectionV1, MachineProvisionerOptionsResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
+import { createUnavailablePluginServicesFactory } from '@/plugins/runtime/invocation/services/factory';
+import { ActionExecuteFailureSchema, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 
 const approvalWire = vi.hoisted(() => ({ sockets: [] as Array<{ update(value: unknown): void }>,
     registrations: new Map<string, { deliver(packet: unknown, acknowledge: (value: unknown) => void): void }>(),
@@ -2025,6 +2033,52 @@ describe('daemon managed Machine Action factory', () => {
         expect(post).not.toHaveBeenCalled();
     });
 
+    it.each(['setup', 'session', 'setup-recovered'] as const)('preserves child %s Action diagnostics in the retained managed operation', async phase => {
+        const selection = { kind: 'one-off' as const, homeId: 'srv_home', controller: { machineId: 'controller', installationId: 'installation' },
+            launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} },
+            retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false };
+        let machine = ManagedMachineFullV1Schema.parse({ id: 'managed', homeId: 'srv_home', custodianAccountId: 'account', enrollmentIdentity,
+            launch: selection.launch, controller: selection.controller, allocation: 'bound',
+            resource: { contributionRef: selection.launch.provider, schemaVersion: 1, value: {} },
+            creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0, enrolledMachineId: 'actual-guest',
+            retention: selection.retention, wakeOnAcceptedMessage: false,
+            ...(phase !== 'session' ? { preset: { id: 'preset', revision: 1, contentEncryptionMode: 'plain' },
+                machineSetup: { state: 'pending', setup: { scripts: [{ body: 'echo setup', affects: 'none' }] } } } : {}) });
+        // The guest Action HTTP transport is the boundary; adapter, driver and operation projection remain real.
+        const childPhase = phase !== 'session' ? 'machines.setup.apply' : 'session.spawn_new';
+        const failure = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',
+            failureCause: projectActionFailureCauseV1(Object.assign(new Error('private native response'), { code: 'credential_unavailable' }), childPhase),
+            details: { kind: 'managedNative', nativeCause: { httpStatusClass: '4xx', code: 'forbidden' } } });
+        vi.spyOn(axios, 'post').mockImplementation(async url => ({ status: 200,
+            data: String(url).endsWith('/child-action') ? failure : String(url).endsWith('/admit')
+                ? { machine, replayed: false } : { machine } }));
+        const child = async () => {
+            const result = (await axios.post<ActionExecuteResult>(`${serverUrl}/child-action`)).data;
+            if (phase === 'setup-recovered') machine = ManagedMachineFullV1Schema.parse({ ...machine,
+                machineSetup: { ...machine.machineSetup, state: 'succeeded' } });
+            return result;
+        };
+        const managed = adapter(true, phase === 'session' ? child : phase === 'setup-recovered'
+            ? async () => ({ ok: true, result: SessionSpawnNewActionResultV1Schema.parse({ type: 'success', disposition: 'created', sessionId: 'recovered-session',
+                executionTarget: { serverId: configuration.activeServerId, machineId: 'actual-guest' },
+                organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' } }) }) : undefined,
+            undefined, nacl.sign.keyPair().secretKey, credentials, undefined, phase !== 'session' ? child : undefined);
+        const input = { enrollmentIdentity, selection, ...(phase !== 'setup' ? { agentStart: { directory: { kind: 'managed' as const },
+            agentTarget: { kind: 'agent' as const, identity: { pluginId: 'acme.agent', localId: 'coding' } } } } : {}) };
+        const operations = createHostActionOperationRuntime({ machineId: 'controller', resolveAccountId: async () => 'account', generateOperationId: () => 'child-diagnostic' });
+        await operations.observeExecution({ actionId: 'machines.managed.acquire', input, actionRequestId: 'request',
+            execute: async context => ({ ok: true, result: await managed({ actionId: 'machines.managed.acquire', input,
+                context: { ...context, surface: 'cli', authority: 'present_user', serverId: configuration.activeServerId }, signal: context.signal }) }) });
+        const settled = await operations.handlers.getV2({ operationId: 'child-diagnostic', waitForTerminal: true });
+        if (phase === 'setup-recovered') {
+            expect(settled, JSON.stringify(settled)).toMatchObject({ kind: 'found', operation: { state: 'succeeded' } });
+            return;
+        }
+        expect(settled).toMatchObject({ kind: 'found', operation: {
+            state: 'failed', error: { errorCode: failure.errorCode, failureCause: failure.failureCause, details: failure.details },
+        } });
+    });
+
     it('projects a real ordinary Session-start domain refusal into the retained managed operation', async () => {
         const selection = { kind: 'one-off' as const, homeId: 'srv_home', controller: { machineId: 'controller', installationId: 'installation' },
             launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} },
@@ -2122,7 +2176,7 @@ describe('daemon managed Machine Action factory', () => {
         expect(seen).toEqual([{ action: 'machines.managed.retention.update', requestId: 'parity-request', input: update }]);
         expect(native.effects()).toBe(1);
     });
-    it.each(['cli', 'mcp'] as const)('routes standalone %s provisioner discovery through the installed native contribution', async surface => {
+    it.each(['cli', 'mcp', 'cua'] as const)('routes standalone %s provisioner discovery through the installed native contribution', async surface => {
         await withConfiguredDaemonTestHome({ prefix: 'managed-provisioner-parity-' }, async () => {
             await storeHome('srv_home');
             const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account', tokenEpoch: 1,
@@ -2149,7 +2203,34 @@ describe('daemon managed Machine Action factory', () => {
             const networkFetch = globalThis.fetch;
             vi.spyOn(globalThis, 'fetch').mockImplementation((url, options) => String(url).startsWith('http://127.0.0.1:')
                 ? networkFetch(url, options) : realFetch!(url, options));
-            const native = nativeFixture({ privateNative: true });
+            const authored = surface === 'cua' ? await createPluginTestkit({ manifest: CUA_PLUGIN.manifest, module: CUA_PLUGIN }) : undefined;
+            const cuaManifest = normalizePluginManifestV2(CUA_PLUGIN.manifest);
+            const unavailableServices = createUnavailablePluginServicesFactory();
+            const native = surface === 'cua' ? nativeFixture({ fixtureManifest: cuaManifest,
+                actionHandlers: new Map(cuaManifest.contributes.actions.map(action => {
+                    const handler = authored?.registration('actions', action.id);
+                    if (!handler) throw new Error('Missing authored Cua Action');
+                    return [action.id, handler];
+                })),
+                createServices(seed, binding) {
+                    const services = unavailableServices(seed, binding);
+                    return { ...services, exec: { ...services.exec, async run(request) {
+                        const args = request.args ?? [];
+                        const digest = `sha256:${'a'.repeat(64)}`;
+                        const value = args.includes('doctor') ? { host: { os: 'linux', arch: 'x86_64', kvm: true,
+                            accel: { x86_64: 'kvm', aarch64: 'tcg' } }, backends: [{ backend: 'qemu', ready: true, provisionable: false }],
+                            qemu: { version: '10.1.0' }, lume: { version: null }, container: { reachable: false, gvisor: false, runtimes: [] } }
+                            : args.includes('images') ? [{ ref: 'ghcr.io/trycua/linux:24.04-disk', os: 'linux', arch: ['amd64'],
+                                local: 'qemu', published: true, spacesd: true, digest,
+                                sizes: { digest, platforms: [{ arch: 'amd64', disk: 20 * 1024 ** 3 }] } }] : undefined;
+                        if (!value) throw new Error('Options must only inspect native capabilities');
+                        return { termination: { observed: { kind: 'exit' as const, exitCode: 0 }, requestedBy: { kind: 'none' as const } },
+                            stdout: new TextEncoder().encode(JSON.stringify(value)), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false };
+                    } }, managedServices: { ...services.managedServices, dependencies: { ...services.managedServices.dependencies,
+                        status: async () => ({ state: 'ready' as const, id: 'cua-cli', version: '0.5.0', sourceId: 'system',
+                            executable: { kind: 'managedDependency' as const, id: { pluginId: cuaManifest.id, localId: 'cua-cli' } } }) } } };
+                },
+            }) : nativeFixture({ privateNative: true });
             const managedMachineAction = createDaemonManagedMachineActionAdapter({ credentials: accountCredentials,
                 machineId: 'controller', serverBaseUrl: serverUrl, serverId: configuration.activeServerId,
                 installationIdentity: { installationId: 'installation', privateKey: nacl.sign.keyPair().secretKey },
@@ -2186,7 +2267,7 @@ describe('daemon managed Machine Action factory', () => {
                 await mcp.connect(serverTransport); await client.connect(clientTransport);
                 const controller = { machineId: 'controller', installationId: 'installation' };
                 const invoke = async (actionId: 'machines.provisioners.list' | 'machines.provisioners.check' | 'machines.provisioners.options', input: unknown) => {
-                    if (surface === 'cli') {
+                    if (surface !== 'mcp') {
                         const result = await cli.execute(actionId, input, { surface: 'cli', actionRequestId: 'parity-request' });
                         expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
                         if (!result.ok) throw new Error('CLI discovery failed');
@@ -2198,6 +2279,22 @@ describe('daemon managed Machine Action factory', () => {
                     if (!content || content.type !== 'text') throw new Error('Missing MCP result');
                     return JSON.parse(content.text);
                 };
+                if (surface === 'cua') {
+                    const contribution = { pluginId: cuaManifest.id, localId: 'local-sandbox' };
+                    const input = { homeId: 'srv_home', controller, contribution, selectors: { size: { cpu: 4, memoryBytes: 4 * 1024 ** 3 } } };
+                    const options = MachineProvisionerOptionsResultV1Schema.parse(await invoke('machines.provisioners.options', input));
+                    const selection = Object.fromEntries(Object.entries(options.dimensions).flatMap(([key, entries]) => entries[0] ? [[key, entries[0].id]] : []));
+                    const descriptor = cuaManifest.contributes.machineProvisioners.find(value => value.id === contribution.localId);
+                    if (!descriptor) throw new Error('Missing Cua declaration');
+                    const projected = projectMachineProvisionerSelectionV1({ options, selection, launchSchema: descriptor.launchSchema });
+                    if (projected.kind !== 'ready') throw new Error('Cua options must produce a complete strict launch');
+                    expect(CuaLocalLaunchV1Schema.parse(projected.launch)).toMatchObject({ runtimeId: 'qemu', imageId: 'ghcr.io/trycua/linux:24.04-disk' });
+                    expect(await cli.execute('machines.provisioners.options', { ...input, controller: { ...controller, installationId: 'unavailable' } },
+                        { surface: 'cli', actionRequestId: 'unavailable-controller' })).toMatchObject({ ok: false });
+                    expect(await cli.execute('machines.provisioners.options', { ...input, contribution: { ...contribution, localId: 'misbound' } },
+                        { surface: 'cli', actionRequestId: 'misbound-contribution' })).toMatchObject({ ok: false });
+                    return;
+                }
                 expect(await invoke('machines.provisioners.list', { homeId: 'srv_home', controller })).toMatchObject({
                     controller, provisioners: [expect.objectContaining({ contribution: { pluginId: 'acme.compute', localId: 'vm' } })],
                 });
