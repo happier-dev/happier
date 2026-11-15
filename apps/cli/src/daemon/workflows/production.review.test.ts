@@ -324,7 +324,7 @@ describe('durable review coordinator', () => {
     }
   });
 
-  it.each([false, true])('retains unresolved child custody on denied Resume when Stop is %s', async (stop) => {
+  it.each([false, true, 'terminal_child'] as const)('settles only resolved child custody on denied Resume when Stop is %s', async (stop) => {
     const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: { agentTarget: generationAgentTarget }, blocks: [step] };
     const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
       binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: {
@@ -349,7 +349,20 @@ describe('durable review coordinator', () => {
     await h.storage.execute({ operation: 'resume', runId, expectedRevision: h.storage.run().revision });
     const workflowResumeRequestedRevision = h.storage.run().revision;
     let resumedEffect = false;
-    const coordinate = createProductionWorkflowRunCoordinator({ token: 'token', accountId, machineId: 'machine', storage: h.storage,
+    let childSettled = false;
+    const storage = { ...h.storage, execute: async (...args: Parameters<typeof h.storage.execute>) => {
+      const result = await h.storage.execute(...args);
+      const request = args[0];
+      if (stop === 'terminal_child' && !childSettled && request.operation === 'invocations.list'
+        && request.lifecycles?.length === 2 && request.lifecycles.includes('cancel_requested')) {
+        childSettled = true;
+        // Native recovery commits terminal evidence while cancellation drains
+        // structural rows from its earlier page. The final custody read owns it.
+        await h.store.commitFact({ key, lifecycle: 'failed', reason: 'execution_run_protocol_unsupported' });
+      }
+      return result;
+    } };
+    const coordinate = createProductionWorkflowRunCoordinator({ token: 'token', accountId, machineId: 'machine', storage,
       resolveAccountEncryption: async () => ({ kind: 'available', witness: encryption.witness }),
       resolveControllerContext: async () => { throw new Error('controller_was_admitted_at_action'); },
       // Source lookup is an external boundary. A concurrent human Stop reaches
@@ -375,10 +388,10 @@ describe('durable review coordinator', () => {
     expect(await coordinate({ runId, attempt: 0, expectedRevision: h.storage.run().revision,
       workflowResumeRequestedRevision, acceptedEnvelope, accountCurrentness: encryption.witness }))
       .toMatchObject({ state: stop ? 'cancelled' : 'interrupted', reason: 'run_access_denied' });
-    expect(h.storage.run()).toMatchObject({ state: stop ? 'cancelled' : 'interrupted', workflowCustodyState: 'pending' });
+    expect(h.storage.run()).toMatchObject({ state: stop ? 'cancelled' : 'interrupted', workflowCustodyState: stop === 'terminal_child' ? 'settled' : 'pending' });
     expect(h.storage.rowById(rootId)?.index.lifecycle).toBe(stop ? 'cancelled' : 'pending');
     expect(await (await h.load()).readByLogicalInvocation(childId)).toMatchObject({
-      lifecycle: stop ? 'cancel_requested' : 'running',
+      lifecycle: stop === 'terminal_child' ? 'failed' : stop ? 'cancel_requested' : 'running',
       execution: { sessionId: 'unresolved-session', localInputId: 'unresolved-input' },
     });
     expect(resumedEffect).toBe(false);

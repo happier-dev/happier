@@ -2324,7 +2324,6 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       // admitted leaf. A pause that arrives after all authored work completed is
       // intentionally allowed to settle that completed work normally.
       const control = await durableStore.readControl();
-      let hasPendingChildStop = false;
       if (control === 'cancel_requested') {
         const pendingStops = await durableStore.listByLifecycle({
           runId: claim.runId,
@@ -2337,8 +2336,6 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
             // to stop. Close the same durable row rather than retaining them as
             // child custody after the coordinator has unwound every pipeline.
             await durableStore.commitFact({ key: record.key, lifecycle: 'cancelled' });
-          } else {
-            hasPendingChildStop = true;
           }
         }
         // Cancellation ends authored work, not unresolved child custody. Retain
@@ -2366,7 +2363,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
           finalResult: result.finalResult,
         }))
         : undefined;
-      let custodyState = hasPendingChildStop || discussionPublicationPending
+      let custodyState = discussionPublicationPending
         ? undefined : projectWorkflowTerminalCustodySettlement(result.state);
       if (custodyState === 'settled') {
         const unsettled = await durableStore.listByLifecycle({ runId: claim.runId,
