@@ -1,5 +1,5 @@
 import { OpenProjectInputV1Schema, type OpenProjectInputV1 } from '@happier-dev/protocol/projects/openProjectV1';
-import type { ProjectSourceRepositorySelectorV1, ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { OpenProjectDraftSelectionV1 } from '@happier-dev/protocol/projects/openProjectDraftV1';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { z } from 'zod/mini';
@@ -27,12 +27,6 @@ export function buildProjectSourceOpenRoute(serverId: string, source: ProjectSou
     const seed = sourceSeedSchema.parse({ serverId, source: { kind: 'source', id: source.id, revision: source.revision,
         selector: source.repository, ...(source.defaultRef ? { defaultRef: source.defaultRef } : {}),
         ...(source.subdir ? { subdir: source.subdir } : {}) } });
-    return { pathname: '/projects/open' as const, params: { openSource: JSON.stringify(seed) } };
-}
-
-/** A repository named by its link (Deploy an app → Your code) seeds Open's clone; Open asks where, and nothing runs here. */
-export function buildProjectRepositoryOpenRoute(serverId: string, selector: ProjectSourceRepositorySelectorV1) {
-    const seed = sourceSeedSchema.parse({ serverId, source: { kind: 'repository', selector } });
     return { pathname: '/projects/open' as const, params: { openSource: JSON.stringify(seed) } };
 }
 

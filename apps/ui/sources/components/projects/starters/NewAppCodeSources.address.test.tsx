@@ -177,6 +177,7 @@ it.each([
         expect.objectContaining({
           repository: { nameWithOwner: 'acme/ops-tools' },
         }),
+        expect.any(Function),
       );
   } finally {
     await screen.unmount();
@@ -239,6 +240,95 @@ it('narrows Your code to the repositories a search names, without asking any Mac
     expect(screen.findByTestId('newApp.code:source-billing-api')).toBeTruthy();
     expect(screen.findByTestId('newApp.code:source-invoices')).toBeNull();
     expect(screen.findByTestId('newApp.code:source-docs')).toBeNull();
+  } finally {
+    await screen.unmount();
+  }
+});
+
+/** A Home with no repository Projects yet and one online Machine whose hosting owner reads pasted links. */
+async function homeWithAddressReader(serverUrl: string, identityLetter: string) {
+  const serverId = await homes.addHome({
+    name: 'Deploy', serverUrl, serverIdentityId: `srv_${identityLetter.repeat(32)}`,
+    accountId: 'account-owner', currentAccount: true,
+  });
+  homes.answer(serverId, 'GET /v1/projects/sources', {
+    body: { ok: true, sources: [], coverage: { complete: true, nextCursor: null } },
+  });
+  const { createPlainMachineRowFixture } = await import('@/dev/testkit');
+  const machineRow = createPlainMachineRowFixture({ id: 'reader', accountId: 'account-owner' });
+  homes.answer(serverId, '/v1/machines', { body: [machineRow] });
+  homes.answer(serverId, 'GET /v1/machines/reader', { body: { machine: machineRow } });
+  storage.getState().applyMachines(
+    [createHydratedPlainMachineFixture({ id: 'reader', accountId: 'account-owner', machine: { active: true, activeAt: Date.now() } })],
+    true, { sourceServerId: serverId });
+  storage.getState().markMachineListSettled(serverId);
+  const asked: string[] = [];
+  installDisconnectedServerSocketBoundary((socket) => {
+    configureConnectedServerSocketBoundary(socket);
+    socket.emitWithAck = vi.fn<typeof socket.emitWithAck>(async (event: string, payload: unknown) => {
+      if (event !== SOCKET_RPC_EVENTS.CALL) return { v: 1, ok: true, admittedSessionIds: [] };
+      const call = payload as { method: string; params: { address: string } };
+      expect(call.method).toBe('reader:scm.hostingRepository.resolveAddress');
+      asked.push(call.params.address);
+      return { ok: true, result: { success: true, kind: 'resolved',
+        selector: selectorFor(call.params.address.replace('https://github.com/', '')) } };
+    });
+  });
+  return { serverId, asked };
+}
+
+// COR4B first-time journey (UI refinements 11-15 17:35Z): a pasted link is read as it lands, without Enter. Search
+// words are never sent to a Machine.
+it('reads a pasted link as it lands, without Enter, and never asks a Machine about search words', async () => {
+  const { serverId, asked } = await homeWithAddressReader('https://deploy-your-code-live.test', 'g');
+  const onChooseRepository = vi.fn();
+  const screen = await renderAccountScreen(
+    <SearchHost scope={{ serverId, accountId: 'account-owner' }} value={null} onChange={vi.fn()}
+      onChooseRepository={onChooseRepository} chosenRepository={null} columns={2} insetStyle={null} />,
+  );
+  try {
+    const field = () => screen.root.findAll((node) =>
+      node.props.testID === 'newApp.code.address' && typeof node.props.onChangeText === 'function')[0]!;
+    await waitForHomeGovernance(() => expect(field()).toBeTruthy());
+    await act(async () => { field().props.onChangeText('ops tools'); });
+    await act(async () => { field().props.onChangeText('https://github.com/acme/ops-tools'); });
+    await waitForHomeGovernance(() => expect(onChooseRepository).toHaveBeenCalledWith(
+      expect.objectContaining({ repository: { nameWithOwner: 'acme/ops-tools' } }), expect.any(Function)));
+    expect(asked).toEqual(['https://github.com/acme/ops-tools']);
+  } finally {
+    await screen.unmount();
+  }
+});
+
+// The pasted repository IS the deploy source (O-DEPLOY 17:33Z): the host's Continue keeps it through the Sources' own
+// writer, never a second one, and gets the saved Source to open its new Environment.
+it('keeps a pasted repository as a Source through the Sources writer when the host asks', async () => {
+  const { serverId } = await homeWithAddressReader('https://deploy-your-code-save.test', 'h');
+  const created: unknown[] = [];
+  homes.answer(serverId, 'POST /v1/projects/sources', { select: (input) => {
+    created.push(input);
+    return { body: { ok: true, canManage: true, source: { id: 'source-ops-tools', revision: 1, name: 'ops-tools',
+      repository: selectorFor('acme/ops-tools'), audience: [], createdByAccountId: 'account-owner' } } };
+  } });
+  const onChooseRepository = vi.fn();
+  const screen = await renderAccountScreen(
+    <SearchHost scope={{ serverId, accountId: 'account-owner' }} value={null} onChange={vi.fn()}
+      onChooseRepository={onChooseRepository} chosenRepository={null} columns={2} insetStyle={null} />,
+  );
+  try {
+    const field = () => screen.root.findAll((node) =>
+      node.props.testID === 'newApp.code.address' && typeof node.props.onChangeText === 'function')[0]!;
+    await waitForHomeGovernance(() => expect(field()).toBeTruthy());
+    await act(async () => { field().props.onChangeText('https://github.com/acme/ops-tools'); });
+    await act(async () => { field().props.onSubmitEditing(); });
+    await waitForHomeGovernance(() => expect(onChooseRepository).toHaveBeenCalledOnce());
+    expect(created).toEqual([]);
+    const save = onChooseRepository.mock.calls[0]![1] as () => Promise<{ id: string } | undefined>;
+    let saved: { id: string } | undefined;
+    await act(async () => { saved = await save(); });
+    expect(saved).toMatchObject({ id: 'source-ops-tools' });
+    expect(created).toEqual([expect.objectContaining({ serverId, name: 'ops-tools',
+      repository: expect.objectContaining({ repository: { nameWithOwner: 'acme/ops-tools' } }) })]);
   } finally {
     await screen.unmount();
   }

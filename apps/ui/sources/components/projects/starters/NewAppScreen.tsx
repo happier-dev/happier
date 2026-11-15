@@ -59,8 +59,7 @@ import {
   type StarterCreateInput,
 } from './newAppDraft';
 import { projectCheckoutParentPath } from '../activation/projectOpenChoices';
-import { buildProjectRepositoryOpenRoute } from '../activation/projectOpenRoute';
-import type { ProjectSourceRepositorySelectorV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import type { ProjectSourceRepositorySelectorV1, ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { StoreItemMark } from '@/components/store/catalog/StoreItemMark';
 import { useOpenStoreListing } from '@/components/store/StoreListing';
 import {
@@ -69,6 +68,7 @@ import {
   type DeploymentNewDefinitionKind,
 } from '@/components/projects/deployments/deploymentNavigation';
 import { NewAppCodeSources } from './NewAppCodeSources';
+import { isRepositoryAddressCandidate } from '@/components/projects/sources/projectSourceAddress';
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { QualifiedMachineV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
@@ -156,7 +156,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   // The step's one search (lab f1src): Your code narrows its repositories, starters and the catalog ask their
   // registry read with the same query (the Store's search owner).
   const [query, setQuery] = React.useState('');
-  const search = query.trim();
+  // A pasted repository link is read by Your code, not searched for: starters and the catalog stay as they were.
+  const search = isRepositoryAddressCandidate(query) ? '' : query.trim();
   const starterCatalog = useRegistryItems(search ? { kind: 'starter', query: search } : { kind: 'starter' }, true);
   const starters = starterCatalog.items;
 
@@ -169,7 +170,10 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   // Already built and From the catalog (lab f1src): a way that continues outside this dialog, chosen like the others.
   const [door, setDoor] = React.useState<Door | null>(null);
   // Your code → a pasted link to a repository that is not a Project here yet (owner ruling 20:50Z).
-  const [pastedRepository, setPastedRepository] = React.useState<ProjectSourceRepositorySelectorV1 | null>(null);
+  const [pastedRepository, setPastedRepository] = React.useState<Readonly<{ selector: ProjectSourceRepositorySelectorV1;
+    save: () => Promise<ProjectSourceV1 | undefined> }> | null>(null);
+  // Saving the pasted repository as this Home's Source, on Continue; the step stays until it is kept.
+  const [savingSource, setSavingSource] = React.useState(false);
   const chooseCode = React.useCallback((next: string | null) => {
     setCodeSourceId(next);
     if (next) {
@@ -197,8 +201,9 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       setPastedRepository(null);
     }
   }, []);
-  const choosePastedRepository = React.useCallback((selector: ProjectSourceRepositorySelectorV1) => {
-    setPastedRepository(selector);
+  const choosePastedRepository = React.useCallback((selector: ProjectSourceRepositorySelectorV1,
+    save: () => Promise<ProjectSourceV1 | undefined>) => {
+    setPastedRepository({ selector, save });
     setStarterId(null);
     setCodeSourceId(null);
     setDoor(null);
@@ -464,11 +469,18 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     step === 'start'
       ? {
           title: t('common.continue'),
-          disabled: !starter && codeSourceId === null && door === null && pastedRepository === null,
+          disabled: savingSource || (!starter && codeSourceId === null && door === null && pastedRepository === null),
           onPress: () => {
             if (pastedRepository !== null && scope) {
-              stepAside();
-              router.push(buildProjectRepositoryOpenRoute(scope.serverId, pastedRepository) as never);
+              // The pasted repository is the deploy source: kept as this Home's Source, then its new Environment.
+              setSavingSource(true);
+              void pastedRepository.save().then((source) => {
+                setSavingSource(false);
+                if (!source) return;
+                stepAside();
+                router.push(buildDeploymentRepositoryDraftHref({ serverId: scope.serverId, projectSourceId: source.id,
+                  machineId: props.machine?.machineId ?? null }) as never);
+              });
               return;
             }
             if (door !== null) {
@@ -570,7 +582,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
         {scope ? (
           <View>
             <NewAppCodeSources scope={scope} value={codeSourceId} onChange={chooseCode} columns={phone ? 1 : 2}
-              chosenRepository={pastedRepository} onChooseRepository={choosePastedRepository}
+              chosenRepository={pastedRepository?.selector ?? null} onChooseRepository={choosePastedRepository}
               query={query} onQueryChange={setQuery}
               insetStyle={dialog ? styles.dialogInset : null} />
           </View>

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { act } from 'react-test-renderer';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 
@@ -149,6 +149,23 @@ it('searches starters with the same field as Your code (lab f1src: one search)',
     expect(screen.findByTestId('newApp.starter:static-website')).toBeTruthy();
     await act(async () => { screen.changeTextByTestId('newApp.code.address', 'expo'); });
     await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.starter:static-website')).toBeNull());
+    expect(screen.findByTestId('newApp.starter:expo-blank')).toBeTruthy();
+  } finally {
+    await standardCleanup();
+    await fixture.dispose();
+  }
+});
+
+// COR4B (UI refinements 11-15 17:35Z): a pasted repository link is not a search term. The starters and the catalog
+// stay as they were instead of searching for the link and showing nothing.
+it('keeps starters listed while the shared field holds a pasted repository link', async () => {
+  const fixture = await starterHome('https://new-app-starter-pasted-link.test');
+  try {
+    const screen = await renderScreen(<NewAppScreen onClose={() => {}} />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.starter:expo-blank')).toBeTruthy());
+    await act(async () => { screen.changeTextByTestId('newApp.code.address', 'https://github.com/acme/ops-tools'); });
+    await flushHookEffects({ cycles: 8 });
+    expect(screen.findByTestId('newApp.starter:static-website')).toBeTruthy();
     expect(screen.findByTestId('newApp.starter:expo-blank')).toBeTruthy();
   } finally {
     await standardCleanup();

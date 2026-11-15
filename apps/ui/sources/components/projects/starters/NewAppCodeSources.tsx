@@ -10,6 +10,10 @@ import {
 import { useProjectSourceAddress } from '@/components/projects/sources/useProjectSourceAddress';
 import { presentProjectSourceAddressRefusal } from '@/components/projects/sources/resolveProjectSourceAddress';
 import { useProjectSources } from '@/components/projects/sources/useProjectSources';
+import { presentProjectSourceIssue } from '@/components/projects/sources/projectSourceIssue';
+import { isRepositoryAddressCandidate } from '@/components/projects/sources/projectSourceAddress';
+import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
+import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { describeCodeSource } from './codeSourcePresentation';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -34,8 +38,10 @@ const identityOf = (selector: ProjectSourceRepositorySelectorV1) =>
 /**
  * Deploy an app → Your code (owner ruling 11-14 20:50Z): the Account's Projects that have a repository, a search that
  * narrows them, and a pasted GitHub or GitLab link read by a Machine's hosting owner (`useProjectSourceAddress`). A link
- * to a Project already here picks that Project; any other repository becomes the chosen tile, which the host opens as a
- * Project first. A repository-free Project holds stored definitions only, so it is reached through Already built.
+ * to a Project already here picks that Project; any other repository becomes the chosen tile, handed to the host with
+ * the Sources' own save so Continue keeps it as this Home's Source and opens its new Environment (O-DEPLOY 11-15
+ * 17:33Z). A link is read as it is pasted or typed. A repository-free Project holds stored definitions only, so it is
+ * reached through Already built.
  */
 export function NewAppCodeSources(
   props: Readonly<{
@@ -44,7 +50,8 @@ export function NewAppCodeSources(
     onChange: (projectSourceId: string | null) => void;
     /** A pasted repository that is not a Project here yet; null when a Project or nothing is chosen. */
     chosenRepository: ProjectSourceRepositorySelectorV1 | null;
-    onChooseRepository: (selector: ProjectSourceRepositorySelectorV1) => void;
+    /** `save` keeps it as a Source through the Sources' own writer; resolves to the Source, or nothing when refused. */
+    onChooseRepository: (selector: ProjectSourceRepositorySelectorV1, save: () => Promise<ProjectSourceV1 | undefined>) => void;
     /** The step's one search (owned by the host): narrows these repositories, the starters and the catalog alike. */
     query: string;
     onQueryChange: (query: string) => void;
@@ -54,7 +61,8 @@ export function NewAppCodeSources(
     insetStyle: React.ComponentProps<typeof View>['style'];
   }>,
 ): React.ReactNode {
-  const { state, repositoryFacts } = useProjectSources(props.scope, { repositoryFacts: true });
+  const { state, controller, repositoryFacts } = useProjectSources(props.scope, { repositoryFacts: true });
+  const [saveIssue, setSaveIssue] = React.useState<string | null>(null);
   const rows = state.rows ?? NO_ROWS;
   const withCode = React.useMemo(
     () => rows.filter((row) => row.repository !== undefined),
@@ -67,7 +75,15 @@ export function NewAppCodeSources(
     if (project) {
       setQuery('');
       props.onChange(project.id);
-    } else props.onChooseRepository(selector);
+    } else {
+      setSaveIssue(null);
+      props.onChooseRepository(selector, async () => {
+        controller.beginCreate({ repository: selector });
+        const source = await controller.save();
+        setSaveIssue(source ? null : controller.getSnapshot().issue ?? 'source_save_failed');
+        return source ?? undefined;
+      });
+    }
   });
   const askedMachineId = address.resolution.kind === 'resolving' || address.resolution.kind === 'unavailable'
     ? address.resolution.machineId ?? null : null;
@@ -77,7 +93,12 @@ export function NewAppCodeSources(
     && address.refusal !== 'projects.sources.addressInvalid'
     ? presentProjectSourceAddressRefusal(address.resolution, address.refusal, () => askedMachine ?? '')
     : null;
-  const needle = query.trim().toLowerCase();
+  const reading = address.resolution.kind === 'resolving'
+    ? t('projects.sources.addressResolving', { machine: askedMachine ?? '' }) : null;
+  const saveBanner = saveIssue && props.chosenRepository ? presentProjectSourceIssue(saveIssue,
+    resolveHomeDisplayLabel(getServerProfileById(props.scope.serverId), props.scope.serverId)) : null;
+  // A link is read, not searched for: the repositories stay listed while it is checked.
+  const needle = isRepositoryAddressCandidate(query) ? '' : query.trim().toLowerCase();
   const matching = React.useMemo(() => needle
     ? withCode.filter((row) => row.name.toLowerCase().includes(needle)
       || row.repository!.repository.nameWithOwner.toLowerCase().includes(needle))
@@ -94,7 +115,7 @@ export function NewAppCodeSources(
       ...(pasted ? [{
         id: PASTED,
         title: pasted.repository.nameWithOwner,
-        subtitle: t('newApp.pastedSubtitle', { provider: pasted.provider.displayName }),
+        subtitle: pasted.provider.displayName,
         icon: 'git-branch' as const,
       }] : []),
       ...shown.map((row) => ({
@@ -112,13 +133,14 @@ export function NewAppCodeSources(
       {/* The search leads the step (lab f1src), on the same edge as the sections' tiles beneath it. */}
       <ItemGroup testID="newApp.search" header="none" surface="none">
       <View style={[styles.field, props.insetStyle]}>
-        {/* The app's one search field; Enter also reads a pasted repository link. */}
+        {/* The app's one search field; a pasted or typed repository link is read as it lands (Enter reads it at once). */}
         <CompactSearchField
           testID="newApp.code.address"
           value={query}
           onChangeText={(text) => {
             setQuery(text);
             address.withdrawRefusal();
+            address.resolveAsTyped(text);
           }}
           onSubmitEditing={() => {
             if (query.trim()) void address.resolve(query.trim());
@@ -126,8 +148,12 @@ export function NewAppCodeSources(
           // The lab's sentence on wide; a phone's field holds the short one whole (QA #34, 320).
           placeholder={t(props.columns === 1 ? 'newApp.codeSearchPlaceholderShort' : 'newApp.codeSearchPlaceholder')}
         />
+        {reading ? <EmptyState testID="newApp.code.address.reading" layout="line" lineLoading title={reading} /> : null}
         {refusal ? (
           <SurfaceStateCard testID="newApp.code.address.refusal" size="line" kind="unavailable" title={refusal} />
+        ) : null}
+        {saveBanner ? (
+          <SurfaceStateCard testID="newApp.code.saveIssue" size="line" kind="error" title={saveBanner.title} />
         ) : null}
       </View>
       </ItemGroup>

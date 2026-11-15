@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { presentProjectSourceIssue } from './projectSourceIssue';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type {
@@ -298,54 +299,6 @@ export type ProjectSourceDetailProps = Readonly<{
   onBack?: () => void;
 }>;
 
-function issueBanner(
-  issue: string | null,
-  homeName: string,
-): Readonly<{
-  title: string;
-  description?: string;
-  tone: 'warning' | 'neutral' | 'danger';
-}> | null {
-  switch (issue) {
-    case null:
-      return null;
-    case 'source_unavailable':
-      return {
-        title: t('projects.sources.unavailable'),
-        description: t('projects.sources.unavailableBody'),
-        tone: 'neutral',
-      };
-    case 'source_access_denied':
-      return {
-        title: t('projects.sources.unavailable'),
-        description: t('projects.sources.unavailableBody'),
-        tone: 'neutral',
-      };
-    case 'outcome_unknown':
-      return {
-        title: t('projects.sources.outcomeUnknown'),
-        description: t('projects.sources.outcomeUnknownBody'),
-        tone: 'warning',
-      };
-    case 'home_unreachable':
-      return {
-        title: t('projects.sources.offline', { home: homeName }),
-        tone: 'warning',
-      };
-    case 'source_backend_unavailable':
-      return {
-        title: t('projects.sources.backendUnavailable'),
-        tone: 'neutral',
-      };
-    case 'source_invalid':
-      return { title: t('projects.sources.addressInvalid'), tone: 'warning' };
-    case 'source_conflict':
-      return null;
-    default:
-      return { title: t('projects.sources.saveFailed'), tone: 'warning' };
-  }
-}
-
 /**
  * What the new Source's address check says under the field. Save stays disabled until the address
  * resolves; the controller names the reason (A3b), and this only words it.
@@ -494,7 +447,7 @@ export const ProjectSourceDetail = React.memo(function ProjectSourceDetail(
   );
 
   if (!props.creating && !current) {
-    const banner = issueBanner(state.issue, props.homeName);
+    const banner = presentProjectSourceIssue(state.issue, props.homeName);
     // The loading and unavailable states have no page identity of their own, but a detail that stands alone
     // (a phone) still needs its Back: the header draws it, titled as the page it leaves.
     const stateBack = standsAlone && props.onBack
@@ -549,7 +502,7 @@ export const ProjectSourceDetail = React.memo(function ProjectSourceDetail(
           : []),
       ]
     : [];
-  const banner = issueBanner(state.issue, props.homeName);
+  const banner = presentProjectSourceIssue(state.issue, props.homeName);
   const dashboards = (current?.attachments ?? []).filter(
     (
       attachment,

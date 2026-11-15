@@ -24,6 +24,19 @@ function readProviderHost(provider: ProviderValue): string | null {
   return readDeploymentHost(provider.baseUrl);
 }
 
+/**
+ * Whether typed text reads as a repository link — a web address, a host path like this file's own
+ * "github.com/owner/name", or an scp-style "git@host:owner/name" — rather than search words. Only such text
+ * is sent to a Machine's hosting owner, which alone decides what it names.
+ */
+export function isRepositoryAddressCandidate(text: string): boolean {
+  const value = text.trim();
+  if (!value || /\s/u.test(value)) return false;
+  return /^[a-z][a-z0-9+.-]*:\/\/[^/]+\/[^/]+\/[^/]+/iu.test(value)
+    || /^[^@/:]+@[^/:]+\.[^/:]+:[^/]+\/[^/]+/u.test(value)
+    || /^[a-z0-9-]+(?:\.[a-z0-9-]+)+(?::\d+)?\/[^/]+\/[^/]+/iu.test(value);
+}
+
 /** "github.com/happier-dev/happier", or the owner/name alone when the deployment is unknown. */
 export function formatProjectSourceAddress(
   selector: ProjectSourceRepositorySelectorV1,
