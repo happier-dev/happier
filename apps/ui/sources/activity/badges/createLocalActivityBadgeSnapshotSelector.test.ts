@@ -400,7 +400,7 @@ describe('createLocalActivityBadgeSnapshotSelector', () => {
         expect(second.localBadgeState).toEqual({ count: 1, showNonNumericDot: false });
     });
 
-    it('recomputes when qualified index tuples differ only by delimiter placement', () => {
+    it('keeps the published snapshot when qualified index tuples differ only by delimiter placement', () => {
         const selector = createSelector();
         const first = selector(createStorageState({
             sessionListIndexByServerId: {
@@ -424,11 +424,10 @@ describe('createLocalActivityBadgeSnapshotSelector', () => {
             },
         }));
 
-        // Both index shapes serialize to `s:alpha:home:b:Home` with the old delimiter join.
-        // No other source differs, so referential invalidation proves the tuple encoding itself.
+        // Both index shapes serialize to `s:alpha:home:b:Home` with the old delimiter join. The
+        // re-derivation here yields equal badge facts, so the published snapshot is kept.
         expect(first.localBadgeState).toEqual({ count: 0, showNonNumericDot: false });
-        expect(second).not.toBe(first);
-        expect(second.localBadgeState).toEqual({ count: 0, showNonNumericDot: false });
+        expect(second).toBe(first);
     });
 
     it('invalidates the badge snapshot when renderable blocked pending delivery changes', () => {
@@ -474,7 +473,7 @@ describe('createLocalActivityBadgeSnapshotSelector', () => {
         expect(second.localBadgeState).toEqual({ count: 1, showNonNumericDot: false });
     });
 
-    it('invalidates the badge snapshot when optimistic thinking starts without another session field changing', () => {
+    it('keeps the published snapshot when optimistic thinking starts without changing a badge fact', () => {
         const selector = createSelector();
         const firstSession = createSession({
             id: 'optimistic-thinking',
@@ -502,7 +501,9 @@ describe('createLocalActivityBadgeSnapshotSelector', () => {
             },
         }));
 
-        expect(second).not.toBe(first);
+        // Optimistic thinking re-derives the badge; with no badge fact changed nothing is republished.
+        expect(second).toBe(first);
+        expect(second.localBadgeState).toEqual({ count: 0, showNonNumericDot: false });
     });
 
     it('invalidates the badge snapshot when stored message versions change for a candidate session', () => {
@@ -996,5 +997,41 @@ describe('createLocalActivityBadgeSnapshotSelector', () => {
 
         expect(first.localBadgeState.count).toBe(0);
         expect(second).toBe(first);
+    });
+
+    it('keeps the published badge snapshot when a streamed reply changes a candidate transcript but not the badge', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(1_000));
+        const selector = createSelector();
+        const session = createSession({
+            id: 'session1',
+            active: true,
+            activeAt: 1_000,
+            presence: 'online',
+            latestTurnStatus: 'in_progress',
+            latestTurnStatusObservedAt: 1_000,
+            metadata: { path: '/repo', host: 'local' },
+            agentState: { controlledByUser: null, requests: {}, completedRequests: null },
+        });
+        const stateWith = (text: string, messagesVersion: number) => createStorageState({
+            sessions: { session1: session },
+            sessionListIndexByServerId: {
+                server1: [{ type: 'session', sessionId: 'session1', serverId: 'server1', serverName: undefined }],
+            },
+            sessionMessages: {
+                session1: createSessionMessages({
+                    messageIdsOldestFirst: ['reply'],
+                    messagesById: { reply: { kind: 'agent-text', id: 'reply', localId: null, createdAt: 1_000, text } },
+                    messagesVersion,
+                }),
+            },
+        });
+
+        // Three streamed deltas of one reply: the transcript moves, the badge count does not.
+        const published = [stateWith('word0 ', 1), stateWith('word0 word1 ', 2), stateWith('word0 word1 word2 ', 3)]
+            .map((state) => selector(state));
+
+        expect(published[0].localBadgeState.count).toBe(0);
+        expect(new Set(published).size).toBe(1);
     });
 });

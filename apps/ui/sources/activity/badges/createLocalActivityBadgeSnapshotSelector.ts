@@ -736,7 +736,7 @@ export function createLocalActivityBadgeSnapshotSelector(
         previousDeltaRevision = renderableDelta?.revision ?? null;
         previousNowMs = nowMs;
         if (badgeModel.channelDisabled || !badgeModel.policyReady) {
-            previousSnapshot = {
+            previousSnapshot = keepEqualSnapshot(previousSnapshot, {
                 nextRefreshAtMs: nextPolicyBoundaryMs,
                 channelDisabled: badgeModel.channelDisabled,
                 policyReady: badgeModel.policyReady,
@@ -744,7 +744,7 @@ export function createLocalActivityBadgeSnapshotSelector(
                 isDataReady: state.isDataReady,
                 localBadgeState: { count: 0, showNonNumericDot: false },
                 sessionOptions: badgeModel.sessionOptions,
-            };
+            });
             return previousSnapshot;
         }
 
@@ -762,7 +762,7 @@ export function createLocalActivityBadgeSnapshotSelector(
             includeWarmSourceWhenNotReady: true,
         });
 
-        previousSnapshot = {
+        previousSnapshot = keepEqualSnapshot(previousSnapshot, {
             nextRefreshAtMs: summary.nextAttentionBoundaryMs === null
                 ? nextPolicyBoundaryMs
                 : nextPolicyBoundaryMs === null
@@ -785,7 +785,31 @@ export function createLocalActivityBadgeSnapshotSelector(
                     && params.hasNonNumericInboxAttention,
             }),
             sessionOptions: badgeModel.sessionOptions,
-        };
+        });
         return previousSnapshot;
     };
+}
+
+/**
+ * A recomputation whose result equals the published snapshot republishes nothing: the badge
+ * runtime reads this through `useShallow`, so a new object with equal facts (one per streamed
+ * transcript delta of a viewed Session) re-rendered it on every arrival.
+ */
+function keepEqualSnapshot(
+    previous: LocalActivityBadgeSnapshot | null,
+    next: LocalActivityBadgeSnapshot,
+): LocalActivityBadgeSnapshot {
+    if (previous === null) return next;
+    return previous.nextRefreshAtMs === next.nextRefreshAtMs
+        && previous.channelDisabled === next.channelDisabled
+        && previous.policyReady === next.policyReady
+        && previous.hasLocalActivitySource === next.hasLocalActivitySource
+        && previous.isDataReady === next.isDataReady
+        && previous.localBadgeState.count === next.localBadgeState.count
+        && previous.localBadgeState.showNonNumericDot === next.localBadgeState.showNonNumericDot
+        && previous.sessionOptions.showPendingPermissionRequests === next.sessionOptions.showPendingPermissionRequests
+        && previous.sessionOptions.showPendingUserActionRequests === next.sessionOptions.showPendingUserActionRequests
+        && previous.sessionOptions.showUnread === next.sessionOptions.showUnread
+        ? previous
+        : next;
 }
