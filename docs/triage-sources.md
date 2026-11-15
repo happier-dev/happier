@@ -1190,6 +1190,10 @@ Internal task links live only in `todo.<id>.linkedSessions`. The optional
 orchestrator and linked-work readers reach that owner through admitted handles.
 In development source, native Task relation reads call the existing Account Task
 reader directly, including on a cold Session mount without a daemon source claim.
+The linked-entries Resource calls the same `sessions/read-source-links-v1`
+Account Action. That Action declares invoking-UI placement so a browser reads
+its Account data without an own Machine relay; external source operations still
+use their admitted execution owners.
 Unavailable Account Task data remains a failed lane, never an empty link set.
 External entries normally use the existing `session-links` v2 owner. A source
 with partly unreadable task content returns readable Session links with an

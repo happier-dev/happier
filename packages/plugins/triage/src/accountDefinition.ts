@@ -314,7 +314,9 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         inputSchema: TriageReadSourceSessionLinksInputV1Schema,
         resultSchema: TriageReadSourceSessionLinksActionResultV1Schema,
         hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
+        // The mounted Resource reads the same Account relation owner without
+        // requiring a browser's own Machine relay. Source roles retain theirs.
+        execution: { ...TRIAGE_DATA_ACTION_EXECUTION_V1, invokingUi: true },
         run: createTriageReadSourceSessionLinksActionHandler(),
         observeRead: observeTriageSourceSessionLinks,
       },
