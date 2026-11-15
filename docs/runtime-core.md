@@ -1664,10 +1664,15 @@ MCP journal-admission failure still throws to startup; Skill and prompt-library
 notice failures retain their existing logged best-effort handling. Required
 context, credential and post-admission currentness checks are unchanged.
 
-Pi's development MCP extension isolates each optional server's spawn,
-initialize and tool-list failure, closes that failed connection and keeps
-healthy tools callable. Its existing JSON stream carries the canonical notice
-through the public transcript publisher, without raw peer error text that could
+Pi's development MCP extension discovers optional servers independently of native
+Session readiness and one another. A peer that has not answered initialize or
+tool-list does not hold Pi's RPC reader or ordinary turns. Completed catalogs
+register through Pi's native tool refresh and become available to subsequent
+model requests. Session shutdown closes pending peers and joins their discovery;
+it cannot register late tools. Spawn, initialize and tool-list failures close
+only that optional connection and keep healthy tools callable. The existing JSON
+stream carries the canonical notice through the public transcript publisher,
+without raw peer error text that could
 contain secrets. The runner's existing strict-mode fact travels with
 `mcpServers` as `mcpServersStrictMode` on Session and Run requests; strict startup
 failure closes all connections and refuses startup instead of continuing.
