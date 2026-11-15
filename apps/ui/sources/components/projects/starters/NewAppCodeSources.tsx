@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 import type { ProjectSourceRepositorySelectorV1, ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import {
   readScmHostingRepositoryIdentity,
@@ -18,7 +18,7 @@ import {
   type SelectionTile,
 } from '@/components/ui/forms/SelectionTiles';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { Text } from '@/components/ui/text/Text';
+import { EmptyState } from '@/components/ui/empty/EmptyState';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { t } from '@/text';
@@ -54,7 +54,6 @@ export function NewAppCodeSources(
     insetStyle: React.ComponentProps<typeof View>['style'];
   }>,
 ): React.ReactNode {
-  const { theme } = useUnistyles();
   const { state, repositoryFacts } = useProjectSources(props.scope, { repositoryFacts: true });
   const rows = state.rows ?? NO_ROWS;
   const withCode = React.useMemo(
@@ -149,9 +148,7 @@ export function NewAppCodeSources(
             options={tiles}
           />
         ) : needle && withCode.length > 0 ? (
-          <Text testID="newApp.code.noMatch" variant="meta" style={{ color: theme.colors.text.secondary }}>
-            {t('newApp.codeNoMatch')}
-          </Text>
+          <EmptyState testID="newApp.code.noMatch" layout="line" title={t('newApp.codeNoMatch')} />
         ) : null}
       </View>
     </ItemGroup>

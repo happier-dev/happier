@@ -24,6 +24,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Text } from '@/components/ui/text/Text';
 import { WizardStepDots } from '@/components/onboarding/ui/WizardStepDots';
 import { useThisComputerMachineId } from '@/components/machines/add/useMachineAddPaths';
@@ -632,7 +633,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
           />
         ) : null}
         {!search && starterCatalog.hasValue && !starterCatalog.loading && !starterCatalog.error && starterCatalog.sourceFailures.length === 0 && starters.length === 0 ? (
-          <SurfaceStateCard kind="empty" layout="inline" title={t('capabilities.store.emptyTitle')} />
+          <EmptyState testID="newApp.startersEmpty" layout="centered" scene="noPlugins" title={t('capabilities.store.emptyTitle')} />
         ) : null}
             {starters.length > 0 ? (
               <SelectionTiles
