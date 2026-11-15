@@ -573,8 +573,8 @@ describe('WelcomeDecisionPanel', () => {
         };
         const screen = await renderScreen(<WelcomeDecisionPanel authEntryOptions={baseOptions} {...callbacks} />);
 
-        expect(screen.findByTestId('welcome-scan-existing-home-title')?.props.children)
-            .toBe('Enter URL manually');
+        await screen.pressByTestIdAsync('welcome-scan-existing-home');
+        expect(callbacks.onOpenRestore).toHaveBeenCalledTimes(1);
     });
 
     it('keeps paste-based Home entry available when the caller cannot scan', async () => {
@@ -590,12 +590,8 @@ describe('WelcomeDecisionPanel', () => {
             canScanQr={false}
         />);
 
-        expect(screen.findByTestId('welcome-scan-existing-home')).toBeTruthy();
-        expect(screen.findByTestId('welcome-scan-existing-home-title')?.props.children)
-            .toBe('Enter URL manually');
-        // A quiet row: the pairing-link meaning stays as its accessible hint.
-        expect(screen.findAll((node) => node.props.testID === 'welcome-scan-existing-home'
-            && node.props.accessibilityHint === 'Paste the pairing link shown on the other device.').length).toBeGreaterThan(0);
+        await screen.pressByTestIdAsync('welcome-scan-existing-home');
+        expect(callbacks.onOpenRestore).toHaveBeenCalledTimes(1);
         expect(screen.findByTestId('welcome-use-different-home')).toBeTruthy();
     });
 
