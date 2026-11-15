@@ -12,6 +12,7 @@ import { presentSavedSecretReferencePicker } from '@/components/ui/forms/valueRe
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 import { DeploymentBindingReplacementChoices } from './DeploymentBindingReplacementChoices';
+import { DeploymentTemplateDomainRows } from './DeploymentTemplateDomainRows';
 
 type Input = DeploymentTemplateInstantiateInputV1;
 export type DeploymentTemplateChoicesValue = Partial<Pick<Input, 'bindings' | 'volumeBindings' | 'domainBindings' | 'connectTo' | 'replace' | 'companions'>>;
@@ -91,14 +92,9 @@ export function DeploymentTemplateChoices(props: Readonly<{
                         ...(source.trim() ? [{ templateVolumeId: volume.id, source: source.trim() }] : [])] })} autoCapitalize="none" />} />)}
         </ItemGroup> : null}
         {props.includeDomains && template.domains.length ? <ItemGroup title={t('capabilities.store.appPage.addressTitle')}>
-            {template.domains.map(domain => <Item key={domain.key} title={`${domain.service}:${domain.containerPort}`}
-                accessoryLayout="stacked" showChevron={false} rightElement={<FieldTextInput testID={`${testID}.domain.${domain.key}`}
-                    accessibilityLabel={t('capabilities.store.appPage.domainAddress')}
-                    placeholder={t('capabilities.store.appPage.domainPlaceholder')}
-                    value={domainHostnames.get(domain.key) ?? ''}
-                    onChangeText={hostname => onChange({ ...value, domainBindings: [...(value.domainBindings ?? []).filter(binding => binding.templateDomainId !== domain.key),
-                        ...(hostname.trim() ? [{ templateDomainId: domain.key, hostname: hostname.trim() }] : [])] })}
-                    autoCapitalize="none" keyboardType="url" />} />)}
+            <DeploymentTemplateDomainRows domains={template.domains} hostname={key => domainHostnames.get(key) ?? ''} testIDPrefix={`${testID}.domain`}
+                onChangeHostname={(key, hostname) => onChange({ ...value, domainBindings: [...(value.domainBindings ?? []).filter(binding => binding.templateDomainId !== key),
+                    ...(hostname.trim() ? [{ templateDomainId: key, hostname: hostname.trim() }] : [])] })} />
         </ItemGroup> : null}
         {props.services?.length && exportKeys.length ? <ItemGroup title={t('capabilities.store.appPage.choices.connect')}
             description={t('capabilities.store.appPage.choices.connectBody', { names: exportKeys.join(', ') })}>

@@ -25,12 +25,17 @@ import type { AccountSettingsScope } from '@/sync/domains/settings/scope/account
 import { t } from '@/text';
 import type { ManagedReceiptFact } from './managedMachineDisplay';
 import { normalizeMachineSetup } from './normalizeMachineSetup';
-import { groupMachineSetupItems, machineSetupAdapters, machineSetupItemPresentation, moveMachineSetupItem, removeMachineSetupItem, renameMachineSetupApp,
+import { groupMachineSetupItems, machineSetupAdapters, machineSetupItemPresentation, moveMachineSetupItem, removeMachineSetupItem, renameMachineSetupApp, setMachineSetupAppDomain,
   type MachineSetupItemKind } from './machineSetupItems';
 import { openMachineSetupAddItems } from './MachineSetupAddItems';
 import { StoreItemMark } from '@/components/store/catalog/StoreItemMark';
 import { useMachineSetupRecipeOptions } from '@/components/store/catalog/storeSoftware';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
+import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
+import { DeploymentTemplateDomainRows } from '@/components/projects/deployments/DeploymentTemplateDomainRows';
+import { useRegistryItem } from '@/registries/useRegistryItem';
+import type { DeploymentTemplateRefV1, StoredAppPresetInputV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import type { DeploymentTemplateV1 } from '@happier-dev/protocol/registries';
 export { normalizeMachineSetup } from './normalizeMachineSetup';
 
 /**
@@ -180,6 +185,7 @@ export const MachineSetupSection = React.memo(
           {group.rows.map(({ item, index }, at) => {
             const presented = machineSetupItemPresentation(item, offers);
             const title = presented.title;
+            const editsAddresses = props.editable && item.kind === 'app' && item.definition.definition.from === 'catalogApp';
             const actions: ItemAction[] = props.editable ? [
               ...(item.kind === 'app' ? [{ id: 'rename', title: t('machinePresets.setup.renameApp'), icon: 'pencil' as const,
                 onPress: () => { void renameApp(index); } }] : []),
@@ -191,18 +197,28 @@ export const MachineSetupSection = React.memo(
                 onPress: () => change({ items: removeMachineSetupItem(items, index) }) },
             ] : [];
             return (
-              <Item
-                key={`${item.kind}:${index}:${title}`}
-                testID={`${props.testID}.item.${index}`}
-                {...machineSetupItemReadRow(item, presented)}
-                mode="info"
-                showChevron={false}
-                rightElementOutsidePressable
-                rightElement={actions.length ? (
-                  <ItemRowActions title={title} actions={actions} overflowOnly
-                    overflowTriggerTestID={`${props.testID}.item.${index}.more`} />
-                ) : undefined}
-              />
+              <React.Fragment key={`${item.kind}:${index}:${title}`}>
+                <Item
+                  testID={`${props.testID}.item.${index}`}
+                  {...machineSetupItemReadRow(item, presented)}
+                  // Its address fields follow, so the row does not repeat their hostnames.
+                  {...(editsAddresses && item.kind === 'app' ? { subtitle: appProjectText(item) } : {})}
+                  mode="info"
+                  showChevron={false}
+                  rightElementOutsidePressable
+                  rightElement={actions.length ? (
+                    <ItemRowActions title={title} actions={actions} overflowOnly
+                      overflowTriggerTestID={`${props.testID}.item.${index}.more`} />
+                  ) : undefined}
+                />
+                {/* A catalog App's addresses sit beneath it: each new machine serves the App at these names. */}
+                {editsAddresses && item.kind === 'app' && item.definition.definition.from === 'catalogApp' ? (
+                  <MachineSetupAppAddresses templateRef={item.definition.definition.templateRef}
+                    domainBindings={item.definition.domainBindings} scope={props.scope}
+                    onChangeHostname={(domainKey, hostname) => change({ items: setMachineSetupAppDomain(items, index, domainKey, hostname) })}
+                    testIDPrefix={`${props.testID}.item.${index}.domain`} />
+                ) : null}
+              </React.Fragment>
             );
           })}
         </ItemGroup>
@@ -422,6 +438,27 @@ export const MachineSetupSection = React.memo(
   },
 );
 
+const NO_DOMAINS: DeploymentTemplateV1['domains'] = [];
+
+/** The address rows of one catalog App, from its pinned template's Domains; nothing shows until that read settles. */
+function MachineSetupAppAddresses(props: Readonly<{
+  templateRef: DeploymentTemplateRefV1;
+  domainBindings: StoredAppPresetInputV1['domainBindings'];
+  scope: AccountSettingsScope | null;
+  onChangeHostname: (domainKey: string, hostname: string) => void;
+  testIDPrefix: string;
+}>) {
+  const { sourceId, itemId, version } = props.templateRef;
+  const read = useRegistryItem({ kind: 'app', sourceId, itemId, version }, props.scope !== null,
+    props.scope ? { scope: props.scope } : undefined);
+  const payload = read.item?.payload;
+  const domains = payload?.kind === 'app' && payload.state === 'ready' ? payload.app.domains : NO_DOMAINS;
+  const hostname = (domainKey: string) =>
+    props.domainBindings?.find((binding) => binding.templateDomainId === domainKey)?.hostname ?? '';
+  return <DeploymentTemplateDomainRows domains={domains} hostname={hostname}
+    onChangeHostname={props.onChangeHostname} testIDPrefix={props.testIDPrefix} />;
+}
+
 /** Each item kind's heading, in the editor and wherever a preset's setup is read. */
 export const MACHINE_SETUP_ITEM_GROUP_TITLE = {
   setupRecipe: 'machinePresets.setup.itemsGroupSetup',
@@ -437,10 +474,15 @@ export function machineSetupItemReadRow(item: MachinePresetItemV1, presented: Re
     icon: <StoreItemMark size={20} facts={item.kind === 'app' ? { kind: 'app', title }
       : { kind: 'software', title, bundledPluginId: item.selection.ref.pluginId, iconToken: presented.icon ?? null }} />,
     title,
+    // An App's saved addresses follow where it lives, so a read-only preset still says where the App is reached.
     subtitle: item.kind === 'app'
-      ? item.definition.project.kind === 'create' ? t('machinePresets.setup.appNewProject') : t('machinePresets.setup.appExistingProject')
+      ? joinHappierFacts(appProjectText(item), ...(item.definition.domainBindings ?? []).map((binding) => binding.hostname))
       : presented.offered === false ? t('machinePresets.setup.itemNotOffered') : presented.description,
   };
+}
+
+function appProjectText(item: Extract<MachinePresetItemV1, { kind: 'app' }>): string {
+  return item.definition.project.kind === 'create' ? t('machinePresets.setup.appNewProject') : t('machinePresets.setup.appExistingProject');
 }
 
 export function describeMachineSetup(

@@ -130,10 +130,63 @@ it('retains the matching Store Machine and ignores a foreign Machine while addin
                 from: 'catalogApp', templateRef: { sourceId, itemId: 'status-page', version: expect.any(String), ref: expect.any(Object) },
             } } },
         ] });
+        // The listed App row (no pin read yet) is recognised by its catalog identity once added.
+        const { t } = await import('@/text');
+        await waitForHomeGovernance(() => expect(config().detailFooter(pick('status-page')).primary.disabledReason)
+            .toBe(t('machinePresets.setup.alreadyInPreset')));
         expect(homes.requestsFor(machinePresetActionEndpointPathV1('machines.presets.create'))).toHaveLength(0);
         expect(homes.requestsFor(machinePresetActionEndpointPathV1('machines.presets.update'))).toHaveLength(0);
         expect(homes.requestsFor('/v1/artifacts').filter(request => request.method === 'POST')).toHaveLength(0);
         // The explicit App addition makes one selected read. Both reads belong to the preset's Account.
         expect(homes.requestsFor('/apps.json').map(request => request.serverId)).toEqual([serverId, serverId]);
+    } finally { await screen.unmount(); }
+});
+
+it('edits a saved App address for each required template Domain and keeps it on the App intent', async () => {
+    onTestFinished(await installRealActionExecutorModuleLoader());
+    const serverUrl = 'https://preset-addresses.test';
+    const catalogUrl = `${serverUrl}/apps.json`;
+    const sourceId = deriveMarketplaceSourceId(catalogUrl);
+    const catalog = createPromptLibraryCatalogBoundary({ records: [{ key: 'registry-sources', value: {
+        v: 2, sources: [{ id: sourceId, title: 'Apps', url: catalogUrl, format: 'happier-catalog',
+            kinds: ['app'], enabled: true, addedAt: 1 }], disabledSourceIds: [],
+    } }] });
+    const serverId = await homes.addHome({ name: 'Preset addresses', serverUrl,
+        serverIdentityId: 'srv_preset_addresses', accountId: 'owner', currentAccount: true });
+    for (const path of ['/v1/account/entity-rows/prompt-library', '/v1/account/entity-rows/prompt-library/registry-sources']) {
+        homes.answer(serverId, path, { select: async () => ({ body: await (await catalog.handle(path))!.json() }) });
+    }
+    const domainKey = 'SERVICE_URL_REDISINSIGHT_5540';
+    const app = DeploymentTemplateV1Schema.parse({ schemaVersion: 1, title: 'RedisInsight',
+        compose: { document: 'services:\n  redisinsight:\n    image: redis/redisinsight:2\n', profiles: [], services: ['redisinsight'] },
+        variables: [], generatedSecrets: [], volumes: [], firstRunSetup: true,
+        domains: [{ key: domainKey, service: 'redisinsight', containerPort: 5540, protocol: 'http', required: true }] });
+    homes.answer(serverId, '/apps.json', { body: { schemaVersion: 1, apps: [{ itemId: 'redisinsight', app }] } });
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const account = await captureLazyActionAccountContext(serverId);
+    onTestFinished(() => account.dispose());
+    const changes: (MachineSetupV1 | undefined)[] = [];
+    function Host() {
+        const [setup, setSetup] = React.useState<MachineSetupV1 | undefined>(undefined);
+        return <MachineSetupSection editable scope={account.accountLifetime.scope} name="Data tools" setup={setup}
+            onChange={next => { changes.push(next); setSetup(next); }} testID="preset.setup" />;
+    }
+    const screen = await renderScreen(<ModalProvider><ItemList><Host /></ItemList></ModalProvider>);
+    try {
+        await act(async () => screen.pressByTestId('preset.setup.items.add'));
+        const config = () => screen.tree.findByType(CapabilityAddModalBody).props.config;
+        const pick = () => config().catalog.items.find((entry: unknown) => config().catalog.itemKey(entry).includes('redisinsight'));
+        await waitForHomeGovernance(() => expect(pick()).toBeDefined());
+        await act(async () => { await config().detailFooter(pick()).primary.onPress(); });
+        await act(async () => config().onClose?.());
+        const field = `preset.setup.item.0.domain.${domainKey}`;
+        await waitForHomeGovernance(() => expect(screen.findHostByTestId(field)).not.toBeNull());
+        await act(async () => screen.findHostByTestId(field)!.props.onChangeText('redis.example.com'));
+        expect(changes.at(-1)?.items?.[0]).toMatchObject({ kind: 'app', definition: { name: 'RedisInsight',
+            domainBindings: [{ templateDomainId: domainKey, hostname: 'redis.example.com' }] } });
+        await act(async () => screen.findHostByTestId(field)!.props.onChangeText(''));
+        const cleared = changes.at(-1)?.items?.[0];
+        expect(cleared?.kind === 'app' && 'domainBindings' in cleared.definition).toBe(false);
+        expect(homes.requestsFor(machinePresetActionEndpointPathV1('machines.presets.update'))).toHaveLength(0);
     } finally { await screen.unmount(); }
 });

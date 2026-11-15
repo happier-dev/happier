@@ -71,6 +71,26 @@ export function renameMachineSetupApp<T extends Items>(
   );
 }
 
+/**
+ * A catalog App's saved address for one template Domain. A blank hostname clears that selection, and an App with
+ * none keeps no `domainBindings`; the template preparer validates the hostname when Setup reviews the App.
+ */
+export function setMachineSetupAppDomain<T extends Items>(
+  items: T,
+  index: number,
+  templateDomainId: string,
+  hostname: string,
+): T | MachinePresetItemV1[] {
+  const item = items[index];
+  if (item?.kind !== 'app' || item.definition.definition.from !== 'catalogApp') return items;
+  const trimmed = hostname.trim();
+  const rest = (item.definition.domainBindings ?? []).filter((binding) => binding.templateDomainId !== templateDomainId);
+  const domainBindings = trimmed ? [...rest, { templateDomainId, hostname: trimmed }] : rest;
+  const { domainBindings: _previous, ...definition } = item.definition;
+  const next = { ...item, definition: domainBindings.length ? { ...definition, domainBindings } : definition };
+  return items.map((entry, at) => (at === index ? next : entry));
+}
+
 /** Every characterized global-install adapter, across the platforms the catalog declares: the toolchain's name owner. */
 export function machineSetupAdapters(): readonly BuiltinNativeToolchainAdapterV1[] {
   const byId = new Map<string, BuiltinNativeToolchainAdapterV1>();

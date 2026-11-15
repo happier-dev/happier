@@ -2,6 +2,7 @@ import { deploymentRecommendationDescription } from '@/components/projects/deplo
 import * as React from 'react';
 import { useStore } from 'zustand';
 import { DeploymentTemplateChoices } from '@/components/projects/deployments/DeploymentTemplateChoices';
+import { DeploymentTemplateDomainRows } from '@/components/projects/deployments/DeploymentTemplateDomainRows';
 import { DeploymentPartialProgress } from '@/components/projects/deployments/DeploymentPartialProgress';
 import type { QualifiedMachineV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -17,7 +18,6 @@ import { DeploymentProjectChoiceGroups, useDeploymentProjectChoice } from '@/com
 import { MachineSetupReviewFooter } from '@/components/settings/machines/managed/MachineSetupPlanReview';
 import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
-import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
@@ -304,11 +304,6 @@ export function StoreAppPreparationReview(
   );
   useModalCardChrome(props.setChrome, chrome);
 
-  const domainServiceCounts = new Map<string, number>();
-  for (const domain of ready.app.domains) {
-    domainServiceCounts.set(domain.service, (domainServiceCounts.get(domain.service) ?? 0) + 1);
-  }
-
   // Who may deploy has no choice here, so it reads as part of this summary rather than a row without a control.
   const deploySummary = [
     controllerId ? nameOf(controllerId) : t('capabilities.store.appPage.controllerDefault'),
@@ -463,40 +458,12 @@ export function StoreAppPreparationReview(
           }
           showChevron={false}
         />
-        {ready.app.domains.map((domain) => {
-          const service = domainServiceCounts.get(domain.service)! > 1
-            ? `${domain.service}:${domain.containerPort}`
-            : domain.service;
-          const address = ready.app.domains.length === 1
-            ? t('capabilities.store.appPage.domainAddress')
-            : t('capabilities.store.appPage.domainAddressFor', { service });
-          const label = domain.required ? address : `${address} (${t('common.optional')})`;
-          const helper = t('capabilities.store.appPage.domainDnsHint', {
-            route: t('capabilities.store.appPage.addressBody', { service: domain.service, port: domain.containerPort }),
-          });
-          return (
-            <Item
-              key={domain.key}
-              title={label}
-              accessoryLayout="stacked"
-              rightElement={
-                <FieldItem label={null} supportingText={helper}>
-                  <FieldTextInput
-                    testID={`store.app.prepare.domain.${domain.key}`}
-                    value={domainHostnames[domain.key] ?? ''}
-                    onChangeText={(hostname) => reviewState.setState(current => ({ domainHostnames: { ...current.domainHostnames, [domain.key]: hostname } }))}
-                    accessibilityLabel={label}
-                    accessibilityHint={helper}
-                    placeholder={t('capabilities.store.appPage.domainPlaceholder')}
-                    autoCapitalize="none"
-                    keyboardType="url"
-                  />
-                </FieldItem>
-              }
-              showChevron={false}
-            />
-          );
-        })}
+        <DeploymentTemplateDomainRows
+          domains={ready.app.domains}
+          hostname={(key) => domainHostnames[key] ?? ''}
+          onChangeHostname={(key, hostname) => reviewState.setState(current => ({ domainHostnames: { ...current.domainHostnames, [key]: hostname } }))}
+          testIDPrefix="store.app.prepare.domain"
+        />
       </ItemGroup>
       <DeploymentTemplateChoices template={ready.app} lifetime={lifetime} value={templateChoices}
         onChange={templateChoices => reviewState.setState({ templateChoices })} testID="store.app.prepare.choices" />
