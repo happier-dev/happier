@@ -162,8 +162,33 @@ export function getPersistenceStorage(): MMKV {
     if (persistedStorage) return persistedStorage;
     // Keep storage-scope bootstrap local here to avoid import-cycle TDZ hazards during Sync initialization.
     const storageScope = isWebRuntime() ? null : readScopedStorageScopeFromEnv();
-    persistedStorage = storageScope ? new MMKV({ id: buildScopedStorageId('default', storageScope) }) : new MMKV();
+    persistedStorage = wrapQuotaGuardedSet(storageScope ? new MMKV({ id: buildScopedStorageId('default', storageScope) }) : new MMKV());
     return persistedStorage;
+}
+
+/**
+ * Web and the Tauri desktop shell back `react-native-mmkv` onto `localStorage`, whose
+ * per-origin quota is single-digit MBs; when it is exhausted, `set` throws synchronously out
+ * of boot-path writers like settings application. A refused write stays observable (warn with
+ * the key, never the payload) and never propagates: the in-session state remains
+ * authoritative and the next change retries persistence once the quota frees.
+ */
+function wrapQuotaGuardedSet(storage: MMKV): MMKV {
+    return new Proxy(storage, {
+        get(target, property, _receiver) {
+            if (property === 'set') {
+                return (key: string, value: unknown) => {
+                    try {
+                        target.set(key, value);
+                    } catch (error) {
+                        console.warn(`[persistence] storage write refused for "${key}"`, error);
+                    }
+                };
+            }
+            const field = Reflect.get(target, property, target);
+            return typeof field === 'function' ? (field as (...args: unknown[]) => unknown).bind(target) : field;
+        },
+    }) as MMKV;
 }
 
 export type NewSessionAgentType = AgentId;

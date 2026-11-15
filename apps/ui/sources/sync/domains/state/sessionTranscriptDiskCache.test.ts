@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { prepareWarmCacheEncryptionKey } from './warmCacheEncryptionKey';
+import { buildScopedKey, saveScopedRecord, type ScopedRecord } from './warmCachePersistence';
 import { resetReactNativeMmkvStub } from '@/dev/reactNativeMmkvStub';
 import { MMKV } from 'react-native-mmkv';
+import { Platform } from 'react-native';
 
 import {
     deleteEvictedSessionTranscript,
@@ -32,6 +34,29 @@ describe('sessionTranscriptDiskCache', () => {
         // Nothing reads or writes the cache until its at-rest key resolves, exactly as on a device.
         resetReactNativeMmkvStub();
         await prepareWarmCacheEncryptionKey();
+    });
+
+    it('skips transcript persistence on web and prunes stale web copies from the quota-bound store', async () => {
+        await prepareWarmCacheEncryptionKey();
+        // Seed what the pre-gate build wrote: a full transcript record under the scoped key.
+        const staleKey = buildScopedKey('session-transcript-v1:s1', 'server-a', 'account-a')!;
+        saveScopedRecord(staleKey, { v: 1, messages: [{ id: 'm1' }] } as unknown as ScopedRecord);
+
+        const previousOS = (Platform as { OS: string }).OS;
+        (Platform as { OS: string }).OS = 'web';
+        try {
+            // Web/desktop localStorage origins carry a hard quota (~MBs); a transcript record
+            // class is MB-scale, so persistence must be a no-op there.
+            expect(persistEvictedSessionTranscript(scope, 's1', transcriptOf(message('m1', 'x')))).toBe(false);
+
+            // The stale copies the pre-gate build wrote are pruned on first use: the desktop
+            // install whose quota they filled recovers without manual intervention.
+            const storage = new MMKV({ id: 'default' });
+            expect(storage.getAllKeys().some((key) => key.startsWith('session-transcript-v1:'))).toBe(false);
+            expect(readEvictedSessionTranscript(scope, 's1')).toBeNull();
+        } finally {
+            (Platform as { OS: string }).OS = previousOS;
+        }
     });
 
     it('roundtrips a transcript oldest-first under its server+account scope', () => {

@@ -25,6 +25,27 @@ function isWebRuntime(): boolean {
     return typeof window !== 'undefined' && typeof document !== 'undefined';
 }
 
+/**
+ * Best-effort bulk retirement of every scoped record whose key starts with `prefix`, across
+ * the store the current placement opens. Returns how many keys were deleted. Owned here so
+ * every scoped-record producer can retire its own record class without re-deriving placement
+ * (the transcript disk cache uses this to reclaim the web origin quota its pre-gate records
+ * filled).
+ */
+export function deleteWarmCacheRecordsWithPrefix(prefix: string): number {
+    const storage = getWarmCacheStorage();
+    if (!storage) return 0;
+    let deleted = 0;
+    for (const key of storage.getAllKeys()) {
+        if (key.startsWith(prefix)) {
+            storage.delete(key);
+            deleted += 1;
+        }
+    }
+    if (deleted > 0) storage.trim();
+    return deleted;
+}
+
 const SESSION_LIST_WARM_CACHE_PREFIX = 'session-list-warm-cache-v1';
 const MACHINE_DISPLAY_WARM_CACHE_PREFIX = 'machine-display-warm-cache-v1';
 const SESSION_ORGANIZATION_WARM_CACHE_PREFIX = 'session-organization-warm-cache-v2';

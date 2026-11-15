@@ -2,7 +2,8 @@ import { z } from 'zod';
 
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { buildScopedKey, loadScopedRecord, saveScopedRecord } from './warmCachePersistence';
+import { buildScopedKey, deleteWarmCacheRecordsWithPrefix, loadScopedRecord, saveScopedRecord } from './warmCachePersistence';
+import { Platform } from 'react-native';
 
 /**
  * Best-effort disk copy of a session transcript, written when bounded transcript retention
@@ -17,13 +18,40 @@ import { buildScopedKey, loadScopedRecord, saveScopedRecord } from './warmCacheP
  * mixed-coverage shape as any paged session: a first-class window gap, not a fork of the load
  * pipeline.
  *
- * At-rest placement follows the warm-cache owner exactly: encrypted MMKV on native, plaintext
- * on web/desktop where the credential (token + E2EE secret) already lives in `localStorage`
- * (see `warmCachePersistence.resolveWarmCacheStoragePlacement`). Persistence is best-effort
- * ("if possible"): a quota or serialization failure skips the copy and never blocks eviction.
+ * At-rest placement follows the warm-cache owner: encrypted MMKV on native. Web and the
+ * Tauri desktop shell (the web build) are NOT written: react-native-mmkv's web adapter backs
+ * onto `localStorage`, whose per-origin quota is single-digit MBs — one 10k-message
+ * transcript can consume it whole, and the next settings write then throws inside boot-path
+ * persistence (observed as a desktop failure after a full workday of testing). Transcript
+ * persistence on the web origin would be a recurring quota bomb, so evicted transcripts stay
+ * memory-only there: eviction still bounds memory, and reopen falls back to the first-open
+ * fetch exactly as before this cache existed. Persistence is best-effort ("if possible"): a
+ * skip, a quota failure, or a missing scope never blocks eviction.
  */
 
 const SESSION_TRANSCRIPT_DISK_CACHE_PREFIX = 'session-transcript-v1';
+
+function isWebRuntime(): boolean {
+    return Platform.OS === 'web';
+}
+
+let webPruneCompleted = false;
+
+/**
+ * One-time retirement of transcript records the pre-gate build wrote into the web origin:
+ * installs whose localStorage quota those records filled recover their settings writes
+ * without manual intervention. Best-effort and idempotent.
+ */
+function pruneWebSessionTranscriptDiskCacheOnce(): void {
+    if (webPruneCompleted) return;
+    webPruneCompleted = true;
+    try {
+        deleteWarmCacheRecordsWithPrefix(`${SESSION_TRANSCRIPT_DISK_CACHE_PREFIX}:`);
+    } catch {
+        // The prune itself is best-effort: a store that cannot be opened is a no-op miss for
+        // every reader anyway.
+    }
+}
 
 /**
  * Envelope validation only. The messages themselves were normalized by the store before they
@@ -64,6 +92,12 @@ export function persistEvictedSessionTranscript(
     sessionId: string,
     transcript: EvictedSessionTranscriptSnapshot,
 ): boolean {
+    if (isWebRuntime()) {
+        // See the placement note above: the web origin's quota cannot host MB-scale transcript
+        // records. First use also retires whatever the pre-gate build managed to write.
+        pruneWebSessionTranscriptDiskCacheOnce();
+        return false;
+    }
     const key = buildSessionTranscriptDiskCacheKey(scope, sessionId);
     if (!key) return false;
 
@@ -92,6 +126,11 @@ export function readEvictedSessionTranscript(
     scope: ServerAccountScope | null,
     sessionId: string,
 ): readonly Message[] | null {
+    if (isWebRuntime()) {
+        // Nothing new is written on web; stale pre-gate records are retired on first use.
+        pruneWebSessionTranscriptDiskCacheOnce();
+        return null;
+    }
     const key = buildSessionTranscriptDiskCacheKey(scope, sessionId);
     if (!key) return null;
     const record = loadScopedRecord(key, SessionTranscriptDiskCacheRecordSchema);
