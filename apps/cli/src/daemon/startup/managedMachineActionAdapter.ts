@@ -42,6 +42,7 @@ type ManagedMachineActionAdapterParams = Readonly<{
     machineId: string;
     serverBaseUrl: string;
     serverId: string;
+    readGuestHomeHostIdentity?: import('@/machines/managed/acquire').ManagedMachineAcquisitionDriverInput['readGuestHomeHostIdentity'];
     executeSessionStart?: (input: SessionSpawnNewInputV2, context: ActionExecutorContext, machine: ManagedMachineV1) => Promise<ActionExecuteResult>;
     executeEnvironmentSetup?: (machine: ManagedMachineFullV1, context: ActionExecutorContext, isCurrent: () => Promise<boolean>) => Promise<ActionExecuteResult>;
     subscribeEnvironmentSetupChanges?: (context: ActionExecutorContext, callbacks: Readonly<{ onChange(): void; onError(error: unknown): void }>) => Promise<{ dispose(): void | Promise<void> }>;
@@ -132,6 +133,7 @@ async function withBoundDriver<T>(params: ManagedMachineActionAdapterParams, sig
                 credentials: controllerCredentials,
                 observeRecordedApprovalExecution: params.observeRecordedApprovalExecution,
                 homeTarget,
+                readGuestHomeHostIdentity: params.readGuestHomeHostIdentity,
                 ...(params.readPolicyCurrent ? { readPolicyCurrent: params.readPolicyCurrent } : {}),
                 ...(params.prepareTeamCredentialNativeSource ? { prepareTeamCredentialNativeSource: params.prepareTeamCredentialNativeSource } : {}),
                 ...(params.subscribeManagedMachineChanges ? { subscribeManagedMachineChanges: params.subscribeManagedMachineChanges } : {}),

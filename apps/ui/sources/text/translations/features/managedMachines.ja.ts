@@ -375,6 +375,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             enrollmentUnavailable: "Home にこのマシンを登録できませんでした。Home が利用可能か確認してから、もう一度お試しください。",
             homeRequestFailed: "Home でこのリクエストを完了できませんでした。Home を確認してから、もう一度お試しください。",
             homeNotGuestReachable: "新しいマシンからこの Home に接続できません。新しいマシンから Home のアドレス、DNS、ネットワーク経路、ファイアウォールによるアクセス許可を確認して、もう一度お試しください。",
+            homeAuthoredNetworkNotReachable: "設定されたネットワークでは、新しいマシンからこのHomeに接続できません。devcontainerまたはComposeの設定でホストネットワークを指定するか、そのネットワークから接続できるHomeのアドレスを使用して、もう一度お試しください。",
             retryInstall: "インストールを再試行",
             openDetails: "作成の詳細を表示",
             fromThis: { phone: "このスマートフォンから", browser: "このブラウザから", desktop: "このコンピューターから" },

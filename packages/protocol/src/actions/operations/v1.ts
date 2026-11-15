@@ -26,7 +26,7 @@ import { ProjectCommandSourceV1Schema } from '../../workspaces/projectSetup/proj
 import { LocalServiceManagedServiceActionTargetV1Schema, ProjectServiceDeclarationRefV1Schema } from '../../local/services/actions/v1.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { ManagedControllerV1Schema } from '../../machines/managed/managedMachineV1.js';
-import { ManagedResourceV1Schema, MachineProvisionerNativeCauseV1Schema } from '../../machines/managed/providerFactsV1.js';
+import { ManagedResourceV1Schema, MachineProvisionerNativeCauseV1Schema, ManagedGuestHomeNetworkHintV1Schema } from '../../machines/managed/providerFactsV1.js';
 import { MachineAdministratorUsernameV1Schema } from '../../machines/adminAccessV1.js';
 import { ActionApprovalRequestCreatedResultSchema, ActionOperationCredentialUseV1Schema, ActionFailureCauseV1Schema,
   readActionFailureCauseV1, UNKNOWN_ACTION_FAILURE_CAUSE_V1, type ActionExecuteResult } from '../actionExecutionResult.js';
@@ -230,6 +230,7 @@ export const ManagedAgentStartFailureDetailsV1Schema = lazyZodSchema(() => z.str
 /** Selected, credential-free application carrier for guest reachability failures. */
 export const ManagedGuestHomeFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('managedGuestHome'), homeOrigin: HomeApplicationOriginV1Schema,
+  reason: z.optional(ManagedGuestHomeNetworkHintV1Schema),
 }));
 export const ManagedMachineFailureDetailsV1Schema = lazyZodSchema(() => z.union([
   ManagedControllerRequestFailureDetailsV1Schema, ManagedNativeFailureDetailsV1Schema,

@@ -456,7 +456,7 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
                     ? { ...body, timeoutMs: io.timeoutMs } : body;
                 if ((role === 'acquire' || role === 'rebuild') && contribution.definition.billing.location === 'local'
                     && typeof nativeInput === 'object' && nativeInput !== null && !Array.isArray(nativeInput)) {
-                    const guestHome = await resolveManagedGuestHome(target);
+                    const guestHome = await resolveManagedGuestHome(target, await input.readGuestHomeHostIdentity?.(input.homeId));
                     if (guestHome) nativeInput = { ...nativeInput, guestHome };
                 }
                 const executeRole = async (roleInput: unknown, approvalContext?: ActionExecutorContext) => {

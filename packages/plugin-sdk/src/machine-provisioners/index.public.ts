@@ -1,7 +1,7 @@
 export { createMachineProvisionerApiKeyAccount, type MachineProvisionerApiKeyAccountDefinition } from './apiKeyAccount.js';
 export { computeSshHostKeyFingerprint, buildMachineProvisionerCloudInit, buildMachineProvisionerPinnedSshBootstrap, MACHINE_PROVISIONER_CLOUD_SSH_USER,
   type MachineProvisionerCloudHostKeyV1 } from './cloudInit.js';
-export { MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 } from '../machineProvisioners.js';
+export { MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1, compareMachineHosts } from '../machineProvisioners.js';
 export type {
   DevcontainerEffectReviewV1,
   DevcontainerNativeObservationV1,

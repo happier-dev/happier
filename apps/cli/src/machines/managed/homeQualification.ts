@@ -5,17 +5,18 @@ import { isIP } from 'node:net';
 import type { MachineProvisionerGuestHomeV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 
 /** Resolve the already-selected application carrier on the creating controller. */
-export async function resolveManagedGuestHome(target: ResolvedHomeTarget): Promise<MachineProvisionerGuestHomeV1 | null> {
+export async function resolveManagedGuestHome(target: ResolvedHomeTarget, hostIdentity?: MachineProvisionerGuestHomeV1['hostIdentity']): Promise<MachineProvisionerGuestHomeV1 | null> {
     const origin = target.descriptor ? resolveDescriptorApplicationOrigin(target.descriptor) : target.applicationUrl;
     if (!origin) return null;
     const hostname = new URL(origin).hostname.replace(/^\[|\]$/gu, '');
-    if (isIP(hostname)) return { origin, addresses: [] };
+    const identity = hostIdentity ? { hostIdentity } : {};
+    if (isIP(hostname)) return { origin, addresses: [], ...identity };
     try {
-        return { origin, addresses: (await lookup(hostname, { all: true })).map(result => result.address) };
+        return { origin, addresses: (await lookup(hostname, { all: true })).map(result => result.address), ...identity };
     } catch {
         // A descriptor can also offer Iroh. Actual guest enrollment owns carrier
         // availability; unresolved HTTPS must not become a new admission refusal.
-        return { origin, addresses: [] };
+        return { origin, addresses: [], ...identity };
     }
 }
 

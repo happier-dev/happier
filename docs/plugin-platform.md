@@ -4314,13 +4314,20 @@ effect-time drift check before execution and stores executable facts in the
 retained resource. Resize consumes that resource and size, not a preset launch.
 
 Local acquire/rebuild role inputs can carry the transient `guestHome` fact:
-the selected application origin and controller-resolved IP addresses. The
+the selected application origin, controller-resolved IP addresses and optional
+Home/controller host identities from the daemon's existing Home observation. The
 controller uses the existing Home carrier policy and OS resolver; these addresses
-are not settings or retained resource identity. The image provider consumes this
-fact through Docker/Podman `--add-host`, preserving the hostname for TLS and the
-native bridge network. Advanced native configuration retains its reviewed
-networking authority. Home reachability still belongs to guest enrollment,
-not the native bootstrap transport.
+are not settings or retained resource identity. At realization, the image-only
+provider compares the host identities through the canonical hostname helper.
+Matching hosts use Docker/Podman host networking; remote or unknown hosts keep
+the native default. `--add-host` preserves the selected Home hostname for TLS.
+Advanced file, inline and Compose configurations always retain their reviewed
+networking authority. The retained resource and uncertain-acquisition reference
+keep the same-host fact for bootstrap/recovery. If enrollment actually reports
+`home_not_guest_reachable` for a same-host authored network other than host mode,
+the failure keeps that code and adds typed `authored_network` guidance: configure
+host networking in the authored source or expose a Home endpoint that network
+can reach. No extra reachability probe or authored-network override is added.
 
 For advanced configuration, Devcontainer options accept the controller
 `workspaceFolder` and `configPath`, or a saved `configuration` with `kind: inline`

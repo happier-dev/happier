@@ -1,5 +1,5 @@
 import { projectPluginFailureText } from '@happier-dev/plugin-sdk';
-import { MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1, type MachineProvisionerNativeCauseV1, type MachineProvisionerGuestHomeV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { compareMachineHosts, MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1, type MachineProvisionerNativeCauseV1, type MachineProvisionerGuestHomeV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { MachineProvisionerSizeV1Schema, type MachineProvisionerSizeV1, type MachineProvisionerResizeResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { isDeepStrictEqual } from 'node:util';
 import { posix, win32 } from 'node:path';
@@ -149,7 +149,7 @@ export function createDevcontainerProvider(input: Readonly<{
     }
     return { resource, native, running: state.Running && !state.Paused, paused: state.Paused };
   }
-  async function observe(launch: DevcontainerLaunch, containerId: string, managedMachineId: string) {
+  async function observe(launch: DevcontainerLaunch, containerId: string, managedMachineId: string, homeOnControllerHost = false) {
     const native = await inspectContainer(containerId, launch, managedMachineId);
     if (!native || record(native.State).Running !== true || record(native.State).Paused !== false) fail('native_realization_unknown');
     assertLabels(native, launch, managedMachineId);
@@ -158,8 +158,9 @@ export function createDevcontainerProvider(input: Readonly<{
     // can be unavailable. Only this creation path produces the guest witness.
     if (imageSource(launch) && !completed(await childExec(launch, containerId, ['sh', '-c', 'test -f "$1"', 'sh', readyPath(managedMachineId)], undefined, false, managedMachineId))) fail('native_realization_unknown');
     const observed = await namespace(launch, containerId, managedMachineId);
-    const resource = DevcontainerResourceSchema.parse({ ...launch, managedMachineId, containerId, ...observed, ...storage(native, observed.workspaceRoot) });
-    return { kind: 'bound' as const, resource: { contributionRef, schemaVersion: 1, value: resource,
+    const resource = DevcontainerResourceSchema.parse({ ...launch, managedMachineId, containerId, ...observed, ...storage(native, observed.workspaceRoot),
+      ...(homeOnControllerHost ? { homeOnControllerHost: true } : {}) });
+    return { kind: 'bound' as const, resource: { origin: 'created' as const, contributionRef, schemaVersion: 1, value: resource,
       devcontainerObservation: { nativeResourceId: resource.containerId, user: resource.user,
         workspaceFolder: resource.workspaceRoot, storage: resource.storage },
     } };
@@ -171,6 +172,7 @@ export function createDevcontainerProvider(input: Readonly<{
       .trim().split(/\r?\n/u).filter(Boolean);
   }
   async function realize(launch: DevcontainerLaunch, managedMachineId: string, recoveryReference = launch.configPath ?? managedMachineId, guestHome?: MachineProvisionerGuestHomeV1) {
+    const homeOnControllerHost = compareMachineHosts(guestHome?.hostIdentity?.homeMachineHost, guestHome?.hostIdentity?.controllerMachineHost);
     let nativeCause: MachineProvisionerNativeCauseV1 | undefined;
     try {
       // Only admitted acquire/rebuild roles reach evaluation of host and child
@@ -180,11 +182,14 @@ export function createDevcontainerProvider(input: Readonly<{
       const command = source ? 'run' : 'up';
       try { result = source
         ? await run(input.docker, ['run', '--detach',
+          // Image-only input has no authored network. Advanced file/inline/Compose
+          // networking stays under its existing effect review and native CLI.
+          ...(homeOnControllerHost ? ['--network', 'host'] : []),
           ...Object.entries(nativeLabels(launch, managedMachineId)).flatMap(([key, value]) => ['--label', `${key}=${value}`]),
           '--mount', mountArgument([launch.workspaceFolder ? 'type=bind' : 'type=volume',
             `source=${launch.workspaceFolder ?? `${devcontainerComposeProjectName(managedMachineId)}-workspace`}`, 'target=/workspace']),
           // Native hosts entries preserve the declared hostname/TLS identity and
-          // the controller's split DNS without changing the guest's network mode.
+          // the controller's split DNS in either native network mode.
           ...(guestHome?.addresses.flatMap(address => ['--add-host', `${new URL(guestHome.origin).hostname}:${address}`]) ?? []),
           '--workdir', '/workspace', '--entrypoint', 'sh', '--', source.image,
           '-c', "trap 'exit 0' TERM INT; while :; do sleep 2147483647 & wait $!; done"], undefined, false, managedMachineId, launch.workspaceFolder)
@@ -225,15 +230,15 @@ export function createDevcontainerProvider(input: Readonly<{
           try { await run(input.docker, ['rm', '--force', id]); } catch { /* Recovery retains the exact container id. */ }
           fail('native_setup_failed');
         }
-        return await observe(launch, id, managedMachineId);
+        return { outcome: await observe(launch, id, managedMachineId, homeOnControllerHost), homeOnControllerHost };
       }
       const up = record(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(result.stdout)));
       if (typeof up.containerId === 'string' && /^[a-f0-9]{64}$/u.test(up.containerId)) recoveryReference = up.containerId;
       if (up.outcome !== 'success' || typeof up.containerId !== 'string' || !/^[a-f0-9]{64}$/u.test(up.containerId)
         || typeof up.remoteUser !== 'string' || typeof up.remoteWorkspaceFolder !== 'string') fail('native_realization_unknown');
-      return await observe(launch, up.containerId, managedMachineId);
-    } catch (error) { return { kind: 'unknown' as const, recovery: { reference: recoveryReference, reason: code(error) },
-      ...(nativeCause ? { nativeCause } : {}) }; }
+      return { outcome: await observe(launch, up.containerId, managedMachineId, homeOnControllerHost), homeOnControllerHost };
+    } catch (error) { return { homeOnControllerHost, outcome: { kind: 'unknown' as const, recovery: { reference: recoveryReference, reason: code(error) },
+      ...(nativeCause ? { nativeCause } : {}) } }; }
   }
   return {
     async check() {
@@ -259,10 +264,11 @@ export function createDevcontainerProvider(input: Readonly<{
         return { kind: 'rejected' as const, code: code(error) === 'request_conflict' ? 'request_conflict' as const
           : code(error) === 'invalid_request' ? 'invalid_request' as const : 'provider_unavailable' as const };
       }
-      const result = await realize(launch, managedMachineId, undefined, guestHome);
+      const { outcome: result, homeOnControllerHost } = await realize(launch, managedMachineId, undefined, guestHome);
       if (result.kind === 'unknown' && result.recovery.reason === 'native_setup_failed') return result;
       return result.kind === 'bound' ? result : { kind: 'pending' as const, ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}), nativeOperationRef: {
         contributionRef, schemaVersion: 1, value: { managedMachineId, launch,
+          ...(homeOnControllerHost ? { homeOnControllerHost: true as const } : {}),
           ...(/^[a-f0-9]{64}$/u.test(result.recovery.reference) ? { nativeResourceId: result.recovery.reference } : {}) },
       } };
     },
@@ -284,7 +290,7 @@ export function createDevcontainerProvider(input: Readonly<{
         if (matching.length !== 1 || ('containerId' in operation && matching[0] === operation.containerId)
           || ('launch' in operation && operation.nativeResourceId !== undefined && matching[0] !== operation.nativeResourceId)
           || !/^[a-f0-9]{64}$/u.test(matching[0]!)) fail('native_realization_unknown');
-        return await observe(launch, matching[0]!, operation.managedMachineId);
+        return await observe(launch, matching[0]!, operation.managedMachineId, operation.homeOnControllerHost);
       } catch (error) {
         return 'containerId' in operation
           ? { kind: 'unknown' as const, recovery: { reference: operation.containerId, reason: code(error) } }
@@ -308,15 +314,17 @@ export function createDevcontainerProvider(input: Readonly<{
         if (!completed(await run(input.docker, ['rm', '--force', resource.containerId], undefined, false, resource.managedMachineId, resource.workspaceFolder))) {
           return { kind: 'unknown' as const, recovery: { reference: resource.containerId, reason: 'native_rebuild_unknown' } };
         }
-        return await realize(replacementLaunch, resource.managedMachineId, resource.containerId, guestHome);
+        return (await realize(replacementLaunch, resource.managedMachineId, resource.containerId, guestHome)).outcome;
       } catch (error) {
         if (!issued) return { kind: 'refused' as const, code: code(error) };
         return { kind: 'unknown' as const, recovery: { reference: raw.containerId, reason: code(error) } };
       }
     },
     async bootstrap(resource: DevcontainerResource) {
-      await exact(resource, true);
-      return { kind: 'native' as const, transport: { contributionRef, schemaVersion: 1 } };
+      const { native } = await exact(resource, true);
+      return { kind: 'native' as const, transport: { contributionRef, schemaVersion: 1 },
+        ...(resource.homeOnControllerHost && !imageSource(resource) && record(native.HostConfig).NetworkMode !== 'host'
+          ? { homeNetworkHint: 'authored_network' as const } : {}) };
     },
     async inspect(raw: DevcontainerResource) {
       try {

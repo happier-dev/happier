@@ -32,7 +32,7 @@ export function resolveSystemTaskFailureMessage(
     if (key) {
         const details = error.details;
         return code === 'home_not_guest_reachable' && details && 'kind' in details && details.kind === 'managedGuestHome'
-            ? `${t(key)} (${details.homeOrigin})` : t(key);
+            ? `${t(details.reason === 'authored_network' ? 'managedMachines.creation.homeAuthoredNetworkNotReachable' : key)} (${details.homeOrigin})` : t(key);
     }
     const message = typeof error.message === 'string' ? error.message.trim() : '';
     return message.length > 0 ? message : undefined;

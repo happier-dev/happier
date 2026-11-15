@@ -10,6 +10,7 @@ import type { InputPredicate } from './actions/dtos/pluginActionDtoSupport.gener
 import type { PluginContributionRef } from './identity.js';
 import type { AcquireResultV1, ManagedLocalResourceFactsV1, ManagedBootstrapCarrierV1, ProviderDeletionNoticeV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 export { MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+export { compareMachineHosts } from '@happier-dev/protocol/machines/host/normalizeMachineHost';
 
 export type MachineProvisionerContributionV1 = Readonly<{
   id: string;

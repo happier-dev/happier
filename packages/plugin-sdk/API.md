@@ -1921,6 +1921,7 @@
 | `./machine-provisioners` | `buildMachineProvisionerPinnedSshBootstrap` | value | any |
 | `./machine-provisioners` | `buildMachineProvisionerShellCommand` | value | any |
 | `./machine-provisioners` | `classifyManagedMachineAllocationV1` | value | any |
+| `./machine-provisioners` | `compareMachineHosts` | value | any |
 | `./machine-provisioners` | `computeSshHostKeyFingerprint` | value | any |
 | `./machine-provisioners` | `createMachineProvisionerApiKeyAccount` | value | any |
 | `./machine-provisioners` | `createMachineProvisionerFetch` | value | any |

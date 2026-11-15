@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { t } from '@/text';
 
 describe('resolveSystemTaskFailureMessage', () => {
+    it.each(['home_not_guest_reachable', 'bootstrap.home_not_guest_reachable'])(
+        'keeps authored-network recovery visible for %s', async code => {
+        const { resolveSystemTaskFailureMessage } = await import('./resolveSystemTaskFailureMessage');
+        const message = resolveSystemTaskFailureMessage({ code, message: 'private native diagnostic',
+            details: { kind: 'managedGuestHome', homeOrigin: 'https://home.example.test:9443', reason: 'authored_network' } });
+        expect(message).toBe(`${t('managedMachines.creation.homeAuthoredNetworkNotReachable')} (https://home.example.test:9443)`);
+        expect(message).not.toContain('private native diagnostic');
+    });
     it('presents operator authorization recovery through the existing typed cause owner', async () => {
         const { resolveSystemTaskFailureMessage } = await import('./resolveSystemTaskFailureMessage');
         const message = resolveSystemTaskFailureMessage({

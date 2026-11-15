@@ -375,6 +375,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             enrollmentUnavailable: "Ваш Home не смог зарегистрировать эту машину. Проверьте его доступность и попробуйте снова.",
             homeRequestFailed: "Ваш Home не смог выполнить этот запрос. Проверьте Home и попробуйте снова.",
             homeNotGuestReachable: "Новая машина не может подключиться к этому Home. Проверьте адрес Home, DNS, сетевые маршруты и доступ через межсетевой экран с новой машины, затем повторите попытку.",
+            homeAuthoredNetworkNotReachable: "Новая машина не может подключиться к этому Home через сеть из вашей конфигурации. Настройте сеть хоста в файле devcontainer или Compose либо используйте адрес Home, доступный из этой сети, и повторите попытку.",
             retryInstall: "Повторить установку",
             openDetails: "Показать сведения о создании",
             fromThis: { phone: "С этого телефона", browser: "Из этого браузера", desktop: "С этого компьютера" },

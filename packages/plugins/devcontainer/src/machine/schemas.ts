@@ -37,6 +37,7 @@ export const DevcontainerStorageSchema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('child'), childPath }, closed),
 ]);
 const resourceFields = {
+  homeOnControllerHost: defineProtocolLiteral(true).optional(),
   managedMachineId: text,
   containerId: defineProtocolString({ pattern: '^[a-f0-9]{64}$' }),
   user: text, workspaceRoot: childPath, storage: DevcontainerStorageSchema,
@@ -49,6 +50,7 @@ export const DevcontainerResourceSchema = defineProtocolUnion([
 export const DevcontainerNativeOperationSchema = defineProtocolUnion([
   DevcontainerResourceSchema,
   defineProtocolObject({ managedMachineId: text, launch: DevcontainerLaunchSchema,
+    homeOnControllerHost: defineProtocolLiteral(true).optional(),
     nativeResourceId: defineProtocolString({ pattern: '^[a-f0-9]{64}$' }).optional() }, closed),
 ]);
 export type DevcontainerLaunch = ProtocolSchemaOutput<typeof DevcontainerLaunchSchema>;

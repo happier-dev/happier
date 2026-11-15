@@ -375,6 +375,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             enrollmentUnavailable: "La teva Home no ha pogut registrar aquesta màquina. Comprova que estigui disponible i torna-ho a provar.",
             homeRequestFailed: "La teva Home no ha pogut completar aquesta sol·licitud. Comprova-la i torna-ho a provar.",
             homeNotGuestReachable: "La màquina nova no pot arribar a aquesta Home. Comprova l’adreça de Home, el DNS, les rutes de xarxa i l’accés a través del tallafoc des de la màquina nova, i torna-ho a provar.",
+            homeAuthoredNetworkNotReachable: "La màquina nova no pot accedir a aquest Home amb la xarxa de la teva configuració. Configura la xarxa de l’amfitrió al fitxer devcontainer o Compose, o utilitza una adreça de Home accessible des d’aquesta xarxa i torna-ho a provar.",
             retryInstall: "Torna a provar la instal·lació",
             openDetails: "Mostra els detalls de la creació",
             fromThis: { phone: "Des d’aquest telèfon", browser: "Des d’aquest navegador", desktop: "Des d’aquest ordinador" },

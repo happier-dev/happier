@@ -309,6 +309,17 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
     ...(nativeGuestHome ? { startDaemonProcess: (options: Readonly<{ signal?: AbortSignal; timeoutMs?: number }>) => configureNativeBoot(binaryPath, options) } : {}),
     approveLocalAuthRequest: deps.approveLocalAuthRequest,
   });
-  const enrolled = await runPreparedTask(task);
-  return enrolled;
+  try {
+    return await runPreparedTask(task);
+  } catch (error) {
+    // Enrollment's typed transport result owns reachability. The provisioner
+    // contributes only authored-network context, never another probe/refusal.
+    if (carrier.homeNetworkHint && error instanceof SystemTaskExecutionError
+      && error.code === 'home_not_guest_reachable' && error.details?.kind === 'managedGuestHome') {
+      throw new SystemTaskExecutionError(error.code,
+        `${error.message} This configuration keeps its authored networking. Configure host networking in the devcontainer or Compose source, or provide a Home endpoint reachable from that network.`,
+        { cause: error, details: { ...error.details, reason: carrier.homeNetworkHint } });
+    }
+    throw error;
+  }
 }

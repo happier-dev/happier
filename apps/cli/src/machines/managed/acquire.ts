@@ -73,6 +73,7 @@ export type ManagedMachineAcquisitionDriverInput = Readonly<{
     /** The native controller borrows the canonical Account host for portable roles. */
     resolveAccountRuntime?: () => Promise<Pick<ManagedMachineAcquisitionDriverInput, 'runtimeRegistry' | 'managedProviderOperationAuthority'>>;
     homeTarget: ResolvedHomeTarget;
+    readGuestHomeHostIdentity?: (homeId: string) => Promise<import('@happier-dev/protocol/plugins/contributions/machineProvisioners').MachineProvisionerGuestHomeV1['hostIdentity']>;
     externalActionMachineRequestPrivateKey?: ExternalActionMachineRequestSigningKey;
     observeRecordedApprovalExecution?: (args: RecordedApprovalExecutionObservationArgs) => Promise<ActionExecuteResult>;
     managedGuestActivity?: ManagedGuestActivityTransport;

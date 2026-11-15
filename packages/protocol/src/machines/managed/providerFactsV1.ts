@@ -177,10 +177,13 @@ export const ManagedResourceV1Schema = lazyDefinition(() => z.strictObject({
   schemaVersion: z.int().check(z.gt(0)), value: PluginJsonValueV2Schema,
   devcontainerObservation: z.optional(DevcontainerNativeObservationV1Schema),
 }));
+/** Diagnostic context only; enrollment still owns actual Home reachability. */
+export const ManagedGuestHomeNetworkHintV1Schema = lazyDefinition(() => z.literal('authored_network'));
 /** Transport selection only; admitted row custody owns identity and credentials. */
 export const ManagedBootstrapNativeCarrierV1Schema = lazyDefinition(() => z.strictObject({
   kind: z.literal('native'),
   transport: z.strictObject({ contributionRef: asProtocolZod(PluginContributionIdentityV1Schema), schemaVersion: z.int().check(z.gt(0)) }),
+  homeNetworkHint: z.optional(ManagedGuestHomeNetworkHintV1Schema),
   guestHome: z.optional(z.strictObject({
     homeDir: z.string().check(z.startsWith('/'), z.refine(value => !value.includes('\0'))),
     happyHomeDir: z.string().check(z.startsWith('/'), z.refine(value => !value.includes('\0'))),

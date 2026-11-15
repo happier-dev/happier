@@ -380,6 +380,7 @@ export const managedMachinesEn = {
             enrollmentUnavailable: "Your Home couldn’t register this machine. Check your Home’s availability and try again.",
             homeRequestFailed: "Your Home couldn’t complete this request. Check your Home, then try again.",
             homeNotGuestReachable: "The new machine can’t reach this Home. Check the Home address, DNS, network routes, and firewall access from the new machine, then try again.",
+            homeAuthoredNetworkNotReachable: "The new machine can’t reach this Home using the networking in your configuration. Configure host networking in the devcontainer or Compose source, or use a Home address reachable from that network, then try again.",
             joined: ({ name, home }: { name: string; home: string }) => `${name} joined ${home}.`,
             retryInstall: "Retry install",
             openDetails: "Show creation details",

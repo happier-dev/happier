@@ -45,6 +45,8 @@ describe('portable managed enrollment', () => {
     { requesterEnrollment: false, dedicatedRetry: true, retainedEnrollment: false, adminAccessAtCreation: 'ask' as const },
     { requesterEnrollment: false, dedicatedRetry: true, retainedEnrollment: false, adminAccessAtCreation: 'preauthorized' as const },
     { requesterEnrollment: false, dedicatedRetry: true, retainedEnrollment: true, adminAccessAtCreation: 'preauthorized' as const },
+    { requesterEnrollment: false, dedicatedRetry: false, retainedEnrollment: false, adminAccessAtCreation: 'ask' as const, unreachable: true, bridge: true },
+    { requesterEnrollment: false, dedicatedRetry: false, retainedEnrollment: false, adminAccessAtCreation: 'ask' as const, unreachable: true, bridge: false },
   ])('uses local Account pairing only for the custodian row (requester=$requesterEnrollment, dedicated retry=$dedicatedRetry, mode=$adminAccessAtCreation, retained=$retainedEnrollment)', async ({ requesterEnrollment, dedicatedRetry, retainedEnrollment, adminAccessAtCreation, ...availability }) => {
     const commands: string[] = [];
     const phases: string[] = [];
@@ -61,7 +63,8 @@ describe('portable managed enrollment', () => {
       pairingAuthentication: 'v3', remoteProfileId: 'guest-home' };
     const enrollment = runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, channel: 'stable', operationId: 'admitted-operation',
       onInstalled: async () => { phases.push('installed'); },
-      carrier: { kind: 'native', transport: { contributionRef: resource.contributionRef, schemaVersion: 1 } } }, {
+      carrier: { kind: 'native', transport: { contributionRef: resource.contributionRef, schemaVersion: 1 },
+        ...('bridge' in availability && availability.bridge ? { homeNetworkHint: 'authored_network' } : {}) } }, {
       readCurrentManagedRow: async () => { rowReads++; return { ...machine, enrolledMachineId: retainedEnrollment ? 'joined' : undefined,
         ...(dedicatedRetry ? { bootstrapInstalled: true as const, enrollmentIdentity: { kind: 'dedicatedDaemonUser' as const,
           username: 'happier' as const, serviceMode: 'user' as const, role: 'server' as const,
@@ -78,7 +81,12 @@ describe('portable managed enrollment', () => {
         }
         if (command === 'uname -s') return { status: 0, stdout: 'Linux\n', stderr: '' };
         if (command.startsWith('uname -s;')) return { status: 0, stdout: 'Linux\nx86_64\n/home/guest\n', stderr: '' };
-        if (invocation.includes('auth request')) { expect(phases).toEqual(['install', 'installed']); phases.push('request'); return { status: 0, stdout: JSON.stringify(request), stderr: '' }; }
+        if (invocation.includes('auth request')) {
+          if ('unreachable' in availability && availability.unreachable) return { status: 1, stdout: JSON.stringify({ v: 1, ok: false, kind: 'auth_request',
+            error: { code: 'AUTH_ENROLL_REMOTE_CARRIER_UNAVAILABLE', category: 'network_error',
+              carrierFailure: { attemptedCarrier: 'https', reason: 'home_unreachable' } } }), stderr: '' };
+          expect(phases).toEqual(['install', 'installed']); phases.push('request'); return { status: 0, stdout: JSON.stringify(request), stderr: '' };
+        }
         if (invocation.includes('auth wait')) { phases.push('wait'); return { status: 0, stdout: JSON.stringify(completion), stderr: '' }; }
         if ('noServiceManager' in availability && availability.noServiceManager && invocation.includes('service install')) {
           return { status: 1, stdout: JSON.stringify({ ok: false, error: 'service_manager_unavailable', serviceStep: 'preflight', serviceStepStatus: 'unavailable' }), stderr: '' };
@@ -103,6 +111,13 @@ describe('portable managed enrollment', () => {
       expect(phases).toEqual([]);
       expect(commands).toEqual([]);
       expect(rowReads).toBe(1);
+      return;
+    }
+    if ('unreachable' in availability && availability.unreachable) {
+      const error = await enrollment.catch(error => error);
+      expect(error).toMatchObject({ code: 'home_not_guest_reachable', details: { kind: 'managedGuestHome', homeOrigin: target.applicationUrl } });
+      if (availability.bridge) expect(error).toMatchObject({ details: { reason: 'authored_network' }, message: expect.stringContaining('host networking') });
+      else expect(error.details).not.toHaveProperty('reason');
       return;
     }
     expect(await enrollment).toEqual({ machineId: 'joined' });

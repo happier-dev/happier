@@ -31,7 +31,7 @@ function result(value: unknown, exitCode = 0): PluginProcessResult {
     stdout: new TextEncoder().encode(typeof value === 'string' ? value : JSON.stringify(value)), stderr: new Uint8Array(),
     stdoutTruncated: false, stderrTruncated: false };
 }
-function native(overrides: Readonly<{ runtime?: 'docker' | 'podman'; up?: PluginProcessResult; update?: PluginProcessResult; running?: boolean; paused?: boolean; absent?: boolean; inventory?: PluginProcessResult; mounts?: unknown; id?: string; namespace?: string; canceledWrite?: boolean; replacementId?: string; rowScoped?: boolean }> = {}) {
+function native(overrides: Readonly<{ runtime?: 'docker' | 'podman'; networkMode?: string; up?: PluginProcessResult; update?: PluginProcessResult; running?: boolean; paused?: boolean; absent?: boolean; inventory?: PluginProcessResult; mounts?: unknown; id?: string; namespace?: string; canceledWrite?: boolean; replacementId?: string; rowScoped?: boolean }> = {}) {
   const requests: Parameters<ExecService['run']>[0][] = [];
   let running = overrides.running ?? true;
   let observedId = overrides.id ?? containerId;
@@ -75,7 +75,7 @@ function native(overrides: Readonly<{ runtime?: 'docker' | 'podman'; up?: Plugin
     if (request.args?.[0] === 'ps') return overrides.inventory ?? result(request.args.some(arg => arg.startsWith('label=')) ? `${observedId}\n` : '');
     if (request.args?.[0] === 'inspect' && overrides.absent) return result('', 1);
     if (request.args?.[0] === 'inspect') return result([{ Id: observedId, HostConfig: { ...(overrides.runtime === 'podman'
-      ? { CpuQuota: cpuCores * 100000, CpuPeriod: 100000 } : { NanoCpus: cpuCores * 1e9 }), Memory: memoryBytes }, State: { Running: running, Paused: overrides.paused ?? false },
+      ? { CpuQuota: cpuCores * 100000, CpuPeriod: 100000 } : { NanoCpus: cpuCores * 1e9 }), Memory: memoryBytes, NetworkMode: overrides.networkMode ?? 'bridge' }, State: { Running: running, Paused: overrides.paused ?? false },
       Config: { Labels: { 'devcontainer.local_folder': launch.workspaceFolder, 'devcontainer.config_file': launch.configPath,
         'happier.managed-machine': managedMachineId } },
       Mounts: overrides.mounts ?? [{ Type: 'bind', Source: '/host/project', Destination: '/work/custom' },
@@ -141,6 +141,56 @@ function imageNative(runtime: 'docker' | 'podman' = 'docker', options: { imageId
 }
 
 describe('Devcontainer native roles', () => {
+  it.each(['docker', 'podman'] as const)('uses host networking only for same-Home-host image guests (%s)', async runtime => {
+    for (const homeMachineHost of ['controller.local', 'remote', undefined]) {
+      const { provider, requests } = imageNative(runtime);
+      const guestHome = { origin: 'https://home.example.test:9443', addresses: ['100.64.0.5'],
+        ...(homeMachineHost ? { hostIdentity: { homeMachineHost, controllerMachineHost: 'CONTROLLER' } } : {}) };
+      const acquired = await provider.acquire({ runtime, configuration: { kind: 'image', image: 'example:latest' } }, 'managed-a', guestHome);
+      expect(acquired.kind).toBe('bound');
+      if (acquired.kind !== 'bound') throw new Error('Expected image container');
+      expect((await provider.rebuild(acquired.resource.value, acquired.resource.value.reviewedEffectDigest, guestHome)).kind).toBe('bound');
+      for (const { args } of requests.filter(request => request.args?.[0] === 'run')) {
+        expect(args!.includes('--network')).toBe(homeMachineHost === 'controller.local');
+        if (homeMachineHost === 'controller.local') expect(args!.slice(args!.indexOf('--network'), args!.indexOf('--network') + 2)).toEqual(['--network', 'host']);
+        expect(args).toContain('home.example.test:100.64.0.5');
+      }
+    }
+  });
+
+  it('retains same-host authored-network context after an uncertain native acknowledgement', async () => {
+    const { provider } = native({ up: { ...result({ outcome: 'success', containerId }), stdoutTruncated: true } });
+    const guestHome = { origin: 'https://home.example.test:9443', addresses: ['100.64.0.5'],
+      hostIdentity: { homeMachineHost: 'controller', controllerMachineHost: 'controller' } };
+    const acquired = await provider.acquire(launch, 'managed-a', guestHome);
+    expect(acquired.kind).toBe('pending');
+    if (acquired.kind !== 'pending') throw new Error('Expected pending acknowledgement');
+    const reconciled = await provider.reconcile(acquired.nativeOperationRef.value);
+    expect(reconciled.kind).toBe('bound');
+    if (reconciled.kind !== 'bound') throw new Error('Expected observed container');
+    expect(await provider.bootstrap(reconciled.resource.value)).toMatchObject({ homeNetworkHint: 'authored_network' });
+  });
+
+  it.each([
+    { networkMode: 'bridge', homeMachineHost: 'controller', expectedHint: true },
+    { networkMode: 'host', homeMachineHost: 'controller', expectedHint: false },
+    { networkMode: 'bridge', homeMachineHost: 'remote', expectedHint: false },
+  ])('preserves authored $networkMode networking on $homeMachineHost', async ({ networkMode, homeMachineHost, expectedHint }) => {
+    await writeFile(launch.configPath!, JSON.stringify({ image: 'example:latest', runArgs: [`--network=${networkMode}`] }));
+    const { reviewedEffectDigest: _reviewed, ...query } = launch;
+    launch = (await readDevcontainerEffectReview(native().tools, query)).launch;
+    const { provider, requests } = native({ networkMode });
+    const guestHome = { origin: 'https://home.example.test:9443', addresses: ['100.64.0.5'],
+      hostIdentity: { homeMachineHost, controllerMachineHost: 'controller' } };
+    const acquired = await provider.acquire(launch, 'managed-a', guestHome);
+    expect(acquired.kind).toBe('bound');
+    if (acquired.kind !== 'bound') throw new Error('Expected authored container');
+    expect(requests.find(request => request.args?.[0] === 'up')!.args).not.toContain('--network');
+    const carrier = await provider.bootstrap(acquired.resource.value);
+    if (expectedHint) expect(carrier).toMatchObject({ homeNetworkHint: 'authored_network' });
+    else expect(carrier).not.toHaveProperty('homeNetworkHint');
+  });
+
   it.each([
     { inventory: result(''), expected: { kind: 'confirmed' } },
     { inventory: result(`${containerId}\n${'b'.repeat(64)}\n`), expected: { kind: 'refused', code: 'resource_mismatch' } },
@@ -309,7 +359,8 @@ describe('Devcontainer native roles', () => {
       const selectedLaunch = DevcontainerReviewQuerySchema.parse(options.base.launch);
       const reviewedEffectDigest = options.base.effectReview?.reviewedEffectDigest;
       if (!reviewedEffectDigest) throw new Error('Expected computed native effect review');
-      const guestHome = { origin: 'https://home.example.test:9443', addresses: ['100.64.0.5'] };
+      const guestHome = { origin: 'https://home.example.test:9443', addresses: ['100.64.0.5'],
+        hostIdentity: { homeMachineHost: 'controller', controllerMachineHost: 'controller' } };
       expect(await kit.invokeAction('acquire', { launch: selectedLaunch, reviewedEffectDigest: '0'.repeat(64), managedId: 'managed-a', guestHome }, { surface: 'plugin' }))
         .toMatchObject({ kind: 'rejected', code: 'request_conflict' });
       expect(requests.some(request => request.args?.[0] === 'run')).toBe(false);
@@ -332,8 +383,8 @@ describe('Devcontainer native roles', () => {
       expect(rebuilt).toMatchObject({ kind: 'bound', resource: { value: { containerId: 'b'.repeat(64), volumes: retained.volumes } } });
       expect(requests.filter(request => request.args?.at(-1) === 'touch /workspace/prepared')).toHaveLength(2);
       expect(requests.filter(request => request.args?.[0] === 'run').map(request => request.args)).toEqual([
-        expect.arrayContaining(['--mount', `type=volume,source=${volume},target=/workspace`, '--add-host', 'home.example.test:100.64.0.5']),
-        expect.arrayContaining(['--mount', `type=volume,source=${volume},target=/workspace`, '--add-host', 'home.example.test:100.64.0.5']),
+        expect.arrayContaining(['--network', 'host', '--mount', `type=volume,source=${volume},target=/workspace`, '--add-host', 'home.example.test:100.64.0.5']),
+        expect.arrayContaining(['--network', 'host', '--mount', `type=volume,source=${volume},target=/workspace`, '--add-host', 'home.example.test:100.64.0.5']),
       ]);
       expect(requests.some(request => request.args?.some(arg => arg.startsWith('type=bind')))).toBe(false);
       expect(requests.filter(request => request.args?.includes('chown')).map(request => request.args)).toEqual([

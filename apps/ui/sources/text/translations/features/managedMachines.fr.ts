@@ -375,6 +375,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             enrollmentUnavailable: "Ta Home n’a pas pu enregistrer cette machine. Vérifie qu’elle est disponible, puis réessaie.",
             homeRequestFailed: "Ta Home n’a pas pu terminer cette demande. Vérifie ta Home, puis réessaie.",
             homeNotGuestReachable: "La nouvelle machine ne peut pas atteindre cette Home. Vérifie l’adresse de Home, le DNS, les routes réseau et l’accès à travers le pare-feu depuis la nouvelle machine, puis réessaie.",
+            homeAuthoredNetworkNotReachable: "La nouvelle machine ne peut pas joindre ce Home avec le réseau de votre configuration. Configurez le réseau de l’hôte dans le fichier devcontainer ou Compose, ou utilisez une adresse Home accessible depuis ce réseau, puis réessayez.",
             retryInstall: "Réessayer l’installation",
             openDetails: "Afficher les détails de création",
             fromThis: { phone: "Depuis ce téléphone", browser: "Depuis ce navigateur", desktop: "Depuis cet ordinateur" },

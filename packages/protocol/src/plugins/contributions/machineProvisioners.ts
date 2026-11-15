@@ -859,6 +859,7 @@ export type MachineProvisionerProcessConfigV1 = Readonly<{
 export const MachineProvisionerGuestHomeV1Schema = lazyZodSchema(() => z.strictObject({
   origin: HomeApplicationOriginV1Schema,
   addresses: z.array(z.union([z.ipv4(), z.ipv6()])),
+  hostIdentity: z.optional(z.strictObject({ homeMachineHost: z.string().check(z.minLength(1)), controllerMachineHost: z.string().check(z.minLength(1)) })),
 }));
 export type MachineProvisionerGuestHomeV1 = Readonly<z.infer<typeof MachineProvisionerGuestHomeV1Schema>>;
 

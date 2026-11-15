@@ -427,6 +427,7 @@ import { readLocalServiceWorkspaceFacts } from '../local/services/inventory/work
 import { listSessionMarkers } from '../sessionRegistry';
 import {
   fetchServerFeaturesSnapshot,
+  readServerIdentityIdFromFeaturesSnapshot,
   type CliServerFeaturesSnapshot,
 } from '@/features/serverFeaturesClient';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
@@ -11460,7 +11461,18 @@ export async function startDaemonSessionControlRuntime(
     if (!apiMachine) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
     return apiMachine.onManagedMachinePolicyInvalidated(listener);
   };
+  const readGuestHomeHostIdentity = async (homeId: string) => {
+    // Consume the bound Home's existing observation, never probe host identity
+    // during acquire. Missing or another Home's facts leave networking alone.
+    const snapshot = await params.resolveServerFeaturesSnapshot?.();
+    if (readServerIdentityIdFromFeaturesSnapshot(snapshot) !== homeId) return undefined;
+    const homeHost = snapshot?.status === 'ready' ? snapshot.features.homeHostFact : undefined;
+    return homeHost?.kind === 'known' && params.currentMachineHost
+      ? { homeMachineHost: homeHost.machineName, controllerMachineHost: params.currentMachineHost }
+      : undefined;
+  };
   const managedMachinePolicyAdapter = createDaemonManagedMachineActionAdapter({
+    readGuestHomeHostIdentity,
     credentials: params.credentials,
     executeTeamCredentialBrokerAction: params.executeTeamCredentialBrokerAction,
     managedGuestLocalStop: createManagedGuestLocalStop({
@@ -11571,6 +11583,7 @@ export async function startDaemonSessionControlRuntime(
                 if (privatePurpose.kind === 'managed_finite_wake') {
                   const target = privatePurpose.target;
                   const native = createDaemonManagedMachineActionAdapter({ credentials: admitted.credentials,
+                    readGuestHomeHostIdentity,
                     controllerCredentials: params.credentials,
                     executeTeamCredentialBrokerAction: params.executeTeamCredentialBrokerAction,
                     subscribeManagedMachineChanges,
