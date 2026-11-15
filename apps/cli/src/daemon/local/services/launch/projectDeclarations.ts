@@ -108,7 +108,11 @@ export async function produceEnvironmentProjectServices(input: Readonly<{
                 environmentInstanceId: input.release.environmentInstanceId, deploymentId: input.release.deploymentId,
                 release: input.release, composeService, serviceId: `${input.release.environmentInstanceId}/${composeService}`,
                 appliedServiceExports: input.appliedServiceExports,
-                specIdentity: input.specIdentity, signal: input.signal, isCurrent: input.isCurrent,
+                // A restore can replace containers within one deployment receipt.
+                // The supervisor must replace that observation, while an unchanged
+                // native member keeps its existing observer and service generation.
+                specIdentity: JSON.stringify([input.specIdentity, [...input.project.nativeIdsForService(composeService)].sort()]),
+                signal: input.signal, isCurrent: input.isCurrent,
                 nativeEffects: input.nativeEffects, releaseObservation,
                 processSpec: { mode: { kind: 'native', builtinLifecycle: native.lifecycle } },
             });

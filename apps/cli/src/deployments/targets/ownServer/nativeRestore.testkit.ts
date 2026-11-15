@@ -314,7 +314,15 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
     while (args[serviceIndex] === '--env') serviceIndex += 2;
     const argv = args.slice(serviceIndex + 1);
     event({kind:'postgres',argv});
-    if (argv.includes('--version')) {
+    if (argv[0] === 'cat') {
+        const service = args[serviceIndex];
+        const row = native.containers.find(row => row.Config.Labels['com.docker.compose.service'] === service && row.State.Status === 'running');
+        const mount = row?.Mounts.find(mount => mount.Type === 'volume' && argv[1].startsWith(mount.Destination + '/'));
+        if (!mount) throw new Error('missing_marker_mount');
+        const file = path.join(__dirname, 'volume-' + mount.Name, path.posix.relative(mount.Destination, argv[1]));
+        if (fs.existsSync(file)) process.stdout.write(fs.readFileSync(file));
+        else process.exitCode = 1;
+    } else if (argv.includes('--version')) {
         if (state.mode === 'missingTool' && argv[0] === 'pg_amcheck') process.exitCode = 127;
     } else if (argv[0] === 'pg_amcheck') {
         if (state.mode === 'failure') process.exitCode = 1;

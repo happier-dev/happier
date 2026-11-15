@@ -869,6 +869,9 @@ describe('own-server target at the Action host boundary', () => {
                 // Later boundary mutations must not rewrite its expected CAS.
                 if (input.content.platform) throw new Error('The own-server fixture admits only own-server receipt content');
                 receipt.content = structuredClone(input.content);
+                if (uploadedVolume && input.deploymentId === serving.deployment.id) {
+                    Object.assign(serving, structuredClone(receipt));
+                }
                 if (previewCopy) {
                     // Use the incumbent revision writer, including private provenance.
                     // Only committing its prepared mutation is the Home DB boundary.
@@ -906,7 +909,7 @@ describe('own-server target at the Action host boundary', () => {
                             compose: { ...definition.compose, path: 'changed-compose.yaml' } };
                     }
                 }
-                if ((runtimeRead || scenario === 'runtime_stage' || previewCopy)
+                if ((runtimeRead || scenario === 'runtime_stage' || previewCopy || uploadedVolume)
                     && receipt.deployment.operation !== 'teardown'
                     && (input.state === 'succeeded' || input.state === 'running_unverified')) {
                     environment.targetLinks[0].targetLink.activeDeploymentId = receipt.deployment.id;
@@ -3094,6 +3097,8 @@ describe('own-server target at the Action host boundary', () => {
                             const state = JSON.parse(await readFile(statePath, 'utf8'));
                             await writeFile(statePath, JSON.stringify({ ...state, activationCommandFailure: 'afterCreate' }));
                         }
+                        const beforeRestoreService = uploadedVolume ? mounted.registry.projectManagedServices.listProjectServices()
+                            .find(handle => handle.kind === 'environment' && handle.environmentId === environment.environment.id) : undefined;
                         const restored = await completedNativeAction(operations, await executor.execute('deployments.backups.restore', { ...confirm, snapshot: false },
                             { ...context, actionRequestId: 'upload-continue' }), accountId, caller.signal);
                         if (restoreActivationFailure) expect(restored).toMatchObject({ ok: true, result: { verified: false } });
@@ -3124,18 +3129,52 @@ describe('own-server target at the Action host boundary', () => {
                                     async assertCurrent() { caller.signal.throwIfAborted(); },
                                 });
                                 await expect(readSource(restorationRoot)).resolves.toMatchObject({ rootPath: restorationRoot });
-                                Object.assign(serving, structuredClone(restoredReceipt));
+                                const fail = (errorCode: string) => ({ ok: false as const, errorCode, error: errorCode });
+                                const admission = createCliProjectAdmission({ credentials, serverId: 'home', serverHttpBaseUrl }, {
+                                    projectHomeId: 'home', actionHomeId: 'home', executionRunActionFailure: fail,
+                                });
+                                const machine = createCliMachineResourceActionDeps({ credentials, token, serverIdentityId: 'home', serverHttpBaseUrl,
+                                    machineActionDirectTargetTransport: { machineId: 'machine-a',
+                                        async invoke() { throw new Error('Restored service Exec must use the mounted owner'); } },
+                                }, { ...admission, projectHomeId: 'home', readEnvironmentAccess: storage.readEnvironmentAccess,
+                                    observeEnvironmentAccessChanges: storage.observeEnvironmentAccessChanges,
+                                    async callMachineAction() { throw new Error('Restored service Exec must remain local'); },
+                                    executionRunActionFailure: fail });
+                                const serviceExecutor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...machine,
+                                    resolveEnvironmentApprovalScope: storage.resolveEnvironmentApprovalScope,
+                                    runActionOperation: runRestoreOperation });
+                                const service = mounted.registry.projectManagedServices.listProjectServices()
+                                    .find(handle => handle.kind === 'environment' && handle.environmentId === environment.environment.id);
+                                if (!service) throw new Error('Expected the restored Environment service');
+                                expect(service.serviceId).toBe(beforeRestoreService?.serviceId);
+                                expect(service.instanceId).not.toBe(beforeRestoreService?.instanceId);
+                                const execContext = { ...context, actionRequestId: 'exec-after-volume-restore',
+                                    actionsSettings: setScopedActionApprovalPreference({ settings: context.actionsSettings,
+                                        actionId: 'machines.services.exec', scope: { kind: 'environment', environmentId: environment.environment.id },
+                                        surface: 'agent', mode: 'waived' }) };
+                                const executed = await completedNativeAction(operations, await serviceExecutor.execute('machines.services.exec', {
+                                    serverId: 'home', machineId: 'machine-a', mode: 'exec', argv: ['psql', '--version'],
+                                    target: { kind: 'current', serviceId: service.serviceId, expectedGeneration: service.instanceId },
+                                }, execContext), accountId, caller.signal);
+                                const preparedAgain = await completedNativeAction(operations, await executor.execute('deployments.backups.restore', input,
+                                    { ...context, actionRequestId: 'prepare-after-volume-restore' }), accountId, caller.signal);
+                                expect({ executed, preparedAgain }, JSON.stringify(executed)).toMatchObject({
+                                    executed: { ok: true, result: { exitCode: 0 } },
+                                    preparedAgain: { ok: true, result: { kind: 'prepared' } },
+                                });
+                                expect(mounted.registry.projectManagedServices.listProjectServices()
+                                    .find(handle => handle.serviceId === service.serviceId)?.instanceId).toBe(service.instanceId);
                                 const activatedVolumes = restoredReceipt.content.ownServer?.sources
                                     ?.filter(source => source.restorationForDeploymentId === serving.deployment.id)
                                     .flatMap(source => source.namedVolumes ?? []);
                                 expect(activatedVolumes).toHaveLength(1);
                                 receipt.deployment.id = 'redeploy-after-volume-restore';
-                                receipt.deployment.state = 'running';
+                                receipt.deployment.state = 'queued';
+                                receipt.content.machineResults = [];
                                 receipt.content.ownServer = { approvedInputBasis: restoredReceipt.content.ownServer!.approvedInputBasis };
                                 request = { ...request, receipt: { ...request.receipt, deploymentId: receipt.deployment.id } };
-                                const redeployed = await target.executeMember({ request, machineId: 'machine-a', installationId: 'installation-a',
-                                    phase: 'activate', selectedDeploymentId: receipt.deployment.id });
-                                expect(redeployed, JSON.stringify(redeployed)).toMatchObject({ ok: true });
+                                const redeployed = await target.execute(request);
+                                expect(redeployed, JSON.stringify(redeployed)).toMatchObject({ ok: true, state: 'succeeded' });
                                 const state = JSON.parse(await readFile(join(root, 'docker', 'docker-state.json'), 'utf8')) as {
                                     containers: Array<{ Mounts: Array<{ Type: string; Name?: string }> }> };
                                 expect(state.containers.flatMap(container => container.Mounts)
@@ -3143,6 +3182,14 @@ describe('own-server target at the Action host boundary', () => {
                                     .toContain(activatedVolumes![0].physicalName);
                                 expect(receipt.content.ownServer?.sources?.flatMap(source => source.namedVolumes ?? []))
                                     .toEqual(activatedVolumes);
+                                const redeployedService = mounted.registry.projectManagedServices.listProjectServices()
+                                    .find(handle => handle.serviceId === service.serviceId);
+                                if (!redeployedService) throw new Error('Expected the redeployed Environment service');
+                                const marker = await completedNativeAction(operations, await serviceExecutor.execute('machines.services.exec', {
+                                    serverId: 'home', machineId: 'machine-a', mode: 'exec', argv: ['cat', '/data/restored.txt'],
+                                    target: { kind: 'current', serviceId: redeployedService.serviceId, expectedGeneration: redeployedService.instanceId },
+                                }, { ...execContext, actionRequestId: 'marker-after-volume-redeploy' }), accountId, caller.signal);
+                                expect(marker, JSON.stringify(marker)).toMatchObject({ ok: true, result: { exitCode: 0, stdout: 'restored\n' } });
                             }
                         }
                         expect(nativeSnapshots).toBe(1);

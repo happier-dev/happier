@@ -15,6 +15,7 @@ export async function captureOwnServerDeploymentSource(input: Readonly<{
     source: DeploymentSourceMaterializationV1;
     admission: DeploymentSourceAdmissionForHost;
     sharedBinds?: readonly Readonly<{ relativePath: string; services: readonly string[] }>[];
+    namedVolumes?: OwnServerDeploymentSourceV1['namedVolumes'];
 }>): Promise<OwnServerDeploymentSourceV1> {
     await input.source.assertCurrent();
     const expected = await realpath(resolveDeploymentSourcePathForHost(input.admission));
@@ -27,7 +28,8 @@ export async function captureOwnServerDeploymentSource(input: Readonly<{
         rootFingerprint: await computeWorkspaceSyncRootFingerprint(expected),
         manifestFingerprint: input.source.manifestFingerprint,
         manifestEntries: [...readDeploymentSourceManifestForHost(input.source)],
-        sharedBinds: (input.sharedBinds ?? []).map(binding => ({ relativePath: binding.relativePath, services: [...binding.services] })) };
+        sharedBinds: (input.sharedBinds ?? []).map(binding => ({ relativePath: binding.relativePath, services: [...binding.services] })),
+        ...(input.namedVolumes ? { namedVolumes: input.namedVolumes } : {}) };
 }
 
 export function replaceOwnServerDeploymentSource(sources: readonly OwnServerDeploymentSourceV1[] | undefined,

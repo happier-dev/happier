@@ -427,13 +427,21 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 const native = { project, render, activation: currentActivation, context, io: recovery.runtime.nativeIo, onExpectedDownServicesChanged,
                     retainSource: () => recovery.source.commit(),
                     onBackupSettled: input.backupDelivery ? backupRunNotice(input.snapshot.environment, input.snapshot.link.id, context.operation.operationId, input.backupDelivery) : undefined,
-                    async onNamedVolumeBindingsChanged(namedVolumes: NativeComposeProjectRender['namedVolumes']) {
+                    async onNamedVolumeBindingsChanged(...[namedVolumes, activated]:
+                        Parameters<NonNullable<OwnServerNativeRestoreInput['onNamedVolumeBindingsChanged']>>) {
                         const source = await captureOwnServerDeploymentSource({ source: recovery.source,
                             admission: recovery.runtime.source, sharedBinds: render.sharedData?.bindings, namedVolumes });
                         generation = await publishOwnServerDeploymentReceiptContentForHost(generation,
                             { ...generation.content, ownServer: { ...generation.content.ownServer, approvedInputBasis: generationBasis,
                                 sources: replaceOwnServerDeploymentSource(generation.content.ownServer?.sources, source) } },
                             input.request.context, host.writeTransition);
+                        const handles = await produceEnvironmentProjectServices({ owner: recovery.runtime.projectManagedServices,
+                            serverId: recovery.homeServerIdentityId, release: recovery.source, specIdentity: generation.deployment.id,
+                            appliedServiceExports: generationBasis.ownServer?.serviceExports,
+                            signal: input.snapshot.signal, isCurrent: () => activated.project.isCurrent(),
+                            nativeEffects: { keys: activated.render.keys, settleNative: project.settleNative },
+                            io: recovery.runtime.nativeIo, project: activated.project });
+                        recovery.runtime.retainServiceReferences?.(handles);
                     },
                     readDatabaseUsername: createOwnServerDatabaseUsernameReaderForHost({ data: environment.content.template?.data,
                         preparation: { ...recovery.runtime.secrets, environmentId: environment.environment.id,
