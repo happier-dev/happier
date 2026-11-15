@@ -16,6 +16,13 @@ import { SecretReferenceOverlayV1Schema } from '../../profiles/secretReferenceOv
 import { SessionDirectoryIntentV1Schema, refineSessionDirectoryIntentCheckoutV1 } from './sessionDirectoryIntentV1.js';
 import { SessionAuthoringSelectionFieldsV1 } from '../authoring/selectionFieldsV1.js';
 
+/**
+ * Raw launch environment forwarded verbatim to the spawned process. Session spawn input and
+ * Workflow launch selections share this one schema; bounds match the handoff resume plan.
+ */
+export const SessionSpawnEnvironmentVariablesV2Schema = lazyZodSchema(() =>
+  z.record(z.string().check(z.minLength(1), z.maxLength(128)), z.string().check(z.maxLength(16 * 1024))));
+
 /** Ordinary launch selections, below input/trigger/host-authority composition. */
 export const SessionSpawnNewSelectionV2BaseSchema = lazyZodSchema(() => z.strictObject({
   ...AgentSessionToolPolicyShapeV1,

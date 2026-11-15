@@ -3,6 +3,7 @@ import {
     AutomationDefinitionListItemSchema,
     AutomationV3RunListItemSchema,
 } from '@happier-dev/protocol/automations/automationApiV3';
+import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol/automations/automationEventJsonBoundsV1';
 import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 
 import { loadSyncTuning } from '@/sync/runtime/syncTuning';
@@ -154,7 +155,7 @@ describe('fetchAndApplyAutomations', () => {
             observationOnly: { kind: 'observationOnly', templateVersion: eventSummary.templateVersion },
             triggers: [{ ...trigger, eventRef, triggerDefinitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
                 mode: 'plain', binding: { v: 1, automationId: eventSummary.id, triggerId: trigger.id,
-                    triggerRevision: trigger.revision, triggerKind: 'pluginEvent', eventRef, sourceSelectorId: trigger.sourceSelectorId },
+                    triggerRevision: trigger.revision, triggerKind: 'pluginEvent', eventRef, sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(trigger.sourceSelectorId) },
                 definition: { v: 1, sourceInstanceId: 'health:shop', sourceConfig, displayLabel: 'Shop availability',
                     automationDisplay: { name: 'Shop availability', description: 'Public readiness route' },
                     filter: null, maximumObservationAgeMs: null },
@@ -172,7 +173,7 @@ describe('fetchAndApplyAutomations', () => {
                 const second = { ...detail, id: 'event-second', triggers: [{ ...detail.triggers[0]!,
                     triggerDefinitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
                         mode: 'plain', binding: { v: 1, automationId: 'event-second', triggerId: trigger.id,
-                            triggerRevision: trigger.revision, triggerKind: 'pluginEvent', eventRef, sourceSelectorId: trigger.sourceSelectorId },
+                            triggerRevision: trigger.revision, triggerKind: 'pluginEvent', eventRef, sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(trigger.sourceSelectorId) },
                         definition: { v: 1, sourceInstanceId: 'health:second', sourceConfig, displayLabel: 'Second readiness',
                             filter: null, maximumObservationAgeMs: null },
                     })),
@@ -352,7 +353,7 @@ describe('fetchAndApplyAutomations', () => {
                     binding: {
                         v: 1, automationId: 'private-event', triggerId: trigger.id,
                         triggerRevision: trigger.revision, triggerKind: 'pluginEvent',
-                        eventRef: trigger.eventRef, sourceSelectorId: trigger.sourceSelectorId,
+                        eventRef: trigger.eventRef, sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(trigger.sourceSelectorId),
                     },
                     definition: {
                         v: 1, sourceInstanceId: 'github:repository:1234',

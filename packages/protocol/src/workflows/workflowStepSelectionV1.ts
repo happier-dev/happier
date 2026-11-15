@@ -3,18 +3,19 @@ import { AgentStartBaselineSelectionErrorV1, resolveAgentStartBaselineSelectionV
 import { BackendTargetKeyV2Schema, buildBackendTargetKeyV2, parseBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
 import { resolveRoleSelectionV1, type ResolveRoleSelectionV1Input, type RoleSelectionRefusalV1 } from '../prompts/roles/resolveRoleSelectionV1.js';
 import type { ResolvedRoleV1 } from '../prompts/roles/rolesV1.js';
+import { readRoleEngineModelRefV1 } from '../prompts/roles/roleArtifactV1.js';
 import type { JsonValue } from '../json/strictJsonValue.js';
 import { readWorkflowValuePathV1 } from './workflowReferenceV1.js';
-import { WorkflowLiteralEngineSelectionV1Schema } from './workflowV1.js';
+import { WorkflowLiteralEngineSelectionV1Schema, type WorkflowLiteralEngineSelectionV1, type WorkflowSelectionBindingV1 } from './workflowV1.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import type { WorkflowMaterializedLeafV1 } from './workflowDefinitionV1.js';
 import { normalizeExecutableParticipantSelectionV1 } from '../discussions/executableParticipants.js';
 import type { WorkflowStepExecutionSelection, WorkflowStepSelectionV1, WorkflowLeafExecutionTargetV1 } from './workflowV1.js';
 import type { ConnectedServiceBindingsV2 } from '../connect/connectedServiceBindings.js';
-export { WorkflowLeafExecutionTargetV1Schema, WorkflowEngineSelectionV1Schema, WorkflowStepSelectionV1Schema,
-  type WorkflowLeafExecutionTargetV1, type WorkflowEngineSelectionV1, type WorkflowStepSelectionV1 } from './workflowV1.js';
+export { WorkflowLeafExecutionTargetV1Schema, WorkflowStepSelectionV1Schema,
+  type WorkflowLeafExecutionTargetV1, type WorkflowStepSelectionV1 } from './workflowV1.js';
 
-export type WorkflowResolvedStepSelectionV1 = Omit<WorkflowStepSelectionV1, 'engine' | 'participant' | 'executionTarget' | 'connectedServices'>
+export type WorkflowResolvedStepSelectionV1 = Omit<WorkflowStepSelectionV1, 'roleId' | 'engine' | 'participant' | 'executionTarget' | 'connectedServices'>
   & Readonly<{ connectedServices?: ConnectedServiceBindingsV2 | null }>;
 
 /** Host context for the default engine; bindings stay in the existing leaf selection. */
@@ -61,10 +62,54 @@ export function parseWorkflowLiteralEngineSelectionV1(value: unknown): ReturnTyp
   return WorkflowLiteralEngineSelectionV1Schema.safeParse(value);
 }
 
+/** Who runs a step when it is not the flat Agent fields: a Role, or an input/item engine binding. */
+export type WorkflowEngineChoiceV1 = Readonly<{ roleId: string }> | WorkflowSelectionBindingV1;
+type WorkflowEngineChoiceFieldsV1 = Readonly<{ roleId?: string; engine?: WorkflowSelectionBindingV1; agentTarget?: unknown }>;
+
+/** Whether this selection itself chooses who runs the step, rather than inheriting that choice. */
+export function workflowSelectionChoosesEngineV1(selection: WorkflowEngineChoiceFieldsV1 | undefined): selection is WorkflowEngineChoiceFieldsV1 {
+  return selection?.roleId !== undefined || selection?.engine !== undefined || selection?.agentTarget !== undefined;
+}
+
+/**
+ * The step's choice of who runs it (Role, engine binding or Agent) replaces the defaults' choice as
+ * one unit; `undefined` means the flat Agent fields carry it. Every reader of the choice asks here.
+ */
+export function readWorkflowEngineChoiceV1(defaults: WorkflowEngineChoiceFieldsV1,
+  step?: WorkflowEngineChoiceFieldsV1): WorkflowEngineChoiceV1 | undefined {
+  const owner = workflowSelectionChoosesEngineV1(step) ? step! : defaults;
+  return owner.roleId !== undefined ? { roleId: owner.roleId } : owner.engine;
+}
+
+/**
+ * An inherited model and effort belong to the inherited Agent: a step Role, binding or different
+ * Agent replaces them, while a step naming the same Agent (or only a model) keeps per-field inheritance.
+ */
+function replacesInheritedEngineV1(defaults: WorkflowResolvedStepSelectionV1, step: ResolveWorkflowStepSelectionV1Input['step']): boolean {
+  if (step?.roleId !== undefined || step?.engine !== undefined) return true;
+  return step?.agentTarget != null && defaults.agentTarget != null && !sameStrictJsonValue(step.agentTarget, defaults.agentTarget);
+}
+
+/** Drop the Agent, model and effort another engine choice decides; other config options stay. */
+function withoutWorkflowEngineFieldsV1<T extends WorkflowResolvedStepSelectionV1>(selection: T): T {
+  const { agentTarget: _agentTarget, modelSelection: _modelSelection, ...rest } = selection;
+  const config = rest.sessionConfigOptionOverrides;
+  if (config?.overrides.reasoning_effort === undefined) return rest as T;
+  const { reasoning_effort: _effort, ...overrides } = config.overrides;
+  if (Object.keys(overrides).length === 0) {
+    const { sessionConfigOptionOverrides: _config, ...withoutConfig } = rest;
+    return withoutConfig as T;
+  }
+  return { ...rest, sessionConfigOptionOverrides: { ...config, overrides } } as T;
+}
+
 /** Resolve a lexical engine before opening the selected Role's Account sources. */
-export function resolveWorkflowEngineSelectionV1(input: ResolveWorkflowStepSelectionV1Input): WorkflowStepSelectionV1['engine'] {
-  const engine = input.step?.engine ?? input.defaults.engine;
-  if (!engine || !('kind' in engine) || input.purpose === 'authoring') return engine;
+export function resolveWorkflowEngineSelectionV1(input: ResolveWorkflowStepSelectionV1Input):
+  WorkflowLiteralEngineSelectionV1 | WorkflowSelectionBindingV1 | undefined {
+  const engine = readWorkflowEngineChoiceV1(input.defaults, input.step);
+  if (!engine) return undefined;
+  if ('roleId' in engine) return { role: engine.roleId };
+  if (input.purpose === 'authoring') return engine;
   const value = engine.kind === 'input' ? input.inputs?.[engine.name] : input.itemValue;
   const selected = value === undefined ? undefined : readWorkflowValuePathV1(value, engine.path ?? []);
   const parsed = parseWorkflowLiteralEngineSelectionV1(selected);
@@ -125,8 +170,8 @@ export function resolveWorkflowStepSelectionV1(input: Readonly<{
 export function resolveWorkflowStepSelectionV1(input: ResolveWorkflowStepSelectionV1Input): ResolveWorkflowStepSelectionV1Result;
 export function resolveWorkflowStepSelectionV1(input: ResolveWorkflowStepSelectionV1Input): ResolveWorkflowStepSelectionV1Result {
   const engine = resolveWorkflowEngineSelectionV1(input);
-  const { engine: defaultEngine, participant: defaultParticipant, executionTarget: defaultTarget, ...defaults } = input.defaults;
-  const { engine: stepEngine, participant: stepParticipant, executionTarget: stepTarget, ...step } = input.step ?? {};
+  const { engine: _defaultEngine, roleId: _defaultRoleId, participant: defaultParticipant, executionTarget: defaultTarget, ...defaults } = input.defaults;
+  const { engine: _stepEngine, roleId: _stepRoleId, participant: stepParticipant, executionTarget: stepTarget, ...step } = input.step ?? {};
   const participant = stepParticipant ?? defaultParticipant;
   // Optional fields are unset when undefined; explicit null remains an override.
   for (const key of Object.keys(step) as (keyof typeof step)[]) {
@@ -134,19 +179,12 @@ export function resolveWorkflowStepSelectionV1(input: ResolveWorkflowStepSelecti
   }
   let selection: WorkflowResolvedStepSelectionV1 = input.step === undefined && engine === undefined && participant === undefined && defaultTarget === undefined
     ? input.defaults
-    : { ...defaults, ...step };
+    : { ...(replacesInheritedEngineV1(defaults, input.step) ? withoutWorkflowEngineFieldsV1(defaults) : defaults), ...step };
   let role: ResolvedRoleV1 | undefined;
 
   if (engine !== undefined) {
     // Work on our own object: authoring readers can retain defaults by identity.
-    selection = { ...selection };
-    delete selection.agentTarget;
-    delete selection.modelSelection;
-    const config = selection.sessionConfigOptionOverrides;
-    if (config?.overrides.reasoning_effort !== undefined) {
-      const { reasoning_effort, ...overrides } = config.overrides;
-      selection.sessionConfigOptionOverrides = { ...config, overrides };
-    }
+    selection = withoutWorkflowEngineFieldsV1(selection);
 
     let effort: string | undefined;
     if ('role' in engine && input.purpose !== 'authoring') {
@@ -160,12 +198,8 @@ export function resolveWorkflowStepSelectionV1(input: ResolveWorkflowStepSelecti
         throw new WorkflowStepSelectionErrorV1({ code: 'target_unavailable', reason: 'engine_unavailable', roleId: role.roleId });
       }
       selection.agentTarget = target?.kind === 'agent' ? target : { kind: 'agent', identity };
-      if (role.engine.modelId !== undefined) {
-        selection.modelSelection = {
-          v: 1, updatedAt: 0,
-          ref: { agentTargetKey: role.engine.agentTargetKey, providerConnectionId: null, modelId: role.engine.modelId },
-        };
-      }
+      const roleModelRef = readRoleEngineModelRefV1(role.engine);
+      if (roleModelRef) selection.modelSelection = { v: 1, updatedAt: 0, ref: roleModelRef };
       if (role.profileId !== undefined && selection.profileId === undefined) selection.profileId = role.profileId;
       effort = role.engine.effort;
     } else if ('agentTarget' in engine) {

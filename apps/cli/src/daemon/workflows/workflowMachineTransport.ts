@@ -5,7 +5,7 @@ import type { RpcLocalActionContext } from '../../api/rpc/types';
 import type { StoredCredentials } from '../../persistence';
 import type { MachineActionDirectTargetTransport } from '../../session/actions/createCliActionDeps';
 import type { RequesterWorkAttributionV1 } from '../lifecycle/requesterWorkAttribution';
-import type { prepareRequesterSessionBootstrap, RequesterSessionMachineAdmissionBoundary } from '../sessionEncryption/requesterSessionCredentials';
+import type { prepareRequesterSessionBootstrap, readRequesterMachineAdmissionCurrent, RequesterSessionMachineAdmissionBoundary } from '../sessionEncryption/requesterSessionCredentials';
 import { readRequesterHomeWithinActionLifetime } from '../sessionEncryption/requesterCurrentness';
 import { requiresWorkflowMachineActionAdmission } from '../../session/actions/cliActionDeps/machineTransport';
 
@@ -31,7 +31,9 @@ export function createWorkflowRunMachineTransport(input: Readonly<{
   resolveSavedSecretOperationContext(): Promise<import('@/settings/secrets/savedSecretOperationContext').SavedSecretOperationContextV1 | null>;
   dispose(): Promise<void>;
 }> {
-  let requester: ReturnType<typeof prepareRequesterSessionBootstrap> | undefined;
+  let requester: Promise<(NonNullable<Awaited<ReturnType<typeof prepareRequesterSessionBootstrap>>> & Readonly<{
+    machineAdmission: NonNullable<Awaited<ReturnType<typeof readRequesterMachineAdmissionCurrent>>>;
+  }>) | null> | undefined;
   const prepare = async (local: Pick<RpcLocalActionContext, 'executionRunWorkflowRunId' | 'requesterWorkAttributionV1'>) => {
     const expected = input.requesterWorkAttributionV1;
     const stamp = local.requesterWorkAttributionV1;

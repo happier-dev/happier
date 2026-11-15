@@ -21,7 +21,8 @@ import { t } from '@/text';
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { resolveRoleDisplayName } from '@/sync/domains/roles/roleCatalog';
 import { isPermissionMode } from '@/sync/domains/permissions/permissionTypes';
-import type { WorkflowEngineSelectionV1, WorkflowStep, WorkflowStepExecutionSelection } from '@happier-dev/protocol/workflows/workflowV1';
+import type { WorkflowStep, WorkflowStepExecutionSelection } from '@happier-dev/protocol/workflows/workflowV1';
+import { readWorkflowEngineChoiceV1, type WorkflowEngineChoiceV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 import { useSessionAuthoringEnginePicker } from '@/components/sessions/authoring/controls/useSessionAuthoringEnginePicker';
 import type { SessionAuthoringControlFacts } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import type { WorkflowValueReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
@@ -189,7 +190,7 @@ export function WorkflowStepEditor(props: Readonly<{
         value: WorkflowStepExecutionSelection[TField] | undefined,
     ) => void;
     onChangeExecutionFields?: (fields: Partial<WorkflowStepExecutionSelection>) => void;
-    onChangeEngine?: (engine: WorkflowEngineSelectionV1) => void;
+    onChangeEngine?: (engine: WorkflowEngineChoiceV1) => void;
     /** The host's Agent and model catalogs for the in-composer engine chip. */
     authoringFacts?: SessionAuthoringControlFacts;
     /** Registers the prompt input so Add can focus it once layout is ready. */
@@ -268,23 +269,28 @@ export function WorkflowStepEditor(props: Readonly<{
     const agentId = resolveSessionAuthoringAgentId({ agentTarget: effective.agentTarget, facts: props.authoringFacts });
     // A participant a Run supplies for this step owns its Session and launch: the chip names it and offers no Agent choice.
     const participant = step.execution?.participant;
-    const engine = participant ?? step.execution?.engine ?? props.draft.defaults.engine;
+    const engineChoice = React.useMemo(() => readWorkflowEngineChoiceV1(props.draft.defaults, step.execution),
+        [props.draft.defaults, step.execution]);
+    const roleId = engineChoice && 'roleId' in engineChoice ? engineChoice.roleId : null;
+    const engine = participant ?? engineChoice;
     const engineChangeRef = React.useRef({ fields: props.onChangeExecutionFields, engine: props.onChangeEngine });
     engineChangeRef.current = { fields: props.onChangeExecutionFields, engine: props.onChangeEngine };
     const changeEngineFields = React.useCallback((fields: Partial<WorkflowStepExecutionSelection>) => engineChangeRef.current.fields?.(fields), []);
     const roleSelection = React.useMemo(() => ({
-        value: engine && 'role' in engine ? engine.role : null,
+        value: roleId,
         workflowRoles: props.draft.roles,
-        onChange: (role: string) => { if (editable) engineChangeRef.current.engine?.({ role }); },
-    }), [editable, engine, props.draft.roles]);
+        onChange: (nextRoleId: string) => { if (editable) engineChangeRef.current.engine?.({ roleId: nextRoleId }); },
+    }), [editable, roleId, props.draft.roles]);
     const enginePicker = useSessionAuthoringEnginePicker({ values: effective, facts: props.authoringFacts,
         disabled: !editable, onChangeFields: changeEngineFields, roleSelection });
+    // The composer's Agent picker reads this Machine's readiness while it is open, through the shared owner.
+    const [enginePickerOpen, setEnginePickerOpen] = React.useState(false);
     const engineSummary = useSessionAuthoringEngineSummary({ values: effective, engine,
         workflowRoles: props.draft.roles, facts: props.authoringFacts });
     const permissionMode = isPermissionMode(effective.permissionMode) ? effective.permissionMode : undefined;
     // A role reads by its name (a built-in's or this workflow's own), through the one role resolver.
-    const roleName = React.useMemo(() => (engine && 'role' in engine ? resolveRoleDisplayName(engine.role, props.draft.roles) : null),
-        [engine, props.draft.roles]);
+    const roleName = React.useMemo(() => (roleId ? resolveRoleDisplayName(roleId, props.draft.roles) : null),
+        [roleId, props.draft.roles]);
     const agentInputContext = React.useMemo(() => ({
         agentType: enginePicker.agentId ?? agentId ?? undefined,
         agentLabel: roleName ?? enginePicker.label,
@@ -298,6 +304,7 @@ export function WorkflowStepEditor(props: Readonly<{
         // The native AgentInput owns opening its options. This presence also keeps
         // the effective engine chip visible in a read-only document.
         onAgentClick: enginePicker.onAgentClick,
+        onAgentPickerVisibilityChange: setEnginePickerOpen,
         ...(!editable ? props.slots?.enginePresentation : undefined),
     }), [agentId, effective.modelSelection, permissionMode, enginePicker.agentId,
         editable, participant, roleName, engineSummary, enginePicker.label, enginePicker.onAgentClick, enginePicker.onSelect, enginePicker.options, enginePicker.selectedOptionId, props.slots?.enginePresentation]);
@@ -376,6 +383,7 @@ export function WorkflowStepEditor(props: Readonly<{
                 </WorkflowKindCard>
             </WorkflowStepSessionDropZone>
             </View>
+            {enginePickerOpen ? enginePicker.readinessDemand : null}
 
             {props.slots?.reviewedCard ?? null}
 

@@ -10,7 +10,8 @@ import type {
 } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 
 import type { WorkflowStepInspectorFieldId } from './WorkflowStepInspector';
-import type { WorkflowEngineSelectionV1, WorkflowSessionAuthoringSelection } from '@happier-dev/protocol/workflows/workflowV1';
+import type { WorkflowSessionAuthoringSelection } from '@happier-dev/protocol/workflows/workflowV1';
+import type { WorkflowEngineChoiceV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 import type { WorkflowRoleV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
 
 /**
@@ -30,8 +31,8 @@ export type WorkflowStepFieldControlRenderer = (params: Readonly<{
     inheritance: 'inherited' | 'override';
     onChange: (value: WorkflowStepExecutionSelection[WorkflowStepInspectorFieldId] | undefined) => void;
     onChangeFields?: (fields: Partial<WorkflowSessionAuthoringSelection>) => void;
-    engine?: WorkflowEngineSelectionV1;
-    onChangeEngine?: (engine: WorkflowEngineSelectionV1) => void;
+    engine?: WorkflowEngineChoiceV1;
+    onChangeEngine?: (engine: WorkflowEngineChoiceV1) => void;
     workflowRoles?: readonly WorkflowRoleV1[];
     /** The field's inheritance state and reset, for the control to show on the field's own row. */
     stateAccessory?: React.ReactNode;

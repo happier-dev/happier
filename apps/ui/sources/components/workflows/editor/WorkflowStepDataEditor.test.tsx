@@ -92,6 +92,10 @@ function selectTrigger(root: ReactTestInstance, testID: string): ReactTestInstan
 }
 
 describe('WorkflowStepDataEditor field selects', () => {
+    it('names the originating Session in Action value references', () => {
+        expect(formatWorkflowValueReference(createWorkflowEditorDraft({ draftId: 'origin-reference' }), { kind: 'origin_session_id' }))
+            .toBe('workflows.page.inspector.originSession');
+    });
     it('shows and edits an input field path without losing it when selecting another input', async () => {
         const draft = setWorkflowInputs(createWorkflowEditorDraft({ draftId: 'input-path' }), [
             { name: 'reviewSession', valueType: 'json', required: true },

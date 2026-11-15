@@ -1,6 +1,7 @@
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { WorkflowActionValueReferenceV1 } from '@happier-dev/protocol/workflows/workflowLeafV1';
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
-import type { WorkflowReferenceScope, WorkflowValueReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
+import type { WorkflowReferenceScope } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 import { findWorkflowBlock } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { parsePermissionIntentAlias } from '@happier-dev/agents/permissions';
 import type { WorkflowResultField, WorkflowResultFieldType, WorkflowResultListItemType } from '@happier-dev/protocol/workflows/workflowResultFieldsV1';
@@ -35,7 +36,7 @@ export function formatWorkflowReferenceScopeLabel(scope: WorkflowReferenceScope)
  * headings and condition summaries share, so a reference is never worded two
  * ways.
  */
-export function formatWorkflowValueReference(draft: WorkflowValuePresentationContext, reference: WorkflowValueReference, fieldName?: string): string {
+export function formatWorkflowValueReference(draft: WorkflowValuePresentationContext, reference: WorkflowActionValueReferenceV1, fieldName?: string): string {
     const blockLabel = (blockId: string) => {
         const block = findWorkflowBlock(draft, blockId);
         return block === null ? t('workflows.contentUnavailable') : workflowBlockReferenceLabel(block);
@@ -50,6 +51,8 @@ export function formatWorkflowValueReference(draft: WorkflowValuePresentationCon
         producer.scope.kind === 'previous_iteration' ? `${blockLabel(producer.blockId)} · ${formatWorkflowReferenceScopeLabel(producer.scope)}` : blockLabel(producer.blockId)
     );
     switch (reference.kind) {
+        case 'origin_session_id':
+            return t('workflows.page.inspector.originSession');
         case 'literal':
             return formatWorkflowExecutionLiteral(reference.value, fieldName) ?? formatWorkflowLiteralValue(reference.value);
         case 'input':

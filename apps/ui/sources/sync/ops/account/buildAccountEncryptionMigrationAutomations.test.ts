@@ -155,7 +155,9 @@ describe('Account transition Automation recovery', () => {
             readDisplay: (serialized: string) => {
                 const parsed = parseAutomationStoredDefinitionExecutionRecipeV1(serialized);
                 if (parsed.kind !== 'available' || parsed.recipe.template.t !== 'plain') throw new Error('expected plain Action recipe');
-                return parsed.recipe.template.v.display;
+                const payload = parsed.recipe.template.v;
+                if (payload === null || typeof payload !== 'object' || Array.isArray(payload) || !('display' in payload)) throw new Error('expected Action display');
+                return payload.display;
             },
         },
         {
@@ -174,7 +176,9 @@ describe('Account transition Automation recovery', () => {
             readDisplay: (serialized: string) => {
                 const parsed = parseAutomationStoredWorkflowDefinitionRecipeV2(serialized);
                 if (parsed.kind !== 'available' || parsed.recipe.workflow.t !== 'plain') throw new Error('expected plain Workflow recipe');
-                return parsed.recipe.workflow.v.display;
+                const payload = parsed.recipe.workflow.v;
+                if (payload === null || typeof payload !== 'object' || Array.isArray(payload) || !('display' in payload)) throw new Error('expected Workflow display');
+                return payload.display;
             },
         },
     ])('converts the current $kind display carrier with the existing Account transition', async ({ serialize, readDisplay }) => {

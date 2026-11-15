@@ -32,10 +32,10 @@ import type { InputFieldHint } from '../inputs/inputFields.js';
 import { InputTypeReferenceV1Schema } from '../inputs/inputTypes.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 import { isWorkflowActionLiteralFieldV1 } from './stepActionsV1.js';
-import { AgentLaunchEnvironmentV1Schema, AgentSessionProviderResumeV1Schema } from '../runtime/agentSessionV1.js';
+import { AgentSessionProviderResumeV1Schema } from '../runtime/agentSessionV1.js';
 import { readCapabilitySelectionCarrierV1 } from '../reach/sessionCapabilitySelectionV1.js';
 import { findInvalidWorkflowResultFieldName } from './workflowResultFieldsV1.js';
-import { SessionSpawnNewSelectionV2BaseSchema, type SessionSpawnNewSelectionV2 } from '../sessions/creation/sessionSpawnNewSelectionV2.js';
+import { SessionSpawnEnvironmentVariablesV2Schema, SessionSpawnNewSelectionV2BaseSchema, type SessionSpawnNewSelectionV2 } from '../sessions/creation/sessionSpawnNewSelectionV2.js';
 import { isWorkflowRunSummaryActionIdV1 } from '../actions/actionIds.js';
 
 export {
@@ -192,10 +192,8 @@ export const WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS = Object.freeze(
 export const WorkflowStepExecutionSelectionSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(WorkflowSessionAuthoringSelectionSchema, {
   /** Incoming runtime intent; arbitration remains at the Session runtime snapshot owner. */
   permissionModeUpdatedAt: z.optional(z.number().check(z.int())),
-  /** Execution-only launch values, composed by the incumbent Session spawn owner. */
-  launchEnvironment: zMini.optional(AgentLaunchEnvironmentV1Schema.check(zMini.refine((environment) => environment.unset.length === 0, {
-    message: 'Workflow Session launches cannot unset inherited environment values',
-  }))),
+  /** Execution-only launch environment in the Session spawn vocabulary, composed by the Session spawn owner. */
+  environmentVariables: zMini.optional(SessionSpawnEnvironmentVariablesV2Schema),
   /** Native Agent continuation; the Happier conversation may still be fresh. */
   providerSessionResume: zMini.optional(AgentSessionProviderResumeV1Schema),
   conversation: zMini.optional(WorkflowConversationSelectionSchema),
@@ -221,7 +219,7 @@ export type WorkflowSessionLaunchFieldId = (typeof WORKFLOW_SESSION_LAUNCH_FIELD
 
 /** Selection fields only an Agent step consumes; other leaves never launch an Agent. */
 export const WORKFLOW_AGENT_STEP_ONLY_SELECTION_FIELD_IDS = Object.freeze([
-  'launchEnvironment', 'providerSessionResume', ...WORKFLOW_SESSION_LAUNCH_FIELD_IDS,
+  'environmentVariables', 'providerSessionResume', ...WORKFLOW_SESSION_LAUNCH_FIELD_IDS,
 ] as const satisfies readonly (keyof WorkflowStepExecutionSelection)[]);
 
 /**
@@ -229,7 +227,7 @@ export const WORKFLOW_AGENT_STEP_ONLY_SELECTION_FIELD_IDS = Object.freeze([
  * native Session continuation. The one owner for admission refusal and the editor's reason.
  */
 export const WORKFLOW_DETACHED_RUN_UNSUPPORTED_SELECTION_FIELD_IDS = Object.freeze([
-  'launchEnvironment', 'providerSessionResume', 'transcriptStorage', 'terminal',
+  'environmentVariables', 'providerSessionResume', 'transcriptStorage', 'terminal',
   'windowsRemoteSessionLaunchMode', 'windowsRemoteSessionConsole', 'windowsTerminalWindowName',
   ...WORKFLOW_SESSION_LAUNCH_FIELD_IDS.filter(field => field !== 'secretReferenceOverlay'),
 ] as const satisfies readonly (keyof WorkflowStepExecutionSelection)[]);
@@ -271,32 +269,38 @@ export const WorkflowParticipantBindingV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ kind: z.literal('item'), field: z.literal('value'), path: z.optional(WorkflowResultPathSchema),
     roster: z.optional(WorkflowInputNameSchema) }),
 ]));
+/**
+ * The value an engine-choice input or item supplies (an option key, a Role or an Agent with its
+ * model and effort). Authored selections never carry it: `resolveWorkflowStepSelectionV1` projects
+ * a bound value once onto the flat `agentTarget` / `modelSelection` / `reasoning_effort` fields.
+ */
 export const WorkflowLiteralEngineSelectionV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ role: z.string().check(z.minLength(1)) }),
   z.strictObject({ agentTarget: AgentExecutionTargetV1Schema,
     modelSelection: zMini.optional(zMini.nullable(SessionModelSelectionV1Schema)), effort: z.optional(z.string().check(z.minLength(1))) }),
 ]));
-export const WorkflowEngineSelectionV1Schema = lazyZodSchema(() => z.union([
-  WorkflowLiteralEngineSelectionV1Schema, WorkflowSelectionBindingV1Schema,
-]));
-export type WorkflowEngineSelectionV1 = z.infer<typeof WorkflowEngineSelectionV1Schema>;
+export type WorkflowLiteralEngineSelectionV1 = z.infer<typeof WorkflowLiteralEngineSelectionV1Schema>;
 export const WorkflowStepSelectionV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(WorkflowStepExecutionSelectionSchema, {
   /** The Role that runs the step, as the New Session role chip writes it. */
   roleId: SessionSpawnNewSelectionV2BaseSchema.shape.roleId,
-  engine: z.optional(WorkflowEngineSelectionV1Schema),
+  /** An engine choice supplied by an immutable input or the current item. */
+  engine: z.optional(WorkflowSelectionBindingV1Schema),
   participant: z.optional(WorkflowParticipantBindingV1Schema),
   executionTarget: z.optional(WorkflowLeafExecutionTargetV1Schema),
 })).check(z.superRefine((selection, context) => {
-  if (selection.participant !== undefined && (selection.engine !== undefined || selection.conversation !== undefined
+  if (selection.participant !== undefined && (selection.engine !== undefined || selection.roleId !== undefined || selection.conversation !== undefined
     || selection.agentTarget !== undefined || selection.modelSelection !== undefined || selection.executionTarget?.kind === 'detached_run')) {
     context.addIssue({ code: 'custom', path: ['participant'], message: 'A participant owns its Session and launch selection' });
   }
-  if (selection.engine === undefined) return;
+  if (selection.engine !== undefined && selection.roleId !== undefined) {
+    context.addIssue({ code: 'custom', path: ['roleId'], message: 'Choose a Role or an engine binding, not both' });
+  }
+  if (selection.engine === undefined && selection.roleId === undefined) return;
   for (const field of ['agentTarget', 'modelSelection'] as const) {
-    if (selection[field] !== undefined) context.addIssue({ code: 'custom', path: [field], message: 'An engine arm cannot also set a flat engine field' });
+    if (selection[field] !== undefined) context.addIssue({ code: 'custom', path: [field], message: 'A Role or engine binding chooses the Agent and model' });
   }
   if (selection.sessionConfigOptionOverrides?.overrides.reasoning_effort !== undefined) {
-    context.addIssue({ code: 'custom', path: ['sessionConfigOptionOverrides', 'overrides', 'reasoning_effort'], message: 'Engine effort belongs to the engine arm' });
+    context.addIssue({ code: 'custom', path: ['sessionConfigOptionOverrides', 'overrides', 'reasoning_effort'], message: 'A Role or engine binding chooses the effort' });
   }
 })));
 export type WorkflowStepSelectionV1 = z.infer<typeof WorkflowStepSelectionV1Schema>;

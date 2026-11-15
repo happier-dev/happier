@@ -2,97 +2,144 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { presentApprovalProfile } from '@/components/approvals/approvalProfilePresentation';
-import { SESSION_AUTHORING_NONE_OPTION_ID } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { Item } from '@/components/ui/lists/Item';
 import { SelectionListFilterChip } from '@/components/ui/selectionList';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import type { useApprovalProfiles } from '@/hooks/approvals/useApprovalProfiles';
 import { t } from '@/text';
 import type { ApprovalProfileV1 } from '@happier-dev/protocol/actions';
 
-export const APPROVAL_PROFILE_INHERIT_OPTION_ID = 'inherit';
+export const APPROVAL_PROFILE_MACHINE_DEFAULT_OPTION_ID = 'machine_default';
+export const APPROVAL_PROFILE_ACCOUNT_OPTION_ID = 'account_settings';
+
+/**
+ * `session`: a Session's own reference; null or absent follows its Machine's default, which falls back to the
+ * Account settings. `machine`: a Machine's default for my Sessions there; null uses the Account settings.
+ */
+export type ApprovalProfileChoiceMode = 'session' | 'machine';
+
+/** The Machine a new or running Session belongs to and the profile it defaults to; null when no Machine is known yet. */
+export type ApprovalProfileMachineDefault = Readonly<{ profile: Pick<ApprovalProfileV1, 'id' | 'name'> | null }> | null;
 
 type Choice =
-    | Readonly<{ mode: 'required'; value: string; onChange: (value: string) => void }>
-    | Readonly<{ mode: 'session'; value: string | null; onChange: (value: string | null) => void }>
-    | Readonly<{ mode: 'authoring'; value: string | null | undefined; onChange: (value: string | null | undefined) => void }>;
+    | Readonly<{ mode: 'session'; value: string | null | undefined; onChange: (value: string | null) => void }>
+    | Readonly<{ mode: 'machine'; value: string | null; onChange: (value: string | null) => void }>;
 
-type ChoiceMode = 'required' | 'session' | 'authoring';
+function machineDefaultTitle(machineDefault: ApprovalProfileMachineDefault): string {
+    if (machineDefault === null) return t('workflows.triggers.guided.profile.machineDefault');
+    return t('workflows.triggers.guided.profile.machineDefaultNamed', {
+        profile: machineDefault.profile?.name ?? t('workflows.triggers.guided.profile.accountSettings'),
+    });
+}
 
-/** The one approval-profile choice list: the field's menu and the composer chip row offer the same rows. */
-export function buildApprovalProfileChoices(mode: ChoiceMode, profiles: readonly ApprovalProfileV1[], testID: string): DropdownMenuItem[] {
+/** The one approval-profile choice list: the field's menu, the composer chip and the Machine row offer the same rows. */
+export function buildApprovalProfileChoices(mode: ApprovalProfileChoiceMode, profiles: readonly ApprovalProfileV1[],
+    testID: string, machineDefault: ApprovalProfileMachineDefault = null): DropdownMenuItem[] {
     const result: DropdownMenuItem[] = [];
-    if (mode === 'authoring') result.push({ id: APPROVAL_PROFILE_INHERIT_OPTION_ID,
-        title: t('workflows.triggers.guided.profile.inheritSessionProfile') });
-    if (mode !== 'required') result.push({ id: SESSION_AUTHORING_NONE_OPTION_ID,
-        title: t('workflows.triggers.guided.profile.noExplicitSessionProfile') });
-    for (const profile of profiles) {
-        const presented = presentApprovalProfile(profile);
-        result.push({ id: profile.id, testID: `${testID}:${profile.id}`, title: presented.title,
-            ...(presented.subtitle ? { subtitle: presented.subtitle } : {}) });
-    }
+    result.push(mode === 'session'
+        ? { id: APPROVAL_PROFILE_MACHINE_DEFAULT_OPTION_ID, testID: `${testID}:${APPROVAL_PROFILE_MACHINE_DEFAULT_OPTION_ID}`,
+            title: machineDefaultTitle(machineDefault) }
+        : { id: APPROVAL_PROFILE_ACCOUNT_OPTION_ID, testID: `${testID}:${APPROVAL_PROFILE_ACCOUNT_OPTION_ID}`,
+            title: t('workflows.triggers.guided.profile.accountSettings') });
+    for (const profile of profiles) result.push({ id: profile.id, testID: `${testID}:${profile.id}`, title: profile.name });
     return result;
 }
 
-/** The choice row a stored value selects: undefined inherits, null is "no explicit profile". */
-export function approvalProfileChoiceId(mode: ChoiceMode, value: string | null | undefined): string {
-    return value === undefined && mode === 'authoring' ? APPROVAL_PROFILE_INHERIT_OPTION_ID
-        : value === null || value === undefined ? SESSION_AUTHORING_NONE_OPTION_ID : value;
+/** The choice row a stored value selects: no profile follows the Machine (a Session) or the Account (a Machine). */
+export function approvalProfileChoiceId(mode: ApprovalProfileChoiceMode, value: string | null | undefined): string {
+    if (typeof value === 'string') return value;
+    return mode === 'session' ? APPROVAL_PROFILE_MACHINE_DEFAULT_OPTION_ID : APPROVAL_PROFILE_ACCOUNT_OPTION_ID;
 }
 
-/** Apply a chosen row through the caller's change, in the stored value's own shape. */
-export function applyApprovalProfileChoice(mode: ChoiceMode, id: string, onChange: (value: string | null | undefined) => void): void {
-    if (id === APPROVAL_PROFILE_INHERIT_OPTION_ID && mode === 'authoring') onChange(undefined);
-    else if (id === SESSION_AUTHORING_NONE_OPTION_ID && mode !== 'required') onChange(null);
-    else onChange(id);
+/** The stored value a chosen row means: a profile id, or null for "no profile of its own". */
+export function approvalProfileChoiceValue(id: string): string | null {
+    return id === APPROVAL_PROFILE_MACHINE_DEFAULT_OPTION_ID || id === APPROVAL_PROFILE_ACCOUNT_OPTION_ID ? null : id;
 }
 
-/** The profile owner's typed selection drives both the picker and its missing-reference warning. */
+/** The chosen row's words, for a sentence that names the current choice ("Changed elsewhere to …"). */
+export function approvalProfileChoiceTitle(mode: ApprovalProfileChoiceMode, value: string | null | undefined,
+    profiles: readonly ApprovalProfileV1[], machineDefault: ApprovalProfileMachineDefault = null): string {
+    const id = approvalProfileChoiceId(mode, value);
+    return buildApprovalProfileChoices(mode, profiles, '', machineDefault).find(choice => choice.id === id)?.title
+        ?? t('workflows.triggers.guided.profile.deletedName');
+}
+
+/**
+ * A chip names what applies: the chosen profile or the Machine's own profile. While a new Session follows a
+ * Machine with no profile it names its field, as every chip in the row does (QA-SHELL-1114 F3).
+ */
+export function approvalProfileChipLabel(params: Readonly<{
+    value: string | null | undefined;
+    profiles: readonly ApprovalProfileV1[];
+    machineDefault: ApprovalProfileMachineDefault;
+    ready: boolean;
+}>): Readonly<{ label: string; chosen: boolean }> {
+    const fieldName = t('workflows.triggers.guided.profile.title');
+    if (typeof params.value !== 'string') {
+        const profile = params.machineDefault?.profile;
+        return profile ? { label: t('workflows.triggers.guided.profile.machineDefaultChip', { profile: profile.name }), chosen: true }
+            : { label: fieldName, chosen: false };
+    }
+    const profile = params.profiles.find(row => row.id === params.value);
+    return { label: profile?.name ?? (params.ready ? t('workflows.triggers.guided.profile.deletedName') : t('common.loading')), chosen: true };
+}
+
+/** The profile owner's typed read drives both the picker and its missing-reference warning. */
 export function ApprovalProfileSelect(props: Choice & Readonly<{
     testID: string;
-    source: Pick<ReturnType<typeof useApprovalProfiles>, 'profiles' | 'selection' | 'ready' | 'unavailable'>;
+    source: Pick<ReturnType<typeof useApprovalProfiles>, 'profiles' | 'ready' | 'unavailable'>;
+    machineDefault?: ApprovalProfileMachineDefault;
     disabled?: boolean;
     titleMeta?: React.ReactNode;
-    presentation?: 'chips' | 'fields';
+    description?: string;
+    /**
+     * `fields` (default) a labelled field; `chips` the composer chip; `row` a value row among glyph-led rows
+     * (Session Info's Setup: glyph, label, current choice, chevron), collapsed until pressed.
+     */
+    presentation?: 'chips' | 'fields' | 'row';
+    /** The row presentation's glyph, in its section's glyph column. */
+    icon?: React.ReactNode;
 }>) {
     const [open, setOpen] = React.useState(false);
-    const missing = props.source.selection?.resolution.status === 'missing';
-    const items = React.useMemo(() => buildApprovalProfileChoices(props.mode, props.source.profiles, props.testID),
-        [props.mode, props.source.profiles, props.testID]);
+    const machineDefault = props.machineDefault ?? null;
+    const items = React.useMemo(() => buildApprovalProfileChoices(props.mode, props.source.profiles, props.testID, machineDefault),
+        [props.mode, props.source.profiles, props.testID, machineDefault]);
+    const missing = props.source.ready && typeof props.value === 'string'
+        && !props.source.profiles.some(profile => profile.id === props.value);
     const disabled = props.disabled === true || !props.source.ready;
+    const selectedId = approvalProfileChoiceId(props.mode, props.value);
     const select = (id: string) => {
         if (disabled) return;
         setOpen(false);
-        if (id === APPROVAL_PROFILE_INHERIT_OPTION_ID && props.mode === 'authoring') props.onChange(undefined);
-        else if (id === SESSION_AUTHORING_NONE_OPTION_ID && props.mode !== 'required') props.onChange(null);
-        else props.onChange(id);
+        props.onChange(approvalProfileChoiceValue(id));
     };
-    const selectedId = props.value === undefined ? APPROVAL_PROFILE_INHERIT_OPTION_ID
-        : props.value === null ? SESSION_AUTHORING_NONE_OPTION_ID : props.value;
-    const profileChosen = typeof props.value === 'string';
-    const valueLabel = missing && props.source.selection ? presentApprovalProfile(props.source.selection.profile).title
-        : items.find(item => item.id === selectedId)?.title ?? t(props.source.unavailable ? 'common.unavailable' : 'common.loading');
+    const chip = props.presentation === 'chips' ? approvalProfileChipLabel({ value: props.value,
+        profiles: props.source.profiles, machineDefault, ready: props.source.ready }) : null;
+    const row = props.presentation === 'row';
     // A chip keeps its own width wherever it is placed; only the field presentation spans its row.
-    return <View style={props.presentation === 'chips' ? styles.chipHost : undefined}>
+    return <View style={chip ? styles.chipHost : undefined}>
         <DropdownMenu testID={props.testID} open={open}
             onOpenChange={next => { if (!disabled) setOpen(next); }}
-            items={items} selectedId={props.value === undefined ? APPROVAL_PROFILE_INHERIT_OPTION_ID
-                : props.value === null ? SESSION_AUTHORING_NONE_OPTION_ID : props.value}
+            items={items} selectedId={selectedId}
             onSelect={select}
             emptyLabel={t(props.source.unavailable ? 'common.unavailable' : 'common.loading')}
-            trigger={props.presentation === 'chips' ? ({ toggle }) => <SelectionListFilterChip filter={{
+            trigger={chip ? ({ toggle }) => <SelectionListFilterChip filter={{
                 id: props.testID, testID: `${props.testID}-chip`, label: t('workflows.triggers.guided.profile.title'),
-                // Until a profile is chosen the chip names its field, as every filter chip does; the inherit/none
-                // sentences belong to the open menu, where they are choices (QA-SHELL-1114 F3).
-                valueLabel: profileChosen ? valueLabel : t('workflows.triggers.guided.profile.title'), muted: !profileChosen,
+                valueLabel: chip.label, muted: !chip.chosen,
                 disabled, open: false, onOpenChange: next => { if (next) toggle(); }, renderPopoverContent: () => null,
-            }} /> : undefined}
-            itemTrigger={props.presentation === 'chips' ? undefined : { title: t('workflows.triggers.guided.profile.title'),
-                subtitle: t('workflows.triggers.guided.profile.description'),
+            }} /> : row ? ({ toggle }) => <Item testID={`${props.testID}-row`}
+                title={t('workflows.triggers.guided.profile.title')} icon={props.icon} density="compact"
+                // The short choice ("Machine default", a profile's name) keeps the value beside its label; the menu names
+                // the Machine's own profile.
+                detail={props.source.ready
+                    ? approvalProfileChoiceTitle(props.mode, props.value, props.source.profiles)
+                    : t(props.source.unavailable ? 'common.unavailable' : 'common.loading')}
+                disabled={disabled} onPress={toggle} /> : undefined}
+            itemTrigger={chip || row ? undefined : { title: t('workflows.triggers.guided.profile.title'),
+                subtitle: props.description ?? t('workflows.triggers.guided.profile.description'),
                 showSelectedSubtitle: false,
-                ...(missing ? { detailFormatter: () => props.source.selection
-                    ? presentApprovalProfile(props.source.selection.profile).title : null, field: { invalid: true } } : {}),
+                ...(missing ? { detailFormatter: () => t('workflows.triggers.guided.profile.deletedName'), field: { invalid: true } } : {}),
                 itemProps: { disabled, subtitleLines: 0, accessoryLayout: 'stacked', titleMeta: props.titleMeta } }} />
         {missing ? <SurfaceFreshnessLine testID={`${props.testID}-missing`} tone="warning"
             reason={t('workflows.triggers.guided.profile.missing')} /> : null}

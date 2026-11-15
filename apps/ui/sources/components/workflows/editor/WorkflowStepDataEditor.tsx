@@ -127,7 +127,7 @@ export function WorkflowActionFieldTextValue(props: Readonly<{ draft: WorkflowEd
         <Text testID={props.testID} style={workflowEditorStyles.actionFieldText} selectable>
             {parts.map((part, index) => part.kind === 'text' ? part.text
                 : part.reference.kind === 'origin_session_id'
-                    ? <Text key={index} selectable>{t('workflows.page.inspector.originSession')}</Text>
+                    ? <Text key={index} selectable>{formatWorkflowValueReference(props.draft, part.reference)}</Text>
                     : <WorkflowValueReferenceToken key={index} draft={props.draft} reference={part.reference} label={part.label} />)}
         </Text>
     );
@@ -220,7 +220,7 @@ export function WorkflowBindingRow(props: Readonly<{
                     <React.Fragment key={field ?? index}>
                         {field === null ? null : <Text style={workflowEditorStyles.actionFieldLabel}>{field}</Text>}
                         {reference.kind === 'origin_session_id'
-                            ? <Text style={workflowEditorStyles.actionFieldText} selectable>{t('workflows.page.inspector.originSession')}</Text>
+                            ? <Text style={workflowEditorStyles.actionFieldText} selectable>{formatWorkflowValueReference(props.draft, reference)}</Text>
                             : reference.kind === 'literal'
                                 ? isBlankWorkflowLiteral(reference.value)
                                     // A blank value is no value: it reads as unset, never as an empty row (DESIGN-7 N24).

@@ -1,11 +1,12 @@
 import * as React from 'react';
 import { ApprovalProfileSelect } from '@/components/approvals/ApprovalProfileSelect';
-import { useApprovalProfiles } from '@/hooks/approvals/useApprovalProfiles';
+import { resolveApprovalProfileMachineDefault, useApprovalProfiles } from '@/hooks/approvals/useApprovalProfiles';
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, HAPPIER_PAGE_METRICS, HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
-import type { WorkflowEngineSelectionV1, WorkflowSessionAuthoringSelection, WorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowV1';
+import type { WorkflowSessionAuthoringSelection, WorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowV1';
+import type { WorkflowEngineChoiceV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 import type { WorkflowRoleV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
 
 import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
@@ -443,9 +444,9 @@ export type SessionAuthoringControlsProps = Readonly<{
     values: WorkflowSessionAuthoringSelection;
     /** Atomic engine selection (Agent, model, mode and effort/config). */
     onChangeFields?: (fields: Partial<WorkflowSessionAuthoringSelection>) => void;
-    engine?: WorkflowEngineSelectionV1;
+    engine?: WorkflowEngineChoiceV1;
     workflowRoles?: readonly WorkflowRoleV1[];
-    onChangeEngine?: (engine: WorkflowEngineSelectionV1) => void;
+    onChangeEngine?: (engine: WorkflowEngineChoiceV1) => void;
     onChangeField: (
         field: SessionAuthoringFieldId,
         value: WorkflowSessionAuthoringSelection[SessionAuthoringFieldId],
@@ -576,7 +577,7 @@ export function useSessionAuthoringFieldSummary(params: Readonly<{
 const EMPTY_FACTS: SessionAuthoringControlFacts = {};
 
 /** What a step's engine chip reads: its own engine, or the participant a Run supplies for it. */
-type SessionAuthoringEngine = WorkflowEngineSelectionV1 | NonNullable<WorkflowStepSelectionV1['participant']>;
+type SessionAuthoringEngine = WorkflowEngineChoiceV1 | NonNullable<WorkflowStepSelectionV1['participant']>;
 
 /**
  * What the Agent & model control says: a role by its name, or the Agent and its model ("Claude ·
@@ -589,7 +590,7 @@ export function formatSessionAuthoringEngineLabel(params: Readonly<{
     values: WorkflowSessionAuthoringSelection;
     modelLabel?: string;
 }>): string {
-    if (params.engine && 'role' in params.engine) return resolveRoleDisplayName(params.engine.role, params.workflowRoles);
+    if (params.engine && 'roleId' in params.engine) return resolveRoleDisplayName(params.engine.roleId, params.workflowRoles);
     // An identity the Run supplies from a named input is that input's, not an unchosen Agent.
     if (params.engine && 'kind' in params.engine && params.engine.kind === 'input') {
         return t('workflows.page.blocks.fromInput', { name: params.engine.name });
@@ -627,11 +628,12 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
 
     const { agentId, controls } = useResolvedSessionAuthoringControls(props.values, facts, props.metadata);
     const engineSummary = useSessionAuthoringEngineSummary(props);
+    const selectedRoleId = props.engine && 'roleId' in props.engine ? props.engine.roleId : null;
     const roleSelection = React.useMemo(() => props.onChangeEngine === undefined ? undefined : {
-        value: props.engine && 'role' in props.engine ? props.engine.role : null,
+        value: selectedRoleId,
         workflowRoles: props.workflowRoles,
-        onChange: (role: string) => { if (!props.disabled) props.onChangeEngine?.({ role }); },
-    }, [props.disabled, props.engine, props.onChangeEngine, props.workflowRoles]);
+        onChange: (roleId: string) => { if (!props.disabled) props.onChangeEngine?.({ roleId }); },
+    }, [props.disabled, selectedRoleId, props.onChangeEngine, props.workflowRoles]);
     const leadingOption = props.engineLeadingOption;
     const leadingOptions = React.useMemo(() => leadingOption ? [leadingOption.option] : undefined, [leadingOption?.option]);
     const enginePicker = useSessionAuthoringEnginePicker({ values: props.values, facts,
@@ -671,7 +673,8 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
         >
             {props.fields.map((field) => {
                 if (field === 'approvalProfileId') return <SessionAuthoringApprovalProfileField key={field}
-                    value={props.values.approvalProfileId} serverId={facts.agentPickerContext?.serverId} presentation={presentation}
+                    value={props.values.approvalProfileId} serverId={facts.agentPickerContext?.serverId}
+                    machineId={facts.agentPickerContext?.machineId ?? null} presentation={presentation}
                     onChange={value => props.onChangeField('approvalProfileId', value)} disabled={props.disabled}
                     titleMeta={props.fieldMeta?.approvalProfileId} testID={`${testIDPrefix}-approvalProfileId`} />;
                 if (presentation === 'fields' && field === 'profileId' && !props.values.profileId) return null;
@@ -757,11 +760,13 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
  * no remedy of its own stays plainly unavailable.
  */
 export function SessionAuthoringApprovalProfileField(props: Readonly<{
-    value: string | null | undefined; serverId?: string | null; testID: string; disabled?: boolean;
+    value: string | null | undefined; serverId?: string | null; machineId?: string | null; testID: string; disabled?: boolean;
     presentation?: SessionAuthoringControlsPresentation; titleMeta?: React.ReactNode; onChange: (value: string | null | undefined) => void;
 }>) {
     const source = useApprovalProfiles(props.value, props.serverId ?? undefined);
-    return <ApprovalProfileSelect mode="authoring" value={props.value} source={source}
+    const machineDefault = React.useMemo(() => resolveApprovalProfileMachineDefault(source, props.machineId),
+        [source.profiles, source.machineApprovalProfiles, props.machineId]); // eslint-disable-line react-hooks/exhaustive-deps
+    return <ApprovalProfileSelect mode="session" value={props.value} source={source} machineDefault={machineDefault}
         testID={props.testID} disabled={props.disabled} titleMeta={props.titleMeta} presentation={props.presentation} onChange={props.onChange} />;
 }
 

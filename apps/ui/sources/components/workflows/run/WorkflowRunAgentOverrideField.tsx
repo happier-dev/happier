@@ -1,19 +1,25 @@
 import * as React from 'react';
 import type { WorkflowReplayAgentOverrideV1} from '@happier-dev/protocol/workflows/workflowDefinitionV1';
-import type { RoleEngineV1 } from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
-import { buildBackendTargetKeyV2, parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import {
+    readRoleEffortFromSessionConfigOptionOverridesV1,
+    roleEffortToSessionConfigOptionOverridesV1,
+    sessionSelectionToRoleEngineV1,
+    type RoleEngineSessionSelectionV1,
+} from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
 import { RoleEngineField } from '@/components/roles/engine/RoleEngineField';
 import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEnginePresentation';
 import { useRoleRailItems } from '@/components/roles/rail/useRoleRailItems';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { t } from '@/text';
-import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
+
+/** The step's engine choice a replay swaps: a Role, or an Agent with its model and effort. */
+export type WorkflowRunAgentChoice = Omit<WorkflowReplayAgentOverrideV1, 'sourceKey' | 'blockId'>;
 
 /** Only the explicit engine-group choice is editable; admission owns its resolution. */
 export function WorkflowRunAgentOverrideField(props: Readonly<{
     step: string;
-    value: WorkflowReplayAgentOverrideV1['engine'] | undefined;
-    onChange: (engine: WorkflowReplayAgentOverrideV1['engine'] | undefined) => void;
+    value: WorkflowRunAgentChoice | undefined;
+    onChange: (engine: WorkflowRunAgentChoice | undefined) => void;
     disabled: boolean;
     serverId?: string | null;
     machineId?: string | null;
@@ -21,40 +27,31 @@ export function WorkflowRunAgentOverrideField(props: Readonly<{
 }>) {
     const presentEngine = useRoleEnginePresentation();
     const roles = useRoleRailItems();
-    const [targetUnavailable, setTargetUnavailable] = React.useState(false);
-    const engine: RoleEngineV1 | undefined = props.value && 'agentTarget' in props.value ? {
-        agentTargetKey: buildBackendTargetKeyV2(props.value.agentTarget),
-        ...(props.value.modelSelection?.ref.modelId ? { modelId: props.value.modelSelection.ref.modelId } : {}),
-        ...(props.value.effort ? { effort: props.value.effort } : {}),
-    } : undefined;
-    const presentation = presentEngine(engine);
-    const roleId = props.value && 'role' in props.value ? props.value.role : null;
+    const literal = props.value?.agentTarget ? props.value : null;
+    // The override is already the Session-authoring selection, effort included.
+    const selection = React.useMemo<RoleEngineSessionSelectionV1>(() => literal ? {
+        agentTarget: literal.agentTarget ?? undefined,
+        modelSelection: literal.modelSelection ?? null,
+        sessionConfigOptionOverrides: literal.sessionConfigOptionOverrides ?? null,
+    } : {}, [literal]);
+    const presentation = presentEngine(literal ? sessionSelectionToRoleEngineV1(selection) : undefined);
+    const roleId = props.value?.roleId ?? null;
     const role = roles.find((item) => item.roleId === roleId);
-    return <FieldItem label={t('workflows.start.agentForStep', { step: props.step })}
-        supportingText={targetUnavailable ? t('roles.settings.engineUnavailable') : undefined}>
-        <RoleEngineField engine={engine} label={role?.name ?? presentation.label ?? t('workflows.start.chooseAgent')}
+    return <FieldItem label={t('workflows.start.agentForStep', { step: props.step })}>
+        <RoleEngineField selection={selection} label={role?.name ?? presentation.label ?? t('workflows.start.chooseAgent')}
             serverId={props.serverId} machineId={props.machineId} directory={props.directory}
             leading={role?.engineIcon ?? presentation.icon} disabled={props.disabled}
             testID="workflow-run-another-agent-field"
             roleSelection={{ value: roleId, roles, onChange: (id) => {
                 if (props.disabled) return;
-                setTargetUnavailable(false);
-                props.onChange({ role: id });
+                props.onChange({ roleId: id });
             } }}
-            onChange={(next) => {
-                if (props.disabled) return;
-                const agentTargetKey = resolveBackendTargetKeyV2(next.agentTargetKey);
-                const target = parseBackendTargetKeyV2(agentTargetKey);
-                if (target.kind !== 'agent') {
-                    setTargetUnavailable(true);
-                    props.onChange(undefined);
-                    return;
-                }
-                setTargetUnavailable(false);
-                props.onChange({ agentTarget: target,
-                    ...(next.modelId ? { modelSelection: { v: 1, updatedAt: 0,
-                        ref: { agentTargetKey, providerConnectionId: null, modelId: next.modelId } } } : {}),
-                    ...(next.effort ? { effort: next.effort } : {}),
+            onChangeSelection={(next) => {
+                if (props.disabled || !next.agentTarget) return;
+                const effort = readRoleEffortFromSessionConfigOptionOverridesV1(next.sessionConfigOptionOverrides);
+                props.onChange({ agentTarget: next.agentTarget,
+                    ...(next.modelSelection ? { modelSelection: next.modelSelection } : {}),
+                    ...(effort ? { sessionConfigOptionOverrides: roleEffortToSessionConfigOptionOverridesV1(effort)! } : {}),
                 });
             }} />
     </FieldItem>;

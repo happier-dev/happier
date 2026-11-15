@@ -11,13 +11,17 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
     type WorkflowStep,
     type WorkflowStepExecutionSelection,
-    type WorkflowEngineSelectionV1,
     type WorkflowSessionAuthoringSelection,
+    WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS,
 } from '@happier-dev/protocol/workflows/workflowV1';
+import {
+    readWorkflowEngineChoiceV1,
+    workflowSelectionChoosesEngineV1,
+    type WorkflowEngineChoiceV1,
+} from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 import type { WorkflowRoleV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
 
 import {
-    SESSION_AUTHORING_CONTROL_FIELD_IDS,
     findSessionAuthoringAgentTargetOption,
     resolveSessionAuthoringAgentId,
     resolveSessionAuthoringFieldTitle,
@@ -111,15 +115,22 @@ export function WorkflowStepTimeoutField(props: Readonly<{
 
 export type WorkflowStepInspectorFieldId = SessionAuthoringFieldId;
 
-/** A field's inheritance state ("Workflow defaults" / "Changed for this step") and its reset. */
-function WorkflowFieldInheritance(props: Readonly<{
+/** The Agent and model arm, set as one choice (the engine); the step's other Session fields sit beside it. */
+export const WORKFLOW_ENGINE_FIELD_IDS = Object.freeze(['agentTarget', 'modelSelection', 'acpSessionModeId', 'sessionConfigOptionOverrides'] as const satisfies readonly SessionAuthoringFieldId[]);
+export const WORKFLOW_SESSION_FIELD_IDS_BESIDE_ENGINE = Object.freeze(WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS.filter(
+    (field) => !(WORKFLOW_ENGINE_FIELD_IDS as readonly string[]).includes(field)));
+
+/** A row's inheritance state ("From the workflow" / "Changed for this step · Use workflow's"). */
+export function WorkflowFieldInheritance(props: Readonly<{
     fieldId: string;
     inheritance: 'inherited' | 'override';
     onReset: () => void;
 }>): React.ReactElement | null {
     const { theme } = useUnistyles();
-    // An inherited field says nothing of its own: its group names "Workflow defaults" once.
-    if (props.inheritance === 'inherited') return null;
+    // Every row of the step scope says where its value comes from (owner 2026-11-15, lab r1 settings popover).
+    if (props.inheritance === 'inherited') {
+        return <Text testID={`${props.fieldId}-state`} style={styles.inheritedBadge}>{t('workflows.page.fromTheWorkflow')}</Text>;
+    }
     return (
         <View style={styles.inheritance}>
             <Text
@@ -139,7 +150,7 @@ function WorkflowFieldInheritance(props: Readonly<{
                 ]}
             >
                 <Text style={styles.resetAction}>
-                    {t('workflows.editor.useWorkflowDefault')}
+                    {t('workflows.page.useWorkflowsValue')}
                 </Text>
             </HappierPressable>
         </View>
@@ -160,15 +171,15 @@ export function WorkflowStepInspector(props: Readonly<{
         inheritance: 'inherited' | 'override';
         onChange: (value: WorkflowStepExecutionSelection[WorkflowStepInspectorFieldId] | undefined) => void;
         onChangeFields?: (fields: Partial<WorkflowSessionAuthoringSelection>) => void;
-        engine?: WorkflowEngineSelectionV1;
-        onChangeEngine?: (engine: WorkflowEngineSelectionV1) => void;
+        engine?: WorkflowEngineChoiceV1;
+        onChangeEngine?: (engine: WorkflowEngineChoiceV1) => void;
         workflowRoles?: readonly WorkflowRoleV1[];
         /** The field's inheritance state and reset, for the control to show beside its own name. */
         stateAccessory?: React.ReactNode;
     }>) => React.ReactNode;
     onResetField: (field: WorkflowStepInspectorFieldId) => void;
     onChangeFields?: (fields: Partial<WorkflowSessionAuthoringSelection>) => void;
-    onChangeEngine?: (engine: WorkflowEngineSelectionV1) => void;
+    onChangeEngine?: (engine: WorkflowEngineChoiceV1) => void;
     onResetEngine?: () => void;
     onChangeField: (
         field: WorkflowStepInspectorFieldId,
@@ -191,12 +202,11 @@ export function WorkflowStepInspector(props: Readonly<{
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const testIDPrefix = props.testIDPrefix ?? 'workflow-inspector';
-    const fields = props.fields ?? SESSION_AUTHORING_CONTROL_FIELD_IDS;
+    const fields = props.fields ?? WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS;
     const engineField = props.onChangeFields === undefined ? undefined
         : fields.find(field => field === 'agentTarget' || field === 'modelSelection');
-    const engineOverridden = props.step.execution?.engine !== undefined
-        || ['agentTarget', 'modelSelection', 'acpSessionModeId', 'sessionConfigOptionOverrides']
-            .some(field => Object.hasOwn(props.step.execution ?? {}, field));
+    const engineOverridden = workflowSelectionChoosesEngineV1(props.step.execution)
+        || WORKFLOW_ENGINE_FIELD_IDS.some(field => Object.hasOwn(props.step.execution ?? {}, field));
     const effective = React.useMemo(
         () => resolveEffectiveWorkflowStepExecution(props.draft, props.step),
         [props.draft, props.step],
@@ -240,7 +250,7 @@ export function WorkflowStepInspector(props: Readonly<{
                     inheritance,
                     onChange: (value) => props.onChangeField(field, value),
                     onChangeFields: props.onChangeFields,
-                    engine: props.step.execution?.engine ?? props.draft.defaults.engine,
+                    engine: readWorkflowEngineChoiceV1(props.draft.defaults, props.step.execution),
                     onChangeEngine: props.onChangeEngine,
                     workflowRoles: props.draft.roles,
                     stateAccessory,

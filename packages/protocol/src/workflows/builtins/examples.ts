@@ -204,8 +204,11 @@ const restartWhenNeeded: WorkflowDefinitionV1 = {
   finalOutput: result('check'),
 };
 
-function example(key: WorkflowStarterExampleKeyV1, copyKey: string, definition: WorkflowDefinitionV1 | (() => WorkflowDefinitionV1),
-  triggerSeed?: WorkflowStarterExampleV1['triggerSeed']): WorkflowStarterExampleV1 {
+function example<const CopyKey extends string>(key: WorkflowStarterExampleKeyV1, copyKey: CopyKey, definition: WorkflowDefinitionV1 | (() => WorkflowDefinitionV1),
+  triggerSeed?: WorkflowStarterExampleV1['triggerSeed']): WorkflowStarterExampleV1 & Readonly<{
+  titleKey: `workflows.examples.${CopyKey}.title`;
+  descriptionKey: `workflows.examples.${CopyKey}.description`;
+}> {
   return { key, titleKey: `workflows.examples.${copyKey}.title`, descriptionKey: `workflows.examples.${copyKey}.description`,
     get definition() { return typeof definition === 'function' ? definition() : definition; },
     ...(triggerSeed === undefined ? {} : { triggerSeed }) };
@@ -217,7 +220,7 @@ function offUntilInputsAreSet(scheduleExpr: string): AutomationScheduleTriggerIn
 }
 
 /** Seeds only: these keys never enter the runtime workflow-reference grammar. */
-export const WORKFLOW_STARTER_EXAMPLES_V1: readonly WorkflowStarterExampleV1[] = Object.freeze([
+export const WORKFLOW_STARTER_EXAMPLES_V1 = Object.freeze([
   example('ask-once', 'askOnce', askOnce),
   example('review-pull-request', 'reviewPullRequest', reviewPullRequest),
   example('work-through-each-file', 'workThroughEachFile', workThroughEachFile),
@@ -244,7 +247,7 @@ export const WORKFLOW_STARTER_EXAMPLES_V1: readonly WorkflowStarterExampleV1[] =
   example('restart-when-needed', 'restartWhenNeeded', restartWhenNeeded, offUntilInputsAreSet('0 3 * * *')),
 ]);
 
-export function getWorkflowStarterExamplesV1(): readonly WorkflowStarterExampleV1[] {
+export function getWorkflowStarterExamplesV1() {
   return WORKFLOW_STARTER_EXAMPLES_V1;
 }
 
