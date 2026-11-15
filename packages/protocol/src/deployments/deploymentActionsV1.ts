@@ -592,6 +592,8 @@ export const DeploymentEnvironmentListInputV1Schema = lazyZodSchema(() => z.stri
   ...home, projectSourceId: z.optional(DeploymentIdentifierV1Schema), machineId: z.optional(DeploymentIdentifierV1Schema),
   // Source moves and one exact PR's retained previews need history; ordinary inventory stays live-only.
   includeDeleted: z.optional(z.literal(true)),
+  /** Explicit full-selection header census; ordinary pages do not request it. */
+  includeTotal: z.optional(z.literal(true)),
   /** Metadata-only Account/Source summary, independent of inventory continuation. */
   projection: z.optional(z.literal('activity')),
   // Exact visible owner headers, not an inventory crawl. All inventory omits
@@ -612,7 +614,7 @@ export const DeploymentEnvironmentListInputV1Schema = lazyZodSchema(() => z.stri
   z.refine(input => input.projection !== 'activity' || (input.machineId === undefined && input.environmentIds === undefined
     && input.previewRepositoryId === undefined && input.previewRepository === undefined && input.previewTemplateEnvironmentId === undefined
     && input.previewCompanionOfEnvironmentId === undefined
-    && input.cursor === undefined && input.limit === undefined && input.includeDeleted === undefined),
+    && input.cursor === undefined && input.limit === undefined && input.includeDeleted === undefined && input.includeTotal === undefined),
     { message: 'Activity selects one Home or Source, without an inventory page or Machine filter.' })));
 export const DeploymentReceiptListInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...deploymentEnvironmentReadAddress,
@@ -632,6 +634,8 @@ export const DeploymentEnvironmentListResultV1Schema = lazyZodSchema(() => z.uni
   })),
     /** Exact admitted Source presentation; its existing metadata contract owns name disclosure. */
     projectSources: z.optional(z.array(deploymentProjectSourcePresentationV1Schema)),
+    /** Authorized header total for this query, independent of cursor and page size. */
+    totalCount: z.optional(z.number().check(z.int(), z.nonnegative())),
     runtimeTargetLinks: z.optional(z.array(DeploymentTargetLinkHeaderV1Schema)),
     /** Current runtime custody, independent of the latest attempt. Private bytes stay in Artifacts. */
     servingDeployments: z.optional(z.array(DeploymentReceiptHeaderV1Schema)),

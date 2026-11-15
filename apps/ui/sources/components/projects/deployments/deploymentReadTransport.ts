@@ -290,6 +290,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                     currentDeployment });
             }
             return { ok: true, value: { items, nextCursor: page.nextCursor,
+                ...(page.totalCount === undefined ? {} : { totalCount: page.totalCount }),
                 ...(coverage === undefined ? {} : { coverage }) } };
         }),
         readEnvironment: (scope, environmentId, options) => scoped(scope, options, async account => {
@@ -395,14 +396,17 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
         if (!allPages) return transport.listEnvironments(scope, pageQuery, options);
         const items: DeploymentEnvironmentCollectionV1['items'][number][] = [];
         let coverage: DeploymentEnvironmentCollectionV1['coverage'];
+        let totalCount: number | undefined;
         let cursor = pageQuery.cursor;
         do {
             const page = await transport.listEnvironments(scope, { ...pageQuery, cursor }, options);
             if (!page.ok) return page;
+            if (totalCount === undefined) totalCount = page.value.totalCount;
             items.push(...page.value.items);
             if ('coverage' in page.value && page.value.coverage === 'partial') coverage = 'partial';
             cursor = page.value.nextCursor ?? undefined;
         } while (cursor !== undefined);
-        return { ok: true, value: { items, nextCursor: null, ...(coverage === undefined ? {} : { coverage }) } };
+        return { ok: true, value: { items, nextCursor: null, ...(totalCount === undefined ? {} : { totalCount }),
+            ...(coverage === undefined ? {} : { coverage }) } };
     } };
 }

@@ -38,6 +38,8 @@ export const DeploymentEnvironmentCollectionV1Schema = z.strictObject({
             steps: z.optional(z.nullable(z.array(DeploymentStepV1Schema))),
         }))) })),
     nextCursor: z.nullable(DeploymentIdentifierV1Schema),
+    /** Canonical collection total when explicitly requested and available. */
+    totalCount: z.optional(z.number().check(z.int(), z.nonnegative())),
     coverage: collectionCoverage,
 });
 export type DeploymentEnvironmentCollectionV1 = z.infer<typeof DeploymentEnvironmentCollectionV1Schema>;

@@ -90,18 +90,20 @@ describe('deployment scoped read transport', () => {
         const base = DeploymentEnvironmentListResultV1Schema.parse({ ok: true, items: [detail.environment],
             currentDeployments: [latest], runtimeTargetLinks: [runtime], nextCursor: null });
         const respond = (overrides: object = {}) => homes.answer(serverId, root, { body: { ...base,
-            servingDeployments: [active.deployment], liveAddressDomains: [domain], ...overrides } });
+            servingDeployments: [active.deployment], liveAddressDomains: [domain], totalCount: 1, ...overrides } });
         const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'account-owner' },
             isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
         const transport = createDeploymentReadTransport(lifetime);
         const options = { signal: new AbortController().signal };
         const readItem = async () => {
-            const page = await transport.listEnvironments(lifetime.scope, {}, options);
+            const page = await transport.listEnvironments(lifetime.scope, { includeTotal: true }, options);
             expect(page.ok, JSON.stringify(page)).toBe(true);
             if (!page.ok) throw new Error(page.failure.code);
             return DeploymentEnvironmentCollectionV1Schema.parse(page.value).items[0]!;
         };
         respond();
+        const counted = await transport.listEnvironments(lifetime.scope, { includeTotal: true }, options);
+        expect(counted).toMatchObject({ ok: true, value: { totalCount: 1 } });
         const before = homes.requests.length;
         expect(await readItem()).toMatchObject({ liveAddress: 'https://app.example.test/', currentDeployment: {
             id: latest.id, commitSubject: 'Repair worker startup', requestedByAccountId: 'latest-requester',
@@ -150,6 +152,9 @@ describe('deployment scoped read transport', () => {
         expect(await readItem()).toHaveProperty('liveAddress', null);
         homes.answer(serverId, root, { body: base });
         expect(await readItem()).not.toHaveProperty('liveAddress');
+        const uncounted = await transport.listEnvironments(lifetime.scope, {}, options);
+        expect(uncounted.ok).toBe(true);
+        if (uncounted.ok) expect(uncounted.value).not.toHaveProperty('totalCount');
         respond();
         const beforeExact = homes.requests.length;
         const exact = await transport.listEnvironments(lifetime.scope, { environmentIds: [detail.environment.id] }, options);

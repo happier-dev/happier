@@ -117,7 +117,7 @@ describe('deployment detail admission cost', () => {
                 ({ ...base, id: id(prefix), ...readable }))) });
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
             const read = async (accountId: string, cursor?: string) => {
-                const query = new URLSearchParams({ serverId, projectSourceId: source.source.id, limit: '1', ...(cursor ? { cursor } : {}) });
+                const query = new URLSearchParams({ serverId, projectSourceId: source.source.id, limit: '1', includeTotal: 'true', ...(cursor ? { cursor } : {}) });
                 return app.inject({ method: 'GET', url: `/v1/deployments/environments?${query}`,
                     headers: { 'x-test-user-id': accountId } });
             };
@@ -127,10 +127,12 @@ describe('deployment detail admission cost', () => {
             if (!first.ok) throw new Error(first.error);
             expect(first.items.map(row => row.id)).toEqual([id('w')]);
             expect(first.coverage).toBe('complete');
+            expect(first).toMatchObject({ totalCount: 2 });
             expect(first.nextCursor).not.toBeNull();
             const next = DeploymentEnvironmentListResultV1Schema.parse((await read(owner.id, first.nextCursor!)).json());
             if (!next.ok) throw new Error(next.error);
             expect(next.items.map(row => row.id)).toEqual([id('b')]);
+            expect(next).toMatchObject({ totalCount: 2 });
             expect(next.nextCursor).toBeNull();
             expect((await read(stranger.id)).statusCode).toBe(404);
         });
@@ -613,17 +615,21 @@ describe('deployment detail admission cost', () => {
                 patch: { audience: [{ principal: { kind: 'team', teamId: team.id }, level: 'view' }] } }));
             expect(shared).toMatchObject({ ok: true });
             if (!shared.ok) throw new Error(shared.error);
-            const list = async (accountId: string) => DeploymentEnvironmentListResultV1Schema.parse((await app.inject({ method: 'GET',
-                url: `/v1/deployments/environments?${new URLSearchParams({ serverId, projectSourceId: source.source.id })}`,
-                headers: { 'x-test-user-id': accountId } })).json());
-            expect(await list(owner.id)).toMatchObject({ ok: true, items: [{ id: environment.environmentId }] });
+            const list = async (accountId: string) => {
+                const response = await app.inject({ method: 'GET',
+                    url: `/v1/deployments/environments?${new URLSearchParams({ serverId, projectSourceId: source.source.id, includeTotal: 'true' })}`,
+                    headers: { 'x-test-user-id': accountId } });
+                expect(response.statusCode).toBe(200);
+                return DeploymentEnvironmentListResultV1Schema.parse(response.json());
+            };
+            expect(await list(owner.id)).toMatchObject({ ok: true, items: [{ id: environment.environmentId }], totalCount: 1 });
             const readArtifact = (artifactId: string) => app.inject({ method: 'GET', url: `/v1/artifacts/${artifactId}`,
                 headers: { 'x-test-user-id': member.id } });
             if (mode === 'e2ee') {
                 expect((await headers(member.id)).map(item => item.read.ok ? 'ok' : item.read.error))
                     .toEqual(['artifact_content_unavailable', 'artifact_content_unavailable']);
                 expect((await read(member.id)).json()).toMatchObject({ ok: false, error: 'deployment_content_unavailable' });
-                expect(await list(member.id)).toMatchObject({ ok: true, items: [], nextCursor: null });
+                expect(await list(member.id)).toMatchObject({ ok: true, items: [], nextCursor: null, totalCount: 0 });
                 for (const [artifactId, keys] of contentKeys) {
                     await runArtifactRecipientKeyPreparationV1({ artifactId, dataKey: keys.dataKey,
                         openedDataEncryptionKey: privacyKit.encodeBase64(keys.ownerEnvelope), randomBytes: nacl.randomBytes,
@@ -640,7 +646,7 @@ describe('deployment detail admission cost', () => {
                     });
                 }
             }
-            expect(await list(member.id)).toMatchObject({ ok: true, items: [{ id: environment.environmentId }], nextCursor: null });
+            expect(await list(member.id)).toMatchObject({ ok: true, items: [{ id: environment.environmentId }], nextCursor: null, totalCount: 1 });
             const observedHeaders = await headers(member.id);
             for (const item of observedHeaders) {
                 const access = await inTx(tx => resolveArtifactAccessInTx(tx, { actorAccountId: member.id, artifactId: item.artifactId }));

@@ -304,6 +304,26 @@ describe('deployment React demand', () => {
         } finally { await changed.unmount(); await unaffected.unmount(); controller.retire(); }
     });
 
+    it('keeps the authorized collection total with its query while navigating and changing filters', async () => {
+        const changed = createDeferred<Awaited<ReturnType<DeploymentReadTransportV1['listEnvironments']>>>();
+        const boundary = createBoundary();
+        const controller = createDeploymentReadControllerV1({ scope, transport: { ...boundary.transport,
+            listEnvironments: async (_scope, query) => query.machineId === 'changed-machine' ? changed.promise : ({ ok: true,
+                value: { items: [], nextCursor: query.cursor ? null : 'older', ...(query.includeTotal ? { totalCount: 2417 } : {}) } }),
+        } });
+        const hook = await renderHook((machineId: string | undefined) => useDeploymentCollection(controller, shown,
+            { includeTotal: true, machineId }), { initialProps: undefined as string | undefined });
+        try {
+            expect(hook.getCurrent().snapshot.value).toMatchObject({ totalCount: 2417 });
+            await act(async () => { hook.getCurrent().nextPage(); });
+            expect(hook.getCurrent().snapshot.value).toMatchObject({ totalCount: 2417 });
+            await hook.rerender('changed-machine');
+            expect(hook.getCurrent().snapshot.value).toBeNull();
+            await act(async () => { changed.resolve({ ok: true, value: { items: [], nextCursor: null, totalCount: 3 } }); });
+            expect(hook.getCurrent().snapshot.value).toMatchObject({ totalCount: 3 });
+        } finally { await hook.unmount(); controller.retire(); }
+    });
+
     it('navigates Environment and receipt cursor pages only on demand and resets on resource changes', async () => {
         const requests: (string | undefined)[] = [];
         const controller = createDeploymentReadControllerV1({ scope, transport: {

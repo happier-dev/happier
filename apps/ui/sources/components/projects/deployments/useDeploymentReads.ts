@@ -87,11 +87,12 @@ export function useDeploymentCollection(controller: DeploymentReadControllerV1 |
     const previewPullRequestIdsKey = JSON.stringify(previewPullRequestIds);
     const acquire = React.useMemo(() => controller ? () =>
         controller.acquireCollection({ cursor: query.cursor, machineId: query.machineId, environmentIds,
+            includeTotal: query.includeTotal,
             previewRepositoryId: query.previewRepositoryId, previewPullRequestIds,
             previewTemplateEnvironmentId: query.previewTemplateEnvironmentId }, INACTIVE) : null,
         // The canonical set key preserves the lease across equivalent inline vectors.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-        [controller, query.cursor, query.machineId, environmentIdsKey, query.previewRepositoryId, previewPullRequestIdsKey,
+        [controller, query.cursor, query.machineId, query.includeTotal, environmentIdsKey, query.previewRepositoryId, previewPullRequestIdsKey,
             query.previewTemplateEnvironmentId]);
     return useDeploymentPage(acquire, demand);
 }

@@ -225,6 +225,7 @@ export function registerDeploymentRoutes(app: Fastify): void {
         schema: { querystring: z.pipe(z.looseObject({
             limit: z.optional(z.coerce.number().check(z.int(), z.positive())),
             includeDeleted: z.optional(z.pipe(z.literal('true'), z.transform(() => true as const))),
+            includeTotal: z.optional(z.pipe(z.literal('true'), z.transform(() => true as const))),
             environmentIds: z.optional(z.pipe(z.union([z.string(), z.array(z.string())]),
                 z.transform(value => typeof value === 'string' ? [value] : value))),
             previewPullRequestIds: z.optional(z.pipe(z.union([z.string(), z.array(z.string())]),

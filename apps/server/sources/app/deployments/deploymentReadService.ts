@@ -318,23 +318,34 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
     // Source metadata access does not imply an openable private Environment.
     // Admit headers in batches through the Artifact owner (including Source
     // custody and recipient envelopes), then fill the existing page window.
+    const selectedRepository = input.previewRepository ? normalizeScmHostingRepositoryIdentity(input.previewRepository) : null;
+    const admitRows = async <T extends Readonly<{ projectSourceId: string; contentArtifactId: string }>>(candidates: readonly T[]) => {
+        const sourceIds = [...new Set(candidates.map(row => row.projectSourceId))].filter(id => !sources.has(id));
+        if (sourceIds.length) {
+            for (const [id, source] of await resolveProjectSourcesAccessInTx(tx, actorAccountId, sourceIds, authentication, { includeDeleted: true })) {
+                sources.set(id, source.ok ? projectDeploymentSourceAdmission(source) : null);
+            }
+        }
+        const admitted = candidates.filter(row => sources.get(row.projectSourceId));
+        const headers = new Map((await readArtifactHeadersForCallerInTx(tx, {
+            actorAccountId, artifactIds: [...new Set(admitted.map(row => row.contentArtifactId))],
+        })).map(item => [item.artifactId, item.read.ok]));
+        return admitted.filter(row => {
+            if (!headers.get(row.contentArtifactId)) return false;
+            if (!input.previewRepository) return true;
+            const selector = sources.get(row.projectSourceId)!.source.repository;
+            const repository = selector && normalizeScmHostingRepositoryIdentity({ kind: selector.provider.kind,
+                deployment: selector.provider.baseUrl, repository: selector.repository.nameWithOwner });
+            return Boolean(repository && selectedRepository && sameScmHostingRepositoryIdentity(repository, selectedRepository));
+        });
+    };
     const readReadableRows = async (where: Prisma.DeploymentEnvironmentWhereInput): Promise<Awaited<ReturnType<typeof readRows>>> => {
         const readable: Awaited<ReturnType<typeof readRows>> = [];
         let scannedThrough: string | undefined;
         while (readable.length <= limit) {
             const candidates = await readRows(scannedThrough ? { AND: [where, { id: { lt: scannedThrough } }] } : where);
             if (!candidates.length) break;
-            const sourceIds = [...new Set(candidates.map(row => row.projectSourceId))].filter(id => !sources.has(id));
-            if (sourceIds.length) {
-                for (const [id, source] of await resolveProjectSourcesAccessInTx(tx, actorAccountId, sourceIds, authentication, { includeDeleted: true })) {
-                    sources.set(id, source.ok ? projectDeploymentSourceAdmission(source) : null);
-                }
-            }
-            const admitted = candidates.filter(row => sources.get(row.projectSourceId));
-            const headers = new Map((await readArtifactHeadersForCallerInTx(tx, {
-                actorAccountId, artifactIds: [...new Set(admitted.map(row => row.contentArtifactId))],
-            })).map(item => [item.artifactId, item.read.ok]));
-            readable.push(...admitted.filter(row => headers.get(row.contentArtifactId)));
+            readable.push(...await admitRows(candidates));
             if (candidates.length <= limit) break;
             scannedThrough = candidates.at(-1)!.id;
         }
@@ -360,9 +371,11 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
     const previewChunks = input.previewPullRequestIds === undefined ? [undefined]
         : portableQueryChunks({ values: [...new Set(input.previewPullRequestIds)], bindingsPerValue, fixedBindings });
     let rows: Awaited<ReturnType<typeof readRows>> = [];
+    let totalCount = 0;
+    let totalComplete = true;
     for (const environmentIds of environmentChunks) {
         for (const previewPullRequestIds of previewChunks) {
-            const where: Prisma.DeploymentEnvironmentWhereInput = {
+            const selectionWhere = (after: string | undefined): Prisma.DeploymentEnvironmentWhereInput => ({
                 ...(input.includeDeleted ? {} : { deletedAt: null }),
                 ...(input.projectSourceId ? { projectSourceId: input.projectSourceId } : {}),
                 ...(input.previewCompanionOfEnvironmentId === undefined ? {} : {
@@ -372,13 +385,33 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
                 ...(input.previewRepositoryId === undefined ? {} : { previewRepositoryId: input.previewRepositoryId }),
                 ...(input.previewTemplateEnvironmentId === undefined ? {} : { purpose: 'preview',
                     previewTemplateEnvironmentId: input.previewTemplateEnvironmentId }),
-                ...(cursor || environmentIds !== undefined ? { id: {
+                ...(after || environmentIds !== undefined ? { id: {
                     ...(environmentIds === undefined ? {} : { in: [...environmentIds] }),
-                    ...(cursor ? { lt: cursor } : {}),
+                    ...(after ? { lt: after } : {}),
                 } } : {}),
                 ...(input.machineId ? deploymentMachineReferenceWhere(input.machineId) : {}),
-            };
+            });
+            const where = selectionWhere(cursor);
             rows = await readReadableRows(rows.length ? { OR: [where, { id: { in: rows.map(row => row.id) } }] } : where);
+            if (input.includeTotal) {
+                // Full-selection metadata only: no receipts, Domains, runtime
+                // members or Artifact bodies are hydrated for the total.
+                let after: string | undefined;
+                while (true) {
+                    const candidates = await tx.deploymentEnvironment.findMany({ where: selectionWhere(after), orderBy: { id: 'desc' },
+                        take: ARTIFACT_LIST_PAGE_MAX_ITEMS_V1, include: {
+                            deployers: { select: { principalKind: true, principalId: true } },
+                            previewCompanionOfEnvironment: { select: { previewTemplateEnvironmentId: true } },
+                        } });
+                    for (const row of await admitRows(candidates)) {
+                        const header = projectDeploymentListRow(() => projectDeploymentEnvironmentHeader(row, input.serverId, sources.get(row.projectSourceId)!));
+                        if (header) totalCount++;
+                        else totalComplete = false;
+                    }
+                    if (candidates.length < ARTIFACT_LIST_PAGE_MAX_ITEMS_V1) break;
+                    after = candidates.at(-1)!.id;
+                }
+            }
         }
     }
     const hasNext = rows.length > limit;
@@ -390,15 +423,8 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
     const liveAddressDomains: ReturnType<typeof projectDeploymentDomainHeader>[] = [];
     const runtimeTargetLinks: ReturnType<typeof projectDeploymentTargetHeader>[] = [];
     let coverage: 'complete' | 'partial' = 'complete';
-    const selectedRepository = input.previewRepository ? normalizeScmHostingRepositoryIdentity(input.previewRepository) : null;
     for (const row of selected) {
         const source = sources.get(row.projectSourceId)!;
-        if (input.previewRepository) {
-            const selector = source.source.repository;
-            const repository = selector && normalizeScmHostingRepositoryIdentity({ kind: selector.provider.kind,
-                deployment: selector.provider.baseUrl, repository: selector.repository.nameWithOwner });
-            if (!repository || !selectedRepository || !sameScmHostingRepositoryIdentity(repository, selectedRepository)) continue;
-        }
         if (row.runtimeTargetLink && row.runtimeTargetLink.environmentId !== row.id) { coverage = 'partial'; continue; }
         const environment = projectDeploymentListRow(() => projectDeploymentEnvironmentHeader(row, input.serverId, source));
         if (!environment) { coverage = 'partial'; continue; }
@@ -433,6 +459,7 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
         ? items.at(-1)?.id === last.id ? last.id : sealDeploymentReadCursor(actorAccountId, input, last.id)
         : null;
     return { ok: true as const, items, projectSources: [...projectSources.values()], currentDeployments, runtimeTargetLinks, coverage,
+        ...(!input.includeTotal || !totalComplete || coverage === 'partial' ? {} : { totalCount }),
         ...(input.environmentIds === undefined ? { servingDeployments, liveAddressDomains } : {}),
         nextCursor };
 }
