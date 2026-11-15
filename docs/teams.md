@@ -531,6 +531,13 @@ consumer and loaded-runtime journeys.
 
 ## Shared credential usage limits
 
+Team credential usage queries in 0.3 development use the canonical analytics
+token shape for totals, series and breakdowns. When reported token parts exist
+without a raw total, `tokens.measured` carries the derived total while
+`tokens.total` remains the provider's reported fact. Matching Protocol, server
+and client readers reload together; older strict development readers reject
+the optional analytics field.
+
 In 0.3 development source, brokered, credential-test, and external API request
 admission read recorded spend under ReadCommitted isolation. Each applicable
 resource/member/Group limit and UTC period has one counter in the existing

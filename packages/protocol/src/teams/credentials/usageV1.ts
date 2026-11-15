@@ -7,7 +7,7 @@ import {
   UsageAnalyticsCostModeSchema,
   UsageAnalyticsGranularitySchema,
   UsageObservationCostSchema,
-  UsageObservationTokensSchema,
+  UsageAnalyticsTokensSchema,
 } from '../../usage/usageAnalyticsContracts.js';
 
 export const TeamCredentialUsageLimitSubjectKindV1Schema = lazyZodSchema(() => z.enum([
@@ -156,7 +156,7 @@ export type TeamCredentialUsageQueryInputV1 = z.infer<typeof TeamCredentialUsage
 export const TeamCredentialUsageTotalsV1Schema = lazyZodSchema(() => z.strictObject({
   eventCount: z.number().check(z.int(), z.minimum(0)),
   requestCount: z.number().check(z.int(), z.minimum(0)),
-  tokens: UsageObservationTokensSchema,
+  tokens: UsageAnalyticsTokensSchema,
   cost: UsageObservationCostSchema,
 }));
 

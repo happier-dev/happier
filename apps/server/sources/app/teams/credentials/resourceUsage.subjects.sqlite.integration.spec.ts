@@ -90,6 +90,26 @@ describe('Team and Home subjects through the credential usage HTTP query', () =>
         }
     });
 
+    it('preserves measured token totals for Home usage with unreported raw totals', async () => {
+        const f = await fixture();
+        await db.account.update({ where: { id: f.admin.id }, data: { homeRole: 'owner' } });
+        await db.usageEvent.create({ data: {
+            accountId: f.member.id, agentId: 'codex', observedAt: new Date(1),
+            source: 'codex_app_server', scope: 'turn_delta', inputTokens: 7, outputTokens: 3,
+            teamCredentialResourceId: f.resources[0]!.id, teamCredentialActorAccountId: f.member.id,
+            credentialDeliveryMode: 'brokered',
+        } });
+        const response = await query(f.admin.id, {
+            subject: { kind: 'home' }, startMs: 1, endMs: 1, breakdown: 'member',
+        });
+        expect(response.statusCode).toBe(200);
+        const result = TeamCredentialUsageQueryResultV1Schema.parse(response.json());
+        const tokens = { total: null, measured: { total: 10, fromParts: true } };
+        expect(result.totals.tokens).toMatchObject(tokens);
+        expect(result.series[0]?.totals.tokens).toMatchObject(tokens);
+        expect(result.breakdown?.[0]?.totals.tokens).toMatchObject(tokens);
+    });
+
     it('qualifies a restricted Team once before disclosing its aggregate', async () => {
         const f = await fixture();
         await db.team.update({ where: { id: f.teams[0]!.id }, data: { authenticationPolicy: {
