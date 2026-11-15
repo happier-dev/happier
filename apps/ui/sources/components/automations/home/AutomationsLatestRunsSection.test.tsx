@@ -270,6 +270,24 @@ describe('Automations · Latest runs on Home', () => {
         expect(screen.findByTestId('home-automations.empty')).toBeTruthy();
     });
 
+    // P03-ANDROID-FIX-2: Home hides through Activity, so every return re-presents this widget and refreshes it.
+    // With no workflow yet, each return put the answered card back into its loading rows until the refresh answered.
+    it('keeps its answered empty card while a return to Home refreshes it', async () => {
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const home = (presented: boolean) => <PluginSurfaceFocusEligibilityProvider active={presented} presentationActive={presented}>
+            <AutomationsLatestRunsSection menu="menu:here" />
+        </PluginSurfaceFocusEligibilityProvider>;
+        const screen = await renderScreen(home(true));
+        await flushHookEffects({ cycles: 4 });
+        expect(screen.findByTestId('home-automations.empty')).toBeTruthy();
+        await screen.update(home(false));
+        server.pending = new Promise<void>(() => {});
+        await screen.update(home(true));
+        await flushHookEffects({ cycles: 4 });
+        expect(screen.findByTestId('home-automations.loading')).toBeNull();
+        expect(screen.findByTestId('home-automations.empty')).toBeTruthy();
+    });
+
     it('with no workflows yet, hands the frame its scene and one way to a new workflow', async () => {
         server.automations = [];
         const screen = await renderSection();

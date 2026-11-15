@@ -171,9 +171,9 @@ function AutomationsLatestRunsWidget(props: HubSectionProps) {
             action: { label: t('common.retry'), onPress: refresh },
             diagnosticCode: 'home_automations_read_failed',
         };
-    } else if (awaitingRunPages || (read.reading && automations.length === 0)) {
-        // First load only. Automations this device already knows answer "nothing ran yet" at once;
-        // the refresh behind them never puts a known answer back into a skeleton.
+    } else if (awaitingRunPages || (read.reading && read.readAt === null && automations.length === 0)) {
+        // First load only. Automations this device already knows, or an answered read that found none,
+        // answer at once; the refresh behind them (each return to Home) never puts a known answer back into a skeleton.
         body = { kind: 'loading', accessibilityLabel: t('homeWidgets.latestRunsLoading') };
     } else {
         body = latestRunsEmptyBody(noWorkflows ? openNewWorkflow : undefined);
