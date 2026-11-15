@@ -37,9 +37,15 @@ export function buildKiloAcpEnv(params: Readonly<{
   permissionIntent: AgentPermissionIntent | null;
   mcpToolPolicy?: AgentSessionOpenRequest['mcpToolPolicy'];
 }>): Readonly<Record<string, string>> {
-  return buildKiloOpenCodePermissionEnv({
-    env: params.launchEnvironment?.values,
-    permissionIntent: params.permissionIntent,
-    mcpToolPolicy: params.mcpToolPolicy,
-  });
+  return {
+    ...buildKiloOpenCodePermissionEnv({
+      env: params.launchEnvironment?.values,
+      permissionIntent: params.permissionIntent,
+      mcpToolPolicy: params.mcpToolPolicy,
+    }),
+    // Kilo 7.8.27 excludes offline recovery from its default retry budget and
+    // omits offline status over ACP. Use its minimum supported positive limit
+    // (zero is ignored) so repeated connection refusals return a native error.
+    KILO_SESSION_RETRY_LIMIT: '1',
+  };
 }
