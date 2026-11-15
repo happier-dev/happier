@@ -36,7 +36,7 @@ vi.mock("@/app/events/eventRouter", async (importOriginal) => {
 });
 vi.mock("@/utils/keys/randomKeyNaked", () => ({ randomKeyNaked: () => "k" }));
 vi.mock("@/storage/db", () => ({
-    db: { session: { findUnique: sessionFindUnique } },
+    db: { session: { findUnique: sessionFindUnique }, sessionPendingMessage: { findMany: vi.fn(async () => []) } },
 }));
 vi.mock("@/app/session/pending/pendingMessageService", async (importOriginal) => {
     const actual = await importOriginal<typeof import("@/app/session/pending/pendingMessageService")>();

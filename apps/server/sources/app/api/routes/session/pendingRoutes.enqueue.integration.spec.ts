@@ -33,7 +33,7 @@ vi.mock("@/app/events/eventRouter", () => ({
     buildPendingChangedUpdate,
 }));
 vi.mock("@/storage/db", () => ({
-    db: { session: { findUnique: sessionFindUnique } },
+    db: { session: { findUnique: sessionFindUnique }, sessionPendingMessage: { findMany: vi.fn(async () => []) } },
 }));
 vi.mock("@/utils/keys/randomKeyNaked", () => ({ randomKeyNaked: () => "update-id" }));
 

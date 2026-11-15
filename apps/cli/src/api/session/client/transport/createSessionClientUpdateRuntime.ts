@@ -2,7 +2,7 @@ import { logger } from '@/ui/logger';
 import type { AgentState, Metadata, Update } from '../../../types';
 import { handleSessionNewMessageUpdate } from '../../sessionNewMessageUpdate';
 import { handleSessionStateUpdate } from '../../sessionStateUpdateHandling';
-import type { KnownPendingQueueState, PendingQueueState } from '../../pendingQueueState';
+import { readPendingExecutionRunIds, type KnownPendingQueueState, type PendingQueueState } from '../../pendingQueueState';
 import { extractAssistantTextSnapshotFromSessionContent } from '../../turns/extractAssistantTextSnapshot';
 import type { TurnAssistantTextSnapshotStore } from '../../turns/assistantTextSnapshot';
 import type { PendingQueueRuntimeActivityProjection } from '@/agent/runtime/session/input/pendingQueueDrainPolicy';
@@ -193,24 +193,28 @@ export function createSessionClientUpdateRuntime(
                         if (canonicalPendingQueueState?.known) {
                             const recipient = ParticipantExecutionRunRecipientRoutingIdentityV1Schema
                                 .safeParse(bodyRecord?.recipient);
-                            if (recipient.success) {
-                                const observedPendingVersion = typeof bodyRecord?.pendingVersion === 'number'
-                                    && Number.isInteger(bodyRecord.pendingVersion)
-                                    && bodyRecord.pendingVersion >= 0
-                                    ? bodyRecord.pendingVersion
-                                    : canonicalPendingQueueState.pendingVersion;
-                                const previousVersion = latestExecutionRunPendingWakeVersion.get(recipient.data.runId);
-                                if (previousVersion === undefined || observedPendingVersion > previousVersion) {
-                                    latestExecutionRunPendingWakeVersion.set(recipient.data.runId, observedPendingVersion);
-                                    deps.onPendingChangedDrainTrigger?.(
-                                        canonicalPendingQueueState,
-                                        recipient.data,
-                                        observedPendingVersion,
-                                    );
-                                }
-                            } else {
-                                deps.onPendingChangedDrainTrigger?.(canonicalPendingQueueState);
+                            const observedPendingVersion = typeof bodyRecord?.pendingVersion === 'number'
+                                && Number.isInteger(bodyRecord.pendingVersion)
+                                && bodyRecord.pendingVersion >= 0
+                                ? bodyRecord.pendingVersion
+                                : canonicalPendingQueueState.pendingVersion;
+                            // The exact recipient plus the owner's pushed queued run targets (the
+                            // feed hint's projection): each run reconciles once per Pending version.
+                            const runIds = new Set([
+                                ...(recipient.success ? [recipient.data.runId] : []),
+                                ...(readPendingExecutionRunIds(bodyRecord) ?? []),
+                            ]);
+                            for (const runId of runIds) {
+                                const previousVersion = latestExecutionRunPendingWakeVersion.get(runId);
+                                if (previousVersion !== undefined && observedPendingVersion <= previousVersion) continue;
+                                latestExecutionRunPendingWakeVersion.set(runId, observedPendingVersion);
+                                deps.onPendingChangedDrainTrigger?.(
+                                    canonicalPendingQueueState,
+                                    { kind: 'execution_run', runId },
+                                    observedPendingVersion,
+                                );
                             }
+                            if (!recipient.success) deps.onPendingChangedDrainTrigger?.(canonicalPendingQueueState);
                         }
                     }
                     if (stateUpdateResult.runtimeActivityProjection) {

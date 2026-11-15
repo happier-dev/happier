@@ -117,6 +117,8 @@ vi.mock("@/storage/db", async () => {
             findMany: vi.fn(async () => []),
             update: sessionUpdate,
         },
+        // No queued Execution Run targets in these publication fixtures.
+        sessionPendingMessage: { findMany: vi.fn(async () => []) },
     };
     return { db: createDbTransactionMock(() => tables).wrapDb(tables) };
 });

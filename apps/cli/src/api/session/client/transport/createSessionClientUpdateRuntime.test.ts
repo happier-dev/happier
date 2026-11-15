@@ -177,4 +177,21 @@ describe('createSessionClientUpdateRuntime', () => {
       6,
     );
   });
+
+  it('reconciles each pushed queued Execution Run target once per Pending version without a feed read', () => {
+    const canonical = { known: true, pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 7 } as const;
+    const onPendingChangedDrainTrigger = vi.fn();
+    const runtime = createRuntime({ getPendingQueueState: () => canonical, onPendingChangedDrainTrigger });
+    const push = (id: string, pendingVersion: number) => runtime.handleUpdate({
+      id, seq: pendingVersion, createdAt: 1_002,
+      body: { t: 'pending-changed', sid: 'session-1', pendingCount: 1, pendingBlockedCount: 0, pendingVersion,
+        recipient: { kind: 'execution_run', runId: 'run-a' }, pendingExecutionRunIds: ['run-a', 'run-b'] },
+    } as Update, { source: 'session-scoped' });
+
+    push('first', 7);
+    push('replayed', 7);
+
+    const runTriggers = onPendingChangedDrainTrigger.mock.calls.map(([, recipient]) => recipient?.runId);
+    expect(runTriggers.sort()).toEqual(['run-a', 'run-b']);
+  });
 });

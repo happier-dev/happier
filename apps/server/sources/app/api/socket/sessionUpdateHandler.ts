@@ -67,7 +67,7 @@ import {
     type SettlePendingInputAdmissionResult,
 } from "@/app/session/pending/pendingMessageService";
 import { serializePendingMaterializedMessage } from "@/app/session/pending/serializePendingMaterializedMessage";
-import { loadPendingActivationPublication } from "@/app/session/pending/publishPendingMutation";
+import { emitPendingChanged } from "@/app/session/pending/publishPendingMutation";
 import { normalizeIncomingSessionMessageContent } from "@/app/session/messageContent/normalizeIncomingSessionMessageContent";
 import { normalizeSessionMessageContentForStorage } from "@/app/session/normalizeSessionMessageContentForStorage";
 import { resolveStructuralSessionAccess } from "@/app/session/access/sessionAccess";
@@ -223,32 +223,10 @@ function toPendingSocketState(value: { pendingCount: number; pendingBlockedCount
 }
 
 async function emitPublicationSafePendingChanged(params: Readonly<{
-    data: Parameters<typeof buildPendingChangedUpdate>[0];
+    data: Omit<Parameters<typeof emitPendingChanged>[0], "recipientCursors">;
     recipientCursors: readonly Readonly<{ accountId: string; cursor: number }>[];
 }>): Promise<void> {
-    const { sessionId, ...rawProjection } = params.data;
-    const [session, pendingActivationAuthorization] = await Promise.all([
-        loadSessionTranscriptPublicationRecipientProjection(sessionId),
-        loadPendingActivationPublication(sessionId),
-    ]);
-    if (!session) return;
-    await Promise.all(params.recipientCursors.map(async ({ accountId, cursor }) => {
-        const projection = projectSessionTranscriptPublicationPendingProjection(
-            { ...rawProjection, pendingActivationAuthorization },
-            session,
-            accountId,
-        );
-        if (projection.kind === "suppress") return;
-        await eventRouter.emitUpdate({
-            userId: accountId,
-            payload: buildPendingChangedUpdate(
-                { sessionId, ...projection.value },
-                cursor,
-                randomKeyNaked(12),
-            ),
-            recipientFilter: { type: "all-interested-in-session", sessionId },
-        });
-    }));
+    await emitPendingChanged({ ...params.data, recipientCursors: [...params.recipientCursors] });
 }
 
 async function publishAcceptedPendingSettlement(params: Readonly<{
@@ -1039,34 +1017,14 @@ export function sessionUpdateHandler(
                 authentication: readSessionAccessAuthenticationFromSocket(socket),
             });
             if (pendingState.ok) {
-                const session = await loadSessionTranscriptPublicationRecipientProjection(sid);
-                if (session) await Promise.all(result.recipientCursors.map(async ({ accountId, cursor }) => {
-                    const pendingProjection = projectSessionTranscriptPublicationPendingProjection(
-                        {
-                            pendingCount: pendingState.pendingCount,
-                            pendingBlockedCount: pendingState.pendingBlockedCount,
-                            pendingVersion: pendingState.pendingVersion,
-                            changedByAccountId: userId,
-                            pendingActivationAuthorization: await loadPendingActivationPublication(sid),
-                        },
-                        session,
-                        accountId,
-                    );
-                    if (pendingProjection.kind === "suppress") return;
-                    const payload = buildPendingChangedUpdate(
-                        {
-                            sessionId: sid,
-                            ...pendingProjection.value,
-                        },
-                        cursor,
-                        randomKeyNaked(12),
-                    );
-                    await eventRouter.emitUpdate({
-                        userId: accountId,
-                        payload,
-                        recipientFilter: { type: "all-interested-in-session", sessionId: sid },
-                    });
-                }));
+                await emitPendingChanged({
+                    sessionId: sid,
+                    pendingCount: pendingState.pendingCount,
+                    pendingBlockedCount: pendingState.pendingBlockedCount,
+                    pendingVersion: pendingState.pendingVersion,
+                    changedByAccountId: userId,
+                    recipientCursors: [...result.recipientCursors],
+                });
             }
         }
         if ("badgeAttentionChanged" in result && result.badgeAttentionChanged) {

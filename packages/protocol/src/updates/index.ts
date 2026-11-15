@@ -19,7 +19,7 @@ import { SessionMessageReplyPendingHintV1Schema } from '../sessions/messages/ses
 import { UsageSourcesInvalidationV1Schema } from '../usage/usageSources.js';
 import { SessionStoredMessageContentSchema } from '../sessions/messages/sessionStoredMessageContent.js';
 import { PrimaryTurnStatusV1Schema, SessionRuntimeIssueV1Schema } from '../sessions/control/runtimeIssueV1.js';
-import { TurnIdSchema } from '../sessions/idsV1.js';
+import { ExecutionRunIdSchema, TurnIdSchema } from '../sessions/idsV1.js';
 import { SessionFollowStalledOccurrenceV1Schema } from '../sessions/follow/sessionFollowSourceOccurrenceV1.js';
 import {
   ActionOperationRevisionEphemeralV1Schema,
@@ -125,6 +125,8 @@ export const UpdateBodySchema = lazyZodSchema(() => z.discriminatedUnion('t', [
     pendingCount: z.number().check(z.int(), z.minimum(0)),
     pendingBlockedCount: z.optional(z.number().check(z.int(), z.minimum(0))),
     recipient: z.optional(ParticipantExecutionRunRecipientRoutingIdentityV1Schema),
+    /** The Session owner's queued Execution Run targets (owner recipient only; same as the feed hint). */
+    pendingExecutionRunIds: z.optional(z.array(ExecutionRunIdSchema)),
     changedByAccountId: z.optional(z.string()),
     meaningfulActivityAt: z.optional(TimestampMsSchema),
     pendingActivationRequestId: z.optional(z.string().check(z.trim(), z.minLength(1))),

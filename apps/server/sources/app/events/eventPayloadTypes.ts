@@ -156,6 +156,7 @@ export type UpdateEvent = {
     pendingCount: number;
     pendingBlockedCount?: number;
     recipient?: ParticipantExecutionRunRecipientRoutingIdentityV1;
+    pendingExecutionRunIds?: string[];
     changedByAccountId?: string;
     meaningfulActivityAt?: number;
     pendingActivationAuthorization?: PendingActivationAuthorizationV1 | null;

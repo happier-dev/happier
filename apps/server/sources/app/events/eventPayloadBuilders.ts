@@ -413,6 +413,8 @@ export function buildPendingChangedUpdate(
         pendingCount: number;
         pendingBlockedCount?: number;
         recipient?: ParticipantExecutionRunRecipientRoutingIdentityV1;
+        /** The owner's queued Execution Run targets (the feed hint's projection); owner recipient only. */
+        pendingExecutionRunIds?: readonly string[];
         changedByAccountId?: string;
         meaningfulActivityAt?: Date | number;
         pendingActivationRequestId?: string;
@@ -437,6 +439,7 @@ export function buildPendingChangedUpdate(
             pendingCount: data.pendingCount,
             ...(typeof data.pendingBlockedCount === "number" ? { pendingBlockedCount: data.pendingBlockedCount } : {}),
             ...(data.recipient ? { recipient: data.recipient } : {}),
+            ...(data.pendingExecutionRunIds?.length ? { pendingExecutionRunIds: [...data.pendingExecutionRunIds] } : {}),
             ...(typeof data.changedByAccountId === "string" ? { changedByAccountId: data.changedByAccountId } : {}),
             ...(typeof data.pendingActivationRequestId === "string"
                 ? { pendingActivationRequestId: data.pendingActivationRequestId }

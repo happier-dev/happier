@@ -49,7 +49,7 @@ vi.mock("@/storage/inTx", () => ({
     inTx: vi.fn(async (fn: (tx: unknown) => unknown) => await fn({})),
 }));
 vi.mock("@/storage/db", () => ({
-    db: { session: { findUnique: sessionFindUnique } },
+    db: { session: { findUnique: sessionFindUnique }, sessionPendingMessage: { findMany: vi.fn(async () => []) } },
 }));
 
 vi.mock("@/app/session/pending/pendingMessageService", async (importOriginal) => {

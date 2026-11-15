@@ -10,6 +10,7 @@ import { SESSION_ACCESS_SESSION_BATCH_SIZE } from '@/app/session/access/sessionA
 import type { ParticipantExecutionRunRecipientRoutingIdentityV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 import { inReadSnapshot, inTx, type Tx } from '@/storage/inTx';
 import { readPendingManagedWakeTargetInTx } from '@/app/machines/managed/managedWake';
+import { listQueuedExecutionRunPendingTargetsForSessions } from '@/app/session/pending/queuedExecutionRunPendingTargets';
 import { PendingActivationRequestedEphemeralV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 
 export function buildPendingActivationRequestHint(
@@ -65,11 +66,18 @@ export async function emitPendingChanged(params: {
     recipientCursors: Array<{ accountId: string; cursor: number }>;
     activationTarget?: PendingActivationTarget;
 }): Promise<void> {
-    const [session, pendingActivationAuthorization] = await Promise.all([
-        loadSessionTranscriptPublicationRecipientProjection(params.sessionId),
+    const sessionRead = loadSessionTranscriptPublicationRecipientProjection(params.sessionId);
+    const [session, pendingActivationAuthorization, ownerRunTargets] = await Promise.all([
+        sessionRead,
         loadPendingActivationPublication(params.sessionId),
+        // The feed hint's owner-scoped projection, pushed so the owner's hosting process needs no
+        // feed read to learn its queued Execution Run targets. Only the Session owner receives it.
+        sessionRead.then(row => row
+            ? listQueuedExecutionRunPendingTargetsForSessions({ accountId: row.accountId, sessionIds: [params.sessionId] })
+            : []),
     ]);
     if (!session) return;
+    const pendingExecutionRunIds = ownerRunTargets.map(target => target.runId);
     const rawProjection = {
         pendingCount: params.pendingCount,
         ...(typeof params.pendingBlockedCount === 'number' ? { pendingBlockedCount: params.pendingBlockedCount } : {}),
@@ -85,7 +93,8 @@ export async function emitPendingChanged(params: {
         eventRouter.emitUpdate({
             userId: accountId,
             payload: buildPendingChangedUpdate(
-                { sessionId: params.sessionId, ...projection.value },
+                { sessionId: params.sessionId, ...projection.value,
+                    ...(accountId === session.accountId && pendingExecutionRunIds.length > 0 ? { pendingExecutionRunIds } : {}) },
                 cursor,
                 randomKeyNaked(12),
             ),
