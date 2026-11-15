@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto';
 import { createReactNavigationNativeMock } from '@/dev/testkit/mocks/reactNavigation';
 import * as React from 'react';
+import { z } from 'zod/mini';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -1323,8 +1324,8 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             expect(sentSessionId).toBe('s1');
             expect(sentText).toBe('hello');
             expect(sentDisplayText).toBeUndefined();
-            expect(RawIngressStructuredInputV1Schema.parse(sentMetaOverrides?.happierStructuredInputV1)
-                .sessionAttachments).toEqual([issued ? attachmentHandle
+            const sentMeta = z.object({ happierStructuredInputV1: RawIngressStructuredInputV1Schema }).parse(sentMetaOverrides);
+            expect(sentMeta.happierStructuredInputV1.sessionAttachments).toEqual([issued ? attachmentHandle
                     : { v: 1, sessionId: 's1', id: 'attachment-upload-1' }]);
             expect(sentMetaOverrides).not.toHaveProperty('happier');
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
@@ -4374,7 +4375,9 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                                     machineId: 'm1', accountScope: TEST_SERVER_ACCOUNT_SCOPE, connectedServices: null,
                                 });
                                 const key = buildDynamicModelProbeCacheKey({ machineId: 'm1', serverId: 'srv_session_view',
-                                    targetKey: resolveBackendTargetKeyV2(resolveNewSessionOperationalBackendTarget(detail)),
+                                    targetKey: resolveBackendTargetKeyV2(resolveNewSessionOperationalBackendTarget({
+                                        backendTarget: detail.backendTarget, runtimeCarrierAgentId: detail.runtimeCarrierAgentId,
+                                    })),
                                     providerConnectionId: null, cwd: detail.cwd,
                                     extraKeySuffixParts: context?.cacheKeySuffixParts });
                                 if (!key) throw new Error('Expected Pi native catalog address');

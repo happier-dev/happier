@@ -1355,7 +1355,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         const selection = { agentTargetKey, providerConnectionId: null, modelId: 'next-model' };
         updateSession({ active: true, activeAt: now, presence: 'online', thinking: true, thinkingAt: now,
             latestTurnStatus: 'in_progress', latestTurnStatusObservedAt: now,
-            metadata: { ...currentSession().metadata, modelSelectionIntentV1: { v: 1, updatedAt: now, selection },
+            metadata: { path: '/repo', host: 'host', ...currentSession().metadata, modelSelectionIntentV1: { v: 1, updatedAt: now, selection },
                 sessionModelsV1: { v: 1, agentId: 'codex', updatedAt: now - 1,
                     currentModelId: 'old-model', availableModels: [{ id: 'old-model', name: 'Old' }, { id: 'next-model', name: 'Next' }],
                     activeSelectionV1: { v: 1, source: 'runtime_readback', selection: { ...selection, modelId: 'old-model' },

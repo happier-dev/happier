@@ -5,13 +5,6 @@ import { t } from '@/text';
 import { aggregateMachineRunReads, selectMachineRunsForPresentation, summarizeRunListPresentation } from './runListPresentation';
 
 describe('Runs presentation', () => {
-    it('withdraws inventory coverage that the read owner does not offer, without treating it as a failed read', () => {
-        const aggregate = aggregateMachineRunReads([{ serverId: 'home', machineId: 'use-only',
-            result: { ok: false, notOffered: true, error: 'Manage required' } }]);
-        expect(aggregate).toMatchObject({ status: 'loaded', unavailableMachines: [{
-            machineId: 'use-only', reason: 'not_offered',
-        }] });
-    });
     it('retains owned rows and one typed unavailable fact when another Machine refuses its registry read', () => {
         const run = DaemonExecutionRunEntrySchema.parse({
             happyHomeDir: '/tmp/happier', pid: 123, happySessionId: null,

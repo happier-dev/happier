@@ -39,7 +39,7 @@ describe('the Machine name the viewer says', () => {
         seed({});
         const session = getStorage().getState().sessions.s1!;
         getStorage().setState({ sessions: { s1: { ...session, metadataLayoutVersion: 1,
-            metadata: { v: 1 }, ownerMetadataView: null,
+            metadata: null, ownerMetadataView: null,
             computerMachineBinding: { homeId: serverId, machineId: 'm1' } } } });
         function Wrapper(props: React.PropsWithChildren) {
             return React.createElement(SessionViewerControllerProvider, {
@@ -49,11 +49,11 @@ describe('the Machine name the viewer says', () => {
         const hook = await renderHook(() => useOpenSessionComputerScreen({ sessionId: 's1', serverId }), { wrapper: Wrapper });
         expect(hook.getCurrent()).not.toBeNull();
         await act(async () => getStorage().setState({ sessions: { s1: { ...session,
-            metadataLayoutVersion: 1, metadata: { v: 1 }, ownerMetadataView: null,
+            metadataLayoutVersion: 1, metadata: null, ownerMetadataView: null,
             computerMachineBinding: { homeId: 'another-home', machineId: 'm1' } } } }));
         expect(hook.getCurrent()).toBeNull();
         await act(async () => getStorage().setState({ sessions: { s1: { ...session,
-            metadataLayoutVersion: 1, metadata: { v: 1 }, ownerMetadataView: null } } }));
+            metadataLayoutVersion: 1, metadata: null, ownerMetadataView: null } } }));
         expect(hook.getCurrent()).toBeNull();
     });
     it('keeps an offline Computer launcher disabled and refuses another requested Machine', async () => {

@@ -22,7 +22,7 @@ const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
 const readCustomValue = (value: string) => value;
 
 it('retains selection through late grouped options, search, and query clear', async () => {
-    const render = (settled: boolean) => <OptionPickerOverlay title="Model" options={[]}
+    const render = (settled: boolean) => <OptionPickerOverlay title="Model" options={[]} canEnterCustomValue={false}
         sections={settled ? [
             { id: 'own', title: 'Own', options: [{ value: 'own', label: 'Own model' },
                 // Search is offered for catalogs of at least ten options.

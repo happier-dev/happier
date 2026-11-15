@@ -455,7 +455,7 @@ describe('Committed row and native menu availability', () => {
         installBrowserClipboardBoundary(writeText);
         const onPointerEnter = vi.fn();
         const onPointerLeave = vi.fn();
-        const initial = element('agent-text', { transcriptMessageMakeRepeatableActionEnabled: false }, false, 'm1', false, 'Useful prompt', false, false, { onPointerEnter, onPointerLeave });
+        const initial = element('agent-text', { transcriptMessageMakeRepeatableActionEnabled: false }, false, 'm1', false, 'Useful prompt', false, false, { onPointerEnter, onPointerMove: vi.fn(), onPointerLeave });
         const screen = await renderScreen(initial);
         const body = screen.findHostByTestId('committed-message-body')!;
         for (let ancestor = body.parent; ancestor; ancestor = ancestor.parent) {

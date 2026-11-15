@@ -3,6 +3,7 @@ import * as React from 'react';
 import { t, type TranslationKey } from '@/text';
 import { createRpcCallError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import type { SessionConnectedServiceAuthSwitchErrorCode } from '@/sync/ops/connectedServices/sessionAuthSwitch';
+import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import type { RenderHookOptions } from '@/dev/testkit/hooks/renderHook';
 import { storage } from '@/sync/domains/state/storageStore';
 import type { IModal } from '@/modal';
@@ -635,8 +636,8 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         const consumer = { pluginId: 'happier.agent.claude', localId: 'claude' };
         const service = { pluginId: 'happier.agent.claude', localId: 'anthropic' };
         const selection = { source: 'team_resource' as const, resourceId: 'resource-1', deliveryMode: 'brokered' as const };
-        const resource = {
-            id: 'resource-1', teamId: 'team-1', displayName: 'Shared Claude', sourceOwnerDisplayName: null, resourceRevision: 4,
+        const resource: TeamCredentialResourceCatalogEntryV1 = {
+            id: 'resource-1', teamId: 'team-1', displayName: { content: { t: 'plain', v: 'Shared Claude' }, recipientEnvelope: null }, sourceOwnerDisplayName: null, resourceRevision: 4,
             readiness: { kind: 'available' as const }, recoveryAction: null,
             mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered' as const,
             sessionUsePolicy: 'personal_allowed' as const, providerModels: [],
@@ -648,6 +649,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             sessionId: 'session-1', agentId: 'codex', machineId: 'machine-1', connectedAccounts: CODEX_CONNECTED_ACCOUNTS,
             armedContinuationAgent: { agentId: 'claude', agentIdentity: consumer, connectedAccounts: [{ purpose: 'primary', service }] },
             teamCredentialResources: availability === 'missing' ? [] : [resource],
+            teamCredentialDisplayNames: availability === 'missing' ? {} : { 'resource-1': 'Shared Claude' },
             teamCredentialResourceStatusByKey: new Map((availability === 'available' ? ['team-1:resource-1'] : []).map(key => [key, { kind: 'current' as const }])),
             teamNameById: { 'team-1': 'Acme' }, sessionMetadata: {}, switchingDisabledReason: null,
             settings: {
@@ -2458,10 +2460,10 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 accountId: 'shared-account',
             },
         };
-        const resource = {
+        const resource: TeamCredentialResourceCatalogEntryV1 = {
             id: 'resource-1',
             teamId: 'team-1',
-            displayName: 'Shared Claude',
+            displayName: { content: { t: 'plain', v: 'Shared Claude' }, recipientEnvelope: null },
             sourceOwnerDisplayName: null,
             resourceRevision: 4,
             readiness: { kind: 'available' as const },
@@ -2498,6 +2500,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             serverId: 'server-1',
             connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
             teamCredentialResources: [resource],
+            teamCredentialDisplayNames: { 'resource-1': 'Shared Claude' },
             teamNameById: { 'team-1': 'Acme' },
             sessionMetadata: {
                 connectedServices: {

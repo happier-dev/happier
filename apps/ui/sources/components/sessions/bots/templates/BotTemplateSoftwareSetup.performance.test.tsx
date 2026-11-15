@@ -115,7 +115,10 @@ describe('BT3.F2 selected software demand cost', () => {
             expect(network.requests[0]?.targetId).toBe(selected.id);
             expect(plans[0]?.machineId).toBe(selected.id);
             expect(plans[0]?.sources).toHaveLength(1);
-            expect(plans[0]?.sources?.[0]?.setup.items).toHaveLength(needs.length);
+            const source = plans[0]?.sources?.[0];
+            expect(source?.kind).toBe('direct');
+            if (source?.kind !== 'direct') throw new Error('Expected direct software setup source');
+            expect(source.setup.items).toHaveLength(needs.length);
             const reads = { http: http.length, daemon: network.requests.length };
             const settledCommits = commits;
             await act(async () => {

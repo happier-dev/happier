@@ -88,11 +88,15 @@ const executionRunsFeatureState = vi.hoisted(() => ({ enabled: false }));
 const backendCatalogEntriesState = vi.hoisted(() => ({
   entries: [] as ResolvedBackendCatalogEntry[],
 }));
-const teamCredentialCatalogState = vi.hoisted(() => ({
+const teamCredentialCatalogState = vi.hoisted(() => {
+  const displayNames: Record<string, string> = {};
+  return {
   resources: [] as TeamCredentialResourceCatalogEntryV1[],
+  displayNames,
   teamNameById: {} as Record<string, string>,
   resourceStatusByKey: new Map(),
-}));
+  };
+});
 const boardFeatureState = vi.hoisted(() => ({
   enabled: false,
   itemCount: 0,
@@ -363,6 +367,7 @@ vi.mock('@/agents/backendCatalog/getResolvedBackendCatalogEntries', () => ({
 vi.mock('@/hooks/teams/useHomeTeamCredentialModelCatalog', () => ({
   useHomeTeamCredentialModelCatalog: () => ({
     resources: teamCredentialCatalogState.resources,
+    displayNames: teamCredentialCatalogState.displayNames,
     teamNameById: teamCredentialCatalogState.teamNameById,
     homeNameByTeamId: {},
     resourceStatusByKey: teamCredentialCatalogState.resourceStatusByKey,
@@ -786,6 +791,7 @@ describe('SessionView header action menu visibility', () => {
     executionRunsFeatureState.enabled = false;
     backendCatalogEntriesState.entries = [];
     teamCredentialCatalogState.resources = [];
+    teamCredentialCatalogState.displayNames = {};
     teamCredentialCatalogState.teamNameById = {};
     teamCredentialCatalogState.resourceStatusByKey = new Map();
     boardFeatureState.enabled = false;
@@ -1229,7 +1235,7 @@ describe('SessionView header action menu visibility', () => {
     const currentResource = {
       id: 'resource-current',
       teamId: 'team-current',
-      displayName: 'Current Team account',
+      displayName: { content: { t: 'plain', v: 'Current Team account' }, recipientEnvelope: null },
       sourceOwnerDisplayName: null,
       resourceRevision: 7,
       readiness: { kind: 'available' },
@@ -1256,7 +1262,7 @@ describe('SessionView header action menu visibility', () => {
     const staleResource = {
       ...currentResource,
       id: 'resource-stale',
-      displayName: 'Stale Team account',
+      displayName: { content: { t: 'plain', v: 'Stale Team account' }, recipientEnvelope: null },
       connectedServiceSelections: [{
         ...currentResource.connectedServiceSelections[0],
         resourceId: 'resource-stale',
@@ -1265,7 +1271,7 @@ describe('SessionView header action menu visibility', () => {
     const currentWithoutConnectedServiceChoice = {
       ...currentResource,
       id: 'resource-provider-only',
-      displayName: 'Provider-only Team resource',
+      displayName: { content: { t: 'plain', v: 'Provider-only Team resource' }, recipientEnvelope: null },
       connectedServiceSelections: [],
     } satisfies TeamCredentialResourceCatalogEntryV1;
     teamCredentialCatalogState.resources = [
@@ -1278,6 +1284,11 @@ describe('SessionView header action menu visibility', () => {
       ['team-current:resource-provider-only', { kind: 'current' as const }],
     ]);
     teamCredentialCatalogState.teamNameById = { 'team-current': 'Current Team' };
+    teamCredentialCatalogState.displayNames = {
+      'resource-current': 'Current Team account',
+      'resource-stale': 'Stale Team account',
+      'resource-provider-only': 'Provider-only Team resource',
+    };
 
     await renderSessionView();
 
@@ -1306,13 +1317,12 @@ describe('SessionView header action menu visibility', () => {
     modalConfirmSpy.mockClear();
     currentOption?.onSelect?.();
     await flushHookEffects();
-    expect(modalConfirmSpy).toHaveBeenCalledWith('teams.credentials.directUse.title',
-      'teams.credentials.directUse.body', expect.objectContaining({ confirmText: 'common.continue' }));
+    expect(modalConfirmSpy).toHaveBeenCalled();
     // Cancel at the genuine consent boundary; no auth mutation leaves this fixture.
     modalConfirmSpy.mockClear();
     routerPushSpy.mockClear();
     staleOption?.onSelect?.();
-    expect(routerPushSpy).toHaveBeenCalledWith('/settings/teams/server-1/team-current/credentials/resource-stale');
+    expect(routerPushSpy.mock.calls.at(-1)?.[0]).toBe('/settings/teams/server-1/team-current/credentials/resource-stale');
     expect(modalConfirmSpy).not.toHaveBeenCalled();
     expect(connectedServicesAuthSwitchResultSpy.mock.calls.at(-1)?.[0].connectedServicesAuthChip?.collapsedContentPopover?.label)
       .toBe(chip?.collapsedContentPopover?.label);

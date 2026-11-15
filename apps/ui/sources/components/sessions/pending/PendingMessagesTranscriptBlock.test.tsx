@@ -6,6 +6,7 @@ import { invokeTestInstanceHandler, renderScreen } from '@/dev/testkit/render/re
 import { installBrowserClipboardBoundary } from '@/dev/testkit';
 import { SessionFollowInputV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
+import type { PendingDeliveryFailureCauseV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
 import { t } from '@/text';
 import { resolvePendingMessagesPresentationByRecipient } from './pendingMessageVisualState';
 import { installPendingMessagesCommonModuleMocks } from './pendingMessagesTestHelpers';
@@ -336,11 +337,11 @@ describe('PendingMessagesTranscriptBlock', () => {
     }
 
     it('presents a retained resume refusal as failed with its own cause', async () => {
-        const errorDetail = { kind: 'connected_service_resume_unreachable', uxDiagnostic: { code: 'provider_session_state_unavailable_for_resume', failurePhase: 'continuity', source: 'spawn_resume', retryable: false, suggestedActions: ['start_fresh_under_selected_account', 'resume_current_account', 'open_connected_accounts'] } } as const;
+        const errorDetail: PendingDeliveryFailureCauseV1 = { kind: 'connected_service_resume_unreachable', uxDiagnostic: { code: 'provider_session_state_unavailable_for_resume', failurePhase: 'continuity', source: 'spawn_resume', retryable: false, suggestedActions: ['start_fresh_under_selected_account', 'resume_current_account', 'open_connected_accounts'] } };
         const message = { ...queuedMessage('resume', 1), discardedAt: 2, discardedReason: 'resume_failed' as const, pendingFailure: { code: 'resume_failed' as const, errorDetail } };
         const Component = await loadPendingMessagesTranscriptBlock();
         const screen = await renderScreen(React.createElement(Component, { sessionId: 's1', pendingMessages: [], discardedMessages: [message] }));
-        const renderedText = screen.findByTestId('pendingMessages.discarded.message:resume')?.findAll(node => node.type === 'Text').flatMap(node => node.children.filter(child => typeof child === 'string')).join(' ');
+        const renderedText = screen.findByTestId('pendingMessages.discarded.message:resume')?.findAll(node => String(node.type) === 'Text').flatMap(node => node.children.filter(child => typeof child === 'string')).join(' ');
         expect(renderedText).toContain(t('session.pendingMessages.errors.sendFailed'));
         expect(renderedText).not.toContain(t('session.pendingMessages.discarded.label'));
         expect(renderedText).toContain(t('connectedServices.diagnostics.body.provider_session_state_unavailable_for_resume'));
@@ -354,7 +355,7 @@ describe('PendingMessagesTranscriptBlock', () => {
         const message = { ...queuedMessage('launch', 1), discardedAt: 2, discardedReason: 'resume_failed' as const, pendingFailure };
         const Component = await loadPendingMessagesTranscriptBlock();
         const screen = await renderScreen(React.createElement(Component, { sessionId: 's1', pendingMessages: [], discardedMessages: [message] }));
-        const renderedText = screen.findByTestId('pendingMessages.discarded.message:launch')?.findAll(node => node.type === 'Text').flatMap(node => node.children.filter(child => typeof child === 'string')).join(' ');
+        const renderedText = screen.findByTestId('pendingMessages.discarded.message:launch')?.findAll(node => String(node.type) === 'Text').flatMap(node => node.children.filter(child => typeof child === 'string')).join(' ');
         expect(renderedText).toContain(t('session.pendingMessages.errors.sendFailed'));
         expect(renderedText).toContain(t('newSession.selectModelTitle'));
     });

@@ -90,9 +90,11 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => runtime.activeServerSnapshot,
 }));
 
-vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({
-    createFrontDoorActionExecute: () => runtime.executeApiTokenAction,
-}));
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOriginal => {
+    const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
+    const { createFrontDoorActionExecuteForVitest } = await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary');
+    return { ...original, createFrontDoorActionExecute: createFrontDoorActionExecuteForVitest(original) };
+});
 
 vi.mock('@/utils/runtime/useHostActivelyViewed', async () => {
     const { useSyncExternalStore } = await import('react');
@@ -147,7 +149,7 @@ function createController(state: ApiTokenSettingsState) {
             setCreateDraft: (_draft: ApiTokenSettingsState['createDraft']) => {},
             resetCreateDraft: () => {},
             createToken: async () => {},
-            adoptCreatedToken: () => false,
+            adoptCreatedToken: async () => false,
             acknowledgeReveal: () => {},
             clearReveal: () => {},
             requestRevealDismiss: async () => true,
@@ -185,7 +187,7 @@ function createObservableController(initialState: ApiTokenSettingsState) {
         setCreateDraft: () => {},
         resetCreateDraft: () => {},
         createToken: async () => {},
-        adoptCreatedToken: () => false,
+        adoptCreatedToken: async () => false,
         acknowledgeReveal: () => {},
         clearReveal: () => {},
         requestRevealDismiss: async () => true,
@@ -213,6 +215,9 @@ function createObservableController(initialState: ApiTokenSettingsState) {
         clearOperationFeedback,
     };
 }
+
+// Collect the real screen after installing its boundaries, before individual test deadlines begin.
+await import('./ApiTokensSettingsScreen');
 
 afterEach(() => {
     standardCleanup();

@@ -152,7 +152,7 @@ function createManyPluginHeaderProjection(actionCount: number) {
 
 describe('resolveSessionViewHeaderProps owner metadata', () => {
     it('passes observed wake activity to the existing Bot face without asserting a connected runtime', () => {
-        const session = createSessionFixture({ encryptionMode: 'plain', active: false, activeAt: 100, presence: 'offline',
+        const session = createSessionFixture({ encryptionMode: 'plain', active: false, activeAt: 100, presence: 100,
             metadata: { path: '/work', host: 'host', bot: { kind: 'bot' } } });
         const header = resolveSessionViewHeaderProps({
             isDataReady: true, session, sessionId: session.id,

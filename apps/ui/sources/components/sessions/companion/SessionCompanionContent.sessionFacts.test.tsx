@@ -118,7 +118,7 @@ describe('Companion rail real Session facts', () => {
                     <AgentInputPermissionRequests sessionId="s1" metadata={session.metadata}
                         permissionRequests={listPendingPermissionRequests(session)} permissionLocationsById={new Map()}
                         canApprovePermissions={interaction.canApprovePermissions} disabledReason={interaction.permissionDisabledReason}
-                        maxHeightPx={1000} onContentSizeChange={() => {}} onLayout={() => {}} />
+                        maxHeightPx={1000} onContentSizeChange={() => {}} onLayout={() => {}} onScroll={() => {}} />
                 </View>
             </AppSessionTranscriptSourceProvider>;
         }

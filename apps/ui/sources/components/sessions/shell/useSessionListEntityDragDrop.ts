@@ -59,6 +59,7 @@ import {
     SESSION_LIST_NO_TARGET_CODE,
 } from './dropPreview/sessionListDropPresentation';
 import type { UseSessionInlineDragResolvedDrop } from './useSessionInlineDrag';
+import type { SessionSpaceDrop } from './search/SessionSpaceTabDropZone';
 
 /**
  * The Session list's binding to the ONE entity drag owner (`components/ui/treeDragDrop`).
@@ -190,6 +191,7 @@ function previewForAdmission(admission: Extract<SessionListDragAdmission, { ok: 
 export function useSessionListEntityDragDrop(input: UseSessionListEntityDragDropInput): Readonly<{
     runtime: EntityDragDropRuntime;
     targetId: string;
+    spaceDrop: SessionSpaceDrop;
     beginCarry: (snapshot: SessionListDragSnapshot, mode: 'pointer' | 'keyboard') => SessionListCarry | null;
     prepareSource: (request: SessionListDragSnapshot | Readonly<{ sourceRowId: string }>) => Readonly<{ sourceId: string; scope: EntityDragScopeV1; dispose: () => void }> | null;
 }> {

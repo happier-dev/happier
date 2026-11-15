@@ -18,7 +18,7 @@ export function sameSessionPaneUrlState(left: SessionPaneUrlState | null, right:
  * query write that leaves these facts unchanged keeps the same value, so it renders no reader.
  */
 export function useSessionPaneUrlState(): SessionPaneUrlState | null {
-    return useSessionPaneUrlFact(parseSessionPaneUrlState, sameSessionPaneUrlState);
+    return useSessionPaneUrlFact<SessionPaneUrlState | null>(parseSessionPaneUrlState, sameSessionPaneUrlState);
 }
 
 /** One selected pane-URL fact (`select` must keep its identity: a module-level function). */

@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { AIBackendProfile } from '@happier-dev/protocol/profiles/backendProfileSchema';
+import type { AiLaunchProfileSourceV1 } from '@happier-dev/protocol/profiles/read';
 
 import { useProviderSettings } from '@/providers/hooks/useProviderSettings';
 import { refreshProfileCatalog } from '@/sync/engine/settings/profileCatalogEngine';
@@ -12,7 +13,7 @@ import { resolveProfileMigrationConflict } from './status';
 
 /** Resume the editor draft only from the acknowledged, rehydrated migration source. */
 export const LaunchProfileEditorMigration = React.memo(function LaunchProfileEditorMigration(props: Readonly<{
-    profile: AIBackendProfile;
+    profile: AIBackendProfile & AiLaunchProfileSourceV1;
     onCancel: () => void;
 }>) {
     const scope = useAccountSettingsScope();

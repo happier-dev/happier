@@ -64,8 +64,7 @@ function readExactRouteIdentity(value: string | string[] | undefined): string | 
 }
 
 function unavailableMachineDetail(machine: RunListUnavailableMachine | undefined): string | undefined {
-  return machine?.reason === 'not_offered' ? t('detailPages.runs.machineNotShared')
-    : machine?.reason === 'read_failed' ? machineRunReadFailureDetail(machine.errorCode) : undefined;
+  return machine?.reason === 'read_failed' ? machineRunReadFailureDetail(machine.errorCode) : undefined;
 }
 
 /** Each collection row retains its own exact Home through admission and approval. */

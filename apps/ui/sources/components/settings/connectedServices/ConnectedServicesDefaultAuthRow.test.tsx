@@ -3,7 +3,7 @@ import type { GestureResponderEvent } from 'react-native';
 import type { PopoverAnchor } from '@/components/ui/popover';
 import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createDeferred, renderScreen } from '@/dev/testkit';
+import { createDeferred, renderScreen as renderScreenWithAppProviders, teamCredentialDisplayNameFixture } from '@/dev/testkit';
 import { installConnectedServicesCommonModuleMocks } from './connectedServicesTestHelpers';
 import { ConnectedServicesDefaultAuthRow } from './ConnectedServicesDefaultAuthRow';
 import type {
@@ -139,9 +139,15 @@ installConnectedServicesCommonModuleMocks({
     },
 });
 
-vi.mock('@/hooks/server/connectedServices/useConnectedServiceQuotaBadges', () => ({
-    useConnectedServiceQuotaBadges: () => ({}),
-}));
+const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+
+function SignedOutHost({ children }: React.PropsWithChildren) {
+    return <InjectedAuthProvider credentials={null}>{children}</InjectedAuthProvider>;
+}
+
+function renderScreen(element: React.ReactElement) {
+    return renderScreenWithAppProviders(element, { wrapper: SignedOutHost });
+}
 
 
 const narrowLayoutRef = vi.hoisted(() => ({ value: false }));
@@ -220,7 +226,7 @@ const TEAM_RESOURCE: TeamCredentialResourceCatalogEntryV1 = {
     id: 'resource-a',
     sourceOwnerDisplayName: null,
     teamId: 'team-a',
-    displayName: 'Team Codex',
+    displayName: teamCredentialDisplayNameFixture('Team Codex'),
     resourceRevision: 7,
     mayBroker: true,
     mayReceiveDirect: true,

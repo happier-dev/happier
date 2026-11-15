@@ -13,7 +13,9 @@ describe('buildActionSettingsEntries', () => {
     it('preserves declared confirmation defaults from daemon projection through settings, including explicit Ask', async () => {
         const { adaptDaemonContributionRegistryProjectionToMergedProjectionInputs } = await import('@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters');
         const { getActionTargetApprovalPolicy } = await import('./actionSettingsTargetApproval');
-        const declaration = githubManifest.contributes.actions?.find(action => action.confirmationWhen?.presentUserUi === false);
+        const declaration = githubManifest.contributes.actions?.find(action => action.confirmationWhen
+            && typeof action.confirmationWhen === 'object'
+            && 'presentUserUi' in action.confirmationWhen && action.confirmationWhen.presentUserUi === false);
         if (!declaration) throw new Error('Missing GitHub present-user Action');
         const { hostAccess, connectedAccountPurposeBindings, inputSchema, resultSchema, ...projectedDeclaration } = declaration;
         const pluginId = githubManifest.id;

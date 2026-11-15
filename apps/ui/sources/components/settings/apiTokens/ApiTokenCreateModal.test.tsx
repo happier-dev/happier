@@ -142,7 +142,7 @@ function createController(state: ApiTokenSettingsState): ApiTokenSettingsControl
         setCreateDraft: () => {},
         resetCreateDraft: () => {},
         createToken: async () => {},
-        adoptCreatedToken: () => false,
+        adoptCreatedToken: async () => false,
         acknowledgeReveal: vi.fn(),
         clearReveal: () => {},
         requestRevealDismiss: async () => true,

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { SessionBotFaceV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import { StyleSheet } from 'react-native-unistyles';
 import type { BotTemplatePreviewResultV1, BotTemplateSetupSelectionsV1 } from '@happier-dev/protocol/bots/templates/botTemplateActionsV1';
 import { SessionSpawnNewActionResultV1Schema, readSessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
@@ -134,7 +135,7 @@ function CopySummary({ botCreation, software }: Readonly<{ botCreation: NewSessi
         : t('botTemplateRecipient.startOnly', { name })}</Text>;
 }
 
-const EMPTY_FACE = Object.freeze({});
+const EMPTY_FACE: SessionBotFaceV1 = Object.freeze({});
 
 /** "Your copy" (lab r2 install-setup): the face and name the new Bot is born with, both the person's to change. */
 function CopyIdentity({ preview, botCreation }: Readonly<{ preview: BotTemplatePreviewResultV1; botCreation: NewSessionBotCreationModel }>) {

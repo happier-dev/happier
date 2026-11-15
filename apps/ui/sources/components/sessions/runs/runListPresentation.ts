@@ -10,7 +10,7 @@ export function executionRunMachineAddressKey(serverId: string, machineId: strin
 export type RunListUnavailableMachine = Readonly<{
     serverId: string;
     machineId: string;
-    reason: 'read_failed' | 'not_read' | 'not_offered';
+    reason: 'read_failed' | 'not_read';
     error: string | null;
     errorCode: string | null;
 }>;
@@ -43,7 +43,7 @@ export function aggregateMachineRunReads(reads: readonly Readonly<{
             runsByMachineAddressKey[executionRunMachineAddressKey(serverId, machineId)] = result.runs;
         } else {
             unavailableMachines.push({ serverId, machineId,
-                reason: result && 'notOffered' in result && result.notOffered ? 'not_offered' : result ? 'read_failed' : 'not_read',
+                reason: result ? 'read_failed' : 'not_read',
                 error: result?.error ?? null, errorCode: result?.errorCode ?? null });
         }
     }
