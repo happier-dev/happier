@@ -9,7 +9,9 @@ export function createFirstConversationAgentFixture(promptMarker: string, option
   workspaceRead?: Readonly<{ relativePath: string; text: string }>;
   /** Native startup is exercised before the parent admits any first input. */
   nativeStartupExec?: true;
-  nativeAcp?: Readonly<{ source: string }>;
+  /** `executablePath`: the JavaScript runtime that runs the fixture Agent (default this process's).
+   * A built bundle denies path-only runtimes by name (`node`), so bundle-mode harnesses pass a copy. */
+  nativeAcp?: Readonly<{ source: string; executablePath?: string; /** Declares `resume` (its Agent answers `session/load`). */ resumable?: true }>;
   /** Voice's retained native conversation must reopen this exact provider id.
    * The external reply program receives the native open request before input. */
   nativeSession?: Readonly<{ providerSessionId: string; storePath?: string; externalSessionsExport?: string }>;
@@ -21,10 +23,10 @@ export function createFirstConversationAgentFixture(promptMarker: string, option
       { id: 'workspace', capability: 'filesystem', reason: 'Use the admitted Session directory',
         scope: { locations: [{ root: 'workspace' }], access: ['read'] } }], optional: [] },
       contributes: {
-        systemTools: [{ id: 'native-cli', title: 'Native response', executableNames: [...(options.nativeReply?.executableNames ?? (options.nativeAcp ? [process.execPath] : ['git']))] }],
+        systemTools: [{ id: 'native-cli', title: 'Native response', executableNames: [...(options.nativeReply?.executableNames ?? (options.nativeAcp ? [options.nativeAcp.executablePath ?? process.execPath] : ['git']))] }],
         agents: [{ id: 'agent', title: 'Conversation fixture', runtime: { kind: 'custom' }, primary: 'sessions',
           capabilities: { ...(options.nativeSession?.externalSessionsExport ? { surfaces: ['externalSessions'] } : {}),
-            tools: { delivery: 'native_mcp' }, sessions: { open: options.nativeSession ? ['create', 'resume'] : ['create'], delivery: ['newTurn'], cancel: true,
+            tools: { delivery: 'native_mcp' }, sessions: { open: options.nativeSession || options.nativeAcp?.resumable ? ['create', 'resume'] : ['create'], delivery: ['newTurn'], cancel: true,
             executionRunContext: { versions: [1] } } } }],
       } }),
     files: {
