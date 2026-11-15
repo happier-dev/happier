@@ -29,3 +29,16 @@ test('automatic metadata child keeps artifact gates and only permits the source 
   assert.match(workflow.jobs['gate-compiler'].if, /metadata_only/);
   assert.ok(workflow.jobs['gate-prepare'].steps.some((step) => step.run?.includes('release_notes_projection.contract.test.mjs')));
 });
+
+
+test('default v0.3 CI enforces plugin import policy after dependencies without a compiler prerequisite', () => {
+  const prepare = workflow.jobs['gate-prepare'];
+  const policyIndex = prepare.steps.findIndex(step => /(?:^|[\s;&])pnpm run test:policy(?:$|[\s;&])/.test(step.run ?? ''));
+  assert.ok(policyIndex >= 0, 'the default v0.3 path skips the ordinary typecheck job and must still run test:policy');
+  const dependencyIndex = prepare.steps.findIndex(step => step.id === 'dependencies');
+  assert.ok(policyIndex > dependencyIndex);
+  assert.equal(prepare.steps[policyIndex].if, undefined);
+  assert.notEqual(prepare.steps[policyIndex]['continue-on-error'], true);
+  const buildIndex = prepare.steps.findIndex(step => step.id === 'workspace-build');
+  assert.ok(policyIndex < buildIndex, 'source policy cannot depend on a successful workspace compilation');
+});

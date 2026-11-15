@@ -366,6 +366,8 @@ jobs:
         uses: ./.github/actions/install-pnpm-dependencies
         with:
           cache-dependencies: 'true'
+      - name: Enforce source test policy and plugin import boundaries
+        run: pnpm run test:policy
       - name: Report the exact dependency cache result
         run: echo "Exact dependency cache hit=${{ steps.dependencies.outputs.cache-hit }}; mandatory frozen install and non-compiling postinstalls completed. Cold and warm install durations are distinct measurements."
       - name: Setup pinned Rust for shared native preparation

@@ -98,6 +98,8 @@ function analyzePluginSource(filePath: string, content: string): PluginSourceAna
   >();
   const runtimeDescriptorCompatibilityKeys = new Set<string>();
   const createRequireFactoryNames = new Set<string>();
+  const nodeModuleNamespaces = new Set<string>();
+  const commonRequireLoaderNames = new Set(['require']);
   const createRequireLoaderNames = new Set<string>();
   const addStringLiteral = (value: ts.Expression | undefined): void => {
     if (value && ts.isStringLiteralLike(value)) specifiers.add(value.text);
@@ -114,34 +116,73 @@ function analyzePluginSource(filePath: string, content: string): PluginSourceAna
     }
   };
 
-  for (const statement of sourceFile.statements) {
-    if (
-      !ts.isImportDeclaration(statement)
-      || !ts.isStringLiteralLike(statement.moduleSpecifier)
-      || (statement.moduleSpecifier.text !== 'node:module' && statement.moduleSpecifier.text !== 'module')
-      || !statement.importClause
-      || !statement.importClause.namedBindings
-      || !ts.isNamedImports(statement.importClause.namedBindings)
-    ) {
-      continue;
+  const propertyAccess = (expression: ts.Expression): { owner: ts.Expression; name: string } | null => {
+    if (ts.isPropertyAccessExpression(expression)) {
+      return { owner: expression.expression, name: expression.name.text };
     }
-    for (const element of statement.importClause.namedBindings.elements) {
-      if ((element.propertyName ?? element.name).text === 'createRequire') {
-        createRequireFactoryNames.add(element.name.text);
+    if (ts.isElementAccessExpression(expression) && expression.argumentExpression && ts.isStringLiteralLike(expression.argumentExpression)) {
+      return { owner: expression.expression, name: expression.argumentExpression.text };
+    }
+    return null;
+  };
+  const isModuleRequire = (expression: ts.Expression): boolean => {
+    const property = propertyAccess(expression);
+    return property?.name === 'require' && ts.isIdentifier(property.owner) && property.owner.text === 'module';
+  };
+  const isCommonRequireLoader = (expression: ts.Expression): boolean => (
+    ts.isIdentifier(expression) && commonRequireLoaderNames.has(expression.text) || isModuleRequire(expression)
+  );
+  const isNodeModuleNamespace = (expression: ts.Expression): boolean => (
+    ts.isAwaitExpression(expression) && isNodeModuleNamespace(expression.expression)
+    ||
+    ts.isIdentifier(expression) && nodeModuleNamespaces.has(expression.text)
+    || ts.isCallExpression(expression)
+      && (isCommonRequireLoader(expression.expression) || expression.expression.kind === ts.SyntaxKind.ImportKeyword)
+      && !!expression.arguments[0] && ts.isStringLiteralLike(expression.arguments[0])
+      && ['node:module', 'module'].includes(expression.arguments[0].text)
+  );
+  const isCreateRequireFactory = (expression: ts.Expression): boolean => {
+    if (ts.isIdentifier(expression) && createRequireFactoryNames.has(expression.text)) return true;
+    const property = propertyAccess(expression);
+    return property?.name === 'createRequire' && isNodeModuleNamespace(property.owner);
+  };
+  const isCreateRequireLoader = (expression: ts.Expression): boolean => (
+    ts.isIdentifier(expression) && createRequireLoaderNames.has(expression.text)
+    || ts.isCallExpression(expression) && isCreateRequireFactory(expression.expression)
+  );
+
+  for (const statement of sourceFile.statements) {
+    if (ts.isImportEqualsDeclaration(statement) && ts.isExternalModuleReference(statement.moduleReference)
+      && statement.moduleReference.expression && ts.isStringLiteralLike(statement.moduleReference.expression)
+      && ['node:module', 'module'].includes(statement.moduleReference.expression.text)) {
+      nodeModuleNamespaces.add(statement.name.text);
+    }
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteralLike(statement.moduleSpecifier)
+      || !['node:module', 'module'].includes(statement.moduleSpecifier.text) || !statement.importClause) continue;
+    if (statement.importClause.name) nodeModuleNamespaces.add(statement.importClause.name.text);
+    const bindings = statement.importClause.namedBindings;
+    if (bindings && ts.isNamespaceImport(bindings)) nodeModuleNamespaces.add(bindings.name.text);
+    if (bindings && ts.isNamedImports(bindings)) {
+      for (const element of bindings.elements) {
+        if ((element.propertyName ?? element.name).text === 'createRequire') createRequireFactoryNames.add(element.name.text);
       }
     }
   }
 
   const collectCreateRequireLoaders = (node: ts.Node): void => {
-    if (
-      ts.isVariableDeclaration(node)
-      && ts.isIdentifier(node.name)
-      && node.initializer
-      && ts.isCallExpression(node.initializer)
-      && ts.isIdentifier(node.initializer.expression)
-      && createRequireFactoryNames.has(node.initializer.expression.text)
-    ) {
-      createRequireLoaderNames.add(node.name.text);
+    if (ts.isVariableDeclaration(node) && node.initializer) {
+      if (ts.isIdentifier(node.name)) {
+        if (isCommonRequireLoader(node.initializer)) commonRequireLoaderNames.add(node.name.text);
+        if (isNodeModuleNamespace(node.initializer)) nodeModuleNamespaces.add(node.name.text);
+        if (isCreateRequireFactory(node.initializer)) createRequireFactoryNames.add(node.name.text);
+        if (isCreateRequireLoader(node.initializer)) createRequireLoaderNames.add(node.name.text);
+      } else if (ts.isObjectBindingPattern(node.name) && isNodeModuleNamespace(node.initializer)) {
+        for (const element of node.name.elements) {
+          const property = element.propertyName ?? element.name;
+          if ((ts.isIdentifier(property) || ts.isStringLiteralLike(property)) && property.text === 'createRequire'
+            && ts.isIdentifier(element.name)) createRequireFactoryNames.add(element.name.text);
+        }
+      }
     }
     ts.forEachChild(node, collectCreateRequireLoaders);
   };
@@ -163,14 +204,11 @@ function analyzePluginSource(filePath: string, content: string): PluginSourceAna
     } else if (ts.isCallExpression(node)) {
       const dynamicLoad = node.expression.kind === ts.SyntaxKind.ImportKeyword
         ? 'import()'
-        : ts.isIdentifier(node.expression) && node.expression.text === 'require'
+        : ts.isIdentifier(node.expression) && commonRequireLoaderNames.has(node.expression.text)
           ? 'require()'
-          : ts.isPropertyAccessExpression(node.expression)
-              && ts.isIdentifier(node.expression.expression)
-              && node.expression.expression.text === 'module'
-              && node.expression.name.text === 'require'
+          : isModuleRequire(node.expression)
             ? 'module.require()'
-            : ts.isIdentifier(node.expression) && createRequireLoaderNames.has(node.expression.text)
+            : isCreateRequireLoader(node.expression)
               ? 'createRequire() loader'
           : null;
       if (dynamicLoad) {
@@ -253,6 +291,7 @@ function isTestSupportImportSpecifier(specifier: string): boolean {
 
 function isProductionPluginSource(filePath: string): boolean {
   return filePath.includes('/src/')
+    && !/\.d\.[cm]?ts$/u.test(filePath)
     && !/\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(filePath)
     && !/\.test-support\.[cm]?[jt]sx?$/u.test(filePath)
     && !/\.testkit\.[cm]?[jt]sx?$/u.test(filePath)
@@ -296,10 +335,12 @@ function isAuthoredAgainstPublicSurfaceOnly(
     const filePath = normalizeRepoPath(source.filePath);
     if (!isProductionPluginSource(filePath)) continue;
     productionSourceCount += 1;
-    for (const specifier of analyzePluginSource(filePath, source.content).importSpecifiers) {
-      if (specifier.startsWith('@happier-dev/') && !publicAuthorSurface.has(specifier)) {
-        return false;
-      }
+    const analysis = analyzePluginSource(filePath, source.content);
+    if (analysis.nonLiteralDynamicLoads.length > 0) return false;
+    const dependencies = declaredPackageDependencies(rootDir, packageRoot);
+    for (const specifier of analysis.importSpecifiers) {
+      const target = aliasedTargetSpecifier(specifier, packageNameForSpecifier(specifier), dependencies.npmAliasTargets);
+      if (forbiddenImport(filePath, specifier, target, packageRoot, publicAuthorSurface)) return false;
     }
   }
   return productionSourceCount > 0;
@@ -359,31 +400,71 @@ function publicPluginPackageSpecifiers(rootDir: string): ReadonlySet<string> {
       }
     }
 
-    // A workspace package that declares itself public (`private: false`, the
-    // same publicness declaration the feature-protocol admission above keys on)
-    // and whose own production sources reach nothing beyond the public author
-    // surface is admitted. This is derived, not an allowlist: no package is
-    // named here, one host-private import of its own disqualifies a package,
-    // and a package that stays `private: true` is never considered. Admission
-    // is evaluated against the author surface as it stands before this pass, so
-    // one opt-in package may not launder another and the result never depends
-    // on directory-iteration order.
-    const publicAuthorSurface = new Set(specifiers);
-    for (const [packageName, manifest] of manifests) {
-      if (manifest.private !== false || typeof manifest.name !== 'string') continue;
-      if (!isAuthoredAgainstPublicSurfaceOnly(rootDir, `packages/${packageName}`, publicAuthorSurface)) {
-        continue;
+    // Public shared packages may depend on other admitted public packages. Grow
+    // from the existing author surface until no more packages qualify; host
+    // imports and dependency cycles without a public leaf never enter it.
+    const pending = new Map([...manifests].filter(([, manifest]) => (
+      manifest.private === false && typeof manifest.name === 'string'
+      && manifest.exports && typeof manifest.exports === 'object' && !Array.isArray(manifest.exports)
+    )));
+    let admitted: boolean;
+    do {
+      admitted = false;
+      for (const [packageName, manifest] of pending) {
+        if (!isAuthoredAgainstPublicSurfaceOnly(rootDir, `packages/${packageName}`, specifiers)) continue;
+        for (const exportKey of Object.keys(manifest.exports as Record<string, unknown>)) {
+          const specifier = packageSpecifierForExportKey(manifest.name as string, exportKey);
+          if (specifier) specifiers.add(specifier);
+        }
+        pending.delete(packageName);
+        admitted = true;
       }
-      const exports = manifest.exports;
-      if (!exports || typeof exports !== 'object' || Array.isArray(exports)) continue;
-      for (const exportKey of Object.keys(exports as Record<string, unknown>)) {
-        const specifier = packageSpecifierForExportKey(manifest.name, exportKey);
-        if (specifier) specifiers.add(specifier);
-      }
-    }
+    } while (admitted);
+
   }
 
   return specifiers;
+}
+
+function isHostProtocolSpecifier(specifier: string): boolean {
+  return specifier === '@happier-dev/protocol' || specifier.startsWith('@happier-dev/protocol/');
+}
+
+function forbiddenImport(
+  filePath: string,
+  specifier: string,
+  boundarySpecifier: string,
+  packageRoot: string,
+  publicPackages: ReadonlySet<string>,
+): ExtensionImportBoundaryViolation | null {
+  const violation = (kind: ExtensionImportBoundaryViolation['kind'], details: string): ExtensionImportBoundaryViolation => (
+    { filePath, specifier, kind, details }
+  );
+  if (specifier.startsWith('@/')) {
+    return violation('forbidden-alias', 'Extension packages must not import from the CLI @/ alias; use shared workspace packages or injected context.');
+  }
+  if (specifier.startsWith('#')) {
+    return violation('forbidden-alias', 'Plugin production package-import aliases (#...) are not an approved public boundary.');
+  }
+  if (specifier.startsWith('apps/')) {
+    return violation('forbidden-apps-import', 'Extension packages must not import from apps/**; use shared workspace packages or injected context.');
+  }
+  if (specifier.startsWith('.')) {
+    if (isTestSupportImportSpecifier(specifier)) {
+      return violation('forbidden-test-support-import', 'Plugin production code must not import test-support or testkit modules.');
+    }
+    const resolved = resolveRelativeImport(filePath, specifier);
+    return resolved === packageRoot || resolved.startsWith(`${packageRoot}/`) ? null
+      : violation('relative-escape', `Relative import resolves outside the extension package root (${packageRoot}): ${resolved}`);
+  }
+  if (isHostProtocolSpecifier(boundarySpecifier)) {
+    return violation('forbidden-protocol-import', 'Plugin production code must consume public contracts through @happier-dev/plugin-sdk; do not bypass the SDK boundary.');
+  }
+  if (boundarySpecifier.startsWith('@happier-dev/') && !publicPackages.has(boundarySpecifier)
+    && !isPrivilegedAdapterPrivateImport(filePath, specifier)) {
+    return violation('forbidden-private-happier-import', 'External-shaped plugin production code may import only public Plugin SDK/UI paths or public feature-protocol package exports.');
+  }
+  return null;
 }
 
 function isPrivilegedAdapterPrivateImport(filePath: string, specifier: string): boolean {
@@ -493,18 +574,36 @@ function nonLiteralDynamicLoadDetails(dynamicLoad: PluginSourceAnalysis['nonLite
   }
 }
 
+function collectChangedPluginInventory(rootDir: string, changedFiles: readonly string[]): InventoryFile[] {
+  const inventory = new Map<string, InventoryFile>();
+  for (const changedFile of changedFiles) {
+    const filePath = normalizeRepoPath(changedFile);
+    const packageRoot = extensionPackageRootFor(filePath);
+    if (!packageRoot) continue;
+    if (filePath === `${packageRoot}/package.json`) {
+      for (const file of collectFileInventory({ rootDir, searchRoots: [`${packageRoot}/src`], include: /\.[cm]?[jt]sx?$/ })) {
+        inventory.set(file.filePath, file);
+      }
+    } else if (/\.[cm]?[jt]sx?$/u.test(filePath) && existsSync(path.join(rootDir, filePath))) {
+      inventory.set(filePath, { filePath, content: readFileSync(path.join(rootDir, filePath), 'utf8') });
+    }
+  }
+  return [...inventory.values()];
+}
+
 export function validateExtensionImportBoundaries(options?: {
   rootDir?: string;
   inventory?: readonly InventoryFile[];
+  changedFiles?: readonly string[];
 }): ValidateExtensionImportBoundariesResult {
   const rootDir = options?.rootDir ?? process.cwd();
   const inventory =
     options?.inventory ??
-    collectFileInventory({
+    (options?.changedFiles ? collectChangedPluginInventory(rootDir, options.changedFiles) : collectFileInventory({
       rootDir,
       searchRoots: ['packages'],
       include: /\.[cm]?[jt]sx?$/,
-    });
+    }));
 
   const extensionSourceFiles = inventory.filter((file) => normalizeRepoPath(file.filePath).startsWith('packages/plugins/'));
   if (extensionSourceFiles.length === 0) {
@@ -558,90 +657,14 @@ export function validateExtensionImportBoundaries(options?: {
     }
 
     for (const specifier of analysis.importSpecifiers) {
-      if (specifier.startsWith('@/')) {
-        violations.push({
-          filePath,
-          specifier,
-          kind: 'forbidden-alias',
-          details: 'Extension packages must not import from the CLI @/ alias; use shared workspace packages or injected context.',
-        });
-        continue;
-      }
-
-      if (specifier.startsWith('#')) {
-        violations.push({
-          filePath,
-          specifier,
-          kind: 'forbidden-alias',
-          details: 'Plugin production package-import aliases (#...) are not an approved public boundary.',
-        });
-        continue;
-      }
-
-      if (specifier.startsWith('apps/')) {
-        violations.push({
-          filePath,
-          specifier,
-          kind: 'forbidden-apps-import',
-          details: 'Extension packages must not import from apps/**; use shared workspace packages or injected context.',
-        });
-        continue;
-      }
-
-      if (specifier.startsWith('.')) {
-        if (isTestSupportImportSpecifier(specifier)) {
-          violations.push({
-            filePath,
-            specifier,
-            kind: 'forbidden-test-support-import',
-            details: 'Plugin production code must not import test-support or testkit modules.',
-          });
-          continue;
-        }
-        const resolved = resolveRelativeImport(filePath, specifier);
-        const packageRootPrefix = `${packageRoot}/`;
-        const allowed = resolved === packageRoot || resolved.startsWith(packageRootPrefix);
-        if (!allowed) {
-          violations.push({
-            filePath,
-            specifier,
-            kind: 'relative-escape',
-            details: `Relative import resolves outside the extension package root (${packageRoot}): ${resolved}`,
-          });
-        }
-        continue;
-      }
-
       const packageName = packageNameForSpecifier(specifier);
-      const boundarySpecifier = aliasedTargetSpecifier(
-        specifier,
-        packageName,
-        declaredDependencies.npmAliasTargets,
-      );
-      const isProtocolImport = boundarySpecifier === '@happier-dev/protocol'
-        || boundarySpecifier.startsWith('@happier-dev/protocol/');
-      if (isProtocolImport) {
+      const boundarySpecifier = aliasedTargetSpecifier(specifier, packageName, declaredDependencies.npmAliasTargets);
+      if (isHostProtocolSpecifier(boundarySpecifier)) {
         productionProtocolImportPackages.add(packageRoot);
-        violations.push({
-          filePath,
-          specifier,
-          kind: 'forbidden-protocol-import',
-          details: 'Plugin production code must consume public contracts through @happier-dev/plugin-sdk; do not bypass the SDK boundary.',
-        });
-        continue;
       }
-
-      if (
-        boundarySpecifier.startsWith('@happier-dev/')
-        && !publicPluginPackages.has(boundarySpecifier)
-        && !isPrivilegedAdapterPrivateImport(filePath, specifier)
-      ) {
-        violations.push({
-          filePath,
-          specifier,
-          kind: 'forbidden-private-happier-import',
-          details: 'External-shaped plugin production code may import only public Plugin SDK/UI paths or public feature-protocol package exports.',
-        });
+      const violation = forbiddenImport(filePath, specifier, boundarySpecifier, packageRoot, publicPluginPackages);
+      if (violation) {
+        violations.push(violation);
         continue;
       }
 
@@ -660,6 +683,12 @@ export function validateExtensionImportBoundaries(options?: {
     if (
       declaredDependencies.hasRuntimeProtocolDependency
       && !productionProtocolImportPackages.has(packageRoot)
+      && (!options?.changedFiles || !collectFileInventory({ rootDir, searchRoots: [`${packageRoot}/src`], include: /\.[cm]?[jt]sx?$/ })
+        .some(file => isProductionPluginSource(file.filePath) && analyzePluginSource(file.filePath, file.content).importSpecifiers
+          .some(specifier => {
+            const target = aliasedTargetSpecifier(specifier, packageNameForSpecifier(specifier), declaredDependencies.npmAliasTargets);
+            return isHostProtocolSpecifier(target);
+          })))
     ) {
       violations.push({
         filePath: `${packageRoot}/package.json`,

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -1028,4 +1028,96 @@ test('extension import boundary validator distinguishes generated upstream sourc
   assert.ok(pluginImport.violations.every((violation) => (
     violation.filePath !== 'packages/plugins/acme/src/agent/generatedExtension.ts'
   )));
+});
+
+
+test('changed-file validation inspects selected sources and checks manifests against their whole plugin', (t) => {
+  const rootDir = mkdtempSync(join(tmpdir(), 'happier-extension-import-boundary-'));
+  t.after(() => rmSync(rootDir, { recursive: true, force: true }));
+  const files = {
+    'packages/plugins/acme/package.json': JSON.stringify({ dependencies: { zod: '1' } }),
+    'packages/plugins/acme/src/selected.ts': "import { z } from 'zod';",
+    'packages/plugins/acme/src/unselected.ts': "import { hidden } from '@happier-dev/agents';",
+  };
+  for (const [filePath, content] of Object.entries(files)) {
+    mkdirSync(dirname(join(rootDir, filePath)), { recursive: true });
+    writeFileSync(join(rootDir, filePath), content);
+  }
+  assert.equal(validateExtensionImportBoundaries({ rootDir, changedFiles: [
+    'packages\\plugins\\acme\\src\\selected.ts', 'packages/plugins/acme/src/deleted.ts',
+  ] }).ok, true);
+  assert.equal(validateExtensionImportBoundaries({ rootDir, changedFiles: [] }).ok, true);
+  assert.deepEqual(validateExtensionImportBoundaries({ rootDir, changedFiles: ['packages/plugins/acme/package.json'] })
+    .violations.map(({ filePath }) => filePath), ['packages/plugins/acme/src/unselected.ts']);
+  assert.equal(validateExtensionImportBoundaries({ rootDir }).ok, false);
+});
+
+test('module namespace, bracket access and inline createRequire loads cannot bypass plugin boundaries', (t) => {
+  const rootDir = mkdtempSync(join(tmpdir(), 'happier-extension-import-boundary-'));
+  t.after(() => rmSync(rootDir, { recursive: true, force: true }));
+  const shapes = [
+    "import * as modules from 'node:module'; modules.createRequire(import.meta.url)('@happier-dev/agents');",
+    "import modules from 'node:module'; const load = modules.createRequire(import.meta.url); load('@happier-dev/agents');",
+    "import { createRequire } from 'node:module'; createRequire(import.meta.url)('@happier-dev/agents');",
+    "module['require']('@happier-dev/agents');",
+    "const load = require; load('@happier-dev/agents');",
+    "const load = module['require']; load('@happier-dev/agents');",
+    "import modules = require('node:module'); modules.createRequire(import.meta.url)('@happier-dev/agents');",
+    "const { createRequire } = await import('node:module'); createRequire(import.meta.url)('@happier-dev/agents');",
+    "const { createRequire } = require('node:module'); const load = createRequire(import.meta.url); load('@happier-dev/agents');",
+    "const modules = require('node:module'); const load = modules['createRequire'](import.meta.url); load('@happier-dev/agents');",
+  ];
+  const inventory = shapes.map((content, index) => ({ filePath: `packages/plugins/acme/src/load${index}.ts`, content }));
+  const result = validateExtensionImportBoundaries({ rootDir, inventory });
+  assert.deepEqual(result.violations.filter(({ kind }) => kind === 'forbidden-private-happier-import')
+    .map(({ filePath }) => filePath), inventory.map(({ filePath }) => filePath));
+});
+
+
+test('public shared-package admission follows public dependencies without admitting host-private chains', (t) => {
+  const rootDir = mkdtempSync(join(tmpdir(), 'happier-extension-import-boundary-'));
+  t.after(() => rmSync(rootDir, { recursive: true, force: true }));
+  const packages = {
+    'a-dependent': { private: false, dependency: '@happier-dev/z-leaf' },
+    'z-leaf': { private: false, dependency: '@happier-dev/plugin-sdk' },
+    'host-leaf': { private: false, dependency: '@happier-dev/agents' },
+    'host-dependent': { private: false, dependency: '@happier-dev/host-leaf' },
+    'private-leaf': { private: true, dependency: '@happier-dev/plugin-sdk' },
+    'host-relative': { private: false, dependency: '../../agents/src/index.ts' },
+    'host-alias': { private: false, dependency: '@/host' },
+    'host-app': { private: false, dependency: 'apps/cli/src/host' },
+    'host-dynamic': { private: false, dependency: '@happier-dev/plugin-sdk' },
+  };
+  for (const [name, { private: isPrivate, dependency }] of Object.entries(packages)) {
+    mkdirSync(join(rootDir, `packages/${name}/src`), { recursive: true });
+    writeFileSync(join(rootDir, `packages/${name}/package.json`), JSON.stringify({
+      name: `@happier-dev/${name}`, private: isPrivate, exports: { '.': './dist/index.js' },
+    }));
+    writeFileSync(join(rootDir, `packages/${name}/src/index.ts`), `export * from '${dependency}';`);
+  }
+  writeFileSync(join(rootDir, 'packages/host-dynamic/src/index.ts'), 'export const value = import(process.env.HOST_MODULE);');
+  const names = Object.keys(packages).map(name => `@happier-dev/${name}`);
+  mkdirSync(join(rootDir, 'packages/plugins/acme/src'), { recursive: true });
+  writeFileSync(join(rootDir, 'packages/plugins/acme/package.json'), JSON.stringify({
+    dependencies: Object.fromEntries(names.map(name => [name, '1'])),
+  }));
+  writeFileSync(join(rootDir, 'packages/plugins/acme/src/index.ts'), names.map(name => `export * from '${name}';`).join('\n'));
+  assert.deepEqual(validateExtensionImportBoundaries({ rootDir }).violations.map(({ specifier }) => specifier),
+    ['@happier-dev/host-alias', '@happier-dev/host-app', '@happier-dev/host-dependent', '@happier-dev/host-dynamic', '@happier-dev/host-leaf', '@happier-dev/host-relative', '@happier-dev/private-leaf']);
+});
+
+
+test('declaration artifacts do not duplicate authored plugin source boundary findings', (t) => {
+  const rootDir = mkdtempSync(join(tmpdir(), 'happier-extension-import-boundary-'));
+  t.after(() => rmSync(rootDir, { recursive: true, force: true }));
+  const inventory = [
+    { filePath: 'packages/plugins/acme/src/index.d.ts', content: "export * from '@happier-dev/agents';" },
+    { filePath: 'packages/plugins/acme/src/index.d.mts', content: "export * from '@happier-dev/agents';" },
+    { filePath: 'packages/plugins/acme/src/index.d.cts', content: "export * from '@happier-dev/agents';" },
+    { filePath: 'packages/plugins/acme/src/index.ts', content: 'export const value = true;' },
+  ];
+  assert.equal(validateExtensionImportBoundaries({ rootDir, inventory }).ok, true);
+  inventory[3]!.content = "export type Value = import('@happier-dev/agents').Value;";
+  assert.deepEqual(validateExtensionImportBoundaries({ rootDir, inventory }).violations.map(({ filePath }) => filePath),
+    ['packages/plugins/acme/src/index.ts']);
 });
