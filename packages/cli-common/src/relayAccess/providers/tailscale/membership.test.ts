@@ -6,8 +6,9 @@ import { applyMachineSetupEffectPlan, checkMachineSetupEffectPlan, createMachine
 import { tailscaleMembershipPrograms } from './membership.js';
 import { tailscaleRelayAccessProvider } from './index.js';
 
-function machine(initialOnline = true) {
-    let state = 'Running';
+function machine(initialOnline = true, initialState = 'Running', initialWantRunning = true) {
+    let state = initialState;
+    let wantRunning = initialWantRunning;
     let online = initialOnline;
     let operator = 'daemon-user';
     const commands: MachineSetupNativeCommand[] = [];
@@ -15,10 +16,10 @@ function machine(initialOnline = true) {
     const backend = createMachineSetupNativeBackend({ run: async command => {
         commands.push(command);
         if (command.args[0] === 'status') return { code: 0, stdout: JSON.stringify({ BackendState: state, Self: { Online: online } }), stderr: '' };
-        if (command.args[0] === 'debug') return { code: 0, stdout: JSON.stringify({ OperatorUser: operator }), stderr: '' };
+        if (command.args[0] === 'debug') return { code: 0, stdout: JSON.stringify({ OperatorUser: operator, WantRunning: wantRunning }), stderr: '' };
         nativeEffects.push([...command.args]);
-        if (command.args[0] === 'down') state = 'Stopped';
-        else if (command.args[0] === 'up') { state = 'Running'; online = true; }
+        if (command.args[0] === 'down') { wantRunning = false; if (state !== 'NeedsLogin') state = 'Stopped'; }
+        else if (command.args[0] === 'up') { state = 'Running'; online = true; wantRunning = true; }
         else if (command.args[0] === 'set') operator = command.args[1]!.slice('--operator='.length);
         return { code: 0, stdout: '', stderr: '' };
     } });
@@ -36,6 +37,28 @@ async function plan(backend: ReturnType<typeof createMachineSetupNativeBackend>,
 }
 
 describe('reviewed builtin Tailscale membership through the native interpreter', () => {
+    it.each([false, true])('authenticates a selected key from NeedsLogin with WantRunning=%s', async wantRunning => {
+        const f = machine(false, 'NeedsLogin', wantRunning);
+        const reviewed = await plan(f.backend, true);
+        expect(await applyMachineSetupEffectPlan({ plan: reviewed, backend: f.backend })).toMatchObject({ status: 'applied' });
+        expect(f.nativeEffects).toEqual([
+            ...(wantRunning ? [['down']] : []),
+            ['up', '--force-reauth', '--auth-key=file:/run/happier-machine-credentials/install.setup-key'],
+        ]);
+        expect(f.state()).toBe('Running');
+    });
+
+    it.each([false, true])('disconnects a NeedsLogin node with WantRunning=%s without requiring a saved login', async wantRunning => {
+        const f = machine(false, 'NeedsLogin', wantRunning);
+        const reviewed = await checkMachineSetupEffectPlan({
+            basis: { kind: 'setup', machineId: 'machine', desiredRevision: 1 },
+            steps: tailscaleMembershipPrograms.leave.steps, backend: f.backend,
+        });
+        expect(await applyMachineSetupEffectPlan({ plan: reviewed, backend: f.backend })).toMatchObject({ status: 'applied' });
+        expect(f.nativeEffects).toEqual(wantRunning ? [['down']] : []);
+        expect(f.state()).toBe('NeedsLogin');
+    });
+
     it('does not accept a Running but offline local node as a completed connection', async () => {
         const f = machine(false);
         const reviewed = await plan(f.backend, false);

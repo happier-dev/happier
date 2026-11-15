@@ -15,6 +15,13 @@ const connected = { op: 'and' as const, all: [
     { op: 'eq' as const, path: 'Self.Online', value: true },
 ] };
 
+// `down` sets WantRunning=false. A node without a saved login can remain
+// NeedsLogin, so BackendState=Stopped is not its completion condition.
+const disconnected = {
+    executable: 'tailscale', args: ['debug', 'prefs'], unsatisfiedExitCodes: [],
+    stdoutJson: { op: 'eq', path: 'WantRunning', value: false },
+} satisfies Extract<MachineRecipeV1['steps'][number], { kind: 'command' }>['check'];
+
 /** A selected key is a reviewed finite intent, not a persistent desired network.
  * `down` preserves the existing login/profile; it does not perform logout.
  * The ordinary P20 interpreter reobserves join after the first drifted step,
@@ -29,8 +36,7 @@ export function createTailscaleJoinSteps(binding: Readonly<{
             { id: 'tailscale-switch', kind: 'command', executable: 'tailscale', args: ['down'],
                 review: { title: 'Switch Tailscale network', description: 'Disconnect the observed profile before authenticating with the selected key. A failed authentication leaves that profile stopped; its saved login is retained.' },
                 when: [{ input: { op: 'truthy', path: binding.switchNetworkInputPath ?? 'switchNetwork' } }],
-                check: { executable: 'tailscale', args: ['status', '--json'], unsatisfiedExitCodes: [],
-                    stdoutJson: { op: 'eq', path: 'BackendState', value: 'Stopped' } } },
+                check: disconnected },
             { id: 'tailscale-join', kind: 'command', executable: 'tailscale',
                 args: ['up', '--force-reauth', { kind: 'template', value: '--auth-key=file:{file}',
                     variables: { file: binding.credentialFile } }],
@@ -59,7 +65,6 @@ export const tailscaleMembershipPrograms: Readonly<{ join: MachineRecipeV1; leav
         id: 'tailscale-leave', revision: '1', title: 'Leave Tailscale', inputSchema,
         steps: [{ id: 'tailscale-leave', kind: 'command', executable: 'tailscale', args: ['down'],
             review: { title: 'Disconnect Tailscale', description: 'Stop this Machine’s current Tailscale connection without deleting its saved login.' },
-            check: { executable: 'tailscale', args: ['status', '--json'], unsatisfiedExitCodes: [],
-                stdoutJson: { op: 'eq', path: 'BackendState', value: 'Stopped' } } }],
+            check: disconnected }],
     },
 };
