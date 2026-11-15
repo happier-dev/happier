@@ -171,11 +171,11 @@ export const ArtifactActionOutputSchemasV1 = {
   'artifact.revisions.list': (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(subject, { revisions: z.array(ArtifactBodyRevisionV1Schema), retentionCount: z.number().check(z.int(), z.nonnegative()) })),
   'artifact.revisions.restore': acknowledgement,
   'artifact.storage.usage': ArtifactStorageUsageV1Schema,
-  'artifact.public_link.create': z.strictObject({ publicShare: StoredContentPublicShareV1Schema, url: z.optional(z.string().check(z.url())) }),
-  'artifact.public_link.list': StoredContentPublicSharesListResponseV1Schema,
+  'artifact.public_link.create': lazyZodSchema(() => z.strictObject({ publicShare: StoredContentPublicShareV1Schema, url: z.optional(z.string().check(z.url())) })),
+  'artifact.public_link.list': lazyZodSchema(() => StoredContentPublicSharesListResponseV1Schema),
   'artifact.public_link.join': ArtifactSignedInLinkJoinResultV1Schema,
   'artifact.public_link.revoke': (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(subject, { shareId: z.string().check(z.minLength(1)), revoked: z.literal(true) })),
-  'artifact.public_link.audit': StoredContentPublicShareAccessLogResponseV1Schema,
+  'artifact.public_link.audit': lazyZodSchema(() => StoredContentPublicShareAccessLogResponseV1Schema),
 } as const;
 export type ArtifactActionInputV1<T extends ArtifactActionIdV1> = z.input<(typeof ArtifactActionInputSchemasV1)[T]>;
 export type ArtifactActionResultV1<T extends ArtifactActionIdV1> = z.output<(typeof ArtifactActionOutputSchemasV1)[T]>;

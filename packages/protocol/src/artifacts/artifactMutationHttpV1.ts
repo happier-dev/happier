@@ -1,4 +1,5 @@
 import { z } from '../zodRuntimePolicy.js';
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ArtifactCreateIdV1Schema } from './artifactIdV1.js';
 import { ApprovalArtifactQueryHintsV1Schema } from '../approvals/approvalArtifactKindV1.js';
 import { ArtifactBlobWriteV1Schema } from './artifactBinaryV1.js';
@@ -43,7 +44,7 @@ export function createArtifactUpdateHttpInputV1Schema<const RequiresMemoryDecisi
     requiresMemoryDecisionSource: RequiresMemoryDecisionSource;
 }>) {
     return z.strictObject({
-        transcriptVisualPublication: z.optional(ApprovalTranscriptVisualPublicationV1Schema),
+        transcriptVisualPublication: z.optional(lazyZodSchema(() => ApprovalTranscriptVisualPublicationV1Schema)),
         header: z.optional(z.string()),
         kind: z.optional(ArtifactStoredKindV1Schema),
         approvalState: z.optional(ApprovalArtifactQueryHintsV1Schema.shape.approvalState),
