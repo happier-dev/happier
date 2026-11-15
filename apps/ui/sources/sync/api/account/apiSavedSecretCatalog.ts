@@ -70,6 +70,7 @@ export async function readSavedSecretCatalogInContext(
     const query = new URLSearchParams();
     if (selection?.includeReferenceCensus) query.set('includeReferenceCensus', 'true');
     if (selection?.resourceId) query.set('resourceId', selection.resourceId);
+    for (const resourceId of selection?.resourceIds ?? []) query.append('resourceIds', resourceId);
     if (selection?.expectedRevision !== undefined) query.set('expectedRevision', String(selection.expectedRevision));
     if (selection?.requireManage) query.set('requireManage', 'true');
     const result = await requestHomeDomain({
@@ -208,10 +209,16 @@ export async function readSavedSecretContentsInContext(
         assertCurrent();
         const parsedRef = references.length === 1 ? parseSavedSecretRefV1(references[0]!) : null;
         if (admission && parsedRef?.kind !== 'shared_resource') return { ok: false, reason: 'unavailable' };
+        // Only the selected batch is transferred; any non-shared reference stays unavailable below.
+        const selectedResourceIds = references.flatMap(reference => {
+            const parsed = parseSavedSecretRefV1(reference);
+            return parsed.kind === 'shared_resource' ? [parsed.resourceId] : [];
+        });
         const result = await readSavedSecretCatalogInContext(context, signal,
             parsedRef?.kind === 'shared_resource' ? { resourceId: parsedRef.resourceId,
                 ...(admission ? { expectedRevision: admission.expectedRevision,
-                    ...(admission.requireManage ? { requireManage: true } : {}) } : {}) } : undefined);
+                    ...(admission.requireManage ? { requireManage: true } : {}) } : {}) }
+                : selectedResourceIds.length > 0 ? { resourceIds: selectedResourceIds } : undefined);
         assertCurrent();
         if (!result.ok) return { ok: false, reason: result.failure.kind === 'conflict' ? 'changed' : 'unavailable' };
         const resources = result.resources.filter((row): row is Extract<SavedSecretResourceMaterialV1, { resourceId: string }> =>

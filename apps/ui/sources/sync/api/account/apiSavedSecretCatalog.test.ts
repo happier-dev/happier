@@ -299,6 +299,32 @@ describe('SavedSecret catalog captured request boundary', () => {
         await expect(read(context, ref)).resolves.toEqual({ ok: false, reason: 'changed' });
     });
 
+    it('acquires and opens only the selected reference batch', async () => {
+        const row = (id: string) => ({ resourceId: id, encryptionMode: 'plain', recipientEnvelope: null,
+            storedContent: { t: 'plain', v: { v: 1, name: id, kind: 'password', value: `${id}-value` } },
+            entry: { ref: `happier:shared-secret:v1:${id}`, source: 'shared_resource', relationship: 'owner', name: id, kind: 'password',
+                revision: 1, materialStatus: 'ready', capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } } });
+        const rows = ['login-a', 'login-b', ...Array.from({ length: 6 }, (_, index) => `unrelated-${index}`)].map(row);
+        const reads: string[] = [];
+        const context = { serverId: 'home-a', accountId: 'account-a',
+            credentials: { token: createAccountTokenForTests('account-a') },
+            resolveAccountMode: async () => 'plain' as const,
+            resolveAccountEncryption: async () => { throw new Error('Plain resources must not request Account keys'); },
+            assertCurrent: () => {},
+            request: (async path => {
+                if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+                if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+                reads.push(String(path));
+                const selected = new URL(String(path), 'https://home.invalid').searchParams.getAll('resourceIds');
+                return Response.json({ resources: selected.length ? rows.filter(candidate => selected.includes(candidate.resourceId)) : rows });
+            }) satisfies ServerFetch,
+        };
+        const read = await catalog.readSavedSecretContentsInContext(context,
+            ['happier:shared-secret:v1:login-a', 'happier:shared-secret:v1:login-b']);
+        expect(read.ok && [...read.contents.keys()]).toEqual(['happier:shared-secret:v1:login-a', 'happier:shared-secret:v1:login-b']);
+        expect(reads).toEqual(['/v1/account/saved-secrets/resources/materials?resourceIds=login-a&resourceIds=login-b']);
+    });
+
     it('requires exact managed revision admission for person disclosure through the incumbent reader', async () => {
         const ref = 'happier:shared-secret:v1:managed-login';
         let canManage = true;
