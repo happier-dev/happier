@@ -313,20 +313,27 @@ describe('startHappyServer notification stream', () => {
             };
             const a = await open(sessionA);
             const b = await open(sessionB);
+            // One host endpoint; each Session is reached only through its own bearer.
+            expect(b.context.socketPath).toBe(a.context.socketPath);
             expect(a.context.bearerToken).not.toBe(b.context.bearerToken);
             const catalogReads = daemonCatalogBoundary.read.mock.calls.length;
             for (const method of ['POST', 'GET', 'DELETE']) {
-                expect((await sendLocalSessionRequest(b.context.socketPath, `Bearer ${a.context.bearerToken}`, '{', method)).status).toBe(401);
+                expect((await sendLocalSessionRequest(a.context.socketPath, 'Bearer AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', '{', method)).status).toBe(401);
             }
             expect(daemonCatalogBoundary.read.mock.calls).toHaveLength(catalogReads);
             expect((await sendLocalSessionRequest(a.context.socketPath, `Bearer ${a.context.bearerToken}`)).status).toBe(400);
+            // A connection the endpoint dispatched to Session A closes when A stops; B stays served.
             const acceptedSocket = createConnection(a.context.socketPath);
             onTestFinished(() => { acceptedSocket.destroy(); });
             await once(acceptedSocket, 'connect');
             const acceptedClosed = once(acceptedSocket, 'close');
+            acceptedSocket.write(`POST /mcp HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer ${a.context.bearerToken}\r\n`
+                + 'Content-Type: application/json\r\nAccept: application/json, text/event-stream\r\nContent-Length: 1\r\n\r\n{');
+            await once(acceptedSocket, 'data');
             await a.server.stop();
             await acceptedClosed;
-            await expect(sendLocalSessionRequest(a.context.socketPath, `Bearer ${a.context.bearerToken}`)).rejects.toThrow();
+            expect((await sendLocalSessionRequest(a.context.socketPath, `Bearer ${a.context.bearerToken}`)).status).toBe(401);
+            expect((await sendLocalSessionRequest(b.context.socketPath, `Bearer ${b.context.bearerToken}`)).status).toBe(400);
             const replacement = await open(sessionA);
             expect(replacement.context.bearerToken).not.toBe(a.context.bearerToken);
             expect((await sendLocalSessionRequest(replacement.context.socketPath, `Bearer ${a.context.bearerToken}`)).status).toBe(401);

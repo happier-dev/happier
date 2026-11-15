@@ -15,11 +15,13 @@ import { accountSettingsParse } from '@happier-dev/protocol';
 
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { createHappierMcpBridge } from '@/agent/runtime/createHappierMcpBridge';
+import type { HappyMcpSessionClient } from '@/mcp/startHappyServer';
 import { HAPPIER_MCP_ACTION_SPECS_RESOURCE_URI } from '@/mcp/resources/registerHappierMcpResources';
 import { createSessionHolderSocketPath, requireSessionHolderExecutablePath, spawnSessionHolderChild, type SessionHolderTarget } from '@/subprocess/supervision/sessionHolder';
 import { SESSION_TARGET_PLACEMENT_ENV_KEY } from '@/subprocess/supervision/sessionTargetRelay';
 import { sessionMcpAgentTransport } from './sessionMcpClient.testkit';
 import { SESSION_MCP_CONTEXT_FILE_ENV } from './sessionMcpLocalContext';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 const daemonCatalogBoundary = vi.hoisted(() => ({
     read: vi.fn(async () => ({ kind: 'available' as const, plugins: [], tools: [] })),
@@ -33,8 +35,8 @@ vi.mock('@/daemon/controlClient', async (importOriginal) => {
         requestDaemonPluginActionExecution: async () => ({ matched: false }) };
 });
 
-async function startSessionMcp(sessionId: string) {
-    return await createHappierMcpBridge({ sessionId,
+async function startSessionMcp(sessionId: string, extra: Partial<HappyMcpSessionClient> = {}) {
+    return await createHappierMcpBridge({ ...extra, sessionId,
         getServerBinding: () => ({ serverId: 'test-home', serverUrl: 'https://test-home.example.test' }),
         rpcHandlerManager: new RpcHandlerManager({ scopePrefix: sessionId, encryptionMode: 'plain' }),
         updateMetadata() {}, getMetadataSnapshot: () => ({}),
@@ -185,6 +187,55 @@ describe('Session MCP through the native holder relay', () => {
             }
         } finally {
             await bridge.happierMcpServer.stop();
+        }
+    }, 120_000);
+
+    it.runIf(process.platform !== 'win32')('serves two Sessions of one host from one socket and resolves each Agent tree to its own Session', async () => {
+        const inSession = <T>(run: () => T): T => runAddedHostedSession({ environment: { ...process.env }, workingDirectory: process.cwd(), end: () => {} }, run);
+        // Each Session's own execution-run owner and admitted Turn: what a request reaching that Session can act on.
+        const stops = { a: vi.fn(async () => ({ ok: true as const, data: { v: 1, ok: true } })),
+            b: vi.fn(async () => ({ ok: true as const, data: { v: 1, ok: true } })) };
+        const unexpected = async () => { throw new Error('unexpected execution-run call'); };
+        const runOwner = (sessionId: string, stop: typeof stops.a): Partial<HappyMcpSessionClient> => ({
+            getWorkDepth: () => 0, getPermissionMode: () => 'default',
+            getActiveTurnPermissionWitness: () => ({ turnId: `turn-${sessionId}`, workDepth: 0,
+                causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' } }) as never,
+            executionRuns: { start: unexpected, list: unexpected, get: unexpected, send: unexpected, action: unexpected, stop },
+        });
+        let bridgeA: Awaited<ReturnType<typeof startSessionMcp>> | undefined;
+        let bridgeB: Awaited<ReturnType<typeof startSessionMcp>> | undefined;
+        try {
+            // Each Session starts in its own hosted scope, as the session host runs it; A's Agent tree is spawned in A's scope.
+            await inSession(async () => {
+                bridgeA = await startSessionMcp('session-mcp-host-a', runOwner('session-mcp-host-a', stops.a));
+                const contextA = bridgeA.happierMcpServer.localContext;
+                if (!contextA || !('socketPath' in contextA)) throw new Error('missing Session MCP socket context');
+                bridgeB = await inSession(() => startSessionMcp('session-mcp-host-b', runOwner('session-mcp-host-b', stops.b)));
+                const contextB = bridgeB.happierMcpServer.localContext;
+                if (!contextB || !('socketPath' in contextB)) throw new Error('missing Session MCP socket context');
+                // One listener for the host's Sessions; separate bearers.
+                expect(contextB.socketPath).toBe(contextA.socketPath);
+                expect(contextB.bearerToken).not.toBe(contextA.bearerToken);
+                // A bearer-less client in A's Agent tree is A: a stop naming B is refused as another Session's,
+                // one naming A is not (it reaches A's own execution-run owner).
+                const call = (sessionId: string) => `const http=require('node:http');const send=(b)=>new Promise(r=>{const q=http.request({socketPath:${JSON.stringify(contextA.socketPath)},path:'/mcp',method:'POST',`
+                    + `headers:{'content-type':'application/json',accept:'application/json, text/event-stream'}},res=>{let t='';res.on('data',c=>t+=c);res.on('end',()=>r(res.statusCode+' '+t));});q.end(JSON.stringify(b));});`
+                    + `send({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'action_execute',arguments:{actionId:'execution.run.stop',input:{sessionId:${JSON.stringify(sessionId)},runId:'run-1'}}}}).then(o=>process.stdout.write(o));`;
+                const env = { [SESSION_MCP_CONTEXT_FILE_ENV]: bridgeA.happierMcpServer.contextFilePath ?? '' };
+                const namingB = await runInAgentTree(process.execPath, ['-e', call('session-mcp-host-b')], env);
+                const refusedAsAnotherSession = /current_session_only|execution_run_scope_mismatch/u;
+                expect(namingB.startsWith('200'), namingB).toBe(true);
+                expect(namingB, namingB).toMatch(refusedAsAnotherSession);
+                const namingA = await runInAgentTree(process.execPath, ['-e', call('session-mcp-host-a')], env);
+                expect(namingA.startsWith('200'), namingA).toBe(true);
+                expect(namingA, namingA).not.toMatch(refusedAsAnotherSession);
+                expect([stops.a.mock.calls.length, stops.b.mock.calls.length]).toEqual([1, 0]);
+                // The same bearer-less request from outside every Session's Agent tree is refused.
+                expect(await initializeOverSocket(contextA.socketPath)).toBe(401);
+            });
+        } finally {
+            await bridgeA?.happierMcpServer.stop();
+            await bridgeB?.happierMcpServer.stop();
         }
     }, 120_000);
 

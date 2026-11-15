@@ -37,6 +37,13 @@ export type SessionMcpRelayHost = Readonly<{
     lifetimeSignal: AbortSignal;
 }>;
 
+/** A relay upgrade no Session admits: a bare 401, never an MCP byte. */
+export function refuseSessionMcpRelayUpgrade(socket: Socket): void {
+    logger.debug('[happierMCP] Session MCP relay refused');
+    socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+    socket.destroySoon();
+}
+
 /** Admit one relay upgrade and serve its connection as an MCP session in this process. */
 export async function serveSessionMcpRelayUpgrade(
     request: IncomingMessage,
@@ -48,9 +55,7 @@ export async function serveSessionMcpRelayUpgrade(
     const toolNameMaxLength = readToolNameMaxLength(request);
     if (String(request.headers.upgrade ?? '').toLowerCase() !== SESSION_MCP_RELAY_UPGRADE || toolNameMaxLength === null
         || host.lifetimeSignal.aborted || !(await host.admit(socket, request.headers.authorization))) {
-        logger.debug('[happierMCP] Session MCP relay refused');
-        socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
-        socket.destroySoon();
+        refuseSessionMcpRelayUpgrade(socket);
         return;
     }
     socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: ${SESSION_MCP_RELAY_UPGRADE}\r\nConnection: Upgrade\r\n\r\n`);
