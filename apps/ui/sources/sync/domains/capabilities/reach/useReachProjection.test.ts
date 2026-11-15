@@ -13,7 +13,7 @@ const { applyPromptLibraryCatalogSnapshot, resetPromptLibraryCatalogSnapshotsFor
 const { resetPromptLibraryCatalogEngineForTests } = await import('@/sync/engine/settings/promptLibraryCatalogEngine');
 const { machineAgentInventoryStore } = await import('@/agents/machineAgents/machineAgentInventoryStore');
 const { serverAccountScopedResourceKey } = await import('@/sync/domains/scope/serverAccountScope');
-const { useReachProjection } = await import('./useReachProjection');
+const { useReachMachines, useReachProjection } = await import('./useReachProjection');
 const before = storage.getState();
 afterEach(async () => { await standardCleanup(); storage.setState(before, true); clearMachineRequestReachabilityForTest();
     resetMcpServerCatalogEngineForTests(); resetMcpServerCatalogSnapshotsForTests();
@@ -82,4 +82,43 @@ it.each(['mcp_server', 'skill'] as const)('%s includes offline machines and Proj
             diagnostics: [{ key: 'skill-rules', revision: 1, reason: 'invalid-stored-content' }] }, rawSettings: {}, sourceSettingsVersion: 1 }, true);
     });
     expect(hook.getCurrent()).toEqual([]);
+});
+
+// A Machine page reads reach for its own Machine. On a busy Account the rest of the fleet opens one Machine at a
+// time (name, platform, agent inventory); none of that is a reason to redraw a page about another Machine.
+it('reads one Machine\'s reach without redrawing while other Machines open', async () => {
+    const serverUrl = 'https://reach-one-machine.test';
+    await network.addHome(serverUrl, 'reach-one-account');
+    const home = await adoptHomeProfile({ source: 'manual', descriptor: { v: 1,
+        homeServerIdentityId: 'srv_reach_one', canonicalServerUrl: serverUrl, revision: 1,
+        endpoints: [{ kind: 'https', url: serverUrl }] } });
+    if (!home.serverIdentityId) throw new Error('Expected qualified Home');
+    await setActiveServerId(home.id);
+    const scope = { serverId: home.serverIdentityId, accountId: 'reach-one-account' };
+    const routed = createMachineFixture({ id: 'routed', active: true, activeAt: Date.now() });
+    routed.metadata = { ...routed.metadata!, displayName: 'Routed', agentInventory: { checkedAt: 2, installedAgentIds: ['codex'] } };
+    const others = Array.from({ length: 3 }, (_, index) => createMachineFixture({ id: `other-${index}`, active: true, activeAt: Date.now() }));
+    for (const machine of others) machine.metadata = null;
+    const fleet = [routed, ...others];
+    storage.setState({ settingsScope: scope, profileScope: scope, machines: Object.fromEntries(fleet.map(machine => [machine.id, machine])),
+        machineListByServerId: { [scope.serverId]: fleet }, machineListStatusByServerId: { [scope.serverId]: 'idle' } });
+    storage.getState().applyMachines(fleet, true, { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
+    let renders = 0;
+    const hook = await renderHook(() => { renders += 1; return useReachMachines({ machineIds: ['routed'] }); });
+    await act(async () => { await vi.waitFor(() => expect(hook.getCurrent().machines).toHaveLength(1)); });
+    expect(hook.getCurrent().machines[0]).toMatchObject({ machineId: 'routed', name: 'Routed', agentIds: ['codex'] });
+    const settled = renders;
+    // The rest of the fleet opens, one Machine per publication.
+    for (const [index, machine] of others.entries()) {
+        await act(async () => storage.getState().applyMachines([{ ...machine, metadataVersion: machine.metadataVersion + 1,
+            metadata: { ...createMachineFixture().metadata!, displayName: `Other ${index}`, platform: 'linux',
+                agentInventory: { checkedAt: 3, installedAgentIds: ['claude'] } } }], false,
+            { sourceServerId: scope.serverId, sourceAccountId: scope.accountId }));
+    }
+    expect(renders - settled).toBe(0);
+    // Its own Machine's change still arrives.
+    await act(async () => storage.getState().applyMachines([{ ...routed, metadataVersion: routed.metadataVersion + 1,
+        metadata: { ...routed.metadata!, agentInventory: { checkedAt: 4, installedAgentIds: ['codex', 'gemini'] } } }], false,
+        { sourceServerId: scope.serverId, sourceAccountId: scope.accountId }));
+    await act(async () => { await vi.waitFor(() => expect(hook.getCurrent().machines[0]?.agentIds).toEqual(['codex', 'gemini'])); });
 });

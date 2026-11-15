@@ -110,8 +110,10 @@ export function useInstalledMachines(input: StoreInstalledInput, demand: StoreDe
     // raw snapshot arrays also change when an unrelated daemon resource sample arrives.
     const homes = React.useMemo(() => includeMembership && demand.presented && scope ? [scope.serverId] : [],
     [includeMembership, demand.presented, scope?.serverId]);
-    const displays = useMachineDisplaysByServerId(homes);
     const selectedMachineId = input.machine?.machineId;
+    // On a Machine's door, only that Machine's membership: other Machines opening redraw nothing here.
+    const selectedOnly = React.useMemo(() => selectedMachineId ? { machineIds: [selectedMachineId] } : undefined, [selectedMachineId]);
+    const displays = useMachineDisplaysByServerId(homes, selectedOnly);
     const machineIds = React.useMemo(() => {
         const records = scope ? displays[scope.serverId] : undefined;
         if (selectedMachineId) {

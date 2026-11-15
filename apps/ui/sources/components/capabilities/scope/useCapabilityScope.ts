@@ -150,8 +150,12 @@ export function useCapabilityScope(place: ScopePlace): CapabilityScopeData {
   const library = useSkillsLibrary();
   const { settings, snapshot, scope, reload } = useMcpServersSettings();
   const pluginItems = usePluginMcpServerItems();
-  const reach = useReachMachines();
-  const { workspaceRefs } = useReachProjects(reach.scope?.serverId);
+  // Only the place's own Machines: the rest of the fleet opening or changing redraws nothing here.
+  const { workspaceRefs } = useReachProjects();
+  const placeMachineIds = React.useMemo(() => place.t === 'machine' ? [place.machineId]
+    : workspaceRefs.filter((ref) => (ref.projectKey ?? ref.id) === place.projectKey).map((ref) => ref.machineId),
+  [place, workspaceRefs]);
+  const reach = useReachMachines({ machineIds: placeMachineIds });
   const placeKey =
     place.t === 'machine'
       ? `machine:${place.machineId}`

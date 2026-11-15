@@ -3,7 +3,7 @@ import type { QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/c
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/connect/configurationActionsV1';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
-import { useMachineListStatusByServerId, useMachineRecordListsByServerId, useMachineRecordValues, useSetting } from '@/sync/store/hooks';
+import { getStorage } from '@/sync/domains/state/storageStore';
 import { resolveMcpServerAdministrationMachineId } from '@/sync/ops/actions/mcpServerAdministrationTarget';
 import { isMcpSignInService, type McpSignInGrantDiagnostics } from './mcpSignInGrantView';
 
@@ -19,16 +19,13 @@ export function useMcpSignInGrantDiagnostics(profiles: readonly QualifiedConnect
   const { execute, ready } = execution;
   const grants = (profiles ?? []).filter(profile => isMcpSignInService(profile.ref.service));
   const enabled = Boolean(scope && grants.length);
-  const selections = useSetting('machineAdministrationTargetsLocalV1');
-  const activeMachines = useMachineRecordValues(enabled);
-  const inventories = useMachineRecordListsByServerId(enabled);
-  const inventoryStatuses = useMachineListStatusByServerId(enabled);
-  // Observe canonical inventory/selection facts, never presentation row order.
-  // Exact saved targets retain Administration's explicit-request admission;
-  // absent preferences keep the same automatic choice as Sign in.
-  const machineId = React.useMemo(() => enabled && scope
-    ? resolveMcpServerAdministrationMachineId(scope, { intent: 'retry' }) : null,
-  [enabled, scope?.serverId, scope?.accountId, selections, activeMachines, inventories, inventoryStatuses]);
+  // Observe the resolved administration Machine, never whole-fleet inventory: another Machine's daemon state or
+  // hydration changes nothing here unless it changes which Machine answers. Exact saved targets retain
+  // Administration's explicit-request admission; absent preferences keep the same automatic choice as Sign in.
+  const subscribeStore = React.useCallback((listener: () => void) => getStorage().subscribe(listener), []);
+  const readMachineId = React.useCallback(() => enabled && scope
+    ? resolveMcpServerAdministrationMachineId(scope, { intent: 'retry' }) : null, [enabled, scope]);
+  const machineId = React.useSyncExternalStore(subscribeStore, readMachineId, readMachineId);
   const key = scope && grants.length > 0 ? JSON.stringify([scope.serverId, scope.accountId, machineId,
     grants.map(grant => [grant.ref.accountId, grant.credentialRevision, grant.configurationRevision])]) : null;
   const inputs = React.useRef({ grants, machineId, isCurrent: execution.isCurrent });

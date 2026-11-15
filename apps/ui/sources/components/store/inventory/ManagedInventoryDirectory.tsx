@@ -105,7 +105,7 @@ export function ManagedInventoryDirectory(
 ): React.ReactNode {
   const { state, input, groupBy } = props;
   const go = useGo();
-  const names = useMachineNames();
+  const names = useMachineNames(input.machine?.machineId);
   const { projects } = useReachProjects(input.scope?.serverId);
   // What ships with Happier (decided once in the row presentation) is its own group, never mixed into what the person added.
   const { added, included } = React.useMemo(
@@ -283,9 +283,10 @@ function useGo() {
 }
 
 type MachineNames = InventoryMachineNames;
-/** Display names from the existing Reach presentation owner; never a native read. */
-function useMachineNames(): MachineNames {
-  const reach = useReachMachines();
+/** Display names from the existing Reach presentation owner; never a native read. On a Machine's door, that Machine's alone. */
+function useMachineNames(machineId: string | undefined): MachineNames {
+  const machineIds = React.useMemo(() => (machineId ? [machineId] : undefined), [machineId]);
+  const reach = useReachMachines(machineIds ? { machineIds } : undefined);
   return React.useMemo(() => {
     const byId = new Map<string, string>();
     const byKey = new Map<string, string>();

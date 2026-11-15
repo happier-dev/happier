@@ -42,10 +42,13 @@ export function useManagedInventoryAttention(query: ManagedInventoryQuery, famil
     const grants = storage(state => state.profile.connectedAccountsV4);
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
     const tests = useHeldMcpServerMachineTests();
-    const reach = useReachMachines();
     const readSecrets = React.useCallback(() => getSavedSecretCatalogSnapshot(scope), [scope]);
     const secrets = React.useSyncExternalStore(subscribeSavedSecretCatalogSnapshots, readSecrets, readSecrets);
     const machineIds = React.useMemo(() => [...new Set(families.skill.rows.flatMap(row => row.reach.map(place => place.machineId)))], [families.skill.rows]);
+    // Names and presence only for the Machines the rows place: other Machines opening redraw nothing here.
+    const placedMachineIds = React.useMemo(() => [...machineIds, ...families.mcpServer.rows.flatMap(row => row.reach.map(place => place.machineId))],
+        [machineIds, families.mcpServer.rows]);
+    const reach = useReachMachines({ machineIds: placedMachineIds });
     const found = useFoundSkillsCache(machineIds, scope);
     const agentMachineIds = React.useMemo(() => [...new Set(families.agent.rows.flatMap(row => row.subject === 'machineAgent' ? row.machineIds : []))],
         [families.agent.rows]);

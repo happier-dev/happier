@@ -64,6 +64,14 @@ export function useReachProjects(serverId?: string | null) {
   }, [scope, rows, serverId]);
 }
 
+/** The name inputs `resolveMachineDisplayNames` reads, for the whole fleet in id order. */
+function readNameSources(displays: Parameters<typeof selectMachineFleetFromRecord>[0]) {
+  return [...selectMachineFleetFromRecord(displays)].sort((left, right) => left.id.localeCompare(right.id))
+    .map(machine => ({ id: machine.id,
+      metadata: machine.metadata !== null ? { displayName: machine.metadata?.displayName ?? null, host: machine.metadata?.host ?? null } : null,
+      ...(machine.availability?.kind ? { availability: { kind: machine.availability.kind } } : {}) }));
+}
+
 /** One Account machine as reach sees it: published install facts and REACH's presence predicate. */
 export type ReachMachine = Readonly<{
   machineId: string;
@@ -91,12 +99,19 @@ export type ReachMachine = Readonly<{
  */
 type InstalledReachMachine = Omit<ReachMachine, 'name' | 'online' | 'offline' | 'lastSeenAt'>;
 
-export function useReachMachines(): Readonly<{
+/**
+ * `machineIds` narrows the result to those Machines (a Machine's own page): its selectors then read only their
+ * facts, so the rest of the fleet opening or changing redraws nothing. Names are still disambiguated against the
+ * whole fleet, the same names the fleet-wide read gives.
+ */
+export function useReachMachines(options?: Readonly<{ machineIds?: readonly string[] }>): Readonly<{
   scope: Readonly<{ serverId: string; accountId: string }> | null;
   machines: readonly ReachMachine[];
   placeMachines: readonly Readonly<{ machineId: string; name: string }>[];
   agentIds: readonly string[];
 }> {
+  const onlyKey = options?.machineIds ? [...new Set(options.machineIds)].sort().join('\n') : null;
+  const only = React.useMemo(() => onlyKey === null ? null : new Set(onlyKey ? onlyKey.split('\n') : []), [onlyKey]);
   const activeScope = useAccountSettingsScope();
   const serverId = activeScope?.serverId;
   const accountId = activeScope?.accountId;
@@ -114,15 +129,25 @@ export function useReachMachines(): Readonly<{
   // Primitive inputs keep both subscriptions fact-local, including newly allocated
   // but unchanged installed-Agent publications. Name disambiguation runs below,
   // only when its actual inputs change, rather than on every root-store publication.
-  const displayNames = useMachineDisplayById(displays => admitted ? [...selectMachineFleetFromRecord(displays)].sort((left, right) => left.id.localeCompare(right.id))
-    .flatMap(machine => [machine.id, machine.metadata?.displayName ?? null, machine.metadata?.host ?? null,
-      machine.metadata !== null, machine.availability?.kind ?? null]) : []);
-  const capabilityInputs = useMachineDisplayById(displays => admitted ? [...selectMachineFleetFromRecord(displays)].sort((left, right) => left.id.localeCompare(right.id))
+  // Narrowed: the selector resolves fleet-disambiguated names itself and keeps only the requested Machines' names.
+  const displayNames = useMachineDisplayById(displays => !admitted ? [] : only
+    ? [...resolveMachineDisplayNames(readNameSources(displays))].filter(([machineId]) => only.has(machineId)).flat()
+    : readNameSources(displays).flatMap(source => [source.id, source.metadata?.displayName ?? null, source.metadata?.host ?? null,
+      source.metadata !== null, source.availability?.kind ?? null]));
+  const capabilityInputs = useMachineDisplayById(displays => admitted ? [...selectMachineFleetFromRecord(displays)]
+    .filter(machine => !only || only.has(machine.id)).sort((left, right) => left.id.localeCompare(right.id))
     .flatMap(machine => [machine.id, machine.metadata?.platform ?? null, machine.metadata?.arch ?? null,
       machine.metadata?.agentInventory?.installedAgentIds.length ?? null,
       ...(machine.metadata?.agentInventory?.installedAgentIds ?? [])]) : []);
   const placeMachines = React.useMemo(() => {
     if (!admitted) return [];
+    if (only) {
+      const named = [];
+      for (let index = 0; index < displayNames.length; index += 2) {
+        named.push({ machineId: displayNames[index] as string, name: displayNames[index + 1] as string });
+      }
+      return named;
+    }
     const sources = [];
     for (let index = 0; index < displayNames.length; index += 5) {
       const [id, displayName, host, hasMetadata, availability] = displayNames.slice(index, index + 5) as [
@@ -132,7 +157,7 @@ export function useReachMachines(): Readonly<{
         ...(availability ? { availability: { kind: availability } } : {}) });
     }
     return [...resolveMachineDisplayNames(sources)].map(([machineId, name]) => ({ machineId, name }));
-  }, [admitted, displayNames]);
+  }, [admitted, displayNames, only]);
   const namesById = React.useMemo(() => new Map(placeMachines.map(machine => [machine.machineId, machine.name])), [placeMachines]);
   const machines = React.useMemo(
     () => {

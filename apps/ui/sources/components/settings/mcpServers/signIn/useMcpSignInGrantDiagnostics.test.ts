@@ -115,6 +115,24 @@ describe('MCP grant diagnostics demand through the real Action owner', () => {
     expect(reads).toEqual(target === 'oauth' ? ['linear'] : []);
   });
 
+  // The grants' diagnostics read through one administration Machine. On a busy Account every other Machine publishes
+  // daemon state all day; none of it changes which Machine answers, so none of it redraws the consumer.
+  it('does not redraw while other Machines publish', async () => {
+    const scope = { serverId: account.home.id, accountId: 'diagnostics-account' };
+    let renders = 0;
+    const hook = await renderHook(() => { renders += 1; return useMcpSignInGrantDiagnostics(profile().connectedAccountsV4, scope); });
+    await vi.waitFor(() => expect(Object.keys(hook.getCurrent())).toHaveLength(3));
+    const settled = renders;
+    const answered = hook.getCurrent();
+    const others = Array.from({ length: 3 }, (_, index) => createMachineFixture({ id: `other-${index}`, active: true, activeAt: Date.now() }));
+    for (const [index, other] of others.entries()) {
+      await act(async () => storage.getState().applyMachines([{ ...other, metadataVersion: other.metadataVersion + index }], false,
+        { sourceServerId: account.home.id, sourceAccountId: scope.accountId }));
+    }
+    expect(renders - settled).toBe(0);
+    expect(hook.getCurrent()).toBe(answered);
+  });
+
   it('does not reread the target on an unrelated grant revision; invalidates both selected revisions', async () => {
     const hook = await renderHook(() => useMcpServerSignIn(server, machines));
     await vi.waitFor(() => expect(hook.getCurrent().view?.state).toBe('connected'));

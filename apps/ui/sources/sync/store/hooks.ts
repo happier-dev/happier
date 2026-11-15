@@ -1443,9 +1443,14 @@ export function useMachineDisplayById<T>(select?: (machines: Record<string, Mach
   }));
 }
 
-/** Home-scoped display inventory: daemon content and heartbeat clocks have their own subscribers. */
-export function useMachineDisplaysByServerId(serverIds: readonly string[]): Readonly<Record<string, Record<string, MachineDisplayRenderable>>> {
+/**
+ * Home-scoped display inventory: daemon content and heartbeat clocks have their own subscribers. `machineIds` keeps
+ * only those Machines (one Machine's page), so the rest of the fleet changing publishes nothing to it.
+ */
+export function useMachineDisplaysByServerId(serverIds: readonly string[], options?: Readonly<{ machineIds?: readonly string[] }>): Readonly<Record<string, Record<string, MachineDisplayRenderable>>> {
+  const onlyKey = options?.machineIds ? [...new Set(options.machineIds)].sort().join('\n') : null;
   const select = React.useMemo(() => {
+    const only = onlyKey === null ? null : new Set(onlyKey ? onlyKey.split('\n') : []);
     const heldByServer = new Map<string, Readonly<{
       machines: Machine[] | null;
       displays: Record<string, MachineDisplayRenderable>;
@@ -1461,6 +1466,7 @@ export function useMachineDisplaysByServerId(serverIds: readonly string[]): Read
         }
         const displays: Record<string, MachineDisplayRenderable> = {};
         for (const machine of selectVisibleMachines(machines) ?? []) {
+          if (only && !only.has(machine.id)) continue;
           const display = buildMachineDisplayRenderableFromMachine(machine);
           const previous = held?.displays[machine.id];
           if (previous && areMachineDisplaySemanticsEqual(previous, display)) {
@@ -1474,7 +1480,7 @@ export function useMachineDisplaysByServerId(serverIds: readonly string[]): Read
       }
       return next;
     };
-  }, [serverIds]);
+  }, [serverIds, onlyKey]);
   return usePresentedMachineInventory(select, true);
 }
 
