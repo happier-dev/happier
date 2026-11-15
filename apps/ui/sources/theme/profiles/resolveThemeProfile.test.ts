@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { darkTheme, lightTheme } from '@/theme';
+import { BUILT_IN_THEME_PROFILES } from './builtInThemeProfiles';
 import type { ThemeProfileV1 } from './themeProfileTypes';
 import { clearEffectiveThemeCache, resolveThemeProfile } from './resolveThemeProfile';
 
@@ -18,6 +19,32 @@ describe('resolveThemeProfile', () => {
     it('preserves canonical visual values when no profile is active', () => {
         expect(resolveThemeProfile({ mode: 'light', profile: null })).toBe(lightTheme);
         expect(resolveThemeProfile({ mode: 'dark', profile: null })).toBe(darkTheme);
+    });
+
+    it.each(['light', 'dark'] as const)('keeps the default selected radio visible in %s themes', (mode) => {
+        for (const activeProfile of [null, ...BUILT_IN_THEME_PROFILES.map((definition) => definition.profile)]) {
+            const effective = resolveThemeProfile({ mode, profile: activeProfile });
+            expect(effective.colors.radio.dot).toBe(effective.colors.radio.active);
+        }
+    });
+
+    it('follows the active radio ink unless the profile supplies a valid explicit dot', () => {
+        const resolve = (dot: string | undefined) => resolveThemeProfile({
+            mode: 'dark',
+            profile: profile({
+                light: {},
+                dark: {
+                    'control.radio.active': '#ABCDEF',
+                    ...(dot === undefined ? {} : { 'control.radio.dot': dot }),
+                },
+            }),
+        });
+
+        expect(resolve(undefined).colors.radio.dot).toBe('#ABCDEF');
+        expect(resolve('red').colors.radio.dot).toBe('#ABCDEF');
+        expect(resolve('#123456').colors.radio.dot).toBe('#123456');
+        // An explicit value equal to the base default is still an authored choice.
+        expect(resolve(darkTheme.colors.radio.dot).colors.radio.dot).toBe(darkTheme.colors.radio.dot);
     });
 
     it('applies valid overrides to light and dark separately and falls back for missing tokens', () => {
