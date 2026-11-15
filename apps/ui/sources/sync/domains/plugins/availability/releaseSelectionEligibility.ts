@@ -1,3 +1,4 @@
+import type { InstalledPluginCapabilityDistributionV1 } from '@happier-dev/protocol/capabilities';
 import type { PluginAccountAvailabilityReader } from './reader';
 
 export type PluginAccountReleaseSelectionEligibility =
@@ -12,9 +13,13 @@ export function readPluginAccountReleaseSelectionEligibility(input: Readonly<{
     pluginId: string;
     version: string | null;
     reader: PluginAccountAvailabilityReader | null;
+    installedDistribution?: InstalledPluginCapabilityDistributionV1 | null;
     serverIdentityId: string | null;
     machineId: string | null;
 }>): PluginAccountReleaseSelectionEligibility {
+    // The installed trust record already knows a local source cannot publish an
+    // Account release, including while the Account census is still unavailable.
+    if (input.installedDistribution?.kind === 'localPath') return nonPortable;
     const reader = input.reader;
     const inventory = reader?.readMaterializations();
     // An absent census does not remove the existing direct immutable-release read.

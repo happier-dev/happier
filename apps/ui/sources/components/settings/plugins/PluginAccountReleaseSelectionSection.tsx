@@ -1,3 +1,4 @@
+import type { InstalledPluginCapabilityDistributionV1 } from '@happier-dev/protocol/capabilities';
 import * as React from 'react';
 import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -71,6 +72,7 @@ export function PluginAccountReleaseSelectionSection(props: Readonly<{
      */
     version: string | null;
     reader: PluginAccountAvailabilityReader | null;
+    installedDistribution?: InstalledPluginCapabilityDistributionV1 | null;
     /** The live raw daemon projection, if this Account action can use it. */
     projection: PluginProjectionV2 | null;
     daemon: Readonly<{
@@ -83,6 +85,7 @@ export function PluginAccountReleaseSelectionSection(props: Readonly<{
     const [pending, setPending] = React.useState(false);
     const [releaseEligibility, setReleaseEligibility] = React.useState(() => readPluginAccountReleaseSelectionEligibility({
         pluginId: props.pluginId, version: props.version, reader: props.reader,
+        installedDistribution: props.installedDistribution,
         serverIdentityId: props.daemon.serverIdentityId, machineId: props.daemon.machineId,
     }));
     const [hasUiArtifactSlots, setHasUiArtifactSlots] = React.useState(false);
@@ -128,6 +131,7 @@ export function PluginAccountReleaseSelectionSection(props: Readonly<{
             }));
             setReleaseEligibility(readPluginAccountReleaseSelectionEligibility({
                 pluginId: props.pluginId, version: props.version, reader: props.reader,
+                installedDistribution: props.installedDistribution,
                 serverIdentityId: props.daemon.serverIdentityId, machineId: props.daemon.machineId,
             }));
             const administration = props.reader?.readCurrentHostedArtifactAdministration({ pluginId: props.pluginId });
@@ -135,7 +139,7 @@ export function PluginAccountReleaseSelectionSection(props: Readonly<{
         };
         update();
         return props.reader?.subscribe(update);
-    }, [props.pluginId, props.reader, props.version, props.daemon.serverIdentityId, props.daemon.machineId]);
+    }, [props.pluginId, props.reader, props.version, props.daemon.serverIdentityId, props.daemon.machineId, props.installedDistribution]);
 
     React.useEffect(() => {
         const reader = props.reader;
@@ -238,6 +242,7 @@ export function PluginAccountReleaseSelectionSection(props: Readonly<{
                 <Item
                     testID={`${props.testID}.machineLocal`}
                     title={t('settingsPlugins.machineMatrix.state.localOnly')}
+                    subtitle={t('settingsPlugins.accountReleaseSelection.nonPortableBody')}
                     showChevron={false}
                 />
             ) : null}

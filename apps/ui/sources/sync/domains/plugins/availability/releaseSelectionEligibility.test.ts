@@ -19,6 +19,16 @@ function reader(materializations: ReturnType<typeof materialization>[]) {
 const origin = { serverIdentityId: 'srv_fixture', machineId: 'machine-local' };
 
 describe('Account release selection eligibility', () => {
+    it.each([null, reader([])])('rejects a known local install before its materialization census arrives', availability => {
+        expect(readPluginAccountReleaseSelectionEligibility({ ...coordinate, ...origin,
+            installedDistribution: { kind: 'localPath', canonicalPath: '/tmp/own-plugin' }, reader: availability }))
+            .toEqual({ kind: 'ineligible', reason: 'non_portable' });
+    });
+    it('keeps a packaged installation selectable while its census is unavailable', () => {
+        expect(readPluginAccountReleaseSelectionEligibility({ ...coordinate, ...origin,
+            installedDistribution: { kind: 'archive', source: { kind: 'localFile', canonicalPath: '/tmp/own-plugin.tgz' }, integrity: 'sha256:fixture' },
+            reader: null })).toEqual({ kind: 'eligible' });
+    });
     it.each(['localPath', 'bundledFirstParty'] as const)('retains Availability’s typed non-portable reason for %s', sourceClass => {
         const installed = materialization(sourceClass);
         const availability = reader([installed]);

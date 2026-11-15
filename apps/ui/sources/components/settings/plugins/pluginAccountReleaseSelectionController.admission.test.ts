@@ -75,6 +75,20 @@ const operations = [
 ] as const;
 
 describe('Account plugin administration admission through the production UI front door', () => {
+    it('explains a machine-local install without offering an impossible Account selection before the census loads', async () => {
+        const screen = await renderScreen(createElement(PluginAccountReleaseSelectionSection, {
+            pluginId: 'example.tasks', version: '2.0.0', reader: null, projection: null,
+            installedDistribution: { kind: 'localPath', canonicalPath: '/tmp/own-plugin' },
+            daemon: { serverId, serverIdentityId: 'srv_plugin_admission', machineId: 'machine-a' },
+            testID: 'release',
+        }));
+        expect(screen.findAllByTestId('release').filter(node => node.type !== PluginAccountReleaseSelectionSection)).toHaveLength(0);
+        const row = screen.findAllByTestId('release.machineLocal').find(node => typeof node.props.subtitle === 'string');
+        expect(row).not.toBeNull();
+        expect(row?.props.onPress).toBeUndefined();
+        expect(row?.props.subtitle).toBeTruthy();
+        expect(homes.requestsFor(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.release.read'])).toHaveLength(0);
+    });
     it('opens the exact Account approval and keeps hosted-removal rejection quiet without an Availability mutation', async () => {
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime) throw new Error('Expected active Account');

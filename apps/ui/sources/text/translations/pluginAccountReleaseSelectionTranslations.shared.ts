@@ -14,6 +14,7 @@ export const english = {
         groupTitle: 'Version for this account',
         groupFooter: 'Choose the plugin version this account uses. Installed versions and trust on your machines stay as they are.',
         entryTitle: 'Use for this Account',
+        nonPortableBody: 'This installation stays on its machine. Only packaged plugin releases can be selected for this Account.',
         entrySubtitle: ({ version }: { version: string }) => `Use version ${version}. Your machine installations won’t change.`,
         selectedTitle: 'Account release selected',
         selectedBody: 'The selected plugin release will now be used for this Account.',

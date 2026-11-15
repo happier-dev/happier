@@ -195,6 +195,7 @@ function PluginDetailCurrentContent(props: Readonly<{
                     pluginId={props.pluginId}
                     version={accountReleaseVersion}
                     reader={props.accountAvailability}
+                    installedDistribution={installed?.install.trust?.distribution}
                     projection={state.pluginProjectionV2}
                     daemon={{
                         serverId: state.executionServerId,
