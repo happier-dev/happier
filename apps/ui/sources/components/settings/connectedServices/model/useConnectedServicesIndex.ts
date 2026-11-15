@@ -56,6 +56,7 @@ export type ConnectedServicesGatewayRow = ProviderGatewayCollectionRow & Readonl
 
 export function useConnectedServicesIndex(options: Readonly<{ agents: 'load' | 'cached'; gateways?: boolean; registry?: ConnectedServiceRegistrySnapshot;
     targetSelection?: MachineAdministrationTargetSelectionV1; initialMachineTarget?: MachineAdministrationTargetV1 | null;
+    machineChoices?: boolean;
     /** A focused setup flow reads only its service before joining accounts, pools and labels. */
     serviceKey?: string }>) {
     const presented = useLayoutPresentationActive();

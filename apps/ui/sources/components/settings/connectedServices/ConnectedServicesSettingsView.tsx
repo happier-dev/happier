@@ -221,7 +221,6 @@ const ConnectedServicesSettingsBody = React.memo(function ConnectedServicesSetti
   const connectMore = (
     <ConnectedServicesConnectMore
       model={indexModel}
-      targetSelection={index.targetSelection}
       layout={firstRun ? 'firstRun' : 'section'}
       request={null}
       onRequestHandled={() => {}}

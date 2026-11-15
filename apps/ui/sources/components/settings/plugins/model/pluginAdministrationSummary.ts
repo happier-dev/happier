@@ -45,7 +45,8 @@ const noopSubscribe = () => () => {};
  * transport reconnect). Nothing is known until the page has asked in this launch.
  */
 export function usePluginAdministrationSummary(): PluginAdministrationSummary {
-    const selection = useMachineAdministrationTargetSelection(MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.plugins);
+    // Reads only the stored target; the Plugins page's chooser owns the choices.
+    const selection = useMachineAdministrationTargetSelection(MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.plugins, { rows: 'selected' });
     const target = selection.resolveExecutionTarget();
     const machineId = target?.machine.id ?? null;
     const serverId = target?.serverId ?? null;

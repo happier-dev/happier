@@ -147,7 +147,7 @@ export function useMcpServerDetail(
   const runTest = tests.run;
   const { afterRegistryAdd } = useLocalSearchParams<{ afterRegistryAdd?: string }>();
   const administration = useMachineAdministrationTargetSelection(MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.mcpServers,
-    { enabled: afterRegistryAdd === '1' });
+    { enabled: afterRegistryAdd === '1', rows: 'selected' });
   const registryAddHandled = React.useRef<string | null>(null);
   React.useEffect(() => {
     const targetKey = JSON.stringify([scope?.serverId, scope?.accountId, serverId]);

@@ -126,7 +126,7 @@ export function useRelayDriftBannerFromLocalControl(
 ): RelayDriftBanner | null {
     const activeServerSnapshot = getActiveServerSnapshot();
     const administrationTargetSelection = useMachineAdministrationTargetSelection(
-        MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.relayDrift,
+        MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.relayDrift, { rows: 'selected' },
     );
     const resolveRelayExecutionTarget = React.useCallback(() => {
         const expectedTarget = administrationTargetSelection.selectedTarget;

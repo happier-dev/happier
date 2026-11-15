@@ -23,6 +23,8 @@ type Options = Readonly<{
     agents: 'load' | 'cached';
     targetSelection?: MachineAdministrationTargetSelectionV1;
     initialMachineTarget?: MachineAdministrationTargetV1 | null;
+    /** The Connect sheet renders the Machine chooser; every other reader acts on the stored choice only. */
+    machineChoices?: boolean;
 }>;
 
 const selectPurposeBindings = (snapshot: ConnectedAccountCatalogValueSnapshot<'purposes'>) => snapshot.value;
@@ -44,6 +46,7 @@ export function useConnectedServicesAgents(options: Options) {
     const acquire = presented && options.agents === 'load';
     const defaultTargetSelection = useMachineAdministrationTargetSelection(MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.connectedAccounts, {
         enabled: acquire && options.targetSelection === undefined,
+        rows: options.machineChoices ? 'choices' : 'selected',
         ...(options.initialMachineTarget !== undefined ? { initialTarget: options.initialMachineTarget } : {}),
     });
     const targetSelection = options.targetSelection ?? defaultTargetSelection;

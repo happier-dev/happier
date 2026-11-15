@@ -216,6 +216,66 @@ describe('Connected Services index purpose source admission', () => {
         } finally { await hook.unmount(); retireConnectedAccountDescriptorProjection(lifetime); }
     });
 
+    it.each([3, 30])('keeps the index quiet while %s other Machines open their content, and offers them all in the Connect sheet', async (others) => {
+        const Wrapper = createIndexWrapper('m1');
+        const fleet = Array.from({ length: others }, (_, index) => createMachineFixture({ id: `other-${index}`, active: false, activeAt: 1,
+            metadata: null, metadataVersion: 1, daemonStateVersion: 5 }));
+        storage.getState().applyMachines([createMachineFixture({ id: 'm1', activeAt: Date.now() }), ...fleet], true, { sourceServerId: runtime.serverId });
+        let renders = 0;
+        const hook = await renderHook(() => { renders += 1; return useConnectedServicesIndex({ agents: 'load' }); }, { wrapper: Wrapper });
+        const sheet = await renderHook(() => useConnectAccountSheetModel({ intent: 'add' }, filterActionNoop), { wrapper: Wrapper });
+        try {
+            await vi.waitFor(() => expect(hook.getCurrent().agentsKnown).toBe(true));
+            expect(hook.getCurrent().targetSelection.selectedTarget?.machineId).toBe('m1');
+            await act(async () => {});
+            renders = 0;
+            // Row-by-row content opening of the rest of the fleet, as a large Account hydrates.
+            for (const machine of fleet) {
+                await act(async () => storage.getState().applyMachines([{ ...machine, metadataVersion: 2, daemonStateVersion: 6,
+                    metadata: { ...createMachineFixture().metadata!, displayName: `Opened ${machine.id}` } }], false,
+                    { sourceServerId: runtime.serverId }));
+            }
+            expect(renders).toBe(0);
+            // The chooser leaf still offers every Machine, with its opened label.
+            await vi.waitFor(() => expect(sheet.getCurrent().targetSelection.candidates.map(candidate => candidate.displayName))
+                .toEqual(expect.arrayContaining(fleet.map(machine => `Opened ${machine.id}`))));
+            // Positive control: the selected Machine's own label is a real input.
+            await act(async () => storage.getState().applyMachines([createMachineFixture({ id: 'm1', activeAt: Date.now(), metadataVersion: 2,
+                metadata: { ...createMachineFixture().metadata!, displayName: 'Renamed selected' } })], false, { sourceServerId: runtime.serverId }));
+            await vi.waitFor(() => expect(renders).toBeGreaterThan(0));
+        } finally { await sheet.unmount(); await hook.unmount(); }
+    });
+
+    it.each([3, 30])('keeps the index quiet without a stored choice while %s online Machines open their content', async (others) => {
+        const Wrapper = createIndexWrapper(null);
+        const fleet = Array.from({ length: others }, (_, index) => createMachineFixture({ id: `online-${index}`, activeAt: Date.now(),
+            metadata: null, metadataVersion: 1, daemonStateVersion: 5 }));
+        storage.getState().applyMachines([createMachineFixture({ id: 'm1', activeAt: Date.now() }), ...fleet], true, { sourceServerId: runtime.serverId });
+        storage.getState().markMachineListSettled(runtime.serverId);
+        let renders = 0;
+        const hook = await renderHook(() => { renders += 1; return useConnectedServicesIndex({ agents: 'load' }); }, { wrapper: Wrapper });
+        try {
+            await act(async () => {});
+            expect(hook.getCurrent().targetSelection.selectedTarget).toBeNull();
+            renders = 0;
+            for (const machine of fleet) {
+                await act(async () => storage.getState().applyMachines([{ ...machine, metadataVersion: 2, daemonStateVersion: 6,
+                    metadata: { ...createMachineFixture().metadata!, displayName: `Opened ${machine.id}` } }], false,
+                    { sourceServerId: runtime.serverId }));
+            }
+            expect(renders).toBe(0);
+            // Eligibility changes that leave two or more automatic candidates change no choice.
+            const goOffline = (machineId: string) => act(async () => storage.getState().applyMachines([{
+                ...storage.getState().machines[machineId]!, revokedAt: Date.now() }], false, { sourceServerId: runtime.serverId }));
+            for (const machine of fleet.slice(0, -1)) await goOffline(machine.id);
+            expect(renders).toBe(0);
+            expect(hook.getCurrent().targetSelection.selectedTarget).toBeNull();
+            // Positive control: the flip that leaves one automatic candidate chooses it.
+            await goOffline(fleet.at(-1)!.id);
+            await vi.waitFor(() => expect(hook.getCurrent().targetSelection.selectedTarget?.machineId).toBe('m1'));
+        } finally { await hook.unmount(); }
+    });
+
     it('does no Agent sign-in receipt render work on account health changes and publishes changed purpose defaults', async () => {
         const scope = runtime.accountScope;
         if (!scope) throw new Error('The fixture requires an active Account scope');

@@ -295,6 +295,36 @@ describe('machine administration target demand', () => {
             } finally { await hook.unmount(); }
         } finally { storage.setState(previous); await removeServerProfile(home.id); }
     });
+    it.each([3, 30])('keeps a selected-target reader (Plugins summary) quiet while %s other Machines open their content', async (others) => {
+        const { usePluginAdministrationSummary } = await import('@/components/settings/plugins/model/pluginAdministrationSummary');
+        const previous = storage.getState();
+        const home = await network.addHome(`https://selected-reader-${others}.example.test`, 'selected-reader-owner', {
+            serverIdentityId: `srv_selected_reader_${others}`,
+        });
+        const scope = { serverId: home.id, accountId: home.accountId };
+        await setActiveServerId(home.id);
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        const selected = createMachineFixture({ id: 'selected-reader-target', activeAt: Date.now() });
+        const fleet = Array.from({ length: others }, (_, index) => createMachineFixture({ id: `selected-reader-other-${index}`,
+            activeAt: Date.now(), metadata: null, metadataVersion: 1 }));
+        try {
+            storage.setState(state => ({ profileScope: scope, settingsScope: scope, settings: { ...state.settings,
+                machineAdministrationTargetsLocalV1: { plugins: { serverIdentityId: `srv_selected_reader_${others}`, machineId: selected.id } } } }));
+            storage.getState().applyMachines([selected, ...fleet], true, { sourceServerId: home.id });
+            storage.getState().markMachineListSettled(home.id);
+            const counter = createRenderCommitCounter();
+            const hook = await renderHook(() => { useRenderCommitCounter(counter); return usePluginAdministrationSummary(); });
+            try {
+                await act(async () => {});
+                counter.reset();
+                for (const machine of fleet) {
+                    await act(async () => storage.getState().applyMachines([{ ...machine, metadataVersion: 2,
+                        metadata: { ...createMachineFixture().metadata!, displayName: `Opened ${machine.id}` } }], false, { sourceServerId: home.id }));
+                }
+                expect(counter.read().renders).toBe(0);
+            } finally { await hook.unmount(); }
+        } finally { storage.setState(previous); await removeServerProfile(home.id); }
+    });
     it('keeps an exact source Account selection inside its Home and retires it on Account replacement', async () => {
         const syncRuntime = await import('@/sync/syncEngine');
         const requiredSync: typeof import('@/sync/sync') = createRequire(import.meta.url)('../../../sync.ts');

@@ -35,7 +35,7 @@ export function useConnectAccountSheetModel(request: ConnectSheetAccountRequest,
     const chosenNeedsMachine = machineDemand?.key === JSON.stringify([viewer, chosenTarget]) && machineDemand.required;
     const { indexModel, targetSelection } = useConnectedServicesIndex({
         agents: chosenNeedsMachine || chosenTarget.kind === 'catalog' ? 'load' : 'cached', registry: purposeSetup.registry,
-        targetSelection: request.targetSelection, initialMachineTarget: request.initialMachineTarget,
+        targetSelection: request.targetSelection, initialMachineTarget: request.initialMachineTarget, machineChoices: true,
         serviceKey: chosenTarget.kind === 'catalog' ? undefined : chosenTarget.serviceKey });
     const catalog = React.useMemo(() => purposeSetup.filterCatalog(buildConnectedServiceSetupCatalog(indexModel)),
         [indexModel, request.purposeRequest, purposeSetup.declaration]);
