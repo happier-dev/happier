@@ -15,7 +15,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { randomBytes } from 'node:crypto';
 import { x25519 } from '@noble/curves/ed25519';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent,
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent,
     sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
 import { createDeploymentEnvironmentHeaderV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
@@ -27,15 +27,18 @@ import { createOwnServerDeploymentRuntimeForHost } from './targets/ownServer/own
 
 afterEach(() => vi.restoreAllMocks());
 
-it('completes native Create through the same association owner as a retained Finish linking', async () => {
+it.each(['upload', 'gitIntegration'] as const)('completes titled native Create (%s) through the same association owner as a retained Finish linking', async sourceMethod => {
     const fixture = createPlatformFailureNoticeFixture(true, true);
     const environment = await fixture.host.readEnvironment();
     const source = { kind: 'plugin', contribution: { pluginId: 'example.deploy', localId: 'platform' } } as const;
     const input = DeploymentTargetLinkCreateIntentInputV1Schema.parse({ serverId: 'home',
         environmentId: environment.environment.id, expectedRevision: environment.environment.revision,
         requestKey: 'create-and-associate', targetId: 'platform', targetKind: 'example', role: 'runtime', machines: [], source,
+        title: 'Reviewed destination',
         providerCreate: { credentialRef: fixture.credentialPrincipal.target.account, credentialPrincipal: fixture.credentialPrincipal,
-            providerAccountId: 'native-owner', providerEnvironment: { kind: 'production' }, resourceName: 'reviewed-name' } });
+            providerAccountId: 'native-owner', providerEnvironment: { kind: 'production' }, resourceName: 'reviewed-name', sourceMethod,
+            ...(sourceMethod === 'gitIntegration' ? { repository: { kind: 'github', deployment: 'https://github.com',
+                repository: 'example/site' }, productionBranch: 'production' } : {}) } });
     const provider = { credentialPrincipal: fixture.credentialPrincipal, providerIdentity: {
         providerAccountId: 'native-owner', providerResourceId: 'created-native-id', providerEnvironment: 'production' },
         providerEnvironment: { kind: 'production' }, preparedNative: { projectName: 'created-name' } };
@@ -80,6 +83,8 @@ it('completes native Create through the same association owner as a retained Fin
             .toMatchObject({ state: 'succeeded', result: { ok: true, targetLinkId: 'created-link' } });
         expect(creates).toBe(1);
         expect(associations).toBe(1);
+        expect([...fixture.rows.values()].map(row => decodePlainArtifactStoredContent(row.header)))
+            .toContainEqual(expect.objectContaining({ kind: 'deployment-target-link.v1', title: input.title }));
     } finally { await native.close(); }
 });
 

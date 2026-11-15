@@ -6,7 +6,9 @@ export function buildDeploymentTargetLinkInputV1(
     input: DeploymentTargetLinkIntentInputV1 | DeploymentTargetLinkProviderIntentInputV1,
     published: Readonly<{ artifactId: string; revision: Readonly<{ headerVersion: number; bodyVersion: number }> }>,
 ): DeploymentTargetLinkInputV1 {
-    const { provider: _provider, ...intent } = 'provider' in input ? input : { ...input, provider: undefined };
+    // Provider content and its presentation title live in the published Artifact, not the storage input.
+    const { provider: _provider, title: _title, ...intent } = 'provider' in input
+        ? input : { ...input, provider: undefined, title: undefined };
     return DeploymentTargetLinkInputV1Schema.parse({ ...intent, contentArtifactId: published.artifactId,
         contentHeaderVersion: published.revision.headerVersion, contentBodyVersion: published.revision.bodyVersion });
 }

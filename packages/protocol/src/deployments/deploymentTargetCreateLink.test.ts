@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, readDeploymentActionOperationRequestIdV1 } from './deploymentActionsV1.js';
+import { buildDeploymentTargetLinkInputV1 } from './targetLinkInput.js';
 
 const credential = { service: { pluginId: 'example.platform', localId: 'account' }, accountId: 'connection' };
 const create = { serverId: 'home', environmentId: 'environment', expectedRevision: 2, requestKey: 'one-create',
@@ -30,6 +31,20 @@ it('retains exact created coordinates as an ordinary adopt intent after associat
   expect(DeploymentActionInputSchemasV1['deployments.targets.link'].safeParse(recovery)).toMatchObject({ success: true });
   expect(DeploymentActionOutputSchemasV1['deployments.targets.link'].safeParse({ ...retained,
     recovery: { ...recovery, provider: { ...recovery.provider, providerIdentity: undefined } } }).success).toBe(false);
+});
+
+it.each([false, true])('publishes titled provider intents as canonical storage inputs (provisioned=%s)', provisioned => {
+  const { providerCreate, ...base } = create;
+  const intent = DeploymentActionInputSchemasV1['deployments.targets.link'].parse({ ...base,
+    title: 'Reviewed destination', ...(provisioned ? { provisioned: true } : {}), provider: {
+      credentialPrincipal: providerCreate.credentialPrincipal,
+      providerIdentity: { providerAccountId: 'native-account', providerResourceId: 'returned-id', providerEnvironment: 'production' },
+      providerEnvironment: providerCreate.providerEnvironment } });
+  if (!('provider' in intent)) throw new Error('Expected provider intent');
+  const prepared = buildDeploymentTargetLinkInputV1(intent, { artifactId: 'published-provider',
+    revision: { headerVersion: 1, bodyVersion: 2 } });
+  expect(prepared).toEqual({ ...base, ...(provisioned ? { provisioned: true } : {}), contentArtifactId: 'published-provider',
+    contentHeaderVersion: 1, contentBodyVersion: 2 });
 });
 
 it('binds native-create replay to its request key while exact association recovery is a separate operation', () => {
