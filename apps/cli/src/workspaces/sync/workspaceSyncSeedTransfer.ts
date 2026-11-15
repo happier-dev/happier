@@ -21,6 +21,7 @@ import type { DirectPeerOnDemandTransferScope } from '@/machines/transfer/direct
 import {
   createBufferTransferPayloadSource,
   createFileTransferPayloadSource,
+  type TransferPayloadSource,
 } from '@/machines/transfer/transferPayloadSource';
 
 type WorkspaceSyncSeedEnvelopeV1 = Readonly<{
@@ -93,6 +94,35 @@ export async function createWorkspaceSyncSeedExport(input: Readonly<{
             ? { dispose: async () => await built.blobProvider?.disposeBlobFilePath?.(digest) }
             : {}),
         });
+      },
+    },
+  };
+}
+
+/** Serves a seed its source member built in the member's own process: the daemon holds the
+ * envelope and forwards each blob chunk read to that process, so it opens no member path. */
+export function createMemberWorkspaceSyncSeedExport(input: Readonly<{
+  operationId: string;
+  envelope: Uint8Array;
+  readBlob(request: Readonly<{ transferId: string; offset: number; length: number }>): Promise<Uint8Array>;
+}>): Readonly<{ payloadSource: TransferPayloadSource; onDemandScope: DirectPeerOnDemandTransferScope }> {
+  const payload = Buffer.from(input.envelope);
+  const envelope = parseEnvelope(payload, input.operationId);
+  const sizeByDigest = new Map(envelope.workspaceExportArtifacts.manifest.entries.flatMap((entry) => (
+    entry.kind === 'file' ? [[entry.digest, entry.sizeBytes] as const] : [])));
+  const digestByTransferId = new Map(Object.entries(envelope.blobTransferIds).map(([digest, transferId]) => [transferId, digest]));
+  return {
+    payloadSource: createBufferTransferPayloadSource(payload),
+    onDemandScope: {
+      allowTransferId: (transferId) => digestByTransferId.has(transferId),
+      maxResolvedTransfers: digestByTransferId.size,
+      resolvePayloadSourceOnOpen: async ({ transferId }) => {
+        const digest = digestByTransferId.get(transferId);
+        const sizeBytes = digest === undefined ? undefined : sizeByDigest.get(digest);
+        if (digest === undefined || sizeBytes === undefined) throw new Error('Workspace sync seed blob is not authorized');
+        // A file blob's manifest digest is the sha256 transfer manifest hash of its bytes.
+        return { kind: 'native', sizeBytes, manifestHash: digest,
+          readChunk: async (range) => Buffer.from(await input.readBlob({ transferId, ...range })) };
       },
     },
   };

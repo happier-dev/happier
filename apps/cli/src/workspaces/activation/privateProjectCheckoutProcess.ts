@@ -150,6 +150,9 @@ export async function startPrivateProjectSyncProcess(input: PrivateProjectNative
       }, acquireLocalRoot: async request => {
         const result = await native.acquireLocalRoot(request);
         return 'kind' in result ? result : { ...result, release: () => result.dispose() };
+      }, getPreparedBootstrapOwnership: async request => {
+        const handle = await native.getPreparedBootstrapOwnership(request);
+        return { ...handle, release: () => handle.dispose() };
       }, prepareBootstrapAtTarget: async (request, context) => {
         const result = await native.prepareBootstrapAtTarget(request, context);
         return { ...result, ...(result.ownershipHandles ? { ownershipHandles: result.ownershipHandles.map(handle => ({ ...handle, release: () => handle.dispose() })) } : {}) };

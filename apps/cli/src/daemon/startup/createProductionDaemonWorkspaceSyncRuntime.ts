@@ -95,7 +95,7 @@ import {
 import { prepareWorkspaceSyncGitTarget } from '@/workspaces/sync/workspaceSyncTargetBootstrap';
 import { areWorkspaceSyncRelationshipDefinitionsEqual, areWorkspaceSyncWorkerCopyProvenancesEqual, getWorkspaceSyncWorkerCopyV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { prepareWorkspaceSyncBetween, resolveWorkspaceSyncRelationshipDependencyMachines } from '@/workspaces/sync/workspaceSyncPreparation';
-import { createWorkspaceSyncSeedExport, materializeLocalWorkspaceSyncSeed, materializeWorkspaceSyncSeedExport, resolveWorkspaceSyncSeedTransfer as resolveSeedWorkspaceTransfer } from '@/workspaces/sync/workspaceSyncSeedTransfer';
+import { createMemberWorkspaceSyncSeedExport, createWorkspaceSyncSeedExport, materializeLocalWorkspaceSyncSeed, materializeWorkspaceSyncSeedExport, resolveWorkspaceSyncSeedTransfer as resolveSeedWorkspaceTransfer } from '@/workspaces/sync/workspaceSyncSeedTransfer';
 import { materializeWorkspaceExportArtifactsWithScmWorkspace } from '@/scm/workspace/workspaceExportMaterialization';
 import { buildDirectPeerTransferEndpointPath } from '@/machines/transfer/directPeerTransport';
 import { createWorkspaceSyncPeerIdentityValidator } from '@/workspaces/sync/transport/workspaceSyncPeerIdentity';
@@ -663,12 +663,22 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         sourceWorkspaceRefId,
         targetMachineId,
         contentPolicy,
-      }, async (sourcePath) => await factories.prepareSourceSeedExport({
-        operationId,
-        activeServerDir: input.activeServerDir,
-        sourcePath,
-        workspaceTransfer: resolveSeedWorkspaceTransfer(contentPolicy),
-      }));
+      }, async (sourcePath) => {
+        // A member's own folder is read only by that member's Sync process: the daemon serves
+        // the seed it built and forwards blob reads, never opening a path there itself.
+        const member = privateNativeForRoot(sourcePath);
+        if (member) {
+          return createMemberWorkspaceSyncSeedExport({ operationId,
+            envelope: await member.prepareSourceSeedExport({ operationId, sourcePath, contentPolicy }),
+            readBlob: request => member.readSourceSeedBlob({ operationId, ...request }) });
+        }
+        return await factories.prepareSourceSeedExport({
+          operationId,
+          activeServerDir: input.activeServerDir,
+          sourcePath,
+          workspaceTransfer: resolveSeedWorkspaceTransfer(contentPolicy),
+        });
+      });
     },
     resolutionMaterialDirectory: join(input.activeServerDir, 'workspace-sync', 'resolution'),
     resolveLocalResolutionEndpoint: async (relationshipId, workspaceRefId) => await runtime?.managedWorkspaceSync.resolveLocalResolutionEndpoint(

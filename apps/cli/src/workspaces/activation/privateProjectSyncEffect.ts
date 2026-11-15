@@ -6,7 +6,8 @@ import type { ActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccou
 import { createWorkspaceSyncTargetAuthority, type WorkspaceSyncTargetAuthority, type WorkspaceSyncTargetAuthorityDependencies, type WorkspaceSyncConflictRecoveryContext } from '@/workspaces/sync/workspaceSyncTargetAuthority';
 import { createWorkspaceRootOwnershipManager, type WorkspaceRootOwnershipHandle, type WorkspaceRootOwnershipRequest, type WorkspaceRootOwnershipResult } from '@/workspaces/sync/workspaceSyncRootOwnership';
 import { prepareWorkspaceSyncGitTarget } from '@/workspaces/sync/workspaceSyncTargetBootstrap';
-import { materializeLocalWorkspaceSyncSeed, materializeWorkspaceSyncSeedExport, resolveWorkspaceSyncSeedTransfer } from '@/workspaces/sync/workspaceSyncSeedTransfer';
+import { createWorkspaceSyncSeedExport, materializeLocalWorkspaceSyncSeed, materializeWorkspaceSyncSeedExport, resolveWorkspaceSyncSeedTransfer } from '@/workspaces/sync/workspaceSyncSeedTransfer';
+import { readTransferPayloadChunk } from '@/machines/transfer/transferPayloadSource';
 import { materializeWorkspaceExportArtifactsWithScmWorkspace } from '@/scm/workspace/workspaceExportMaterialization';
 import { inspectWorkspaceLocationWithScmWorkspace } from '@/scm/workspace/workspaceLocationInspection';
 import { realizeWorkspaceCheckoutWithScmWorkspace } from '@/scm/workspace/workspaceCheckoutOperations';
@@ -18,7 +19,7 @@ import { privateProjectCheckoutRefusal, resolvePrivateProjectCheckoutRoot } from
 import type { WorkspaceSyncSourceRootLoan } from '@/workspaces/sync/workspaceSyncTypes';
 
 export type PrivateProjectNativeSync = Pick<WorkspaceSyncTargetAuthority,
-  'preflightHandoffTargetReplacementHere' | 'prepareBootstrapHere' | 'prepareBootstrapAtTarget' | 'releaseBootstrapHere' | 'borrowSourceRootForCopy'
+  'preflightHandoffTargetReplacementHere' | 'prepareBootstrapHere' | 'prepareBootstrapAtTarget' | 'getPreparedBootstrapOwnership' | 'releaseBootstrapHere' | 'borrowSourceRootForCopy'
   | 'acquireWorkspaceSyncMachineIngress' | 'openLocalWorkspaceAgentIngress' | 'reconcileRetainedBootstraps' | 'releaseAllRetainedBootstraps'
   | 'readFileHere' | 'observeEntryHere'> & Readonly<{
   recoverConflictResolutionHere(request: Parameters<WorkspaceSyncTargetAuthority['recoverConflictResolutionHere']>[0], signal?: AbortSignal,
@@ -27,12 +28,17 @@ export type PrivateProjectNativeSync = Pick<WorkspaceSyncTargetAuthority,
   inspectCheckout(subdir?: string): Promise<MaterializedProjectCheckout>;
   resolveLocalRoot(rootPath: string): Promise<string>;
   acquireLocalRoot(request: WorkspaceRootOwnershipRequest): Promise<WorkspaceRootOwnershipResult>;
+  /** SOURCE seed of this member's own folder, built as the member; returns the seed envelope. */
+  prepareSourceSeedExport(request: Readonly<{ operationId: string; sourcePath: string; contentPolicy: WorkspaceContentPolicyV1 }>): Promise<Uint8Array>;
+  /** One chunk of a blob named by that seed, read as the member. */
+  readSourceSeedBlob(request: Readonly<{ operationId: string; transferId: string; offset: number; length: number }>): Promise<Uint8Array>;
   dispose(): Promise<void>;
 }>;
 
 /** Same-binary transport uses the existing bridge's disposable result scope. */
 type DisposableRootHandle = WorkspaceRootOwnershipHandle & Readonly<{ dispose(): Promise<void> }>;
-export type PrivateProjectNativeSyncProcessPort = Omit<PrivateProjectNativeSync, 'acquireWorkspaceSyncMachineIngress' | 'openLocalWorkspaceAgentIngress' | 'acquireLocalRoot' | 'prepareBootstrapAtTarget' | 'borrowSourceRootForCopy'> & Readonly<{
+export type PrivateProjectNativeSyncProcessPort = Omit<PrivateProjectNativeSync, 'acquireWorkspaceSyncMachineIngress' | 'openLocalWorkspaceAgentIngress' | 'acquireLocalRoot' | 'prepareBootstrapAtTarget' | 'getPreparedBootstrapOwnership' | 'borrowSourceRootForCopy'> & Readonly<{
+  getPreparedBootstrapOwnership(request: Parameters<WorkspaceSyncTargetAuthority['getPreparedBootstrapOwnership']>[0]): Promise<DisposableRootHandle>;
   borrowSourceRootForCopy(request: Parameters<WorkspaceSyncTargetAuthority['borrowSourceRootForCopy']>[0]): Promise<(WorkspaceSyncSourceRootLoan & { dispose(): Promise<void> }) | null>;
   acquireWorkspaceSyncMachineIngress(request: Parameters<WorkspaceSyncTargetAuthority['acquireWorkspaceSyncMachineIngress']>[0]):
     Promise<Awaited<ReturnType<WorkspaceSyncTargetAuthority['acquireWorkspaceSyncMachineIngress']>> & Readonly<{ dispose(): Promise<void> }>>;
@@ -178,6 +184,8 @@ export async function executePrivateProjectSyncEffect(effect: WorkspaceNativeSyn
     try { return await operation(); } catch (error) { throw privateSyncEffectError(error); }
   };
   let disposal: Promise<void> | undefined;
+  // The daemon serves these seeds but never opens a path in this member folder (MEMBER-CHILD-READS-1115).
+  const sourceSeeds = new Map<string, Awaited<ReturnType<typeof createWorkspaceSyncSeedExport>>['onDemandScope']>();
   const disposableHandle = (handle: WorkspaceRootOwnershipHandle): DisposableRootHandle => ({ ...handle, dispose: handle.release });
   return {
     borrowSourceRootForCopy: request => call(async () => {
@@ -188,6 +196,10 @@ export async function executePrivateProjectSyncEffect(effect: WorkspaceNativeSyn
     preflightHandoffTargetReplacementHere: (request, signal, ingress) => call(async () => {
       if (request.targetPath !== targetRoot) throw privateProjectCheckoutRefusal();
       return authority.preflightHandoffTargetReplacementHere(request, signal, ingress);
+    }),
+    getPreparedBootstrapOwnership: request => call(async () => {
+      assertBoundId(request.targetWorkspaceRefId);
+      return disposableHandle(await authority.getPreparedBootstrapOwnership(request));
     }),
     prepareBootstrapHere: (request, signal, ingress) => call(async () => {
       assertBoundId(request.targetWorkspaceRefId); context.onEffectsIssued();
@@ -234,6 +246,19 @@ export async function executePrivateProjectSyncEffect(effect: WorkspaceNativeSyn
       if (localResolutionEndpoint) assertLocalRoot(localResolutionEndpoint.canonicalRoot, request.targetWorkspaceRefId);
       context.onEffectsIssued();
       return authority.recoverConflictResolutionHere(request, signal, { localResolutionEndpoint });
+    }),
+    prepareSourceSeedExport: request => call(async () => {
+      assertLocalRoot(request.sourcePath);
+      const built = await createWorkspaceSyncSeedExport({ operationId: request.operationId, activeServerDir: stateDirectory,
+        sourcePath: request.sourcePath, workspaceTransfer: resolveWorkspaceSyncSeedTransfer(request.contentPolicy), registry: registry.registry });
+      sourceSeeds.set(request.operationId, built.onDemandScope);
+      return new Uint8Array(built.payloadSource.payload);
+    }),
+    readSourceSeedBlob: request => call(async () => {
+      const seed = sourceSeeds.get(request.operationId);
+      if (!seed?.allowTransferId(request.transferId)) throw privateProjectCheckoutRefusal();
+      const source = await seed.resolvePayloadSourceOnOpen({ transferId: request.transferId, requestBody: undefined });
+      return new Uint8Array(await readTransferPayloadChunk({ source, offset: request.offset, length: request.length }));
     }),
     readFileHere: (request, signal) => call(async () => { assertBoundId(request.workspaceRefId); return authority.readFileHere(request, signal); }),
     observeEntryHere: (request, signal) => call(async () => { assertBoundId(request.workspaceRefId); return authority.observeEntryHere(request, signal); }),

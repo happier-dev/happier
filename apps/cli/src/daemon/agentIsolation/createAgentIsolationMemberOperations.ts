@@ -12,7 +12,7 @@ import type { HostActionOperationRuntime } from '../actionOperations/createHostA
 import type { ManagedActivityInventory } from '../lifecycle/managedActivity';
 import { waitForRequesterMachineNaturalBoundary } from './naturalBoundary';
 import { memberIdentityRetirementInput, supersedeMemberIdentityRetirement } from './supersedeRetirement';
-import { readAgentIsolationMemberLaunchIdentity } from './memberBindings';
+import { readAgentIsolationMemberLaunchIdentity, readAgentIsolationMemberRequesterForWorkspacePath } from './memberBindings';
 import { retireAgentIsolationMemberIdentity, readProvisionedRequesterAccounts,
   ensureAgentIsolationMember, applyAgentIsolationMemberEffects, type EnsureAgentIsolationMemberResult,
   type AgentIsolationEffectDependencies } from './agentIsolationProvisioner';
@@ -87,6 +87,12 @@ export function createAgentIsolationMemberOperations(options: Readonly<{
     } });
   };
   return Object.freeze({
+    /** The member who owns a member folder, for work an admitted Manage requester runs there as that member. */
+    async readWorkspaceOwner(path: string) {
+      const target = options.target();
+      return target ? readAgentIsolationMemberRequesterForWorkspacePath({ activeServerDir: options.activeServerDir,
+        homeServerIdentityId: target.homeServerIdentityId, machineId: target.machineId, installationId: target.installationId }, path) : null;
+    },
     /** Native operations consume the admitted binding. Setup/readiness belongs
      * to preparation and explicit own-status, never the per-operation path. */
     async read(input: Readonly<{

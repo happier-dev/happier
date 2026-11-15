@@ -1052,6 +1052,11 @@ export class ApiMachineClient {
     private agentIsolationMemberOperations: AgentIsolationMemberOperations | null = null;
     private agentIsolationEffects: AgentIsolationEffectDependencies | null = null;
 
+    /** Member whose own folder holds this path; null off a separate-users Machine or outside member folders. */
+    async readMemberFolderOwner(path: string) {
+        return await this.agentIsolationMemberOperations?.readWorkspaceOwner(path) ?? null;
+    }
+
     async readAgentIsolationMember(input: Parameters<NonNullable<HostAgentIsolationLaunchContext['readMember']>>[0]) {
         if (!this.agentIsolationMemberOperations) throw Object.assign(new PluginError({
             code: 'agent_isolation_unavailable', message: 'Member execution requires owner setup', retryable: false,
@@ -2035,9 +2040,10 @@ export class ApiMachineClient {
         registerScmHandlers(this.rpcHandlerManager, this.machineRpcWorkingDirectory, {
             accessPolicy: this.filesystemAccessPolicy,
             machineId: this.machine.id,
-            resolveRequester: this.filesystemEffectAdmission.resolveRpcRequester,
-            nativeOperationRuntime: { prepareNativeOperation: input => this.prepareNativeOperation(input) },
             selectWorkspaceSource: (context, input) => this.filesystemEffectAdmission.selectWorkspaceSource(context, input),
+            resolveRequester: this.filesystemEffectAdmission.resolveRpcRequester,
+            nativeOperationRuntime: { prepareNativeOperation: input => this.prepareNativeOperation(input),
+                readMemberFolderOwner: path => this.readMemberFolderOwner(path) },
             deliverFileAtRevision: async (request, response, signal) => await deliverScmFileAtRevision({ request, response, signal,
                 ...(this.lifecycleDependencies.directPeerServerLifecycle ? { lifecycle: this.lifecycleDependencies.directPeerServerLifecycle } : {}) }),
             prepareFileBytesExport: async input => {

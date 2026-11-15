@@ -5,7 +5,9 @@ import { z } from 'zod';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createMachineSetupNativeBackend, type MachineSetupBackend } from '@happier-dev/cli-common/machineSetup';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
+import { MACHINE_MEMBER_WORKSPACES_ROOT_V1, readMachineMemberWorkspaceRelativePathV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
 import { deriveAgentIsolationMemberIdentity, type AgentIsolationMemberIdentity } from './provisioning';
+import type { HostRequesterExecutionIdentity } from './agentIsolationLaunchPolicy';
 import { observeAgentIsolationMemberNativeIdentity, readAgentIsolationNativeIdentity,
   type AgentIsolationMemberNativeIdentity, type AgentIsolationMemberNativeIdentityInput } from './agentIsolationNativeIdentity';
 
@@ -122,6 +124,23 @@ export async function readAgentIsolationMemberBindingForAccount(scope: AgentIsol
       requester: { serverId: scope.homeServerIdentityId, accountId, machineId: scope.machineId, installationId: scope.installationId } });
     const root = await privateRoot(scope.activeServerDir, false);
     return await readBinding(root, `${expected.digest}.json`);
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw unavailable(cause);
+  }
+}
+
+/** The member whose own folder holds this path (lexical), from that member's committed
+ * binding. Placement only: the caller has already admitted the request. */
+export async function readAgentIsolationMemberRequesterForWorkspacePath(scope: AgentIsolationMemberBindingScope,
+  path: string): Promise<Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }> | null> {
+  if (readMachineMemberWorkspaceRelativePathV1(path) === null) return null;
+  const digest = path.slice(MACHINE_MEMBER_WORKSPACES_ROOT_V1.length + 1).split('/')[0];
+  try {
+    const value = await readBinding(await privateRoot(scope.activeServerDir, false), `${digest}.json`);
+    if (value.homeServerIdentityId !== scope.homeServerIdentityId || value.machineId !== scope.machineId
+      || value.installationId !== scope.installationId) throw unavailable();
+    return { kind: 'isolated', requester: projectAgentIsolationMemberBinding(value).requester, separationRequired: true };
   } catch (cause) {
     if ((cause as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw unavailable(cause);

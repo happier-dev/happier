@@ -111,7 +111,10 @@ import type { FilesystemEffectRequester } from '@/rpc/handlers/fileSystem/access
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { isScmLocalRepositoryReadRpcMethod } from '@happier-dev/protocol/actions/scmGitActionSpecs';
 import { randomUUID } from 'node:crypto';
+import { resolve as resolvePath } from 'node:path';
 import { registerScmWorkspaceWatchHandler } from './scmWorkspaceWatch';
+import { localWorkspaceSource } from '@/workspaces/source/localWorkspaceSource';
+import { bindWorkspaceSourceRegistrar, currentWorkspaceSource, runWithWorkspaceSource, type WorkspaceSource } from '@/workspaces/source/workspaceSource';
 
 const scmRpcOperationContextStorage = new AsyncLocalStorage<Readonly<{
     context: RpcHandlerContext;
@@ -131,10 +134,12 @@ export function registerScmHandlers(
         actionExecutor?: RpcActionExecutor;
         deliverFileAtRevision?: Parameters<typeof executeScmActionOperation>[0]['deliverFileAtRevision'];
         prepareFileBytesExport?: Parameters<typeof executeScmActionOperation>[0]['prepareFileBytesExport'];
+        /** The filesystem admission's source decision, shared so SCM reads the same workspace. */
+        selectWorkspaceSource?: (context: RpcHandlerContext | undefined, input: unknown) => WorkspaceSource;
         /** The filesystem admission's requester decision, shared so SCM runs where that person may run. */
         resolveRequester?: (context: RpcHandlerContext) => Promise<FilesystemEffectRequester>;
         /** The member execution owner (as bash, Project Open and Sync use it). */
-        nativeOperationRuntime?: Pick<ApiMachineClient, 'prepareNativeOperation'>;
+        nativeOperationRuntime?: Pick<ApiMachineClient, 'prepareNativeOperation'> & Partial<Pick<ApiMachineClient, 'readMemberFolderOwner'>>;
     }>,
 ): void {
     const refused = (actionErrorCode: string) => ({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
@@ -168,6 +173,11 @@ export function registerScmHandlers(
             return refused(readErrorCode(error));
         } finally { await native.dispose(); }
     };
+    const readRequestCwd = (input: unknown): string | undefined => {
+        const cwd: unknown = input && typeof input === 'object' ? Reflect.get(input, 'cwd') : undefined;
+        // Lexical, against the same base the handler resolves it on; the member child resolves links.
+        return typeof cwd === 'string' ? resolvePath(workingDirectory, cwd) : undefined;
+    };
     // Manage is full control of this Machine (owner ruling 2026-10-31): an admitted Manage
     // requester's Project SCM runs as the daemon user, like its file effects and shell.
     // Ingress admits anyone else only to a local repository read; closed host calls keep their runner.
@@ -177,19 +187,38 @@ export function registerScmHandlers(
         const requester = await deps.resolveRequester(context);
         try {
             const identity = requester.identity;
-            if (isHostRequesterUnrestrictedOwner(identity)) return await runWithRequesterScmCommandRunner(
-                createHostScmCommandRunner({ isCurrent: () => !context.signal.aborted }), run);
+            if (isHostRequesterUnrestrictedOwner(identity)) {
+                // Manage keeps full access to a member folder, but daemon Git never runs a member
+                // repository's config or hooks (F-A ruling, MEMBER-CHILD-READS-1115): the read runs in
+                // that member's own child. Happier never adds a safe.directory exception for it.
+                const target = projectRoot ?? readRequestCwd(input);
+                const readOwner = deps.nativeOperationRuntime?.readMemberFolderOwner;
+                const member = readOwner && target !== undefined && isScmLocalRepositoryReadRpcMethod(method)
+                    ? await readOwner(target).catch(() => 'unavailable' as const) : null;
+                if (member === 'unavailable') return refused('agent_isolation_unavailable');
+                if (member) return await readAsMember(context, member, method, projectRoot, input);
+                return await runWithRequesterScmCommandRunner(createHostScmCommandRunner({ isCurrent: () => !context.signal.aborted }), run);
+            }
             if (!isScmLocalRepositoryReadRpcMethod(method)) return await run();
             return identity.kind === 'isolated' ? await readAsMember(context, identity, method, projectRoot, input)
                 : refused('agent_isolation_unavailable');
         } finally { await requester.dispose(); }
     };
+    const selectSource = (request: unknown, context: RpcHandlerContext | undefined): WorkspaceSource => {
+        const targeted = request && typeof request === 'object' && 'kind' in request && request.kind === 'targeted_action_rpc'
+            ? TargetedActionRpcRequestV1Schema.safeParse(request) : null;
+        const directory = targeted?.success && targeted.data.target.kind === 'machine' ? targeted.data.target.project?.directory : undefined;
+        return deps?.selectWorkspaceSource?.(context, directory ? { rootPath: directory } : request) ?? localWorkspaceSource;
+    };
+    const sourceBoundRegistrar = bindWorkspaceSourceRegistrar(rpcHandlerManager,
+        (context: RpcHandlerContext | undefined, request) => selectSource(request, context));
     const scopedRegistrar = (unwrapTarget: boolean): RpcHandlerRegistrar => ({
         registerHandler<TRequest, TResponse>(
             method: string,
             handler: RpcHandler<TRequest, TResponse>,
         ): void {
             rpcHandlerManager.registerHandler(method, (request, context) => {
+                return runWithWorkspaceSource(selectSource(request, context), () => {
                 const operationContext = context ?? Object.freeze({ signal: new AbortController().signal });
                 const machinePolicy = deps?.accessPolicy ?? resolveFilesystemAccessPolicy();
                 const wrapped = request && typeof request === 'object' && 'kind' in request
@@ -216,6 +245,7 @@ export function registerScmHandlers(
                     // Raw SCM methods consume semantic input; Action-spec RPCs
                     // retain the same envelope for their canonical target parser.
                     () => handler((unwrapTarget && target?.success ? target.data.input : request) as TRequest, operationContext));
+                });
                 });
             });
         },
@@ -321,6 +351,8 @@ export function registerScmHandlers(
         return Number.isFinite(parsed) && parsed >= 0 ? parsed : 1_000;
     })();
     const statusSnapshotKey = (request: ScmStatusSnapshotRequest): string => JSON.stringify({
+        // The same path in two workspace sources is two working copies.
+        source: currentWorkspaceSource().id,
         // The same path read under another execution placement is another answer.
         requesterPlacement: isRequesterScmCommandRunnerSelected(),
         workingDirectory: routeBase.workingDirectory,
@@ -338,7 +370,7 @@ export function registerScmHandlers(
         statusSnapshotInFlight.clear();
         statusSnapshotCache.clear();
     };
-    if (deps?.machineId) registerScmWorkspaceWatchHandler(rpcHandlerManager, workingDirectory, {
+    if (deps?.machineId) registerScmWorkspaceWatchHandler(sourceBoundRegistrar, workingDirectory, {
         accessPolicy: deps.accessPolicy ?? resolveFilesystemAccessPolicy(),
         registry: deps.registry,
         invalidateStatusSnapshot: invalidateStatusSnapshotCache,

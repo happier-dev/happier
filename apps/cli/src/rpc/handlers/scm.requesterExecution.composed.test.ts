@@ -161,7 +161,10 @@ async function fixture() {
     registry: createScmBackendRegistry([backend]),
     accessPolicy: { kind: 'osUser' },
     resolveRequester: effectAdmission.resolveRpcRequester,
-    nativeOperationRuntime: { prepareNativeOperation },
+    // The member binding store (native OS state) names the member who owns a member folder.
+    nativeOperationRuntime: { prepareNativeOperation, readMemberFolderOwner: async (path: string) =>
+      path === memberRoot || path.startsWith(`${memberRoot}/`) ? { kind: 'isolated' as const, separationRequired: true,
+        requester: { serverId: home, accountId: 'member-account', machineId, installationId } } : null },
   });
   const invoke = (method: string, params: unknown, accountId: string, role: 'manage' | 'use', signal?: AbortSignal) =>
     manager.invokeLocal(method, params, { rpcContext: {
@@ -216,6 +219,23 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
       [RPC_METHODS.SCM_LOG_LIST, { cwd: f.memberRepository, limit: 5 }],
     ] as const) {
       const response = await f.invoke(method, params, 'member-account', 'use');
+      expect(response, JSON.stringify(response)).toMatchObject({ success: true });
+    }
+    expect(os.runAs.map(run => [run.args[0], run.uid])).toEqual([['workspace-effect', 2401], ['workspace-effect', 2401]]);
+    expect(gitLaunches().length).toBeGreaterThan(0);
+    expect(daemonGit()).toEqual([]);
+    expect(os.daemonTouches).toEqual([]);
+  });
+
+  // MEMBER-CHILD-READS-1115 (F-A ruling): Manage keeps full access, but daemon Git never runs
+  // in a member repository (its config and hooks); the read runs in that member's child.
+  it('runs a Manage local repository read of a member folder in that member child, never daemon Git', async () => {
+    const f = await fixture();
+    for (const [method, params] of [
+      [RPC_METHODS.SCM_STATUS_SNAPSHOT, { cwd: f.memberRepository }],
+      [RPC_METHODS.SCM_LOG_LIST, { cwd: f.memberRepository, limit: 5 }],
+    ] as const) {
+      const response = await f.invoke(method, params, 'manager-account', 'manage');
       expect(response, JSON.stringify(response)).toMatchObject({ success: true });
     }
     expect(os.runAs.map(run => [run.args[0], run.uid])).toEqual([['workspace-effect', 2401], ['workspace-effect', 2401]]);
