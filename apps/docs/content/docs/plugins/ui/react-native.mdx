@@ -1738,7 +1738,12 @@ line instead. While the columns show, a row-aligned `titleMeta`
 (`titleMetaAlign: 'row'`) gives its place to them, so declare that fact as a
 field too. Groups that share one page section (`section` on each group) sit on one
 sheet under sub-headings that keep their end: "customer-portal · Production"
-shortens the shared start first. Pass the narrowings in force as `search.tokens`
+shortens the shared start first. On a phone a sub-heading recomposes: its name
+keeps line 1, and what its rows share and its action move to line 2. When a title
+is an identifier (a host name, a path), set the anatomy's `titleIdentifier: true`.
+The list then draws it on one line in the host's mono face, ending in an
+ellipsis, instead of wrapping it like a name; keep the whole value in
+`accessibilityLabel`. Pass the narrowings in force as `search.tokens`
 (`{ key, qualifier, label, onRemove }`): they sit inside the search field, each one
 press to remove. To put that search into your own toolbar row, pass `header` as a
 render: `header={({ search, selection, pageActions }) => <Row>{search}{selection}{trailing controls}{pageActions}</Row>}`
@@ -2011,6 +2016,10 @@ strip and requests one panel. Use `layout="fill"` inside a bounded region for a
 self-scrolling view. A retained `Tabs.Item retention="retain"` mounts only after
 its first visit; its asynchronous work must consume `useTabPanelActivity()` and
 stop when `activeSignal` aborts. Retention ends with the Tabs mount.
+
+A tab can carry its count after the title with `badge` ("3"). When the count is
+itself a state, such as how many apps are failing, give it that state's tone
+with `badgeTone="danger"` (or `"warning"`). Leave the badge quiet for a plain total.
 
 In **0.3 development source**, an outer detail view can use
 `Tabs presentation="page" pageKind={{ pluginId, localId }}`. Keep `value` and
