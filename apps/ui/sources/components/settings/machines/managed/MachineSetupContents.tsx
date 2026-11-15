@@ -41,32 +41,45 @@ export function MachineSetupContents(
   if (total === 0 && !props.onEdit) return null;
   const setupGroups = setupExtras && !groups.some((group) => group.kind === 'setupRecipe')
     ? [{ kind: 'setupRecipe' as const, rows: [] }, ...groups] : groups;
+  const edit = props.onEdit ? <SectionActionButton testID={`${props.testID}.edit`} icon="pencil-simple"
+    title={t('machinePresets.editSetup')} onPress={props.onEdit} /> : undefined;
+  const rowsOf = (group: (typeof setupGroups)[number]) => {
+    const extras = group.kind === 'setupRecipe' ? setupExtras : 0;
+    return (
+      <>
+        {group.rows.map(({ item, index }) => {
+          const read = machineSetupItemReadRow(item, machineSetupItemPresentation(item, offers));
+          return <Item key={`${item.kind}:${index}:${read.title}`} testID={`${props.testID}.item.${index}`} {...read}
+            subtitleLines={0} mode="info" showChevron={false} />;
+        })}
+        {extras ? facts.map((fact) => <Item key={fact.id} testID={`${props.testID}.${fact.id}`} title={fact.label}
+          subtitle={fact.value} subtitleLines={0} mode="info" showChevron={false} />) : null}
+        {extras && commandLines.length ? <MachineSetupChangeGroupRow testID={`${props.testID}.script`} targetCount={0}
+          nameOf={String} group={{ kind: 'commands', lines: commandLines, added: commandLines.length, removed: 0 }} /> : null}
+      </>
+    );
+  };
+  // One kind of setup is one section: its rows sit under the page's own heading, never under a second one.
+  const [only] = setupGroups;
+  if (setupGroups.length === 1 && only) return (
+    <ItemGroup testID={props.testID} title={t('machinePresets.setup.itemsTitle')}
+      titleAccessory={<ManagedSectionCount count={total} />} action={edit}>
+      {rowsOf(only)}
+    </ItemGroup>
+  );
   return (
     <>
-      {/* The total and the apply order speak only across several kinds; one kind's own heading already counts it. */}
+      {/* The total and the apply order speak only across several kinds. */}
       <ItemGroup testID={props.testID} title={t('machinePresets.setup.itemsTitle')}
         titleAccessory={setupGroups.length > 1 ? <ManagedSectionCount count={total} /> : undefined}
         description={total === 0 ? t('machinePresets.setup.itemsEmpty') : setupGroups.length > 1 ? t('machinePresets.setup.itemsOrder') : undefined}
-        action={props.onEdit ? <SectionActionButton testID={`${props.testID}.edit`} icon="pencil-simple"
-          title={t('machinePresets.editSetup')} onPress={props.onEdit} /> : undefined}
-        surface="none">{null}</ItemGroup>
-      {setupGroups.map((group) => {
-        const extras = group.kind === 'setupRecipe' ? setupExtras : 0;
-        return (
-          <ItemGroup key={group.kind} testID={`${props.testID}.${group.kind}`} title={t(MACHINE_SETUP_ITEM_GROUP_TITLE[group.kind])}
-            titleAccessory={<ManagedSectionCount count={group.rows.length + extras} />}>
-            {group.rows.map(({ item, index }) => {
-              const read = machineSetupItemReadRow(item, machineSetupItemPresentation(item, offers));
-              return <Item key={`${item.kind}:${index}:${read.title}`} testID={`${props.testID}.item.${index}`} {...read}
-                subtitleLines={0} mode="info" showChevron={false} />;
-            })}
-            {extras ? facts.map((fact) => <Item key={fact.id} testID={`${props.testID}.${fact.id}`} title={fact.label}
-              subtitle={fact.value} subtitleLines={0} mode="info" showChevron={false} />) : null}
-            {extras && commandLines.length ? <MachineSetupChangeGroupRow testID={`${props.testID}.script`} targetCount={0}
-              nameOf={String} group={{ kind: 'commands', lines: commandLines, added: commandLines.length, removed: 0 }} /> : null}
-          </ItemGroup>
-        );
-      })}
+        action={edit} surface="none">{null}</ItemGroup>
+      {setupGroups.map((group) => (
+        <ItemGroup key={group.kind} testID={`${props.testID}.${group.kind}`} title={t(MACHINE_SETUP_ITEM_GROUP_TITLE[group.kind])}
+          titleAccessory={<ManagedSectionCount count={group.rows.length + (group.kind === 'setupRecipe' ? setupExtras : 0)} />}>
+          {rowsOf(group)}
+        </ItemGroup>
+      ))}
     </>
   );
 }

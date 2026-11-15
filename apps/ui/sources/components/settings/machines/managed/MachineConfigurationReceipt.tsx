@@ -258,8 +258,9 @@ function ReceiptCost(props: Readonly<{ cost: ManagedReceiptCost; placement: 'lea
       {cost.computer === null ? <ReceiptPendingValue /> : (
         <Text style={styles.quietLine}>{t('managedMachines.price.runsOn', { computer: cost.computer })}</Text>
       )}
+      {/* A local machine bills no one: its cost is a plain statement at row weight, never a display figure. */}
       <View style={styles.bigRow}>
-        <Text style={figure}>{headline.value}</Text>
+        <Text style={styles.figure}>{headline.value}</Text>
       </View>
       {cost.meters.map((meter) => (
         <View

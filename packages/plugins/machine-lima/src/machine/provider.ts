@@ -41,15 +41,21 @@ function templateImage(images: unknown, arch: string | undefined): string | unde
   return typeof image?.location === 'string' ? image.location : undefined;
 }
 
-/** What a person recognises an image by: its file name, and where it is served from. */
+/** What a person recognises an image by: the system and release its file names, else the file name; and where it is served from. */
 function describeImage(location: string) {
   try {
     const url = new URL(location);
     const name = decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() ?? '');
-    return name ? { title: name, ...(url.host ? { description: url.host } : {}) } : { title: location };
+    return name ? { title: imageTitle(name), ...(url.host ? { description: url.host } : {}) } : { title: location };
   } catch {
-    return { title: location.split(/[\\/]/u).filter(Boolean).pop() ?? location };
+    return { title: imageTitle(location.split(/[\\/]/u).filter(Boolean).pop() ?? location) };
   }
+}
+
+/** Cloud image files lead with their system and release ("ubuntu-26.04-server-cloudimg-amd64.img" is Ubuntu 26.04). */
+function imageTitle(fileName: string) {
+  const release = /^([a-z]+)-(\d+(?:\.\d+)*)[-_.]/iu.exec(fileName);
+  return release ? `${release[1]!.charAt(0).toUpperCase()}${release[1]!.slice(1)} ${release[2]}` : fileName;
 }
 
 function refusalCode(error: unknown) {

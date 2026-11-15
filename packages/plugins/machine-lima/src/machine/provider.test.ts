@@ -216,15 +216,18 @@ describe('public Lima native leaf', () => {
     expect(statuses).toEqual(['qemu-x86-64', 'qemu-img']);
   });
 
-  it('names the reviewed image by its file and source, never by its whole location', async () => {
+  it('names the reviewed image by its system and source, never by its whole location', async () => {
     const { executor } = processBoundary(() => ({ exitCode: 0, out: 'limactl version 2.1.0', err: '' }));
     const query = { ...launch, image: 'https://cloud-images.ubuntu.com/releases/noble/release-20260926/ubuntu-24.04-server-cloudimg-amd64.img?x=1' };
     const { base, dimensions } = await createLimaProvider(executor, 123, async () => true).options(query);
     expect(base).toMatchObject({ guestPlatform: 'linux' });
     expect(dimensions.image).toEqual([]);
     expect(base?.launch).toMatchObject({ image: query.image });
-    expect(base?.nativeFacts?.image).toEqual({ id: query.image, title: 'ubuntu-24.04-server-cloudimg-amd64.img',
+    expect(base?.nativeFacts?.image).toEqual({ id: query.image, title: 'Ubuntu 24.04',
       description: 'cloud-images.ubuntu.com' });
+    // A file that names no system and release keeps its file name.
+    const custom = await createLimaProvider(executor, 123, async () => true).options({ ...launch, image: 'file:///srv/images/golden.qcow2' });
+    expect(custom.base?.nativeFacts?.image).toEqual({ id: 'file:///srv/images/golden.qcow2', title: 'golden.qcow2' });
   });
 
   it('does not advertise a QEMU executable without its native disk-image tool', async () => {

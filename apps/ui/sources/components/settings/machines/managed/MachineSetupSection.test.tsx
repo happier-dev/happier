@@ -18,6 +18,7 @@ afterEach(() => standardCleanup());
 // Load the real component after boundary mocks, outside any render's act lifetime.
 const { MachineSetupSection } = await import('./MachineSetupSection');
 const { MachineSetupContents } = await import('./MachineSetupContents');
+const { t } = await import('@/text');
 
 async function renderSection(
   setup: MachineSetupV1 | undefined,
@@ -227,5 +228,15 @@ describe('MachineSetupSection (D53)', () => {
     const empty = await renderScreen(<MachineSetupContents testID="sets" setup={undefined} scope={null} />);
     expect(empty.tree.findAll(node => node.props?.testID === 'sets' && node.props.title !== undefined)).toHaveLength(0);
     await empty.unmount();
+  });
+
+  it('puts one kind of setup under the section\'s own heading, never a second heading for the same rows', async () => {
+    const screen = await renderScreen(<MachineSetupContents testID="sets" setup={{ items: [], scripts: [{ body: 'touch /tmp/ok' }] }}
+      scope={null} onEdit={() => {}} />);
+    const titled = screen.tree.findAll(node => typeof node.props?.testID === 'string' && /^sets(\.(setupRecipe|softwareRecipe|app))?$/.test(node.props.testID)
+      && typeof node.props.title === 'string').map(node => node.props.title as string);
+    expect([...new Set(titled)]).toEqual([t('machinePresets.setup.itemsTitle')]);
+    expect(screen.getTextContent()).toContain('$ touch /tmp/ok');
+    await screen.unmount();
   });
 });
