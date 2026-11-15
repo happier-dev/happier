@@ -237,7 +237,8 @@ describe('resolveConcurrentTargets', () => {
         vi.resetModules();
         const stopInterval = vi.fn();
         const startRuntimeActiveGatedInterval = vi.fn(() => stopInterval);
-        vi.doMock('@/utils/runtime/isRuntimeActive', () => ({
+        vi.doMock('@/utils/runtime/isRuntimeActive', async (importOriginal) => ({
+            ...(await importOriginal<typeof import('@/utils/runtime/isRuntimeActive')>()),
             isRuntimeActive: () => true,
             startRuntimeActiveGatedInterval,
         }));

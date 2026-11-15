@@ -61,12 +61,17 @@ export function trackSessionMessageMaterialization<T>(sessionId: string, materia
 /**
  * Settles every session message already received for `sessionId`: awaits the materializations in
  * flight at this call, then applies anything still queued in the coalescer. Call this before
- * retiring pending rows for the session.
+ * retiring pending rows for the session. With nothing in flight it applies synchronously and
+ * returns nothing, so a caller that only awaits a returned promise does not yield.
  */
-export async function settleReceivedSessionMessages(sessionId: string): Promise<void> {
+export function settleReceivedSessionMessages(sessionId: string): Promise<void> | void {
     const key = sessionKey(sessionId);
     if (!key) return;
     const entries = inFlightSessionMessageMaterializations.get(key);
-    if (entries && entries.size > 0) await Promise.allSettled([...entries]);
+    if (entries && entries.size > 0) {
+        return Promise.allSettled([...entries]).then(() => {
+            applyReceivedSessionMessages?.(key);
+        });
+    }
     applyReceivedSessionMessages?.(key);
 }
