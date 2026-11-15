@@ -42,7 +42,7 @@ export function retainHealthResult(previous: HealthResultProjection['checks'][nu
     checkId: string, result: HealthResultProjection['checks'][number]['result']): HealthResultProjection['checks'][number] {
     const history = previous?.history;
     // Re-adoption and monitor wakes may return the same retained observation.
-    if (previous && result.observedAt <= (history?.lastObservedAt ?? previous.result.observedAt)) return { ...previous, checkId, result, history };
+    if (previous && result.observedAt <= (history?.lastObservedAt ?? previous.result.observedAt)) return { ...previous, checkId, result };
     const dayStartAt = Math.floor(result.observedAt / DAY_MS) * DAY_MS;
     const days = history ? windowHistory(history, result.observedAt).days : [];
     const last = days.at(-1);
@@ -65,8 +65,9 @@ export function retainHealthResult(previous: HealthResultProjection['checks'][nu
 function windowRecentResults(check: Pick<HealthResultProjection['checks'][number], 'recentResults' | 'recentResultsOmittedThrough'>, at: number) {
     const start = Math.floor(at / DAY_MS) * DAY_MS - (HISTORY_DAYS - 1) * DAY_MS;
     const omitted = check.recentResultsOmittedThrough;
-    return { recentResults: check.recentResults?.filter(result => result.observedAt >= start && result.observedAt <= at),
-        ...(check.recentResults === undefined ? {} : { recentResultsCoverage: omitted !== undefined && omitted >= start ? 'partial' as const : 'complete' as const }),
+    return { ...(check.recentResults === undefined ? {} : {
+        recentResults: check.recentResults.filter(result => result.observedAt >= start && result.observedAt <= at),
+        recentResultsCoverage: omitted !== undefined && omitted >= start ? 'partial' as const : 'complete' as const }),
         ...(omitted !== undefined && omitted >= start ? { recentResultsOmittedThrough: omitted } : {}) };
 }
 

@@ -11,6 +11,21 @@ import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRun
 import * as configured from './configuredHealthResults';
 
 describe('configured saved health public Action bridge', () => {
+    it('keeps an old checkpoint available when the same result is read again', async () => {
+        const kv = { list: async () => ({ items: [{ key: 'health:saved', version: 1, value: { current: {
+            v: 1,
+            members: [{ automationId: 'automation', triggerId: 'trigger', triggerRevision: 1, sourceSelectorId: 'selector' }],
+            checks: [{ checkId: 'site', result: { status: 'down', observedAt: 1000,
+                evidence: { v: 1, items: [{ source: { kind: 'alert', label: 'HTTP' }, author: { kind: 'process' }, text: 'Check failed.' }] } } }],
+        } } }] }) };
+        const signal = new AbortController().signal;
+        const first = await configured.readConfiguredHealthResults(kv, signal, { results: new Map(), preceding: false });
+        expect(first.results.get(configured.configuredHealthResultKey('automation', 'trigger'))?.state.kind).toBe('available');
+        const second = await configured.readConfiguredHealthResults(kv, signal, first);
+        expect(second.results.get(configured.configuredHealthResultKey('automation', 'trigger'))?.state)
+            .toMatchObject({ kind: 'available', checks: [{ checkId: 'site', result: { status: 'down', observedAt: 1000 } }] });
+        expect(second).toBe(first);
+    });
     it.each([503, '503'])('reads additive stored cause facts while rejecting an invalid known status (%s)', async httpStatus => {
         const page = await configured.readConfiguredHealthResults({ list: async () => ({ items: [{ key: 'health:saved', version: 1,
             value: { current: { v: 1, futureProjection: true,

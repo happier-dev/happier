@@ -371,6 +371,21 @@ describe('saved health source registration and finite cycles', () => {
         expect(actual.recentResults?.at(-1)?.observedAt).toBe(f.now());
         expect(f.read).toHaveBeenCalledTimes(2);
     });
+    it('re-adopts a legacy result without inventing missing history or rewriting its checkpoint', async () => {
+        const f = fixture();
+        await f.cycle();
+        const [key, entry] = [...f.rows][0]!;
+        if (!entry || !('value' in entry) || !entry.value || typeof entry.value !== 'object' || Array.isArray(entry.value)) throw Error('Expected checkpoint');
+        const current = healthResultProjectionSchema.parse(entry.value.current);
+        f.rows.set(key, { version: entry.version, value: { ...entry.value, current: { ...current,
+            checks: current.checks.map(({ checkId, result }) => ({ checkId, result })),
+        } } });
+        const writes = f.writes.length;
+        await f.cycle(createHealthCheckSourceAdapter(f.now));
+        expect(f.read).toHaveBeenCalledTimes(2);
+        expect(f.errors).toEqual([]);
+        expect(f.writes).toHaveLength(writes);
+    });
     it('retains thirty UTC days of sample uptime through equal results, missing days and restart without extra probes', async () => {
         const day = 86_400_000;
         const f = fixture();
