@@ -296,12 +296,30 @@ export function runScmCommand(input: ScmCommandInput): Promise<ScmExecResult> {
         return { success: false, stdout: '', exitCode: -1,
             stderr: typeof code === 'string' ? code : typeof dataCode === 'string' ? dataCode : 'SCM command execution is unavailable' };
     };
-    const executeCommand: ScmCommandRunner = command => runner
-        ? Promise.resolve().then(() => runner(command)).catch(failure) : runHostScmCommand(command);
+    const executeCommand: ScmCommandRunner = command => {
+        const scoped = withEmptySafeDirectory(command);
+        return runner ? Promise.resolve().then(() => runner(scoped)).catch(failure) : runHostScmCommand(scoped);
+    };
     const execute = () => executeCommand(input);
     const command = isHostGitPush(input)
         ? runHostGitPush(input, runHostScmCommand, lease?.registry.scmAgentIsolation, executeCommand).then(transport => transport ?? execute()) : execute();
     return command.catch(failure).then(result => observeScmCommandResult(input, result, startedAt)).finally(() => lease?.release());
+}
+
+/**
+ * The daemon never relies on the host's `safe.directory`: an empty value resets the list for every
+ * Git command it runs, so Git's ownership refusal holds even when the host config trusts every
+ * directory. Appends to any inherited environment config rather than replacing it.
+ */
+function withEmptySafeDirectory(input: ScmCommandInput): ScmCommandInput {
+    if (path.basename(input.bin).replace(/\.exe$/i, '') !== 'git') return input;
+    const environment = { ...sessionProcessEnvironment(), ...input.env };
+    const raw = environment.GIT_CONFIG_COUNT ?? '';
+    const count = raw === '' ? 0 : /^[ \t\n\r\f\v]*[+-]?\d+$/.test(raw) ? Number(raw) : NaN;
+    // A malformed count is left for Git to report, as before.
+    if (!Number.isSafeInteger(count) || count < 0) return input;
+    return { ...input, env: { ...input.env, GIT_CONFIG_COUNT: String(count + 1),
+        [`GIT_CONFIG_KEY_${count}`]: 'safe.directory', [`GIT_CONFIG_VALUE_${count}`]: '' } };
 }
 
 function runHostScmCommand(input: ScmCommandInput): Promise<ScmExecResult> {

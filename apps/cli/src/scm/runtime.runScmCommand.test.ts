@@ -48,6 +48,19 @@ describe('runScmCommand output limits', () => {
         } finally { for (const home of homes) rmSync(home, { recursive: true, force: true }); }
     });
 
+    it('keeps Git ownership checks on when the host config trusts every directory', async () => {
+        const workspace = mkdtempSync(join(tmpdir(), 'happier-scm-safe-dir-'));
+        try {
+            execFileSync('git', ['init', '-q'], { cwd: workspace });
+            const globalConfig = join(workspace, 'host-gitconfig');
+            writeFileSync(globalConfig, '[safe]\n\tdirectory = *\n');
+            const result = await runScmCommand({ bin: 'git', cwd: workspace, args: ['rev-parse', '--git-dir'],
+                env: { GIT_CONFIG_GLOBAL: globalConfig, GIT_TEST_ASSUME_DIFFERENT_OWNER: '1', LC_ALL: 'C' } });
+            expect(result.success).toBe(false);
+            expect(result.stderr).toContain('dubious ownership');
+        } finally { rmSync(workspace, { recursive: true, force: true }); }
+    });
+
     it('preserves complete valid output beyond the former implicit 4 MiB ceiling', async () => {
         const workspace = mkdtempSync(join(tmpdir(), 'happier-scm-runtime-large-'));
         try {
