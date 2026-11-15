@@ -4,6 +4,60 @@ import { createDeploymentTeardownExecutor } from './teardown';
 import { DEPLOYMENT_TEARDOWN_STEPS_V1 } from '@happier-dev/deployment-protocol';
 
 describe('teardown operation custody', () => {
+    it.each([
+        { machineCount: 1, resuming: false, cancel: false },
+        { machineCount: 3, resuming: false, cancel: false },
+        { machineCount: 1, resuming: true, cancel: false },
+        { machineCount: 1, resuming: false, cancel: true },
+        { machineCount: 1, resuming: true, cancel: true },
+    ])('reads cancellation once at each effect boundary ($machineCount Machines, resuming=$resuming, cancel=$cancel)', async ({ machineCount, resuming, cancel }) => {
+        const environment = createDeploymentEnvironmentDetailV1();
+        const link = environment.targetLinks[0].targetLink;
+        link.members = Array.from({ length: machineCount }, (_, index) => ({
+            machineId: `machine-${index}`, installationId: `installation-${index}`, state: 'active' as const,
+        }));
+        link.machines = link.members.map(member => member.machineId);
+        const sample = createDeploymentReceiptDetailV1();
+        let receipt = createDeploymentReceiptDetailV1({ deployment: { ...sample.deployment,
+            operation: 'teardown', state: 'running', environmentId: environment.environment.id,
+            targetLinkId: link.id, actionOperationId: 'remove-operation' }, content: { ...sample.content,
+            teardown: { reason: 'manual', targetLinkRevision: link.revision,
+                machines: link.members.map(({ machineId, installationId }) => ({ machineId, installationId })),
+                resources: [], proofs: resuming ? [{ step: DEPLOYMENT_TEARDOWN_STEPS_V1[0],
+                    machineId: link.members[0].machineId, installationId: link.members[0].installationId,
+                    state: 'running', resources: [] }] : [] } } });
+        let reads = 0;
+        let effects = 0;
+        let cancelPending = false;
+        // Home receipt reads/writes and native effects are the system boundaries.
+        const execute = createDeploymentTeardownExecutor({ serverId: 'home', machineId: link.machines[0],
+            readEnvironment: async () => environment,
+            readReceipt: async () => {
+                reads++;
+                if (cancelPending) receipt = { ...receipt, deployment: { ...receipt.deployment, cancelRequestedAtMs: 1000 } };
+                return receipt;
+            },
+            writeTransition: async transition => {
+                receipt = createDeploymentReceiptDetailV1({ deployment: { ...receipt.deployment,
+                    revision: receipt.deployment.revision + 1, state: transition.state }, content: transition.content });
+                return { ok: true, environmentId: environment.environment.id, revision: environment.environment.revision,
+                    deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: receipt.deployment.state };
+            },
+            boundary: { observe: async () => { cancelPending = cancel; return { kind: 'needed' }; },
+                execute: async () => { effects++; return { kind: 'proved', resources: [] }; } } });
+        const result = await execute({ actionId: 'deployments.teardown', input: { serverId: 'home',
+            environmentId: environment.environment.id, targetLinkId: link.id, expectedRevision: environment.environment.revision,
+            expectedTargetLinkRevision: link.revision, requestKey: receipt.deployment.requestKey, reason: 'manual',
+            contentArtifactId: receipt.deployment.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1 },
+            receipt: { ok: true, environmentId: environment.environment.id, revision: environment.environment.revision,
+                deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: 'running' },
+            context: { surface: 'cli', operationAcceptance: { operationId: 'remove-operation', accept() {} } } });
+        expect(result).toMatchObject(cancel ? { ok: false, errorCode: 'cancelled' } : { ok: true, state: 'succeeded' });
+        const steps = machineCount * DEPLOYMENT_TEARDOWN_STEPS_V1.length;
+        expect(effects).toBe(cancel ? 0 : steps);
+        // Initial receipt, then step admission, started proof and completed proof.
+        expect(reads).toBe(cancel ? 3 : 1 + 3 * steps);
+    });
     it.each([true, false])('settles final Environment removal from the signed Home response (accepted=%s)', async accepted => {
         const environment = createDeploymentEnvironmentDetailV1();
         const link = environment.targetLinks[0].targetLink;

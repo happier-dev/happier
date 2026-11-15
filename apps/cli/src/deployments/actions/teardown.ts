@@ -121,7 +121,12 @@ export function createDeploymentTeardownExecutor(host: Pick<OwnServerDeploymentT
             const { failure: _failure, ...withoutFailure } = receipt.content;
             const currentContent = state === 'succeeded' ? withoutFailure : receipt.content;
             const content = proof ? { ...currentContent, teardown: { ...current, proofs } } : currentContent;
-            if (state === receipt.deployment.state && isDeepStrictEqual(content, receipt.content)) return null;
+            if (state === receipt.deployment.state && isDeepStrictEqual(content, receipt.content)) {
+                // A resumed running proof still needs the same cancellation read
+                // as a newly persisted proof before its native effect.
+                receipt = await read();
+                return null;
+            }
             const teardownProof: OwnServerDeploymentTransition['teardownProof'] = state === 'succeeded'
                 ? { targetLinkRevision: intent.targetLinkRevision, machines: intent.machines, workloadAbsent: true,
                     steps: [...DEPLOYMENT_TEARDOWN_STEPS_V1],
@@ -183,8 +188,7 @@ export function createDeploymentTeardownExecutor(host: Pick<OwnServerDeploymentT
                 if (observed.kind === 'needed') {
                     const started = await write('running', { step, ...member, state: 'running', resources: [] });
                     if (started) return started;
-                    const current = await read();
-                    if (current.deployment.cancelRequestedAtMs !== undefined || current.deployment.state === 'cancelled'
+                    if (receipt.deployment.cancelRequestedAtMs !== undefined || receipt.deployment.state === 'cancelled'
                         || request.context.signal?.aborted) return failure('cancelled');
                     try { observed = await boundary.execute(operation); }
                     catch (error) {
