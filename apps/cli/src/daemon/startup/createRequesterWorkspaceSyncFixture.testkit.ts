@@ -287,7 +287,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
         requesterWorkspaceSyncTargetInstallationFiles.run({ path: configuration.installationIdentityFile,
           identity: JSON.stringify(installed.installation) }, () => receiver.handleRequest(packet, undefined, 'authenticated_home_socket')));
       const received: RpcRequest = { ...payload, requestId: payload.requestId,
-        method: payload.method, params: payload.params, workspaceSyncSeedRouting: routing,
+        method: payload.method, params: payload.params, workspaceSyncSeedRouting: routing, externalActionExecution: signed,
         callerInputAuthorization: signed.authorization, machineAdmission: sourceContext.machineAdmission,
         callerAuthority: sourceContext.callerAuthority, sessionActionOrigin: sourceContext.sessionActionOrigin,
         callerInputConstraints: sourceContext.callerInputConstraints };

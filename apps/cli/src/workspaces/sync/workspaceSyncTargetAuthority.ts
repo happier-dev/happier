@@ -17,6 +17,7 @@ import { configuration } from '@/configuration';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { openManagedMachineRead, readManagedMachineFull, readManagedMachineReads } from '@/machines/managed/readManagedMachine';
 import { ManagedInspectOutputV1Schema, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { isManagedDevcontainerChildProjectionCurrentV1, deriveManagedDevcontainerChildProjectionV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/socketRpc';
@@ -419,7 +420,7 @@ export async function readWorkspaceSyncChildMachineFacts(input: Readonly<{
       }
       // The controller-owned list carries Home's exact recipient projection;
       // open that selected carrier before deriving the private child facts.
-      let managedMachine = retainedManaged ? await (async () => {
+      let managedMachine: ManagedMachineV1 | undefined = retainedManaged ? await (async () => {
         if (!input.credentials) {
           throw authorityError('workspace_sync_child_unavailable', 'Requester content custody is unavailable');
         }
