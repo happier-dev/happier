@@ -385,7 +385,9 @@ function ProjectsTreeRowList(props: ProjectsTreeRowListProps & Readonly<{ rows: 
 export function ProjectsTreeRowFact(props: Readonly<{ row: Pick<ProjectsTreeRow, 'fact' | 'needsYouStatus'>; testID?: string }>) {
     const status = props.row.needsYouStatus;
     const testID = props.testID === undefined ? {} : { testID: props.testID };
-    if (status) return <StatusPill chrome="plain" labelVariant="phrase" variant={WORK_STATUS_PILL_VARIANT[status.tone]} label={status.word} {...testID} />;
+    // A long state word ("Running, not verified") shortens before it leaves the row's end inset.
+    if (status) return <StatusPill chrome="plain" labelVariant="phrase" labelNumberOfLines={1} style={styles.fact}
+        variant={WORK_STATUS_PILL_VARIANT[status.tone]} label={status.word} {...testID} />;
     return props.row.fact ? <Text {...testID} numberOfLines={1} style={styles.count}>{props.row.fact}</Text> : null;
 }
 
@@ -501,6 +503,10 @@ const styles = StyleSheet.create((theme) => ({
     list: {
         flex: 1,
         minHeight: 0,
+    },
+    fact: {
+        flexShrink: 1,
+        minWidth: 0,
     },
     hidden: {
         marginTop: theme.space.s12,

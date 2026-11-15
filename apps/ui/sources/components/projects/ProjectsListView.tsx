@@ -28,7 +28,8 @@ import { useProjectsTreeCheckoutFactsFor, useProjectsTreeCheckoutFactsSource, ty
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces';
 import { useCollectionTreeKeyboard } from '@/components/ui/lists/collection/useCollectionTreeKeyboard';
-import { ProjectsTree, ProjectsTreeRowFact, openProjectsTreeRow } from './ProjectsTree';
+import { ProjectsTree, openProjectsTreeRow } from './ProjectsTree';
+import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
 import { ProjectHideUndoNotice } from './ProjectHideUndoNotice';
 import { ProjectsAddMenu } from './ProjectsAddMenu';
 import { useOpenNewApp } from './starters/newAppPresentation';
@@ -286,12 +287,14 @@ function ProjectsListRow(props: Readonly<{
             onSeparate: leaf && ref && checkouts.length > 1 ? () => { void groupCheckouts([ref], 'self'); } : null,
         };
     }, [checkouts, groupCheckouts, leaf, projectKey, props.refsById, readGroupTargets, ref]);
-    const subtitle = [projectsTreeRowSubtitle(row, t('projects.identity.newFromSession')), attentionLabel].filter((part): part is string => Boolean(part)).join(' · ');
+    // A phone row keeps only a short value beside its label (DESIGN "Phones recompose"): an Environment's fact, a state
+    // word as often as a version, moves beneath its name, its trouble mark leading it.
+    const environmentFact = row.kind === 'environment' ? row.fact ?? null : null;
+    const subtitle = environmentFact ?? [projectsTreeRowSubtitle(row, t('projects.identity.newFromSession')), attentionLabel].filter((part): part is string => Boolean(part)).join(' · ');
     const trailing = (
         <View style={styles.trailing}>
             {row.count != null ? <Text style={styles.count}>{String(row.count)}</Text> : null}
-            {row.kind === 'environment' ? <ProjectsTreeRowFact row={row} testID={`projects-list-project-${row.key}:fact`} />
-            : row.attention === 'needs-you' ? (
+            {row.kind === 'environment' ? null : row.attention === 'needs-you' ? (
                 <StatusDot color={theme.colors.state.warning.foreground} size={6} accessibilityLabel={t('projects.checkouts.needsYou')} />
             ) : row.attention === 'working' ? (
                 <ActivitySpinner size="small" color={theme.colors.text.tertiary} />
@@ -333,6 +336,8 @@ function ProjectsListRow(props: Readonly<{
             title={row.title}
             titleQualifier={row.titleQualifier}
             subtitle={subtitle || undefined}
+            subtitleLeading={row.kind === 'environment' && row.needsYouStatus
+                ? <WorkStatusRowMark status={row.needsYouStatus} testIDSuffix={`projects-list-project-${row.key}`} /> : undefined}
             subtitleLines={ref ? model.workspaceSubtitleLines(ref) : 1}
             icon={<Icon name={projectsTreeGlyphIcon(row.glyph)} size={20} color={theme.colors.text.secondary} />}
             accessibilityExpanded={row.expandable ? row.expanded : undefined}
