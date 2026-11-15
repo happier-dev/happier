@@ -34,7 +34,7 @@ import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encry
 import { captureMachineAccessImpactsInTx, applyMachineAccessImpactsInTx } from './machineAccessEffects';
 import { isMachineOperationSupportedForRequester, type MachineOperationRequesterContext } from './machineOperationSupport';
 import { isMachineRecipientWorkPending, projectMachineRecipientWork, readMachineAudienceAccountIdsInTx, readMachineAudienceAccountIdsForMachinesInTx, readMachineRecipientWorkInTx } from './machineRecipientWork';
-import { classifyMachineAvailabilityState } from './machineStateGuards';
+import { classifyMachineAvailabilityState, readMachineOnlineAvailabilityDiagnostic } from './machineStateGuards';
 import { MACHINE_PERMISSION_FACTS_SELECT, buildMachineActorPermissionFactsSelect, machineGrantRelationsSelect, contributions, readMachineRoleGraphInTx, projectMachineRoles, projectMachineTeamRoles, expandMachineIdsWithManagedGuestsInTx } from './machineRole';
 import { projectTeamGroupNameForRecipient } from '@/app/teams/groups/privateLabels';
 import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
@@ -472,8 +472,8 @@ async function machineAdmissionFromFactsWithRoleInTx(tx: Tx, row: MachineFacts |
         diagnostic: { reason: 'machine_replaced', requiredFact: 'current_machine', remedy: 'select_current_machine' } };
     if (!row.installationId) return { kind: 'denied', code: 'machine_unavailable',
         diagnostic: { reason: 'machine_installation_missing', requiredFact: 'machine_installation', remedy: 'register_machine' } };
-    if (input.requireOnline === true && !row.active) return { kind: 'denied', code: 'machine_unavailable',
-        diagnostic: { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' } };
+    const onlineDiagnostic = readMachineOnlineAvailabilityDiagnostic(row, input.requireOnline);
+    if (onlineDiagnostic) return { kind: 'denied', code: 'machine_unavailable', diagnostic: onlineDiagnostic };
     // A template creates the same requester-owned Session as ordinary New Session.
     // Keep its signed root while consuming the existing spawn role/isolation policy.
     const operationActionId = input.actionId === 'template.instantiate' ? 'session.spawn_new' : input.actionId;

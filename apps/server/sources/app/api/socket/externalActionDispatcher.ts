@@ -20,7 +20,7 @@ import { SOCKET_RPC_EVENTS } from "@happier-dev/protocol/socketRpc";
 import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import type { Server } from "socket.io";
 
-import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
+import { classifyMachineAvailabilityState, readMachineOnlineAvailabilityDiagnostic } from "@/app/machines/machineStateGuards";
 import { auth, ApiTokenOperationError, type ExternalActionGrantEvaluationContext, type ExternalActionExecutionAuthorizationMintInput } from "@/app/auth/auth";
 import { admitManagedAcquire, ExternalActionAdmissionUnexpectedError } from '@/app/machines/managed/managedAcquire';
 import { cancelManagedCreation } from '@/app/machines/managed/managedRead';
@@ -369,6 +369,7 @@ async function resolveMachineFromServer(params: Parameters<ResolveMachine>[0]): 
             installationId: true,
             revokedAt: true,
             replacedByMachineId: true,
+            active: true,
             operationProtocolCapabilities: true,
             operationProtocolCapabilitiesRevision: true,
         },
@@ -386,7 +387,7 @@ async function resolveMachineFromServer(params: Parameters<ResolveMachine>[0]): 
             && (isOriginalAccountHandoffAction(params.actionId) || params.actionId === 'session.spawn_new')
             ? await readCurrentExternalActionHandoffBindingInTx(db, { accountId: params.accountId,
                 callerAuthority: params.callerAuthority, sessionActionOrigin: params.sessionActionOrigin,
-                handoffAdmission: params.handoffAdmission, requireSourceOnline: true }) : null);
+                handoffAdmission: params.handoffAdmission }) : null);
         if (params.handoffAdmission && (!handoff
             || ![handoff.sourceMachineId, handoff.targetMachineId].includes(params.machineId)
             || machine.installationId !== (params.machineId === handoff.sourceMachineId
@@ -411,7 +412,7 @@ async function resolveMachineFromServer(params: Parameters<ResolveMachine>[0]): 
             ? await resolveMachineAdmission({ actorAccountId: params.accountId,
                 machineId: params.machineId, requiredRole: 'use',
                 callerAuthority: params.callerAuthority, sessionActionOrigin: params.sessionActionOrigin,
-                requireOnline: params.requireOnline ?? true })
+                requireOnline: false })
             : params.actionId
                 ? await resolveExternalActionExecutionMachineAdmissionInTx(db, {
                     actorAccountId: params.accountId,
@@ -424,16 +425,18 @@ async function resolveMachineFromServer(params: Parameters<ResolveMachine>[0]): 
                     managedCreationAdmission: params.managedCreationAdmission,
                     capturedMachineAdmission: params.capturedMachineAdmission,
                     envelope: params.envelope,
-                    requireOnline: params.requireOnline ?? true,
+                    requireOnline: false,
                 })
                 : await resolveMachineAdmission({ actorAccountId: params.accountId,
                     machineId: params.machineId, callerAuthority: params.callerAuthority,
-                    sessionActionOrigin: params.sessionActionOrigin, requireOnline: params.requireOnline ?? true });
+                    sessionActionOrigin: params.sessionActionOrigin, requireOnline: false });
         if (!admission || admission.kind !== 'admitted') {
             if (admission?.diagnostic) return { kind: 'unavailable', diagnostic: admission.diagnostic };
             return admission?.code === 'machine_unavailable' ? 'unavailable' : 'not_owned';
         }
         if (admission.custodianAccountId !== machine.accountId || admission.installationId !== machine.installationId) return 'unavailable';
+        const diagnostic = readMachineOnlineAvailabilityDiagnostic(machine, params.requireOnline ?? true);
+        if (diagnostic) return { kind: 'unavailable', diagnostic };
         const { kind: _kind, ...context } = admission;
         machineAdmission = context;
     }
@@ -581,6 +584,8 @@ function createExactMachineDaemonGuard(params: Readonly<{
                 accountId: params.accountId,
                 machineId: params.machineId,
                 admittedDelivery: true,
+                // Delivery already consumed online availability; this guard binds the live socket installation.
+                requireOnline: false,
                 onAdmission: admission => { machineAdmission = admission; },
                 actionId: params.actionId,
                 callerAuthority: params.callerAuthority,

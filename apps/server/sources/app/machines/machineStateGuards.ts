@@ -1,8 +1,15 @@
 import { db } from "@/storage/db";
 import type { Tx } from "@/storage/inTx";
+import type { MachineAvailabilityDiagnosticV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { readMachineIrohEndpointAuthorityV1, MachineOperationProtocolCapabilitiesV1StoredReadSchema, type MachineOperationProtocolCapabilityNameV1, type MachineIrohEndpointAuthorityV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 
 export type MachineAvailabilityState = "available" | "revoked" | "replaced" | "missing";
+
+/** Admission may retain offline work; delivery consumes this same online requirement. */
+export function readMachineOnlineAvailabilityDiagnostic(machine: Readonly<{ active: boolean }>, requireOnline?: boolean): MachineAvailabilityDiagnosticV1 | undefined {
+    return requireOnline === true && !machine.active
+        ? { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' } : undefined;
+}
 
 export function classifyMachineAvailabilityState(
     machine: Readonly<{ revokedAt: Date | null; replacedByMachineId: string | null }> | null,
