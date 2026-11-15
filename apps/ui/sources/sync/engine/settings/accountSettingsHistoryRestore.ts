@@ -252,6 +252,8 @@ const NormalizedHistoryRecordSchema = z.object({
     roots: z.array(z.string()),
     /** Saved Secret recovery inputs a completed pass used at this head (identities and revisions only, no values). */
     recoveries: z.optional(z.array(z.string())),
+    /** History versions the last pass at this head left cleanup-pending; reported again until Settings change. */
+    pendingVersions: z.optional(z.array(z.number().check(z.int(), z.nonnegative()))),
 });
 type NormalizedHistoryRecord = z.infer<typeof NormalizedHistoryRecordSchema>;
 
@@ -287,15 +289,16 @@ function savedSecretRecoveryIdentity(recovery: HistoryNormalizationParams['saved
         resolver: Boolean(recovery.resolveResourceValue) }) : null;
 }
 
-/** Nothing new since the last completed pass: same observed head and every root already normalized. */
-function isHistoryNormalizationUnchanged(params: HistoryNormalizationParams, headVersion: number | null): boolean {
-    if (headVersion === null || hasTransferWitness(params)) return false;
+/** Nothing new since the last recorded pass: same observed head and every root already normalized. Returns that pass's result. */
+function readUnchangedHistoryNormalization(params: HistoryNormalizationParams, headVersion: number | null): AccountSettingsHistoryCleanupResult | null {
+    if (headVersion === null || hasTransferWitness(params)) return null;
     const record = readNormalizedHistoryRecord(accountSettingsScopeKeySuffix(params.settingsScope));
-    if (!record || record.headVersion !== headVersion) return false;
+    if (!record || record.headVersion !== headVersion) return null;
     const recovery = savedSecretRecoveryIdentity(params.savedSecretRecovery);
-    if (recovery !== null && !(record.recoveries ?? []).includes(recovery)) return false;
+    if (recovery !== null && !(record.recoveries ?? []).includes(recovery)) return null;
     const normalized = new Set(record.roots);
-    return params.destinationAuthority.activeTransferredRoots.every(root => normalized.has(root));
+    if (!params.destinationAuthority.activeTransferredRoots.every(root => normalized.has(root))) return null;
+    return record.pendingVersions?.length ? { status: 'cleanup-pending', versions: record.pendingVersions } : { status: 'complete' };
 }
 
 /** Private transport for the incumbent approved, exact-version purge intent. */
@@ -350,7 +353,8 @@ export async function normalizeAccountSettingsHistoryAfterTransfer(params: Reado
     try {
         if (!captured.isCurrent()) throwStaleRestoreScope();
         const observedHead = readObservedAccountSettingsHeadVersion(params.settingsScope, { credentials: params.credentials, request: captured.request });
-        if (isHistoryNormalizationUnchanged(params, observedHead)) return { status: 'complete' };
+        const unchanged = readUnchangedHistoryNormalization(params, observedHead);
+        if (unchanged) return unchanged;
         for (const [key, entry] of completedHistoryNormalizations) {
             if (!entry.isCurrent()) completedHistoryNormalizations.delete(key);
         }
@@ -426,7 +430,10 @@ async function runTrailingHistoryNormalization(own: HistoryNormalizationPass,
         completedHistoryNormalizations.set(key, { params, isCurrent: captured.isCurrent, checkpoint });
     }
     writeVerifiedHistoryRows(key, checkpoint.verifiedUnchanged);
-    if (completed.status === 'complete' && headAtStart !== null && !hasTransferWitness(params)) {
+    // A pending row (one this client cannot open, or a refused normalize) does not change until Settings change:
+    // retrying it on every catalog load repeats the same reads (owner ruling 2026-11-15, "runs only on change").
+    // The pass is recorded at its head either way; the next Settings write runs it again.
+    if ((completed.status === 'complete' || completed.status === 'cleanup-pending') && headAtStart !== null && !hasTransferWitness(params)) {
         const previous = readNormalizedHistoryRecord(key);
         const sameHead = previous?.headVersion === headAtStart;
         const roots = new Set(sameHead ? previous.roots : []);
@@ -435,7 +442,8 @@ async function runTrailingHistoryNormalization(own: HistoryNormalizationPass,
         const recovery = savedSecretRecoveryIdentity(params.savedSecretRecovery);
         if (recovery !== null) recoveries.add(recovery);
         writeNormalizedHistoryRecord(key, { headVersion: headAtStart, roots: [...roots].sort(),
-            ...(recoveries.size ? { recoveries: [...recoveries].sort() } : {}) });
+            ...(recoveries.size ? { recoveries: [...recoveries].sort() } : {}),
+            ...(completed.status === 'cleanup-pending' ? { pendingVersions: [...completed.versions] } : {}) });
     }
     return completed;
 }

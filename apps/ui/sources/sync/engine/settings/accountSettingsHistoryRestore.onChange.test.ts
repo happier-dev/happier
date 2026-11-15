@@ -65,4 +65,41 @@ it('normalizes once per Settings write or newly active root, and a repeated cata
     expect(await withRecovery(2)).toBe(0);
 });
 
+// A history row the pass cannot settle (here: recorded encrypted content this client cannot open) stays
+// cleanup-pending. Retrying it on every catalog load changes nothing until Settings change, so the same head
+// with the same roots makes no request; the next Settings write runs the pass again.
+it('records a cleanup-pending pass at its head, so an unchanged head makes no request', async () => {
+    let head = 9;
+    const requests: string[] = [];
+    const request = bindAccountEncryptionObservation(async (path: string) => {
+        requests.push(path);
+        if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: head }));
+        if (path === '/v2/account/settings/history') return Response.json({ snapshots: [{ version: 6,
+            createdAt: '2026-01-01T00:00:00.000Z', contentKind: 'encrypted', byteLength: 100 }] });
+        if (path === '/v2/account/settings/history/6') return Response.json({ content: { t: 'encrypted', c: 'locked' }, version: 6,
+            createdAt: '2026-01-01T00:00:00.000Z' });
+        if (path === '/v1/account/entity-rows/profiles/transfer') return Response.json({ status: 'absent' });
+        // A Home without the other private catalogs (as a supported older Home answers).
+        if (path.startsWith('/v1/account/entity-rows/')) return Response.json({ error: 'not_found' }, { status: 404 });
+        throw new Error(`Unexpected request ${path}`);
+    }, { credentials, credentialScopeKey: resolveAuthCredentialsScopeKey(credentials), isCurrent: () => true } as AccountEncryptionObservationBinding);
+    const settingsScope = { serverId: 'history-pending-home', accountId: 'owner' };
+    const count = async () => {
+        requests.length = 0;
+        expect(await normalizeAccountSettingsHistoryAfterTransfer({
+            credentials, encryption: null, settingsScope, destinationAuthority: { activeTransferredRoots: ['mcpServersSettingsV1'] },
+            requestContext: { request: request as never, isCurrent: () => true },
+        })).toEqual({ status: 'cleanup-pending', versions: [6] });
+        return requests.length;
+    };
+    retainAccountSettingsRawSnapshot(settingsScope, head, {});
+    expect(await count()).toBeGreaterThan(0);
+    expect(await count()).toBe(0);
+    expect(await count()).toBe(0);
+    head = 10;
+    retainAccountSettingsRawSnapshot(settingsScope, head, {});
+    expect(await count()).toBeGreaterThan(0);
+    expect(await count()).toBe(0);
+});
+
 afterEach(() => resetAccountSettingsRawSnapshotsForTests());
