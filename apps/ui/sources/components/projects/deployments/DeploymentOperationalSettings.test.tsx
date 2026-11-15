@@ -165,8 +165,6 @@ it.each(['plain', 'e2ee'] as const)('edits and removes registry access through t
 });
 
 it.each(['action_interactive_review_required', 'approval_stale', 'machine_unavailable'] as const)('opens recovery from Settings after %s', async code => {
-  const { Modal } = await import('@/modal');
-  vi.mocked(Modal.confirm).mockClear().mockResolvedValue(true);
   const mode = 'plain';
   let boundary: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>> | null = null;
   const writes: unknown[] = [];
@@ -215,8 +213,10 @@ it.each(['action_interactive_review_required', 'approval_stale', 'machine_unavai
     if (code === 'action_interactive_review_required') {
       // The person confirms the controller's own review natively; the exact Save runs once more with it,
       // never a self-approval Artifact and never a failure banner.
+      await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
+      expect(writes).toHaveLength(1);
+      await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
       await vi.waitFor(() => expect(writes).toHaveLength(2));
-      expect(Modal.confirm).toHaveBeenCalledTimes(1);
       expect(requested).toEqual([]);
       expect(screen.findByTestId(refused)).toBeNull();
       return;
@@ -267,7 +267,7 @@ it('opens Environment alert setup before its first deployment instead of showing
 
 it('brings the addressed Settings section into view: Open backups lands on Backups, not Servers & build', async () => {
   home = await createSecretSettingsTestHarness({ mode: 'plain', settings: authoringSettings,
-    token: authoringToken, serverIdentityId: `srv_${'e'.repeat(32)}`,
+    token: authoringToken, serverIdentityId: `srv_${'8'.repeat(32)}`,
     handleRequest: async path => path === '/v3/automations/query'
       ? Response.json({ automations: [], nextCursor: null }) : null });
   const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');

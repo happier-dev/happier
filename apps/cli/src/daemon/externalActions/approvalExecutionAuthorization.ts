@@ -2,6 +2,7 @@ import { doesExternalActionConsumeRequesterAccountContentV1, projectExternalActi
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
 import { retainVerifiedExternalActionRequester } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
@@ -62,6 +63,15 @@ export function createDaemonApprovalExecutionAuthorizationPreparer(input: Readon
       const content = await prepareApiTokenDeploymentAccountProjection(projected, signal);
       if (!content) { releaseAccess(); return null; }
       return { authorization: projected, dispose: async () => { content.dispose(); releaseAccess(); } };
+    }
+    // Controller codecs carry no Account credentials. Reopen their exact
+    // admitted root with the same purpose owner used at native ingress.
+    if (authorization.requesterAccountContext
+      && authorization.binding.accountId !== authorization.binding.custodianAccountId) {
+      const installation = readInstallationIdentityIfExistsSync();
+      if (installation && openManagedControllerActionCodecV1({ authorization, machineId: input.machineId,
+          installationId: installation.installationId, serverIdentityId: authorization.binding.serverIdentityId,
+          installationPrivateKey: decodeBase64(installation.privateKey, 'base64url') })) return { authorization };
     }
     // Match first admission's custody classification. Session/Workflow
     // carriers retain their existing owners rather than borrowing this

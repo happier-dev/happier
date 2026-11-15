@@ -1,6 +1,10 @@
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { AccountStoredContentUpgradeRequiredV1Schema } from '@happier-dev/protocol/clientCompatibility/upgradeRequiredV1';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { artifactReadResponse } from '@/testkit/http/artifactHome';
+import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { isDeploymentChildRootActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { projectAccountRowReadResponse } from '@/testkit/http/projectAccountRows';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
@@ -48,6 +52,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { registerApprovalRpcHandlers } from '@/rpc/handlers/approvals';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
+import { createDaemonApprovalExecutionAuthorizationPreparer } from './approvalExecutionAuthorization';
 import { createDaemonApprovalExecutionOriginCurrentness } from './daemonExternalActionTargetResolver';
 import { ManagedAdmissionComputeInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineEnrollmentIdentityV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -75,7 +80,7 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DeploymentBindingsSetStorageInputV1Schema,
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, DeploymentBindingsSetStorageInputV1Schema,
   type MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
@@ -265,6 +270,7 @@ describe('executeExternalAction', () => {
         const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-domain-proof', binding: {
           ...binding, machineId: target.machineId, custodianAccountId: accountPrincipal.accountId,
           installationId: 'domain-installation', accountEncryptionMode: mode, environmentId: input.environmentId,
+          deploymentChildRoot: isDeploymentChildRootActionIdV1(actionId),
           deploymentNativeAdmission: projectDeploymentNativeAdmissionV1(actionId, input),
           requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
         } });
@@ -678,7 +684,7 @@ describe('executeExternalAction', () => {
       expect(openExternalActionResponseV2({ envelope: result.response, request: envelope, binding, material })).not.toBeNull();
     } finally { get.mockRestore(); post.mockRestore(); phaseLog.mockRestore(); }
   });
-  it.each(['account', 'terminal'] as const)('returns fresh beginConnect custody through a sealed CLI %s decision', async kind => {
+  it.each(['account', 'terminal'] as const)('binds fresh beginConnect custody to the sealed CLI %s decision authority', async kind => {
     const accountId = 'connect-requester';
     const token = `fixture.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 7,
       ...(kind === 'terminal' ? { session: 'terminal-session', provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } } : {}),
@@ -730,7 +736,7 @@ describe('executeExternalAction', () => {
       connectedServiceAction: async () => { effects++; return output; },
     });
     const created = await executor.execute('connectedServices.authentication.beginConnect', { machineId: target.machineId, service, modeId: 'password' },
-      { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: accountId,
+      { surface: 'cli', authority: 'account_automation', actionCaller: { kind: 'host' }, runtimeAccountId: accountId,
         serverId: 'profile', serverIdentityId: 'srv_home', actionRequestId: 'connect-origin', defaultSessionMachineId: target.machineId,
         actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
           'connectedServices.authentication.beginConnect': { approvalRequiredSurfaces: ['cli'] },
@@ -760,7 +766,14 @@ describe('executeExternalAction', () => {
       const result = await run();
       expect(result).toMatchObject({ kind: 'response', response: { v: 2 } });
       if (result.kind !== 'response') throw new Error('Missing encrypted decision reply');
-      expect(openExternalActionResponseV2({ envelope: result.response, request: envelope, binding, material }))
+      const openedDecision = openExternalActionResponseV2({ envelope: result.response, request: envelope, binding, material });
+      if (kind === 'terminal') {
+        expect(openedDecision).toMatchObject({ ok: false, errorCode: 'present_user_required' });
+        expect(stored).toMatchObject({ status: 'open' });
+        expect(effects).toBe(0);
+        return;
+      }
+      expect(openedDecision, JSON.stringify(openedDecision))
         .toMatchObject({ ok: true, result: { status: 'executed', liveExecution: { ok: true, result: output } } });
       const repeated = await run();
       if (repeated.kind !== 'response') throw new Error('Missing repeated reply');
@@ -890,12 +903,19 @@ describe('executeExternalAction', () => {
     const encode = (value: unknown) => encodeBase64(encryptWithDataKey(value, resource.dataKey));
     const settings = prepareAccountSettingsV2Content({ credentials, raw: { actionsSettingsV1: { v: 1,
       actions: { [actionId]: { approvalRequiredSurfaces: ['ui', 'agent'] } } } }, envelopeKind: 'encrypted' });
-    const documents = new Map<string, unknown>();
+    const documents = new Map<string, Readonly<{ id: string }> & Readonly<Record<string, unknown>>>();
     documents.set(detail.environment.contentArtifactId, { id: detail.environment.contentArtifactId, ownerAccountId: accountId,
       access: 'owner', publicAudience: 'none', encryptionMode: 'e2ee', dataEncryptionKey: resource.dataEncryptionKey,
       header: encode({ kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: detail.content.name }),
       body: encode({ body: JSON.stringify(detail.content) }), headerVersion: 1, bodyVersion: 1,
       seq: 1, createdAt: 1, updatedAt: 1 });
+    for (const { targetLink, content } of detail.targetLinks) {
+      documents.set(targetLink.contentArtifactId, { id: targetLink.contentArtifactId, ownerAccountId: accountId,
+        access: 'owner', publicAudience: 'none', encryptionMode: 'e2ee', dataEncryptionKey: resource.dataEncryptionKey,
+        header: encode({ kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title: detail.content.name }),
+        body: encode({ body: JSON.stringify(content) }), headerVersion: targetLink.contentHeaderVersion,
+        bodyVersion: targetLink.contentBodyVersion, seq: 1, createdAt: 1, updatedAt: 1 });
+    }
     const storedSecret = sealSavedSecretResourceStoredContentV1({ resourceId: 'approved-credential', mode: 'e2ee',
       content: { v: 1, name: 'Credential', kind: 'token', value: 'private-binding-value' },
       resourceDataKey: resource.dataKey, randomBytes: getRandomBytes });
@@ -937,6 +957,7 @@ describe('executeExternalAction', () => {
     const post = vi.spyOn(axios, 'post').mockImplementation(async (url, raw: unknown) => {
       const path = new URL(String(url)).pathname;
       if (path === `/v1/actions/${actionId}/execution-authorization/verify`) return { status: 200, data: { ok: true } };
+      if (path === '/v1/artifacts/read') return artifactReadResponse(raw, id => documents.get(id) ?? null);
       if (path === '/v1/artifacts' && raw && typeof raw === 'object' && 'id' in raw && typeof raw.id === 'string') {
         documents.set(raw.id, { ...raw, ownerAccountId: accountId, access: 'owner', publicAudience: 'none', encryptionMode: 'e2ee',
           headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
@@ -995,7 +1016,7 @@ describe('executeExternalAction', () => {
         ? { errorCode: result.errorCode } : {}), phaseFailures })).toMatchObject({ kind: 'response' });
       if (result.kind !== 'response') throw new Error(`Binding refused before effect: ${result.errorCode}`);
       const opened = openExternalActionResponseV2({ envelope: result.response, request: envelope, binding, material });
-      expect(opened, JSON.stringify({ errorCode: opened && !opened.ok ? opened.errorCode : null,
+      expect(opened, JSON.stringify({ opened, errorCode: opened && !opened.ok ? opened.errorCode : null,
         phaseFailures, materialReads, bindingWrites: writes.length }))
         .toMatchObject({ ok: true, result: { ok: true, environmentId: detail.environment.id } });
       expect(writes).toHaveLength(1);
@@ -1399,7 +1420,7 @@ describe('executeExternalAction', () => {
     ['refused by Home', 'prepare', 'present_user'],
     ['invalid settings', 'execute', 'present_user'],
     ['current', 'execute', 'account_automation'], ['newly persisted', 'prepare', 'account_automation'],
-  ] as const)('preserves signed own-Account UI authority and %s Ask before native %s for %s', async (policy, operation, authority) => {
+  ] as const)('preserves signed own-Account UI authority and %s review before native %s for %s', async (policy, operation, authority) => {
     vi.stubEnv('HAPPIER_ACCOUNT_SETTINGS_MODE', 'auto');
     const accountId = 'ask-fresh-account';
     const token = `fixture.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
@@ -1491,6 +1512,16 @@ describe('executeExternalAction', () => {
         expect(savedApprovals).toHaveLength(0);
         return;
       }
+      if (authority === 'present_user') {
+        // A remote UI carrier has no local presenter: the mounted UI owns this review.
+        expect(result).toMatchObject({ kind: 'response', response: { execution: {
+          ok: false, errorCode: 'action_interactive_review_required',
+          details: { review: { actionArgs: input }, reviewDigest: expect.any(String) },
+        } } });
+        expect(effects).toBe(0);
+        expect(savedApprovals).toHaveLength(0);
+        return;
+      }
       expect(result, JSON.stringify(result)).toMatchObject({ kind: 'response', response: { execution: { ok: true, result: { kind: 'approval_request_created', actionId } } } });
       expect(effects).toBe(0);
       expect(savedApprovals).toHaveLength(1);
@@ -1507,7 +1538,7 @@ describe('executeExternalAction', () => {
     ['plain', 'machines.managed.acquire', 'own', 'account_automation'], ['e2ee', 'machines.managed.acquire', 'own', 'account_automation'],
     ['plain', 'machines.managed.acquire', 'admitted requester', 'account_automation'],
     ['e2ee', 'machines.managed.acquire', 'admitted requester', 'account_automation'],
-  ] as const)('preserves one exact-Account Ask and human replay for %s %s %s %s', async (mode, actionId, custody, authority) => {
+  ] as const)('preserves exact-Account confirmation or deferred human replay for %s %s %s %s', async (mode, actionId, custody, authority) => {
     const accountPrincipal = { accountId: 'requester', authority,
       authentication: { kind: 'account' as const, tokenEpoch: 7 } };
     const target = { kind: 'machine' as const, machineId: 'controller' };
@@ -1554,6 +1585,7 @@ describe('executeExternalAction', () => {
     } } : {}) });
     const artifacts = new Map<string, ApprovalRequest>();
     const states: string[] = [];
+    const confirm = vi.fn(async () => true);
     let effects = 0;
     // Persistent Artifact IO is substituted; its immutable subject and
     // open/approved/executing/terminal transition owner remain real.
@@ -1576,10 +1608,51 @@ describe('executeExternalAction', () => {
       },
     };
     const token = `fixture.${Buffer.from(JSON.stringify({ sub: accountPrincipal.accountId })).toString('base64url')}.signature`;
-    const daemon = createCliActionExecutorHarness({ token, credentials: { token, encryption: null }, sessionId: '',
+    const credentials = { token, encryption: mode === 'e2ee' ? { ...material,
+      publicKey: tweetnacl.box.keyPair.fromSecretKey(material.machineKey).publicKey } : null };
+    const settingsContent = prepareAccountSettingsV2Content({ credentials,
+      raw: { actionsSettingsV1: settings }, envelopeKind: mode === 'plain' ? 'plain' : 'encrypted' });
+    const installation = vi.spyOn(installationIdentity, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
+      installationId: 'installation', publicKey: encodeBase64(keyPair.publicKey, 'base64url'),
+      privateKey: encodeBase64(keyPair.secretKey, 'base64url'), createdAt: 1 });
+    const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/profile') return { status: 200, data: { id: accountPrincipal.accountId } };
+      if (path === '/v2/account/settings') return { status: 200, data: { content: settingsContent, version: 1 } };
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode, version: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint: credentials.encryption
+          ? computeAccountEncryptionMigrateKeyFingerprintV1(credentials.encryption.publicKey) : null, updatedAt: 1 } };
+      throw new Error(`Unexpected replay GET ${path}`);
+    });
+    const post = vi.spyOn(axios, 'post').mockImplementation(async url => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/execution-authorization/verify')) return { status: 200, data: { ok: true } };
+      throw new Error(`Unexpected replay POST ${path}`);
+    });
+    onTestFinished(() => { get.mockRestore(); post.mockRestore(); installation.mockRestore(); });
+    const prepareApprovalExecutionAuthorization = createDaemonApprovalExecutionAuthorizationPreparer({
+      machineId: target.machineId, serverId: 'profile', serverBaseUrl: 'https://home.test',
+      resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: target.machineId, serverIdentityId: 'srv_home' }),
+      daemonWorkSignal: new AbortController().signal,
+      // The fresh deciding Account holds these requester credentials. Match
+      // execution.ts's policy reader through real settings HTTP/decryption.
+      readAdmittedRequesterActionsSettings: async ({ signal }) => {
+        const snapshot = await runWithServerHttpBaseUrl('https://home.test', () =>
+          bootstrapAccountSettingsContext({ credentials, signal, mode: 'blocking', publication: 'invocation' }));
+        return snapshot.settings.actionsSettingsV1;
+      },
+      prepareRequesterAccountContext: request => prepareRequesterAccountActionContext({ authorization: request.authorization,
+        purpose: { kind: 'external_action' }, machineId: target.machineId, installationId: 'installation',
+        installationPrivateKey: keyPair.secretKey, serverId: 'profile', serverIdentityId: 'srv_home',
+        serverHttpBaseUrl: 'https://home.test', ownCredentials: credentials, isCurrent: async () => true,
+        createExecutor: () => daemon }),
+    });
+    const daemon: ReturnType<typeof createCliActionExecutorHarness>['executor'] = createCliActionExecutorHarness({ token, credentials: { token, encryption: null }, sessionId: '',
       serverId: 'profile', serverIdentityId: 'srv_home', serverHttpBaseUrl: 'https://home.test', mode: 'plain', ctx: null,
       actionsSettingsProvider: { getActionsSettings: () => settings, getAccountSettings: () => null },
     }, { ...approvalStore, isApprovalExecutionOriginCurrent: currentness,
+      prepareApprovalExecutionAuthorization,
+      presentUserActionConfirmation: confirm,
       managedMachineAction: async request => {
         expect(request.context).toMatchObject({ authority, actionRequestId: binding.requestId,
           externalActionExecutionAuthorization: authorization, runtimeAccountId: accountPrincipal.accountId });
@@ -1587,6 +1660,12 @@ describe('executeExternalAction', () => {
         return { managedId: 'retained' };
       },
     }).executor;
+    // The production credentialed executor supplies these host facts on replay;
+    // the lower-level harness requires them through its public currentAccount input.
+    const replay = daemon.replayApprovedApprovalRequest;
+    daemon.replayApprovedApprovalRequest = (args, ingress) => replay({ ...args, currentAccount: {
+      accountId: accountPrincipal.accountId, serverId: 'profile', serverIdentityId: 'srv_home', actionsSettings: settings,
+    } }, ingress);
     const handlers = new Map<string, (input: unknown, context?: RpcHandlerContext) => Promise<unknown>>();
     registerApprovalRpcHandlers({ rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } },
       actionExecutor: custody === 'own' ? daemon : createActionExecutor(createUnavailableHostActionDeps()) });
@@ -1619,10 +1698,29 @@ describe('executeExternalAction', () => {
       expect(artifacts.size).toBe(0);
       expect(effects).toBe(0);
     }
+    if (custody === 'admitted requester' && authority === 'account_automation') {
+      // A controller codec is not an Account credential box: wrong receivers
+      // and a changed signed root must remain closed before replay effects.
+      const wrongReceiver = sealManagedControllerActionCodecV1({ authorization: rawAuthorization, material,
+        installationPublicKey: tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(24)).publicKey,
+        randomBytes: tweetnacl.randomBytes });
+      for (const rejected of [wrongReceiver, { ...authorization,
+        binding: { ...authorization.binding, requestId: 'changed-root' } }]) {
+        expect(await prepareApprovalExecutionAuthorization({ authorization: rejected })).toBeNull();
+      }
+      expect(effects).toBe(0);
+    }
     const admitted = await execute();
     const result = admitted.kind === 'response' ? admitted.response.v === 2 && envelope.v === 2
       ? openExternalActionResponseV2({ envelope: admitted.response, binding, material, request: envelope })
       : admitted.response.v === 1 ? admitted.response.execution : null : null;
+    if (authority === 'present_user') {
+      expect(result).toMatchObject({ ok: true, result: { managedId: 'retained' } });
+      expect(confirm).toHaveBeenCalledOnce();
+      expect(artifacts.size).toBe(0);
+      expect(effects).toBe(1);
+      return;
+    }
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'approval-1', actionId } });
     expect(effects).toBe(0);
     const approval = ApprovalRequestV2Schema.parse(artifacts.get('approval-1'));
@@ -2963,6 +3061,7 @@ describe('executeExternalAction', () => {
       actionId: 'session.spawn_new',
       actionInput: { directory: '/workspace', prompt: 'hello' },
       target: undefined,
+      context: { surface: 'api', actionCaller: undefined },
       currentMachineId: 'machine-1',
       signal,
     });
@@ -3114,7 +3213,7 @@ describe('executeExternalAction', () => {
       actionInput: { sessionId: 'session-other-machine' },
       target: { kind: 'session', sessionId: 'session-other-machine' },
       currentMachineId: 'machine-1',
-      signal: undefined,
+      context: { surface: 'api', actionCaller: undefined },
     });
     expect(execute).not.toHaveBeenCalled();
   });
@@ -3155,7 +3254,7 @@ describe('executeExternalAction', () => {
       actionInput: { sessionId: 'session-1' },
       target: { kind: 'session', sessionId: 'session-1' },
       currentMachineId: 'machine-1',
-      signal: undefined,
+      context: { surface: 'api', actionCaller: undefined },
     });
     expect(execute).toHaveBeenCalledWith(
       'session.open',
