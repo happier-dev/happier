@@ -13,6 +13,7 @@ import { applyVoiceDictationEngineChoice, projectVoiceProviderSelectionRows, sel
 import type { VoiceSettingsRegistry as VoiceProviderRegistry } from './providerRegistry.js';
 import { projectConversationLanguagePreference, updateConversationLanguagePreference } from './conversationLanguage.js';
 import type { VoiceSpeechDiagnosticsSettingsV1 } from '../diagnostics.js';
+import type { ActionExecutorContext } from '../../actions/executor/types.js';
 
 export const VoiceMemoryRestoreChoiceSchema = z.enum(['recent_messages', 'summary_plus_recent', 'provider_resume']);
 export type VoiceMemoryRestoreChoice = z.infer<typeof VoiceMemoryRestoreChoiceSchema>;
@@ -30,13 +31,18 @@ export function applyVoiceDiagnosticsCaptureDirection(diagnostics: VoiceSpeechDi
 }
 
 export type VoiceScalarValueV1 = Extract<SettingDomainValueV1, string | number | boolean | null>;
-export type VoiceSettingsMutationServicesV1<T> = Readonly<{ readAgentCatalog?: (settings: T, selectedValue?: string) => Promise<Readonly<{ entries: readonly VoiceAgentCatalogEntryV1[]; isCurrent(settings: T): boolean }> | null> }>;
+export type VoiceSettingsPreparationContextV1 = Readonly<{ signal?: AbortSignal; isCurrent(): boolean; actionContext?: ActionExecutorContext }>;
+export type VoiceSettingsMutationServicesV1<T> = Readonly<{
+ readAgentCatalog?: (settings: T, selectedValue?: string) => Promise<Readonly<{ entries: readonly VoiceAgentCatalogEntryV1[]; isCurrent(settings: T): boolean }> | null>;
+ /** Released Chat imports need the host's Provider/Saved Secret owners before selecting an Agent. */
+ prepareLegacyAgentSelection?: (settings: T, selectedValue: string, context?: VoiceSettingsPreparationContextV1) => Promise<((settings: T) => Readonly<{ voice: VoiceSettings }> | null) | null>;
+}>;
 export type VoiceSettingBindingV1<T extends { voice: VoiceSettings }> = Readonly<{
  scope: 'account'; kind: 'owner'; access: 'read_write' | 'read_only' | 'sensitive'; allowedValues?: readonly VoiceScalarValueV1[];
  read(settings: T): unknown;
  parse(value: unknown): Readonly<{success: true; value: SettingDomainValueV1}> | Readonly<{success: false}>;
  mutate(settings: T, value: SettingDomainValueV1): Readonly<{voice: VoiceSettings}> | null;
- prepare?: (settings: T, value: SettingDomainValueV1, services: VoiceSettingsMutationServicesV1<T>, context?: Readonly<{signal?: AbortSignal; isCurrent(): boolean}>) => Promise<((settings: T) => Readonly<{voice: VoiceSettings}> | null) | null>;
+ prepare?: (settings: T, value: SettingDomainValueV1, services: VoiceSettingsMutationServicesV1<T>, context?: VoiceSettingsPreparationContextV1) => Promise<((settings: T) => Readonly<{voice: VoiceSettings}> | null) | null>;
 }>;
 function parseSettingScalarValue(value: unknown) {
  const parsed=SettingsDeclarationValueV1Schema.safeParse(value);
@@ -234,6 +240,11 @@ function canEditLocalConversation(voice: VoiceSettings): boolean {
     return !voice.providers.local_conversation || readVoiceProviderSettingsConfig(voice, 'local_conversation') !== null;
 }
 
+function canReplaceLocalConversationAgent(voice: VoiceSettings): boolean {
+    const chat = readLocalConversationVoiceSettings(voice).agent.providerChat;
+    return canEditLocalConversation(voice) && chat?.status !== 'migration_required' && chat?.status !== 'needs_selection';
+}
+
 function localPreferenceOwner(voice: VoiceSettings, path: LocalConversationPreferencePath) {
     const sharedSpeechPath = path.startsWith('stt.') || path.startsWith('tts.')
         || path.startsWith('handsFree.') || path === 'networkTimeoutMs';
@@ -272,7 +283,7 @@ function voiceRoleModelChoiceSchema(role: 'chat' | 'commit') {
 }
 function updateVoiceRoleModelChoice(voice: VoiceSettings, role: 'chat' | 'commit', value: unknown): VoiceSettings | null {
     const parsed = voiceRoleModelChoiceSchema(role).safeParse(value);
-    if (!parsed.success || !canEditLocalConversation(voice)) return null;
+    if (!parsed.success || !canReplaceLocalConversationAgent(voice)) return null;
     const cfg = readLocalConversationVoiceSettings(voice);
     const { source, model } = parsed.data;
     return writeLocalConversationVoiceSettings(voice, { ...cfg, agent: { ...cfg.agent,
@@ -368,8 +379,13 @@ const voiceAgentSelectionBinding: VoiceSettingBindingV1<T> = {
     },
     // Catalog choices are prepared through the exact Account/machine owner below, never inferred.
     mutate: () => null,
-    prepare: async (settings, value, services) => {
+    prepare: async (settings, value, services, context) => {
         if (typeof value !== 'string' || !canEditLocalConversation(settings.voice)) return null;
+        const pending = readLocalConversationVoiceSettings(settings.voice).agent.providerChat;
+        if (pending?.status === 'migration_required' || pending?.status === 'needs_selection') {
+            const prepared = await services.prepareLegacyAgentSelection?.(settings, value, context);
+            return prepared ? current => canEditLocalConversation(current.voice) ? prepared(current) : null : null;
+        }
         const catalog = await services.readAgentCatalog?.(settings, value);
         if (!catalog) return null;
         const entry = resolveVoiceAgentCatalogSelectionV1(catalog.entries, value);
@@ -390,7 +406,7 @@ const voiceCustomAgentBinding: VoiceSettingBindingV1<T> = {
         return parsed.success && typeof parsed.value === 'string' && parsed.value.trim()
             ? { success: true, value: parsed.value.trim() } : { success: false };
     },
-    mutate: (settings, value) => canEditLocalConversation(settings.voice) && typeof value === 'string'
+    mutate: (settings, value) => canReplaceLocalConversationAgent(settings.voice) && typeof value === 'string'
         ? { voice: applyVoiceAgentSelectionV1(settings.voice, { kind: 'custom', agentId: value }, owner) } : null,
 };
 

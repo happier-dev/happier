@@ -56,6 +56,10 @@ Legacy Voice Chat imports use the shared resolved Agent catalog for selection.
 The existing Provider model picker admission decides whether both imported
 models can be used with that exact Agent target. Voice preserves the selected
 catalog identity and never substitutes a particular Agent for the import.
+The shared settings Action owner imports the released Chat configuration through
+`settings.invoke` on `voiceConversations.agent`. Public Agent selection through
+`settings.set` also prepares the import and completes selection through that owner;
+Saved Secret promotion retains its own approval admission.
 
 Local Voice uses the same Happier Action catalog and admitted Session tool surface
 as coding Agents. OpenCode (server and ACP), Claude, Pi, Muse and configured ACP

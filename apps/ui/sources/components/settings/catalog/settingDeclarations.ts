@@ -47,6 +47,7 @@ export type SettingOwnerMutation = (settings: Settings) => SettingsWriteDelta | 
 export type SettingsOwnerActionExecute = SettingsOwnerActionExecuteV1;
 export type SettingOperationContext = Readonly<{
     signal?: AbortSignal;
+    actionContext?: ActionExecutorContext;
     accountScope?: ServerAccountScope;
     input?: SettingsDeclarationOperationInputV1;
     target?: import('@happier-dev/protocol/actions/settingsDeclarationActionFamily').SettingsDeclarationTargetV1;
@@ -110,6 +111,8 @@ export type SettingsMutationServices = Readonly<{
         isCurrent: (settings: Settings) => boolean;
     }> | null>;
     readAgentCatalog?: import('@happier-dev/protocol/voice/settings/voiceSettingBindings').VoiceSettingsMutationServicesV1<Settings>['readAgentCatalog'];
+    prepareLegacyAgentSelection?: import('@happier-dev/protocol/voice/settings/voiceSettingBindings').VoiceSettingsMutationServicesV1<Settings>['prepareLegacyAgentSelection'];
+    importLegacyVoiceChat?: (context: ActionExecutorContext) => ReturnType<typeof import('@/sync/ops/settings/legacyVoiceChatImport').importLegacyVoiceOpenAiChatProvider>;
 }>;
 
 /** Explicitly admitted preference; declarations never infer a writer from a row id. */
@@ -143,7 +146,7 @@ export type SettingStorageBinding = Readonly<{
         /** Applied inside the Account CAS owner, including every conflict rebase. */
         mutate: (settings: Settings, value: SettingValue) => SettingsWriteDelta | null;
         /** Resolve a catalog choice before CAS; the returned intent rechecks its captured authority. */
-        prepare?: (settings: Settings, value: SettingValue, services: SettingsMutationServices, context?: Readonly<{ signal?: AbortSignal; isCurrent(): boolean }>) => Promise<SettingOwnerMutation | null>;
+        prepare?: (settings: Settings, value: SettingValue, services: SettingsMutationServices, context?: Readonly<{ signal?: AbortSignal; isCurrent(): boolean; actionContext?: ActionExecutorContext }>) => Promise<SettingOwnerMutation | null>;
     }>
     | Readonly<{
         scope: 'local';

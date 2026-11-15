@@ -1779,6 +1779,15 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         return true;
       },
       mutationServices: { readAgentCatalog: createVoiceAgentSettingsCatalogReader(accountContext ?? null),
+        prepareLegacyAgentSelection: createLegacyVoiceChatSelectionPreparer(accountContext ?? null,
+          createVoiceAgentSettingsCatalogReader(accountContext ?? null),
+          { onBlockingApprovalPending: opts?.onBlockingApprovalPending }),
+        ...(accountContext ? { importLegacyVoiceChat: async (context: ActionExecutorContext) => {
+          const { importLegacyVoiceOpenAiChatProvider } = await import('@/sync/ops/settings/legacyVoiceChatImport');
+          return importLegacyVoiceOpenAiChatProvider(accountContext.accountLifetime.scope, undefined, {
+            actionContext: context, executorOptions: { onBlockingApprovalPending: opts?.onBlockingApprovalPending },
+          });
+        } } : {}),
         ...(accountContext && opts?.voiceSettingsEdit ? { voiceSettingsEdit: opts.voiceSettingsEdit } : {}),
         ...(accountContext && opts?.voiceModelPackPresentation ? { voiceModelPackPresentation: opts.voiceModelPackPresentation } : {}),
         ...(accountContext ? createAtmosphereSettingServices(accountContext) : {}),
@@ -5877,4 +5886,5 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
   };
 }
 import { createVoiceAgentSettingsCatalogReader } from './voiceAgentSettingsCatalog';
+import { createLegacyVoiceChatSelectionPreparer } from '@/sync/ops/settings/legacyVoiceChatImport';
 import { createWidgetAreaActionDepsV1, prepareWidgetAreaSharingV1 } from './widgetAreaActionDeps';

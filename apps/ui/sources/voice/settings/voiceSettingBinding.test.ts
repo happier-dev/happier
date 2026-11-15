@@ -1,11 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { settingsDefaults, settingsParse } from '@/sync/domains/settings/settings';
 import { readLocalDirectVoiceSettings, writeLocalDirectVoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { SETTING_VALUE_UNAVAILABLE } from '@/components/settings/catalog/settingDeclarations';
-import { voiceAgentSelectionBinding, voiceLocalConversationBinding, voiceSettingBinding } from './voiceSettingBinding';
+import { voiceAgentSelectionBinding, voiceCustomAgentBinding, voiceLocalConversationBinding, voiceSettingBinding } from './voiceSettingBinding';
 import { voiceMemoryRestoreBinding } from './memoryRestore';
 
 describe('Voice nested declaration mutations', () => {
+    it.each(['custom', 'chat', 'commit'] as const)('preserves the retained Chat source when a %s edit cannot admit its imported models', field => {
+        const settings = settingsParse({ voice: { providerId: 'local_conversation', adapters: { local_conversation: {
+            conversationMode: 'agent', agent: { backend: 'openai_compat', agentSource: 'agent', agentId: 'opencode',
+                openaiCompat: { chatBaseUrl: 'https://legacy-chat.test/v1', chatApiKey: null,
+                    chatModel: 'legacy-chat', commitModel: 'legacy-commit' } },
+        } } } });
+        const binding = field === 'custom' ? voiceCustomAgentBinding : voiceLocalConversationBinding(`agent.${field}ModelId`);
+        if (!('kind' in binding) || binding.kind !== 'owner') throw new Error('Expected the Voice field owner');
+        expect(binding.mutate(settings, 'claude')).toBeNull();
+    });
     it('rejects compound JSON at scalar declaration mutation boundaries', () => {
         for (const binding of [voiceSettingBinding('privacy.shareRecentMessages'), voiceLocalConversationBinding('tts.localNeural.speed')]) {
             if (!('kind' in binding) || binding.kind !== 'owner') throw new Error('Expected a scalar preference owner');

@@ -4,6 +4,7 @@ import { listAccountSettingsSavedSecretReferences, listSavedSecretPersonalImport
     type SavedSecretLegacyInferenceCredentialV1, type SavedSecretLegacyChatCredentialV1, type SavedSecretLegacyVoiceCredentialV1,
     deriveSavedSecretImportResourceIdV1, readSavedSecretTransferSourceV1, type SavedSecretReferenceCatalogsV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import type { AccountSettingsHistorySavedSecretTransferV1 } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { openSavedSecretResourceStoredContentV1, sealSavedSecretResourceStoredContentV1, SavedSecretResourceContentV1Schema, prepareSavedSecretResourceRecipientEnvelopesV1, prepareSavedSecretResourceUpdateContentV1, type SavedSecretExternalSourceV1, type SavedSecretResourceSourceV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { admitSavedSecretResourceAudienceV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { SavedSecretBackupRekeyRequiredV1Schema, type SavedSecretBackupRekeyRequiredV1, SHARED_SAVED_SECRET_ACTION_PATHS_V1, SharedSavedSecretCreateInputV1Schema, SharedSavedSecretPromoteInputV1Schema, SharedSavedSecretMutationOutputV1Schema, SavedSecretResourceEnvelopeRepairOutputV1Schema, SharedSavedSecretPromoteOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
@@ -1098,12 +1099,18 @@ export async function promotePersonalSavedSecretResource(params: SavedSecretPers
     }
 }
 
+type SavedSecretImportExecution = Readonly<{
+    actionContext?: ActionExecutorContext;
+    executorOptions?: Parameters<typeof runTeamAction>[0]['executorOptions'];
+}>;
+
 /** The demand loader borrows this same sealed composite, without invalidating itself. */
 async function promoteSavedSecretSourceResourceInContext(context: ProfileAccountContext, accountMode: 'plain' | 'e2ee',
     params: SavedSecretPersonalPromotionParams | SavedSecretInferencePromotionParams | SavedSecretChatPromotionParams | SavedSecretVoicePromotionParams,
     expectedProfileTransferRevision?: number | 'absent',
     approval?: SavedSecretPrivateCreationApprovalOptions,
     onMaterialEffect?: () => void,
+    execution?: SavedSecretImportExecution,
 ): Promise<Exclude<SavedSecretPromotionResult, Readonly<{ ok: true }>> | Readonly<{
     ok: true; resourceRef: string; settingsVersion: number; profileTransferRevision: number | 'absent';
     previousSource: Awaited<ReturnType<typeof readProfileTransferSourceInContext>>;
@@ -1273,6 +1280,7 @@ async function promoteSavedSecretSourceResourceInContext(context: ProfileAccount
                 const execute = (callbacks?: Required<SavedSecretApprovalHandlers<
                     ReturnType<typeof SharedSavedSecretPromoteOutputV1Schema.parse>
                 >>) => runTeamAction({
+                    ...execution,
                     scope: params.scope,
                     actionId: 'secrets.shared.promote',
                     input: {
@@ -1462,6 +1470,7 @@ export async function importLegacySavedSecretsInContext(context: ProfileAccountC
     historyIntent: 'maintenance' | 'current-read' = 'maintenance',
     /** An acknowledged or uncertain resource write requires the demand owner's material readback. */
     onMaterialEffect?: () => void,
+    execution?: SavedSecretImportExecution,
 ): Promise<SavedSecretLegacyImportResult> {
     const transfers: AccountSettingsHistorySavedSecretTransferV1[] = [];
     const verifiedReferences: SavedSecretVerifiedImportReference[] = [];
@@ -1549,7 +1558,7 @@ export async function importLegacySavedSecretsInContext(context: ProfileAccountC
             const current = readSavedSecretTransferSourceV1(before.source.raw).secrets.find(candidate => candidate.id === secret.id);
             if (!current) continue;
             const result = await promoteSavedSecretSourceResourceInContext(context, mode, { scope,
-                expectedSettingsVersion: before.source.version, secret: current, accountGrants: [], teamGrants: [], groupGrants: [] }, capturedControlRevision, approval, onMaterialEffect);
+                expectedSettingsVersion: before.source.version, secret: current, accountGrants: [], teamGrants: [], groupGrants: [] }, capturedControlRevision, approval, onMaterialEffect, execution);
             if (!result.ok) {
                 pending = { status: 'pending', reason: result.reason === 'changed' || result.reason === 'outcome_unknown'
                     ? result.reason : 'source-unavailable' };
@@ -1568,7 +1577,7 @@ export async function importLegacySavedSecretsInContext(context: ProfileAccountC
             const credential = readSavedSecretTransferSourceV1(before.source.raw).inferenceCredential;
             if (credential) {
                 const result = await promoteSavedSecretSourceResourceInContext(context, mode, { scope,
-                    expectedSettingsVersion: before.source.version, credential, accountGrants: [], teamGrants: [], groupGrants: [] }, capturedControlRevision, approval, onMaterialEffect);
+                    expectedSettingsVersion: before.source.version, credential, accountGrants: [], teamGrants: [], groupGrants: [] }, capturedControlRevision, approval, onMaterialEffect, execution);
                 if (!result.ok) pending = { status: 'pending', reason: result.reason === 'changed' || result.reason === 'outcome_unknown'
                     ? result.reason : 'source-unavailable' };
                 else {
@@ -1606,7 +1615,7 @@ export async function importLegacySavedSecretsInContext(context: ProfileAccountC
             }
             const result = await promoteSavedSecretSourceResourceInContext(context, mode, { scope,
                 expectedSettingsVersion: before.source.version, credential: { ...credential, source: credential.source },
-                accountGrants: [], teamGrants: [], groupGrants: [] }, capturedControlRevision, approval, onMaterialEffect);
+                accountGrants: [], teamGrants: [], groupGrants: [] }, capturedControlRevision, approval, onMaterialEffect, execution);
             if (!result.ok) {
                 pending = { status: 'pending', reason: result.reason === 'changed' || result.reason === 'outcome_unknown'
                     ? result.reason : 'source-unavailable' };
@@ -1646,7 +1655,7 @@ export async function importLegacySavedSecretsInContext(context: ProfileAccountC
                 const result = await promoteSavedSecretSourceResourceInContext(context, mode, {
                     scope, expectedSettingsVersion: chatBaseline.source.version,
                     credential: { ...chatCredential, source: chatSource }, accountGrants: [], teamGrants: [], groupGrants: [],
-                }, capturedControlRevision, approval, onMaterialEffect);
+                }, capturedControlRevision, approval, onMaterialEffect, execution);
                 if (!result.ok) return { status: 'pending', reason: result.reason === 'changed' || result.reason === 'outcome_unknown'
                     ? result.reason : 'source-unavailable' };
                 if (!advanceRetainedReceiptBaselines(result.previousSource, result.acknowledgedSource)) return { status: 'pending', reason: 'changed' };

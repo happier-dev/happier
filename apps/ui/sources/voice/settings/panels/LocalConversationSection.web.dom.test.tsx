@@ -5,11 +5,12 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { waitForTestEvent } from '@/dev/testkit';
 import { createProviderModelProjectionFixture, createProviderModelProjectionGroupFixture, createProviderSettingsAccountHarness,
-    createProviderSettingsHarness, installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
+    createProviderSettingsHarness, installProviderSettingsRpcBoundary, installBundledProviderDeclarationsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { t } from '@/text';
+import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, ProviderConnectionsRowMutationV1Schema } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
@@ -32,6 +33,7 @@ const daemon = createProviderSettingsHarness();
 installProviderSettingsRpcBoundary(daemon);
 // Only Socket delivery is replaced; routing, Action admission and receipt arbitration stay real.
 beforeEach(() => {
+    installBundledProviderDeclarationsRpcBoundary(daemon);
     daemon.intercept(RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION, async request => {
         transport.projectionReads.push(request.payload);
         return transport.projection;
@@ -113,7 +115,7 @@ async function waitForSaveError() {
 }
 
 describe('imported Voice Chat Agent selection through the real settings gesture', () => {
-    it.each(['acknowledged', 'provider-conflict', 'settings-conflict', 'owner-receipt', 'owner-same-model', 'owner-unknown-ack', 'owner-existing-resource', 'owner-existing-resource-unrelated', 'existing-resource',
+    it.each(['owner-action', 'owner-agent-action', 'owner-agent-conditional', 'acknowledged', 'provider-conflict', 'settings-conflict', 'owner-receipt', 'owner-same-model', 'owner-unknown-ack', 'owner-existing-resource', 'owner-existing-resource-unrelated', 'existing-resource',
         'personal-approval-executed', 'personal-approval-canceled', 'personal-approval-unmounted'] as const)(
       'keeps the genuine predecessor selection until the imported Provider row is acknowledged (%s)', async outcome => {
         locks = installWebLockManagerMock();
@@ -122,7 +124,8 @@ describe('imported Voice Chat Agent selection through the real settings gesture'
             || outcome === 'personal-approval-unmounted';
         const resourceId = '2cd702f5-1111-4222-8333-444455556666';
         const resourceRef = formatSharedSavedSecretRefV1(resourceId);
-        const original = { ...(usesPersonalApproval ? { actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+        const original = { experiments: true, featureToggles: { 'voice.agent': true, 'execution.runs': true },
+            ...(usesPersonalApproval ? { actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
             actions: { 'secrets.shared.promote': { approvalRequiredSurfaces: ['ui'] } },
         }) } : {}), secrets: outcome === 'owner-existing-resource-unrelated' ? [{
             id: 'unrelated-personal', name: 'Unrelated token', kind: 'token', createdAt: 1, updatedAt: 1,
@@ -137,12 +140,12 @@ describe('imported Voice Chat Agent selection through the real settings gesture'
                     chatModel: 'legacy-chat', commitModel: outcome === 'owner-same-model' ? 'legacy-chat' : 'legacy-commit', temperature: 0.4, maxTokens: 2048 },
             },
         } } } };
-        const features = createRootLayoutFeaturesResponse({ features: { providers: { enabled: true } } });
+        const features = createRootLayoutFeaturesResponse({ features: { providers: { enabled: true }, voice: { enabled: true } } });
         if (usesPersonalApproval) {
             expect(tryWriteServerEnabledBitInPlace(features, 'teams', true)).toBe(true);
             expect(tryWriteServerEnabledBitInPlace(features, 'encryption.plaintextStorage', true)).toBe(true);
         }
-        const scope = await account.restore({ settings: original, ...(usesPersonalApproval ? { features } : {}),
+        const scope = await account.restore({ settings: original, features,
             machines: [createMachineFixture({ id: 'machine-a', activeAt: Date.now() })],
         });
         if (outcome === 'owner-existing-resource-unrelated') account.home.answer(scope.serverId, PROFILE_ROWS_ROUTE_V1, {
@@ -160,8 +163,8 @@ describe('imported Voice Chat Agent selection through the real settings gesture'
             }
             account.home.answer(scope.serverId, '/v1/account/saved-secrets/resources/materials', { body: { resources: [] } });
         }
-        if (usesResource) account.home.answer(scope.serverId, '/v1/account/saved-secrets/resources/materials', {
-            body: { resources: [SavedSecretResourceMaterialV1Schema.parse({ resourceId, encryptionMode: 'plain',
+        if (usesResource) {
+            const resource = SavedSecretResourceMaterialV1Schema.parse({ resourceId, encryptionMode: 'plain',
                 storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain', content: {
                     v: 1, name: 'Retained Chat key', kind: 'apiKey', value: 'owned-chat-value',
                 } }), recipientEnvelope: null, entry: { ref: resourceRef, source: 'shared_resource', relationship: 'owner',
@@ -169,8 +172,10 @@ describe('imported Voice Chat Agent selection through the real settings gesture'
                     revision: 3, materialStatus: 'ready', capabilities: {
                         use: true, rename: true, rotate: true, manageAccess: true, delete: true,
                     } },
-            })] },
-        });
+            });
+            account.home.answer(scope.serverId, '/v1/account/saved-secrets/resources/materials', { body: { resources: [resource] } });
+            account.home.answer(scope.serverId, '/v1/account/saved-secrets/resources', { body: { resources: [resource.entry] } });
+        }
         let stored: Readonly<Record<string, unknown>> = original;
         let settingsVersion = 1;
         account.home.answer(scope.serverId, 'POST /v2/account/settings', { select: input => {
@@ -197,8 +202,7 @@ describe('imported Voice Chat Agent selection through the real settings gesture'
                 stored = input.nextSettings.v;
                 settingsVersion += 1;
                 account.home.answer(scope.serverId, '/v2/account/settings', { body: { content: input.nextSettings, version: settingsVersion } });
-                account.home.answer(scope.serverId, '/v1/account/saved-secrets/resources/materials', { body: { resources: [
-                    SavedSecretResourceMaterialV1Schema.parse({ resourceId: input.resourceId, encryptionMode: 'plain',
+                const resource = SavedSecretResourceMaterialV1Schema.parse({ resourceId: input.resourceId, encryptionMode: 'plain',
                         storedContent: input.storedContent, recipientEnvelope: null, entry: {
                             ref: formatSharedSavedSecretRefV1(input.resourceId), source: 'shared_resource', relationship: 'owner',
                             ownerAccountId: scope.accountId, name: input.displayName, kind: input.kind, encryptionMode: 'plain',
@@ -206,8 +210,9 @@ describe('imported Voice Chat Agent selection through the real settings gesture'
                                 use: true, rename: true, rotate: true, manageAccess: true, delete: true,
                             },
                         },
-                    }),
-                ] } });
+                    });
+                account.home.answer(scope.serverId, '/v1/account/saved-secrets/resources/materials', { body: { resources: [resource] } });
+                account.home.answer(scope.serverId, '/v1/account/saved-secrets/resources', { body: { resources: [resource.entry] } });
                 return { body: { resourceId: input.resourceId, settingsVersion } };
             },
         });
@@ -232,9 +237,26 @@ describe('imported Voice Chat Agent selection through the real settings gesture'
             } });
             return { respondAfter: ack, body: outcome === 'owner-unknown-ack' ? {} : { status: 'updated', revision: 2, cursor: 2 } };
         } });
+        if (outcome === 'owner-action' || outcome === 'owner-agent-action' || outcome === 'owner-agent-conditional') {
+            acknowledge();
+            const result = await createDefaultActionExecutor().execute(outcome === 'owner-action' ? 'settings.invoke' : 'settings.set', {
+                anchor: 'voiceConversations.agent',
+                ...(outcome !== 'owner-action' ? { value: 'agent:happier.agent.opencode/opencode',
+                    ...(outcome === 'owner-agent-conditional' ? { expectedSettingsVersion: 1 } : {}) } : {}),
+            }, { surface: 'ui', authority: 'present_user', serverId: scope.serverId, expectedAccountId: scope.accountId,
+                presentUserConfirmation: { actionId: outcome === 'owner-action' ? 'settings.invoke' : 'settings.set' } });
+            expect(result).toMatchObject(outcome === 'owner-action' ? { ok: true, result: { status: 'completed' } } : { ok: false });
+            const { settingsParse } = await import('@/sync/domains/settings/settings');
+            const { readLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
+            expect(readLocalConversationVoiceSettings(settingsParse(stored).voice).agent.providerChat).toMatchObject({
+                status: 'needs_selection',
+            });
+            expect(providerWrites).toBe(1);
+            return;
+        }
         if (outcome === 'owner-receipt' || outcome === 'owner-same-model' || outcome === 'owner-unknown-ack' || outcome === 'owner-existing-resource' || outcome === 'owner-existing-resource-unrelated') {
             acknowledge();
-            const { importLegacyVoiceOpenAiChatProvider } = await import('@/voice/adapters/localConversation/migrateLegacyOpenAiChatProvider');
+            const { importLegacyVoiceOpenAiChatProvider } = await import('@/sync/ops/settings/legacyVoiceChatImport');
             const receipt = await importLegacyVoiceOpenAiChatProvider(scope);
             expect(providerWrites).toBe(1);
             expect(importedModelSettings).toEqual({
@@ -275,12 +297,11 @@ describe('imported Voice Chat Agent selection through the real settings gesture'
         mounted = { root: createRoot(container), container };
         await act(async () => mounted?.root.render(<Editor />));
         try {
-            const trigger = [...container.querySelectorAll<HTMLElement>('[role="button"],button,[tabindex="0"]')]
-                .find(node => node.textContent?.includes(t('settingsVoice.local.mediatorAgentId')));
+            const trigger = container.querySelector<HTMLElement>('[data-testid="settings.voice.local.agent"] button');
             if (!trigger) throw new Error('missing actual pending Chat Agent dropdown');
             await act(async () => press(trigger));
-            await waitForTestEvent(subscribeDom, () => expect(document.querySelector('[data-testid="dropdown-option-opencode"]')).not.toBeNull());
-            await act(async () => press(document.querySelector<HTMLElement>('[data-testid="dropdown-option-opencode"]')!));
+            await waitForTestEvent(subscribeDom, () => expect(document.querySelector('[data-testid="dropdown-option-agent_happier_agent_opencode_opencode"]')).not.toBeNull());
+            await act(async () => press(document.querySelector<HTMLElement>('[data-testid="dropdown-option-agent_happier_agent_opencode_opencode"]')!));
             if (usesPersonalApproval) {
                 // Own UI Ask is answered in place; the Action owner does not create an Inbox item.
                 const approve = '[data-testid="actions.confirmation-review.decision-approve"]';
@@ -356,7 +377,10 @@ describe('imported Voice Chat Agent selection through the real settings gesture'
         } finally { acknowledge(); }
     }, 180_000);
 
-    it.each([false, true])('uses both current model admissions before persisting a configured selection (authorized: %s)', async authorized => {
+    it.each([{ authorized: false, surface: 'ui' }, { authorized: true, surface: 'ui' },
+        { authorized: false, surface: 'action' }, { authorized: true, surface: 'action' },
+        { authorized: true, surface: 'action_conditional' }] as const)(
+      'uses both model admissions before persisting a selection ($surface, authorized: $authorized)', async ({ authorized, surface }) => {
         locks = installWebLockManagerMock();
         const [{ voiceSettingsDefaults, readLocalConversationVoiceSettings, writeLocalConversationVoiceSettings },
             { normalizeVoiceSettingsServerDelta }, { storage }] = await Promise.all([
@@ -367,9 +391,9 @@ describe('imported Voice Chat Agent selection through the real settings gesture'
         const connectionId = ProviderConnectionIdSchema.parse('voice-openai-compatible-chat');
         const agentTargetKey = 'agent:happier.agent.opencode/opencode';
         const local = readLocalConversationVoiceSettings(voiceSettingsDefaults);
-        const voice = writeLocalConversationVoiceSettings({ ...voiceSettingsDefaults, providerId: 'local_conversation' }, {
+        const voice = writeLocalConversationVoiceSettings({ ...voiceSettingsDefaults, providerId: 'local_conversation',
+            executionMachine: { mode: 'fixed', machineId: 'machine-a' } }, {
             ...local, conversationMode: 'agent', agent: { ...local.agent,
-                machineTargetMode: 'fixed', machineTargetId: 'machine-a',
                 providerChat: { status: 'needs_selection', providerConnectionId: connectionId,
                     chatModelId: 'legacy-chat', commitModelId: 'legacy-commit' },
             },
@@ -389,7 +413,8 @@ describe('imported Voice Chat Agent selection through the real settings gesture'
                 })),
             })],
         });
-        const scope = await account.restore({ settings: normalizeVoiceSettingsServerDelta({ voice }),
+        const scope = await account.restore({ settings: { ...normalizeVoiceSettingsServerDelta({ voice }),
+                experiments: true, featureToggles: { 'voice.agent': true, 'execution.runs': true } },
             machines: [createMachineFixture({ id: 'machine-a', activeAt: Date.now() })],
             features: createRootLayoutFeaturesResponse({ features: {
                 providers: { enabled: true }, voice: { enabled: true },
@@ -417,6 +442,17 @@ describe('imported Voice Chat Agent selection through the real settings gesture'
         } });
         const { refreshProviderCatalog } = await import('@/sync/engine/settings/providerCatalogEngine');
         await refreshProviderCatalog(scope);
+        if (surface === 'action' || surface === 'action_conditional') {
+            const result = await createDefaultActionExecutor().execute('settings.set', {
+                anchor: 'voiceConversations.agent', value: agentTargetKey,
+                ...(surface === 'action_conditional' ? { expectedSettingsVersion: 1 } : {}),
+            }, { surface: 'ui', authority: 'present_user', serverId: scope.serverId, expectedAccountId: scope.accountId,
+                presentUserConfirmation: { actionId: 'settings.set' } });
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: authorized });
+            expect(readLocalConversationVoiceSettings(storage.getState().settings.voice).agent.providerChat?.status)
+                .toBe(authorized ? 'configured' : 'needs_selection');
+            return;
+        }
         const [{ LocalConversationSection }, { useVoiceSettingsMutable }] = await Promise.all([
             import('./LocalConversationSection'), import('../useVoiceSettingsMutable'),
         ]);
@@ -429,12 +465,11 @@ describe('imported Voice Chat Agent selection through the real settings gesture'
         const root = createRoot(container);
         mounted = { root, container };
         await act(async () => root.render(<Editor />));
-        const trigger = [...container.querySelectorAll<HTMLElement>('[role="button"],button,[tabindex="0"]')]
-            .find(node => node.textContent?.includes(t('settingsVoice.local.mediatorAgentId')));
+        const trigger = container.querySelector<HTMLElement>('[data-testid="settings.voice.local.agent"] button');
         if (!trigger) throw new Error('missing actual imported Chat Agent dropdown trigger');
         await act(async () => press(trigger));
-        await waitForTestEvent(subscribeDom, () => expect(document.querySelector('[data-testid="dropdown-option-opencode"]')).not.toBeNull());
-        await act(async () => press(document.querySelector<HTMLElement>('[data-testid="dropdown-option-opencode"]')!));
+        await waitForTestEvent(subscribeDom, () => expect(document.querySelector('[data-testid="dropdown-option-agent_happier_agent_opencode_opencode"]')).not.toBeNull());
+        await act(async () => press(document.querySelector<HTMLElement>('[data-testid="dropdown-option-agent_happier_agent_opencode_opencode"]')!));
         await waitForTestEvent(daemon.subscribe, () => transport.projectionReads,
             reads => reads.some(read => !!read && typeof read === 'object'
                 && 'agentTargetKey' in read && read.agentTargetKey === agentTargetKey && 'mode' in read && read.mode === 'picker'));

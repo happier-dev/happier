@@ -2,6 +2,7 @@ import type { SettingDeclaration } from '@/components/settings/catalog/settingDe
 import { readBuiltInSettingsOperationPolicyV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
 
 export type VoiceSettingsOperation =
+    | 'legacy_chat_import'
     | 'stt_prepare' | 'stt_remove' | 'stt_update' | 'stt_cancel'
     | 'tts_prepare' | 'tts_remove' | 'tts_update' | 'tts_cancel' | 'tts_preview' | 'tts_preview_stop' | 'tts_test' | 'tts_catalog' | 'tts_catalog_retry'
     | 'model_install' | 'model_remove' | 'model_default' | 'model_cancel' | 'models_inspect' | 'readiness_inspect'

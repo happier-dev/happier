@@ -8,11 +8,15 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import type { ProviderCatalogCryptoAdmission } from '@/sync/store/settings/providerCatalogSnapshot';
 import type { SavedSecretVerifiedImportReference } from '@/sync/domains/settings/savedSecretTypes';
 import type { SavedSecretPrivateCreationApprovalOptions } from '@/components/secrets/useSavedSecretCatalog';
+import type { SettingsMutationServices } from '@/components/settings/catalog/settingDeclarations';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import type { runTeamAction } from '@/sync/ops/teams/teamActionClient';
+import { readBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { readSavedSecretTransferSourceV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 
-import { VoiceLocalConversationProviderChatSchema } from './settings';
+import { VoiceLocalConversationProviderChatSchema } from '@/voice/adapters/localConversation/settings';
 
-export { LEGACY_VOICE_OPENAI_CHAT_COMPATIBLE_AGENT_ID, completeLegacyVoiceOpenAiChatAgentSelection, migrateLegacyVoiceOpenAiChatProvider, resolveLegacyVoiceOpenAiChatImportState } from '@happier-dev/protocol/voice/settings/legacyOpenAiChatProviderMigration';
 import { resolveLegacyVoiceOpenAiChatImportState, readLegacyVoiceOpenAiChatConfig as readLegacyConfig, readLegacyVoiceOpenAiChatPath as readPath, readLegacyVoiceOpenAiChatModelId as readModelId } from '@happier-dev/protocol/voice/settings/legacyOpenAiChatProviderMigration';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -25,6 +29,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 export async function importLegacyVoiceOpenAiChatProvider(
   scope: ServerAccountScope,
   approval?: SavedSecretPrivateCreationApprovalOptions,
+  execution?: Readonly<{ actionContext?: ActionExecutorContext; executorOptions?: Parameters<typeof runTeamAction>[0]['executorOptions'] }>,
 ): Promise<ProviderConnectionsCatalogImportResultV1 | Readonly<{ status: 'applied'; settingsVersion: number }>> {
   const [{ captureLazyActionAccountContext }, providerApi, snapshots, { settingsParse }, voiceSettings,
     { normalizeVoiceSettingsLocalDelta }] = await Promise.all([
@@ -32,7 +37,7 @@ export async function importLegacyVoiceOpenAiChatProvider(
     import('@/sync/store/settings/providerCatalogSnapshot'), import('@/sync/domains/settings/settings'),
     import('@/sync/domains/settings/voiceSettings'), import('@/sync/domains/settings/voiceSettingsPersistence'),
   ]);
-  const context = await captureLazyActionAccountContext(scope.serverId, approval?.signal);
+  const context = await captureLazyActionAccountContext(scope.serverId, approval?.signal ?? execution?.actionContext?.signal);
   try {
     if (context.accountId !== scope.accountId) return { status: 'cancelled' };
     // Bootstrap maintenance can advance Settings. Capture the retained Voice source afterwards.
@@ -56,7 +61,8 @@ export async function importLegacyVoiceOpenAiChatProvider(
           : { status: 'unavailable', reason: 'saved-secret-import-pending' };
         verifiedReferences = [verified.reference];
       } else {
-        const importedSecrets = await importLegacySavedSecretsInContext(context, await context.resolveAccountMode(), scope, approval);
+        const importedSecrets = await importLegacySavedSecretsInContext(context, await context.resolveAccountMode(), scope, approval,
+          undefined, 'maintenance', undefined, execution);
         if (importedSecrets.status !== 'complete') return importedSecrets.reason === 'outcome_unknown'
           ? { status: 'outcome_unknown' } : { status: 'unavailable', reason: 'saved-secret-import-pending' };
         verifiedReferences = importedSecrets.verifiedReferences;
@@ -136,4 +142,55 @@ export async function importLegacyVoiceOpenAiChatProvider(
     if (saved.status === 'applied') return { status: 'applied', settingsVersion: saved.settingsVersion };
     return saved.status === 'outcomeUnknown' ? { status: 'outcome_unknown' } : { status: 'conflict' };
   } finally { context.dispose(); }
+}
+
+/** Both the declaration's invoke operation and public Agent selection consume this preparation. */
+export function createLegacyVoiceChatSelectionPreparer(
+  account: Awaited<ReturnType<typeof captureLazyActionAccountContext>> | null,
+  readCatalog: NonNullable<SettingsMutationServices['readAgentCatalog']>,
+  executorOptions?: Parameters<typeof runTeamAction>[0]['executorOptions'],
+): NonNullable<SettingsMutationServices['prepareLegacyAgentSelection']> {
+  return async (settings, selectedValue, invocation) => {
+    if (!account || !invocation?.actionContext?.executeOrdinaryChildAction) return null;
+    account.assertCurrent();
+    const [{ readLocalConversationVoiceSettings }, { resolveVoiceAgentCatalogSelectionV1 },
+      { resolveVoiceExecutionMachineIdFromState }, { storage }, { applyVoiceAgentSelection },
+      { PROVIDER_ACTION_OUTPUT_SCHEMAS_V1 }] = await Promise.all([
+      import('@/sync/domains/settings/voiceSettings'), import('@happier-dev/protocol/voice/settings/voiceAgentSelection'),
+      import('@/voice/settings/executionMachine'), import('@/sync/domains/state/storage'),
+      import('@/voice/settings/voiceAgentSelection'), import('@happier-dev/protocol/providers/providerActionsV1'),
+    ]);
+    let source = settings;
+    if (readLocalConversationVoiceSettings(source.voice).agent.providerChat?.status === 'migration_required') {
+      const imported = await importLegacyVoiceOpenAiChatProvider(account.accountLifetime.scope, undefined, {
+        actionContext: invocation.actionContext, executorOptions,
+      });
+      if (imported.status !== 'applied' && imported.status !== 'unchanged') return null;
+      // The acknowledged Settings owner already publishes its new value locally.
+      const live = account.readLiveSettings();
+      if (!live) return null;
+      source = live;
+    }
+    const pending = readLocalConversationVoiceSettings(source.voice).agent.providerChat;
+    if (pending?.status !== 'needs_selection') return null;
+    const catalog = await readCatalog(source, selectedValue);
+    const entry = catalog && resolveVoiceAgentCatalogSelectionV1(catalog.entries, selectedValue);
+    if (!catalog || !entry || entry.enabled === false) return null;
+    const machineId = resolveVoiceExecutionMachineIdFromState({ ...storage.getState(), settings: source });
+    const agentTargetKey = readBackendTargetKeyV2(entry.backendTargetKey ?? { kind: 'backend', backendId: entry.agentId });
+    if (!machineId || !agentTargetKey) return null;
+    const result = await invocation.actionContext.executeOrdinaryChildAction('providers.models.projection', {
+      machineId, agentTargetKey, mode: 'picker',
+    });
+    if (!result.ok) return null;
+    const projection = PROVIDER_ACTION_OUTPUT_SCHEMAS_V1['providers.models.projection'].safeParse(result.result);
+    if (!projection.success || projection.data.status !== 'success' || 'connectionId' in projection.data) return null;
+    const modelProjection = projection.data;
+    return current => {
+      if (!invocation.isCurrent() || !catalog.isCurrent(current)
+        || !sameStrictJsonValue(readLocalConversationVoiceSettings(current.voice).agent.providerChat, pending)) return null;
+      const voice = applyVoiceAgentSelection(current.voice, { kind: 'legacy_provider_chat', entry, modelProjection });
+      return voice === current.voice ? null : { voice };
+    };
+  };
 }

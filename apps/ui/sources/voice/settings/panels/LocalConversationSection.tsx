@@ -53,8 +53,6 @@ import { resolveVoiceWelcomeSelection } from '@/voice/settings/welcome';
 import { VoiceGreetingItem } from '@/voice/settings/panels/VoiceGreetingItem';
 import { applyVoiceAgentSelection } from '@/voice/settings/voiceAgentSelection';
 import { projectVoiceConfiguredAgentTarget } from '@/voice/agent/projectVoiceConfiguredAgentTarget';
-import { useProviderActionClient } from '@/providers/actions/useProviderActionClient';
-import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Modal } from '@/modal';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
@@ -66,10 +64,9 @@ import { VoiceAgentModelPicker } from '@/voice/settings/panels/VoiceAgentModelPi
 import { isTeamCredentialProviderModelPickerValue } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 import { resolveProjectedConnectedAccountServiceKeys } from '@/sync/domains/connectedServices/qualifiedConnectedAccountServiceOptions';
 import { VoiceAgentConnectedServicesSchema } from '@happier-dev/protocol/voice/settings/localConversation';
-import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
-import {
-  importLegacyVoiceOpenAiChatProvider,
-} from '@/voice/adapters/localConversation/migrateLegacyOpenAiChatProvider';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { SettingsDeclarationActionOutputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 
 /** The menu id of "the session's own" in the Agent and Model selects. */
 const SAME_AS_SESSION_ID = '__same_as_session__';
@@ -172,25 +169,7 @@ export function LocalConversationSection(props: {
 
   const capabilityServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
   const voiceSettingsScope = useAccountSettingsScope();
-  const voiceSettingsScopeKey = voiceSettingsScope ? `${voiceSettingsScope.serverId}:${voiceSettingsScope.accountId}` : 'unavailable';
-  const legacyChatOrigin = React.useRef<AbortController | null>(null);
-  React.useEffect(() => {
-    const origin = new AbortController();
-    legacyChatOrigin.current = origin;
-    return () => {
-      origin.abort();
-      if (legacyChatOrigin.current === origin) legacyChatOrigin.current = null;
-    };
-  }, [voiceSettingsScopeKey]);
-  const legacyChatApproval = useActionApprovalContinuation({
-    scopeKey: voiceSettingsScopeKey,
-    serverId: voiceSettingsScope?.serverId ?? '',
-    onExecuted: () => {},
-  });
-  const importedChatModels = useProviderActionClient(needsProviderChatSelection && voiceSettingsScope
-    ? voiceSettingsScope.serverId : []);
-  const currentVoiceRef = React.useRef(props.voice);
-  currentVoiceRef.current = props.voice;
+  const legacyChatActions = useMountedActionExecution(voiceSettingsScope);
   const daemonMergedProjection = useDaemonMergedProjectionInputs({
     machineId: preflightMachineId,
     serverId: capabilityServerId,
@@ -463,6 +442,7 @@ export function LocalConversationSection(props: {
         {needsProviderChatSelection ? (
           <SettingAnchor setting={AGENT_SELECTION_SETTINGS.agent}>
           <DropdownMenu
+            testID="settings.voice.local.agent"
             open={openMenu === 'providerChatAgentSelection'}
             onOpenChange={(next) => setOpenMenu(next ? 'providerChatAgentSelection' : null)}
             variant="selectable"
@@ -481,41 +461,30 @@ export function LocalConversationSection(props: {
             onSelect={(id) => {
               const entry = resolveVoiceAgentCatalogSelectionV1(resolvedAgentEntries, String(id));
               if (!entry) return;
-              const capturedVoice = props.voice;
-              const origin = legacyChatOrigin.current;
+              if (legacyChatActions.approval.approvalPending) return;
               fireAndForget((async () => {
                 if (cfg.agent.providerChat?.status === 'migration_required') {
-                  if (!voiceSettingsScope) return;
-                  if (!origin || origin.signal.aborted || legacyChatApproval.approvalPending) return;
-                  const imported = await importLegacyVoiceOpenAiChatProvider(voiceSettingsScope, {
-                    onApprovalPending: legacyChatApproval.requestApproval,
-                    signal: origin.signal,
+                  const outcome = await legacyChatActions.execute('settings.invoke', {
+                    anchor: AGENT_SELECTION_SETTINGS.agent.anchor,
                   });
-                  if (origin.signal.aborted) return;
-                  if (imported.status !== 'applied' && imported.status !== 'unchanged') throw new Error('voice_chat_import_failed');
-                  setOpenMenu(null);
-                  return;
+                  requireActionSuccess(outcome);
+                  const result = SettingsDeclarationActionOutputSchemasV1['settings.invoke'].parse(outcome.result);
+                  if (result.status === 'cancelled') return;
+                  if (result.status !== 'completed') throw new Error('voice_chat_import_failed');
+                } else {
+                  const outcome = await legacyChatActions.execute('settings.set', {
+                    anchor: AGENT_SELECTION_SETTINGS.agent.anchor, value: voiceAgentCatalogSelectionValueV1(entry),
+                  }, { presentUserConfirmation: { actionId: 'settings.set' } });
+                  requireActionSuccess(outcome);
                 }
-                const projection = await importedChatModels.describeProviderModels({
-                  serverId: voiceSettingsScope?.serverId ?? null,
-                  ...(preflightMachineId ? { machineId: preflightMachineId } : {}),
-                  agentTargetKey: entry.backendTargetKey ?? buildAgentUniverseBackendTargetKey(entry.agentId),
-                  mode: 'picker',
-                }, origin ? { signal: origin.signal } : {});
-                if (currentVoiceRef.current !== capturedVoice || projection?.status !== 'success') return;
-                const nextVoice = applyVoiceAgentSelection(voice, {
-                  kind: 'legacy_provider_chat', entry, modelProjection: projection,
-                });
-                if (nextVoice === voice) return;
-                props.setVoice(nextVoice);
                 setOpenMenu(null);
               })(), { tag: 'Voice imported Chat Agent selection', logError: false,
-                onError: () => { if (!origin?.signal.aborted) Modal.alert(t('common.error'), t('common.saveError')); } });
+                onError: () => { if (legacyChatActions.isCurrent()) Modal.alert(t('common.error'), t('common.saveError')); } });
             }}
           />
           </SettingAnchor>
         ) : null}
-        {!hasConfiguredProviderChat ? (
+        {!hasConfiguredProviderChat && !needsProviderChatSelection ? (
           <>
         {/* One row answers which agent thinks, the session's own or a fixed one, so it hosts both settings. */}
         <SettingAnchor setting={AGENT_SELECTION_SETTINGS.agentSource}>

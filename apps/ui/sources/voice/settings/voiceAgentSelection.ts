@@ -11,14 +11,14 @@ import {
 } from '@/sync/domains/settings/voiceSettings';
 import {
     completeLegacyVoiceOpenAiChatAgentSelection,
-    LEGACY_VOICE_OPENAI_CHAT_COMPATIBLE_AGENT_ID,
-} from '@/voice/adapters/localConversation/migrateLegacyOpenAiChatProvider';
+} from '@happier-dev/protocol/voice/settings/legacyOpenAiChatProviderMigration';
 
 export type VoiceAgentSelectionChoice =
     | Readonly<{ kind: 'catalog'; entry: Pick<ResolvedAgentCatalogEntry,
         'agentId' | 'backendTargetKey' | 'identity' | 'projectionGeneration' | 'isBuiltIn'> }>
     | Readonly<{ kind: 'custom'; agentId: string }>
-    | Readonly<{ kind: 'legacy_provider_chat'; agentId: string;
+    | Readonly<{ kind: 'legacy_provider_chat'; entry: Pick<ResolvedAgentCatalogEntry,
+        'agentId' | 'backendTargetKey' | 'identity' | 'projectionGeneration' | 'isBuiltIn'>;
         modelProjection?: Extract<DaemonProviderModelProjectionResponseV1, { status: 'success' }> }>;
 
 /** A selection replaces all routing facts together; catalog identities are never inferred from an id. */
@@ -26,8 +26,8 @@ export function applyVoiceAgentSelection(voice: VoiceSettings, choice: VoiceAgen
     const cfg = readLocalConversationVoiceSettings(voice);
     if (choice.kind !== 'legacy_provider_chat') return applyVoiceAgentSelectionV1(voice, choice, { readLocalConversationVoiceSettings, writeLocalConversationVoiceSettings });
     if (cfg.agent.providerChat?.status !== 'needs_selection') return voice;
-    const providerChat = completeLegacyVoiceOpenAiChatAgentSelection(cfg.agent.providerChat, choice.agentId);
-    if (!providerChat) return voice;
+    const providerChat = completeLegacyVoiceOpenAiChatAgentSelection(cfg.agent.providerChat,
+        choice.entry.backendTargetKey ?? { kind: 'backend', backendId: choice.entry.agentId });
     const projection = choice.modelProjection;
     if (!projection || !backendTargetKeysMatch(projection.agentTargetKey, providerChat.chat.agentTargetKey)) return voice;
     // Reuse the session picker's existing authorization/compatibility/visibility
@@ -42,14 +42,14 @@ export function applyVoiceAgentSelection(voice: VoiceSettings, choice: VoiceAgen
     }).flatMap(section => section.options);
     if (![providerChat.chat, providerChat.commit].every(ref => options.some(option => !option.disabled
         && sessionModelSelectionKey(option.value) === sessionModelSelectionKey(ref)))) return voice;
-    return writeLocalConversationVoiceSettings(voice, {
-        ...cfg,
+    const selected = applyVoiceAgentSelectionV1(voice, { kind: 'catalog', entry: choice.entry },
+        { readLocalConversationVoiceSettings, writeLocalConversationVoiceSettings });
+    const selectedConfig = readLocalConversationVoiceSettings(selected);
+    return writeLocalConversationVoiceSettings(selected, {
+        ...selectedConfig,
         agent: {
-            ...cfg.agent,
+            ...selectedConfig.agent,
             agentSource: 'agent',
-            agentId: LEGACY_VOICE_OPENAI_CHAT_COMPATIBLE_AGENT_ID,
-            agentTargetKey: providerChat.chat.agentTargetKey,
-            agentIdentity: null,
             providerChat,
         },
     });

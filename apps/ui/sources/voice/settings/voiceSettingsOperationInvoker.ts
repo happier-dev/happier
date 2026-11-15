@@ -58,6 +58,12 @@ export async function invokeVoiceSettingsOperation(operation: VoiceSettingsOpera
         return unavailable('model_operation_changed');
     }
     try {
+        if (operation === 'legacy_chat_import') {
+            if (!context.actionContext || !context.services?.importLegacyVoiceChat) return unavailable('setting_not_bound');
+            const result = await context.services.importLegacyVoiceChat(context.actionContext);
+            return result.status === 'applied' || result.status === 'unchanged'
+                ? completed() : unavailable('reason' in result ? result.reason : result.status);
+        }
         if (operation === 'history_inspect') {
             const { getDefaultVoiceHistoryConsumer } = await import('@/voice/history/defaultVoiceHistoryConsumer');
             if (!current()) return { status: 'cancelled' };

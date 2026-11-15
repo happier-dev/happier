@@ -554,7 +554,7 @@ export function createSettingsDeclarationAction(owner: SettingsDeclarationOwner)
                     ...(!opened ? { reason: 'human_interaction_unavailable' } : {}) };
             }
             const operationInput = SettingsDeclarationActionInputSchemasV1['settings.invoke'].parse(input);
-            const result = await ref.operation.invoke({ signal: context?.signal, input: operationInput.input, target, isCurrent,
+            const result = await ref.operation.invoke({ signal: context?.signal, actionContext: context, input: operationInput.input, target, isCurrent,
                 accountScope: owner.accountScope,
                 openMountedControl: anchor => invokeCurrentUiContextSettingCommand({ anchor, accountScope: owner.accountScope,
                     context: context ?? { surface: 'ui' } }),
@@ -677,7 +677,7 @@ export function createSettingsDeclarationAction(owner: SettingsDeclarationOwner)
                 if (value && !value.success || ownerValue && !ownerValue.success) return refuse('invalid_setting_value');
                 const prepared = 'key' in binding ? undefined : binding.prepare
                     ? await binding.prepare(await owner.readAccountSettings(), ownerValue?.success ? ownerValue.value : storedValue,
-                        owner.mutationServices ?? {}, { signal: context?.signal, isCurrent })
+                        owner.mutationServices ?? {}, { signal: context?.signal, isCurrent, actionContext: context })
                     : (settings: Settings) => binding.mutate(settings, ownerValue?.success ? ownerValue.value : storedValue);
                 if (!('key' in binding) && !prepared) return refuse('setting_value_unavailable');
                 const mutationFor = (raw: Readonly<Record<string, unknown>>) => {
@@ -790,7 +790,7 @@ export function createSettingsDeclarationAction(owner: SettingsDeclarationOwner)
                     return { anchor: ref.anchor, value: parsedValue.value };
                 }
                 const mutate = binding.prepare
-                    ? await binding.prepare(await owner.readAccountSettings(), parsedValue.value, owner.mutationServices ?? {}, { signal: context?.signal, isCurrent })
+                    ? await binding.prepare(await owner.readAccountSettings(), parsedValue.value, owner.mutationServices ?? {}, { signal: context?.signal, isCurrent, actionContext: context })
                     : (settings: Settings) => binding.mutate(settings, parsedValue.value);
                 throwIfAborted(context?.signal);
                 if (!mutate) return refuse('setting_value_unavailable');

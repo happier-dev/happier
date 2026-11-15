@@ -1,6 +1,6 @@
 import { ProviderModelIdSchema } from '../../providers/ids.js';
 import { normalizeCustomProviderTemplateV1 } from '../../providers/connections/normalizeCustomTemplateV1.js';
-import { resolveBackendTargetKeyV2 } from '../../backends/targets/backendTargetRefV2.js';
+import { resolveBackendTargetKeyV2, type BackendTargetRefV2Input } from '../../backends/targets/backendTargetRefV2.js';
 import { readSavedSecretTransferSourceV1 } from '../../account/settings/savedSecretMutationOwner.js';
 
 import { parsePredecessorVoiceCredentialBindings } from './voiceCredentialBindingCompatibility.js';
@@ -8,16 +8,14 @@ import { parsePredecessorVoiceCredentialBindings } from './voiceCredentialBindin
 import type { VoiceLocalConversationSettings } from './localConversation.js';
 
 const MIGRATED_CHAT_SAVED_SECRET_ID = 'voice:openai_compat:chat_api_key';
-export const LEGACY_VOICE_OPENAI_CHAT_COMPATIBLE_AGENT_ID = 'opencode' as const;
 
 type MutableRecord = Record<string, unknown>;
 
 export function completeLegacyVoiceOpenAiChatAgentSelection(
   pending: Extract<NonNullable<VoiceLocalConversationSettings['agent']['providerChat']>, { status: 'needs_selection' }>,
-  agentId: string,
-): Extract<NonNullable<VoiceLocalConversationSettings['agent']['providerChat']>, { status: 'configured' }> | null {
-  if (agentId !== LEGACY_VOICE_OPENAI_CHAT_COMPATIBLE_AGENT_ID) return null;
-  const agentTargetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: agentId.trim() });
+  agentTarget: BackendTargetRefV2Input,
+): Extract<NonNullable<VoiceLocalConversationSettings['agent']['providerChat']>, { status: 'configured' }> {
+  const agentTargetKey = resolveBackendTargetKeyV2(agentTarget);
   return {
     status: 'configured',
     chat: {

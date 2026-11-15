@@ -114,7 +114,7 @@ export const VOICE_CONVERSATIONS_SETTINGS = defineSettingsPage({
                 testTts: {   operation: voiceSettingsOperation('tts_test') },
                 readiness: {  operation: voiceSettingsOperation('readiness_inspect') },
                 agentSource: { storage: voiceLocalConversationBinding('agent.agentSource') },
-                agent: { storage: voiceAgentSelectionBinding },
+                agent: { storage: voiceAgentSelectionBinding, operation: voiceSettingsOperation('legacy_chat_import') },
                 connectedServices: { storage: voiceAgentConnectedServicesBinding },
                 customAgent: { storage: voiceCustomAgentBinding },
                 permissionIntent: { storage: voiceLocalConversationBinding('agent.permissionIntent') },

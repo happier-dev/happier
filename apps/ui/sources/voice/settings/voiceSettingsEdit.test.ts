@@ -5,7 +5,7 @@ import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegi
 import { selectVoiceProviderOption } from '@/voice/registry/providerSelection';
 import { captureConversationLanguagePreferenceOwner } from './language/conversationLanguage';
 import { commitExternalVoiceProviderRegistration, removeExternalVoiceProviderRegistration } from '@/voice/registry/externalVoiceProviderRegistrations';
-import { completeLegacyVoiceOpenAiChatAgentSelection } from '@/voice/adapters/localConversation/migrateLegacyOpenAiChatProvider';
+import { completeLegacyVoiceOpenAiChatAgentSelection } from '@happier-dev/protocol/voice/settings/legacyOpenAiChatProviderMigration';
 import { VoiceLocalConversationProviderChatSchema } from '@happier-dev/protocol/voice/settings/localConversation';
 
 describe('Voice settings edit intent', () => {

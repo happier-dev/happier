@@ -49,20 +49,22 @@ describe('atomic Voice Agent selection', () => {
             providerChat: { status: 'needs_selection', providerConnectionId: ProviderConnectionIdSchema.parse('voice-openai-compatible-chat'),
                 chatModelId: 'legacy-chat', commitModelId: 'legacy-commit' },
         } });
-        const next = applyVoiceAgentSelection(pending, { kind: 'legacy_provider_chat', agentId: 'opencode' });
+        const next = applyVoiceAgentSelection(pending, { kind: 'legacy_provider_chat', entry: getResolvedBackendCatalogEntries({ enabledAgentIds: ['opencode'] })[0]!.agentCatalogEntry });
         expect(next).toBe(pending);
         expect(readLocalConversationVoiceSettings(next).agent.providerChat?.status).toBe('needs_selection');
     });
 
-    it.each([
+    it.each(['opencode', 'muse', 'external-registry-id'].flatMap(agentId => [
         { authorized: false, chatConfirmed: true, commitConfirmed: true, expected: 'needs_selection' },
         { authorized: true, chatConfirmed: false, commitConfirmed: true, expected: 'needs_selection' },
         { authorized: true, chatConfirmed: true, commitConfirmed: false, expected: 'needs_selection' },
         { authorized: true, chatConfirmed: true, commitConfirmed: true, expected: 'configured' },
-    ] as const)('uses the incumbent model picker admission for BOTH imported Chat models: %o', ({ authorized, chatConfirmed, commitConfirmed, expected }) => {
+    ].map(row => ({ ...row, agentId }))))('uses the incumbent model picker admission for BOTH imported Chat models: %o', ({ agentId, authorized, chatConfirmed, commitConfirmed, expected }) => {
         const local = readLocalConversationVoiceSettings(voiceSettingsDefaults);
         const connectionId = ProviderConnectionIdSchema.parse('voice-openai-compatible-chat');
-        const agentTargetKey = 'agent:happier.agent.opencode/opencode';
+        const entry = agentId === externalChoice.entry.agentId ? externalChoice.entry
+            : getResolvedBackendCatalogEntries({ enabledAgentIds: [agentId] })[0]!.agentCatalogEntry;
+        const agentTargetKey = entry.backendTargetKey!;
         const pending = writeLocalConversationVoiceSettings(voiceSettingsDefaults, { ...local, agent: {
             ...local.agent,
             providerChat: { status: 'needs_selection', providerConnectionId: connectionId,
@@ -83,8 +85,11 @@ describe('atomic Voice Agent selection', () => {
                 endpointHealth: 'available', catalog: { stale: false }, loadState: 'unknown', visibility: 'visible',
             })),
         })] });
-        const next = applyVoiceAgentSelection(pending, { kind: 'legacy_provider_chat', agentId: 'opencode', modelProjection: projection });
+        const next = applyVoiceAgentSelection(pending, { kind: 'legacy_provider_chat', entry, modelProjection: projection });
         expect(readLocalConversationVoiceSettings(next).agent.providerChat?.status).toBe(expected);
+        if (expected === 'configured') expect(readLocalConversationVoiceSettings(next).agent).toMatchObject({
+            agentId, agentTargetKey, agentIdentity: entry.isBuiltIn ? null : entry.identity,
+        });
     });
 
     it('persists the exact external catalog tuple and replaces it completely for a bundled Agent', () => {

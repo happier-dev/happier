@@ -25,7 +25,7 @@ import {
     attachCurrentSessionAuthoringSelectionsRuntimeProjection,
     type CurrentSessionAuthoringSelectionsRuntimeProjection,
 } from './sessionAuthoringSelectionPersistence';
-import { migrateLegacyVoiceOpenAiChatProvider } from '@/voice/adapters/localConversation/migrateLegacyOpenAiChatProvider';
+import { migrateLegacyVoiceOpenAiChatProvider } from '@happier-dev/protocol/voice/settings/legacyOpenAiChatProviderMigration';
 import { stripRetiredNewSessionSettings } from './localOnlyAccountSettings';
 
 // NOTE: We intentionally do NOT support legacy provider config objects (e.g. `openaiConfig`).
