@@ -147,7 +147,7 @@ it.each(['pullRequest', 'bindings'] as const)('retains the repository owner and 
         expect(fixture.writes).toHaveLength(0);
         const executed = await fixture.inHome(() => executor.execute('deployments.templates.instantiate', input, context));
         expect(executed, JSON.stringify({ executed, httpRequests: forge.httpRequests, tokenRequests: forge.tokenRequests() })).toMatchObject({ ok: false, details: { kind: 'partial', phase: failurePhase === 'bindings' ? 'bindings' : 'repository',
-            errorCode: failurePhase === 'bindings' ? 'deployment_content_unavailable' : 'COMMAND_FAILED',
+            errorCode: failurePhase === 'bindings' ? 'invalid_action_output' : 'COMMAND_FAILED',
             savedSecrets: [{ name: 'DB_PASSWORD' }], repositoryChange: failurePhase === 'bindings'
                 ? { kind: 'pullRequest', pullRequest: { url: 'https://github.com/example/app/pull/4' }, headCommit: expect.any(String) }
                 : { stage: 'pullRequest', errorCode: 'COMMAND_FAILED' } } });

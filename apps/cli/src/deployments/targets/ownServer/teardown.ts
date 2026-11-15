@@ -18,6 +18,7 @@ import { createDeploymentTeardownExecutor, DeploymentTeardownObservationSchema, 
 import type { DeploymentReceiptDispatchV1 } from '../../createCliDeploymentActionDeps';
 import type { OwnServerDeploymentTargetHostInput } from './ownServerDeploymentTarget';
 import { resolveOwnServerDeploymentIdentityForHost } from './paths';
+import { projectDeploymentException } from '../../deploymentFailure';
 import { admitOwnServerDeploymentTargetLink } from './ownServerTargetAdmission';
 import { readOwnServerTeardownVolumes, observeOwnServerTeardownVolumes, settleOwnServerTeardownVolumes } from './teardownVolumes';
 import { DeploymentTeardownPreviewV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -254,9 +255,7 @@ export function createOwnServerTeardownForHost(host: Host) {
                 return DeploymentTeardownPreviewV1Schema.parse({ ok: true, kind: 'preview', volumes: resources.map(resource => ({
                     name: resource.id, machineId: resource.machineId })) });
             } catch (error) { return {
-                ...normalizeActionExecutorThrownError(error, 'deployment.teardown.preview'),
-                ...failure(context.signal?.aborted ? 'cancelled'
-                    : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'deployment_content_unavailable'),
+                ...projectDeploymentException(error, { signal: context.signal, phase: 'deployment.teardown.preview' }),
                 effectAttempted: false }; }
         },
         async admit(environment: DeploymentEnvironmentDetailV1, targetLinkId: string, content: DeploymentContentV1,
@@ -355,9 +354,7 @@ export function createOwnServerTeardownForHost(host: Host) {
                         summary: 'Stop and remove this Environment’s containers and owned networks. Only explicitly selected named data volumes are deleted; other volumes and images are kept.',
                         machines: members.map(member => member.machineId), resources: content.teardown?.resources ?? [] }) };
             } catch (error) { return {
-                ...normalizeActionExecutorThrownError(error, 'deployment.teardown.prepare'),
-                ...failure(context.signal?.aborted ? 'cancelled'
-                    : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'deployment_content_unavailable'),
+                ...projectDeploymentException(error, { signal: context.signal, phase: 'deployment.teardown.prepare' }),
                 effectAttempted: false }; }
         },
         executeNative,

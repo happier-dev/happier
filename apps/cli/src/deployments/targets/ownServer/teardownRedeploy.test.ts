@@ -176,7 +176,8 @@ it('deploys after native teardown and preserves a later activation failure witho
                 expect(persisted.deployment.state).toBe('failed');
                 expect(persisted.content.failure).toEqual({ code: 'native_failed', phase: 'activate',
                     requiredFact: 'deploymentActionResult', remedy: expect.stringMatching(/\S/),
-                    failureCause: { phase: 'deployment.failure', errorClass: 'Error', errorCode: 'native_failed', httpStatus: null } });
+                    // The native owner's closed reason is the typed cause.
+                    failureCause: { phase: 'deployment.failure', errorClass: 'Error', errorCode: 'deployment_activation_failed', httpStatus: null } });
                 expect(await docker.readRunningImageConfig('app')).toBeNull();
             } else {
                 expect(persisted.content.failure).toBeUndefined();

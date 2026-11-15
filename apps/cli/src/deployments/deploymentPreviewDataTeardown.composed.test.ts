@@ -302,7 +302,9 @@ describe('ordinary preview data teardown composition', () => {
                 if (scenario !== 'retained A' && scenario !== 'encrypted retained A') {
                     expect(result, diagnostic).toMatchObject({ ok: false,
                         errorCode: scenario === 'another person' ? 'deployment_access_denied'
-                            : scenario === 'wrong invocation' ? 'run_not_found' : 'deployment_content_unavailable' });
+                            : scenario === 'wrong invocation' ? 'run_not_found'
+                                // An unreadable creation result and an uncoded throw are not missing Source content.
+                                : scenario === 'unknown creation' ? 'invalid_action_output' : 'action_failed' });
                     expect(providerRequests).toEqual([]);
                     expect(materializations).toEqual([]);
                     expect(transitions).toEqual([]);

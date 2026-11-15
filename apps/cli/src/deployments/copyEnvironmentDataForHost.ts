@@ -1,4 +1,5 @@
 import { deploymentOutputValidationFailure } from './outputValidation';
+import { projectDeploymentException } from './deploymentFailure';
 import type { DeploymentEnvironmentCreateInputV1, ActionExecutorContext, ActionExecuteFailure } from '@happier-dev/protocol';
 import { DeploymentTargetLinkResultV1Schema, type DeploymentTemplateInstantiationPartialV1Schema }
     from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -100,7 +101,6 @@ export async function copyEnvironmentDataForHost(request: Readonly<{
         return { ok: true, environmentId, revision };
     } catch (error) {
         // Transport exceptions can conceal a completed provider write. Never offer a blind replay.
-        return partial(context.signal?.aborted ? 'cancelled' : error instanceof Error && 'code' in error
-            && typeof error.code === 'string' ? error.code : 'deployment_content_unavailable');
+        return partial(projectDeploymentException(error, { signal: context.signal }));
     }
 }

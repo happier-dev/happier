@@ -70,6 +70,15 @@ describe('backup configure coordinator', () => {
         expect(result).toMatchObject({ ok: false, errorCode: 'ECONNRESET', effectAttempted: true });
     });
 
+    it('settles an uncoded publication throw as an unknown failure, not missing deployment content', async () => {
+        const f = fixture();
+        const result = await createDeploymentBackupConfigureActionForHost({ ...f.host,
+            async saveBackup() { throw new Error('publication failed'); },
+        })({ ...f.input, intent: 'initializeAndSave' }, {});
+        expect(result).toMatchObject({ ok: false, errorCode: 'action_failed', effectAttempted: true,
+            failureCause: { errorClass: 'Error' } });
+    });
+
     it('re-keys with old repository custody before publishing only the successor password binding', async () => {
         const f = fixture();
         f.environment.content.backup = configuration;

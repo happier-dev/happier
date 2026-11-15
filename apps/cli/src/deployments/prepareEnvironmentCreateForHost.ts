@@ -16,7 +16,7 @@ import type { StoredCredentials } from '@/persistence';
 import { normalizeStoredComposeDefinitionInput } from '@/workspaces/projectSetup/nativeComposeSource';
 import type { createPrepareEnvironmentContentForHost } from './prepareEnvironmentContentForHost';
 import { createDeploymentArtifactForHost } from './createArtifactForHost';
-import { projectDeploymentFailure } from './deploymentFailure';
+import { projectDeploymentException, projectDeploymentFailure } from './deploymentFailure';
 import type { EnvironmentCreateCopyResolution } from './resolveEnvironmentCreateCopyForHost';
 import { deriveDeploymentEnvironmentCreateCommitmentV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
@@ -147,8 +147,7 @@ export async function resolveEnvironmentCreatePreviewForHost(
             ...(template.content.previewTemplate!.domain ? { domain: template.content.previewTemplate!.domain } : {}),
             ...(nativeTemplate ? { nativeTemplate } : {}) };
     } catch (error) {
-        return projectDeploymentFailure(context.signal?.aborted ? 'cancelled' : error instanceof Error && 'code' in error
-            && typeof error.code === 'string' ? error.code : 'deployment_content_unavailable', error);
+        return projectDeploymentException(error, { signal: context.signal });
     }
 }
 
@@ -266,10 +265,11 @@ export function createPrepareEnvironmentCreateForHost(host: EnvironmentCreateHos
             await retainPreparedPreview?.(prepared, content);
             return prepared;
         } catch (error) {
-            const code = context.signal?.aborted ? 'cancelled' : error instanceof ArtifactEncryptionMaterialUnavailableError
-                || error instanceof Error && 'code' in error && error.code === 'account_storage_currentness_unavailable' ? 'client_required'
-                : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'deployment_content_unavailable';
-            return projectDeploymentFailure(code, error);
+            if (!context.signal?.aborted && (error instanceof ArtifactEncryptionMaterialUnavailableError
+                || error instanceof Error && 'code' in error && error.code === 'account_storage_currentness_unavailable')) {
+                return projectDeploymentFailure('client_required', error);
+            }
+            return projectDeploymentException(error, { signal: context.signal });
         }
     };
 }

@@ -65,6 +65,20 @@ export function projectDeploymentFailure(errorCode: string, error?: unknown, pha
         ? deploymentUnavailableDiagnostic(projected, phase, 'native_failure', error) : projected;
 }
 
+/**
+ * The one exception-to-failure decision for deployment owners. A typed throw keeps its own code. An uncoded throw is
+ * the shared Action owner's `action_failed`: it claims no content or Source cause nobody observed, keeps its class in
+ * the code-only cause, and gives its class and redacted message only to the private diagnostic log.
+ */
+export function projectDeploymentException(error: unknown,
+    options: Readonly<{ signal?: AbortSignal; phase?: string }> = {}): ActionExecuteFailure {
+    if (options.signal?.aborted) return projectDeploymentFailure('cancelled', error, options.phase);
+    const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : undefined;
+    if (code) return projectDeploymentFailure(code, error, options.phase);
+    const phase = options.phase ?? 'deployment.failure';
+    return deploymentUnavailableDiagnostic(projectDeploymentFailure('action_failed', error, phase), phase, 'native_failure', error);
+}
+
 function readAuthoredDeploymentFailure(errorCode: string, error: unknown, phase: string): ActionExecuteFailure {
     if (error instanceof Error && 'code' in error && typeof error.code === 'string'
         && 'syscall' in error && typeof error.syscall === 'string' && 'path' in error && typeof error.path === 'string') {
@@ -90,7 +104,14 @@ function readAuthoredDeploymentFailure(errorCode: string, error: unknown, phase:
     }
     const carried = ActionExecuteFailureSchema.safeParse(error instanceof Error ? error.cause : error);
     if (carried.success && carried.data.errorCode === errorCode) return carried.data;
-    const cause = error === undefined ? undefined : normalizeActionExecutorThrownError(error, phase).failureCause;
+    const thrownCause = error === undefined ? undefined : normalizeActionExecutorThrownError(error, phase).failureCause;
+    // Native owners throw their family code with a closed `reason` (Start First eligibility, origin
+    // changes). That reason is the typed cause: it reaches the receipt and recovery, never prose.
+    const reason = pluginError?.code === errorCode ? author?.details : undefined;
+    const typedReason = reason && typeof reason === 'object' && !Array.isArray(reason) && 'reason' in reason
+        && typeof reason.reason === 'string' && /^[a-z][a-z0-9_]{0,63}$/u.test(reason.reason) ? reason.reason : undefined;
+    const cause = thrownCause && typedReason && thrownCause.errorCode === errorCode
+        ? { ...thrownCause, errorCode: typedReason } : thrownCause;
     const retainedDetails = readDeploymentBackupMaintenanceFailureEvidenceV1(error)
         ?? (error instanceof MachineNativeEffectAdmissionError && error.code === errorCode ? error.details : undefined);
     return { ok: false, errorCode, error: errorCode,

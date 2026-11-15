@@ -18,6 +18,7 @@ import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecr
 import { normalizeStoredComposeDefinitionInput, parseNativeComposeSource } from '@/workspaces/projectSetup/nativeComposeSource';
 import { withDeploymentTemplateGeneratedSecretsForHost, validateDeploymentTemplateGeneratedSecretProfileForHost } from './generatedSecretForHost';
 import { readPinnedDeploymentTemplateForHost } from './readPinnedTemplateForHost';
+import { projectDeploymentException } from '../deploymentFailure';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveRequesterSavedSecretActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
@@ -307,8 +308,6 @@ export async function executePreviewTemplateCreationForHost(input: Readonly<{
                 previewNativeBindings: readPreviewCompanionBindingsForHost(input.plan, bindings, created.environmentId) } : {}),
             ...(input.plan.companionRequired ? { previewCompanionRequired: true } : {}) } };
     } catch (error) {
-        const errorCode = input.context.signal?.aborted ? 'cancelled' : error instanceof Error && 'code' in error
-            && typeof error.code === 'string' ? error.code : 'deployment_content_unavailable';
-        return { ok: false, errorCode, error: errorCode, effectAttempted };
+        return { ...projectDeploymentException(error, { signal: input.context.signal }), effectAttempted };
     }
 }

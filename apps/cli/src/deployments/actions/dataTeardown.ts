@@ -7,7 +7,7 @@ import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/prot
 import { isActionOutcomeUnknownErrorCodeV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { DeploymentExecutionFailureDetailsV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
-import { projectDeploymentReceiptFailure } from '../deploymentFailure';
+import { projectDeploymentException, projectDeploymentReceiptFailure } from '../deploymentFailure';
 import { createDeploymentTargetRoleAdmissionHost } from '../targets/createDeploymentTargetRoleAdmissionHost';
 import { admitDeploymentTargetRoleForHost } from '../targets/admitDeploymentTargetRoleForHost';
 import { resolveRegistryConnectedAccountActionCredentialPurposeAuthorization } from '@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations';
@@ -131,8 +131,7 @@ export function createDataTeardownForHost(host: Host) {
                 return { input: prepared, preview: normalizeStrictJsonValue({ dataCreation: reference,
                     providerIdentity: retained.result.providerIdentity, providerEnvironment: retained.result.providerEnvironment }),
                     hostReviewedChildren: children(prepared, content) };
-            } catch (error) { return failure(request.context.signal?.aborted ? 'cancelled'
-                : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'deployment_content_unavailable'); }
+            } catch (error) { return projectDeploymentException(error, { signal: request.context.signal }); }
         },
         async admit(input: DeploymentTeardownInputV1, context: ActionExecutorContext) {
             const content = await readPrepared(input, context);

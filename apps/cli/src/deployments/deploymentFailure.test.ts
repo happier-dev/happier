@@ -6,7 +6,9 @@ import { ActionExecuteFailureSchema, projectActionFailureCauseV1 } from '@happie
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createMachineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { logger } from '@/ui/logger';
-import { projectDeploymentFailure, privateServiceForwardAcquisitionError } from './deploymentFailure';
+import { projectDeploymentException, projectDeploymentFailure, projectDeploymentReceiptFailure, privateServiceForwardAcquisitionError } from './deploymentFailure';
+import { inspectNativeComposeStorage } from '@/daemon/local/services/launch/nativeComposeStorage';
+import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { MachineCarrierError } from '@/daemon/peer/iroh/machineCarrier';
 import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployment-protocol';
 
@@ -151,5 +153,57 @@ describe('deployment filesystem failure diagnostics', () => {
         expect(warning).not.toHaveBeenCalled();
         expect(result).toMatchObject({ ok: false, errorCode: 'deployment_failed', error: 'deployment_failed' });
         expect(JSON.stringify(result)).not.toContain('private-native');
+    });
+});
+
+describe('deployment exception projection', () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    it('settles an uncoded throw as a typed unknown failure with its class, never as missing Source content', () => {
+        const warning = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        const result = projectDeploymentException(new Error('private-native-message token=private-native-value'),
+            { phase: 'deployment.backup.publication' });
+
+        expect(ActionExecuteFailureSchema.parse(result)).toMatchObject({ ok: false, errorCode: 'action_failed',
+            failureCause: { phase: 'deployment.backup.publication', errorClass: 'Error', errorCode: null } });
+        const recovery = readDeploymentFailureRecoveryV1(result.errorCode, result.details);
+        expect(recovery.nextAction.destination).not.toBe('source');
+        expect(recovery.remedy).not.toMatch(/source/i);
+        // Class and redacted message reach only the private diagnostic log.
+        expect(warning).toHaveBeenCalledWith('[Deployment] Unavailable', expect.objectContaining({
+            phase: 'deployment.backup.publication', exception: expect.objectContaining({ errorClass: 'Error' }) }));
+        expect(JSON.stringify(warning.mock.calls)).not.toContain('private-native-value');
+        expect(JSON.stringify(result)).not.toContain('private-native');
+    });
+
+    it('keeps a typed throw code and a cancellation without the unknown-failure diagnostic', () => {
+        const warning = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        expect(projectDeploymentException(Object.assign(new Error('private-native-message'), { code: 'backup_failed' })))
+            .toMatchObject({ ok: false, errorCode: 'backup_failed', failureCause: { errorCode: 'backup_failed' } });
+        const aborted = new AbortController();
+        aborted.abort();
+        expect(projectDeploymentException(new Error('private-native-message'), { signal: aborted.signal }))
+            .toMatchObject({ ok: false, errorCode: 'cancelled' });
+        expect(warning).not.toHaveBeenCalled();
+    });
+});
+
+describe('deployment native typed reason', () => {
+    it('carries the native Start First eligibility reason into the public cause, the receipt and its recovery', async () => {
+        // The real storage classifier refuses a writable named volume for Start First.
+        const error: unknown = await inspectNativeComposeStorage({ runtimeMachineCount: 1, requireStateless: true,
+            model: { services: { app: { volumes: [{ type: 'volume', source: 'archive-data', target: '/data' }] } },
+                volumes: { 'archive-data': {} } },
+            imageConfigs: new Map([['app', { config: {} }]]), isUnchangedManifestSource: async () => false }).then(() => null, (refusal: unknown) => refusal);
+        expect(error).toMatchObject({ code: 'native_failed' });
+        const result = projectDeploymentFailure('native_failed', error);
+        expect(result).toMatchObject({ ok: false, errorCode: 'native_failed',
+            failureCause: { errorCode: 'deployment_start_first_unavailable' } });
+        const receipt = projectDeploymentReceiptFailure(result, 'activate');
+        expect(receipt).toMatchObject({ code: 'native_failed', phase: 'activate',
+            failureCause: { errorCode: 'deployment_start_first_unavailable' } });
+        const recovery = readDeploymentFailureRecoveryV1(receipt.code, { failure: receipt });
+        expect(recovery).toMatchObject({ remedy: receipt.remedy, nextAction: { destination: 'settings' } });
+        expect(recovery.remedy).toMatch(/Start First/);
     });
 });

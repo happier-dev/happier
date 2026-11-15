@@ -20,7 +20,7 @@ import { admitPreviewEnvironmentForHost, preparePreviewForkEligibilityForHost } 
 import type { DeploymentEnvironmentListInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { readDeploymentEnvironmentForHost } from './readEnvironmentForHost';
 import { createDeploymentArtifactForHost } from './createArtifactForHost';
-import { projectDeploymentFailure } from './deploymentFailure';
+import { projectDeploymentException, projectDeploymentFailure } from './deploymentFailure';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import { createDeploymentEnvironmentContentArtifactIdV1,
     isDeploymentEnvironmentUpdateNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -242,9 +242,7 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
             }
             return null;
         } catch (error) {
-            const code = request.context.signal?.aborted ? 'cancelled'
-                : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'deployment_content_unavailable';
-            return projectDeploymentFailure(code, error);
+            return projectDeploymentException(error, { signal: request.context.signal });
         }
     };
 }

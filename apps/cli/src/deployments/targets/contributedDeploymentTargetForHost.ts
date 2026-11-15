@@ -27,7 +27,7 @@ import type { OwnServerDeploymentTransition, OwnServerDeploymentTargetHostInput 
 import { readDeploymentSourceIntentForHost } from '../readDeploymentSourceIntentForHost';
 import { readDeploymentTargetV1 } from './deploymentTargetCatalog';
 import { admitDeploymentTargetRoleForHost } from './admitDeploymentTargetRoleForHost';
-import { projectDeploymentFailure as failure, projectDeploymentReceiptFailure } from '../deploymentFailure';
+import { projectDeploymentException, projectDeploymentFailure as failure, projectDeploymentReceiptFailure } from '../deploymentFailure';
 import { readDeploymentObservationTargetFailure } from '../readObservationForHost';
 import { resolveScmHostingRefForHost, type ExecuteScmSourceReadAction } from '@/scm/hostingProviders/resolveRefForHost';
 import { DeploymentLogsReadSuccessV1Schema, type DeploymentLogsReadInputV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
@@ -53,8 +53,6 @@ type Host = Readonly<{
         ReturnType<OwnServerDeploymentTargetHostInput['writeTransition']>;
 }>;
 const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
-const codeOf = (error: unknown) => error instanceof Error && 'code' in error && typeof error.code === 'string'
-    ? error.code : 'deployment_content_unavailable';
 const deployRole = (method: 'gitIntegration' | 'upload'): Role => method === 'upload' ? 'uploadDeploy' : 'deploy';
 
 function receiptFailureContent(content: DeploymentPlatformContentV1, result: ActionExecuteFailure,
@@ -317,10 +315,10 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                                 return failure('outcome_unknown');
                             const written = await writeObservation(receipt, content, observation.data, context, environment.environment.revision);
                             return written.ok ? { ok: true, result: written } : written;
-                        } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : codeOf(error), error); }
+                        } catch (error) { return projectDeploymentException(error, { signal: context.signal }); }
                     } };
             });
-        } catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : codeOf(error), error); }
+        } catch (error) { return projectDeploymentException(error, { signal: request.context.signal }); }
     }
 
     async function execute(request: DeploymentReceiptDispatchV1) {
@@ -427,7 +425,7 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                 }
                 return result;
             }
-            const result = { ...failure(request.context.signal?.aborted ? 'cancelled' : codeOf(error), error),
+            const result = { ...projectDeploymentException(error, { signal: request.context.signal }),
                 ...(!providerInvocationStarted ? { effectAttempted: false } : {}) };
             if (ownsReceipt && receipt && effectContent && !transitionAttempted) {
                 await host.writeTransition({ environmentId: request.input.environmentId, deploymentId: receipt.deployment.id,

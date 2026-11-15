@@ -10,6 +10,7 @@ import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-pro
 import { ArtifactEncryptionMaterialUnavailableError, createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readDeploymentEnvironmentForHost } from './readEnvironmentForHost';
+import { projectDeploymentException } from './deploymentFailure';
 import type { EnvironmentCreateHost } from './prepareEnvironmentCreateForHost';
 
 export type EnvironmentCreateCopyResolution = Readonly<{
@@ -144,8 +145,9 @@ export async function resolveEnvironmentCreateCopyForHost(
             copyPlan: { bindings, ...(copiedData.length ? { data: copiedData } : {}), ...(source.environment.runtimeTargetLinkId === undefined ? {}
                 : { sourceRuntimeTargetLinkId: source.environment.runtimeTargetLinkId }) } };
     } catch (error) {
-        const code = context.signal?.aborted ? 'cancelled' : error instanceof ArtifactEncryptionMaterialUnavailableError ? 'client_required'
-            : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'deployment_content_unavailable';
-        return { ok: false, errorCode: code, error: code };
+        if (!context.signal?.aborted && error instanceof ArtifactEncryptionMaterialUnavailableError) {
+            return { ok: false, errorCode: 'client_required', error: 'client_required' };
+        }
+        return projectDeploymentException(error, { signal: context.signal });
     }
 }

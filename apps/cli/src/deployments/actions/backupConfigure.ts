@@ -10,7 +10,7 @@ import type { ResolvedDeploymentCreationDefaultsV1, DeploymentCreationDefaultsV1
 import type { readDeploymentEnvironmentForHost } from '../readEnvironmentForHost';
 import type { BackupAnotherMachinePreparation } from '../backups/anotherMachineForHost';
 import type { DeploymentBackupAnotherMachineSetupV1 } from '@happier-dev/protocol/deployments/deploymentBackupAnotherMachineV1';
-import { projectDeploymentFailure } from '../deploymentFailure';
+import { projectDeploymentException, projectDeploymentFailure } from '../deploymentFailure';
 
 export type DeploymentBackupConfigurationEnvironmentForHost = Awaited<ReturnType<typeof readDeploymentEnvironmentForHost>>;
 
@@ -152,9 +152,7 @@ export function createDeploymentBackupConfigureActionForHost<TRegistry extends R
                     ...(Object.keys(nativeReview).length ? { review: nativeReview } : {}) };
             } finally { await lease.release(); }
         } catch (error) {
-            const code = context.signal?.aborted ? 'cancelled' : error instanceof Error && 'code' in error && typeof error.code === 'string'
-                ? error.code : 'deployment_content_unavailable';
-            return retainSetupFailure(projectDeploymentFailure(code, error));
+            return retainSetupFailure(projectDeploymentException(error, { signal: context.signal }));
         }
     };
 }

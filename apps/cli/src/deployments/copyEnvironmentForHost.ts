@@ -8,7 +8,7 @@ import type { ActionExecuteFailure, ActionExecutorContext, ActionExecutorDeps } 
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { deploymentUnavailableError, projectDeploymentFailure } from './deploymentFailure';
+import { deploymentUnavailableError, projectDeploymentException, projectDeploymentFailure } from './deploymentFailure';
 import { copyEnvironmentDataForHost } from './copyEnvironmentDataForHost';
 import type { readDeploymentEnvironmentForHost } from './readEnvironmentForHost';
 import { sameBindingIntent } from './secrets/sameBindingIntent';
@@ -94,8 +94,6 @@ export async function createEnvironmentWithCopyForHost(request: Readonly<{
         return settled.data.environmentId === created.environmentId
             ? finish(settled.data.revision) : partial(deploymentOutputValidationFailure('copyEnvironmentForHost', undefined));
     } catch (error) {
-        return partial(projectDeploymentFailure(context.signal?.aborted ? 'cancelled'
-            : error instanceof Error && 'code' in error && typeof error.code === 'string'
-                ? error.code : 'deployment_content_unavailable', error, 'deployment.environment.copy.bindings'));
+        return partial(projectDeploymentException(error, { signal: context.signal, phase: 'deployment.environment.copy.bindings' }));
     }
 }

@@ -22,7 +22,7 @@ import { prepareRepositoryFilesPullRequest, openRepositoryFilesPullRequest,
   type RepositoryFilesPullRequestHost } from '@/scm/actions/repositoryFilesPullRequest';
 import { previewRepositoryForDefinition, provisionRepositoryForDefinition } from '@/scm/actions/provisionRepositoryForDefinition';
 import { ADMITTED_CHECKOUT_OWNER_REQUIRED } from './admittedCheckoutRepositoryFiles';
-import { projectDeploymentFailure } from './deploymentFailure';
+import { projectDeploymentException } from './deploymentFailure';
 
 /** A definition Move reads Environment content only, never runtime target-link content. */
 type MoveEnvironment = Pick<DeploymentEnvironmentDetailV1, 'environment' | 'content'>;
@@ -42,8 +42,6 @@ type Host = Readonly<{
     owner: DeploymentEnvironmentDetailV1['environment']['owner'], environmentId: string): Promise<DeploymentArtifactContentReferenceV1>;
 }>;
 const fail = (errorCode: string) => ({ ok: false as const, errorCode, error: errorCode });
-const codeOf = (error: unknown) => error instanceof Error && 'code' in error && typeof error.code === 'string'
-  ? error.code : 'deployment_content_unavailable';
 const pinOf = (definition: Extract<DeploymentEnvironmentDetailV1['content']['definition'], { kind: 'stored' }>) => ({
   contentRevision: definition.contentRevision, composeDigest: definition.composeDigest,
 });
@@ -150,16 +148,16 @@ export function createDeploymentMoveToRepositoryForHost(host: Host): NonNullable
             errorCode: 'errorCode' in attached ? attached.errorCode : attached.error, continuation: continuation() };
           source = attached.source;
           await host.acceptWorkspace(workspace, source, input.repository, context);
-        } catch (error) { return { kind: 'partial', phase: 'source', errorCode: codeOf(error), continuation: continuation() }; }
+        } catch (error) { return { kind: 'partial', phase: 'source', errorCode: projectDeploymentException(error).errorCode, continuation: continuation() }; }
       }
       return { kind: 'pullRequest', continuation: continuation(), ...(created ? { repository: {
         repository: created.repository, baseCommit: created.baseCommit, baseBranch: created.baseBranch, workspace: input.workspace,
       } } : {}) };
     } catch (error) {
       if (context.signal?.aborted) return fail('cancelled');
-      const code = codeOf(error);
+      const failure = projectDeploymentException(error);
       // The reviewed checkout belongs to another Account's Machine: a typed refusal, before any repository effect.
-      return code === ADMITTED_CHECKOUT_OWNER_REQUIRED ? { kind: 'refused', reason: code } : projectDeploymentFailure(code, error);
+      return failure.errorCode === ADMITTED_CHECKOUT_OWNER_REQUIRED ? { kind: 'refused', reason: failure.errorCode } : failure;
     }
   };
 
