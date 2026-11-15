@@ -71,6 +71,11 @@ export type RunnerAgentBootstrapIdentity = Readonly<
 export interface TrackedSession {
   /** Daemon-issued Session identity; the tracked map and the Session marker are keyed by it. */
   readonly trackingKey: SessionTrackingKey;
+  /**
+   * The plugin runtime registry the spawn that launched this Session still holds (null once that
+   * spawn released its lease). In memory only; never marker-persisted.
+   */
+  readSpawnPluginRuntimeRegistry?: () => import('@/plugins/runtime/reload/controller').PluginRuntimeRegistryLease['registry'] | null;
   /** Original startup operation while the native Agent has not opened; never marker-persisted. */
   projectSetupOperation?: import('@/workspaces/projectSetup/projectSetupExecution').ProjectSetupOperationContext;
   /** Generation-bound pre-exit chain observations; ephemeral evidence, never marker-persisted. */
