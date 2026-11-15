@@ -1,5 +1,6 @@
 import { realpathSync } from 'node:fs';
 
+import { sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 
 export const SESSION_REQUESTED_DIRECTORY_ENV = 'HAPPIER_SESSION_REQUESTED_DIRECTORY' as const;
@@ -33,7 +34,7 @@ function resolveLogicalPwd(params: Readonly<{
 }
 
 export function consumeRequestedSessionDirectoryFromEnvironment(
-    env: NodeJS.ProcessEnv = process.env,
+    env: NodeJS.ProcessEnv = sessionProcessEnvironment(),
 ): string | null {
     const requestedDirectory = normalizeNonEmptyString(env[SESSION_REQUESTED_DIRECTORY_ENV]);
     delete env[SESSION_REQUESTED_DIRECTORY_ENV];
@@ -45,13 +46,13 @@ export function resolveRequestedSessionDirectory(params?: Readonly<{
     env?: NodeJS.ProcessEnv;
     cwd?: string;
 }>): string {
-    const env = params?.env ?? process.env;
+    const env = params?.env ?? sessionProcessEnvironment();
     const explicitDirectory = normalizeNonEmptyString(params?.requestedDirectory);
     if (explicitDirectory) {
         return expandHomeDirPath(explicitDirectory, env);
     }
 
-    const cwd = params?.cwd ?? process.cwd();
+    const cwd = params?.cwd ?? sessionWorkingDirectory();
     const requestedDirectory = consumeRequestedSessionDirectoryFromEnvironment(env);
     if (requestedDirectory) {
         return expandHomeDirPath(requestedDirectory, env);

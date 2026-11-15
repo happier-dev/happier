@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { runAddedHostedSession } from './lifecycle/hostedSessionScope';
 import {
     consumeRequestedSessionDirectoryFromEnvironment,
     resolveRequestedSessionDirectory,
@@ -7,6 +8,32 @@ import {
 } from './resolveRequestedSessionDirectory';
 
 describe('resolveRequestedSessionDirectory', () => {
+    it.each(['seed', 'workingDirectory', 'explicitHome'] as const)(
+        'resolves each hosted Session from its own %s', async source => {
+            const ambientSeed = process.env[SESSION_REQUESTED_DIRECTORY_ENV];
+            const observations = await Promise.all(['first', 'second'].map((name) => {
+                const home = `/home/${name}`;
+                const workingDirectory = `/work/${name}`;
+                const environment: NodeJS.ProcessEnv = {
+                    HOME: home,
+                    ...(source === 'seed' ? { [SESSION_REQUESTED_DIRECTORY_ENV]: `/requested/${name}` } : {}),
+                };
+                return runAddedHostedSession({ environment, workingDirectory, end: () => undefined }, async () => {
+                    await Promise.resolve();
+                    const directory = resolveRequestedSessionDirectory(source === 'explicitHome'
+                        ? { requestedDirectory: '~/project' } : undefined);
+                    const expected = source === 'seed' ? `/requested/${name}`
+                        : source === 'explicitHome' ? `${home}/project` : workingDirectory;
+                    expect(directory).toBe(expected);
+                    expect(environment[SESSION_REQUESTED_DIRECTORY_ENV]).toBeUndefined();
+                    return directory;
+                });
+            }));
+            expect(observations[0]).not.toBe(observations[1]);
+            expect(process.env[SESSION_REQUESTED_DIRECTORY_ENV]).toBe(ambientSeed);
+        },
+    );
+
     it('prefers the explicit requested directory', () => {
         expect(resolveRequestedSessionDirectory({
             requestedDirectory: '/tmp/explicit-session-directory',
