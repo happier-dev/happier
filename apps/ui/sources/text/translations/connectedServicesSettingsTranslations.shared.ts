@@ -164,6 +164,7 @@ export const en = {
     detailSignedOutTitle: ({ service }: { service: string }) => `${service} signed this account out`,
     detailSignedOutBody: 'The sign-in was revoked or changed, for example after a password change. Sessions can’t use this account until you sign in again.',
     detailSignInTitle: 'Sign-in',
+    signInInProgress: 'Sign-in in progress',
     detailSignInNeeded: 'Needs a new sign-in',
     detailCopyAccountId: 'Copy account id',
     detailKeyTitle: 'Key',

@@ -1827,9 +1827,14 @@ describe('ConnectedAccountSetupController real ownership', () => {
         platform.params = { ...service, accountId: saved.ref.accountId };
         await installNativeConfigurationAttemptBoundary();
         const screen = await renderScreen(<InjectedAuthProvider credentials={account.credentials}><ConnectedAccountServiceView /></InjectedAuthProvider>);
-        await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-oauth:open'), JSON.stringify({
+        // A sign-in restored from an earlier visit waits as one collapsed row; its form opens on intent (lab A1).
+        await vi.waitFor(() => expect(screen.findHostByTestId('qualified-account-detail:sign-in-pending'), JSON.stringify({
             text: screen.getTextContent(), controlCommands, authenticationCommands,
         })).not.toBeNull());
+        expect(screen.findHostByTestId('connected-account-oauth:open')).toBeNull();
+        await screen.pressByTestIdAsync('qualified-account-detail:sign-in-pending:continue');
+        await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-oauth:open')).not.toBeNull());
+        expect(screen.findHostByTestId('qualified-account-detail:sign-in-pending')).toBeNull();
         expect(screen.findHostByTestId('qualified-account-detail')).not.toBeNull();
         const accountPage = screen.findHostByTestId('qualified-account-detail');
         expect(screen.findHostByTestId('qualified-account-detail:signed-out-banner')).not.toBeNull();
@@ -1849,6 +1854,33 @@ describe('ConnectedAccountSetupController real ownership', () => {
         await screen.pressByTestIdAsync('qualified-account-detail:signed-out-banner:sign-in-again');
         await vi.waitFor(() => expect(authenticationCommands).toContainEqual({ operation: 'beginReconnect', account: saved.ref }));
         expect(screen.findHostByTestId('qualified-account-detail')).toBe(accountPage);
+    });
+
+    it('cancels a restored sign-in from its collapsed row without opening the form', async () => {
+        const saved = QualifiedConnectedAccountProfileV4Schema.parse({ ref: { service, accountId: 'existing' },
+            status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned', credentialRevision,
+            configurationReady: true, configurationRevision: null });
+        installDescription({ ...described, accounts: [saved] });
+        storage.getState().applyProfile({ ...profileDefaults, id: 'account-a', connectedAccountsV4: [saved] });
+        handleControl = command => command.operation === 'listPendingAttempts'
+            ? { status: 'pendingAttempts', attempts: [{ attemptId: 'left-over', kind: 'manual', modeId: 'manual',
+                intent: 'connect', phase: 'awaitingManual', createdAtMs: Date.now(), expiresAtMs: Date.now() + 60_000 }] }
+            : description;
+        handleAuthentication = command => command.operation === 'cancel'
+            ? { status: 'cancelled', attemptId: command.attemptId }
+            : { status: 'awaitingManual', attemptId: 'left-over' };
+        platform.params = { ...service, accountId: saved.ref.accountId };
+        await installNativeConfigurationAttemptBoundary();
+        const screen = await renderScreen(<InjectedAuthProvider credentials={account.credentials}><ConnectedAccountServiceView /></InjectedAuthProvider>);
+        await vi.waitFor(() => expect(screen.findHostByTestId('qualified-account-detail:sign-in-pending'), JSON.stringify({
+            text: screen.getTextContent(), controlCommands, authenticationCommands,
+        })).not.toBeNull());
+        expect(screen.findHostByTestId('connected-account-manual:token')).toBeNull();
+        await screen.pressByTestIdAsync('qualified-account-detail:sign-in-pending:cancel');
+        await vi.waitFor(() => expect(authenticationCommands).toContainEqual({ operation: 'cancel', attemptId: 'left-over' }));
+        await vi.waitFor(() => expect(screen.findHostByTestId('qualified-account-detail:sign-in-pending')).toBeNull());
+        expect(screen.findHostByTestId('connected-account-manual:token')).toBeNull();
+        expect(screen.findHostByTestId('qualified-account-detail')).not.toBeNull();
     });
 
     it('P8 account draft checklist · Add account keeps the existing account and returns a second connected ref to the collection', async () => {

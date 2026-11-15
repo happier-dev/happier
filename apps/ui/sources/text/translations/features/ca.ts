@@ -2386,6 +2386,7 @@ const ca: ConnectedServicesSettingsCopy = {
     detailSignedOutTitle: ({ service }) => `${service} ha tancat la sessió d’aquest compte`,
     detailSignedOutBody: 'L’inici de sessió s’ha revocat o ha canviat, per exemple després d’un canvi de contrasenya. Les sessions no poden fer servir aquest compte fins que hi tornis a iniciar la sessió.',
     detailSignInTitle: 'Inici de sessió',
+    signInInProgress: 'Inici de sessió en curs',
     detailSignInNeeded: 'Cal tornar a iniciar la sessió',
     detailCopyAccountId: 'Copia l’ID del compte',
     detailKeyTitle: 'Clau',

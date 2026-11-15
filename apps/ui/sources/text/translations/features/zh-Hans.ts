@@ -2381,6 +2381,7 @@ const zhHans: ConnectedServicesSettingsCopy = {
     detailSignedOutTitle: ({ service }) => `${service} 已将此账户退出登录`,
     detailSignedOutBody: '登录已被撤销或更改（例如修改了密码）。在你重新登录之前，会话无法使用此账户。',
     detailSignInTitle: '登录',
+    signInInProgress: '登录进行中',
     detailSignInNeeded: '需要重新登录',
     detailCopyAccountId: '复制账户 ID',
     detailKeyTitle: '密钥',

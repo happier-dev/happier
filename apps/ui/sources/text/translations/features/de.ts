@@ -2380,6 +2380,7 @@ const de: ConnectedServicesSettingsCopy = {
     detailSignedOutTitle: ({ service }) => `${service} hat dieses Konto abgemeldet`,
     detailSignedOutBody: 'Die Anmeldung wurde widerrufen oder geändert, etwa nach einer Passwortänderung. Sitzungen können das Konto erst wieder nutzen, wenn du dich erneut anmeldest.',
     detailSignInTitle: 'Anmeldung',
+    signInInProgress: 'Anmeldung läuft',
     detailSignInNeeded: 'Neue Anmeldung nötig',
     detailCopyAccountId: 'Konto-ID kopieren',
     detailKeyTitle: 'Schlüssel',

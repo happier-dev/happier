@@ -2386,6 +2386,7 @@ const pt: ConnectedServicesSettingsCopy = {
     detailSignedOutTitle: ({ service }) => `O ${service} encerrou a sessão desta conta`,
     detailSignedOutBody: 'O login foi revogado ou alterado, por exemplo após uma troca de senha. As sessões não podem usar esta conta até você entrar de novo.',
     detailSignInTitle: 'Login',
+    signInInProgress: 'Login em curso',
     detailSignInNeeded: 'Precisa entrar de novo',
     detailCopyAccountId: 'Copiar ID da conta',
     detailKeyTitle: 'Chave',

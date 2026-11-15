@@ -2397,6 +2397,7 @@ const pl: ConnectedServicesSettingsCopy = {
     detailSignedOutTitle: ({ service }) => `${service} wylogował to konto`,
     detailSignedOutBody: 'Logowanie zostało cofnięte lub zmienione, np. po zmianie hasła. Sesje nie mogą używać tego konta, dopóki nie zalogujesz się ponownie.',
     detailSignInTitle: 'Logowanie',
+    signInInProgress: 'Logowanie w toku',
     detailSignInNeeded: 'Wymaga ponownego logowania',
     detailCopyAccountId: 'Kopiuj ID konta',
     detailKeyTitle: 'Klucz',

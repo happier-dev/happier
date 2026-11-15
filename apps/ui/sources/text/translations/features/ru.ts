@@ -2408,6 +2408,7 @@ const ru: ConnectedServicesSettingsCopy = {
     detailSignedOutTitle: ({ service }) => `${service} завершил сеанс этого аккаунта`,
     detailSignedOutBody: 'Вход был отозван или изменён, например после смены пароля. Сеансы не смогут использовать аккаунт, пока вы не войдёте снова.',
     detailSignInTitle: 'Вход',
+    signInInProgress: 'Вход выполняется',
     detailSignInNeeded: 'Нужно войти снова',
     detailCopyAccountId: 'Скопировать ID аккаунта',
     detailKeyTitle: 'Ключ',

@@ -2386,6 +2386,7 @@ const fr: ConnectedServicesSettingsCopy = {
     detailSignedOutTitle: ({ service }) => `${service} a déconnecté ce compte`,
     detailSignedOutBody: 'La connexion a été révoquée ou modifiée, par exemple après un changement de mot de passe. Les sessions ne peuvent plus utiliser ce compte avant une nouvelle connexion.',
     detailSignInTitle: 'Connexion',
+    signInInProgress: 'Connexion en cours',
     detailSignInNeeded: 'Nouvelle connexion requise',
     detailCopyAccountId: 'Copier l’ID du compte',
     detailKeyTitle: 'Clé',

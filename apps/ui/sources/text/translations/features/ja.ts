@@ -2386,6 +2386,7 @@ const ja: ConnectedServicesSettingsCopy = {
     detailSignedOutTitle: ({ service }) => `${service} がこのアカウントをサインアウトしました`,
     detailSignedOutBody: 'パスワード変更などでサインインが取り消されたか変更されました。再度サインインするまで、セッションはこのアカウントを使えません。',
     detailSignInTitle: 'サインイン',
+    signInInProgress: 'サインイン中',
     detailSignInNeeded: '再サインインが必要',
     detailCopyAccountId: 'アカウント ID をコピー',
     detailKeyTitle: 'キー',

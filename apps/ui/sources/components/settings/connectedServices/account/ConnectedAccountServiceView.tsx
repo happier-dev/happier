@@ -32,6 +32,7 @@ import { readConnectedAccountBrowserSignInMachineSupport } from '@/sync/domains/
 import { isMachineAdministrationCandidateSelectable, machineAdministrationTargetsEqual } from '@/sync/domains/machines/administration/targetSelection';
 import { reviewManagedResourceRemoval } from '@/components/settings/machines/managed/reviewManagedResourceRemoval';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { MachineScopedSection } from '@/components/settings/machines/MachineScopedSection';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -369,6 +370,8 @@ const ConnectedAccountServiceController = React.memo(
     panelRef.current = controllerProps.panel;
     // A panel starts its sign-in only once it knows no earlier attempt is waiting to be resumed.
     const [noPendingAttempt, setNoPendingAttempt] = React.useState(false);
+    /** A sign-in restored from an earlier visit waits collapsed on the account page until the person continues it. */
+    const [collapsedRestoredAttemptId, setCollapsedRestoredAttemptId] = React.useState<string | null>(null);
     const panelStartedRef = React.useRef(false);
     const [retryingDescription, setRetryingDescription] = React.useState(false);
     const [targetPickerOpen, setTargetPickerOpen] = React.useState(false);
@@ -1009,6 +1012,7 @@ const ConnectedAccountServiceController = React.memo(
             });
             if (!isControllerCurrent() || request.signal.aborted || generation !== flowGenerationRef.current) return;
             setActiveModeId(pending.modeId);
+            setCollapsedRestoredAttemptId(pending.attemptId);
             // Restored connects retain the same intent as a fresh begin, including after expiry.
             if (pending.intent === 'connect') {
                 setPendingIntent({ kind: 'connect', service, modeId: pending.modeId });
@@ -1915,7 +1919,20 @@ const ConnectedAccountServiceController = React.memo(
                     signInFlow={focusedScreenOwnsScroll && route.focus?.kind === 'account' && (attempt || configuration || errorCode)
                         ? accountDetailAvailable && errorCode && errorPhase === 'load' && !attempt && !configuration
                             ? <SurfaceStateCard testID="qualified-account-detail:live-unavailable" size="line" kind="unavailable" title={t('common.unavailable')} />
-                            : renderFlow(true) : undefined}
+                            : attempt && 'attemptId' in attempt && attempt.attemptId === collapsedRestoredAttemptId ? (
+                                // Found, not asked for: one line until the person continues it (lab A1).
+                                <SurfaceFreshnessLine
+                                    testID="qualified-account-detail:sign-in-pending"
+                                    reason={t('connectedServicesSettings.signInInProgress')}
+                                    glyph="sign-in"
+                                    actions={[
+                                        { testID: 'qualified-account-detail:sign-in-pending:continue', label: t('common.continue'),
+                                            emphasis: 'primary', onPress: () => setCollapsedRestoredAttemptId(null) },
+                                        { testID: 'qualified-account-detail:sign-in-pending:cancel', label: t('common.cancel'),
+                                            onPress: () => { setCollapsedRestoredAttemptId(null); cancelSetupAttempt(); } },
+                                    ]}
+                                />
+                            ) : renderFlow(true) : undefined}
                     // Stored identity and removal belong to the Account. A native sign-in needs a
                     // machine. One quiet line in the Sign-in group says so, with its own chooser, and nothing
                     // shows while a usable machine is chosen (lab csvc nomachine).

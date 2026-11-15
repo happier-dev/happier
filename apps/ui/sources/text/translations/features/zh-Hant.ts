@@ -2381,6 +2381,7 @@ const zhHant: ConnectedServicesSettingsCopy = {
     detailSignedOutTitle: ({ service }) => `${service} 已將此帳號登出`,
     detailSignedOutBody: '登入已被撤銷或變更（例如變更了密碼）。在你重新登入之前，工作階段無法使用此帳號。',
     detailSignInTitle: '登入',
+    signInInProgress: '登入進行中',
     detailSignInNeeded: '需要重新登入',
     detailCopyAccountId: '複製帳戶 ID',
     detailKeyTitle: '金鑰',

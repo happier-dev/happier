@@ -2386,6 +2386,7 @@ const it: ConnectedServicesSettingsCopy = {
     detailSignedOutTitle: ({ service }) => `${service} ha disconnesso questo account`,
     detailSignedOutBody: 'L’accesso è stato revocato o modificato, ad esempio dopo un cambio password. Le sessioni non possono usare l’account finché non accedi di nuovo.',
     detailSignInTitle: 'Accesso',
+    signInInProgress: 'Accesso in corso',
     detailSignInNeeded: 'Serve un nuovo accesso',
     detailCopyAccountId: 'Copia ID account',
     detailKeyTitle: 'Chiave',

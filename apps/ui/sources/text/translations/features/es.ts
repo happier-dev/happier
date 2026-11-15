@@ -2386,6 +2386,7 @@ const es: ConnectedServicesSettingsCopy = {
     detailSignedOutTitle: ({ service }) => `${service} cerró la sesión de esta cuenta`,
     detailSignedOutBody: 'El inicio de sesión se revocó o cambió, por ejemplo tras un cambio de contraseña. Las sesiones no pueden usar esta cuenta hasta que vuelvas a iniciar sesión.',
     detailSignInTitle: 'Inicio de sesión',
+    signInInProgress: 'Inicio de sesión en curso',
     detailSignInNeeded: 'Necesita volver a iniciar sesión',
     detailCopyAccountId: 'Copiar ID de la cuenta',
     detailKeyTitle: 'Clave',
