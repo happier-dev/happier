@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ExecFileOptions } from 'node:child_process';
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 
-const { execFileSyncMock, spawnSyncMock } = vi.hoisted(() => ({
-  execFileSyncMock: vi.fn(),
+const { processQueryMock, spawnSyncMock } = vi.hoisted(() => ({
+  processQueryMock: vi.fn(),
   spawnSyncMock: vi.fn(() => { throw new Error('Unexpected process mutation'); }),
 }));
 
@@ -14,7 +15,21 @@ const { execFileSyncMock, spawnSyncMock } = vi.hoisted(() => ({
 // commands and release-network I/O, so a failing test cannot stop this host or install a payload.
 vi.mock('node:child_process', async (importOriginal) => ({
   ...await importOriginal<typeof import('node:child_process')>(),
-  execFileSync: execFileSyncMock,
+  execFileSync: vi.fn(() => { throw new Error('Unexpected synchronous process query'); }),
+  execFile: (
+    _command: string,
+    _args: readonly string[],
+    _options: ExecFileOptions,
+    callback: (error: Error | null, stdout: string) => void,
+  ) => {
+    queueMicrotask(() => {
+      try {
+        callback(null, processQueryMock());
+      } catch (error) {
+        callback(error instanceof Error ? error : new Error(String(error)), '');
+      }
+    });
+  },
   spawnSync: vi.fn(() => ({ status: 0, stdout: '[]', stderr: '' })),
 }));
 vi.mock('cross-spawn', () => ({ default: { sync: spawnSyncMock } }));
@@ -36,7 +51,7 @@ describe('Windows self-update admission', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 404 })));
-    execFileSyncMock.mockReset();
+    processQueryMock.mockReset();
     spawnSyncMock.mockClear();
     // Normal CLI initialization creates log/server directories before command dispatch.
     await import('./self');
@@ -61,7 +76,7 @@ describe('Windows self-update admission', () => {
     ['update'],
     ['__install-payload', '--component', 'happier-cli', '--payload-root', 'C:\\staged', '--version', '0.2.17'],
   ])('refuses %j from a shell below a daemon-started session before changing the install', async (...args) => {
-    execFileSyncMock.mockReturnValue(JSON.stringify([
+    processQueryMock.mockReturnValue(JSON.stringify([
       { ProcessId: process.ppid, ParentProcessId: 93101, Name: 'powershell.exe', CommandLine: 'powershell.exe' },
       { ProcessId: 93101, ParentProcessId: 93102, Name: 'claude.exe', CommandLine: 'claude.exe' },
       { ProcessId: 93102, ParentProcessId: 0, Name: 'hdev.exe', CommandLine: 'C:\\happier\\hdev.exe claude "--started-by" "daemon"' },
@@ -77,14 +92,14 @@ describe('Windows self-update admission', () => {
   it.each(['--help', '-h'])('prints update %s without entering the updater', async (flag) => {
     await run(['update', flag]);
     expect(vi.mocked(console.log).mock.calls.flat().join(' ')).toContain('Usage:');
-    expect(execFileSyncMock).not.toHaveBeenCalled();
+    expect(processQueryMock).not.toHaveBeenCalled();
     expect(fetch).not.toHaveBeenCalled();
     expect(spawnSyncMock).not.toHaveBeenCalled();
     expect(readdirSync(homeDir)).toEqual(initialHomeEntries);
   });
 
   it('allows an independent terminal even while another Happier daemon is running', async () => {
-    execFileSyncMock.mockReturnValue(JSON.stringify([
+    processQueryMock.mockReturnValue(JSON.stringify([
       { ProcessId: process.ppid, ParentProcessId: 0, Name: 'powershell.exe', CommandLine: 'powershell.exe' },
       { ProcessId: 93102, ParentProcessId: 0, Name: 'happier.exe', CommandLine: 'happier.exe daemon start-sync' },
     ]));
@@ -94,9 +109,9 @@ describe('Windows self-update admission', () => {
 
   it.each(['unavailable', 'incomplete'])('refuses when process ancestry is %s', async (kind) => {
     if (kind === 'unavailable') {
-      execFileSyncMock.mockImplementation(() => { throw new Error('CIM unavailable'); });
+      processQueryMock.mockImplementation(() => { throw new Error('CIM unavailable'); });
     } else {
-      execFileSyncMock.mockReturnValue(JSON.stringify({ ProcessId: process.ppid, Name: 'powershell.exe' }));
+      processQueryMock.mockReturnValue(JSON.stringify({ ProcessId: process.ppid, Name: 'powershell.exe' }));
     }
     await expect(run(['update'])).rejects.toThrow('exit 1');
     expect(vi.mocked(console.error).mock.calls.flat().join(' ')).toContain('Cannot verify Windows update process ancestry');
@@ -109,6 +124,6 @@ describe('Windows self-update admission', () => {
     Object.defineProperty(process, 'platform', { ...platform, value: 'linux' });
     const { assertWindowsCliUpdateIsOutsideManagedProcessTree } = await import('../runtime/update/quiesceInstalledCliWindowsPayloadOwners');
     await expect(assertWindowsCliUpdateIsOutsideManagedProcessTree()).resolves.toBeUndefined();
-    expect(execFileSyncMock).not.toHaveBeenCalled();
+    expect(processQueryMock).not.toHaveBeenCalled();
   });
 });

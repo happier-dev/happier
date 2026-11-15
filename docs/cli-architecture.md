@@ -1862,6 +1862,14 @@ attachable. There is no parallel Herdr session synchronization service.
 
 ## Daemon architecture
 
+In current 0.2 development source, Windows process inspection in
+`apps/cli/src/daemon/doctor.ts` awaits PowerShell/CIM asynchronously for both
+PID-specific enrichment and the full-discovery fallback. Slow queries keep the
+daemon event loop available; inspection adds no query-local deadline or buffer
+override. Query and JSON failures retain the existing unavailable-evidence result
+and write a file warning without command lines or query output. Process
+classification and PID safety continue to use the same inspection owner.
+
 Startup reattachment and resume of an already-running session reconcile both
 the daemon's session access key and the session's machine routing metadata.
 The recovered-session machine-control owner uses the existing versioned
