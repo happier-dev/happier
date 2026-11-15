@@ -95,14 +95,14 @@ export async function restartDaemonAndWait(params: RestartDaemonAndWaitParams = 
   const previousDaemon = await inspectDaemonRunningStateAndCleanupStaleState();
   const previousIdentityFingerprint = resolveDaemonIdentityFingerprint(previousDaemon);
 
-  let stopSucceeded = true;
   try {
     await stopDaemon({
       stopSessions: params.stopSessions,
+      ...(params.signal ? { signal: params.signal } : {}),
     });
   } catch {
-    // best-effort; restart should still attempt to start even if the daemon wasn't running
-    stopSucceeded = false;
+    // An incomplete stop may still own the lifecycle lock and process-local custody.
+    return await restartFailed({ failedPhase: 'stop' });
   }
 
   const child = await spawnDetachedDaemonStartSync({
@@ -153,7 +153,7 @@ export async function restartDaemonAndWait(params: RestartDaemonAndWaitParams = 
   }
 
   let sessionRunnerRestart: RestartAllDaemonSessionRunnersResult | undefined;
-  if (stopSucceeded && params.restartSessionRunners === true) {
+  if (params.restartSessionRunners === true) {
     try {
       sessionRunnerRestart = await restartAllDaemonSessionRunners({
         mode: params.restartSessionRunnersMode ?? 'force_current_cli',
@@ -170,12 +170,6 @@ export async function restartDaemonAndWait(params: RestartDaemonAndWaitParams = 
     } catch {
       return await restartFailed({ failedPhase: 'session-runners', observedStatus: stableInspection.status });
     }
-  }
-
-  if (!stopSucceeded) {
-    // The replacement daemon is proven running and distinct; only the previous daemon's stop could
-    // not be confirmed. Reporting that as a bare restart failure hid a healthy daemon from the user.
-    return await restartFailed({ failedPhase: 'stop', observedStatus: stableInspection.status });
   }
 
   return {

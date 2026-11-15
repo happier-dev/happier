@@ -99,7 +99,7 @@ async function resolveTimeout(path: string, options: DaemonControlRequestOptions
   }
   // Runner exit and terminal retirement belong to the daemon Stop lifecycle.
   // Explicit caller deadlines and cancellation still apply.
-  if (path === '/stop-session') return null;
+  if (path === '/stop-session' || path === '/stop') return null;
   // Catalog preparation follows its request lifetime. A loaded daemon may
   // take longer than the generic control wait without being unavailable.
   if (path === '/plugins/catalog/read') return null;

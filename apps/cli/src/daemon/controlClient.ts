@@ -37,6 +37,7 @@ import { Metadata, type SessionCreationOutcome } from '@/api/types';
 import { projectPath, projectPathFromModuleUrl } from '@/projectPath';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import { readFileSync } from 'fs';
 import { configuration } from '@/configuration';
 import type { SpawnDaemonSessionRequest } from '@/rpc/handlers/spawnSessionOptionsContract';
@@ -186,10 +187,8 @@ export async function admitDaemonExecutionRunStart(options: DaemonControlRequest
   if (!response.data.admitted) throw Object.assign(new Error(response.data.reason), { code: response.data.reason });
 }
 const DEFAULT_DAEMON_STOP_WAIT_FOR_DEATH_TIMEOUT_MS = 12_000;
-const DEFAULT_DAEMON_SHUTDOWN_SPAWN_DRAIN_GRACE_MS = 10_000;
 const DAEMON_PING_TIMEOUT_ENV_KEY = 'HAPPIER_DAEMON_PING_TIMEOUT_MS';
 const DAEMON_STOP_WAIT_FOR_DEATH_TIMEOUT_ENV_KEY = 'HAPPIER_DAEMON_STOP_WAIT_FOR_DEATH_TIMEOUT_MS';
-const DAEMON_SHUTDOWN_SPAWN_DRAIN_GRACE_ENV_KEY = 'HAPPIER_DAEMON_SHUTDOWN_SPAWN_DRAIN_GRACE_MS';
 const EXECUTION_RUN_CS_MATERIALIZE_TIMEOUT_ENV_KEY = 'HAPPIER_EXECUTION_RUN_CS_MATERIALIZE_TIMEOUT_MS';
 
 function serializeSpawnDaemonSessionRequestForLocalControl(
@@ -245,7 +244,7 @@ function resolveDaemonPingTimeoutMs(): number {
   });
 }
 
-function resolveDaemonStopWaitForDeathTimeoutMs(): number {
+function resolveDaemonStopWaitForDeathTimeoutMs(): number | null {
   const rawExplicit = process.env[DAEMON_STOP_WAIT_FOR_DEATH_TIMEOUT_ENV_KEY];
   if (rawExplicit !== undefined && String(rawExplicit).trim().length > 0) {
     return resolvePositiveIntValue(rawExplicit, DEFAULT_DAEMON_STOP_WAIT_FOR_DEATH_TIMEOUT_MS, {
@@ -254,13 +253,9 @@ function resolveDaemonStopWaitForDeathTimeoutMs(): number {
     });
   }
 
-  const rawDrainGrace = process.env[DAEMON_SHUTDOWN_SPAWN_DRAIN_GRACE_ENV_KEY];
-  const drainGraceMs = resolvePositiveIntValue(rawDrainGrace, DEFAULT_DAEMON_SHUTDOWN_SPAWN_DRAIN_GRACE_MS, {
-    min: 0,
-    max: 120_000,
-  });
-
-  return Math.max(DEFAULT_DAEMON_STOP_WAIT_FOR_DEATH_TIMEOUT_MS, drainGraceMs + 2_000);
+  // Accepted shutdown owns draining and final lock release. Elapsed time does not
+  // prove exit; only an explicit caller deadline bounds this observation.
+  return null;
 }
 
 export type DaemonRunningInspection =
@@ -1326,10 +1321,11 @@ export async function checkExecutionRunConnectedServicesGenerationCurrent(
 
 export async function stopDaemonHttp(params: {
   stopSessions?: boolean;
+  signal?: AbortSignal;
 } = {}): Promise<void> {
   const result = await daemonPost('/stop', {
     ...(params.stopSessions === true ? { stopSessions: true } : {}),
-  });
+  }, { signal: params.signal });
   if (result?.error) {
     throw new Error(result.error);
   }
@@ -1670,8 +1666,10 @@ export async function forceStopKnownDaemonPid(pid: number): Promise<DaemonStopRe
 
 export async function stopDaemon(params: {
   stopSessions?: boolean;
+  signal?: AbortSignal;
 } = {}): Promise<DaemonStopResult> {
   try {
+    params.signal?.throwIfAborted();
     const state = await readDaemonState();
     if (!state) {
       const lockStartup = await inspectDaemonLockStartupProgress();
@@ -1701,20 +1699,23 @@ export async function stopDaemon(params: {
     try {
       await stopDaemonHttp({
         stopSessions: params.stopSessions === true,
+        signal: params.signal,
       });
 
       observation.acknowledgeStop();
       // Wait for daemon to die
-      await waitForProcessDeath(state.pid, resolveDaemonStopWaitForDeathTimeoutMs(), observation);
+      await waitForProcessDeath(state.pid, resolveDaemonStopWaitForDeathTimeoutMs(), observation, params.signal);
       await observation.reclaimIfDead();
       logger.debug('Daemon stopped gracefully via HTTP');
       return { status: 'stopped', method: 'graceful' };
     } catch (error) {
+      params.signal?.throwIfAborted();
       logger.debug('HTTP stop failed, will force kill', error);
     }
 
     return await forceKillKnownDaemonPid(state.pid, state, observation);
   } catch (error) {
+    params.signal?.throwIfAborted();
     if (isDaemonStopIncompleteError(error)) throw error;
     logger.debug('Error stopping daemon', error);
     throw new DaemonStopIncompleteError({ reason: 'control_client_failure' });
@@ -1744,6 +1745,7 @@ export function observePublishedDaemonOwner(
   let observedLockRaw: string | null | undefined;
   let hiddenPid = false;
   let unobservablePid = false;
+  let shutdownAcknowledged = false;
   try {
     const snapshot = readDaemonLockSnapshot(lockFile, true);
     observedLockRaw = snapshot?.raw ?? null;
@@ -1753,7 +1755,10 @@ export function observePublishedDaemonOwner(
   }
   return {
     hasHiddenPid: () => hiddenPid,
-    acknowledgeStop: () => { if (unobservablePid) hiddenPid = true; },
+    acknowledgeStop: () => {
+      shutdownAcknowledged = true;
+      if (unobservablePid) hiddenPid = true;
+    },
     async reclaimIfDead() {
       if (hiddenPid || observedLockRaw === undefined || options.unobservablePidIsUnverified) return;
       await reclaimDeadDaemonPublication({
@@ -1773,8 +1778,9 @@ export function observePublishedDaemonOwner(
         return true;
       }
       // Ordinary dead publications remain absent. Stricter cleanup proof applies
-      // only after authenticated control established the hidden owner in this operation.
-      if (!hiddenPid) return options.unobservablePidIsUnverified === true;
+      // after authenticated control accepted shutdown, including a visible PID.
+      if (!hiddenPid && !shutdownAcknowledged) return options.unobservablePidIsUnverified === true;
+      if (!hiddenPid && isPidProvablyAbsent(state.pid)) return false;
       if (!observedLock) return true;
       // Control closes before final cleanup. Only release of the observed owner lock
       // proves that the existing shutdown sequence reached its final exit phase.
@@ -1788,18 +1794,24 @@ export function observePublishedDaemonOwner(
   };
 }
 
-async function waitForProcessDeath(pid: number, timeout: number, observation?: PublishedDaemonOwnerObservation): Promise<void> {
+async function waitForProcessDeath(
+  pid: number,
+  timeout: number | null,
+  observation?: PublishedDaemonOwnerObservation,
+  signal?: AbortSignal,
+): Promise<void> {
   if (observation) {
     const started = Date.now();
-    while (Date.now() - started < timeout) {
+    while (timeout === null || Date.now() - started < timeout) {
+      signal?.throwIfAborted();
       if (!await observation.isPresent()) return;
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await delay(100, undefined, { signal });
     }
     if (!await observation.isPresent()) return;
     throw new Error('Daemon lifecycle did not finish within timeout');
   }
   const start = Date.now();
-  while (Date.now() - start < timeout) {
+  while (timeout === null || Date.now() - start < timeout) {
     const liveness = probeProcessLiveness(pid);
     if (liveness === 'absent') return;
     // A pid we may not signal cannot be watched to its death here; fail as before rather than wait.

@@ -162,6 +162,7 @@ describe('daemon control HTTP authentication', () => {
   });
 
   it.each([
+    '/stop',
     '/plugins/catalog/read',
     '/session-activity-changed',
     '/connected-service-run/applied-parent-selection',

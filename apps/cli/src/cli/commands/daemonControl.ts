@@ -428,7 +428,10 @@ export async function handleDaemonControlCliCommand(context: CommandContext): Pr
       console.error(errorFrame(message.title, [...message.lines]));
       process.exit(1);
     }
-    await steps.run('Stopping daemon', () => stopDaemon(stopOptions), (result) => (
+    await steps.run('Stopping daemon', () => stopDaemon({
+      ...stopOptions,
+      ...(context.signal ? { signal: context.signal } : {}),
+    }), (result) => (
       result.status === 'stopped' ? 'Stopped daemon' : 'No daemon was running'
     ));
     process.exit(0);

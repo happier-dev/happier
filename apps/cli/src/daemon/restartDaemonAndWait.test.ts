@@ -150,13 +150,8 @@ describe('restartDaemonAndWait', () => {
         expect(stopDaemonMock).toHaveBeenCalledWith({
             stopSessions: true,
         });
-        expect(spawnDetachedDaemonStartSyncMock).toHaveBeenCalledWith(expect.objectContaining({
-            startupSource: 'self-restart',
-            env: expect.objectContaining({
-                HAPPIER_DAEMON_TAKEOVER: '1',
-            }),
-        }));
-        expect(waitForDaemonRunningWithinBudgetMock).toHaveBeenCalledTimes(1);
+        expect(spawnDetachedDaemonStartSyncMock.mock.calls.length).toBe(0);
+        expect(waitForDaemonRunningWithinBudgetMock.mock.calls.length).toBe(0);
     });
 
     it('does not report success when the restarted daemon is not proven running', async () => {
@@ -205,9 +200,7 @@ describe('restartDaemonAndWait', () => {
         });
     });
 
-    it('reports a stop-phase failure while naming the daemon that is now running', async () => {
-        // The mirror-image lie: the replacement daemon is up and healthy, but because the OLD daemon's
-        // stop could not be confirmed the command printed the same bare "Failed to restart daemon".
+    it('reports a stop-phase failure while naming the retained predecessor state', async () => {
         const { restartDaemonAndWait } = await importSubject();
         stopDaemonMock.mockRejectedValueOnce(new Error('stop failed'));
 
