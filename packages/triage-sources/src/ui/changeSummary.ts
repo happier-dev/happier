@@ -11,6 +11,10 @@ export type TriageChangedFileV1 = Readonly<{
   lines?: Readonly<{ additions: number; deletions: number }>;
   /** The provider's own word for the change ("edit", "renamed"), for a file without line counts. */
   note?: string;
+  /** Where the source shows this file (the Files row's Open). */
+  webUrl?: string;
+  /** The source can show this file's diff in place (the Files row opens). */
+  diffAvailable?: boolean;
 }>;
 
 /** The provider's own whole-change counts, when it states them. */

@@ -414,21 +414,9 @@ export function useGitlabDiscussions(
 
 /* ------------------------------------------------------------------- changes */
 
-export type GitlabChangesViewV1 = Readonly<{
-  /** `unknown` means GitLab supplied no per-file truncation evidence at all. */
-  diffLimitStatus: 'reported' | 'unknown';
-}>;
+export type GitlabChangesControllerV1 = GitlabPagedControllerV1<GitlabProjectedChangedFileRowV1>;
 
-export type GitlabChangesControllerV1 = GitlabPagedControllerV1<GitlabProjectedChangedFileRowV1>
-  & Readonly<{ diffLimitStatus: 'reported' | 'unknown' }>;
-
-/**
- * The `/diffs` walk, plus the one plane-level fact its rows cannot carry.
- *
- * `diffLimitStatus` is sticky across pages in the honest direction only: once
- * any page fails to report per-file truncation evidence, the tab may not claim a
- * complete diff for the rest of the walk.
- */
+/** The `/diffs` walk: each row carries GitLab's own per-file evidence (and its line counts where the patch is whole). */
 export function useGitlabChanges(
   input: TriageDetailSurfaceInputV1,
 ): GitlabChangesControllerV1 {
@@ -439,7 +427,6 @@ export function useGitlabChanges(
   const { execute } = useExecutePluginAction(action);
   const { instance, localRef } = useTriageDetailRequest(input);
   const routingToken = useGitlabRoutingToken(input);
-  const [diffLimitStatus, setDiffLimitStatus] = useState<'reported' | 'unknown'>('unknown');
 
   const readPage: PageReader<GitlabProjectedChangedFileRowV1> = useCallback(async (
     continuation,
@@ -465,24 +452,15 @@ export function useGitlabChanges(
       return { kind: 'failed' as const, failure: dispatchFailure(execution, 'gitlab-detail-read-failed', parsed.data.failure) };
     }
     if (parsed.data.kind !== 'changes') return { kind: 'failed' as const, failure: UNREADABLE_RESULT };
-    const page = parsed.data;
-    setDiffLimitStatus((current) => (
-      // A first page starts the walk at whatever it reported; any later page
-      // that reports `unknown` degrades the whole tab and never recovers.
-      continuation === null
-        ? page.diffLimitStatus
-        : current === 'unknown' ? 'unknown' : page.diffLimitStatus
-    ));
-    return { kind: 'page' as const, page: toPage(page) };
+    return { kind: 'page' as const, page: toPage(parsed.data) };
   }, [execute, instance, localRef, routingToken]);
 
-  const controller = useGitlabPagedWalk(
+  return useGitlabPagedWalk(
     readPage,
     routingToken !== null,
     ROUTE_UNAVAILABLE,
     { retainOnRefresh: true, retainAcrossLeave: true },
   );
-  return useMemo(() => ({ ...controller, diffLimitStatus }), [controller, diffLimitStatus]);
 }
 
 /* --------------------------------------------------------------- raw diff */

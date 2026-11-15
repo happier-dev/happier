@@ -14,6 +14,15 @@ import {
 } from '../../triage/contribution.js';
 import { renderSurface } from '../renderSurface.js';
 
+/** A Files row names itself by its path (its title is middle-ellipsized, so the path is not one text node). */
+async function fileShown(detail: PluginUiTestkit, path: string, settle = true): Promise<boolean> {
+  for (let turn = 0; ; turn += 1) {
+    const shown = (await detail.queryAllByRole('button')).some(button => button.name?.startsWith(path));
+    if (shown || !settle || turn >= 20) return shown;
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+  }
+}
+
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -277,11 +286,11 @@ describe('the mounted GitLab detail-panel lifecycle', () => {
     });
 
     await openTab(detail, 'Changes');
-    await expect(detail.getByText('src/first.ts')).resolves.toBeDefined();
+    expect(await fileShown(detail, 'src/first.ts')).toBe(true);
     await act(async () => {
       await detail.press(await detail.getByRole('button', { name: 'Show more files' }));
     });
-    await expect(detail.getByText('src/second.ts')).resolves.toBeDefined();
+    expect(await fileShown(detail, 'src/second.ts')).toBe(true);
 
     await openTab(detail, 'Overview');
     await openTab(detail, 'Changes');
@@ -289,8 +298,8 @@ describe('the mounted GitLab detail-panel lifecycle', () => {
     // §4.6 retains the parsed per-file page model. A reader who loaded a later
     // file and glanced at Overview comes back to it, and the tab does not spend
     // GitLab's budget re-reading what it already holds.
-    await expect(detail.getByText('src/first.ts')).resolves.toBeDefined();
-    await expect(detail.getByText('src/second.ts')).resolves.toBeDefined();
+    expect(await fileShown(detail, 'src/first.ts')).toBe(true);
+    expect(await fileShown(detail, 'src/second.ts')).toBe(true);
     expect(continuations).toEqual([undefined, 'changes-page-2']);
 
     // The retained cursor is the one that follows the retained pages, not a
@@ -298,7 +307,7 @@ describe('the mounted GitLab detail-panel lifecycle', () => {
     await act(async () => {
       await detail.press(await detail.getByRole('button', { name: 'Show more files' }));
     });
-    await expect(detail.getByText('src/third.ts')).resolves.toBeDefined();
+    expect(await fileShown(detail, 'src/third.ts')).toBe(true);
     expect(continuations).toEqual([undefined, 'changes-page-2', 'changes-page-3']);
   });
 
@@ -319,11 +328,11 @@ describe('the mounted GitLab detail-panel lifecycle', () => {
     });
 
     await openTab(detail, 'Changes');
-    await expect(detail.getByText('src/retained.ts')).resolves.toBeDefined();
+    expect(await fileShown(detail, 'src/retained.ts')).toBe(true);
     await act(async () => {
       await detail.press(await detail.getByRole('button', { name: 'Show more files' }));
     });
-    await expect(detail.getByText('src/retained.ts')).resolves.toBeDefined();
+    expect(await fileShown(detail, 'src/retained.ts')).toBe(true);
 
     await openTab(detail, 'Overview');
     await openTab(detail, 'Changes');
@@ -331,8 +340,8 @@ describe('the mounted GitLab detail-panel lifecycle', () => {
     // A later page that failed says nothing about the pages that settled. §4.6
     // retains those, so the reader comes back to the file they already read
     // rather than to a walk restarted from page one over GitLab's budget.
-    await expect(detail.getByText('src/retained.ts')).resolves.toBeDefined();
-    await expect(detail.queryByText('src/restarted.ts')).resolves.toBeUndefined();
+    expect(await fileShown(detail, 'src/retained.ts')).toBe(true);
+    expect(await fileShown(detail, 'src/restarted.ts', false)).toBe(false);
     expect(continuations).toEqual([undefined, 'changes-page-2']);
   });
 
@@ -353,7 +362,7 @@ describe('the mounted GitLab detail-panel lifecycle', () => {
     });
 
     await openTab(detail, 'Changes');
-    await expect(detail.getByText('src/first.ts')).resolves.toBeDefined();
+    expect(await fileShown(detail, 'src/first.ts')).toBe(true);
     await act(async () => {
       await detail.press(await detail.getByRole('button', { name: 'Show more files' }));
     });
@@ -364,7 +373,7 @@ describe('the mounted GitLab detail-panel lifecycle', () => {
       await detail.press(await detail.getByRole('button', { name: 'Show more files' }));
     });
 
-    await expect(detail.getByText('src/second.ts')).resolves.toBeDefined();
+    expect(await fileShown(detail, 'src/second.ts')).toBe(true);
     expect(continuations).toEqual([undefined, 'changes-page-2', 'changes-page-2']);
   });
 
@@ -395,8 +404,8 @@ describe('the mounted GitLab detail-panel lifecycle', () => {
     // The abandoned read settled nothing, so there is no page model to return
     // to and the panel starts its walk again rather than waiting on a request
     // that no longer exists.
-    await expect(detail.getByText('src/restarted.ts')).resolves.toBeDefined();
-    await expect(detail.queryByText('src/abandoned.ts')).resolves.toBeUndefined();
+    expect(await fileShown(detail, 'src/restarted.ts')).toBe(true);
+    expect(await fileShown(detail, 'src/abandoned.ts', false)).toBe(false);
     expect(continuations).toEqual([undefined, undefined]);
   });
 });

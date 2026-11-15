@@ -114,6 +114,9 @@ import {
   TriageDetailPanel,
   TriageDetailStory,
   TriageDetailChangeSummary,
+  TriageChangedFilesLoading,
+  TriageChangedFilesProgress,
+  useTriageViewedFileCount,
   TriageChecksRollupLine,
   TriageDetailChecks,
   type TriageDetailChecksRollupV1,
@@ -149,7 +152,7 @@ import {
   type TriagePullRequestOperationOfferV1,
 } from '@happier-dev/triage-protocol/v1';
 
-import { GithubFilesList, useViewedFileCount } from './detail/filesList.js';
+import { GithubFilesList } from './detail/filesList.js';
 import type {
   GithubProjectedCheckRowV1,
   GithubProjectedTimelineRowV1,
@@ -2871,7 +2874,7 @@ function FilesPanel({
   const { active } = useTabPanelActivity();
   // GitHub's Viewed marks for this PR and head, from the host's one Viewed owner.
   const viewed = useGithubFileViewedSource(input, overview);
-  const viewedCount = useViewedFileCount(viewed);
+  const viewedCount = useTriageViewedFileCount(viewed);
   // The page's one refresh re-reads the files and their Viewed marks; this panel draws no refresh of its own.
   useTriagePageRefresh(() => { controller.refresh(); void viewed?.refresh(); });
   // One disclosed file for reader and agent intents; leaving Files releases its body.
@@ -2893,8 +2896,9 @@ function FilesPanel({
     state.canLoadMore, state.pending, controller.loadMore);
 
   if (state.kind === 'idle' || state.kind === 'loading') {
-    // The rows' own shape, so the files replace placeholders of their size rather than a spinner.
-    return <LoadingState title="Reading the changed files from GitHub" titleKey="plugins.github.ui.readingFiles" rows={6} rowShape="compact" />;
+    // The rows' own shape and the progress line's place, so the files replace placeholders of their size.
+    return <TriageChangedFilesLoading title="Reading the changed files from GitHub" titleKey="plugins.github.ui.readingFiles"
+      progress={viewed !== null} />;
   }
   if (state.kind === 'unavailable') {
     return (
@@ -2934,12 +2938,11 @@ function FilesPanel({
   // The tab already counts the files; above them the panel says only what the tab cannot: the reader's progress.
   const notices = (
     <>
-      {viewedCount === null ? null : (
-        <Text variant="micro" tone="secondary" value={total === undefined
-          ? text('plugins.github.ui.filesViewedCount', '{viewed} viewed', { viewed: new Intl.NumberFormat(locale).format(viewedCount) })
-          : text('plugins.github.ui.filesViewedOf', '{viewed} of {total} viewed', {
-            viewed: new Intl.NumberFormat(locale).format(viewedCount), total: new Intl.NumberFormat(locale).format(total) })} />
-      )}
+      {/* Held empty until the Viewed marks answer, so the rows do not move when the count lands. */}
+      {viewed === null ? null : <TriageChangedFilesProgress value={viewedCount === null ? null : total === undefined
+        ? text('plugins.github.ui.filesViewedCount', '{viewed} viewed', { viewed: new Intl.NumberFormat(locale).format(viewedCount) })
+        : text('plugins.github.ui.filesViewedOf', '{viewed} of {total} viewed', {
+          viewed: new Intl.NumberFormat(locale).format(viewedCount), total: new Intl.NumberFormat(locale).format(total) })} />}
       <PageFailureBanner state={state} />
       {incomplete === null
         ? null

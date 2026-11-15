@@ -34,11 +34,14 @@ import * as React from 'react';
 import { TriageSourceReadFailureDetails } from '@happier-dev/triage-sources/ui';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import { createReviewCommentLinkedIssueIdV1 } from '@happier-dev/plugin-sdk/reviews';
+import { splitUnifiedDiffByFile } from '@happier-dev/protocol/diff/splitUnifiedDiffByFile';
+import { parseScmPatchPaths } from '@happier-dev/protocol/scm';
 import {
   Action,
   Badge,
   Banner,
   Button,
+  DiffViewer,
   EmptyState,
   ErrorState,
   Item,
@@ -58,6 +61,7 @@ import {
   useExecutePluginAction,
   useReviewCommentProposalsForEntry,
   useSurfaceContext,
+  useTabPanelActivity,
   type PluginTranslate,
   type ReviewCommentProposalReadV1,
   type MetadataEntry,
@@ -104,11 +108,15 @@ import {
   useGitlabPipelines,
   useGitlabRawDiff,
   type GitlabApprovalsViewV1,
+  type GitlabRawDiffStateV1,
   type GitlabPagedControllerV1,
 } from './detail/panelReaders.js';
 import type { GitlabPagedStateV1, GitlabReadStateV1 } from './detail/panelState.js';
 import {
   TriageActivityTimeline,
+  TriageChangedFilesList,
+  TriageChangedFilesLoading,
+  type TriageChangedFileV1,
   TriageDetailChangeSummary,
   TriageDetailChecks,
   TriageDetailPanel,
@@ -334,19 +342,19 @@ function GitlabStoryChanges({ input }: Readonly<{ input: TriageDetailSurfaceInpu
   const text = usePluginTranslation();
   const controller = useGitlabChanges(input);
   const { state } = controller;
-  // GitLab's changes read carries no line counts: the shared step lists the files with
-  // GitLab's own word for each change and says the counts are not reported.
-  const rows = React.useMemo(() => state.rows.map((row) => ({ path: row.path, note: changedFileSubtitle(text, row) })), [state.rows, text]);
+  // Line counts where GitLab's patch for a file is whole; elsewhere the shared step lists the file with GitLab's own
+  // word for the change.
+  const rows = React.useMemo(() => state.rows.map((row) => {
+    const note = changedFileSubtitle(text, row);
+    return { path: row.path, ...(row.lines === undefined ? {} : { lines: row.lines }), ...(note === undefined ? {} : { note }) };
+  }), [state.rows, text]);
   return <TriageDetailChangeSummary rows={state.kind === 'ready' ? rows : []}
     more={state.canLoadMore || state.incomplete !== null}>
     {state.kind === 'idle' || state.kind === 'loading' ? <LoadingState title="Reading changed files" titleKey="plugins.gitlab.ui.readingFiles" />
       : state.kind === 'unavailable' ? <><ErrorState title="The changed files are unavailable" titleKey="plugins.gitlab.ui.filesUnavailable"
         description={failureDescription(state.failure, text('plugins.gitlab.ui.readFailed', 'GitLab could not complete this read.'), text)} />
         <TriageSourceReadFailureDetails failures={[state.failure]} /></>
-      : <><PageFailureBanner state={state} />
-        {controller.diffLimitStatus === 'reported' ? null : <Banner tone="warning" title="Diff-limit status unknown" titleKey="plugins.gitlab.ui.diffLimitUnknown"
-          description="This deployment did not say whether it left any file out, so this list is not a claim that the diff is whole." descriptionKey="plugins.gitlab.ui.diffLimitUnknown.description" />}
-      </>}
+      : <PageFailureBanner state={state} />}
   </TriageDetailChangeSummary>;
 }
 
@@ -760,12 +768,6 @@ function changedFileSubtitle(
   if (row.tooLarge === true) {
     return text('plugins.gitlab.ui.files.tooLarge', 'Too large for GitLab to return a diff.');
   }
-  if (row.collapsed === true) {
-    return text(
-      'plugins.gitlab.ui.files.collapsed',
-      'GitLab collapsed this file; it can be fetched on request.',
-    );
-  }
   if (row.deletedFile) return text('plugins.gitlab.ui.files.deleted', 'Deleted');
   if (row.newFile) return text('plugins.gitlab.ui.files.added', 'Added');
   if (row.renamedFile && row.previousPath !== undefined) {
@@ -776,20 +778,120 @@ function changedFileSubtitle(
   return undefined;
 }
 
+/** A GitLab file as the shared Files frame reads it, keeping the GitLab row its diff lookup needs. */
+type GitlabFilesRowV1 = TriageChangedFileV1 & Readonly<{ gitlab: GitlabProjectedChangedFileRowV1 }>;
+
+/** One file's part of the merge request's diff, and whether the diff stopped inside it. */
+type GitlabFileDiffV1 = Readonly<{ diff: string; shortened: boolean }>;
+
+/**
+ * The merge request's one diff read, shared by every open file: the first file opened reads it, and each file shows
+ * its own part. A file past the end of a shortened diff says the rest is on GitLab.
+ */
+type GitlabFilesDiffV1 = Readonly<{
+  state: GitlabRawDiffStateV1;
+  load: () => void;
+  files: ReadonlyMap<string, GitlabFileDiffV1>;
+}>;
+
+const GitlabFilesDiffContext = React.createContext<GitlabFilesDiffV1 | null>(null);
+
+function splitGitlabDiffByFile(state: GitlabRawDiffStateV1): ReadonlyMap<string, GitlabFileDiffV1> {
+  const files = new Map<string, GitlabFileDiffV1>();
+  if (state.kind !== 'ready') return files;
+  const blocks = splitUnifiedDiffByFile(state.text);
+  blocks.forEach((diff, index) => {
+    const part = { diff, shortened: state.truncated && index === blocks.length - 1 };
+    for (const path of parseScmPatchPaths(diff)) if (!files.has(path)) files.set(path, part);
+  });
+  return files;
+}
+
+function GitlabFileBody({ row }: Readonly<{ row: GitlabFilesRowV1 }>): React.ReactElement {
+  const text = usePluginTranslation();
+  const diff = React.useContext(GitlabFilesDiffContext);
+  const kind = diff?.state.kind ?? 'idle';
+  const load = diff?.load;
+  // Opening a file is the request for the diff; every later file reuses that one read.
+  React.useEffect(() => { if (kind === 'idle') load?.(); }, [kind, load]);
+  if (diff === null || diff.state.kind === 'idle' || diff.state.kind === 'loading') {
+    return <LoadingState title="Reading this file's diff from GitLab…" titleKey="plugins.gitlab.ui.readingFileDiff" />;
+  }
+  if (diff.state.kind === 'unavailable') {
+    return <Stack gap="small">
+      <ErrorState layout="line" title="This file's diff is unavailable" titleKey="plugins.gitlab.ui.fileDiffUnavailable"
+        description={failureDescription(diff.state.failure,
+          text('plugins.gitlab.ui.readFailed', 'GitLab could not complete this read.'), text)} />
+      <TriageSourceReadFailureDetails failures={[diff.state.failure]} />
+    </Stack>;
+  }
+  const part = diff.files.get(row.path)
+    ?? (row.gitlab.previousPath === undefined ? undefined : diff.files.get(row.gitlab.previousPath));
+  const shortened = part === undefined ? diff.state.truncated : part.shortened;
+  return <Stack gap="small">
+    {shortened
+      ? <Text value={text('plugins.gitlab.ui.fileDiffShortened', 'This diff is too long to show here. The rest is on GitLab.')} />
+      : null}
+    {part !== undefined
+      ? <DiffViewer unifiedDiff={part.diff} filePath={row.path} label={row.path} />
+      : shortened ? null : <Text value={text('plugins.gitlab.ui.fileDiffNone', 'GitLab has no diff for this file.')} />}
+  </Stack>;
+}
+
+/** A file GitLab says is too large has no diff to open; every other file opens onto its part of the diff. */
+function gitlabFileOpenable(row: GitlabProjectedChangedFileRowV1): boolean {
+  return row.tooLarge !== true;
+}
+
+const renderGitlabFileBody = (row: GitlabFilesRowV1): React.ReactNode => <GitlabFileBody row={row} />;
+
 function ChangesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement {
   const text = usePluginTranslation();
   const controller = useGitlabChanges(input);
   const rawDiff = useGitlabRawDiff(input);
   const { state } = controller;
+  const { active } = useTabPanelActivity();
+  const [focusPath, setFocusPath] = React.useState<string | null>(null);
   const loadMore = useTriageSourcePanelPagingV1('files', text('plugins.gitlab.ui.showMoreFiles', 'Show more files'),
     state.canLoadMore, state.pending, controller.loadMore);
   const changesUrl = gitlabChangesEvidenceUrlV1(input.observation.locator.webUrl);
-  const { locale } = useSurfaceContext();
   // The page's one refresh re-reads these files; the panel draws no refresh of its own.
   useTriagePageRefresh(controller.refresh);
+  // Leaving Files closes its open file (and the diff read is released with the panel).
+  React.useEffect(() => { if (!active) setFocusPath(null); }, [active]);
+  const openCommands = React.useMemo<readonly TriageSourcePanelCommandV1[]>(() => state.rows.filter(gitlabFileOpenable)
+    .map(row => ({ title: row.path,
+      operation: { kind: 'setSourceItemExpanded', list: 'files', itemId: row.path, expanded: true } })), [state.rows]);
+  useTriageSourcePanelIntentV1({ kind: 'setSourceItemExpanded', list: 'files' }, async (operation) => {
+    if (operation.kind !== 'setSourceItemExpanded'
+      || !state.rows.some(row => row.path === operation.itemId && gitlabFileOpenable(row))) return { status: 'unavailable' };
+    setFocusPath(operation.expanded ? operation.itemId : null);
+    return { status: 'applied' };
+  }, openCommands);
+  // One frame row per GitLab row, kept while that row is, so a later page does not re-key the rows already drawn.
+  const framed = React.useMemo(() => new WeakMap<GitlabProjectedChangedFileRowV1, GitlabFilesRowV1>(), [text, changesUrl]);
+  const sections = React.useMemo(() => [{ key: 'files', title: '', data: state.rows.map((row) => {
+    const existing = framed.get(row);
+    if (existing !== undefined) return existing;
+    const note = changedFileSubtitle(text, row);
+    const next: GitlabFilesRowV1 = {
+      path: row.path,
+      diffAvailable: gitlabFileOpenable(row),
+      ...(row.lines === undefined ? {} : { lines: row.lines }),
+      ...(note === undefined ? {} : { note }),
+      ...(changesUrl === null ? {} : { webUrl: changesUrl }),
+      gitlab: row,
+    };
+    framed.set(row, next);
+    return next;
+  }) }], [state.rows, framed, text, changesUrl]);
+  const files = React.useMemo(() => splitGitlabDiffByFile(rawDiff.state), [rawDiff.state]);
+  const diff = React.useMemo<GitlabFilesDiffV1>(() => ({ state: rawDiff.state, load: rawDiff.load, files }),
+    [rawDiff.state, rawDiff.load, files]);
 
   if (state.kind === 'idle' || state.kind === 'loading') {
-    return <LoadingState title="Reading the changed files from GitLab" titleKey="plugins.gitlab.ui.readingFiles" rows={6} rowShape="compact" />;
+    return <TriageChangedFilesLoading title="Reading the changed files from GitLab" titleKey="plugins.gitlab.ui.readingFiles"
+      progress={false} />;
   }
   if (state.kind === 'unavailable') {
     return (
@@ -806,109 +908,37 @@ function ChangesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
       </Stack>
     );
   }
+  if (state.rows.length === 0) {
+    return (
+      <EmptyState
+        title="No changed files"
+        titleKey="plugins.gitlab.ui.noFiles"
+        description="GitLab reports that this merge request changes no files."
+        descriptionKey="plugins.gitlab.ui.noFiles.description"
+      />
+    );
+  }
   return (
-    <List
-      accessibilityLabel="Files this GitLab merge request changes"
-      accessibilityLabelKey="plugins.gitlab.ui.filesLabel"
-      // Single-line file rows stack flush on the compact list step, as GitHub's Files rows do.
-      density="flush"
-      items={state.rows}
-      keyForItem={(row) => row.path}
-      header={(
-        <Stack gap="small">
-          <Text variant="label" value={`${text('plugins.gitlab.ui.changedFiles', 'Changed files')} · ${new Intl.NumberFormat(locale).format(state.rows.length)}`} />
-          <PageFailureBanner state={state} />
-          <Button
-            title="Load raw diff evidence"
-            titleKey="plugins.gitlab.ui.loadRawDiff"
-            variant="secondary"
-            busy={rawDiff.state.kind === 'loading'}
-            onPress={rawDiff.load}
+    <GitlabFilesDiffContext.Provider value={diff}>
+      <TriageChangedFilesList
+        accessibilityLabel="Files this GitLab merge request changes"
+        accessibilityLabelKey="plugins.gitlab.ui.filesLabel"
+        sections={sections}
+        focusPath={focusPath}
+        onFocusPath={setFocusPath}
+        active={active}
+        viewed={null}
+        renderBody={renderGitlabFileBody}
+        header={<PageFailureBanner state={state} />}
+        endContent={(
+          <PagedFooter
+            state={state}
+            loadMoreTitle={text('plugins.gitlab.ui.showMoreFiles', 'Show more files')}
+            onLoadMore={loadMore}
           />
-          {rawDiff.state.kind !== 'unavailable' ? null : (
-            <Banner
-              tone="warning"
-              title="Raw diff evidence is unavailable"
-              titleKey="plugins.gitlab.ui.rawDiffUnavailable"
-              description={failureDescription(
-                rawDiff.state.failure,
-                text('plugins.gitlab.ui.readFailed', 'GitLab could not complete this read.'), text,
-              )}
-            />
-          )}
-          {rawDiff.state.kind === 'unavailable' ? <TriageSourceReadFailureDetails failures={[rawDiff.state.failure]} /> : null}
-          {controller.diffLimitStatus === 'reported'
-            ? null
-            : (
-              // The prohibition that matters: a diff whose completeness GitLab
-              // did not state is never rendered as a complete one.
-              <Banner
-                tone="warning"
-                title="Diff-limit status unknown"
-                titleKey="plugins.gitlab.ui.diffLimitUnknown"
-                description="This deployment did not say whether it left any file out, so this list is not a claim that the diff is whole."
-                descriptionKey="plugins.gitlab.ui.diffLimitUnknown.description"
-              />
-            )}
-        </Stack>
-      )}
-      endContent={rawDiff.state.kind !== 'ready' ? undefined : (
-        <Stack gap="small">
-          <Text
-            variant="micro"
-            tone="neutral"
-            valueKey="plugins.gitlab.ui.rawDiffLabel"
-            fallback="Raw diff evidence · returned as text by GitLab"
-          />
-          {rawDiff.state.truncated ? (
-            <Banner
-              tone="neutral"
-              title="The raw diff was shortened"
-              titleKey="plugins.gitlab.ui.rawDiffShortened"
-              description="The returned prefix fits Happier’s Action-result boundary."
-              descriptionKey="plugins.gitlab.ui.rawDiffShortened.description"
-            />
-          ) : null}
-          <Text variant="code" value={rawDiff.state.text} />
-        </Stack>
-      )}
-      empty={(
-        <EmptyState
-          title="No changed files"
-          titleKey="plugins.gitlab.ui.noFiles"
-          description="GitLab reports that this merge request changes no files."
-          descriptionKey="plugins.gitlab.ui.noFiles.description"
-        />
-      )}
-      footer={(
-        <PagedFooter
-          state={state}
-          loadMoreTitle={text('plugins.gitlab.ui.showMoreFiles', 'Show more files')}
-          onLoadMore={loadMore}
-        />
-      )}
-      renderItem={(row) => {
-        const note = changedFileSubtitle(text, row);
-        return (
-        <Item
-          title={row.path}
-          density="compact"
-          {...(note === undefined ? {} : { subtitle: note })}
-          accessoryOutsidePressable
-          accessory={<Row gap="small">
-            <Action.Copy value={row.path} variant="plain" accessibilityLabel={text('plugins.gitlab.ui.copyValue', 'Copy {item}', { item: row.path })} />
-            {row.collapsed !== true || changesUrl === null ? null : (
-              <Action.OpenExternal url={changesUrl} variant="plain" accessibilityLabel={text(
-                'plugins.gitlab.ui.openCollapsedFile',
-                'Open collapsed file evidence for {file} on GitLab',
-                { file: row.path },
-              )} />
-            )}
-          </Row>}
-        />
-        );
-      }}
-    />
+        )}
+      />
+    </GitlabFilesDiffContext.Provider>
   );
 }
 

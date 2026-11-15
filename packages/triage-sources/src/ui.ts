@@ -48,6 +48,14 @@ export {
   type TriageDetailTrendV1,
 } from './ui/detailStory.js';
 export {
+  TriageChangedFilesList,
+  TriageChangedFilesLoading,
+  TriageChangedFilesProgress,
+  useTriageViewedFileCount,
+  type TriageChangedFilesSectionV1,
+  type TriageChangedFilesViewedV1,
+} from './ui/changedFilesList.js';
+export {
   summarizeTriageChangesV1,
   TRIAGE_STORY_SHOWN_FILES_V1,
   type TriageChangedFileV1,

@@ -34,6 +34,7 @@ import {
   type TriageRowFactV1,
 } from '@happier-dev/triage-protocol/v1';
 
+import { parseUnifiedDiffHunks } from '@happier-dev/protocol/diff/hunks';
 import { readGitlabDiscussionResolution } from '../mapping/discussionResolution.js';
 import type { GitlabComparisonFileV1, GitlabPatchEvidenceV1 } from './contracts.js';
 import type { GitlabDetailPageV1 } from './reads.js';
@@ -603,6 +604,8 @@ export type GitlabProjectedChangedFileRowV1 = Readonly<{
   /** GitLab excluded this file's diff and says it cannot be retrieved. */
   tooLarge?: boolean;
   truncated?: true;
+  /** Added and removed lines, counted only from a patch GitLab says is whole (never a collapsed or silent one). */
+  lines?: Readonly<{ additions: number; deletions: number }>;
 }>;
 
 /**
@@ -646,6 +649,9 @@ export function projectGitlabChangedFileRows(
     const tooLarge = typeof raw.too_large === 'boolean' ? raw.too_large : null;
     if (collapsed === null || tooLarge === null) everyRowReported = false;
     const truncated = path.truncated || (previousPath?.truncated ?? false);
+    const evidence = projectGitlabPatchEvidence(raw);
+    // The default page carries the patch's counts, never its text; a comparison carries the patch itself.
+    const lines = comparison || evidence.state !== 'available' ? null : countGitlabPatchLines(evidence.patch);
     return {
       row: Object.freeze({
         path: path.value,
@@ -656,11 +662,12 @@ export function projectGitlabChangedFileRows(
         ...(collapsed === null ? {} : { collapsed }),
         ...(tooLarge === null ? {} : { tooLarge }),
         ...(truncated ? { truncated: true as const } : {}),
+        ...(lines === null ? {} : { lines }),
         ...(comparison ? {
           status: raw.new_file === true ? 'added' : raw.deleted_file === true ? 'removed'
             : raw.renamed_file === true ? 'renamed' : 'modified',
           diffAvailable: typeof raw.diff === 'string' && raw.diff.length > 0,
-          evidence: projectGitlabPatchEvidence(raw),
+          evidence,
         } : {}),
       }),
       truncated,
@@ -674,6 +681,18 @@ export function projectGitlabChangedFileRows(
       ? ('reported' as const)
       : ('unknown' as const),
   });
+}
+
+function countGitlabPatchLines(patch: string): Readonly<{ additions: number; deletions: number }> {
+  let additions = 0;
+  let deletions = 0;
+  for (const hunk of parseUnifiedDiffHunks(patch)) {
+    for (const line of hunk.lines) {
+      if (line.kind === 'add') additions += 1;
+      else if (line.kind === 'remove') deletions += 1;
+    }
+  }
+  return Object.freeze({ additions, deletions });
 }
 
 function projectGitlabPatchEvidence(raw: JsonRecord): GitlabPatchEvidenceV1 {

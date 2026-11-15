@@ -645,6 +645,34 @@ describe('GitLab changes plane', () => {
     expect(result.diffLimitStatus).toBe('unknown');
   });
 
+  it('counts added and removed lines only from a patch GitLab says is whole', async () => {
+    const patch = '@@ -1,3 +1,4 @@\n context\n-old one\n-old two\n+new one\n+new two\n+new three\n';
+    const stub = createStubGitlabTransport({
+      respond: (request) => (
+        pathOf(request).endsWith('/merge_requests/7/diffs')
+          ? ok([
+            { old_path: 'src/a.ts', new_path: 'src/a.ts', collapsed: false, too_large: false, diff: patch },
+            // Collapsed, too large, silent about completeness, or with no patch: no count is drawn.
+            { old_path: 'src/b.ts', new_path: 'src/b.ts', collapsed: true, too_large: false, diff: '' },
+            { old_path: 'src/c.ts', new_path: 'src/c.ts', collapsed: false, too_large: true, diff: patch },
+            { old_path: 'src/d.ts', new_path: 'src/d.ts', diff: patch },
+            { old_path: 'src/e.bin', new_path: 'src/e.bin', collapsed: false, too_large: false, diff: '' },
+          ])
+          : undefined
+      ),
+    });
+
+    const result = GitlabChangesResultV1Schema.parse(
+      await listGitlabChanges(planeInput(), stub.context),
+    );
+    if (result.kind !== 'changes') throw new Error('the changes page must settle');
+    expect(result.rows.map(row => row.lines ?? null)).toEqual([
+      { additions: 3, deletions: 2 }, null, null, null, null,
+    ]);
+    // The page carries the counts, never the patch text itself.
+    expect(JSON.stringify(result)).not.toContain('new three');
+  });
+
   it('keeps the default changed-file read on current /diffs only', async () => {
     const stub = createStubGitlabTransport({
       respond: (request) => (

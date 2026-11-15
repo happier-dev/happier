@@ -383,6 +383,8 @@ const changedFileFields = {
   collapsed: GitlabBooleanSchema.optional(),
   tooLarge: GitlabBooleanSchema.optional(),
   truncated: defineProtocolLiteral(true).optional(),
+  /** Added and removed lines, only from a patch GitLab says is whole. */
+  lines: defineProtocolObject({ additions: CountSchema, deletions: CountSchema }, { policy: 'closed' }).optional(),
 };
 export const GitlabProjectedChangedFileRowV1Schema = defineProtocolObject(changedFileFields, { policy: 'closed' });
 

@@ -14,6 +14,15 @@ import { GitlabChangesInputV1Schema, GitlabChangesResultV1Schema } from '../../t
 import { createStubGitlabTransport, gitlabTestConfiguredInstance, GITLAB_TEST_COLLISION_SCOPE } from '../../triage/testkit/gitlabTriage.test-support.js';
 import { renderSurface } from '../renderSurface.js';
 
+/** A Files row names itself by its path (its title is middle-ellipsized, so the path is not one text node). */
+async function fileShown(detail: PluginUiTestkit, path: string, settle = true): Promise<boolean> {
+  for (let turn = 0; ; turn += 1) {
+    const shown = (await detail.queryAllByRole('button')).some(button => button.name?.startsWith(path));
+    if (shown || !settle || turn >= 20) return shown;
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+  }
+}
+
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const mounted: PluginUiTestkit[] = [];
 const plugins: Array<Awaited<ReturnType<typeof createPluginTestkit>>> = [];
@@ -102,9 +111,9 @@ describe('registered GitLab detail read dispatch', () => {
     await act(async () => { release(); });
     expect(producerResults).toHaveLength(1);
     expect(GitlabChangesResultV1Schema.parse(producerResults[0])).toMatchObject({ kind: 'changes', rows: [{ path: 'src/dispatch.ts' }] });
-    await expect(detail.getByText('src/dispatch.ts')).resolves.toBeDefined();
+    expect(await fileShown(detail, 'src/dispatch.ts')).toBe(true);
     await act(async () => { await detail.updateSurface(createSurfaceContextFixture()); });
-    await expect(detail.getByText('src/dispatch.ts')).resolves.toBeDefined();
+    expect(await fileShown(detail, 'src/dispatch.ts')).toBe(true);
     expect(producerResults).toHaveLength(1);
   });
   it.each(['approvals', 'comparison'] as const)('rejects a mis-bound registered %s producer', async (mode) => {
