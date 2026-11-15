@@ -10,7 +10,7 @@ import { resolveCanonicalAgentIdFromFlavor } from './resolveAgentIdFromFlavor.js
 import { AgentExecutionTargetV1Schema, type AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { resolveLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
-import { agentRoutingIdAddressesContributionIdentityV1, buildQualifiedPluginContributionKey, PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { agentRoutingIdAddressesContributionIdentityV1, buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey, PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES, isBundledAgentId } from './generated/agentIds.js';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -137,7 +137,9 @@ export function resolveSessionMetadataAgentIdentity(metadata: unknown, admittedL
     };
   }
 
-  const flavorAgentId = resolveCanonicalAgentIdFromFlavor(record.flavor);
+  const qualifiedFlavor = parseQualifiedPluginContributionKey(record.flavor);
+  const flavorAgentId = resolveCanonicalAgentIdFromFlavor(record.flavor)
+    ?? (qualifiedFlavor ? buildQualifiedPluginContributionKey(qualifiedFlavor) : null);
   if (flavorAgentId) {
     return {
       agentId: flavorAgentId,
@@ -209,12 +211,18 @@ export function resolveAgentExecutionTargetFromSessionMetadata(
   const linked = admittedLinkedSession === undefined ? resolveLinkedExternalSessionMetadataV1(record, 'stored') : null;
   const linkedSession = admittedLinkedSession === undefined ? linked?.ok ? linked.linkedSession : null : admittedLinkedSession;
   const bundledIdentity = agentId && isBundledAgentId(agentId) ? BUNDLED_AGENT_CONTRIBUTION_IDENTITIES[agentId] : null;
-  const candidate = correspondence.success ? correspondence.data.recipe.agentTarget
-    : linkedSession?.qualifiedIdentity ? { kind: 'agent' as const, identity: linkedSession.qualifiedIdentity.agent }
-      : bundledIdentity ? { kind: 'agent' as const, identity: bundledIdentity } : null;
+  const currentIdentity = bundledIdentity ?? parseQualifiedPluginContributionKey(agentId);
+  const matchesCurrentAgent = (identity: { pluginId: string; localId: string }): boolean => currentIdentity
+    ? currentIdentity.pluginId === identity.pluginId && currentIdentity.localId === identity.localId
+    : !agentId || agentRoutingIdAddressesContributionIdentityV1(agentId, identity);
+  // Birth is immutable provenance. It may supply a matching configured
+  // definition, but cannot select the departing Agent after a cutover.
+  const candidate = correspondence.success && matchesCurrentAgent(correspondence.data.recipe.agentTarget.identity)
+    ? correspondence.data.recipe.agentTarget
+    : linkedSession?.qualifiedIdentity && matchesCurrentAgent(linkedSession.qualifiedIdentity.agent)
+      ? { kind: 'agent' as const, identity: linkedSession.qualifiedIdentity.agent }
+      : currentIdentity ? { kind: 'agent' as const, identity: currentIdentity } : null;
   const parsed = AgentExecutionTargetV1Schema.safeParse(candidate);
   if (!parsed.success) return null;
-  if (agentId && !agentRoutingIdAddressesContributionIdentityV1(agentId, parsed.data.identity)
-    && !(bundledIdentity?.pluginId === parsed.data.identity.pluginId && bundledIdentity.localId === parsed.data.identity.localId)) return null;
   return parsed.data;
 }

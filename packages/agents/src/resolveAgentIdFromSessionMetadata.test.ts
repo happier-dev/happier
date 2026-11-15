@@ -8,12 +8,31 @@ import {
 import { readNonAuthoritativeLinkedExternalSessionV1FromMetadata } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import { buildSessionCreationCorrespondence } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { buildCommittedLaunchMetadata } from './session/state/metadataWriters.js';
+import { projectCurrentAgentSessionView } from './session/state/projectCurrentAgentSessionView.js';
 
 function runtimeDescriptor(agentId: string) {
   return { v: 1, agentId, agent: {} };
 }
 
 describe('resolveSessionMetadataAgentIdentity', () => {
+  it.each([
+    { agentId: 'pi', identity: { pluginId: 'happier.agent.pi', localId: 'pi' } },
+    { agentId: 'example.agents/reviewer', identity: { pluginId: 'example.agents', localId: 'reviewer' } },
+  ])('resolves the current $agentId target after cutover without rewriting birth provenance', ({ agentId, identity }) => {
+    const birth = buildSessionCreationCorrespondence({
+      identity: { callerCreationNamespace: 'user', creationKey: 'continued-session' },
+      recipe: { execution: { machineId: 'machine-1', directory: { kind: 'path', path: '/tmp' } },
+        organization: { folderId: null, tagIds: [] },
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.muse', localId: 'muse' } } },
+    });
+    const initial = buildCommittedLaunchMetadata({ options: { sessionCreationCorrespondence: birth }, directory: '/tmp' });
+    const continued = projectCurrentAgentSessionView(initial, { agentId, agentScopedCurrentState: 'clear' });
+
+    expect(resolveAgentIdFromSessionMetadata(continued)).toBe(agentId);
+    expect(resolveAgentExecutionTargetFromSessionMetadata(continued)).toEqual({ kind: 'agent', identity });
+    expect(continued.sessionCreationCorrespondenceV1).toEqual(birth);
+  });
+
   it.each([
     { identity: { pluginId: 'happier.agent.codex', localId: 'codex' }, agentId: 'codex' },
     { identity: { pluginId: 'example.agents', localId: 'codex' }, agentId: 'example.agents/codex' },

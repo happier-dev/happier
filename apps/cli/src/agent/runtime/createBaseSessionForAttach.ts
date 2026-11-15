@@ -1,7 +1,7 @@
 import type { AgentState, Metadata, Session as ApiSession } from '@/api/types';
 import { readSessionAttachFromEnv, readSessionAttachFromFile, type SessionAttachSecret } from '@/agent/runtime/sessionAttach';
 import { SESSION_METADATA_LAYOUT_VERSION_V1, SessionSharedMetadataV1Schema, projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
-import { projectCurrentAgentSessionView, resolveAgentExecutionTargetFromSessionMetadata, resolveAgentIdFromSessionMetadata, resolveSessionMetadataAgentIdentity } from '@happier-dev/agents';
+import { projectCurrentAgentSessionView, resolveAgentIdFromSessionMetadata, resolveSessionMetadataAgentIdentity } from '@happier-dev/agents';
 import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { readAcpConfiguredBackendV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/acpConfiguredBackendV1';
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
@@ -62,8 +62,8 @@ export async function createBaseSessionForAttach(opts: Readonly<{
   const identity = resolveSessionMetadataAgentIdentity(persistedMetadata);
   const correspondence = SessionCreationCorrespondenceV1ReadSchema.safeParse(persistedMetadata.sessionCreationCorrespondenceV1);
   const runnerAgentId = resolveAgentIdFromSessionMetadata(opts.metadata);
-  const birthTarget = correspondence.success && runnerAgentId
-    ? resolveAgentExecutionTargetFromSessionMetadata(persistedMetadata, runnerAgentId)
+  const birthTarget = correspondence.success && runnerAgentId === identity.agentId
+    ? correspondence.data.recipe.agentTarget
     : null;
   const runtimeDescriptor = readRuntimeDescriptorV1FromMetadata(opts.metadata);
   // A committed birth can precede the first runtime publication. The Session

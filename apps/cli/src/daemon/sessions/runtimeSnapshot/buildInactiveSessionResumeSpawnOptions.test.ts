@@ -227,7 +227,7 @@ describe('buildInactiveSessionResumeSpawnOptions', () => {
         kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot', sourceKind: 'configured',
       });
     } else if (currentAgentId === 'claude') {
-      expect(result?.backendTarget).toEqual({ kind: 'backend', backendId: 'claude', sourceKind: 'built_in' });
+      expect(result?.agentTarget).toEqual({ kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } });
     } else {
       expect(result?.agentTarget).toEqual(correspondence.recipe.agentTarget);
     }
