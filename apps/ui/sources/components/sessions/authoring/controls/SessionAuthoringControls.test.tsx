@@ -575,6 +575,19 @@ describe('SessionAuthoringControls', () => {
     await screen.unmount();
   });
 
+  it('draws no chip for an Agent-owned field while no Agent is chosen (the engine chip already asks for one)', async () => {
+    const { screen } = await renderControls({
+      presentation: 'chips',
+      fields: ['agentTarget', 'permissionMode', 'transcriptStorage'],
+      values: {},
+      onChangeFields: vi.fn(),
+    });
+    // A row of chips is not a form: two "Unavailable" words would repeat what the Agent chip says.
+    expect(screen.findByTestId('session-authoring-control-permissionMode-unavailable')).toBeNull();
+    expect(screen.findByTestId('session-authoring-control-transcriptStorage-unavailable')).toBeNull();
+    await screen.unmount();
+  });
+
   it('authors the unattended tool policy: other tools ask or deny, and the allowed list as typed', async () => {
     const { screen, onChangeField } = await renderControls({
       presentation: 'fields',

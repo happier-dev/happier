@@ -22,6 +22,7 @@ import { getPermissionModeLabelForAgentType } from '@/sync/domains/permissions/p
 import { isPermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { StatusPill } from '@/components/ui/status/StatusPill';
+import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
 import { resolveExecutableModelParticipantDisplay, useExecutableParticipantLabel } from './useExecutableParticipantLabel';
 import { t } from '@/text';
 
@@ -285,10 +286,8 @@ export function ContextualStartComposerBody({ model, whoHint, question, whoConte
             </View>
             {/* Agents the person added lead the list, checked, their recipe as the row's line (lab dpRev `two`). */}
             {display.added.map((selection, index) => <View key={index} style={styles.hang}>
-                <Item testID="second-opinion.selected-model-row" density="compact" showChevron={false} showDivider={false}
-                    selected disabled={busy} title={<AddedRecipeTitle selection={selection} />}
-                    subtitle={<RecipeSummary selection={selection} />} onPress={() => onChoose?.(selection)}
-                    rightElement={<TextLinkButton testID="second-opinion.change-model" tone="strong" size="meta"
+                <AddedRecipeRow selection={selection} busy={busy} onPress={() => onChoose?.(selection)}
+                    change={<TextLinkButton testID="second-opinion.change-model" tone="strong" size="meta"
                         label={t('common.change')} disabled={busy || openRecipe !== null}
                         onPress={() => { setRecipe('change'); editModel?.(selection, next => onReplace?.(selection, next)); }} />} />
             </View>)}
@@ -328,9 +327,20 @@ export function ContextualStartComposerBody({ model, whoHint, question, whoConte
     </View>;
 }
 
-function AddedRecipeTitle(props: Readonly<{ selection: ModelSelection }>) {
-    const label = useExecutableParticipantLabel(props.selection, props.selection.launch.executionTarget.serverId);
-    return <>{label ?? t('session.collaboration.discussion.heldParticipant')}</>;
+/**
+ * An added agent is a row like the Sessions under it (lab dpRev `two`): its Agent's mark in the icon column and its
+ * name in the row's own title role, so it shares their edge and type.
+ */
+function AddedRecipeRow(props: Readonly<{ selection: ModelSelection; busy: boolean; onPress: () => void; change: React.ReactNode }>) {
+    const { launch } = props.selection;
+    const label = useExecutableParticipantLabel(props.selection, launch.executionTarget.serverId);
+    const machines = useMachineListForServer(launch.executionTarget.serverId);
+    const agentId = resolveExecutableModelParticipantDisplay(launch, machines ?? []).agentId ?? launch.agentTarget.identity.localId;
+    return <Item testID="second-opinion.selected-model-row" density="compact" showChevron={false} showDivider={false}
+        selected disabled={props.busy} title={label ?? t('session.collaboration.discussion.heldParticipant')}
+        icon={<SessionAgentCatalogIdentityIcon agentId={agentId} machineId={launch.executionTarget.machineId}
+            serverId={launch.executionTarget.serverId} size={ICON_SIZE.md} />}
+        subtitle={<RecipeSummary selection={props.selection} />} onPress={props.onPress} rightElement={props.change} />;
 }
 
 /** A chosen recipe in one quiet line: model, Machine, folder and what it may do. */

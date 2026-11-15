@@ -709,7 +709,10 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
                         testIDPrefix={testIDPrefix}
                     />
                 );
-                if (presentation === 'chips') return rendered;
+                // A chip row with an engine chip says "Choose an agent" once, there; the fields that wait on it add
+                // nothing. Without one (a lone field), the field still says why it is unavailable.
+                if (presentation === 'chips') return engineField !== undefined && control.kind === 'unavailable'
+                    && control.reason === 'requires_agent_target' ? null : rendered;
                 // A settings form holds only the decisions this step has: a field the Agent or the target can
                 // never offer (a Windows-only field on Linux, an Agent with no such options) is left out rather
                 // than listed as "Unavailable". Fields that wait on something or say what to do stay.

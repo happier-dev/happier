@@ -83,15 +83,18 @@ function ComposerChips(props: Readonly<{
     return (
         <View testID="server-start-draft-chips" style={styles.chips}>
             {agentsReady ? (
-                <SessionAuthoringControls
-                    presentation="chips"
-                    fields={CHIP_FIELDS}
-                    values={selection}
-                    facts={facts}
-                    onChangeFields={changeFields}
-                    onChangeField={changeField}
-                    testIDPrefix="server-start-draft-control"
-                />
+                // The authoring chips wrap inside this row's width instead of running past its edge (dpRev at 390).
+                <View style={styles.authoringChips}>
+                    <SessionAuthoringControls
+                        presentation="chips"
+                        fields={CHIP_FIELDS}
+                        values={selection}
+                        facts={facts}
+                        onChangeFields={changeFields}
+                        onChangeField={changeField}
+                        testIDPrefix="server-start-draft-control"
+                    />
+                </View>
             ) : daemonMergedProjection.phase === 'idle' || daemonMergedProjection.phase === 'loading'
                 || (daemonMergedProjection.phase === 'ready' && facts.agentTargets === undefined) ? (
                 <ItemLoadStateRows state={{ kind: 'loading' }} rows={1} lines={1} accessibilityLabel={t('common.loading')} />
@@ -267,6 +270,7 @@ function ComposerFields(props: Readonly<{
 const styles = StyleSheet.create((theme) => ({
     content: { paddingBottom: theme.space.s16 },
     chips: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s6, paddingHorizontal: theme.space.s16, paddingVertical: theme.space.s8 },
+    authoringChips: { maxWidth: '100%' },
     note: { ...Typography.variant('meta'), color: theme.colors.text.secondary },
     chipError: { ...Typography.variant('meta'), color: theme.colors.state.danger.foreground },
     toolsGroup: { paddingTop: 0 },
