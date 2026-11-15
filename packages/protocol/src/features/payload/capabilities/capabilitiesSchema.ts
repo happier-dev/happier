@@ -58,6 +58,7 @@ import {
   ServerIdentityCapabilitiesSchema,
 } from './serverIdentityCapabilities.js';
 import { ServerReleaseCapabilitiesSchema } from './serverReleaseCapabilities.js';
+import { GuestCliIdentityV1Schema } from './guestCliIdentityV1.js';
 import {
   DEFAULT_PETS_CAPABILITIES,
   PetsCapabilitiesSchema,
@@ -105,6 +106,7 @@ export const CapabilitiesSchema = lazyZodSchema(() => z.object({
   server: z._default(z.optional(ServerCapabilitiesSchema), DEFAULT_SERVER_CAPABILITIES),
   serverIdentity: z._default(z.optional(ServerIdentityCapabilitiesSchema), DEFAULT_SERVER_IDENTITY_CAPABILITIES),
   serverRelease: z.optional(ServerReleaseCapabilitiesSchema),
+  guestCli: z.catch(z.optional(GuestCliIdentityV1Schema), undefined),
   machines: z._default(z.optional(z
     .object({
       // Accepted operation representation, not a product/native-readiness gate.

@@ -1,4 +1,4 @@
-import { access, open, stat } from 'node:fs/promises';
+import { access, open, readFile, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { basename, join } from 'node:path';
 import { quoteRemotePathWithHomeExpansion } from '../../ssh/shellQuote.js';
@@ -38,6 +38,7 @@ import { normalizeScpRemotePath } from '../ssh/scpRemotePath.js';
 import { buildRemoteFirstPartyStagingCleanupCommand } from '../ssh/remoteFirstPartyStagingCleanup.js';
 import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from '@happier-dev/protocol/bugs/reports/redaction';
 import { DEFAULT_COMMAND_CAPTURE_MAX_BYTES } from '../../process/commandCaptureBudget.js';
+import { resolveManagedGuestCliSource } from '../ssh/managedGuestCliSupplier.js';
 
 export {
   normalizeRemoteReleaseArch,
@@ -75,6 +76,7 @@ export interface RemoteFirstPartyInstallDeps {
     channel: 'stable' | 'preview' | 'publicdev';
     os: 'linux' | 'darwin';
     arch: 'x64' | 'arm64';
+    versionId?: string;
     userAgent?: string;
   }>) => Promise<PreparedFirstPartyComponentPayload>;
   resolveSelfDownloadInstallPlan?: (params: Readonly<{
@@ -83,6 +85,7 @@ export interface RemoteFirstPartyInstallDeps {
     os: 'linux' | 'darwin';
     arch: 'x64' | 'arm64';
     remoteHomeDir?: string;
+    versionId?: string;
     runRemoteText: Parameters<typeof resolveRemoteSelfDownloadFirstPartyInstallPlan>[0]['runRemoteText'];
   }>) => Promise<RemoteSelfDownloadFirstPartyInstallPlan>;
   now?: () => number;
@@ -103,16 +106,38 @@ function assertRemotePayloadCommandSucceeded(result: RemoteFirstPartyCommandResu
 }
 
 /** Flat payloads remain supported; collections select the guest, never the controller. */
-async function resolveLocalCliPayloadRoot(root: string, target: Readonly<{ os: 'linux' | 'darwin'; arch: 'x64' | 'arm64' }>): Promise<string> {
-  const targetId = `${target.os}-${target.arch}`;
-  let payloadRoot = root;
+async function resolveLocalCliPayloadDirectory(root: string, target: Readonly<{ os: 'linux' | 'darwin'; arch: 'x64' | 'arm64' }>): Promise<string> {
   try {
-    if ((await stat(join(root, targetId))).isDirectory()) payloadRoot = join(root, targetId);
+    const targetRoot = join(root, `${target.os}-${target.arch}`);
+    if ((await stat(targetRoot)).isDirectory()) return targetRoot;
   } catch (error) {
     if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') {
       throw new SystemTaskExecutionError('invalid_payload', 'The local CLI payload could not be read.');
     }
   }
+  return root;
+}
+
+async function readLocalCliPayloadVersion(payloadRoot: string): Promise<string | undefined> {
+  let text: string;
+  try {
+    text = await readFile(join(payloadRoot, 'package.json'), 'utf8');
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined;
+    throw new SystemTaskExecutionError('invalid_payload', 'The local CLI payload version could not be read.', { cause: error });
+  }
+  try {
+    const metadata: unknown = JSON.parse(text);
+    return metadata && typeof metadata === 'object' && 'version' in metadata && typeof metadata.version === 'string'
+      ? metadata.version : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function resolveLocalCliPayloadRoot(root: string, target: Readonly<{ os: 'linux' | 'darwin'; arch: 'x64' | 'arm64' }>): Promise<string> {
+  const targetId = `${target.os}-${target.arch}`;
+  const payloadRoot = await resolveLocalCliPayloadDirectory(root, target);
   const binaryPath = join(payloadRoot, getFirstPartyComponentCatalogEntry('happier-cli').binaryRelativePath);
   let header: Buffer;
   try {
@@ -164,6 +189,7 @@ export async function installRemoteFirstPartyComponent(params: Readonly<{
   remoteHomeDir?: string;
   strategy?: 'scp-upload' | 'remote-self-download';
   requireHomePayload?: boolean;
+  homeUrl?: string;
   signal?: AbortSignal;
   onPhase?(phase: 'prepare' | 'archive' | 'transfer' | 'promote'): void;
 }>, deps: RemoteFirstPartyInstallDeps): Promise<Readonly<{ binaryPath: string; versionId: string; source: string | null }>> {
@@ -187,6 +213,7 @@ export async function installRemoteFirstPartyComponentPayload(
   remoteHomeDir?: string;
   strategy?: 'scp-upload' | 'remote-self-download';
   requireHomePayload?: boolean;
+  homeUrl?: string;
   signal?: AbortSignal;
   onPhase?(phase: 'prepare' | 'archive' | 'transfer' | 'promote'): void;
 }>, 'ssh' | 'knownHostsMode'>,
@@ -199,11 +226,11 @@ export async function installRemoteFirstPartyComponentPayload(
     ...deps,
   } satisfies Required<RemoteFirstPartyPayloadInstallDeps>;
   const channel = normalizeBootstrapReleaseChannel(params.channel);
-  const localCliPayloadRoot = params.componentId === 'happier-cli'
+  let localCliPayloadRoot = params.componentId === 'happier-cli'
     ? String(process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT ?? '').trim()
     : '';
-  if (params.requireHomePayload && !localCliPayloadRoot) {
-    throw new SystemTaskExecutionError('guest_payload_missing', 'This Home has no guest CLI payload to install.');
+  if (params.requireHomePayload && !params.homeUrl) {
+    throw new SystemTaskExecutionError('guest_cli_identity_unavailable', 'Managed installation requires its selected Home URL.');
   }
   const remoteHomeDir = normalizeRemoteFirstPartyHomeDir(params.remoteHomeDir);
   const pruneRemoteVersions = async (): Promise<void> => {
@@ -218,6 +245,21 @@ export async function installRemoteFirstPartyComponentPayload(
   const target = await resolvedDeps.resolveRemoteReleaseTarget({
     ...(params.signal ? { signal: params.signal } : {}),
   });
+  let versionId: string | undefined;
+  if (params.componentId === 'happier-cli' && params.homeUrl) {
+    const localPayloadDirectory = localCliPayloadRoot ? await resolveLocalCliPayloadDirectory(localCliPayloadRoot, target) : undefined;
+    const localPayloadVersion = localPayloadDirectory ? await readLocalCliPayloadVersion(localPayloadDirectory) : undefined;
+    const source = await resolveManagedGuestCliSource({
+      homeUrl: params.homeUrl, channel,
+      binaryPath: resolveRemoteInstalledFirstPartyBinaryPath({ componentId: params.componentId, channel, remoteHomeDir }),
+      runRemoteText: remoteCommand => resolvedDeps.runRemoteText({ remoteCommand, ...(params.signal ? { signal: params.signal } : {}) }),
+      signal: params.signal, localPayloadAvailable: !!localCliPayloadRoot, localPayloadVersion,
+    });
+    if (source.kind === 'public-release') {
+      localCliPayloadRoot = '';
+      versionId = source.versionId;
+    }
+  }
   const rethrowGuestPayloadFailure = (error: unknown): never => {
     if (readAcquisitionFailureCause(error) === 'release_archive_missing') {
       throw new SystemTaskExecutionError('guest_payload_missing', `The selected release has no ${params.componentId} payload for ${target.os}-${target.arch}.`);
@@ -230,6 +272,7 @@ export async function installRemoteFirstPartyComponentPayload(
       channel,
       os: target.os,
       arch: target.arch,
+      ...(versionId ? { versionId } : {}),
       runRemoteText: remoteCommand => resolvedDeps.runRemoteText({ remoteCommand, ...(params.signal ? { signal: params.signal } : {}) }),
       ...(params.remoteHomeDir ? { remoteHomeDir } : {}),
     }).catch(rethrowGuestPayloadFailure);
@@ -262,6 +305,7 @@ export async function installRemoteFirstPartyComponentPayload(
       channel,
       os: target.os,
       arch: target.arch,
+      ...(versionId ? { versionId } : {}),
       userAgent: 'happier-bootstrap',
     }).catch(rethrowGuestPayloadFailure);
   }

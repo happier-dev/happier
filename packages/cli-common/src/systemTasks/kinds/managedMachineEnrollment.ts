@@ -37,6 +37,7 @@ export type ManagedNativeBootstrapIO = Readonly<{
 type NativeTaskOptions = Parameters<typeof createRemoteNativeBootstrapMachineTaskKind>[0];
 export type ManagedNativePayloadInstallation = Readonly<{
   channel: 'stable' | 'preview' | 'dev';
+  homeUrl: string;
   os: 'linux' | 'darwin'; arch: 'x64' | 'arm64'; home: string;
   remoteHomeDir?: string; dedicatedIdentity: boolean;
   resource: ManagedEnrollmentFullCorrelationV1['resource']['value'];
@@ -225,7 +226,7 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
       },
       transport: { exec, install: async placement => {
         const { os, arch, home } = await probeManagedNativeGuestPlatform(exec, signal);
-        const installation = { channel: configuration.channel, signal, os, arch, home,
+        const installation = { channel: configuration.channel, homeUrl: input.target.applicationUrl, signal, os, arch, home,
           remoteHomeDir: placement.remoteHomeDir ?? nativeGuestHome?.happyHomeDir, dedicatedIdentity: !!dedicatedIdentity,
           resource: correlation.resource.value, exec: payloadExec, putFile, bootstrapExec: exec,
           cleanupExec: (request: Parameters<ManagedNativeBootstrapIO['exec']>[0]) => native.exec(request),

@@ -6,10 +6,9 @@ import { buildDedicatedDaemonAccountCommand, DEDICATED_DAEMON_INSTALL_HOME } fro
 
 /** Installation placement is selected once here; platform adapters supply only IO. */
 export type RemoteCliInstallation = Readonly<{
-  requireHomePayload?: boolean;
   remoteHomeDir?: string;
   daemonUsername?: 'happier';
-}>;
+} & ({ requireHomePayload: true; homeUrl: string } | { requireHomePayload?: false; homeUrl?: undefined })>;
 
 export type RemoteCliInstallTransport = Readonly<{
   exec: DedicatedDaemonBootstrapExec;
@@ -39,6 +38,11 @@ export async function installRemoteCli(input: Readonly<{
   }>;
 }>): Promise<void> {
   const { transport, bootstrap } = input;
+  const managedEnrollment = bootstrap?.parsed.managedEnrollment;
+  const homeTarget = bootstrap?.parsed.homeTarget;
+  if (managedEnrollment && !homeTarget) {
+    throw new SystemTaskExecutionError('guest_cli_identity_unavailable', 'Managed installation requires its selected Home URL.');
+  }
   const identity = bootstrap?.parsed.enrollmentIdentity;
   let prepare: ((binaryPath: string) => Promise<void>) | undefined;
   if (bootstrap && identity?.kind === 'dedicatedDaemonUser' && !bootstrap.enrolledMachineId && bootstrap.bootstrapInstalled !== true) {
@@ -69,11 +73,13 @@ export async function installRemoteCli(input: Readonly<{
     }
     if (account.status !== 0) throw new SystemTaskExecutionError('dedicated_identity_unconfirmed', 'The dedicated daemon account could not be prepared.');
   }
+  const sourcePlacement: RemoteCliInstallation = managedEnrollment && homeTarget
+    ? { requireHomePayload: true, homeUrl: homeTarget.applicationUrl } : {};
   const installed = await transport.install({
+    ...sourcePlacement,
     ...(identity?.kind === 'dedicatedDaemonUser' ? {
       remoteHomeDir: DEDICATED_DAEMON_INSTALL_HOME, daemonUsername: 'happier' as const,
     } : {}),
-    ...(bootstrap?.parsed.managedEnrollment ? { requireHomePayload: true } : {}),
   });
   if (prepare) await prepare(installed.binaryPath);
 }

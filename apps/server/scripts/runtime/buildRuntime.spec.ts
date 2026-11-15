@@ -1,11 +1,12 @@
-import { access, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { buildServerRuntime } from './buildRuntime';
+import { buildServerRuntime, bundleServerRuntimeEntrypoints } from './buildRuntime';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const tempDirs: string[] = [];
 
@@ -18,6 +19,22 @@ afterEach(async () => {
 });
 
 describe('buildServerRuntime', () => {
+  it('stamps public guest CLI selection into both published runtime entrypoints', async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), 'happier-server-runtime-identity-'));
+    tempDirs.push(projectDir);
+    await mkdir(join(projectDir, 'sources'));
+    await writeFile(join(projectDir, 'package.json'), JSON.stringify({ type: 'module' }));
+    await writeFile(join(projectDir, 'tsconfig.json'), '{}');
+    await symlink(fileURLToPath(new URL('../../node_modules', import.meta.url)), join(projectDir, 'node_modules'), 'junction');
+    for (const name of ['main.ts', 'main.light.ts']) {
+      await writeFile(join(projectDir, 'sources', name), 'export const source = typeof __HAPPIER_GUEST_CLI_SOURCE__ === "undefined" ? null : __HAPPIER_GUEST_CLI_SOURCE__;');
+    }
+    const outDir = join(projectDir, 'out');
+    await bundleServerRuntimeEntrypoints({ projectDir, outDir });
+    for (const name of ['main.js', 'main.light.js']) {
+      expect((await import(/* @vite-ignore */ pathToFileURL(join(outDir, name)).href)).source).toBe('public-release');
+    }
+  });
   it('emits full and light runtime entrypoints', async () => {
     const outDir = await mkdtemp(join(tmpdir(), 'happier-server-runtime-build-'));
     tempDirs.push(outDir);

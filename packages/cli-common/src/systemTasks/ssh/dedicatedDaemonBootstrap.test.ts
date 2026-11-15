@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { ManagedMachineEnrollmentIdentityV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedEnrollmentCorrelationV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { checkMachineSetupEffectPlan, applyMachineSetupEffectPlans, createMachineSetupEffectPlan, type MachineSetupBackend, type MachineSetupStepObservationV1 } from '../../machineSetup/index.js';
 import * as bootstrap from '../nativeRemoteSshBootstrap.js';
@@ -14,6 +15,20 @@ import { DEDICATED_DAEMON_INSTALL_HOME } from './remoteBootstrapCommandBuilder.j
 import { installRemoteCli } from './installRemoteCli.js';
 
 describe('portable dedicated daemon bootstrap', () => {
+  it('refuses managed installation without its Home before touching the guest', async () => {
+    const managedEnrollment = ManagedEnrollmentCorrelationV1Schema.parse({ homeId: 'srv_managed_home', managedId: 'managed-1', requestId: 'request-1', expectedIntentRevision: 1,
+      controller: { machineId: 'controller-1', installationId: 'installation-1' } });
+    let guestTouched = false;
+    await expect(installRemoteCli({ channel: 'stable', bootstrap: {
+      parsed: { relay: { relayUrl: 'https://home.example' }, managedEnrollment },
+      createPromptId: () => 'unused',
+    }, transport: {
+      install: async () => { guestTouched = true; return { binaryPath: '/guest/happier' }; },
+      exec: async () => { guestTouched = true; return { status: 0, stdout: '', stderr: '' }; },
+    } })).rejects.toMatchObject({ code: 'guest_cli_identity_unavailable' });
+    expect(guestTouched).toBe(false);
+  });
+
   it.skipIf(process.platform === 'win32').each(['systemctl', 'loginctl', 'runuser'])('reports an unsupported guest before account creation when %s is absent', async missing => {
     const directory = await mkdtemp(join(tmpdir(), 'mach-devc-identity-'));
     try {

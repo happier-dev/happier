@@ -50,10 +50,13 @@ The table below covers all user-facing released assets and how updates work.
 ## Provisioned guest machines (0.3 development)
 
 Update and Retry install use the guest CLI supplied by the connected Home, through
-the same installer used when creating the machine. They keep the guest on that
-Home's build even when a public release channel points to an older version.
-If the Home cannot supply its guest payload, the update refuses with
-`guest_payload_missing`. Make that payload available on the Home, then retry.
+the same installer used when creating the machine. Development Homes use their
+own guest payload. Released Homes select the newest signed public CLI on their
+release line, such as `0.3.x`, and install that exact version. Updates refuse to
+cross release lines or replace an installed CLI with an older version.
+If a development Home's guest payload is unavailable, choose a connected
+controller with that payload, then retry. An older Home that does not advertise
+its guest CLI source must be updated before managed installation can continue.
 An older guest that cannot provide diagnostic reports returns
 `guest_cli_incompatible` when inspected; use Retry install to replace its CLI.
 

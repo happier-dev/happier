@@ -81,6 +81,8 @@ export {
   resolveFirstPartyComponentRelease,
 } from './prepareFirstPartyComponentPayloadFromGitHubRelease.js';
 export type { ResolvedFirstPartyComponentRelease } from './prepareFirstPartyComponentPayloadFromGitHubRelease.js';
+export { assertManagedGuestCliVersion, ManagedGuestCliReleaseError, resolveManagedGuestCliRelease } from './resolveManagedGuestCliRelease.js';
+export type { ManagedGuestCliReleaseErrorCode } from './resolveManagedGuestCliRelease.js';
 export type {
   FirstPartyReleaseArtifactSource,
   PreparedFirstPartyComponentPayload,

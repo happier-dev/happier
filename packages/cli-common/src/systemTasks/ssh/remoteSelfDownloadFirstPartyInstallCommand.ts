@@ -134,6 +134,8 @@ export function buildRemoteSelfDownloadFirstPartyInstallCommand(params: Readonly
 export async function resolveRemoteSelfDownloadFirstPartyInstallPlan(params: Readonly<{
   componentId: FirstPartyComponentId;
   channel?: string;
+  /** An admitted exact version uses its immutable component release tag. */
+  versionId?: string;
   os: 'linux' | 'darwin';
   arch: 'x64' | 'arm64';
   githubRepo?: string;
@@ -157,7 +159,7 @@ export async function resolveRemoteSelfDownloadFirstPartyInstallPlan(params: Rea
   const release = await fetchGitHubReleaseByTag({
     githubRepo,
     githubToken,
-    tag: variant.releaseTag,
+    tag: params.versionId ? `${component.rollingReleasePrefix}-v${params.versionId}` : variant.releaseTag,
     userAgent,
     transientNotFoundAttempts: 1,
     fetchImpl: params.fetchImpl ?? globalThis.fetch,
@@ -174,6 +176,9 @@ export async function resolveRemoteSelfDownloadFirstPartyInstallPlan(params: Rea
     arch: params.arch,
     preferZipOnWindows: false,
   });
+  if (params.versionId && bundle.version !== params.versionId) {
+    throw new SystemTaskExecutionError('guest_payload_missing', 'The selected guest CLI release does not contain the exact requested version.');
+  }
   const checksumsText = await readRemoteReleaseTextAsset({
     url: bundle.checksums.url,
     runRemoteText: params.runRemoteText,

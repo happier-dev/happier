@@ -1,13 +1,21 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NativeSshExecRequest, NativeSshModule } from '@happier-dev/ssh-native';
 import { computeSshHostKeyFingerprint } from '@happier-dev/protocol/ssh/hostTrust';
+import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 
 import { runNativeRemoteSshBootstrapTask } from './nativeTask';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+
+afterEach(() => { resetRuntimeFetch(); vi.unstubAllEnvs(); });
 
 const HOST_KEY = '[guest.example]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
 const OTHER_HOST_KEY = '[guest.example]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC';
 const fingerprint = (line: string) => computeSshHostKeyFingerprint(line.split(' ')[2]!);
 const INSTALL_COMMAND = 'install verified native CLI';
+const MANAGED_HOME_TARGET = resolveHomeTargetFromDescriptor({ authority: 'trusted_enrollment', descriptor: {
+    v: 1, homeServerIdentityId: 'srv_home', canonicalServerUrl: 'https://home.example', revision: 1,
+    endpoints: [{ kind: 'https', url: 'https://home.example' }],
+} });
 
 function createSpec(ssh: Record<string, unknown> = {}) {
     return {
@@ -37,6 +45,14 @@ function createNativeBoundary(input: Readonly<{ actualFingerprint?: string; fail
             if (request.command.includes('uname -s')) {
                 return { exitCode: 0, stdout: JSON.stringify({ platform: 'linux', arch: 'x86_64' }), stderr: '' };
             }
+            if (request.command.includes('managed_guest_cli_absent')) {
+                return { exitCode: 0, stdout: 'managed_guest_cli_absent\n', stderr: '' };
+            }
+            if (request.command.includes('download ') && request.command.includes('checksums.txt')) {
+                phases.push('integrity-read');
+                return { exitCode: 0, stdout: request.command.includes('.minisig') ? 'invalid signature'
+                    : `${'c'.repeat(64)}  happier-v0.3.4-linux-x64.tar.gz\n`, stderr: '' };
+            }
             if (request.command.includes('for version_path in')) {
                 return { exitCode: 0, stdout: 'current=\nprevious=\n', stderr: '' };
             }
@@ -59,11 +75,12 @@ const resolveInstallPlan = async () => ({ binaryPath: '$HOME/.happier/cli/curren
 
 describe('native SSH bootstrap host pinning', () => {
     it('refuses a managed guest when native SSH cannot transfer the Home payload', async () => {
+        setRuntimeFetch(async () => Response.json({ capabilities: { guestCli: { source: 'home-payload', line: '0.3' } } }));
         const boundary = createNativeBoundary();
         const spec = createSpec({ trustedHostKey: HOST_KEY });
         let publicResolutions = 0;
         await expect(runNativeRemoteSshBootstrapTask({ taskId: 'managed-home-payload', ...boundary,
-            spec: { ...spec, params: { ...spec.params, managedEnrollment: {
+            spec: { ...spec, params: { ...spec.params, homeTarget: MANAGED_HOME_TARGET, managedEnrollment: {
                 homeId: 'srv_home', managedId: 'managed', requestId: 'request', expectedIntentRevision: 1,
                 controller: { machineId: 'controller', installationId: 'installation' },
                 resource: { contributionRef: { pluginId: 'test.provisioner', localId: 'vm' }, schemaVersion: 1, value: { nativeId: 'guest' } },
@@ -72,6 +89,37 @@ describe('native SSH bootstrap host pinning', () => {
         })).rejects.toMatchObject({ code: 'guest_payload_missing' });
         expect(publicResolutions).toBe(0);
         expect(boundary.phases).not.toContain('install');
+    });
+
+    it('uses the selected Home public supplier and verifies its exact release before managed SSH enrollment', async () => {
+        const boundary = createNativeBoundary();
+        const spec = createSpec({ trustedHostKey: HOST_KEY });
+        const releaseRequests: string[] = [];
+        vi.stubEnv('HAPPIER_FIRST_PARTY_RELEASE_TOKEN', 'synthetic-test-credential');
+        setRuntimeFetch(async url => {
+            if (String(url) === 'https://home.example/v1/features') {
+                return Response.json({ capabilities: { guestCli: { source: 'public-release', line: '0.3' } } });
+            }
+            releaseRequests.push(String(url));
+            const release = { tag_name: 'cli-v0.3.4', draft: false, prerelease: false, assets: [
+                { name: 'checksums-happier-v0.3.4.txt', browser_download_url: 'https://downloads.example/checksums.txt' },
+                { name: 'checksums-happier-v0.3.4.txt.minisig', browser_download_url: 'https://downloads.example/checksums.txt.minisig' },
+                { name: 'happier-v0.3.4-linux-x64.tar.gz', browser_download_url: 'https://downloads.example/cli.tar.gz' },
+            ] };
+            return Response.json(String(url).includes('/releases/tags/') ? release : [release]);
+        });
+        const approveLocalAuthRequest = vi.fn(async () => undefined);
+        await expect(runNativeRemoteSshBootstrapTask({ taskId: 'managed-public-supplier', ...boundary,
+            spec: { ...spec, params: { ...spec.params, homeTarget: MANAGED_HOME_TARGET, managedEnrollment: {
+                homeId: 'srv_home', managedId: 'managed', requestId: 'request', expectedIntentRevision: 1,
+                controller: { machineId: 'controller', installationId: 'installation' },
+                resource: { contributionRef: { pluginId: 'test.provisioner', localId: 'vm' }, schemaVersion: 1, value: { nativeId: 'guest' } },
+            } } },
+            approveLocalAuthRequest,
+        })).rejects.toThrow('signature verification failed');
+        expect(releaseRequests.some(url => url.endsWith('/releases/tags/cli-v0.3.4'))).toBe(true);
+        expect(boundary.phases).toEqual(['integrity-read', 'integrity-read']);
+        expect(approveLocalAuthRequest).not.toHaveBeenCalled();
     });
 
     it.each([false, true])('pins every native command before installation and enrollment (provider evidence: %s)', async withEvidence => {

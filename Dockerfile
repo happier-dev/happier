@@ -257,6 +257,7 @@ CMD ["node", "/repo/node_modules/next/dist/bin/next", "start"]
 
 # Server
 FROM deps-debian AS server-builder
+ENV HAPPIER_BUILD_GUEST_CLI_SOURCE=public-release
 ARG HAPPIER_EMBEDDED_POLICY_ENV=preview
 ARG HAPPIER_BUILD_DB_PROVIDERS=""
 ENV HAPPIER_BUILD_DB_PROVIDERS=$HAPPIER_BUILD_DB_PROVIDERS

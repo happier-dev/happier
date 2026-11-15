@@ -242,6 +242,7 @@ export {
 } from './features/payload/capabilities/sessionCapabilities.js';
 
 export { CapabilitiesSchema, type Capabilities } from './features/payload/capabilities/capabilitiesSchema.js';
+export { GuestCliIdentityV1Schema, type GuestCliIdentityV1 } from './features/payload/capabilities/guestCliIdentityV1.js';
 export {
   HomeSearchCapabilitiesSchema,
   type HomeSearchCapabilities,

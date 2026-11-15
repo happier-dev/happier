@@ -1,5 +1,24 @@
 # Compatibility and version skew
 
+## Home guest CLI source (unreleased 0.3)
+
+`/v1/features` advertises optional `capabilities.guestCli` with the closed identity
+`{ source: 'home-payload' | 'public-release', line: 'major.minor' }`. This selects
+installation artifacts; it is independent of feature enablement and the server's
+diagnostic package version. The current program line is explicitly `0.3`.
+Development source builds select Home payloads; released server binaries and
+Docker images select public releases. Updated managed installers require this
+identity, choose the newest published CLI on its line through exact signed
+acquisition, and refuse an installed-version downgrade. Missing or malformed
+identity refuses with `guest_cli_identity_unavailable`, including on an older
+Home that has not gained the producer; no version-based fallback is inferred.
+
+The capability root is additive: released 0.2 readers discard the unknown family.
+The new identity itself is closed because its source and line select executable
+artifacts. Matching 0.3 server and controller/app consumers must reload together;
+this adds no persisted state, migration, endpoint or SDK epoch.
+
+
 ## Managed guest Home network context (unreleased 0.3)
 
 Local provisioner `guestHome` input optionally carries closed `hostIdentity`

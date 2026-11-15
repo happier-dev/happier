@@ -45,16 +45,18 @@ async function extractTarFixture(params: Readonly<{ archivePath: string }>): Pro
 describe('installRemoteFirstPartyComponent', () => {
   afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
-  it('refuses a Home-managed CLI install without its Home payload instead of resolving public latest', async () => {
-    vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', '');
-    let publicResolutions = 0;
-    await expect(installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli', requireHomePayload: true }, {
-      resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
-      preparePayload: async () => { publicResolutions++; throw new Error('public latest is 0.2.20'); },
-      runRemoteText: async () => ({ status: 0, stdout: '', stderr: '' }),
-      copyLocalDirectoryToRemote: async () => {},
-    })).rejects.toMatchObject({ code: 'guest_payload_missing' });
-    expect(publicResolutions).toBe(0);
+  it.each([false, true])('refuses managed delivery without its selected Home URL (local payload: %s)', async localPayloadAvailable => {
+    const fixture = await createPayloadRootFixture();
+    let guestTouched = false;
+    try {
+      vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', localPayloadAvailable ? fixture.payloadRoot : '');
+      await expect(installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli', requireHomePayload: true }, {
+        resolveRemoteReleaseTarget: async () => { guestTouched = true; return { os: 'linux', arch: 'x64' }; },
+        runRemoteText: async () => { guestTouched = true; return { status: 0, stdout: '', stderr: '' }; },
+        copyLocalDirectoryToRemote: async () => { guestTouched = true; },
+      })).rejects.toMatchObject({ code: 'guest_cli_identity_unavailable' });
+      expect(guestTouched).toBe(false);
+    } finally { await fixture.cleanup(); }
   });
 
   it('delivers the Home development payload instead of the older public release', async () => {
@@ -63,10 +65,11 @@ describe('installRemoteFirstPartyComponent', () => {
     try {
       await writeFile(join(fixture.payloadRoot, 'home-build.json'), JSON.stringify({ version: '0.3.0-dev' }));
       vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', fixture.payloadRoot);
-      const installed = await installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli', requireHomePayload: true }, {
+      vi.stubGlobal('fetch', async () => Response.json({ capabilities: { guestCli: { source: 'home-payload', line: '0.3' } } }));
+      const installed = await installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli', homeUrl: 'https://home.example', requireHomePayload: true }, {
         resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
         preparePayload: async () => { throw new Error('Public latest 0.2.20 must never be selected'); },
-        runRemoteText: async () => ({ status: 0, stdout: '', stderr: '' }),
+        runRemoteText: async ({ remoteCommand }) => ({ status: 0, stdout: remoteCommand.includes('--version') ? 'managed_guest_cli_absent\n' : '', stderr: '' }),
         copyLocalDirectoryToRemote: async ({ localPath }) => {
           const extracted = await extractTarFixture({ archivePath: join(localPath, 'payload-root.tar.gz') });
           try {
@@ -79,6 +82,65 @@ describe('installRemoteFirstPartyComponent', () => {
       expect(installed.source).toContain('local-payload:');
       expect(delivered).toBe(true);
     } finally { await fixture.cleanup(); }
+  });
+
+  it('refuses to replace a newer managed guest CLI with an older Home payload', async () => {
+    const fixture = await createPayloadRootFixture();
+    let delivered = false;
+    try {
+      await writeFile(join(fixture.payloadRoot, 'package.json'), JSON.stringify({ version: '0.2.10' }));
+      vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', fixture.payloadRoot);
+      // Home HTTP and guest command execution are the external boundaries.
+      vi.stubGlobal('fetch', async () => Response.json({ capabilities: { guestCli: { source: 'home-payload', line: '0.3' } } }));
+      await expect(installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli', homeUrl: 'https://home.example', requireHomePayload: true }, {
+        resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+        runRemoteText: async ({ remoteCommand }) => ({ status: 0, stdout: remoteCommand.includes('--version') ? '0.3.3\n' : '', stderr: '' }),
+        copyLocalDirectoryToRemote: async () => { delivered = true; },
+      })).rejects.toMatchObject({ code: 'managed_guest_cli_release_downgrade' });
+      expect(delivered).toBe(false);
+    } finally { await fixture.cleanup(); }
+  });
+
+  it('delivers a fresh Home development payload even when its package version predates the Home line', async () => {
+    const fixture = await createPayloadRootFixture();
+    let delivered = false;
+    try {
+      await writeFile(join(fixture.payloadRoot, 'package.json'), JSON.stringify({ version: '0.2.10' }));
+      vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', fixture.payloadRoot);
+      vi.stubGlobal('fetch', async () => Response.json({ capabilities: { guestCli: { source: 'home-payload', line: '0.3' } } }));
+      const installed = await installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli', homeUrl: 'https://home.example', requireHomePayload: true }, {
+        resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+        runRemoteText: async ({ remoteCommand }) => ({ status: 0, stdout: remoteCommand.includes('--version') ? 'managed_guest_cli_absent\n' : '', stderr: '' }),
+        copyLocalDirectoryToRemote: async () => { delivered = true; },
+      });
+      expect(installed.source).toContain('local-payload:');
+      expect(delivered).toBe(true);
+    } finally { await fixture.cleanup(); }
+  });
+
+  it('uses the public Home source despite a controller development payload and retains release lookup failures', async () => {
+    const fixture = await createPayloadRootFixture();
+    const server = createServer((_request, response) => { response.setHeader('content-type', 'application/json'); response.end('[]'); });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    let delivered = false;
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Expected a release mirror listener');
+      vi.stubEnv('NODE_ENV', 'development');
+      vi.stubEnv('HAPPIER_FIRST_PARTY_RELEASE_API_BASE_URL', `http://127.0.0.1:${address.port}`);
+      vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', fixture.payloadRoot);
+      vi.stubGlobal('fetch', async () => Response.json({ capabilities: { guestCli: { source: 'public-release', line: '0.3' } } }));
+      await expect(installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli', homeUrl: 'https://home.example', requireHomePayload: true }, {
+        resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+        runRemoteText: async ({ remoteCommand }) => ({ status: 0, stdout: remoteCommand.includes('--version') ? 'managed_guest_cli_absent\n' : '', stderr: '' }),
+        copyLocalDirectoryToRemote: async () => { delivered = true; },
+      })).rejects.toMatchObject({ code: 'managed_guest_cli_release_unavailable' });
+      expect(delivered).toBe(false);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+      await fixture.cleanup();
+    }
   });
 
   it('archives a full-size installed payload without requiring a second uncompressed copy', async () => {

@@ -1,4 +1,18 @@
 import packageJson from '../../../package.json' with { type: 'json' };
+import type { GuestCliIdentityV1 } from '@happier-dev/protocol/features/payload/capabilities/guestCliIdentityV1';
+
+declare const __HAPPIER_GUEST_CLI_SOURCE__: GuestCliIdentityV1['source'];
+
+/** The source program's line is explicit: unreleased package stamps can still say 0.2. */
+const GUEST_CLI_LINE = '0.3';
+
+/** Build producers select the guest artifact family; direct source runs serve Home payloads. */
+export function readServerGuestCliIdentity(): GuestCliIdentityV1 {
+    return {
+        source: typeof __HAPPIER_GUEST_CLI_SOURCE__ === 'undefined' ? 'home-payload' : __HAPPIER_GUEST_CLI_SOURCE__,
+        line: GUEST_CLI_LINE,
+    };
+}
 
 /**
  * The release version of the running server binary (plan `2026-09-26-home-owner-console` §3.7).

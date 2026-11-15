@@ -6,7 +6,7 @@ import {
     resolveConfiguredCanonicalServerUrl,
     resolveEffectiveWebappUrl,
 } from "../serverUrls/effectiveServerUrls";
-import { readServerReleaseVersion } from "../runtime/serverRelease";
+import { readServerGuestCliIdentity, readServerReleaseVersion } from "../runtime/serverRelease";
 
 /**
  * `capabilities.server`: the addresses clients use; `capabilities.serverRelease`: diagnostic facts about
@@ -29,12 +29,9 @@ export function resolveServerUrlCapabilitiesFeature(
         ...(version ? { version } : null),
         ...(releaseFlavor ? { flavor: releaseFlavor } : null),
     };
-    if (Object.keys(server).length === 0 && Object.keys(serverRelease).length === 0) {
-        return {};
-    }
-
     return {
         capabilities: {
+            guestCli: readServerGuestCliIdentity(),
             ...(Object.keys(server).length > 0 ? { server } : null),
             // Its own family: released readers parse `capabilities.server` strictly (see
             // `serverReleaseCapabilities.ts` in protocol).

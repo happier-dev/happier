@@ -68,7 +68,7 @@ describe('portable managed enrollment', () => {
           adminAccessAtCreation, ...(adminAccessAtCreation === 'ask' ? { administrator: { username: 'operator' } } : {}) } } : {}),
         ...(requesterEnrollment ? { enrollmentAccountId: 'requester-account' } : {}) }; },
       createPromptId: () => 'prompt',
-      installNativePayload: async input => { phases.push('install'); expect(input).toMatchObject({ os: 'linux', arch: 'x64', home: '/home/guest' });
+      installNativePayload: async input => { phases.push('install'); expect(input).toMatchObject({ os: 'linux', arch: 'x64', home: '/home/guest', homeUrl: target.applicationUrl });
         return { binaryPath: '/home/guest/.happier/cli/current/happier' }; },
       native: { putFile: async () => {}, exec: async ({ command }) => {
         commands.push(command);

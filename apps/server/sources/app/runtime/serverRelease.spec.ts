@@ -1,0 +1,25 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import { build } from 'esbuild';
+import { expect, it } from 'vitest';
+
+it('publishes the build-selected guest CLI source and explicit development line', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-guest-cli-identity-'));
+    try {
+        for (const source of ['home-payload', 'public-release']) {
+            const outfile = join(root, `${source}.mjs`);
+            await build({
+                entryPoints: [fileURLToPath(new URL('./serverRelease.ts', import.meta.url))],
+                outfile, bundle: true, platform: 'node', format: 'esm',
+                define: { __HAPPIER_GUEST_CLI_SOURCE__: JSON.stringify(source) },
+            });
+            const runtime = await import(/* @vite-ignore */ pathToFileURL(outfile).href);
+            expect(runtime.readServerGuestCliIdentity()).toEqual({ source, line: '0.3' });
+        }
+    } finally {
+        await rm(root, { recursive: true, force: true });
+    }
+});

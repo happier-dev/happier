@@ -2,6 +2,7 @@ import {
     SystemTaskExecutionError,
     runManagedMachineEnrollment,
     projectManagedMachineBootstrapPrompt,
+    installManagedGuestCliViaRemoteDownload,
     type ManagedMachineEnrollmentInput,
     type ManagedMachineEnrollmentDependencies,
 } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
@@ -16,6 +17,7 @@ import { approveNativeLocalAuthRequest } from '@/components/systemTasks/remoteSs
 import { createUiManagedAccountSshTask } from './managedMachineAccountSsh';
 import { answerSshSystemTaskPrompt } from '@/components/systemTasks/ssh/answerSshSystemTaskPrompt';
 import { answerManagedCreationEstablish } from '@/components/settings/machines/managed/managedCreationPrompt';
+import { runtimeFetch } from '@/utils/system/runtimeFetch';
 
 export type UiManagedMachineEnrollmentInput = ManagedMachineEnrollmentInput & Readonly<{
     credentials: AuthCredentials;
@@ -63,6 +65,11 @@ export async function runUiManagedMachineEnrollment(input: UiManagedMachineEnrol
     };
     return await runManagedMachineEnrollment({ ...input, reviewedChild: input.context.hostReviewedChild }, {
         ...deps,
+        installNativePayload: deps.installNativePayload ?? (installation => installManagedGuestCliViaRemoteDownload({
+            homeUrl: installation.homeUrl, channel: installation.channel, os: installation.os, arch: installation.arch,
+            remoteHomeDir: installation.remoteHomeDir, signal: installation.signal, fetchImpl: runtimeFetch,
+            runRemoteText: command => installation.exec({ command, signal: installation.signal }),
+        })),
         ...(deps.readBootstrapCredential ? { runSshTask: createUiManagedAccountSshTask({
             credentials: input.credentials, readBootstrapCredential: deps.readBootstrapCredential,
             onInstalled: input.onInstalled, prompt, signal: input.signal,

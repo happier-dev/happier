@@ -301,13 +301,17 @@ remains supported. Native ELF and Mach-O entrypoints must match the guest ABI;
 explicit operator scripts run through the guest's interpreter. The shared payload installer consumes
 this input for managed native, managed SSH and SSH setup, using the same archive,
 delivery and promotion path. A bad local payload fails with `invalid_payload`
-instead of falling back to a release. Current managed acquire, repair and Update require
-this controller-local payload; without it they report `guest_payload_missing`.
-This restriction does not establish a production distribution contract: the
-released server payload builder stages the server and its runtime support, not
-guest CLI artifacts. Server Docker images likewise build the server source
-runtime. Neither path supplies the controller payload-root input. Standalone SSH
-setup retains normal verified release acquisition. A missing target executable or release archive reports
+instead of falling back to a release. Managed acquire, repair and Update read the
+Home's explicit `capabilities.guestCli` identity through the shared supplier.
+`source: 'home-payload'` selects this controller-local payload and reports
+`guest_payload_missing` when unavailable. The released server artifact and Docker
+image advertise `source: 'public-release'`; they need no embedded guest archive.
+That source selects the newest published signed CLI in the advertised major.minor
+`line`, then acquires its exact immutable version. A rolling channel or controller
+version cannot choose a different line. Before either source promotes a payload,
+the supplier reads an existing guest CLI's version and refuses a downgrade; an
+unreadable installed version refuses instead of being treated as absent.
+Standalone SSH setup retains its own verified release acquisition contract. A missing target executable or release archive reports
 `guest_payload_missing` during installation, and a mismatched native executable
 reports `guest_architecture_unsupported`, before upload or guest mutation.
 Build the directory through the existing
@@ -335,27 +339,22 @@ installer, independently of its private daemon home. Interpreter failures retain
 only phase, exit, response classification and safe result reason in current
 operation diagnostics, never native output or administrator input.
 
-Release acquisition already supports an exact CLI `versionId` through
-`resolveFirstPartyComponentRelease`, including signed checksum verification and
-asset-version equality. Managed enrollment does not yet carry that identity.
-The Home's advertised `capabilities.serverRelease.version` is the server package
-version, not a guest CLI release binding; release workflows select server and CLI
-versions separately, and source development can retain a released package version.
-A supplier must therefore consume an explicit Home-selected CLI artifact identity
-before using a public artifact. A server version, controller version or rolling
-channel alone cannot establish the required target or prevent a downgrade.
-The release-Home fallback and its Account-native consumer remain unresolved;
-`guest_payload_missing` is the current limitation, not proof that release Homes
-provide a payload export.
+The Home's guest identity is produced by its existing release/capabilities owner,
+independently of diagnostic `capabilities.serverRelease.version`. The current
+source program explicitly declares line `0.3`, even while development package
+versions retain `0.2.10`. Stack source builds advertise `home-payload`; release
+binary, standalone server bundle and Docker producers stamp `public-release`.
+Older Homes without a valid identity report `guest_cli_identity_unavailable`;
+the supplier does not infer a release line from their package version.
 
-The invoking UI's Account-native enrollment currently has no default Home-payload
-supplier. Its native guest exec/file adapters can deliver bytes, but cannot read
-the controller's local payload root; native SSH's self-download path likewise has
-no Home artifact export to consume. Both paths retain `guest_payload_missing`
-rather than selecting a public channel, and direct the user to choose a connected
-controller for installation. Supporting direct app delivery requires a Home payload
-export consumed by the same enrollment installer, including a decision about
-controllerless Account execution; no such export is provided by this contract.
+The invoking UI's Account-native and native SSH enrollment use the same source
+and version decision. For `public-release`, the existing signed installer runs
+on the guest and requires no controller-local filesystem access. For
+`home-payload`, an app without access to the payload reports `guest_payload_missing`
+and directs the person to a connected controller. Both transports retain the
+existing signed checksum verification, exact archive-version check and ordinary
+Home enrollment lifecycle. Public acquisition reports typed unavailable,
+line-mismatch, invalid-version or downgrade refusals through the operation.
 Add Machine's command handoff makes the same refusal for a Stack-configured Home
 (`stack-env` profile source), on POSIX and Windows, instead of emitting a public
 development-channel installer. Native task execution remains available through

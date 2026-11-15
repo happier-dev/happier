@@ -29,7 +29,9 @@ describe('remote self-download first-party installer command', () => {
       message: expect.stringContaining('Try again after') });
   });
 
-  it.each([null, 302, 307])('resolves signed checksums through the guest when controller asset fetch lacks CORS, metadata redirect %s', async (status) => {
+  it.each([
+    { status: null }, { status: 302 }, { status: 307 }, { status: null, versionId: '1.2.3' },
+  ])('resolves signed checksums through the guest without controller asset CORS ($status, $versionId)', async ({ status, versionId }) => {
     const checksums = `${'c'.repeat(64)}  happier-v1.2.3-linux-x64.tar.gz\n`;
     const { publicKey, privateKey } = generateKeyPairSync('ed25519');
     const prefix = Buffer.from('45640000000000000000', 'hex');
@@ -62,13 +64,16 @@ describe('remote self-download first-party installer command', () => {
       const address = server.address();
       if (!address || typeof address === 'string') throw new Error('Expected an HTTP listener');
       const origin = `http://127.0.0.1:${address.port}`;
+      const requestedMetadata: string[] = [];
       const fetchImpl: typeof fetch = async (url, init) => {
         if (String(url).includes('/checksums.txt')) throw new TypeError('Asset download blocked by CORS');
+        requestedMetadata.push(String(url));
         return await fetch(String(url).startsWith('https://api.github.com/')
           ? `http://127.0.0.1:${address.port}/release` : url, init);
       };
       const plan = await resolveRemoteSelfDownloadFirstPartyInstallPlan({
         componentId: 'happier-cli', os: 'linux', arch: 'x64', githubToken: 'synthetic-test-credential', fetchImpl, minisignPublicKey,
+        ...(versionId ? { versionId } : {}),
         // Guest command IO is an external boundary; model its HTTP download without controller CORS.
         runRemoteText: async command => {
           const url = command.includes('/checksums.txt.minisig') ? `${origin}/checksums.txt.minisig` : `${origin}/checksums.txt`;
@@ -77,6 +82,7 @@ describe('remote self-download first-party installer command', () => {
         },
       });
       expect(plan.versionId).toBe('1.2.3');
+      expect(requestedMetadata[0]).toBe(`https://api.github.com/repos/happier-dev/happier/releases/tags/${versionId ? 'cli-v1.2.3' : 'cli-stable'}`);
       expect(credentialsByPath).toEqual([
         { path: '/release', credentialPresent: true },
         ...(status === null ? [] : [{ path: '/release-complete', credentialPresent: false }]),
@@ -87,6 +93,20 @@ describe('remote self-download first-party installer command', () => {
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
+  });
+
+  it('refuses a release whose archive differs from the exact selected version before guest download', async () => {
+    let guestCommands = 0;
+    await expect(resolveRemoteSelfDownloadFirstPartyInstallPlan({
+      componentId: 'happier-cli', os: 'linux', arch: 'x64', versionId: '0.3.4',
+      fetchImpl: async () => Response.json({ assets: [
+        { name: 'checksums-happier-v0.2.20.txt', browser_download_url: 'https://downloads.example/checksums.txt' },
+        { name: 'checksums-happier-v0.2.20.txt.minisig', browser_download_url: 'https://downloads.example/checksums.txt.minisig' },
+        { name: 'happier-v0.2.20-linux-x64.tar.gz', browser_download_url: 'https://downloads.example/cli.tar.gz' },
+      ] }),
+      runRemoteText: async () => { guestCommands++; return { status: 0, stdout: '', stderr: '' }; },
+    })).rejects.toMatchObject({ code: 'guest_payload_missing' });
+    expect(guestCommands).toBe(0);
   });
 
   it('builds an install command that verifies a locally resolved checksum without remote minisign', async () => {

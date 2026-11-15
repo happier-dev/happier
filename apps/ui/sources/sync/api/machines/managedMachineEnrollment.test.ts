@@ -20,7 +20,7 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { runUiManagedMachineEnrollment } from './managedMachineEnrollment';
 
 installApprovalCommonModuleMocks();
-afterEach(() => { resetRuntimeFetch(); vi.restoreAllMocks(); });
+afterEach(() => { resetRuntimeFetch(); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 describe('app managed enrollment', () => {
     it.each([
@@ -28,7 +28,11 @@ describe('app managed enrollment', () => {
         { mode: 'plain', review: 'forged', snapshot: 'full' },
         { mode: 'plain', review: 'mismatched', snapshot: 'full' },
         { mode: 'e2ee', review: 'matching', snapshot: 'opaque' },
-    ] as const)('uses ordinary $mode Account pairing for the $snapshot snapshot only under the $review creation review', async ({ mode, review, snapshot }) => {
+        { mode: 'plain', review: 'matching', snapshot: 'full', supplier: 'public-invalid-signature' },
+    ] as const)('uses ordinary $mode Account pairing for the $snapshot snapshot only under the $review creation review ($supplier)', async scenario => {
+        const { mode, review, snapshot } = scenario;
+        const publicSupplier = 'supplier' in scenario;
+        if (publicSupplier) vi.stubEnv('HAPPIER_FIRST_PARTY_RELEASE_TOKEN', 'synthetic-test-credential');
         const homeId = `srv_app_native_${mode}`;
         const serverUrl = `https://app-native-${mode}.example.test`;
         const lifetime = new AbortController();
@@ -67,15 +71,30 @@ describe('app managed enrollment', () => {
             homeServerIdentityId: homeId, machineId: 'joined', encryptionType: mode === 'plain' ? 'tokenOnly' : 'dataKey',
             pairingAuthentication: 'v3', remoteProfileId: 'guest-home' };
         const approvalKinds: unknown[] = [];
+        const releaseRequests: string[] = [];
+        let integrityReads = 0;
         setRuntimeFetch(async (url, init) => {
+            if (String(url).startsWith('https://api.github.com/')) {
+                releaseRequests.push(String(url));
+                const release = { tag_name: 'cli-v0.3.4', draft: false, prerelease: false, assets: [
+                    { name: 'checksums-happier-v0.3.4.txt', browser_download_url: 'https://downloads.example/checksums.txt' },
+                    { name: 'checksums-happier-v0.3.4.txt.minisig', browser_download_url: 'https://downloads.example/checksums.txt.minisig' },
+                    { name: 'happier-v0.3.4-linux-x64.tar.gz', browser_download_url: 'https://downloads.example/cli.tar.gz' },
+                ] };
+                return Response.json(String(url).includes('/releases/tags/') ? release : [release]);
+            }
             expect(new URL(String(url)).origin).toBe(serverUrl);
             const path = new URL(String(url)).pathname;
             if (path === '/health' || path === '/v1/auth/ping') return Response.json({});
             if (path === '/v1/account/encryption/currentness') return Response.json(createAccountEncryptionCurrentnessFixtureForCredentials(credentials));
-            if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({
+            if (path === '/v1/features') {
+                const features = createRootLayoutFeaturesResponse({
                 features: { encryption: { plaintextStorage: { enabled: true } }, e2ee: { keylessAccounts: { enabled: true } } },
                 capabilities: { serverIdentity: { serverIdentityId: homeId } },
-            }));
+                });
+                return Response.json({ ...features, capabilities: { ...features.capabilities,
+                    guestCli: { source: 'public-release', line: '0.3' } } });
+            }
             if (path === '/v1/auth/request/status') return Response.json({ status: 'pending', supportsV2: true });
             if (path === '/v1/auth/response') {
                 const response = JSON.parse(String(init?.body)) as { responseKind: unknown };
@@ -113,12 +132,18 @@ describe('app managed enrollment', () => {
                 }, {
                     readCurrentManagedRow: async () => { rowReads++; return machine; },
                     // Source-payload transfer is a host IO strategy, replacing only external guest installation bytes.
-                    installNativePayload: async installation => {
+                    ...(!publicSupplier ? { installNativePayload: async (installation: import('@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap').ManagedNativePayloadInstallation) => {
                         installationResources.push(installation.resource);
                         return { binaryPath: '/home/guest/.happier/cli/current/happier' };
-                    },
+                    } } : {}),
                     native: { putFile: async () => {}, exec: async ({ command, input }) => {
                         if (command.startsWith('uname -s;')) return { status: 0, stdout: 'Linux\nx86_64\n/home/guest\n', stderr: '' };
+                        if (command.includes('managed_guest_cli_absent')) return { status: 0, stdout: 'managed_guest_cli_absent\n', stderr: '' };
+                        if (command.includes('download ') && command.includes('checksums.txt')) {
+                            integrityReads++;
+                            return { status: 0, stdout: command.includes('.minisig') ? 'invalid signature'
+                                : `${'c'.repeat(64)}  happier-v0.3.4-linux-x64.tar.gz\n`, stderr: '' };
+                        }
                         if (command.includes("'auth' 'request'")) {
                             const guestInput: unknown = JSON.parse(input ?? 'null');
                             if (guestInput && typeof guestInput === 'object' && 'managedEnrollment' in guestInput) {
@@ -143,6 +168,14 @@ describe('app managed enrollment', () => {
                 actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) });
         const result = await executor.execute('machines.managed.acquire', input, context);
         expect(recipeEntered).toBe(true);
+        if (publicSupplier) {
+            expect(result).toMatchObject({ ok: false, errorCode: 'action_failed', error: expect.stringContaining('signature verification failed') });
+            expect(releaseRequests.some(url => url.endsWith('/releases/tags/cli-v0.3.4'))).toBe(true);
+            expect(integrityReads).toBe(2);
+            expect(approvalKinds).toEqual([]);
+            expect(running).toBe(false);
+            return;
+        }
         if (review === 'mismatched' || review === 'forged') {
             expect(result).toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
             expect(rowReads).toBe(0);

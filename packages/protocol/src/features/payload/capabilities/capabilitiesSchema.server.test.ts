@@ -4,6 +4,18 @@ import { z } from 'zod/mini';
 import { CapabilitiesSchema } from './capabilitiesSchema.js';
 
 describe('CapabilitiesSchema (server capabilities)', () => {
+  it('reads the Home guest CLI artifact identity independently of release diagnostics', () => {
+    for (const source of ['home-payload', 'public-release']) {
+      const guestCli = { source, line: '0.3' };
+      expect(Reflect.get(CapabilitiesSchema.parse({ guestCli }), 'guestCli')).toEqual(guestCli);
+    }
+    expect(Reflect.get(CapabilitiesSchema.parse({}), 'guestCli')).toBeUndefined();
+    for (const guestCli of [{ source: 'unknown', line: '0.3' }, { source: 'public-release', line: '0.3.1' }]) {
+      const parsed = CapabilitiesSchema.parse({ guestCli, serverRelease: { version: '0.2.10' } });
+      expect(Reflect.get(parsed, 'guestCli')).toBeUndefined();
+      expect(parsed.serverRelease).toEqual({ version: '0.2.10' });
+    }
+  });
   it('reads Home Connected Account publication support without dropping sibling capabilities', () => {
     const machines = { connectedAccountAuthentication: { protocolVersions: [1] }, transfer: { serverRouted: { maxBytes: 42 } } };
     expect(CapabilitiesSchema.parse({ machines }).machines).toMatchObject(machines);

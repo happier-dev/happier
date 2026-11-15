@@ -45,6 +45,26 @@ import { markDependencyMutation, resolveDependencyRefreshLockPath, resolveDepend
 // producer; adoption-only QA requests live in source_runtime_producer.test.mjs.
 const buildSourceRuntimeBundle = options => buildSourceRuntimeBundleOwner(sourceProducerFixtureOptions(options));
 
+test('server source builds select Home payloads and Docker builds select public guest releases', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-guest-cli-source-' });
+  const repoDir = fixture.path('repo');
+  const server = join(repoDir, 'apps/server');
+  for (const directory of ['sources', 'scripts', 'node_modules']) await mkdir(join(server, directory), { recursive: true });
+  await writeFile(join(repoDir, 'package.json'), JSON.stringify({ private: true, workspaces: ['apps/*'] }));
+  await writeFile(join(server, 'package.json'), JSON.stringify({ name: '@happier-dev/server', type: 'module' }));
+  await writeFile(join(server, 'tsconfig.json'), '{}');
+  await writeFile(join(server, 'sources/main.light.ts'), 'export const source = typeof __HAPPIER_GUEST_CLI_SOURCE__ === "undefined" ? null : __HAPPIER_GUEST_CLI_SOURCE__;');
+  await writeFile(join(server, 'scripts/migrate.sqlite.deploy.ts'), 'export async function runSqliteMigrationDeploy() {}');
+  await symlink(dirname(createRequire(import.meta.url).resolve('esbuild/package.json')), join(server, 'node_modules/esbuild'),
+    process.platform === 'win32' ? 'junction' : 'dir');
+  const native = process.platform === 'linux' ? await installSourceAdmissionFixture(fixture.root) : null;
+  for (const source of ['home-payload', 'public-release']) {
+    const built = await (native?.build ?? buildSourceRuntimeBundle)({ repoDir, outputDir: fixture.path(source), component: 'server',
+      env: { ...process.env, ...native?.env, HAPPIER_BUILD_GUEST_CLI_SOURCE: source === 'home-payload' ? undefined : source } });
+    assert.equal((await import(pathToFileURL(built.entrypoint))).source, source);
+  }
+});
+
 test('source launch waits for an active dependency writer, loads its bundled guard and preserves cancellation', async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-source-launch-writer-' });
   const repoDir = fixture.path('repo');

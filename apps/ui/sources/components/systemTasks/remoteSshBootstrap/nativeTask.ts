@@ -8,6 +8,7 @@ import {
     createRemoteSshBootstrapMachineTaskKind,
     executeRemoteSelfDownloadFirstPartyInstallPlan,
     installRemoteCli,
+    installManagedGuestCliViaRemoteDownload,
     normalizeRemoteReleaseArch,
     normalizeRemoteReleaseOs,
     parseRemoteBootstrapMachineParams,
@@ -36,6 +37,7 @@ import {
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { isLoopbackHostname } from '@/sync/domains/server/url/serverUrlClassification';
 import { randomUUID } from '@/platform/randomUUID';
+import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import {
     NATIVE_SSH_BOOTSTRAP_TASK_KIND,
     type NativeSshTaskCredentials,
@@ -161,6 +163,7 @@ function readNativePairingContext(value: unknown): Readonly<{
 
 async function installRemoteCliViaNativeSelfDownload(params: Readonly<{
     channel?: string;
+    signal?: AbortSignal;
     runTextCommand: (command: string, options?: Readonly<{ execTimeoutMs?: number }>) => Promise<Readonly<{
         status: number;
         stdout: string;
@@ -168,9 +171,6 @@ async function installRemoteCliViaNativeSelfDownload(params: Readonly<{
     }>>;
     resolveInstallPlan?: RunNativeRemoteSshBootstrapTaskParams['resolveInstallPlan'];
 } & RemoteCliInstallation>): Promise<Readonly<{ binaryPath: string }>> {
-    if (params.requireHomePayload) {
-        throw new SystemTaskExecutionError('guest_payload_missing', 'This app cannot read the Home guest CLI payload. Choose a connected controller to install this machine, then retry.');
-    }
     const preflight = await params.runTextCommand([
         "printf '{\"platform\":\"%s\",\"arch\":\"%s\"}\\n'",
         '"$(uname -s | tr \'[:upper:]\' \'[:lower:]\')"',
@@ -190,6 +190,14 @@ async function installRemoteCliViaNativeSelfDownload(params: Readonly<{
         : params.channel === 'stable' || params.channel === 'preview' || params.channel === 'publicdev'
             ? params.channel
             : 'stable';
+    if (params.requireHomePayload) {
+        return await installManagedGuestCliViaRemoteDownload({
+            homeUrl: params.homeUrl, channel, os, arch, remoteHomeDir: params.remoteHomeDir,
+            signal: params.signal, fetchImpl: runtimeFetch,
+            runRemoteText: command => params.runTextCommand(params.daemonUsername
+                ? buildDedicatedDaemonInvocationCommand(command) : command),
+        });
+    }
     const plan = params.resolveInstallPlan
         ? await params.resolveInstallPlan({ channel, os, arch, ...(params.remoteHomeDir ? { remoteHomeDir: params.remoteHomeDir } : {}) })
         : await resolveRemoteSelfDownloadFirstPartyInstallPlan({
@@ -441,6 +449,7 @@ export async function runNativeRemoteSshBootstrapTask(
                     exec,
                     install: placement => installRemoteCliViaNativeSelfDownload({
                         channel: installTarget.channel,
+                        signal,
                         ...placement,
                         runTextCommand: (command, options) => exec({ command, signal, timeoutMs: options?.execTimeoutMs }),
                         resolveInstallPlan: params.resolveInstallPlan,

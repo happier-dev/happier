@@ -258,8 +258,9 @@ async function fetchGitHubReleaseByTag(params: Readonly<{
   throw createHttpError(`[github] failed to resolve release tag ${params.tag}`, 404);
 }
 
-async function fetchGitHubLatestRelease(params: Readonly<{
-  githubRepo: string;
+async function fetchGitHubReleaseJson(params: Readonly<{
+  url: string;
+  context: string;
   userAgent?: string;
   githubToken?: string;
   fetchImpl?: FetchImpl;
@@ -269,7 +270,6 @@ async function fetchGitHubLatestRelease(params: Readonly<{
   const rememberQuota = readReleaseQuota(params);
   const userAgent = String(params.userAgent ?? '').trim() || 'happier-release-runtime';
   const token = String(params.githubToken ?? '').trim();
-  const url = buildGitHubLatestReleaseUrl(params.githubRepo);
   const headers: Record<string, string> = {
     'user-agent': userAgent,
     accept: 'application/vnd.github+json',
@@ -280,22 +280,59 @@ async function fetchGitHubLatestRelease(params: Readonly<{
   try {
     if (fetchImpl) {
       const response = token
-        ? await fetchWithCredentialRedirectRefusal(url, { headers, signal: params.signal }, fetchImpl)
-        : await fetchImpl(url, { headers, signal: params.signal });
+        ? await fetchWithCredentialRedirectRefusal(params.url, { headers, signal: params.signal }, fetchImpl)
+        : await fetchImpl(params.url, { headers, signal: params.signal });
       if (!response.ok) {
-        throw responseError('[github] failed to resolve latest release', response);
+        throw responseError(params.context, response);
       }
-      return response.json();
+      const result: unknown = await response.json();
+      params.signal?.throwIfAborted();
+      return result;
     }
-    return await nativeTransport!.requestJson({ url, headers, signal: params.signal });
+    return await nativeTransport!.requestJson({ url: params.url, headers, signal: params.signal });
   } catch (error) {
     params.signal?.throwIfAborted();
     const normalized = normalizeGitHubRequestError({
-      context: '[github] failed to resolve latest release',
+      context: params.context,
       error,
     });
     rememberQuota(normalized);
     throw normalized;
+  }
+}
+
+async function fetchGitHubLatestRelease(params: Readonly<{
+  githubRepo: string;
+  userAgent?: string;
+  githubToken?: string;
+  fetchImpl?: FetchImpl;
+  signal?: AbortSignal;
+}>): Promise<unknown> {
+  return fetchGitHubReleaseJson({ ...params, url: buildGitHubLatestReleaseUrl(params.githubRepo), context: '[github] failed to resolve latest release' });
+}
+
+/** Enumerates releases, including older release lines; ordering is not SemVer ordering. */
+async function fetchGitHubReleases(params: Readonly<{
+  githubRepo: string;
+  apiBaseUrl?: string;
+  userAgent?: string;
+  githubToken?: string;
+  fetchImpl?: FetchImpl;
+  signal?: AbortSignal;
+}>): Promise<readonly unknown[]> {
+  const repo = params.githubRepo.trim();
+  if (!repo) throw new Error('[github] githubRepo is required');
+  // GitHub's List releases API permits at most 100 rows per page. No page-count
+  // cutoff: an older line can occur anywhere in the repository's release history.
+  // https://docs.github.com/en/rest/releases/releases#list-releases (2026-11-15)
+  const pageSize = 100;
+  const releases: unknown[] = [];
+  for (let page = 1; ; page += 1) {
+    const url = `${(params.apiBaseUrl ?? 'https://api.github.com').replace(/\/$/, '')}/repos/${repo}/releases?per_page=${pageSize}&page=${page}`;
+    const rows = await fetchGitHubReleaseJson({ ...params, url, context: '[github] failed to list releases' });
+    if (!Array.isArray(rows)) throw new Error('[github] invalid release list response');
+    releases.push(...rows);
+    if (rows.length < pageSize) return releases;
   }
 }
 
@@ -329,5 +366,5 @@ async function fetchFirstGitHubReleaseByTags(params: Readonly<{
   throw createHttpError('[github] no matching release tags found', 404);
 }
 
-  return { fetchGitHubReleaseByTag, fetchGitHubLatestRelease, fetchFirstGitHubReleaseByTags };
+  return { fetchGitHubReleaseByTag, fetchGitHubLatestRelease, fetchGitHubReleases, fetchFirstGitHubReleaseByTags };
 }
