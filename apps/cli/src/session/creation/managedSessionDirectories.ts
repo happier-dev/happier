@@ -16,7 +16,7 @@ import {
   type ProtectedLocalStateOptions,
 } from '@/utils/fs/protectedLocalState';
 import { realpathWithAbsentSuffix } from '@/utils/path/physicalAncestorPath';
-import { canonicalAbsolutePathsEqual, isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
+import { canonicalAbsolutePathsEqual, isCanonicalAbsolutePathInsideRoot, resolveCanonicalAbsolutePath } from '@/utils/path/expandHomeDirPath';
 import { isTerminalHostPhysicallyRetiredStopResult } from '@/daemon/sessions/stopSessionContract';
 import { SessionCreationCorrespondenceConflictError } from '@/api/session/sessionCreationCorrespondenceConflictError';
 import { renameStoragePathNoReplace } from '@/storage/trash/renameStoragePath';
@@ -52,6 +52,17 @@ export type ManagedSessionDirectoryResolution =
   | ({ ok: true; created?: boolean } & ManagedSessionDirectoryAllocation)
   | { ok: false; errorCode: 'SESSION_DIRECTORY_MISSING' };
 type StopSession = (sessionId: string) => Promise<StopSessionResult>;
+const MANAGED_DIRECTORY_NAME = 'session-directories';
+const ALLOCATION_ID = /^[a-f0-9]{64}$/u;
+
+/** Browse classification across retained stack roots; never authorization for filesystem effects. */
+export function isManagedSessionDirectoryPath(directory: string): boolean {
+  const platform = win32.parse(directory).root.length > 1 ? 'win32' : process.platform;
+  const canonical = resolveCanonicalAbsolutePath(directory, { platform });
+  if (!canonical) return false;
+  const segments = canonical.comparisonKey.split(/[\\/]/u);
+  return segments.some((segment, index) => segment === MANAGED_DIRECTORY_NAME && ALLOCATION_ID.test(segments[index + 1] ?? ''));
+}
 
 function absent(error: unknown): boolean {
   return error !== null && typeof error === 'object' && 'code' in error && error.code === 'ENOENT';
@@ -77,7 +88,7 @@ export function createManagedSessionDirectories(input: Readonly<{
 }> = {}) {
   const platform = input.platform ?? process.platform;
   const paths = platform === 'win32' ? win32 : posix;
-  const root = paths.join(input.activeServerDir ?? configuration.activeServerDir, 'session-directories');
+  const root = paths.join(input.activeServerDir ?? configuration.activeServerDir, MANAGED_DIRECTORY_NAME);
   const owners = paths.join(root, '.owners');
   const protection: ProtectedLocalStateOptions = { ...input.protection, authority: 'owned' };
   const allocation = (identity: string): ManagedSessionDirectoryAllocation => {
@@ -88,7 +99,7 @@ export function createManagedSessionDirectories(input: Readonly<{
     allocationId, directory: paths.join(record.payloadPlacement?.root ?? root, allocationId),
   });
   const recordPath = (allocationId: string) => {
-    if (!/^[a-f0-9]{64}$/u.test(allocationId)) throw new Error('Invalid managed allocation id');
+    if (!ALLOCATION_ID.test(allocationId)) throw new Error('Invalid managed allocation id');
     return paths.join(owners, `${allocationId}.json`);
   };
   const prepareForCreation = ({ sessionCreationTag }: Readonly<{ sessionCreationTag: string }>) => {
