@@ -14,8 +14,14 @@ import { watchMountedDiscussions } from '@/sync/domains/discussions/discussionCh
 import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 
 type Participant = DiscussionParticipantsListResponseV1['participants'][number];
+/** The reconciled UI projection retains the structural-sharing owner's immutable row arrays. */
+export type DiscussionParticipantRoster = Omit<DiscussionParticipantsListResponseV1, 'participants' | 'grants' | 'accountActors'> & Readonly<{
+    participants: readonly DiscussionParticipantsListResponseV1['participants'][number][];
+    grants: readonly DiscussionParticipantsListResponseV1['grants'][number][];
+    accountActors?: readonly NonNullable<DiscussionParticipantsListResponseV1['accountActors']>[number][];
+}>;
 /** Admitted roster rows keep their identity across fresh reads and membership reordering. */
-export function reconcileDiscussionParticipantRoster(previous: DiscussionParticipantsListResponseV1, incoming: DiscussionParticipantsListResponseV1): DiscussionParticipantsListResponseV1 {
+export function reconcileDiscussionParticipantRoster(previous: DiscussionParticipantRoster, incoming: DiscussionParticipantRoster): DiscussionParticipantRoster {
     const participants = retainKeyedRows(previous.participants, incoming.participants, row => row.participant.kind === 'session'
         ? `session:${row.participant.sessionId}` : `model:${row.participant.participantSlotId}`);
     const grants = retainKeyedRows(previous.grants, incoming.grants, row => {
@@ -91,7 +97,7 @@ export function useDiscussionParticipantManagement(input: Readonly<{
     const [load, setLoad] = React.useState<Readonly<{ accountLifetime: ServerAccountScopeLifetime | null; discussionId: string;
         status: 'loading' | 'ready' | 'error'; errorCode: string | null }> | null>(null);
     const [projection, setProjection] = React.useState<Readonly<{
-        accountLifetime: ServerAccountScopeLifetime; discussionId: string; roster: DiscussionParticipantsListResponseV1;
+        accountLifetime: ServerAccountScopeLifetime; discussionId: string; roster: DiscussionParticipantRoster;
     }> | null>(null);
     const roster = projection?.accountLifetime === accountLifetime && projection.discussionId === discussionId
         && input.enabled && live ? projection.roster : null;

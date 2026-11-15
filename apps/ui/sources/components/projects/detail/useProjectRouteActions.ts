@@ -76,9 +76,9 @@ export function useProjectRouteActions(params: Readonly<{
     const openWorktreesInDetails = React.useCallback((method: 'push' | 'replace' = 'push') => {
         navigateToSegment({ segment: 'overview', showWorktrees: true, method });
     }, [navigateToSegment]);
-    const openTerminal = React.useCallback((input?: Readonly<{ exitOverview?: boolean }>) =>
-        navigateToSegment({ segment: 'terminal', ...(input?.exitOverview ? { showWorktrees: false } : {}) }),
-    [navigateToSegment]);
+    const openTerminal = React.useCallback((_input?: Readonly<{ exitOverview?: boolean }>) => {
+        if (params.pane) openEmbeddedToolInDockLocation({ pane: params.pane, tool: 'terminal' });
+    }, [params.pane]);
     const openBrowser = React.useCallback(() => {
         if (params.pane) openEmbeddedToolInDockLocation({ pane: params.pane, tool: 'browser' });
     }, [params.pane]);

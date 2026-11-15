@@ -94,7 +94,7 @@ function Reply(props: Readonly<{
     const unknown = mutation?.status === 'outcome_unknown';
     return <View testID={`artifact:passage-thread:${discussionId}.composer`}>
         {mentionFailure ? <SurfaceStateCard size="line" kind="warning" title={mentionFailure.kind === 'failed' ? discussionFailureLabel(mentionFailure.errorCode)
-            : mentionFailure.kind === 'approval_pending' ? t('approvals.status.open') : t('session.collaboration.discussion.deliveryUnknown')}
+            : mentionFailure.kind === 'approval_request_created' ? t('approvals.status.open') : t('session.collaboration.discussion.deliveryUnknown')}
             action={{ label: t('artifacts.browser.passage.openConversation'), onPress: props.onOpen }} /> : null}
         {mutation && (failed || unknown) ? <SurfaceStateCard size="line" kind="warning"
             title={failed ? discussionFailureLabel(mutation.errorCode) : t('session.collaboration.discussion.deliveryUnknown')}

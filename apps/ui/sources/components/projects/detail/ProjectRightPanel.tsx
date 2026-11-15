@@ -130,12 +130,13 @@ function useProjectRightSidebarModel(props: ProjectRightPanelProps) {
         isOpen: scope?.right?.isOpen,
         activeTabId: scope?.right?.activeTabId,
         selectedDestination: scope?.right?.selectedDestination,
+        bottomTerminalActive: scope?.bottom.isOpen === true && scope.bottom.activeTabId === 'terminal',
+        rightTerminalActive: scope?.right.isOpen === true && scope.right.activeTabId === 'terminal',
     }));
     const scopeState = pane.scopeState;
     const dockLocation = resolveSessionTerminalDockLocation(deviceType);
     const rightPaneHiddenByDetails = usePaneActionRailRightPaneHiddenByDetails();
-    const bottomTerminalActive = Boolean(scopeState?.bottom?.isOpen) && scopeState?.bottom?.activeTabId === 'terminal';
-    const rightTerminalActive = Boolean(scopeState?.right?.isOpen) && scopeState?.right?.activeTabId === 'terminal';
+    const { bottomTerminalActive, rightTerminalActive } = scopeState;
     const terminal = React.useMemo(() => ({
         available: true,
         dockLocation,

@@ -26,7 +26,7 @@ import { useDeviceType } from '@/utils/platform/responsive';
 import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { presentTerminalActionFailure } from '@/components/sessions/terminal/terminalActionFailure';
 import { t } from '@/text';
-import { buildProjectMemberTerminalKey, buildProjectTerminalKey, useProjectTerminalScope } from '../projectTerminalScope';
+import { buildProjectMemberTerminalKey, buildProjectTerminalKey, resolveProjectTerminalScope, useProjectTerminalScope } from '../projectTerminalScope';
 import { SessionTerminalTrustNotice } from '@/components/sessions/terminal/strip/SessionTerminalTrustNotice';
 import { usePaneDestinationWindowActions } from '@/components/appShell/panes/useOpenPaneDestinationWindow';
 import { useProjectRunningTerminals } from '../useProjectRunningTerminals';

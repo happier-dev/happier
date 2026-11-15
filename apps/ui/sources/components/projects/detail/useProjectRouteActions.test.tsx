@@ -87,10 +87,12 @@ describe('project route actions', () => {
         routerMock.spies.push.mockClear(); routerMock.spies.replace.mockClear();
     });
     afterEach(() => { unregister?.(); unregister = undefined; clearActiveUnsavedChangesGuard(); standardCleanup(); publishAppliedActiveServerRuntimeAvailability(false); });
-    it('opens the qualified Terminal workspace through the public Project header instead of inventing a Details member', async () => {
+    it('opens the existing terminal dock through the public Project header without navigating away from the current page', async () => {
         const workspace = mountWorkspace();
+        const runtime: { pane?: ReturnType<typeof useAppPaneScope> } = {};
         function Header() {
-            const pane = useAppPaneScope('project-header', () => null);
+            const pane = useAppPaneScope('project-header');
+            runtime.pane = pane;
             const actions = useProjectRouteActions({ workspaceRef, activeRootPath: '/repo/feature',
                 activeWorktreeId: 'checkout-a', pane });
             return <ProjectHeaderActions testIdPrefix="project-header" showWorktreesButton={false}
@@ -98,12 +100,9 @@ describe('project route actions', () => {
         }
         const screen = await renderScreen(<ProjectDestination><AppPaneProvider><Header /></AppPaneProvider></ProjectDestination>);
         await screen.pressByTestIdAsync('project-header-open-terminal');
-        const href = workspace.hrefs.at(-1);
-        expect(href).toBeDefined();
-        const url = new URL(String(href), 'https://happier.test');
-        expect(url.pathname).toBe('/projects/wr_1/terminal');
-        expect(Object.fromEntries(url.searchParams)).toMatchObject({ serverId: workspaceRef.serverId, worktreeId: 'checkout-a' });
-        expect(workspace.state().tabs.project.target.params.pageId).toBe('terminal');
+        expect(runtime.pane?.scopeState?.bottom).toMatchObject({ isOpen: true, activeTabId: 'terminal' });
+        expect(workspace.hrefs).toEqual([]);
+        expect(workspace.state().tabs.project.target.params.pageId).toBe('context');
         await screen.unmount();
     });
     it('refuses Project page and checkout navigation when workspace.tabs.open is disabled', async () => {

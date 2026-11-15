@@ -13,7 +13,7 @@ import { ActionOperationActionInputSchemasV1 } from '@happier-dev/protocol/actio
 import { createActionExecutorBoundaryFixture, createUiActionExecutorBoundary } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { createManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
-import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachineV1, ManagedMachinePublicFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -302,7 +302,7 @@ describe('Project Scripts Setup controls', () => {
             : { kind: 'one-off', homeId, launch, controller, retention, wakeOnAcceptedMessage: false },
             receipt: { launch, controller, optionStatus: 'current', prerequisites: [], billing: { location: 'local', stoppedBilling: 'not-billed' },
                 retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] }, retention, wakeOnAcceptedMessage: false } });
-        let machine: ManagedMachineV1 = { id: 'paid', homeId, custodianAccountId: delegated ? 'company' : 'alice',
+        let machine: ManagedMachinePublicFullV1 = { id: 'paid', homeId, custodianAccountId: delegated ? 'company' : 'alice',
             ...(delegated ? { enrollmentAccountId: 'alice' } : {}), launch, controller,
             allocation: 'bound', resource: { contributionRef: launch.provider, schemaVersion: 1, value: { id: 'native' } },
             creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1, retention, wakeOnAcceptedMessage: false };

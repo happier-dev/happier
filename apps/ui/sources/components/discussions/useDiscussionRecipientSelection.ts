@@ -1,6 +1,6 @@
+import type { DiscussionParticipantRoster } from './useDiscussionParticipantManagement';
 import * as React from 'react';
 import type { DiscussionParticipantRefV1 } from '@happier-dev/protocol/discussions/references';
-import type { DiscussionParticipantsListResponseV1 } from '@happier-dev/protocol/discussions/participants';
 import { buildRecipientMultiSelectModel, type RecipientMultiSelectModel } from '@/components/sessions/agentInput/routing/recipientMultiSelectModel';
 import type { DiscussionDraft, DiscussionDraftContentOptions } from './useDiscussionDraft';
 import type { DiscussionMessageContentV1 } from '@happier-dev/protocol/discussions/content';
@@ -18,7 +18,7 @@ export type DiscussionRecipientSelection = RecipientMultiSelectModel<DiscussionP
 /** A demanded, admitted roster supplies choices; display labels never admit a recipient. */
 export function useDiscussionRecipientSelection(input: Readonly<{
     draft: Pick<DiscussionDraft, 'recipients' | 'setRecipients' | 'replyTarget' | 'prepareContent'>;
-    roster: DiscussionParticipantsListResponseV1 | null;
+    roster: DiscussionParticipantRoster | null;
     label(participant: DiscussionParticipantRefV1): string;
 }>): DiscussionRecipientSelection {
     return React.useMemo<DiscussionRecipientSelection>(() => {

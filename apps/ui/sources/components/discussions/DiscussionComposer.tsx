@@ -1,3 +1,4 @@
+import type { DiscussionParticipantRoster } from './useDiscussionParticipantManagement';
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import * as React from 'react';
 import { View } from 'react-native';
@@ -14,7 +15,7 @@ import type { AutocompleteSuggestion } from '@/components/autocomplete/autocompl
 import { matchesComposerSuggestionQuery, type ComposerSuggestionCatalogs } from '@/components/autocomplete/composerSuggestionCatalogs';
 import type { TranscriptAccountActor } from '@happier-dev/session-core/messages';
 import { resolveAccountActorName } from '@/sync/domains/account/accountActorPresentation';
-import type { DiscussionInitialParticipantV1, DiscussionModelParticipantV1, DiscussionParticipantsListResponseV1 } from '@happier-dev/protocol/discussions/participants';
+import type { DiscussionInitialParticipantV1, DiscussionModelParticipantV1 } from '@happier-dev/protocol/discussions/participants';
 import type { SessionResponsibilityCandidateV1 } from '@happier-dev/protocol/sessions/access/sessionResponsibilityV1';
 import { AgentInput } from '@/components/sessions/agentInput';
 import { ComposerAuxiliaryFrame } from '@/components/sessions/shell/view/ComposerAuxiliaryFrame';
@@ -122,7 +123,7 @@ export function DiscussionComposer(props: Readonly<{
     address: DiscussionHomeAddress;
     discussionId?: string;
     /** The page's admitted roster; autocomplete filters it, never reacquires it. */
-    roster?: DiscussionParticipantsListResponseV1 | null;
+    roster?: DiscussionParticipantRoster | null;
     onRefreshParticipants?: () => Promise<unknown>;
     availability: SessionCollaborationAvailability;
     value: DiscussionComposerValue;

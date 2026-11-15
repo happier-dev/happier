@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { t } from '@/text';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import {
   ProjectWorkerNoAcceptanceFailureDetailsV1Schema,
@@ -32,7 +33,7 @@ import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntim
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { randomUUID } from '@/platform/randomUUID';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { managedMachineCreationIntent, type ManagedMachineSelectionDraft, type ManagedMachineAcquisitionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
+import { managedMachineCreationIntent, readManagedMachineSelectionName, type ManagedMachineSelectionDraft, type ManagedMachineAcquisitionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import { runManagedMachineCreation, type ManagedMachineCreationProgress } from '@/components/settings/machines/managed/managedMachineCreation';
 import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
 import { useProjectEnvironmentBindings } from './useProjectEnvironmentBindings';
@@ -281,7 +282,7 @@ export function useProjectScriptsController(
             onProgress: progress => { if (current()) setCreations(previous => ({ scopeKey,
               values: { ...(previous?.scopeKey === scopeKey ? previous.values : {}),
                 [key]: { scopeKey, key, acquisition: continuation.acquisition, progress,
-                  machineName: continuation.draft.receipt.launch.name } } })); },
+                  machineName: readManagedMachineSelectionName(continuation.draft) ?? t('managedMachines.picker.newMachine') } } })); },
           });
           if (!current() || acquired.kind === 'pending' || acquired.kind === 'delete_requested') return null;
           if (acquired.kind === 'failed') throw Object.assign(new Error(acquired.code), { code: acquired.code });

@@ -1,9 +1,9 @@
+import type { DiscussionParticipantRoster } from './useDiscussionParticipantManagement';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import type { DiscussionAccessGrantsListResponseV1 } from '@happier-dev/protocol/discussions/access';
-import type { DiscussionParticipantsListResponseV1 } from '@happier-dev/protocol/discussions/participants';
 import type { ExecutableParticipantSelectionV1 } from '@happier-dev/protocol/discussions/executableParticipants';
 import type { SessionMessageAccountActorV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1';
 import { classifyAccountActorLabelV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
@@ -129,7 +129,7 @@ function useDiscussionInviteController(
      * The Discussion's roster when the page already holds it: it is a superset of the grant list, so
      * the sheet opens on it at once instead of a second read, and follows each roster refresh.
      */
-    roster?: DiscussionParticipantsListResponseV1 | null;
+    roster?: DiscussionParticipantRoster | null;
     onChanged?: () => void;
   }>,
 ) {
@@ -436,7 +436,7 @@ function DiscussionInviteSheet(
     accountLifetime?: ServerAccountScopeLifetime;
     discussionId: string;
     discussionTitle: string;
-    roster?: DiscussionParticipantsListResponseV1 | null;
+    roster?: DiscussionParticipantRoster | null;
     management?: DiscussionParticipantManagement | null;
     onChanged?: () => void;
     onRequestClose: () => void;
@@ -490,7 +490,7 @@ function DiscussionInviteSheetWithAgents(
   props: DiscussionShareSheetShared & Readonly<{
     accountLifetime: ServerAccountScopeLifetime;
     management: DiscussionParticipantManagement;
-    roster: DiscussionParticipantsListResponseV1 | null;
+    roster: DiscussionParticipantRoster | null;
   }>,
 ) {
   const { inviteExecutable, operation } = props.management;
@@ -555,7 +555,7 @@ export function DiscussionParticipantsSheet(
     accountLifetime?: ServerAccountScopeLifetime;
     discussionId: string;
     discussionTitle: string;
-    roster: DiscussionParticipantsListResponseV1 | null;
+    roster: DiscussionParticipantRoster | null;
     management: DiscussionParticipantManagement | null;
     afterAccess: readonly SelectionListSectionDescriptor[];
     principalTags: (principal: SharePrincipalPresentation) => readonly string[];
@@ -692,7 +692,7 @@ type DiscussionInviteButtonProps = Readonly<{
       draft?: undefined;
       discussionId: string;
       discussionTitle: string;
-      roster?: DiscussionParticipantsListResponseV1 | null;
+      roster?: DiscussionParticipantRoster | null;
       management?: DiscussionParticipantManagement | null;
       onChanged?: () => void;
     }>

@@ -1,7 +1,7 @@
+import type { DiscussionParticipantRoster } from './useDiscussionParticipantManagement';
 import * as React from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import type { TranscriptAccountActor } from '@happier-dev/session-core/messages';
-import type { DiscussionParticipantsListResponseV1 } from '@happier-dev/protocol/discussions/participants';
 import type { AccountDisplayProfileV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
 import type { SessionMessageAccountActorV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1';
 import { areServerAccountScopesEqual, serverAccountScopedResourceKey, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -13,7 +13,7 @@ import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDi
 /** Safe display facts alongside the admitted roster, never another people inventory or grant owner. */
 export function useDiscussionParticipantProfiles(input: Readonly<{
     scope: ServerAccountScope;
-    roster: DiscussionParticipantsListResponseV1 | null;
+    roster: DiscussionParticipantRoster | null;
     /** Complete scoped profiles already admitted by the Discussion summary owner. */
     participantAccounts?: readonly SessionMessageAccountActorV1[];
     /** Before a roster exists (a New Discussion's chosen people), the same profile read by id. */

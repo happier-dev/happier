@@ -23,7 +23,7 @@ describe('Project header page descriptors', () => {
     afterEach(standardCleanup);
 
     it('keeps a same-named machine\'s telling suffix whole when the chip shortens', async () => {
-        const pages = resolveProjectPageCatalog({ target: { kind: 'project', workspaceRefId: 'project', serverId: 'home' }, surface: 'projects' });
+        const pages = resolveProjectPageCatalog({ target: { kind: 'project', workspaceRefId: 'project', serverId: 'home' } });
         const screen = await renderScreen(<ProjectShellHeader projectName="Project"
             checkout={{ machineName: 'NLDW3-5-36-33 · 5ac7', machineNameParts: { name: 'NLDW3-5-36-33', hint: '5ac7' },
                 machineIcon: 'desktop', branch: null, choices: [], onSelect: () => {} }}
@@ -36,7 +36,7 @@ describe('Project header page descriptors', () => {
 
     it('rests the checkout chip on its containing material, so over glass it is the glass tint and hover only adds a step (owner 11-11 #11/#12)', async () => {
         const glass = 'rgba(235, 230, 225, 0.1)';
-        const pages = resolveProjectPageCatalog({ target: { kind: 'project', workspaceRefId: 'project', serverId: 'home' }, surface: 'projects' });
+        const pages = resolveProjectPageCatalog({ target: { kind: 'project', workspaceRefId: 'project', serverId: 'home' } });
         const screen = await renderScreen(<HappierMaterialRoleProvider role="content" resolveMaterialColor={() => glass}>
             <ProjectShellHeader projectName="Project"
                 checkout={{ machineName: 'NLDW3', machineNameParts: { name: 'NLDW3', hint: null }, machineIcon: 'desktop', branch: null, choices: [], onSelect: () => {} }}
@@ -87,6 +87,7 @@ describe('Project header page descriptors', () => {
         const binding = screen.root.findByType(EntityFlatReorderList).props.binding;
         const admission = binding.resolve('code', { anchorId: 'overview', placement: 'before' });
         expect(admission.status).toBe('allowed');
+        if (admission.status !== 'allowed') throw new Error('Tab reorder was refused');
         expect(admission.effect).toMatchObject({ actionId: 'settings.set', input: { anchor: 'appearance.navigationPlacements' } });
         await React.act(async () => { expect(await binding.execute(admission.effect)).toEqual({ status: 'applied' }); });
         expect(writes).toEqual([expect.objectContaining({ orderedIds: expect.arrayContaining(['code', 'overview', 'changes']), placements: { changes: 'hidden' } })]);
@@ -125,6 +126,7 @@ describe('Project header page descriptors', () => {
         // Customize is an operation row past the pages in the same menu.
         const customize = menu?.props.items.find((item: { id: string }) => item.id !== external.id);
         expect(customize).toBeDefined();
+        if (!customize) throw new Error('Customize tab operation is missing');
         await React.act(async () => { menu?.props.onSelect(customize.id); });
         expect(customizations).toBe(1);
         await React.act(async () => { await menu?.props.onSelect(external.id); });

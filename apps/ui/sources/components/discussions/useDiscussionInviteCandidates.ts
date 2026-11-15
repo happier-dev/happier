@@ -1,6 +1,6 @@
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import * as React from 'react';
-import type { DiscussionParticipantsListResponseV1 } from '@happier-dev/protocol/discussions/participants';
+import type { DiscussionParticipantRoster } from './useDiscussionParticipantManagement';
 import type { ExecutableParticipantPickerOption } from '@/components/sessions/authoring/executableParticipantPicker';
 import { useSessionAccessDirectory } from '@/components/sessions/access/useSessionAccessDirectory';
 import type { SessionAccessCandidateRowModel, SessionAccessGrantOperationModel } from '@/components/sessions/access/sessionAccessEditorTypes';
@@ -77,7 +77,7 @@ export function useDiscussionInviteCandidates(input: Readonly<{
     accountLifetime: ServerAccountScopeLifetime;
     availability: SessionCollaborationAvailability;
     enabled: boolean;
-    roster?: DiscussionParticipantsListResponseV1 | null;
+    roster?: DiscussionParticipantRoster | null;
     teamAddress?: TeamAddress;
     modelOptions?: readonly ExecutableParticipantPickerOption[];
     /** Only the opened/highlighted detail demands readiness, never every roster candidate. */

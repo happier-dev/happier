@@ -1,6 +1,6 @@
+import type { DiscussionParticipantRoster } from './useDiscussionParticipantManagement';
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
-import type { DiscussionParticipantsListResponseV1 } from '@happier-dev/protocol/discussions/participants';
 import { projectDiscussionModelParticipantLaunchV1 } from '@happier-dev/protocol/discussions/participants';
 import {
   normalizeExecutableParticipantSelectionV1,
@@ -85,7 +85,7 @@ export function useExecutableParticipantSections(
     enabled: boolean;
     /** Filters rows when the host owns the search field; omit when the list filters itself. */
     query?: string;
-    roster?: DiscussionParticipantsListResponseV1 | null;
+    roster?: DiscussionParticipantRoster | null;
     busy?: boolean;
     readinessSessionId?: string | null;
     onReadinessSessionChange?: (sessionId: string | null) => void;

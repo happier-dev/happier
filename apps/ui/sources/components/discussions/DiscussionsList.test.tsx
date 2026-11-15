@@ -332,7 +332,7 @@ describe('DiscussionsList and its Session anchor consumer', () => {
         const { buildApprovalRequestArtifactHeaderV1 } = await import('@happier-dev/protocol/approvals/approvalArtifactHeaderV1');
         const { buildApprovalExecutionOriginV1 } = await import('@happier-dev/protocol/actions/actionExecutor');
         discussionApi.list.mockImplementation(() => succeededList([summary('draft-waits', { title: 'Release notes wording' })], null));
-        const { screen } = await renderConversations({ homeList: true, column: true });
+        const { profile, screen } = await renderConversations({ homeList: true, column: true });
         const rowSubtitle = () => JSON.stringify(screen.findHostByTestId('session-discussion-row-subtitle-draft-waits')?.props.children ?? null);
         await vi.waitFor(() => expect(screen.findByTestId('session-discussion-row-draft-waits')).not.toBeNull());
         const conversation = rowSubtitle();

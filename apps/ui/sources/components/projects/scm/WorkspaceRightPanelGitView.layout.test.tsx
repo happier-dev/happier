@@ -378,7 +378,7 @@ describe('project Git presentation', () => {
                 historyIdentity={identity} testIDPrefix="history-pane" renderChanges={() => null}
                 timeline={<GitTimelineSection changedCount={0} selectedCount={0} ahead={0} behind={incoming?.length ?? 0}
                     upstream={incoming ? 'origin/main' : null} entries={current} incoming={incoming}
-                    loading={false} hasMore={false} onLoadMore={() => {}} onOpenCommit={() => {}} landedSha={null} />}
+                    loading={false} error={false} onRetry={() => {}} hasMore={false} onLoadMore={() => {}} onOpenCommit={() => {}} landedSha={null} />}
             />
         );
         const screen = await renderScreen(renderHistory(entries), {

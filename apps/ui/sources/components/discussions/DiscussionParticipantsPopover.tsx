@@ -1,3 +1,4 @@
+import type { DiscussionParticipantRoster } from './useDiscussionParticipantManagement';
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import * as React from 'react';
 import type { TranscriptAccountActor } from '@happier-dev/session-core/messages';
@@ -5,7 +6,6 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type {
   DiscussionAnswerPolicyV1,
-  DiscussionParticipantsListResponseV1,
 } from '@happier-dev/protocol/discussions/participants';
 
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
@@ -125,7 +125,7 @@ export const DiscussionRosterFaces = React.memo(function DiscussionRosterFaces(
     /** The Discussion's Home, so a Session participant shows its own Agent's mark. */
     serverId?: string;
   }> & (
-    | Readonly<{ roster: DiscussionParticipantsListResponseV1; members?: undefined }>
+    | Readonly<{ roster: DiscussionParticipantRoster; members?: undefined }>
     /** A New Discussion's chosen people and agents, before any roster exists. */
     | Readonly<{ roster?: undefined; members: Readonly<{ accountIds: readonly string[]; agents: readonly ('session' | 'model')[] }> }>
   ),
@@ -195,7 +195,7 @@ const rosterFaceStyles = StyleSheet.create((theme) => ({
 }));
 
 export function summarizeDiscussionRoster(
-  roster: DiscussionParticipantsListResponseV1,
+  roster: DiscussionParticipantRoster,
 ): DiscussionRosterFacts {
   const invited = new Set<string>([roster.ownerAccountId]);
   let inherited = false;
@@ -264,7 +264,7 @@ export type DiscussionParticipantManagement = ReturnType<
   typeof useDiscussionParticipantManagement
 >;
 type RosterParticipant =
-  DiscussionParticipantsListResponseV1['participants'][number];
+  DiscussionParticipantRoster['participants'][number];
 
 /**
  * Who is in a Discussion (lab T2-S): the people who can read it, then the agents and how each answers,
@@ -281,7 +281,7 @@ export const DiscussionParticipantsPopover = React.memo(
       discussionTitle: string;
       serverId: string;
       viewerAccountId: string;
-      roster: DiscussionParticipantsListResponseV1 | null;
+      roster: DiscussionParticipantRoster | null;
       /** A roster write landed (an invitation from the search). */
       onChanged?: () => void;
       /** Captured-Home display facts; composition uses the shared Account byline presentation owner. */
@@ -563,7 +563,7 @@ function DiscussionOwnerLeaveResolution(
 function useDiscussionRosterAgentSections(
   props: Readonly<{
     serverId: string;
-    roster: DiscussionParticipantsListResponseV1;
+    roster: DiscussionParticipantRoster;
     management: DiscussionParticipantManagement | null;
     canManage: boolean;
     accountLifetime?: ServerAccountScopeLifetime;
@@ -735,7 +735,7 @@ function DiscussionRoster(
     discussionTitle: string;
     serverId: string;
     viewerAccountId: string;
-    roster: DiscussionParticipantsListResponseV1;
+    roster: DiscussionParticipantRoster;
     presentAccountIds: ReadonlySet<string>;
     management: DiscussionParticipantManagement | null;
     canManage: boolean;
@@ -1017,7 +1017,7 @@ export function DiscussionParticipantsPanel(
     discussionTitle: string;
     serverId: string;
     viewerAccountId: string;
-    roster: DiscussionParticipantsListResponseV1 | null;
+    roster: DiscussionParticipantRoster | null;
     onChanged?: () => void;
     accountActors: ReadonlyMap<string, TranscriptAccountActor>;
     presentAccountIds: ReadonlySet<string>;
@@ -1093,7 +1093,7 @@ export function DiscussionAgentsPanel(
   props: Readonly<{
     accountLifetime: ServerAccountScopeLifetime;
     serverId: string;
-    roster: DiscussionParticipantsListResponseV1 | null;
+    roster: DiscussionParticipantRoster | null;
     management: DiscussionParticipantManagement | null;
     canManage: boolean;
   }>,
@@ -1110,7 +1110,7 @@ function DiscussionAgentsList(
   props: Readonly<{
     accountLifetime: ServerAccountScopeLifetime;
     serverId: string;
-    roster: DiscussionParticipantsListResponseV1;
+    roster: DiscussionParticipantRoster;
     management: DiscussionParticipantManagement | null;
     canManage: boolean;
   }>,

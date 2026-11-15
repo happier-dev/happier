@@ -1,4 +1,4 @@
-import type { DiscussionParticipantsListResponseV1 } from '@happier-dev/protocol/discussions/participants';
+import type { DiscussionParticipantRoster } from './useDiscussionParticipantManagement';
 import type { ExecutableParticipantSelectionV1 } from '@happier-dev/protocol/discussions/executableParticipants';
 import type { ExecutableParticipantPickerOption } from '@/components/sessions/authoring/executableParticipantPicker';
 import type { SessionAccessCandidateRowModel } from '@/components/sessions/access/sessionAccessEditorTypes';
@@ -54,7 +54,7 @@ export type DiscussionInviteCandidatesInput = Readonly<{
         access: Pick<SessionEffectiveAccessV1, 'capabilities'> | null;
         readiness?: SessionReadinessV1 | null; repair?: SessionReadinessRepairV1 | null }>[];
     modelOptions: readonly ExecutableParticipantPickerOption[];
-    roster?: DiscussionParticipantsListResponseV1 | null;
+    roster?: DiscussionParticipantRoster | null;
 }>;
 
 type WithoutKey<T> = T extends unknown ? Omit<T, 'key'> : never;

@@ -45,6 +45,7 @@ import { useMachinePoolSelection } from '@/components/sessions/new/hooks/machine
 import type { ServerScopedMachinePoolSelection } from '@/components/sessions/new/components/machineSelection/useMachineSelectionListModel';
 import type { FrontDoorRuntimeActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { describeManagedCreationProgress } from '@/components/settings/machines/managed/managedCreationProgressPresentation';
+import { readManagedMachineSelectionName } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import { isProjectServiceTargetFromSource, type ProjectServiceSource } from './projectServiceSource';
 
@@ -318,6 +319,7 @@ function ProjectServicePlacementControlsBody(props: React.ComponentProps<typeof 
   const managed = { draft: observation.managed?.draft ?? null, progress: observation.managed?.progress ?? null,
     busy: observation.managed?.busy ?? false, acquire: observation.managed?.acquire ?? (async () => null),
     cancel: observation.managed?.cancel ?? (() => {}), select: observation.selectManaged };
+  const managedName = readManagedMachineSelectionName(managed.draft);
   const poolSelection = useMachinePoolSelection({
     requestKey: JSON.stringify(['project-service-move', props.source.serverId, props.source.refId, props.serviceName]),
     scopeKey: binding?.accountId,
@@ -465,7 +467,7 @@ function ProjectServicePlacementControlsBody(props: React.ComponentProps<typeof 
         : t('projectServices.settingsUnavailable')
     : null;
   // A live occurrence is named where it actually runs; desired intent only describes the next start.
-  const value = actualName ?? managed.draft?.receipt.launch.name ?? (observed?.status === 'ambiguous'
+  const value = actualName ?? managedName ?? (observed?.status === 'ambiguous'
       ? t('projectServices.actualAmbiguous')
       : observed?.status === 'unavailable'
         ? t('projectServices.actualUnavailable')
@@ -608,7 +610,7 @@ function ProjectServicePlacementControlsBody(props: React.ComponentProps<typeof 
   }
 
   const fromName = actualName ?? sourceName;
-  const creation = managed.draft && managed.progress ? describeManagedCreationProgress(managed.draft.receipt.launch.name, managed.progress) : null;
+  const creation = managed.draft && managed.progress ? describeManagedCreationProgress(managedName ?? t('managedMachines.picker.newMachine'), managed.progress) : null;
   const confirmManagedMove = () => {
     if (!managed.draft || !placement.canMove || !portable || managed.busy) return;
     setManagedMove('acquiring');
@@ -698,7 +700,7 @@ function ProjectServicePlacementControlsBody(props: React.ComponentProps<typeof 
       {where && !compact ? <Text testID={`${testID}.note`} variant="meta" style={noteStyle}>{where}</Text> : null}
       {notice ? <AttentionBanner testID={`${testID}.notice`} tone="neutral" title={notice} /> : null}
       {managedMove === 'confirm' && managed.draft ? <AttentionBanner testID={`${testID}.move`} tone="neutral"
-        title={t('projectServices.moveConfirm', { service: props.serviceName, from: fromName, to: managed.draft.receipt.launch.name })}
+        title={t('projectServices.moveConfirm', { service: props.serviceName, from: fromName, to: managedName ?? t('managedMachines.picker.newMachine') })}
         description={t('projectServices.moveDetail')}
         action={{ label: t('projectServices.move'), testID: `${testID}.move.confirm`, onPress: confirmManagedMove }}
         secondaryAction={{ label: t('common.cancel'), testID: `${testID}.move.cancel`, onPress: () => { managed.select(null); setManagedMove(null); } }} /> : null}
