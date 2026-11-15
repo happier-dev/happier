@@ -333,7 +333,8 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
     const uiFontScale = useLocalSetting('uiFontScale');
     const { metricScale } = useHappierTextPresentation({ textScale: uiFontScale });
     const { fontScale } = usePresentationWindowDimensions();
-    const nameRoomPx = HAPPIER_PAGE_METRICS.sectionTextMinWidthPx * metricScale * (Platform.OS === 'web' ? 1 : fontScale);
+    const textGrowth = metricScale * (Platform.OS === 'web' ? 1 : fontScale);
+    const nameRoomPx = HAPPIER_PAGE_METRICS.sectionTextMinWidthPx * textGrowth;
     const line = props.line ?? (props.subtitle ? { segments: [props.subtitle] } : null);
     const chipVisible = usePaneMainRestoreChipVisible() && props.mainRestoreChip === true;
     const insets = useChromeSafeAreaInsets();
@@ -373,6 +374,26 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
     const columnMaxWidthPx = !large && props.columnMaxWidthPx !== undefined && Number.isFinite(props.columnMaxWidthPx)
         ? resolvePaneHeaderColumnMaxWidthPx(props.columnMaxWidthPx) : null;
     const hasLineView = Boolean((line && (line.segments.length > 0 || line.leading)) || props.lineTrailing);
+    // The band is the platform's height, which holds its words at the default text size. A larger text size
+    // grows it to hold them whole (QA-LAYOUT V3: at 200% a pane's live line ran over the content beneath). On
+    // the title row the band's own line keeps its place, so the title, its mark and the controls stay level
+    // with the column titles beside it; the growth is room beneath that line, where the live line hangs.
+    const bandGrowth = (() => {
+        if (large || textGrowth <= 1) return null;
+        const titleLinePx = hasTitle ? HEADER_BAND_TITLE_TEXT.lineHeight * textGrowth : 0;
+        const belowPx = hasLineView
+            ? belowTitlePx ?? HEADER_BAND_SUBTITLE_TEXT.lineHeight * textGrowth + HEADER_BAND_SUBTITLE_TEXT.marginTop
+            : 0;
+        const abovePx = props.overline ? aboveTitlePx : 0;
+        if (!titleOnRow) {
+            const wordsPx = Math.ceil(titleLinePx + abovePx + belowPx);
+            return wordsPx <= height ? null : { heightPx: wordsPx, topPx: 0, bottomPx: 0 };
+        }
+        const halfPx = (height - titleLinePx) / 2;
+        const topPx = Math.ceil(Math.max(0, abovePx - halfPx));
+        const bottomPx = Math.ceil(Math.max(0, belowPx - halfPx));
+        return topPx + bottomPx === 0 ? null : { heightPx: height + topPx + bottomPx, topPx, bottomPx };
+    })();
     // The centred mark shifts by half its top margin: onto the centre of its words.
     const markOffsetPx = titleOnRow && props.leading
         ? (hasLineView ? belowTitlePx ?? HEADER_BAND_SUBTITLE_TEXT.lineHeight + HEADER_BAND_SUBTITLE_TEXT.marginTop : 0)
@@ -470,7 +491,9 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
         </>
     );
     return (
-        <View testID={testID} style={[large ? styles.large : [styles.band, { height: height + topInset, paddingTop: topInset }],
+        <View testID={testID} style={[large ? styles.large : [styles.band, bandGrowth === null
+            ? { height: height + topInset, paddingTop: topInset }
+            : { height: bandGrowth.heightPx + topInset, paddingTop: topInset + bandGrowth.topPx, paddingBottom: bandGrowth.bottomPx }],
             props.navigation ? navigationBandEdges : props.onBack ? styles.bandWithBack : null,
             columnMaxWidthPx === null ? null : styles.bandOverColumn,
             // On the navigation plane (a side panel standing on the canvas) the band takes the plane's paint.

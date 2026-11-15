@@ -210,6 +210,30 @@ describe('ColumnDestinationRows', () => {
         expect(style.minHeight).toBe(densityHeight);
     });
 
+    it('grows with the text scale exactly like the session rows beneath it', async () => {
+        surfaceState.platformOS = 'web';
+        surfaceState.windowWidth = 1440;
+        storage.setState({ localSettings: { ...storage.getState().localSettings, uiFontScale: 2 } });
+        try {
+            const scaledHeight = resolveSessionListDensityViewState('narrow', {
+                isTablet: false,
+                platform: 'web',
+                windowWidth: 1440,
+                uiFontScale: 2,
+            }).rowHeight;
+            expect(scaledHeight).toBeGreaterThan(resolveSessionListDensityViewState('narrow', {
+                isTablet: false, platform: 'web', windowWidth: 1440,
+            }).rowHeight);
+
+            const style = await renderActionRowStyle();
+
+            expect(style.height).toBe(scaledHeight);
+            expect(style.minHeight).toBe(scaledHeight);
+        } finally {
+            storage.setState({ localSettings: { ...storage.getState().localSettings, uiFontScale: 1 } });
+        }
+    });
+
     it('shows a localized unavailable reason instead of a silent disabled row', async () => {
         setCatalog({ pages: [page('notes', { requestedPlacement: { kind: 'column', column: 'sessions' }, disabledReason: 'feature_disabled' })] });
         const { ColumnDestinationRows } = await import('./ColumnDestinationRows');

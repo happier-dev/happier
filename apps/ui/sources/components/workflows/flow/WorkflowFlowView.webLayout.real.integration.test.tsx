@@ -224,6 +224,30 @@ describe('Flow readability in the actual browser layout (FF-N3DEEP)', () => {
         }
     });
 
+    it('stacks a Run step\'s state under its name when the state beside it would leave the name a sliver (QA-LAYOUT V1)', async () => {
+        // A phone at 200% text: beside the ordinal the name still had the lane floor, but the trailing
+        // "10 min ✓" took most of it and "Validate workflow" was cut to fragments.
+        const name = 'Validate workflow';
+        const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'step', id: 'validate', name,
+            document: { text: name, references: [], attachments: [] }, input: [], result: { kind: 'text' } }] };
+        const projection = projectWorkflowFlow(definition);
+        const runStates = new Map([['validate', [{ nodeId: 'validate', invocationId: 'validate-1', lifecycle: 'completed' as const,
+            timing: { startedAt: '2026-11-15T01:31:00.000Z', finishedAt: '2026-11-15T01:43:00.000Z' } }]]]);
+        host = document.createElement('div');
+        document.body.appendChild(host);
+        root = createRoot(host);
+        await act(async () => root!.render(<View testID="flow-pane" style={{ width: 236 }}>
+            <WorkflowFlowView projection={projection} selectedNodeId={null} testIDPrefix="flow" runStates={runStates as never} />
+        </View>));
+        const layout = await measureWebLayout(host, { viewport: { width: 1440, height: 600 },
+            texts: [name], settle: replay => act(replay) });
+        const card = layout.rect('flow-node-validate');
+        const texts = layout.textRects(name);
+        expect(texts).toHaveLength(1);
+        expect(texts[0].clipped, JSON.stringify(texts[0])).toBe(false);
+        expect(texts[0].width + 1, JSON.stringify({ text: texts[0], card })).toBeGreaterThanOrEqual(Math.min(HAPPIER_WORK_MAP_LANE_MIN_WIDTH, card.width - 24));
+    });
+
     it.each([200, 240])('drops a numbered step\'s name under its ordinal and mark rather than clip a word (%spx map, large text)', async mapWidth => {
         // A phone at 200% text gives the Run map about this width. Beside the step's ordinal and Agent mark
         // the name would have less than its readable width, so it takes the card's full width under them.

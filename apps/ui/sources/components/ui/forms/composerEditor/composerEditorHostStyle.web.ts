@@ -37,8 +37,11 @@ export function resolveComposerEditorHostStyle(
   }>,
 ): CSSProperties {
   const { theme } = input;
+  // The field's size is the composer base unless the caller declares one. A style system entry (a Unistyles
+  // stylesheet entry) keeps its metrics in CSS classes on web, which this raw DOM host cannot read, so the
+  // base stands in rather than the browser default, and it scales with the in-app text size.
   const scaled = scaleTextStyle(
-    input.textStyle ?? { fontSize: MULTI_TEXT_INPUT_BASE_FONT_SIZE },
+    { fontSize: MULTI_TEXT_INPUT_BASE_FONT_SIZE, ...input.textStyle },
     typeof input.uiFontScale === 'number' ? input.uiFontScale : 1,
   );
   const maxHeight =

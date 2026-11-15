@@ -14,6 +14,9 @@ import { useWorkflowDocumentGridStyles, workflowEditorStyles } from './workflowE
 
 export type WorkflowBlockNameEditor = InlineTextEditor;
 
+/** Joins a heading's fact to what precedes it; web never collapses these spaces at a flex item's start. */
+const HEADING_FACT_SEPARATOR = '\u00A0\u00B7\u00A0';
+
 /**
  * The one heading every authored block uses: a circled tabular ordinal (filled
  * while the block is selected), the block's kind mark, its name as the control
@@ -94,10 +97,16 @@ export function WorkflowBlockHeading(props: Readonly<{
     // layout says which: beside the name it starts after the name's width, beneath it at the line's
     // start (the name line's inset).
     const [metaWrapped, setMetaWrapped] = React.useState(false);
+    // Beside what precedes it, a fact's separator sits one space from each neighbour ("Side by side · 2
+    // lanes", QA-DESIGN R5): the fact takes back the line's column gap, and after an editable name also the
+    // name field's caret room, and the separator's own spaces stand on both sides of the dot.
+    const besideNameMarginPx = -(theme.space.s8 + (props.nameEditor !== undefined ? theme.space.s4 : 0));
+    const sourceLabelPresent = props.sourceLabel !== undefined;
     const meta = props.meta === undefined ? null : sentenceTitle ? (
         <Text testID={`${props.testID}-meta`} style={[workflowEditorStyles.headingName, { flexShrink: 1 }]}>{props.meta}</Text>
     ) : (
-        <Text testID={`${props.testID}-meta`} numberOfLines={2} style={workflowEditorStyles.headingMeta}
+        <Text testID={`${props.testID}-meta`} numberOfLines={2}
+            style={[workflowEditorStyles.headingMeta, metaWrapped ? null : { marginLeft: sourceLabelPresent ? -theme.space.s8 : besideNameMarginPx }]}
             onLayout={(event) => {
                 // Beneath the name it starts a line of its own: its top is past half its own height
                 // (beside the name it is centred on the name's line). The vertical test holds whatever
@@ -106,7 +115,7 @@ export function WorkflowBlockHeading(props: Readonly<{
                 const wrapped = width > 0 && y > height / 2;
                 setMetaWrapped((current) => (current === wrapped ? current : wrapped));
             }}>
-            {metaWrapped ? null : '· '}{props.meta}
+            {metaWrapped ? null : HEADING_FACT_SEPARATOR}{props.meta}
         </Text>
     );
     const kindMark = props.kindMark === undefined ? null : (
@@ -120,7 +129,8 @@ export function WorkflowBlockHeading(props: Readonly<{
     // identity keeps the mark; a container's mark is its ordinal.
     const nameMark = numbered && props.unnamed === 'card' ? kindMark : null;
     const source = props.sourceLabel === undefined ? null
-        : <Text testID={`${props.testID}-source`} numberOfLines={1} style={workflowEditorStyles.headingMeta}>{'· '}{props.sourceLabel}</Text>;
+        : <Text testID={`${props.testID}-source`} numberOfLines={1}
+            style={[workflowEditorStyles.headingMeta, { marginLeft: besideNameMarginPx }]}>{HEADING_FACT_SEPARATOR}{props.sourceLabel}</Text>;
     return (
         <View style={grid.heading}>
             <View style={[workflowEditorStyles.headingLine, workflowEditorStyles.ordinalColumn]}>

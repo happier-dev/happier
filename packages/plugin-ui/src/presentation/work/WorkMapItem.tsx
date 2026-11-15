@@ -86,6 +86,14 @@ function WorkMapItemView<TNode extends HappierWorkMapNode>(props: Omit<WorkMapIt
     const next = Math.round(event.nativeEvent.layout.width);
     setLeadingWidth((current) => (current === next ? current : next));
   }, []);
+  // The trailing state is read at its drawn width too: a wide state ("10 min ✓" at large text) beside a name
+  // that only just keeps its floor would leave it a sliver. It is measured where it trails; while stacked
+  // the last trailing width stands, so the decision never flips on its own measurement.
+  const [trailingStatusWidth, setTrailingStatusWidth] = useState<number | null>(null);
+  const onTrailingStatusLayout = useCallback((event: HappierLayoutChangeEvent) => {
+    const next = Math.round(event.nativeEvent.layout.width);
+    setTrailingStatusWidth((current) => (current === next ? current : next));
+  }, []);
   const { copyFloor } = props;
   const leadingSpan = leading ? (leadingWidth ?? props.leadingMinWidth) + props.leadingGap : 0;
   const besideLeading = copyRoom === null ? null : copyRoom - leadingSpan;
@@ -100,7 +108,9 @@ function WorkMapItemView<TNode extends HappierWorkMapNode>(props: Omit<WorkMapIt
     : Math.min(copyFloor, Math.max(0, besideLeading ?? 0));
   // A full-width card trails its status on the name's row, so states line up down the map's right edge
   // (lab `map-M1`, `session-A2`); a narrow lane card, a compressed one or one at the floor stacks it.
-  const stackStatus = appearance === 'card' && (inLane || compressed || wrapRow);
+  const statusSpan = trailingStatusWidth ? trailingStatusWidth + props.leadingGap : 0;
+  const statusCrowdsName = appearance === 'card' && besideLeading !== null && besideLeading - statusSpan < copyFloor;
+  const stackStatus = appearance === 'card' && (inLane || compressed || wrapRow || statusCrowdsName);
   const tone = presentation.tone ?? 'neutral';
   const role = labelRole(appearance, compact);
   return (
@@ -150,7 +160,7 @@ function WorkMapItemView<TNode extends HappierWorkMapNode>(props: Omit<WorkMapIt
         ) : null}
       </View>
       {stackStatus ? null : appearance === 'card'
-        ? <View style={styles.trailingStatus}>{props.status}</View>
+        ? <View style={styles.trailingStatus} onLayout={onTrailingStatusLayout}>{props.status}</View>
         : props.status}
     </Pressable>
   );
