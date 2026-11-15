@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { useNewSessionEntryRouter as useRouter } from '@/components/sessions/new/navigation/newSessionEntry';
 
 import {
   HubComposerSuggestionList,
@@ -11,11 +10,13 @@ import { ComposerBannerCollapseProvider } from '@/components/sessions/composerBa
 import { NewSessionScreen } from '@/components/sessions/new/NewSessionScreen';
 import { NewSessionEmbeddedHostProvider } from '@/components/sessions/new/navigation/newSessionHost';
 import { useNewSessionEmbeddedHostState } from '@/components/sessions/new/navigation/useNewSessionEmbeddedHostState';
-import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { SessionAuthoringOpenResultV1Schema } from '@happier-dev/protocol/plugins/ui/hostApiRequests';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { readHappierStorageBytes } from '@/components/machines/storage/storageViewModel';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
+import { resolveDefaultDirectoryForMachine } from '@/utils/sessions/machineDefaultDirectory';
 import { storage as appStorage } from '@/sync/domains/state/storageStore';
 import { useMachineResourceSummary } from '@/sync/domains/machines/resources/useMachineResourceSummary';
 import { useMachineResourcesPolicy } from '@/sync/domains/machines/resources/useMachineResourcesPolicy';
@@ -46,13 +47,16 @@ export const MachineResourcesAskBlock = React.memo(
       subject?: MachineResourceSuggestionSubject;
     }>,
   ) {
-    const router = useRouter();
     const language = usePreferredLanguage();
     const presence = useMachinePresenceSummary(props.serverId, props.machineId);
     const online = presence.reachability === 'reachable';
-    const homeDir = appStorage(React.useCallback((state: ReturnType<typeof appStorage.getState>) =>
-      resolveServerScopedMachine(state, props.serverId, props.machineId)?.metadata?.homeDir || undefined,
-    [props.machineId, props.serverId]));
+    // Ask starts at the home intent of whoever the session runs as, never the daemon's absolute home:
+    // on a separate-users Machine the member's folder comes from the New Session placement owner.
+    const directory = appStorage(React.useCallback((state: ReturnType<typeof appStorage.getState>) => {
+      const machine = resolveServerScopedMachine(state, props.serverId, props.machineId);
+      return machine ? resolveDefaultDirectoryForMachine({ machineId: props.machineId, machines: [machine], recentPaths: [] }) || undefined
+        : undefined;
+    }, [props.machineId, props.serverId]));
     const summary = useMachineResourceSummary({
       serverId: props.serverId,
       machineId: props.machineId,
@@ -87,7 +91,7 @@ export const MachineResourcesAskBlock = React.memo(
             serverId: props.serverId,
             machineId: props.machineId,
             name: props.machineName,
-            directory: homeDir ?? '',
+            directory: directory ?? '',
           },
           online,
           hasLastReport,
@@ -116,7 +120,7 @@ export const MachineResourcesAskBlock = React.memo(
         guardEnabled,
         happierStorageBytes,
         leftBehindCount,
-        homeDir,
+        directory,
         props.machineId,
         props.machineName,
         online,
@@ -131,22 +135,20 @@ export const MachineResourcesAskBlock = React.memo(
     React.useEffect(() => {
       previousSuggestions.current = suggestions;
     }, [suggestions]);
-    const fillGlobalComposer = React.useCallback((suggestion: HomeComposerSuggestionFill) => {
+    const fillGlobalComposer = React.useCallback(async (suggestion: HomeComposerSuggestionFill) => {
       const lifetime = captureActiveServerAccountScopeLifetime();
       const scope = selectActiveServerAccountScopeForServer(lifetime?.scope ?? null, props.serverId);
-      const outcome = lifetime && scope && seedAndOpenNewSession({
+      const result = lifetime && scope && await createFrontDoorActionExecute()('session.authoring.open', {
         seed: { prompt: suggestion.prompt },
-        scope: lifetime.scope,
-        isCurrent: lifetime.isCurrent,
-        navigateToNewSession: ({ draftId }) => router.push({
-          pathname: '/new',
-          params: { draftId, draftServerId: lifetime.scope.serverId, draftAccountId: lifetime.scope.accountId },
-        }),
+      }, {
+        surface: 'ui', authority: 'present_user', serverId: lifetime.scope.serverId,
+        expectedAccountId: lifetime.scope.accountId,
       });
-      if (!outcome || outcome.kind !== 'opened') {
+      const outcome = result?.ok ? SessionAuthoringOpenResultV1Schema.safeParse(result.result) : null;
+      if (!outcome?.success || outcome.data.kind !== 'opened') {
         Modal.alert(t('common.error'), t('errors.operationFailed'));
       }
-    }, [props.serverId, router]);
+    }, [props.serverId]);
 
     return (
       <ItemGroup
@@ -163,7 +165,7 @@ export const MachineResourcesAskBlock = React.memo(
               serverId={props.serverId}
               machineId={props.machineId}
               machineName={props.machineName}
-              directory={homeDir}
+              directory={directory}
               suggestions={suggestions}
             />
           ) : (

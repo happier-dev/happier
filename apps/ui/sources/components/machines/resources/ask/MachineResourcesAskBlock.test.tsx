@@ -8,7 +8,7 @@ import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } 
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { t } from '@/text';
 import type { NewSessionEmbeddedHost } from '@/components/sessions/new/navigation/newSessionHost';
-import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { settingsDefaults, settingsParse } from '@/sync/domains/settings/settings';
 import type { MachineVitalsSampleV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsSampleV1';
 
 it('offers only the return notification without a last report and fills the global draft without sending', async () => {
@@ -24,15 +24,20 @@ it('offers only the return notification without a last report and fills the glob
     expect(screen.root.findAllByType(NewSessionEmbeddedHostProvider)).toHaveLength(0);
     const scope = captureActiveServerAccountScopeLifetime()!.scope;
     expect(list().props.suggestions.map((entry: { kind: string }) => entry.kind)).toEqual(['notifyWhenBack']);
+    storage.setState({ settings: settingsParse({ ...storage.getState().settings, actionsSettingsV1: { v: 1,
+        actions: { 'session.authoring.open': { disabledSurfaces: ['ui'] } } } }) });
+    const first = list().props.suggestions[0];
+    await screen.pressByTestIdAsync(`hub-composer.suggestion.${first.id}`);
+    expect(routePush).not.toHaveBeenCalled();
+    storage.setState({ settings: settingsParse({ ...storage.getState().settings, actionsSettingsV1: { v: 1, actions: {} } }) });
     for (const kind of ['notifyWhenBack']) {
         const suggestion = list().props.suggestions.find((entry: { kind: string }) => entry.kind === kind);
         expect(suggestion).toBeDefined();
         const testId = `hub-composer.suggestion.${suggestion.id}`;
         expect(screen.findByTestId(testId)?.props.disabled).not.toBe(true);
         await screen.pressByTestIdAsync(testId);
-        expect(routePush.mock.lastCall?.[0]).toEqual({ pathname: '/new', params: {
-            draftId: expect.any(String), draftServerId: scope.serverId, draftAccountId: scope.accountId,
-        } });
+        await vi.waitFor(() => expect(routePush).toHaveBeenCalled());
+        expect(routePush.mock.lastCall?.[0]).toEqual({ pathname: '/new', params: { draftId: expect.any(String) } });
         const route = routePush.mock.lastCall![0] as { params: { draftId: string } };
         const draft = readNewSessionDraftFromRepository({ scope, draftId: route.params.draftId });
         expect(draft?.input).toBe(suggestion.fill.text);
@@ -257,7 +262,6 @@ it('starts Ask on the page machine and home folder before intent, independently 
     const connection = await restoreServerAccountForTest({ serverUrl: 'https://placement.example.test', serverIdentityId: serverId });
     onTestFinished(() => connection.dispose());
     const machine = createMachineFixture({ id: 'machine-a', active: true, activeAt: Date.now() });
-    const homeDir = machine.metadata?.homeDir;
     await publishMachineInventoryForTest(captureActiveServerAccountScopeLifetime()!.scope, [machine]);
     const screen = await renderScreen(<MachineResourcesAskBlock serverId={serverId} machineId="machine-a" machineName="Laptop" />);
     expect(rpc).not.toHaveBeenCalled();
@@ -285,7 +289,7 @@ it('starts Ask on the page machine and home folder before intent, independently 
         persistedPath: '/foreign/repo',
     }));
     expect(placement.getCurrent().executionTarget).toEqual({ kind: 'machine', target: { serverId, machineId: 'machine-a' } });
-    expect(placement.getCurrent().directoryIntent).toEqual({ kind: 'path', path: homeDir });
+    expect(placement.getCurrent().directoryIntent).toEqual({ kind: 'path', path: '~' });
     expect(host.demanded).toBe(false);
     expect(rpc).not.toHaveBeenCalled();
     expect(host.params.draftOrigin).toBeUndefined();
@@ -294,7 +298,7 @@ it('starts Ask on the page machine and home folder before intent, independently 
     expect(editedHost.params.directory).toBe('/authored/repo');
     await act(async () => editedHost.openDraft({ draftId: '4db4aa44-4b4a-4444-8444-4b4a4b4a4b4a', draftOrigin: 'ordinary' }));
     const restartedHost: NewSessionEmbeddedHost = screen.root.findByType(NewSessionEmbeddedHostProvider).props.host;
-    expect(restartedHost.params.directory).toBe(homeDir);
+    expect(restartedHost.params.directory).toBe('~');
     expect(restartedHost.params.resumeSessionId).toBeUndefined();
     expect(restartedHost.params.machineId).toBe('machine-a');
     expect(restartedHost.params.draftOrigin).toBeUndefined();
@@ -318,6 +322,28 @@ afterEach(() => {
     storage.setState({ sessions: {}, machines: {}, machineListByServerId: {}, machineListStatusByServerId: {} });
     rpc.mockReset();
     routePush.mockReset();
+});
+
+it('never seeds Ask with the daemon home on a separate-users Machine, where the requester runs as its own member', async () => {
+    const serverId = 'srv_member_ask';
+    const connection = await restoreServerAccountForTest({ serverUrl: 'https://member-ask.example.test', serverIdentityId: serverId });
+    onTestFinished(() => connection.dispose());
+    const ordinary = createMachineFixture({ id: 'machine-ordinary', active: true, activeAt: Date.now() });
+    const base = createMachineFixture({ id: 'machine-member', active: true, activeAt: Date.now() });
+    // R126U3: the daemon's /home/happier is not readable by member UID 997.
+    const member = { ...base, metadata: { ...base.metadata!, platform: 'linux', homeDir: '/home/happier',
+        agentIsolation: { enabled: true, memberProvisioning: 'linuxUsersV1' as const } } };
+    await publishMachineInventoryForTest(captureActiveServerAccountScopeLifetime()!.scope, [ordinary, member]);
+    const hostFor = async (machineId: string) => {
+        const screen = await renderScreen(<MachineResourcesAskBlock serverId={serverId} machineId={machineId} machineName="Guest" />);
+        const host: NewSessionEmbeddedHost = screen.root.findByType(NewSessionEmbeddedHostProvider).props.host;
+        await screen.unmount();
+        return host;
+    };
+    // The member's folder is decided by the New Session placement owner from its own requester status.
+    expect((await hostFor(member.id)).params.directory).toBeUndefined();
+    // Elsewhere Ask starts at the home intent, which the native execution owner expands.
+    expect((await hostFor(ordinary.id)).params.directory).toBe('~');
 });
 
 it('uses warmed Storage and Processes facts without extra reads and suppresses unavailable Automations', async () => {
