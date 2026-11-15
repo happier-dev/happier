@@ -69,8 +69,8 @@ export function createSessionProviderInputConsumerSessionAdapter(
     },
     ...(session.reconcilePendingProviderInputCustodyBeforeMaterialization
       ? {
-          reconcilePendingProviderInputCustodyBeforeMaterialization: () =>
-            session.reconcilePendingProviderInputCustodyBeforeMaterialization(),
+          reconcilePendingProviderInputCustodyBeforeMaterialization: (opts?: Readonly<{ beforeClaim?: boolean }>) =>
+            session.reconcilePendingProviderInputCustodyBeforeMaterialization(opts),
         }
       : {}),
     reconcilePendingQueueState: async (reconcileOpts) => {

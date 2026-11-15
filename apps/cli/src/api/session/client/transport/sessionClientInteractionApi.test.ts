@@ -912,6 +912,36 @@ describe('createSessionClientInteractionApi diagnostics', () => {
     expect(handleSessionScopedUpdate).not.toHaveBeenCalled();
   });
 
+  it('carries held custody localIds on the claim and hands their delivery statuses from the claim reply to the custody owner', async () => {
+    const socket = createSocketStub();
+    socketAckMock.mockResolvedValueOnce({
+      ok: true, didMaterialize: false, pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 7,
+      custodyDeliveryStatuses: [
+        { localId: 'held-blocked', deliveryStatus: { status: 'blocked', reason: 'team_access_removed' } },
+        { localId: 'held-archived', deliveryStatus: { status: 'discarded', reason: 'dismissed_uncertain' } },
+      ],
+    });
+    const applyPendingCustodyDeliveryStatuses = vi.fn(async () => {});
+    const api = createApi({
+      getSocket: () => socket as never,
+      getSessionConnectionSupervisor: () => ({ getState: () => ({ phase: 'online' }) } as never),
+      getPendingQueueState: () => ({ known: true as const, pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 6 }),
+      readPendingCustodyLocalIdsForClaim: () => ['held-blocked', 'held-archived', 'held-absent'],
+      applyPendingCustodyDeliveryStatuses,
+    });
+
+    await api.materializeNextPendingMessageSafely({ reconcileWhenEmpty: 'force' });
+
+    expect(socketAckMock).toHaveBeenCalledWith('pending-materialize-next', expect.objectContaining({
+      sid: 's1', custodyLocalIds: ['held-blocked', 'held-archived', 'held-absent'],
+    }));
+    expect(axiosGetMock).not.toHaveBeenCalled();
+    expect(applyPendingCustodyDeliveryStatuses).toHaveBeenCalledWith(['held-blocked', 'held-archived', 'held-absent'], [
+      { localId: 'held-blocked', deliveryStatus: { status: 'blocked', reason: 'team_access_removed' } },
+      { localId: 'held-archived', deliveryStatus: { status: 'discarded', reason: 'dismissed_uncertain' } },
+    ]);
+  });
+
   it('ignores the retired local Activity veto and asks the server Pending owner', async () => {
     const socket = createSocketStub();
     socketAckMock.mockResolvedValueOnce({

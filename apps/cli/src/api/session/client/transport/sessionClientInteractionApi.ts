@@ -36,6 +36,7 @@ import {
     type PendingClaimForegroundState,
     type PendingQueueMaterializedMessage,
     type PendingQueueMaterializeNextResult,
+    type PendingCustodyDeliveryStatus,
 } from '../../pendingQueueV2Transport';
 import { runPendingQueueV2ReleasedServerAdapter } from '../../pendingQueueV2ReleasedServerAdapter';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -563,6 +564,12 @@ export function createSessionClientInteractionApi(
         getProviderInputBacklog: () => UserMessage[];
         setProviderInputConsumer: (callback: SessionProviderInputConsumer | null) => void;
         readRetainedContextLocalIds?: () => readonly string[];
+        /** The host's held Pending localIds whose delivery statuses ride on the claim reply. */
+        readPendingCustodyLocalIdsForClaim?: () => readonly string[];
+        applyPendingCustodyDeliveryStatuses?: (
+            localIds: readonly string[],
+            statuses: readonly PendingCustodyDeliveryStatus[],
+        ) => Promise<void>;
         getProviderInputConsumerAttachedAtMs: () => number | null;
         setProviderInputConsumerAttachedAtMs: (value: number | null) => void;
         wakePendingMaterialization: () => void;
@@ -706,6 +713,7 @@ export function createSessionClientInteractionApi(
         }
         let materializeResult: PendingQueueMaterializeNextResult;
         let targetAuthorAccountId: string | null = null;
+        let claimCustodyLocalIds: readonly string[] = [];
         try {
             reportDiagnosticPhase('materialize.server_claim');
             materializeResult = await runSupervisedRequest({
@@ -725,6 +733,7 @@ export function createSessionClientInteractionApi(
                         return result;
                     }
                     const pendingQueueState = deps.getPendingQueueState();
+                    claimCustodyLocalIds = retainedContextLocalIds.length ? [] : deps.readPendingCustodyLocalIdsForClaim?.() ?? [];
                     return await runWithServerHttpBaseUrl(serverUrl, async () => materializeNextPendingQueueV2Message({
                         signal: deps.signal ?? metadataWaitAbortController.signal,
                         token: deps.token,
@@ -735,6 +744,7 @@ export function createSessionClientInteractionApi(
                         deliveryTiming: deliveryTiming ?? 'after_foreground_ready',
                         foregroundState: deps.getPendingClaimForegroundState(),
                         ...(retainedContextLocalIds.length ? { retainedContext: { localIds: retainedContextLocalIds } } : {}),
+                        ...(claimCustodyLocalIds.length ? { custodyLocalIds: claimCustodyLocalIds } : {}),
                         ...(deliveryTiming === 'after_runtime_idle' && opts.expectedRuntimeActivityRevision !== undefined
                             ? { expectedRuntimeActivityRevision: opts.expectedRuntimeActivityRevision }
                             : {}),
@@ -764,6 +774,9 @@ export function createSessionClientInteractionApi(
         }
         if (!hasCurrentContractAuthority()) {
             return { didMaterialize: false, result: { type: 'retryable_transport' } };
+        }
+        if (claimCustodyLocalIds.length && materializeResult.custodyDeliveryStatuses) {
+            await deps.applyPendingCustodyDeliveryStatuses?.(claimCustodyLocalIds, materializeResult.custodyDeliveryStatuses);
         }
         const pendingStateChanged = !target && materializeResult.pendingQueueState
             ? deps.applyPendingQueueState(materializeResult.pendingQueueState)

@@ -47,7 +47,8 @@ export type SessionProviderInputConsumerSession = Readonly<{
   shouldAttemptPendingMaterialization?: () => boolean | Promise<boolean>;
   /** Synchronous observed Pending state at the context-only dispatch ordering point. */
   hasPendingProviderInput?: () => boolean;
-  reconcilePendingProviderInputCustodyBeforeMaterialization?: () => Promise<boolean>;
+  /** `beforeClaim`: the claim reply carries settled custody's statuses, so no separate list read. */
+  reconcilePendingProviderInputCustodyBeforeMaterialization?: (opts?: Readonly<{ beforeClaim?: boolean }>) => Promise<boolean>;
   reconcilePendingQueueState?: (opts: { force: boolean }) => unknown | Promise<unknown>;
   readPendingQueueStateForLiveWork?: () => Promise<PendingQueueState>;
   /** Incumbent synchronous projection, used only to detect change edges. */

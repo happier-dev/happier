@@ -59,6 +59,7 @@ import {
     blockPendingDelivery,
     mapPendingMaterializationError,
     materializeNextPendingMessageInTx,
+    readPendingCustodyDeliveryStatusesInTx,
     readSessionPendingState,
     resolveAcceptedPendingDelivery,
     settlePendingInputAdmission,
@@ -177,6 +178,13 @@ type SessionEndSocketPayload = Readonly<{
     sid?: unknown;
     time?: unknown;
 }>;
+
+/** Exact Pending localIds; undefined = malformed request. */
+function readPendingCustodyLocalIds(value: unknown): string[] | undefined {
+    if (!Array.isArray(value)) return undefined;
+    const localIds = value.map(localId => readPendingLocalId(localId));
+    return localIds.every((localId, index) => localId !== null && localId === value[index]) ? localIds as string[] : undefined;
+}
 
 function readExpectedRuntimeActivityRevision(data: unknown): number | null {
     if (!data || typeof data !== 'object') return null;
@@ -2551,6 +2559,15 @@ export function sessionUpdateHandler(
                         return;
                     }
                     const expectedRuntimeActivityRevision = readExpectedRuntimeActivityRevision(data);
+                    // The claiming host's held main-route custody: their statuses ride on this reply
+                    // instead of a separate Pending list read before the claim.
+                    const custodyLocalIds = executionRunTarget || raw.custodyLocalIds === undefined ? null
+                        : readPendingCustodyLocalIds(raw.custodyLocalIds);
+                    if (custodyLocalIds === undefined) {
+                        respond({ ok: false, error: "invalid-params" });
+                        return;
+                    }
+                    const custodyReply: { statuses: Awaited<ReturnType<typeof readPendingCustodyDeliveryStatusesInTx>> | null } = { statuses: null };
                     const materialize = (
                         publisherAuthority: import("@/app/presence/sessionPublisherPresence").CurrentSessionPublisherAuthority,
                         tx: import("@/storage/inTx").Tx,
@@ -2572,8 +2589,15 @@ export function sessionUpdateHandler(
                         ? null
                         : await publisher.presence.runAsCurrentPublisherInTx({
                             socket,
-                            operation: materialize,
+                            operation: async (publisherAuthority, tx) => {
+                                const claimed = await materialize(publisherAuthority, tx);
+                                custodyReply.statuses = custodyLocalIds
+                                    ? await readPendingCustodyDeliveryStatusesInTx(tx, { sessionId: sid, localIds: custodyLocalIds })
+                                    : null;
+                                return claimed;
+                            },
                         });
+                    const custody = custodyReply.statuses ? { custodyDeliveryStatuses: custodyReply.statuses } : {};
 
                     if (result === null) {
                         respond({ ok: false, error: "forbidden" });
@@ -2598,6 +2622,7 @@ export function sessionUpdateHandler(
                             ...(result.deferredReason ? { deferredReason: result.deferredReason } : {}),
                             ...(result.localId ? { localId: result.localId } : {}),
                             ...(result.deliveryState ? { deliveryState: result.deliveryState } : {}),
+                            ...custody,
                         } as const;
                         respond(response);
                         if (result.pendingStateChanged === true) await publishSessionAfterCommit(sid, "Pending materialization", async () => {
@@ -2628,6 +2653,7 @@ export function sessionUpdateHandler(
                         message: serializePendingMaterializedMessage(result.message, { nativeAdmission: true }),
                         ...toPendingSocketState(result),
                         ...(result.deliveryState ? { deliveryState: result.deliveryState } : {}),
+                        ...custody,
                     });
 
                     await publishSessionAfterCommit(sid, "Pending materialization", async () => {

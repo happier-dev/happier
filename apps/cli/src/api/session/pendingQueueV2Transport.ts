@@ -165,7 +165,11 @@ export type PendingQueueMaterializeNextResult = {
     message: PendingQueueMaterializedMessage | null;
     deliveryState?: PendingMaterializationDeliveryState | null;
     deferredReason?: 'waiting_for_foreground_turn' | 'waiting_for_runtime_activity' | 'runtime_activity_unknown' | 'waiting_for_predecessor' | 'waiting_for_quota_reset' | 'steering_unavailable';
+    /** Delivery statuses of the claim's `custodyLocalIds` (queued or visible discarded rows; absent = no row). */
+    custodyDeliveryStatuses?: readonly PendingCustodyDeliveryStatus[];
 };
+
+export type PendingCustodyDeliveryStatus = Readonly<{ localId: string; deliveryStatus: PendingDeliveryStatusV1 }>;
 
 export type PendingQueueMaterializationTransportClassification =
     | 'server_rejected'
@@ -330,9 +334,10 @@ export type PendingQueueWriteBody = Readonly<(
     nextTurnNote?: SessionPendingEnqueueByMachineRequestV1['nextTurnNote'];
 }>>;
 
-type PendingQueueSocketMaterializeResult =
+type PendingQueueSocketMaterializeResult = (
     | { ok: true; didMaterialize: true; localId: string | null; didWrite: boolean; pendingQueueState: KnownPendingQueueState | null; message: PendingQueueMaterializedMessage | null }
-    | { ok: true; didMaterialize: false; pendingQueueState: KnownPendingQueueState | null; deliveryState: PendingMaterializationDeliveryState | null; localId: string | null; deferredReason?: PendingQueueMaterializeNextResult['deferredReason'] };
+    | { ok: true; didMaterialize: false; pendingQueueState: KnownPendingQueueState | null; deliveryState: PendingMaterializationDeliveryState | null; localId: string | null; deferredReason?: PendingQueueMaterializeNextResult['deferredReason'] }
+) & { custodyDeliveryStatuses?: readonly PendingCustodyDeliveryStatus[] };
 
 type PendingQueueHttpMaterializeResult =
     | { ok: true; didMaterialize: true; localId: string | null; didWrite: boolean; pendingQueueState: KnownPendingQueueState | null; message: PendingQueueMaterializedMessage | null }
@@ -348,6 +353,7 @@ type PendingMaterializePayload = Readonly<{
     foregroundState?: PendingClaimForegroundState;
     expectedRuntimeActivityRevision?: number;
     retainedContext?: RetainedPendingContextV1;
+    custodyLocalIds?: readonly string[];
 }>;
 
 export type PendingQueueDeliveryBlockedReason = PendingDeliveryBlockedReason;
@@ -446,7 +452,25 @@ function readPendingMaterializePayload(payload: unknown): PendingMaterializePayl
         ...(record.foregroundState === 'ready' || record.foregroundState === 'active_steerable' || record.foregroundState === 'active_unsteerable'
             ? { foregroundState: record.foregroundState }
             : {}),
+        ...(Array.isArray(record.custodyLocalIds) && record.custodyLocalIds.length > 0
+            && record.custodyLocalIds.every(localId => readPendingLocalId(localId) === localId)
+            ? { custodyLocalIds: record.custodyLocalIds as string[] }
+            : {}),
     };
+}
+
+/** The claim reply's statuses for the host's held localIds; malformed entries carry no status. */
+function readPendingCustodyDeliveryStatuses(value: unknown): readonly PendingCustodyDeliveryStatus[] | undefined {
+    if (!Array.isArray(value)) return undefined;
+    const statuses: PendingCustodyDeliveryStatus[] = [];
+    for (const entry of value) {
+        if (!entry || typeof entry !== 'object') continue;
+        const record = entry as Record<string, unknown>;
+        const localId = readPendingLocalId(record.localId);
+        const deliveryStatus = parsePendingDeliveryStatusV1(record.deliveryStatus);
+        if (localId && deliveryStatus) statuses.push({ localId, deliveryStatus });
+    }
+    return statuses;
 }
 
 function createPendingMaterializeAckSocket(socket: Socket<ServerToClientEvents, ClientToServerEvents>): AckSocket {
@@ -1416,6 +1440,7 @@ async function tryMaterializeNextViaSocket(params: {
     foregroundState?: PendingClaimForegroundState;
     expectedRuntimeActivityRevision?: number;
     retainedContext?: RetainedPendingContextV1;
+    custodyLocalIds?: readonly string[];
 }): Promise<PendingQueueSocketMaterializeResult> {
     try {
         const rawAck = await emitSocketWithAck<Record<string, unknown>>({
@@ -1430,6 +1455,7 @@ async function tryMaterializeNextViaSocket(params: {
                 ...(params.deliveryTiming ? { deliveryTiming: params.deliveryTiming } : {}),
                 ...(params.foregroundState ? { foregroundState: params.foregroundState } : {}),
                 ...(params.retainedContext ? { retainedContext: params.retainedContext } : {}),
+                ...(params.custodyLocalIds?.length ? { custodyLocalIds: params.custodyLocalIds } : {}),
                 ...(typeof params.expectedRuntimeActivityRevision === 'number'
                     ? { expectedRuntimeActivityRevision: params.expectedRuntimeActivityRevision }
                     : {}),
@@ -1465,6 +1491,9 @@ async function tryMaterializeNextViaSocket(params: {
             );
         }
         const pendingQueueState = readKnownPendingQueueState(rawAck);
+        const custodyDeliveryStatuses = params.custodyLocalIds?.length
+            ? readPendingCustodyDeliveryStatuses(rawAck.custodyDeliveryStatuses) : undefined;
+        const custody = custodyDeliveryStatuses ? { custodyDeliveryStatuses } : {};
         if (rawAck.didMaterialize !== true) {
             const deferredReason = readPendingMaterializeDeferredReason(rawAck.deferredReason);
             return {
@@ -1474,6 +1503,7 @@ async function tryMaterializeNextViaSocket(params: {
                 deliveryState: parseDeliveryState(rawAck.deliveryState).deliveryState,
                 localId: deferredReason ? readPendingLocalId(rawAck.localId) : null,
                 ...(deferredReason ? { deferredReason } : {}),
+                ...custody,
             };
         }
         const parsedMessage = readMaterializedMessageFromAck(rawAck);
@@ -1482,7 +1512,7 @@ async function tryMaterializeNextViaSocket(params: {
         if (params.deliveryStateOptIn === true) {
             assertProviderDeliveryClaimMaterialization({ didWrite, message: parsedMessage, localId });
         }
-        return { ok: true, didMaterialize: true, localId, didWrite, pendingQueueState, message: parsedMessage };
+        return { ok: true, didMaterialize: true, localId, didWrite, pendingQueueState, message: parsedMessage, ...custody };
     } catch (error) {
         if (isAuthenticationError(error)) throw error;
         throw readPendingQueueMaterializationTransportDiagnostic(error)
@@ -1588,6 +1618,7 @@ export async function materializeNextPendingQueueV2Message(params: {
     foregroundState?: PendingClaimForegroundState;
     expectedRuntimeActivityRevision?: number;
     retainedContext?: RetainedPendingContextV1;
+    custodyLocalIds?: readonly string[];
 }): Promise<PendingQueueMaterializeNextResult> {
     const requiresBoundSessionSocket = Boolean(params.deliveryStateOptIn);
     const socketRes = params.socket.connected
@@ -1601,6 +1632,7 @@ export async function materializeNextPendingQueueV2Message(params: {
             foregroundState: params.foregroundState,
             expectedRuntimeActivityRevision: params.expectedRuntimeActivityRevision,
             retainedContext: params.retainedContext,
+            custodyLocalIds: params.custodyLocalIds,
         })
         : null;
     let res: PendingQueueSocketMaterializeResult | PendingQueueHttpMaterializeResult;
@@ -1620,6 +1652,7 @@ export async function materializeNextPendingQueueV2Message(params: {
             foregroundState: params.foregroundState,
         });
     }
+    const custody = 'custodyDeliveryStatuses' in res ? res.custodyDeliveryStatuses : undefined;
     if (!res.didMaterialize) {
         return {
             didMaterialize: false,
@@ -1630,6 +1663,7 @@ export async function materializeNextPendingQueueV2Message(params: {
             deliveryState: res.deliveryState,
             ...(res.deferredReason ? { deferredReason: res.deferredReason } : {}),
             ...(res.localId ? { localId: res.localId } : {}),
+            ...(custody ? { custodyDeliveryStatuses: custody } : {}),
         };
     }
     return {
@@ -1638,5 +1672,6 @@ export async function materializeNextPendingQueueV2Message(params: {
         didWrite: res.didWrite,
         pendingQueueState: res.pendingQueueState,
         message: res.message,
+        ...(custody ? { custodyDeliveryStatuses: custody } : {}),
     };
 }

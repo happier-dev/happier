@@ -504,6 +504,56 @@ export async function readSessionPendingState(params: {
     }
 }
 
+const PENDING_MESSAGE_ROW_SELECT = {
+    localId: true,
+    autonomousExchangeRootSessionId: true,
+    autonomousExchangeRootLocalId: true,
+    targetExecutionRunId: true,
+    messageRole: true,
+    providerAction: true,
+    replyProgress: true,
+    deliveryFailure: true,
+    content: true,
+    requestedAction: true,
+    status: true,
+    deliveryState: true,
+    deliveryBlockedReason: true,
+    position: true,
+    createdAt: true,
+    updatedAt: true,
+    discardedAt: true,
+    discardedReason: true,
+    authorAccountId: true,
+    inputAdmissionReceipt: true,
+} as const;
+
+/**
+ * Delivery statuses of a claiming host's held main-route localIds, as the Pending list reports
+ * them (queued and visible discarded rows); a localId without such a row is omitted (absent).
+ */
+export async function readPendingCustodyDeliveryStatusesInTx(tx: Tx, params: Readonly<{
+    sessionId: string;
+    localIds: readonly string[];
+}>): Promise<Array<{ localId: string; deliveryStatus: PendingMessageRow["deliveryStatus"] }>> {
+    if (params.localIds.length === 0) return [];
+    const rows = await tx.sessionPendingMessage.findMany({
+        where: {
+            sessionId: params.sessionId,
+            targetExecutionRunId: null,
+            localId: { in: [...new Set(params.localIds)] },
+            OR: [
+                { status: "queued" },
+                { status: "discarded", OR: [
+                    { discardedReason: null },
+                    { discardedReason: { notIn: [...PENDING_DELIVERY_HIDDEN_DISCARDED_REASONS_V1] } },
+                ] },
+            ],
+        },
+        select: PENDING_MESSAGE_ROW_SELECT,
+    });
+    return rows.map(row => ({ localId: row.localId, deliveryStatus: mapPendingMessageRow(row).deliveryStatus }));
+}
+
 export async function listPendingMessages(params: {
     actorUserId: string;
     sessionId: string;
@@ -527,28 +577,7 @@ export async function listPendingMessages(params: {
     });
     if (decision.status !== "allowed") return { ok: false, error: projectPendingSessionAccessError(decision.status) };
 
-    const select = {
-        localId: true,
-        autonomousExchangeRootSessionId: true,
-        autonomousExchangeRootLocalId: true,
-        targetExecutionRunId: true,
-        messageRole: true,
-        providerAction: true,
-        replyProgress: true,
-        deliveryFailure: true,
-        content: true,
-        requestedAction: true,
-        status: true,
-        deliveryState: true,
-        deliveryBlockedReason: true,
-        position: true,
-        createdAt: true,
-        updatedAt: true,
-        discardedAt: true,
-        discardedReason: true,
-        authorAccountId: true,
-        inputAdmissionReceipt: true,
-    } as const;
+    const select = PENDING_MESSAGE_ROW_SELECT;
 
     try {
         if (targetExecutionRunId !== null) {

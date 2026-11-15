@@ -1147,10 +1147,11 @@ async function drainPendingMessages(
   }
 }
 
+/** The claim path: both callers claim next, so custody statuses ride on the claim reply. */
 async function reconcilePendingProviderInputCustodyBeforeMaterialization(
   session: SessionProviderInputConsumerSession,
 ): Promise<boolean> {
-  return await (session.reconcilePendingProviderInputCustodyBeforeMaterialization?.() ?? true);
+  return await (session.reconcilePendingProviderInputCustodyBeforeMaterialization?.({ beforeClaim: true }) ?? true);
 }
 
 function isSessionPendingDrainBlocked(session: SessionProviderInputConsumerSession): boolean {
