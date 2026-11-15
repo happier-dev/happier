@@ -561,11 +561,16 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
           lease.registry.generation, lease.registry.readPluginOccurrenceId);
         const observation = await readProviderConnectionSourceCatalog({ machineId: request.machineId,
           source: request.providerConnection, snapshot, registry, runtime: sharedRuntime, lifetime: operationLifetime,
-          ...(accountContext ? { accountScope: { getAccountSettingsSnapshot: accountContext.getAccountSettingsSnapshot,
-            resolveManagedPurposeBindingIntent: accountContext.resolveManagedPurposeBindingIntent,
-            isAccountCurrent: accountContext.isCurrent,
-            savedSecretOperationContext: accountContext.savedSecretOperationContext ?? null,
-            managedRuntimeAccount: accountContext.managedRuntimeAccount ?? null } } : {}),
+          accountScope: {
+            resolveContributedCatalogParsers: leasedCatalogParserResolver(lease),
+            ...(accountContext ? {
+              getAccountSettingsSnapshot: accountContext.getAccountSettingsSnapshot,
+              resolveManagedPurposeBindingIntent: accountContext.resolveManagedPurposeBindingIntent,
+              isAccountCurrent: accountContext.isCurrent,
+              savedSecretOperationContext: accountContext.savedSecretOperationContext ?? null,
+              managedRuntimeAccount: accountContext.managedRuntimeAccount ?? null,
+            } : {}),
+          },
           resolveAddresses: input.resolveAddresses, refreshPolicy: request.refreshPolicy, forceRefresh: request.forceRefresh });
         if (observation.status === 'error') return observation;
         if (!await isAccountCurrent() || !isAccountSnapshotCurrent()) {

@@ -31,7 +31,7 @@ type SourceInput = Readonly<{
   refreshPolicy?: 'current_only';
   forceRefresh?: boolean;
   accountScope?: Pick<RuntimeProviderOperationScope, 'getAccountSettingsSnapshot' | 'resolveManagedPurposeBindingIntent'
-    | 'isAccountCurrent' | 'savedSecretOperationContext' | 'managedRuntimeAccount'>;
+    | 'isAccountCurrent' | 'savedSecretOperationContext' | 'managedRuntimeAccount' | 'resolveContributedCatalogParsers'>;
 }>;
 
 /** The incumbent resolver and catalog merge own grants, DNS, observations and

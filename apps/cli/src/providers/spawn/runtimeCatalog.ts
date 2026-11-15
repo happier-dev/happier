@@ -14,6 +14,7 @@ import {
   resolveProviderConnectionForMachine,
   type ProviderContributionRegistryView,
   type ProviderEndpointDnsEvidence,
+  type ResolvedProviderConnectionRecord,
 } from '../registry';
 import {
   resolveProviderProbeAuthorization,
@@ -126,6 +127,48 @@ type ResolveProviderRuntimeCatalogModelInput = Readonly<{
   signal?: AbortSignal;
 }>;
 
+async function readProviderRuntimeCatalogSelectionProjection(
+  input: ResolveProviderRuntimeCatalogModelInput,
+  record: ResolvedProviderConnectionRecord,
+  machineId: string,
+): Promise<ProviderRuntimeCatalogSelectionObservation | null> {
+  const connectionId = record.connectionId;
+  const unavailable = () => createProviderErrorV1('provider_endpoint_unavailable', { connectionId, machineId });
+  if (!input.readModelProjection || !input.signal) throw unavailable();
+  input.signal.throwIfAborted();
+  // The source Machine owns catalog membership and currentness. The selected worker's
+  // outer spawn authorization chooses its Agent application/compatibility.
+  const response = DaemonProviderModelProjectionResponseV1Schema.parse(await input.readModelProjection(
+    { ...createAccountConnectionModelProjectionRequest({ machineId,
+      connectionId: record.connectionId, expectedConnectionSecurityFingerprint: record.connectionSecurityFingerprint,
+      agentTargetKey: input.selection.ref.agentTargetKey, refreshPolicy: 'current_only' }), sourceCatalog: true }, input.signal,
+  ));
+  input.signal.throwIfAborted();
+  if (response.status === 'error') throw response.error;
+  if (response.agentTargetKey !== input.selection.ref.agentTargetKey) throw unavailable();
+  const group = response.groups.find(candidate => candidate.connectionId === connectionId
+    && (record.source.kind !== 'contribution' || (candidate.sourceAuthority?.connectionSecurityFingerprint === record.connectionSecurityFingerprint
+      && pluginJsonValuesEqual(candidate.sourceAuthority.provider.identity, { pluginId: record.source.pluginId, localId: record.source.definition.id }))));
+  if (!group) throw unavailable();
+  if (!group.authorization.authorized) throw group.authorization.error;
+  const requestedIds = new Set([input.selection.ref.modelId, ...(input.additionalModelIds ?? [])]);
+  const selected = group.rows.filter(row => requestedIds.has(row.ref.modelId));
+  const primary = selected.find(row => row.ref.modelId === input.selection.ref.modelId);
+  if (!primary && record.deployment.kind === 'managedLocal') {
+    throw createProviderErrorV1('provider_model_not_found', { connectionId, machineId });
+  }
+  for (const row of selected) {
+    if (row.ref.agentTargetKey !== input.selection.ref.agentTargetKey || row.ref.providerConnectionId !== connectionId
+      || row.descriptor.id !== row.ref.modelId || record.deployment.kind === 'managedLocal' && row.catalog.stale) throw unavailable();
+  }
+  return {
+    model: primary ? ProviderModelDescriptorV1Schema.parse(primary.descriptor) : null,
+    loadState: primary?.loadState ?? 'unknown',
+    ...(input.additionalModelIds ? { additionalModels: selected.filter(row => input.additionalModelIds!.includes(row.ref.modelId))
+      .map(row => ProviderModelDescriptorV1Schema.parse(row.descriptor)) } : {}),
+  };
+}
+
 export async function resolveProviderRuntimeCatalogSelectionObservation(
   input: ResolveProviderRuntimeCatalogModelInput,
 ): Promise<ProviderRuntimeCatalogSelectionObservation | null> {
@@ -215,37 +258,8 @@ export async function resolveProviderRuntimeCatalogSelectionObservation(
       const unavailable = () => createProviderErrorV1('provider_endpoint_unavailable', {
         connectionId, machineId: placement.machineId,
       });
-      if (managedDeployment.managedRuntime.sharing !== 'connectionMachine'
-        || !input.readModelProjection || !input.signal) throw unavailable();
-      input.signal.throwIfAborted();
-      // The hub owns source membership and currentness. The selected worker's
-      // outer spawn authorization chooses its Agent application/compatibility.
-      const response = DaemonProviderModelProjectionResponseV1Schema.parse(await input.readModelProjection(
-        { ...createAccountConnectionModelProjectionRequest({ machineId: placement.machineId,
-          connectionId: record.connectionId, expectedConnectionSecurityFingerprint: record.connectionSecurityFingerprint,
-          agentTargetKey: input.selection.ref.agentTargetKey, refreshPolicy: 'current_only' }), sourceCatalog: true }, input.signal,
-      ));
-      input.signal.throwIfAborted();
-      if (response.status === 'error') throw response.error;
-      if (response.agentTargetKey !== input.selection.ref.agentTargetKey) throw unavailable();
-      const group = response.groups.find(candidate => candidate.connectionId === connectionId
-        && candidate.sourceAuthority?.connectionSecurityFingerprint === record.connectionSecurityFingerprint
-        && pluginJsonValuesEqual(candidate.sourceAuthority.provider.identity, managedDeployment.implementationIdentity));
-      if (!group) throw unavailable();
-      if (!group.authorization.authorized) throw group.authorization.error;
-      const requestedIds = new Set([input.selection.ref.modelId, ...(input.additionalModelIds ?? [])]);
-      const selected = group.rows.filter(row => requestedIds.has(row.ref.modelId));
-      const primary = selected.find(row => row.ref.modelId === input.selection.ref.modelId);
-      if (!primary) throw createProviderErrorV1('provider_model_not_found', { connectionId, machineId: placement.machineId });
-      for (const row of selected) {
-        if (row.ref.agentTargetKey !== input.selection.ref.agentTargetKey || row.ref.providerConnectionId !== connectionId
-          || row.descriptor.id !== row.ref.modelId || row.catalog.stale) throw unavailable();
-      }
-      return {
-        model: ProviderModelDescriptorV1Schema.parse(primary.descriptor), loadState: primary.loadState,
-        ...(input.additionalModelIds ? { additionalModels: selected.filter(row => input.additionalModelIds!.includes(row.ref.modelId))
-          .map(row => ProviderModelDescriptorV1Schema.parse(row.descriptor)) } : {}),
-      };
+      if (managedDeployment.managedRuntime.sharing !== 'connectionMachine') throw unavailable();
+      return readProviderRuntimeCatalogSelectionProjection(input, record, placement.machineId);
     }
     const managedSources = endpointTemplates.map((endpointTemplate) => ({
       implementationIdentity: managedDeployment.implementationIdentity,
@@ -316,6 +330,9 @@ export async function resolveProviderRuntimeCatalogSelectionObservation(
     });
   }
 
+  // Account-scoped source projection owns probe facts even when this launch's
+  // requester Home has no local observation. Keep adapter compatibility local.
+  if (input.readModelProjection) return readProviderRuntimeCatalogSelectionProjection(input, record, input.machineId);
   if (!input.runtimeStateStore) return null;
   const requestFingerprints = catalog.probes.map((probe) => {
     const endpoint = record.endpoints.find((candidate) => candidate.endpointTemplateId === probe.endpointTemplateId);

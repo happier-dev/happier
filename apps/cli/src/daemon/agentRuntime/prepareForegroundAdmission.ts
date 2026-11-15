@@ -477,6 +477,7 @@ async function prepareForegroundProviderLaunch(input: Readonly<{
       agentId,
       lease,
       getAccountSettingsSnapshot: () => readForegroundAccountSnapshot(dependencies),
+      ...(dependencies.readModelProjection ? { readModelProjection: dependencies.readModelProjection } : {}),
       subscribeAccountSettingsSnapshot: dependencies.subscribeAccountSettingsSnapshot
         ?? (requester ? undefined : (listener, keys) => subscribeActiveAccountSettingsKeys(keys, () => listener())),
       ...(requester ? { savedSecretOperationContext: requester.savedSecretOperationContext } : {}),
