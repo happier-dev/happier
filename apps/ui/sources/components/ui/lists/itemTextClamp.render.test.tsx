@@ -195,6 +195,12 @@ describe('itemTextClamp is the clamp Item actually paints', () => {
         expect(slot.height).toBe(lineHeight);
         expect(row.alignItems).toBe('flex-start');
     });
+    it('draws a status mark that carries its own word even when the line has no text', async () => {
+        const { Item } = await import('./Item');
+        const { View } = await import('react-native');
+        const screen = await renderScreen(<Item title="acme-site" subtitleLeading={<View testID="state" />} showChevron={false} />);
+        expect(screen.tree.findAll((node: { props: Record<string, unknown> }) => node.props.testID === 'state')).toHaveLength(1);
+    });
     it('keeps the separator before a middle-ellipsis suffix visible: a run of its own cannot start with a collapsible space', async () => {
         const { Item } = await import('./Item');
         const screen = await renderScreen(<Item title="NLDW4-5-40-40 · 0da8" subtitle="No work" titleEllipsizeMode="middle" showChevron={false} />);

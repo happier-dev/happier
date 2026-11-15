@@ -400,7 +400,8 @@ export const DeploymentEnvironmentDraft = React.memo(
             }
             titleEditor={partial ? undefined : {
               value: name,
-              placeholder: t('projects.deployments.namePlaceholder'),
+              // The rail's draft row reads the same until a name is typed (one name for one draft).
+              placeholder: t('projects.deployments.newEnvironment'),
               accessibilityLabel: t('projects.deployments.name'),
               onChangeText: setName,
               onCommit: () => setName((current) => current.trim()),

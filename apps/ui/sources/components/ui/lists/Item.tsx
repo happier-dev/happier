@@ -1715,7 +1715,12 @@ export const Item = React.memo<ItemProps>((props) => {
                 )}
                 {/* A row's own facts stay under its name; a moved short value (a time) follows them, last. */}
                 {detailBeneath && detail && !subtitle ? detailBeneathNode : null}
-                {renderColumnMetaLine(subtitle ? (() => {
+                {renderColumnMetaLine(subtitle || subtitleLeading ? (() => {
+                    // A status mark carries its own word ("● Failed"): it stands on its own when the line has no text.
+                    if (!subtitle) {
+                        const markSlotHeight = pageRowMetrics?.subtitle.lineHeight ?? ITEM_SUBTITLE_TEXT_METRICS[resolvedIconDensity].lineHeight;
+                        return <View style={[styles.subtitleMarkSlot, { height: markSlotHeight }]}>{subtitleLeading}</View>;
+                    }
                     // If subtitle is a ReactNode (not string), render as-is.
                     // This enables richer subtitle layouts (e.g. inline glyphs).
                     if (typeof subtitle !== 'string') {

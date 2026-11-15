@@ -21,16 +21,15 @@ import { useMachineDisplayNamesById } from '@/sync/store/hooks';
 import { retainKeyedRows, retainShallow } from '@/sync/domains/state/structuralSharing';
 import { t } from '@/text';
 import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
-import { WorkStatusGlyph } from '@/components/work/status/WorkStatusGlyph';
-import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
+import { DeploymentEnvironmentMark, DeploymentEnvironmentStateMark, type DeploymentPlatformIdentity } from './rows/DeploymentEnvironmentRow';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { DeploymentReadControllerV1 } from '@happier-dev/deployments';
 
-import { deploymentActionRefusalRemedy, deploymentRailState, deploymentStepWorkStatus, deploymentWorkStatus } from './deploymentPresentation';
+import { deploymentActionRefusalRemedy, deploymentRailState } from './deploymentPresentation';
 import { useDeploymentCollection } from './useDeploymentReads';
-import { currentStep, deploymentStepCaption } from './DeploymentStepStrip';
+import { deploymentStepCaption } from './DeploymentStepStrip';
 
 type EnvironmentItem = DeploymentEnvironmentCollectionV1['items'][number];
 
@@ -80,11 +79,6 @@ export const DeploymentEnvironmentCollection = React.memo(
   ) {
     const { theme } = useUnistyles();
     const draftTitle = useCollectionDraftTitle();
-    const mark = React.useMemo(() => (
-      <HappierCollectionListMark>
-        <Icon name="hard-drives" size={18} color={theme.colors.text.secondary} />
-      </HappierCollectionListMark>
-    ), [theme.colors.text.secondary]);
     const parts = useDeploymentEnvironmentRowParts(props.items, 'project-deployments.rail.row', props.lifetime ?? null, 'rail');
     const onSelect = props.onSelect;
     const selectRow = React.useCallback((row: typeof parts[number]) => onSelect(row.environmentId), [onSelect]);
@@ -138,9 +132,9 @@ export const DeploymentEnvironmentCollection = React.memo(
             titleQualifier={row.titleQualifier}
             subtitle={row.subtitle}
             subtitleLeading={row.subtitleLeading}
-            needsYouStatus={row.needsYouStatus}
+            needsYou={Boolean(row.state?.tone)}
             detail={row.detail}
-            icon={mark}
+            icon={<DeploymentEnvironmentMark platform={row.platformMark} />}
             selected={!props.drafting && props.selectedId === row.environmentId}
             onPress={row.onPress}
           />
@@ -220,7 +214,6 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
     const working = currentDeployment && (currentDeployment.state === 'queued' || currentDeployment.state === 'running')
       && currentDeployment.steps && currentDeployment.steps.length > 0 ? currentDeployment.steps : null;
     const caption = working ? deploymentStepCaption(working) : null;
-    const step = working ? currentStep(working) : null;
     // A failed deploy keeps its steps beside the row, so the step that stopped it shows (lab svcApps Staging).
     const steps = working ?? (currentDeployment?.state === 'failed' && currentDeployment.steps && currentDeployment.steps.length > 0
       ? currentDeployment.steps : null);
@@ -235,6 +228,9 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
       // last, the state word that needs the person and the steps of a deploy at work or stopped.
       runsOn: platform ?? machine,
       platform: platform !== null,
+      /** A platform Environment's identity for its mark, known from the link before the platform's name is read. */
+      platformMark: runtimeTargetLink?.source.kind === 'plugin' ? { pluginId: runtimeTargetLink.source.contribution.pluginId,
+        title: platform ?? t('projects.deployments.platformLink.platform') } satisfies DeploymentPlatformIdentity : null,
       /** How it runs on a Machine target ("Compose"); a platform names itself in Runs on. */
       runtimeKind: compose,
       /** The address it serves at (the collection's resolved live address); null when none or not known. */
@@ -248,22 +244,23 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
       state: latest,
       steps,
       stepCaption: steps ? deploymentStepCaption(steps) : null,
-      // A running deploy's line names the step it waits on; the Machine returns when it settles.
+      // The state word is the leading state mark's (`subtitleLeading`), so the line never repeats it: a running deploy's
+      // line names the step it waits on.
       subtitle: working
-        ? [latest?.text, caption].filter(Boolean).join(' · ')
-        : latest ? (machine && presentation === 'row' ? `${latest.text} · ${machine}` : latest.text)
+        ? caption ?? undefined
+        // The state mark draws only beside text, so a state keeps where it runs after it (lab d1 `mixed`: "Failed", then
+        // "Vercel"): the rail names the target, a row its Machine or platform.
+        : latest ? (presentation === 'row' ? platform ?? machine : where) ?? undefined
         // Healthy says where it runs and, with room, what is live there (lab d1 `d1r`: the rail leaves that to the detail).
         // A live version titled like its Environment (a Store app, a Compose service) would only repeat the row's name.
         : liveVersionTitle && presentation === 'row' && !isSameDeploymentName(liveVersionTitle, title)
           ? [machine, liveVersionTitle].filter(Boolean).join(' · ') : where,
-      leading: step ? { kind: 'step' as const, status: deploymentStepWorkStatus(step), testID: `${testIDPrefix}.${environment.id}.step` }
-        : latest?.tone && currentDeployment ? { kind: 'trouble' as const, status: deploymentWorkStatus(currentDeployment.state),
-            testID: `${testIDPrefix}.${environment.id}` } : null,
+      leading: latest ? { state: latest, testID: `${testIDPrefix}.${environment.id}.state` } : null,
       detail: formatRelativeTimeShort(environment.updatedAtMs, nowMs),
     };
   });
   type Fact = typeof incoming[number];
-  type Row = Omit<Fact, 'leading'> & { subtitleLeading: React.ReactNode; needsYouStatus: ReturnType<typeof deploymentWorkStatus> | null };
+  type Row = Omit<Fact, 'leading'> & { subtitleLeading: React.ReactNode };
   const previous = React.useRef<{ facts: readonly Fact[]; rows: Row[] } | null>(null);
   // Reconcile display facts before creating React elements, whose renderer-owned fields are not JSON data.
   const facts = retainKeyedRows(previous.current?.facts, incoming, row => row.environmentId);
@@ -273,10 +270,10 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
     const old = byId.get(fact.environmentId);
     if (old?.fact === fact) return old.row;
     const { leading, ...parts } = fact;
+    // The one Environment state mark (UI refinements ruling 2026-11-15 08:57Z) leads the line while a state speaks.
     const subtitleLeading = old?.fact.leading === leading ? old.row.subtitleLeading
-      : leading?.kind === 'step' ? <WorkStatusGlyph status={leading.status} testIDSuffix={leading.testID} />
-      : leading?.kind === 'trouble' ? <WorkStatusRowMark status={leading.status} testIDSuffix={leading.testID} /> : undefined;
-    return { ...parts, subtitleLeading, needsYouStatus: leading?.kind === 'trouble' ? leading.status : null };
+      : leading ? <DeploymentEnvironmentStateMark state={leading.state} testID={leading.testID} /> : undefined;
+    return { ...parts, subtitleLeading };
   });
   previous.current = { facts, rows };
   return rows;

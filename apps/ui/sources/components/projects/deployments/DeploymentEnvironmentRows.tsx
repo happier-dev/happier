@@ -3,7 +3,6 @@ import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import {
   Collection,
-  Status,
   useHappierCollection,
   type CollectionAnatomy,
   type CollectionField,
@@ -14,7 +13,6 @@ import {
 import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol/v1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
@@ -31,6 +29,7 @@ import { useDeploymentActorPresentations } from './useDeploymentActorPresentatio
 import { formatDeploymentLiveAddress } from './deploymentLiveAddressFacts';
 import { deploymentEnvironmentRoute } from './deploymentNavigation';
 import { groupDeploymentRowsByProject } from './deploymentProjectGroups';
+import { DeploymentEnvironmentMark, DeploymentEnvironmentStateMark } from './rows/DeploymentEnvironmentRow';
 
 type EnvironmentItem = DeploymentEnvironmentCollectionV1['items'][number];
 type Row = ReturnType<typeof useDeploymentEnvironmentRowParts>[number];
@@ -239,13 +238,7 @@ export function DeploymentEnvironmentRows(
       },
     ];
     return {
-      glyph: (row) => (
-        <Icon
-          name={row.platform ? 'cloud' : 'hard-drives'}
-          size={ICON_SIZE.md}
-          color={theme.colors.text.secondary}
-        />
-      ),
+      glyph: (row) => <DeploymentEnvironmentMark platform={row.platformMark} />,
       title: (row) =>
         row.titleQualifier ? `${row.title} · ${row.titleQualifier}` : row.title,
       // Line 2 (lab envRow): what was deployed and who asked; a phone folds the columns in (deploymentEnvironmentRowLine).
@@ -368,14 +361,5 @@ export function ServicesPageList<Item>(props: Readonly<{
 
 /** The state word that needs the person (Failed, Running, not verified) or the work in progress; healthy says nothing. */
 function EnvironmentStateWord(props: Readonly<{ row: Row }>) {
-  const state = props.row.state;
-  if (!state) return null;
-  return (
-    <Status
-      tone={state.tone ?? 'neutral'}
-      label={state.text}
-      presentation="inline"
-      pulsing={state.tone === null}
-    />
-  );
+  return props.row.state ? <DeploymentEnvironmentStateMark state={props.row.state} /> : null;
 }

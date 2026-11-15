@@ -31,6 +31,7 @@ import {
   type PageHeaderMetaFact,
 } from '@/components/ui/layout/PageHeader';
 import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { DeploymentEnvironmentMark } from './rows/DeploymentEnvironmentRow';
 import { Item } from '@/components/ui/lists/Item';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { DEFAULT_DEPLOYMENT_ON_FAILURE_V1, type DeploymentOnFailureV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
@@ -47,7 +48,7 @@ import { ItemGroup, ItemGroupDefaultSurfaceProvider } from '@/components/ui/list
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { useMountedScopeActionCommand } from '@/components/approvals/useMountedScopeActionCommand';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
-import { StatusPill } from '@/components/ui/status/StatusPill';
+import { StatusPill, StatusWord } from '@/components/ui/status/StatusPill';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import {
   useMachineDisplayNamesById,
@@ -147,9 +148,9 @@ import { EnvironmentPageNavigation } from './EnvironmentNavigationViews';
 import { PageLoadingRows } from '@/components/ui/layout/PageLoadingRows';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { useMachineServicesList } from '@/components/machines/services/useMachineServicesList';
-import { Collection, Status, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
-import { machineServiceIcon, machineServiceRunFacts, machineServiceStateTone } from '@/components/machines/services/machineServicesPresentation';
-import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
+import { Collection, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
+import { machineServiceColumnFields, machineServiceStateField } from '@/components/machines/services/machineServiceColumns';
+import { machineServiceIcon, machineServiceStateLabel } from '@/components/machines/services/machineServicesPresentation';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { readDeploymentRefusalRecoveryV1, type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { showServiceCommandSheet } from '@/components/machines/services/command/ServiceCommandSheet';
@@ -902,8 +903,10 @@ export const DeploymentEnvironmentDetail = React.memo(
             title={detail.content.name}
             alwaysShowTitle
             leading={
-              // A Machine runs a Compose file; anything else deploys to a platform (D11: no server glyph there).
-              <PageHeaderMarkIcon name={runtime?.source.kind === 'host' || (!runtime && definition) ? 'hard-drives' : 'cloud'} />
+              // A Machine runs a Compose file; a platform Environment carries its platform's brand (lab d4, D11: no server glyph).
+              platformRef ? <DeploymentEnvironmentMark size="page" platform={{ pluginId: platformRef.pluginId,
+                title: platform?.title ?? t('projects.deployments.platformLink.platform') }} />
+                : <PageHeaderMarkIcon name={runtime?.source.kind === 'host' || (!runtime && definition) ? 'hard-drives' : 'cloud'} />
             }
             titleAccessory={
               detail.environment.protection === 'production' ? (
@@ -1486,8 +1489,6 @@ const styles = StyleSheet.create((theme) => ({
   factsGroup: { marginTop: PAGE_LIST_METRICS.cardGapPx },
   cellQuiet: { color: theme.colors.text.secondary, fontVariant: ['tabular-nums'] },
   serviceByline: { minWidth: 0, maxWidth: '100%', alignSelf: 'stretch' },
-  danger: { color: theme.colors.state.danger.textForeground },
-  warning: { color: theme.colors.state.attention.textForeground },
   rowMeta: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s16 },
   rowMetaText: { color: theme.colors.text.secondary, fontVariant: ['tabular-nums'] },
   // The age column keeps one width so every row's duration lines up beside it.
@@ -1551,7 +1552,9 @@ function ReceiptFactsLine(props: Readonly<{
     parts.push(node);
   };
   if (props.lead) {
-    push(<Text key="lead" style={props.lead.tone === 'danger' ? styles.danger : props.lead.tone === 'warning' ? styles.warning : null}>{props.lead.text}</Text>);
+    // The shared status word owns the tone's ink (FIDELITY G10); an untoned lead stays plain text.
+    push(props.lead.tone ? <StatusWord key="lead" variant={props.lead.tone === 'danger' ? 'danger' : 'attention'} label={props.lead.text} />
+      : <Text key="lead">{props.lead.text}</Text>);
   }
   if (props.sha) push(<Text key="sha" style={styles.mono}>{props.sha}</Text>);
   for (const fact of props.facts) push(fact);
@@ -2027,6 +2030,8 @@ type EnvironmentServiceItem = Readonly<{
 type ServiceRestartFeedback = Readonly<{ state: ServiceRestartState; code: string | null }>;
 const NO_RESTART_FEEDBACK: ReadonlyMap<string, ServiceRestartFeedback> = new Map();
 
+const serviceRowOf = (item: EnvironmentServiceItem) => item.row;
+
 function EnvironmentServiceRows(
   props: Readonly<{
     services: readonly DeploymentService[];
@@ -2084,15 +2089,9 @@ function EnvironmentServiceRows(
         render: (item) => item.serves.length > 0
           ? <Text variant="meta" style={[styles.mono, styles.cellQuiet]} numberOfLines={1}>{item.serves.join(', ')}</Text>
           : <Text variant="meta" style={styles.cellQuiet}>—</Text> },
-      { key: 'memory', title: t('machineServices.columns.memory'), align: 'end', minWidth: 72, priority: 2, listColumn: true,
-        render: (item) => {
-          const memoryBytes = item.row ? machineServiceRunFacts(item.row, Date.now()).memoryBytes : null;
-          return <Text variant="meta" style={styles.cellQuiet}>{memoryBytes === null ? '—' : formatMachineBytes(memoryBytes, 'memory')}</Text>;
-        } },
-      { key: 'state', title: t('projects.deployments.overviewStatus.columnState'), align: 'end', minWidth: 88, priority: 1, listColumn: true,
-        render: (item) => item.row
-          ? <Status tone={machineServiceStateTone(item.row.state)} label={t(`machineServices.state.${item.row.state}`)} presentation="inline" />
-          : <Text variant="meta" style={styles.cellQuiet}>—</Text> },
+      // Memory and State come from the service owner, so a stop the person asked for reads as that stop (FIDELITY G10).
+      ...machineServiceColumnFields<EnvironmentServiceItem>(serviceRowOf).filter((field) => field.key === 'memory'),
+      machineServiceStateField<EnvironmentServiceItem>(serviceRowOf),
     ],
     action: (item) => (
       <EnvironmentServiceMenu item={item} serverId={props.serverId} environmentId={props.environmentId} machineId={props.machineId}
@@ -2100,7 +2099,7 @@ function EnvironmentServiceRows(
         review={props.review} onRestarted={list.refresh} onOpenLogs={props.onOpenLogs} openOnMachine={openOnMachine(item)}
         onFeedback={onFeedback} />
     ),
-    accessibilityLabel: (item) => item.row ? `${item.service.name}, ${t(`machineServices.state.${item.row.state}`)}` : item.service.name,
+    accessibilityLabel: (item) => item.row ? `${item.service.name}, ${machineServiceStateLabel(item.row)}` : item.service.name,
     testID: (item) => `project-deployments.environment.services.${item.service.name}`,
     columnTitles: { title: t('machineServices.columns.service') },
   }), [list.refresh, onFeedback, openOnMachine, props.environmentId, props.machineId, props.machineName, props.onOpenLogs,

@@ -563,43 +563,34 @@ export function DeploymentPlatformTargetEditor(
   const providerUrl = provisioned?.provider.providerUrl;
   const disclosedProvider = provisioned?.provider ?? (outcome?.kind === 'ready' || outcome?.kind === 'needsGitAccess' ? outcome.provider : null);
   const ready = outcome?.kind === 'ready';
+  const primary = createdBranchOutcome || provisioned || outcomeUnknown || duplicate || pendingLink || unresolvedLink ? null : {
+    testID: create ? 'project-deployments.platform.create'
+      : ready && !props.onPrepared ? 'project-deployments.platform.link' : 'project-deployments.platform.check',
+    loading: busy !== null,
+    disabled: busy !== null || !draft || !target || missing || needsConnect || !drawn.canCheck,
+    title: create ? t('projects.deployments.platformLink.create', { platform: target?.title ?? '' }) : ready && target && !props.onPrepared
+      ? t('projects.deployments.platformLink.link', { platform: target.title })
+      : outcome ? t('projects.deployments.platformLink.checkAgain') : t('projects.deployments.platformLink.check'),
+    onPress: () => { void (create ? createOrFinish() : ready && !props.onPrepared ? link() : check()); },
+  };
   const footer = (
     <ModalCardFooterActions {...(props.onPrepared || createdBranchOutcome ? {} : { cancel: { onPress: onClose, testID: 'project-deployments.platform.cancel', disabled: busy !== null } })}>
       {createdBranchOutcome ? <RoundButton testID="project-deployments.platform.done" size="normal" title={t('common.done')} onPress={onClose} />
-        : provisioned || outcomeUnknown || duplicate || pendingLink || unresolvedLink ? null : <RoundButton
-        testID={
-          create ? 'project-deployments.platform.create' :
-          ready && !props.onPrepared
-            ? 'project-deployments.platform.link'
-            : 'project-deployments.platform.check'
-        }
-        size="normal"
-        loading={busy !== null}
-        disabled={busy !== null || !draft || !target || missing || needsConnect || !drawn.canCheck}
-        title={
-          create ? t('projects.deployments.platformLink.create', { platform: target?.title ?? '' }) : ready && target && !props.onPrepared
-            ? t('projects.deployments.platformLink.link', {
-                platform: target.title,
-              })
-            : outcome
-              ? t('projects.deployments.platformLink.checkAgain')
-              : t('projects.deployments.platformLink.check')
-        }
-        onPress={() => {
-          void (create ? createOrFinish() : ready && !props.onPrepared ? link() : check());
-        }}
-      />}
+        : primary ? <RoundButton size="normal" {...primary} /> : null}
     </ModalCardFooterActions>
   );
   const { setChrome } = props;
+  // Inside a page (the new-environment draft) the editor is one of the page's sections: its rows share the page's
+  // edge, the platform names the section and its one action sits on the section title (lab d1r `platform`).
+  const embedded = !setChrome;
   React.useEffect(() => {
     setChrome?.({ kind: 'card', footer });
   });
   React.useEffect(() => () => setChrome?.(null), [setChrome]);
 
   return (
-    <ListPresentationProvider value="page" pageInsets="contained">
-      <View testID="project-deployments.platform" style={deploymentSheetStyles.body}>
+    <ListPresentationProvider value="page" pageInsets={embedded ? undefined : 'contained'}>
+      <View testID="project-deployments.platform" style={embedded ? styles.embedded : deploymentSheetStyles.body}>
         {props.onPrepared ? null : <Text style={deploymentSheetStyles.lead}>
           {t('projects.deployments.platformLink.lead')}
         </Text>}
@@ -636,7 +627,11 @@ export function DeploymentPlatformTargetEditor(
           />
         ) : (
           <>
-            <ItemGroup header="none">
+            <ItemGroup {...(embedded ? {
+              title: t('projects.deployments.platformLink.onPlatformTitle', { platform: target.title }),
+              description: t('projects.deployments.platformLink.onPlatformBody'),
+              ...(primary ? { action: <SectionActionButton {...primary} /> } : {}),
+            } : { header: 'none' as const })}>
               {target.create && !props.onPrepared && props.environment.id && props.environment.revision !== undefined ? <SegmentedChoiceItem<'existing' | 'create'>
                 testID="project-deployments.platform.mode" title={t('projects.deployments.platformLink.platform')}
                 value={mode} disabled={busy !== null || reviewingCreate}
@@ -817,8 +812,8 @@ export function DeploymentPlatformTargetEditor(
             diagnosticCode={linkRefused.code}
           />
         ) : null}
-        {/* Without card chrome (an embedding host), the footer ends the body. */}
-        {setChrome ? null : footer}
+        {/* Without card chrome the section title carries the action; only a created branch's Done ends the body. */}
+        {embedded && createdBranchOutcome ? footer : null}
       </View>
     </ListPresentationProvider>
   );
@@ -836,6 +831,7 @@ export function showDeploymentPlatformTargetSheet(
 }
 
 const styles = StyleSheet.create((theme) => ({
+  embedded: { gap: theme.space.s16 },
   paging: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -65,6 +65,8 @@ type DeploymentPlatformLinkCopy = Readonly<{
   onMachine: string;
   platformLater: string;
   deploysFrom: string;
+  onPlatformTitle: (params: { platform: string }) => string;
+  onPlatformBody: string;
   platformBuilds: string;
   managersOnly: string;
   refusedRemedy: string;
@@ -144,6 +146,8 @@ export const deploymentPlatformLinkTranslations = {
     onMachine: 'A machine',
     platformLater: 'You choose the platform project right after you create it.',
     deploysFrom: 'Deploys from',
+    onPlatformTitle: ({ platform }) => `On ${platform}`,
+    onPlatformBody: 'Next, you pick the account and project. Linking deploys nothing.',
     platformBuilds: 'The platform builds this project’s repository at the branch you choose.',
     managersOnly: 'Only managers of this environment can link a platform.',
     refusedRemedy: 'Check the account and project you chose, then check again.',
@@ -223,6 +227,8 @@ export const deploymentPlatformLinkTranslations = {
     platformLater:
       'Tries el projecte de la plataforma just després de crear-lo.',
     deploysFrom: 'Desplega des de',
+    onPlatformTitle: ({ platform }) => `A ${platform}`,
+    onPlatformBody: 'Després tries el compte i el projecte. Enllaçar no desplega res.',
     platformBuilds: 'La plataforma construeix el repositori d’aquest projecte a la branca que triïs.',
     managersOnly: 'Només els gestors d’aquest entorn poden enllaçar una plataforma.',
     refusedRemedy: 'Revisa el compte i el projecte que has triat i torna a comprovar.',
@@ -301,6 +307,8 @@ export const deploymentPlatformLinkTranslations = {
     onMachine: 'Einer Maschine',
     platformLater: 'Das Plattform-Projekt wählst du direkt nach dem Erstellen.',
     deploysFrom: 'Deployt von',
+    onPlatformTitle: ({ platform }) => `Auf ${platform}`,
+    onPlatformBody: 'Als Nächstes wählst du Konto und Projekt. Verknüpfen deployt nichts.',
     platformBuilds: 'Die Plattform baut das Repository dieses Projekts auf dem gewählten Branch.',
     managersOnly: 'Nur Verwalter dieser Umgebung können eine Plattform verknüpfen.',
     refusedRemedy: 'Prüfe das gewählte Konto und Projekt und prüfe dann erneut.',
@@ -380,6 +388,8 @@ export const deploymentPlatformLinkTranslations = {
     platformLater:
       'Eliges el proyecto de la plataforma justo después de crearlo.',
     deploysFrom: 'Despliega desde',
+    onPlatformTitle: ({ platform }) => `En ${platform}`,
+    onPlatformBody: 'Después eliges la cuenta y el proyecto. Vincular no despliega nada.',
     platformBuilds: 'La plataforma construye el repositorio de este proyecto en la rama que elijas.',
     managersOnly: 'Solo los gestores de este entorno pueden vincular una plataforma.',
     refusedRemedy: 'Revisa la cuenta y el proyecto que elegiste y vuelve a comprobar.',
@@ -459,6 +469,8 @@ export const deploymentPlatformLinkTranslations = {
     platformLater:
       'Vous choisissez le projet de la plateforme juste après l’avoir créé.',
     deploysFrom: 'Déploie depuis',
+    onPlatformTitle: ({ platform }) => `Sur ${platform}`,
+    onPlatformBody: 'Ensuite, choisissez le compte et le projet. Lier ne déploie rien.',
     platformBuilds: 'La plateforme construit le dépôt de ce projet sur la branche choisie.',
     managersOnly: 'Seuls les gestionnaires de cet environnement peuvent lier une plateforme.',
     refusedRemedy: 'Vérifie le compte et le projet choisis, puis vérifie à nouveau.',
@@ -538,6 +550,8 @@ export const deploymentPlatformLinkTranslations = {
     platformLater:
       'Scegli il progetto della piattaforma subito dopo averlo creato.',
     deploysFrom: 'Distribuisce da',
+    onPlatformTitle: ({ platform }) => `Su ${platform}`,
+    onPlatformBody: 'Poi scegli l’account e il progetto. Collegare non distribuisce nulla.',
     platformBuilds: 'La piattaforma compila il repository di questo progetto sul branch che scegli.',
     managersOnly: 'Solo i gestori di questo ambiente possono collegare una piattaforma.',
     refusedRemedy: 'Controlla l’account e il progetto scelti, poi verifica di nuovo.',
@@ -616,6 +630,8 @@ export const deploymentPlatformLinkTranslations = {
     onMachine: 'マシン',
     platformLater: 'プラットフォームのプロジェクトは作成した直後に選びます。',
     deploysFrom: 'デプロイ元',
+    onPlatformTitle: ({ platform }) => `${platform} 側`,
+    onPlatformBody: '次にアカウントとプロジェクトを選びます。リンクしても何もデプロイされません。',
     platformBuilds: 'プラットフォームが、選んだブランチでこのプロジェクトのリポジトリをビルドします。',
     managersOnly: 'この環境の管理者だけがプラットフォームを連携できます。',
     refusedRemedy: '選んだアカウントとプロジェクトを確認してから、もう一度チェックしてください。',
@@ -693,6 +709,8 @@ export const deploymentPlatformLinkTranslations = {
     onMachine: 'Maszynie',
     platformLater: 'Projekt na platformie wybierasz zaraz po utworzeniu.',
     deploysFrom: 'Wdraża z',
+    onPlatformTitle: ({ platform }) => `W ${platform}`,
+    onPlatformBody: 'Następnie wybierasz konto i projekt. Połączenie niczego nie wdraża.',
     platformBuilds: 'Platforma buduje repozytorium tego projektu z wybranej gałęzi.',
     managersOnly: 'Tylko zarządzający tym środowiskiem mogą połączyć platformę.',
     refusedRemedy: 'Sprawdź wybrane konto i projekt, a potem sprawdź ponownie.',
@@ -771,6 +789,8 @@ export const deploymentPlatformLinkTranslations = {
     onMachine: 'Uma máquina',
     platformLater: 'Escolhe o projeto da plataforma logo depois de o criar.',
     deploysFrom: 'Implementa a partir de',
+    onPlatformTitle: ({ platform }) => `No ${platform}`,
+    onPlatformBody: 'Em seguida, escolhe a conta e o projeto. Ligar não implementa nada.',
     platformBuilds: 'A plataforma compila o repositório deste projeto no ramo que escolher.',
     managersOnly: 'Só os gestores deste ambiente podem ligar uma plataforma.',
     refusedRemedy: 'Verifique a conta e o projeto que escolheu e volte a verificar.',
@@ -849,6 +869,8 @@ export const deploymentPlatformLinkTranslations = {
     onMachine: 'Машине',
     platformLater: 'Проект на платформе вы выберете сразу после создания.',
     deploysFrom: 'Развёртывает с',
+    onPlatformTitle: ({ platform }) => `В ${platform}`,
+    onPlatformBody: 'Затем выберите аккаунт и проект. Привязка ничего не развёртывает.',
     platformBuilds: 'Платформа собирает репозиторий этого проекта из выбранной ветки.',
     managersOnly: 'Подключить платформу могут только управляющие этой средой.',
     refusedRemedy: 'Проверьте выбранные аккаунт и проект, затем проверьте ещё раз.',
@@ -926,6 +948,8 @@ export const deploymentPlatformLinkTranslations = {
     onMachine: '一台机器',
     platformLater: '创建后即可选择平台上的项目。',
     deploysFrom: '部署来源',
+    onPlatformTitle: ({ platform }) => `在 ${platform} 上`,
+    onPlatformBody: '接下来选择账户和项目。关联不会部署任何内容。',
     platformBuilds: '平台会按你选择的分支构建此项目的仓库。',
     managersOnly: '只有此环境的管理者可以关联平台。',
     refusedRemedy: '请核对所选的账户和项目，然后再次检查。',
@@ -1003,6 +1027,8 @@ export const deploymentPlatformLinkTranslations = {
     onMachine: '一台機器',
     platformLater: '建立後即可選擇平台上的專案。',
     deploysFrom: '部署來源',
+    onPlatformTitle: ({ platform }) => `在 ${platform} 上`,
+    onPlatformBody: '接下來選擇帳戶和專案。連結不會部署任何內容。',
     platformBuilds: '平台會依你選擇的分支建置此專案的儲存庫。',
     managersOnly: '只有此環境的管理者可以連結平台。',
     refusedRemedy: '請核對所選的帳戶與專案，然後再次檢查。',

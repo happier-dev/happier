@@ -70,6 +70,28 @@ describe('Environment detail in a split pane', () => {
         }
     });
 
+    it('keeps a failed Environment\'s state and where it runs on its rail row (lab d1 mixed)', async () => {
+        const detail = createDeploymentEnvironmentDetailV1();
+        const receipt = createDeploymentReceiptDetailV1();
+        const transport: DeploymentReadTransportV1 = {
+            listEnvironments: async () => ({ ok: true, value: { items: [{ environment: detail.environment, title: 'Staging',
+                currentDeployment: { ...receipt.deployment, state: 'failed' } }], nextCursor: null } }),
+            readEnvironment: async () => ({ ok: true, value: detail }),
+            readReceipt: async () => ({ ok: true, value: receipt }),
+            listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+        };
+        const scope = { serverId: 'home', accountId: 'account-owner', projectSourceId: 'source-app' };
+        const controller = createDeploymentReadControllerV1({ scope, transport });
+        const screen = await renderScreen(<AccountNoticeInvestigationBoundary><ProjectDeploymentsView controller={controller}
+            demand={{ mounted: true, visible: true, focused: true }} lifetime={null} serverId={scope.serverId}
+            accountId={scope.accountId} sourceId={scope.projectSourceId} /></AccountNoticeInvestigationBoundary>);
+        try {
+            expect(screen.findByTestId(`project-deployments.rail.row.${detail.environment.id}.state`)).not.toBeNull();
+        } finally {
+            await screen.unmount(); controller.retire();
+        }
+    });
+
     it.each([[true, 1], [false, 0]] as const)('reads the selected Environment while its pane is visible (%s) even when another pane has focus', async (visible, reads) => {
         const detail = createDeploymentEnvironmentDetailV1();
         const receipt = createDeploymentReceiptDetailV1();
