@@ -391,7 +391,8 @@ export function createHostedWebAccountDataBridge(input: Readonly<{
                     case 'accountData.watch': {
                         const queryId = createQueryId();
                         const watch = await input.dataClient.watchAccountData(operation.arguments[0],
-                            () => { if (!disposed) input.publish({ kind: 'change', queryId }); }, { signal });
+                            accountDataChange => { if (!disposed) input.publish({ kind: 'change', queryId,
+                                ...(accountDataChange === undefined ? {} : { accountDataChange }) }); }, { signal });
                         if (disposed || signal?.aborted) watch.dispose();
                         else dataWatches.set(queryId, watch);
                         value = queryId;

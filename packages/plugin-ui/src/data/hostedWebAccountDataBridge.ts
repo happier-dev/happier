@@ -447,7 +447,7 @@ export function createHostedWebPluginUiDataClient(input: Readonly<{
     const transport = await input.acquireTransport(options);
     const queryId = await requestData<string>('accountData.watch', [selection], options);
     let disposed = false;
-    const subscription = transport.subscribe(change => { if (!disposed && change.queryId === queryId) listener(); });
+    const subscription = transport.subscribe(change => { if (!disposed && change.queryId === queryId) listener(change.accountDataChange); });
     const dispose = () => {
       if (disposed) return;
       disposed = true;

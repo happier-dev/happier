@@ -202,7 +202,9 @@ export async function getInternalTask(input: TriageGetInputV1, context: TriageDa
   if (!isInternalTaskConfiguredInstanceV1(input.instance) || !admitsRef(input.localRef)) return { kind: 'unresolved', localRef: input.localRef, failure: INVALID_ADDRESS };
   const result = await readTask(input.localRef, context);
   if (result === null) return { kind: 'unresolved', localRef: input.localRef, failure: UNAVAILABLE };
-  if (result.status === 'refused') return { kind: 'unresolved', localRef: input.localRef, failure: { class: 'permission', code: result.reason } };
+  if (result.status === 'refused') return result.reason === 'task_not_found'
+    ? { kind: 'absent', localRef: input.localRef }
+    : { kind: 'unresolved', localRef: input.localRef, failure: { class: 'permission', code: result.reason } };
   const task = result.todo;
   const owner = ownerOf(task, result);
   // The exact read owns task content/access. One existing list read supplies the inverse parent relation.

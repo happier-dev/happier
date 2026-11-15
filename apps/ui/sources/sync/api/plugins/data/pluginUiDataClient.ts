@@ -635,7 +635,7 @@ function createPluginUiDataBindings(input: PluginUiDataBindingInput) {
     return Object.freeze({
         collection,
         openCollectionQuery,
-        async watchAccountData(selection: Parameters<PluginUiDataClient['watchAccountData']>[0], listener: () => void, options?: Readonly<{ signal?: AbortSignal }>) {
+        async watchAccountData(selection: Parameters<PluginUiDataClient['watchAccountData']>[0], listener: Parameters<PluginUiDataClient['watchAccountData']>[1], options?: Readonly<{ signal?: AbortSignal }>) {
             assertBindingCurrent(options?.signal);
             const watch = registerActivePluginAccountDataChangeWatch({ pluginId: input.pluginId, selection,
                 lifetime: input.accountLifetime, onInvalidated: listener });

@@ -535,3 +535,16 @@ it('observes one hosted KV key without reads and stops delivery on disposal', as
   harness.emitChange({ kind: 'change', queryId: 'kv-watch-1' });
   expect(listener).toHaveBeenCalledTimes(1);
 });
+
+
+it('preserves qualified Task identities across the hosted watch without reads', async () => {
+  const harness = createTransportHarness();
+  const client = createClient(harness);
+  const listener = vi.fn();
+  const watch = await client.watchAccountData({ kind: 'internalTasks' }, listener);
+  const accountDataChange = { kind: 'internalTasks', accountId: 'viewer', tasks: [{ ownerAccountId: 'owner', taskId: 'task-a' }] };
+  harness.emitChange({ kind: 'change', queryId: 'kv-watch-1', accountDataChange });
+  expect(listener).toHaveBeenCalledWith(accountDataChange);
+  expect(harness.request.mock.calls.map(([request]) => request.operation)).toEqual(['accountData.watch']);
+  watch.dispose();
+});

@@ -648,6 +648,66 @@ it('pushes one external Task transition into both mounted projections with one r
 });
 
 
+it.each(['viewer', 'owner'])('reconciles qualified %s Task pushes beyond page one, new matches and absence without list-page reads', async ownerAccountId => {
+  const scope = createTriageEphemeralSharedScopeFixture();
+  let listener: ((change?: { kind: 'internalTasks'; accountId: string; tasks: { ownerAccountId: string; taskId: string }[] }) => void) | undefined;
+  let pageReads = 0;
+  const exactReads: string[] = [];
+  let absent = false;
+  let changed = false;
+  const ref = (id: string) => ({ source: INTERNAL_TASK_SOURCE_V1, kindId: 'task', collisionScope: ownerAccountId === 'viewer' ? 'personal' : `account:${ownerAccountId}`, entryId: id });
+  const outcome = (completed: boolean) => ({ kind: 'present' as const, locator: testkitLocator(),
+    snapshot: testkitSnapshot({ title: 'Matching task', state: completed
+      ? { presentation: 'resolved', completionReason: 'completed', nativeLabel: 'Done' }
+      : { presentation: 'active', stage: 'unstarted', nativeLabel: 'To do' } }), viewer: testkitViewer() });
+  const host: TriageListWindowHostV1 = { async executeAction(action, input) {
+    if (action === 'entries/reobserve-v1') {
+      const id = (input as { entryRef: { entryId: string } }).entryRef.entryId;
+      exactReads.push(id);
+      return { kind: 'observed', entryRef: ref(id), observation: { sourceInstanceId: INSTANCE_A,
+        observedAtMs: 2, outcome: absent ? { kind: 'absent' } : outcome(true) } };
+    }
+    pageReads++;
+    return TriageListEntriesResultV1Schema.parse({ v: 1,
+      configuredSources: [{ sourceInstanceId: INSTANCE_A, configurationRowId: INSTANCE_A, source: INTERNAL_TASK_SOURCE_V1, available: true }],
+      configuredSourcesStatus: 'complete', window: { v: 1, coverage: 'partial', assembledAtMs: 1,
+        rows: !changed ? [{ entryRef: ref('task-a'), lane: '1-open', sortAtMs: 1,
+          presence: { kind: 'present', observedAtMs: 1 }, selected: { kind: 'selected', sourceInstanceId: INSTANCE_A, reason: 'onlyPresent' },
+          observation: { sourceInstanceId: INSTANCE_A, observedAtMs: 1, outcome: outcome(false) }, otherObservations: [], observedByCount: 1 }] : [],
+        lanes: [{ sourceInstanceId: INSTANCE_A, source: INTERNAL_TASK_SOURCE_V1, health: { kind: 'partial', reason: 'pageLimit' }, exhausted: false }],
+      } });
+  } };
+  const otherHost = { executeAction: host.executeAction };
+  const data: Pick<PluginUiDataClient, 'watchAccountData'> = { async watchAccountData(selection, next) {
+    if (selection.kind === 'internalTasks') listener = next;
+    return { dispose() { if (selection.kind === 'internalTasks') listener = undefined; } };
+  } };
+  const first = acquireTriageListWindow(host, scope, undefined, data);
+  const second = acquireTriageListWindow(otherHost, scope, undefined, data);
+  const rows = () => readTriageListWindowSnapshot(host, scope).window?.rows ?? [];
+  const push = (taskId: string) => { changed = true; listener?.({ kind: 'internalTasks', accountId: 'viewer', tasks: [{ ownerAccountId, taskId }] }); };
+  try {
+    await refreshTriageListWindow('view', host, scope);
+    setTriageListWindowLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, query: 'Matching task' }, host, scope);
+    expect(rows()[0]?.content?.outcome.snapshot.state).toMatchObject({ stage: 'unstarted' });
+    const before = pageReads;
+    push('task-a');
+    await vi.waitFor(() => expect(rows()[0]?.content?.outcome.snapshot.state).toMatchObject({ completionReason: 'completed' }));
+    expect(exactReads).toEqual(['task-a']);
+    expect(pageReads).toBe(before);
+    expect(readTriageListWindowSnapshot(otherHost, scope)).toBe(readTriageListWindowSnapshot(host, scope));
+    push('task-b'); // not in the retained page; exact admission discovers a new matching row
+    await vi.waitFor(() => expect(rows().map(row => row.entryRef.entryId).sort()).toEqual(['task-a', 'task-b']));
+    expect(exactReads).toEqual(['task-a', 'task-b']);
+    absent = true;
+    push('task-a');
+    await vi.waitFor(() => expect(rows().map(row => row.entryRef.entryId)).toEqual(['task-b']));
+    expect(exactReads).toEqual(['task-a', 'task-b', 'task-a']);
+    expect(pageReads).toBe(before);
+  } finally { first.release(); second.release(); }
+});
+
+
 it('removes a deleted source from both mounted windows on the existing collection change', async () => {
   const scope = createTriageEphemeralSharedScopeFixture();
   let deleted = false;

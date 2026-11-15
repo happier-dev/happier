@@ -3,6 +3,7 @@ import { derivePluginCollectionIdentityTagV1} from '@happier-dev/protocol/crypto
 import { normalizePluginAccountCollectionContractV1} from '@happier-dev/protocol/plugins/data/collectionsV1';
 import { PluginAccountCollectionContributionV1Schema} from '@happier-dev/protocol/plugins/data/collectionContributionV1';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
+import { buildTaskResourceChangeEntityIdV1 } from '@happier-dev/protocol/actions/internalTaskActions';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { defineAccountCollection } from '@happier-dev/plugin-sdk/collections';
 import type { PluginUiDataClient } from '@happier-dev/plugin-ui/data';
@@ -236,6 +237,7 @@ async function loadBridge(input: Readonly<{
     const { publishActivePluginCollectionUiQueryChanges } = await import(
         './queryPluginCollectionUiQuery'
     );
+    const { publishActivePluginCollectionChanges } = await import('./pluginCollectionChangeWatch');
     const { recordAccountStoredContentServerRequirements } = await import(
         '@/sync/http/accountStoredContentCompatibility'
     );
@@ -273,6 +275,9 @@ async function loadBridge(input: Readonly<{
         changes,
         transport,
         accountKvWrites,
+        publishTasks: () => publishActivePluginCollectionChanges([{
+            cursor: 50, kind: 'kv', entityId: buildTaskResourceChangeEntityIdV1({ ownerAccountId: 'owner', taskId: 'task-1' }), changedAt: 12,
+        }]),
         retire: () => {
             current = false;
             for (const callback of [...retireCallbacks]) callback();
@@ -297,6 +302,18 @@ async function loadBridge(input: Readonly<{
 }
 
 describe('hosted-web Account Data bridge adapter', () => {
+    it('forwards qualified Task identities through the existing watch without reading', async () => {
+        const fixture = await loadBridge();
+        const response = await fixture.bridge.handle({ kind: 'data', operation: 'accountData.watch', arguments: [{ kind: 'internalTasks' }] });
+        expect(response).toEqual({ kind: 'data', value: expect.any(String) });
+        const before = fixture.transport.mock.calls.length;
+        fixture.publishTasks();
+        expect(fixture.changes).toEqual([{ kind: 'change', queryId: (response as { value: string }).value, accountDataChange: {
+            kind: 'internalTasks', accountId: 'account-a', tasks: [{ ownerAccountId: 'owner', taskId: 'task-1' }],
+        } }]);
+        expect(fixture.transport.mock.calls).toHaveLength(before);
+        fixture.bridge.dispose();
+    });
     it('forwards exact-revision Collection forget through the current mounted Data client', async () => {
         const forget = vi.fn(async () => ({ rowId: 'task-1', forgotten: true as const }));
         const { createHostedWebAccountDataBridge } = await import('./hostedWebAccountDataBridge');

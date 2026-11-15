@@ -1395,6 +1395,10 @@ it('observes external core Task changes through AccountChange without fetching',
             ...Array.from({ length: 1000 }, (_, index) => ({ kind: 'kv', entityId: `todo.own-task-${index}`, cursor: 102 + index, changedAt: 1 })),
         ]);
         expect(listener).toHaveBeenCalledTimes(1);
+        expect(listener).toHaveBeenCalledWith({ kind: 'internalTasks', accountId: lifetime.scope.accountId, tasks: [
+            { ownerAccountId: 'other-owner', taskId: 'shared-task' },
+            ...Array.from({ length: 1000 }, (_, index) => ({ ownerAccountId: lifetime.scope.accountId, taskId: `own-task-${index}` })),
+        ] });
         expect(boundary.mock.calls.length).toBe(before);
         watch.dispose();
         publishActivePluginCollectionChanges([{ kind: 'kv', entityId: 'todo.own-task', cursor: 1102, changedAt: 1 }]);

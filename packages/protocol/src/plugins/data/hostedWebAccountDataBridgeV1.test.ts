@@ -270,9 +270,14 @@ describe('hosted-web Collection UI-query bridge contract', () => {
       kind: 'change',
       queryId: 'query-1',
     }).success).toBe(true);
-    // AccountChange reaches the direct pager as `onInvalidated(): void`.
-    // The hosted bridge therefore forwards only the opaque query correlation;
-    // rows remain exclusively in authenticated query responses after reread.
+    const accountDataChange = { kind: 'internalTasks', accountId: 'viewer',
+      tasks: [{ ownerAccountId: 'owner', taskId: 'task-1' }] };
+    expect(change.safeParse({ kind: 'change', queryId: 'watch-1', accountDataChange }).success).toBe(true);
+    expect(change.safeParse({ kind: 'change', queryId: 'watch-1', accountDataChange: {
+      ...accountDataChange, tasks: [{ ...accountDataChange.tasks[0], title: 'must-not-cross' }],
+    } }).success).toBe(false);
+    // Precise Account Task notifications carry addresses only. Content remains
+    // exclusively in authenticated read responses.
     for (const forbidden of ['snapshot', 'rows', 'accountId', 'contractDigest', 'revision']) {
       expect(change.safeParse({
         kind: 'change',

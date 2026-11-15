@@ -211,8 +211,9 @@ export type TriageListWindowStoreV1 = Readonly<{
     /** Read retained entry truth, including entries outside the current lens. */
     getRow(key: string): TriageListRowV1 | null;
     subscribeRow(key: string, listener: () => void): () => void;
-    /** Fold an exact read for an already retained entry; exact-only opens do not acquire list membership. */
-    publishObservation(observation: CorpusQualifiedObservationV1, keepViewerFacts?: boolean): TriageListRowV1 | null;
+    /** Fold an exact read; source-change observations can reconcile membership, while exact-only opens do not acquire it. */
+    publishObservation(observation: CorpusQualifiedObservationV1, keepViewerFacts?: boolean,
+        options?: Readonly<{ reconcileMembership: true }>): TriageListRowV1 | null;
     /** The only way a consumer causes provider work. */
     refresh(trigger: TriageRefreshTriggerV1): Promise<void>;
     /** Re-read known changed lanes through the same scheduler, without enumerating unrelated sources. */
@@ -1450,13 +1451,20 @@ export function createTriageListWindowStore(deps: Readonly<{
                 if (subscription.listeners.size === 0) rowSubscriptions.delete(key);
             };
         },
-        publishObservation(observation, keepViewerFacts = false) {
+        publishObservation(observation, keepViewerFacts = false, options) {
             if (!isCurrent()) return null;
             const lane = lanes.get(observation.sourceInstanceId);
             if (lane === undefined) return null;
             const key = triageEntryRowKey(observation.entryRef);
             const previous = foldBaseline.entries.get(key)?.row ?? null;
-            if (previous === null) return null;
+            if (options?.reconcileMembership && observation.outcome.kind === 'absent') {
+                lane.observations = lane.observations.filter(value => triageEntryRowKey(value.entryRef) !== key);
+                if (lane.walkObservations !== undefined) lane.walkObservations = lane.walkObservations.filter(value => triageEntryRowKey(value.entryRef) !== key);
+                rebuild();
+                publish();
+                return foldBaseline.entries.get(key)?.row ?? null;
+            }
+            if (previous === null && !options?.reconcileMembership) return null;
             const row = foldTriagePostMutationObservation({
                 row: previous,
                 observation,
@@ -1472,6 +1480,9 @@ export function createTriageListWindowStore(deps: Readonly<{
             const replace = (observations: readonly CorpusQualifiedObservationV1[]) => [
                 ...observations.filter(value => triageEntryRowKey(value.entryRef) !== key), qualified,
             ];
+            // Keep the acquired source order, admitting a new pushed member at
+            // its end until the next ordinary source-ranked acquisition.
+            if (orderedEntryKeys !== null && !orderedEntryKeys.includes(key)) orderedEntryKeys = [...orderedEntryKeys, key];
             lane.observations = replace(lane.observations);
             if (lane.walkObservations !== undefined) lane.walkObservations = replace(lane.walkObservations);
             // The exact fold also owns last-good presentation for an unresolved read.

@@ -16,6 +16,7 @@ import {
   PluginAccountStorageJsonValueV1Schema,
   PluginAccountStorageLogicalKeyV1Schema,
 } from './accountKvValueV1.js';
+import { TaskResourceAddressV1Schema } from '../../todos/taskResourceV1.js';
 import { PluginUiJsonValueV1Schema } from '../contributions/ui/json.js';
 import { isPluginCollectionQuerySelectionV1, pluginCollectionQueryShapeV1 } from './collectionQueryWireV1.js';
 import { PluginCollectionSharingSetGrantRequestV1Schema, PluginCollectionSharingRevokeGrantRequestV1Schema,
@@ -146,6 +147,12 @@ export const PluginAccountDataObservationV1Schema = lazyZodSchema(() => z.discri
   z.strictObject({ kind: z.literal('internalTasks') }),
 ]));
 export type PluginAccountDataObservationV1 = z.infer<typeof PluginAccountDataObservationV1Schema>;
+
+/** Qualified changed identities, never Task content. Undefined notifications mean structural recovery. */
+export const PluginAccountDataChangeV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('internalTasks'), accountId: z.string().check(z.minLength(1)), tasks: z.array(TaskResourceAddressV1Schema),
+}));
+export type PluginAccountDataChangeV1 = z.infer<typeof PluginAccountDataChangeV1Schema>;
 
 const PluginHostedWebAccountDataStorageOperationV1Schema = lazyZodSchema(() => z.discriminatedUnion('operation', [
   z.strictObject({ kind: z.literal('data'), operation: z.literal('accountData.watch'), arguments: z.tuple([PluginAccountDataObservationV1Schema]) }),
@@ -290,6 +297,7 @@ export type PluginHostedWebAccountDataBridgeResponseV1 = z.infer<
 export const PluginHostedWebAccountDataBridgeChangeV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('change'),
   queryId: OpaqueHostedWebAccountDataQueryIdV1Schema,
+  accountDataChange: z.optional(PluginAccountDataChangeV1Schema),
 }));
 export type PluginHostedWebAccountDataBridgeChangeV1 = z.infer<
   typeof PluginHostedWebAccountDataBridgeChangeV1Schema

@@ -1,6 +1,6 @@
 import type { PlannedKvAction } from '@/sync/runtime/orchestration/changesPlanner';
-import type { PluginAccountDataObservationV1 } from '@happier-dev/protocol/plugins/data/hostedWebAccountDataBridgeV1';
-import { readTaskResourceChangeEntityIdV1 } from '@happier-dev/protocol/actions/internalTaskActions';
+import type { PluginAccountDataObservationV1, PluginAccountDataChangeV1 } from '@happier-dev/protocol/plugins/data/hostedWebAccountDataBridgeV1';
+import { buildTaskResourceChangeEntityIdV1, readTaskResourceChangeEntityIdV1 } from '@happier-dev/protocol/actions/internalTaskActions';
 import { classifyAccountJsonKvKey } from '@happier-dev/protocol/account/accountJsonKv';
 import { ChangeEntrySchema, PluginDomainChangeEntrySchema } from '@happier-dev/protocol/changes';
 import type { PluginCollectionInvalidation } from '@happier-dev/plugin-sdk/collections';
@@ -24,10 +24,11 @@ type ActivePluginCollectionChangeWatch = Readonly<{
     pluginId: string;
     collectionId?: string;
     kvKey?: string;
+    kvPrefix?: string;
     internalTasks?: boolean;
     rowId?: string;
     lifetime: ActiveServerAccountScopeLifetime;
-    onInvalidated: (invalidation?: PluginCollectionInvalidation) => void;
+    onInvalidated: (invalidation?: PluginCollectionInvalidation, change?: PluginAccountDataChangeV1) => void;
     readBasis?: Readonly<{ owner: object; key: string }>;
     contractDigest?: string;
     indexSelection?: Readonly<{ indexId: string; prefixes: readonly string[] }>;
@@ -39,10 +40,11 @@ export function registerActivePluginCollectionChangeWatch(input: Readonly<{
     pluginId: string;
     collectionId?: string;
     kvKey?: string;
+    kvPrefix?: string;
     internalTasks?: boolean;
     rowId?: string;
     lifetime: ActiveServerAccountScopeLifetime;
-    onInvalidated(invalidation?: PluginCollectionInvalidation): void;
+    onInvalidated(invalidation?: PluginCollectionInvalidation, change?: PluginAccountDataChangeV1): void;
     readBasis?: Readonly<{ owner: object; key: string }>;
     acquisitionCursor?: number;
     contractDigest?: string;
@@ -96,11 +98,11 @@ export function captureActivePluginCollectionReadBasis(input: Readonly<{
     };
 }
 
-function notifyWatches(watches: Iterable<ActivePluginCollectionChangeWatch>, invalidation?: PluginCollectionInvalidation): void {
+function notifyWatches(watches: Iterable<ActivePluginCollectionChangeWatch>, invalidation?: PluginCollectionInvalidation, change?: PluginAccountDataChangeV1): void {
     for (const watch of watches) {
         if (!activeWatches.has(watch) || !watch.lifetime.isCurrent()) continue;
         try {
-            watch.onInvalidated(invalidation);
+            watch.onInvalidated(invalidation, change);
         } catch {
             // Presentation callbacks cannot affect canonical Account changes.
         }
@@ -119,10 +121,10 @@ export function registerActivePluginAccountDataChangeWatch(input: Readonly<{
     pluginId: string;
     selection: PluginAccountDataObservationV1;
     lifetime: ActiveServerAccountScopeLifetime;
-    onInvalidated(): void;
+    onInvalidated(change?: PluginAccountDataChangeV1): void;
 }>): PluginCollectionChangeWatchV1 {
     const selection = input.selection;
-    return registerActivePluginCollectionChangeWatch({ ...input,
+    return registerActivePluginCollectionChangeWatch({ ...input, onInvalidated: (_invalidation, change) => input.onInvalidated(change),
         ...(selection.kind === 'kv' ? { kvKey: selection.key }
             : selection.kind === 'collection' ? { collectionId: selection.collectionId } : { internalTasks: true }),
     });
@@ -134,15 +136,25 @@ export function publishActivePluginCollectionChanges(changes: readonly unknown[]
     const taskKeysChanged = kv?.type === 'refresh-feature'
         || kv?.type === 'bulk-keys' && kv.keys.some(key => classifyAccountJsonKvKey(key) === 'todo');
     const affected = new Map<ActivePluginCollectionChangeWatch, number>();
+    const taskChanges = new Map<ActivePluginCollectionChangeWatch, Map<string, PluginAccountDataChangeV1['tasks'][number]>>();
     for (const rawChange of changes) {
         const accountChange = ChangeEntrySchema.safeParse(rawChange);
         if (accountChange.success && accountChange.data.kind === 'kv') {
             const { entityId, cursor } = accountChange.data;
-            if (taskKeysChanged || readTaskResourceChangeEntityIdV1(entityId) || classifyAccountJsonKvKey(entityId) === 'todo') {
+            const qualifiedTask = readTaskResourceChangeEntityIdV1(entityId);
+            if (taskKeysChanged || qualifiedTask || classifyAccountJsonKvKey(entityId) === 'todo') {
                 for (const watch of activeWatches) {
                     if (!watch.internalTasks || (watch.lastObservedCursor !== null && cursor <= watch.lastObservedCursor)) continue;
                     affected.set(watch, Math.max(affected.get(watch) ?? cursor, cursor));
                     watch.lastObservedCursor = cursor;
+                    const keys = kv?.type === 'bulk-keys' ? kv.keys : [entityId];
+                    const tasks = qualifiedTask ? [qualifiedTask] : keys.flatMap(key => classifyAccountJsonKvKey(key) === 'todo' && key !== 'todo.index'
+                        ? [{ ownerAccountId: watch.lifetime.scope.accountId, taskId: key.slice('todo.'.length) }] : []);
+                    if (tasks.length > 0) {
+                        let identities = taskChanges.get(watch);
+                        if (!identities) { identities = new Map(); taskChanges.set(watch, identities); }
+                        for (const task of tasks) identities.set(buildTaskResourceChangeEntityIdV1(task), task);
+                    }
                 }
             }
             continue;
@@ -152,9 +164,9 @@ export function publishActivePluginCollectionChanges(changes: readonly unknown[]
         if (parsed.data.hint.pluginDomain === 'dataKv') {
             const { hint, cursor } = parsed.data;
             for (const watch of activeWatches) {
-                if (watch.kvKey === undefined || watch.pluginId !== hint.pluginId
+                if ((watch.kvKey === undefined && watch.kvPrefix === undefined) || watch.pluginId !== hint.pluginId
                     || (watch.lastObservedCursor !== null && cursor <= watch.lastObservedCursor)) continue;
-                if ('full' in hint || hint.keys.includes(watch.kvKey)) affected.set(watch, cursor);
+                if ('full' in hint || hint.keys.some(key => key === watch.kvKey || watch.kvPrefix !== undefined && key.startsWith(watch.kvPrefix))) affected.set(watch, cursor);
                 watch.lastObservedCursor = cursor;
             }
             continue;
@@ -191,7 +203,9 @@ export function publishActivePluginCollectionChanges(changes: readonly unknown[]
         }
     }
     for (const [watch, changeCursor] of affected) {
-        notifyWatches([watch], Object.freeze({ kind: 'changed', changeCursor }));
+        const tasks = taskChanges.get(watch);
+        notifyWatches([watch], Object.freeze({ kind: 'changed', changeCursor }), tasks === undefined ? undefined
+            : { kind: 'internalTasks', accountId: watch.lifetime.scope.accountId, tasks: [...tasks.values()] });
     }
 }
 

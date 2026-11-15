@@ -3324,3 +3324,21 @@ it('keeps a source-silent default projection honest about sources outside its so
   expect(harness.actionInputs).toHaveLength(reads);
  } finally { store.dispose(); }
 });
+
+
+it('admits a newly matching exact observation into a sorted retained window without page reads', async () => {
+ const harness = createHarness({ configureSourceB: false, admitSourceB: false, sortFields: ['created'] });
+ let reads = 0;
+ const store = createTriageListWindowStore({ lens: { ...TRIAGE_LIST_DEFAULT_LENS_V1, sort: { field: 'created', direction: 'asc' } },
+  readEntries: async input => { reads++; return harness.readEntries(input); }, nowMs: () => harness.clock.nowMs });
+ try {
+  await store.refresh('view');
+  const first = store.getSnapshot().window?.rows[0];
+  if (!first) throw new Error('Expected acquired row');
+  const entryRef = { ...first.entryRef, entryId: 'new-matching-row' };
+  const before = reads;
+  store.publishObservation({ ...first.observations[0]!, entryRef }, false, { reconcileMembership: true });
+  expect(store.getSnapshot().window?.rows.some(row => row.entryRef.entryId === entryRef.entryId)).toBe(true);
+  expect(reads).toBe(before);
+ } finally { store.dispose(); }
+});

@@ -2252,10 +2252,16 @@ key, an Account Collection, or core internal Tasks. It registers with the same
 AccountChange dispatcher and lifetime used by Collection queries, performs no
 read, and returns a disposable observation. The existing Sync change plan owns
 hinted KV-key/full normalization; Data consumes that typed result for Task
-invalidation. Native and hosted-web clients share that owner, with content-free
-change notifications carried on the existing Data bridge. Projection owners
-perform their ordinary read after invalidation; they add no polling or second
-subscription system.
+invalidation. Native and hosted-web clients share that owner. Precise Task
+notifications preserve qualified changed addresses and the receiving Account id
+through the existing listener and Data bridge, carrying no Task content. Triage
+normalizes personal/shared addresses, invokes the existing exact-read owner once
+per changed Task (including its inverse-child enrichment), and publishes the
+observation through the shared list-window owner. This updates retained rows,
+removes authoritative absent rows and admits new matches without list-page reads.
+Structural notifications retain ordinary refresh recovery. This matching 0.3
+host/guest contract adds no polling or second subscription system; it changes no
+persisted format and is absent from the released 0.2 predecessor.
 
 In 0.3 development source, ordinary Collection mutations also publish the
 changed rows' old and new encoded index keys. An index watch narrows wake-ups
@@ -7210,7 +7216,10 @@ The input may narrow demand with `environmentId`, or with `environmentId` and
 before projecting rows, and the same selector scopes invalidations. The full
 Machine Services view omits both selectors.
 The original list Action—not the logs Action—admits READ and OPEN and applies
-the existing requester/Environment disclosure rules. Native observation publishes
+the existing requester/Environment disclosure rules. Its Resource continuation retains
+the same finite Action executor, including an admitted native codec without requester
+Account credentials; it does not select the credentialed service-launcher factory.
+Native observation publishes
 only semantic changes to exact Machine rows; unchanged observations do not reread
 the list. Watch-intent changes use the Machine metadata reconciliation wake.
 Hidden demand releases the same watcher. The list reference grants no mounted

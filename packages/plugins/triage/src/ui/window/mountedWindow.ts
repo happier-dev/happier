@@ -1,5 +1,5 @@
 import { CORPUS_SOURCE_INSTANCES_COLLECTION } from '../../corpus/collections/definitions.js';
-import { INTERNAL_TASK_SOURCE_V1 } from '../../internalTasks/identity.js';
+import { internalTaskLocalRefV1, INTERNAL_TASK_SOURCE_V1 } from '../../internalTasks/identity.js';
 import { sameTriageSourceIdentity } from '../../corpus/identity/components.js';
 import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { PluginUiEphemeralSharedScope, PluginUiHostReadiness, PluginUiDataClient } from '@happier-dev/plugin-ui';
@@ -10,6 +10,7 @@ import {
   type TriageListEntriesInputV1,
   type TriageListEntriesResultV1,
 } from '../../actions/listEntriesProtocol.js';
+import { reobserveTriagePostMutationRow } from '../detail/postMutationReobservation.js';
 import type { TriageListLensV1 } from '../../projection/listWindow.js';
 import { TRIAGE_TASKS_LIST_ACTION_LOCAL_ID_V1 } from '../../actions/tasksProtocol.js';
 import {
@@ -29,8 +30,8 @@ import type { TriageRefreshTriggerV1 } from '../../refresh/refreshEligibility.js
  * and Composer picker therefore share rows, continuations, pacing and
  * single-flight even though their JavaScript modules are separate realms.
  *
- * The scope is intentionally opaque: Triage receives no Account id and cannot
- * accidentally key one Account's rows into another's. There is no `globalThis`
+ * The scope supplies opaque isolation; change notifications carry the receiver
+ * Account only to normalize personal versus shared Task addresses. There is no `globalThis`
  * fallback, durable corpus, second cache, or second scheduler. A renderer that
  * cannot provide the host scope stays cold at that real platform boundary.
  */
@@ -216,10 +217,25 @@ export function acquireTriageListWindow(
             { kind: 'internalTasks' },
             { kind: 'collection', collectionId: CORPUS_SOURCE_INSTANCES_COLLECTION.id },
           ];
-          for (const selection of selections) void next.watchAccountData(selection, () => {
+          for (const selection of selections) void next.watchAccountData(selection, change => {
             if (controller.signal.aborted) return;
             if (selection.kind === 'collection') void store.refresh('view');
-            else void store.refreshSources(store.getSnapshot().configuredSources
+            else if (change?.kind === 'internalTasks') {
+              const client = clients.keys().next().value;
+              if (client === undefined) return;
+              const source = store.getSnapshot().configuredSources.find(source => sameTriageSourceIdentity(source.source, INTERNAL_TASK_SOURCE_V1));
+              if (source === undefined) return;
+              for (const task of change.tasks) {
+                const entryRef = { source: INTERNAL_TASK_SOURCE_V1, ...internalTaskLocalRefV1(task.taskId,
+                  task.ownerAccountId === change.accountId ? undefined : task.ownerAccountId) };
+                void reobserveTriagePostMutationRow(client, { entryRef }, store.getSnapshot().window?.lanes ?? [], source.sourceInstanceId, {
+                  signal: controller.signal, sharedScope: scope,
+                  publishObservation: observation => store.publishObservation(observation, false, { reconcileMembership: true }),
+                }).catch(() => {
+                  // Keep the retained row on transport failure; explicit Refresh remains recovery.
+                });
+              }
+            } else void store.refreshSources(store.getSnapshot().configuredSources
               .filter(source => sameTriageSourceIdentity(source.source, INTERNAL_TASK_SOURCE_V1))
               .map(source => source.sourceInstanceId));
           }, { signal: controller.signal }).then(watch => {

@@ -70,6 +70,16 @@ describe('registered internal Happier task source', () => {
       });
     }, undefined, () => { throw error; });
   });
+  it('reports authoritative missing Task access as absent, preserving other refusals', async () => {
+    for (const reason of ['task_not_found', 'task_access_denied', 'task_storage_unavailable']) {
+      await withSource(async (kit, calls) => {
+        const result = TriageGetResultV1Schema.parse(await kit.invokeAction('internal/tasks/get-v1', { v: 1, instance, localRef }));
+        expect(result).toMatchObject(reason === 'task_not_found'
+          ? { kind: 'absent', localRef } : { kind: 'unresolved', failure: { code: reason } });
+        expect(calls.map(call => call.id)).toEqual(['tasks.internal.read']);
+      }, undefined, () => ({ status: 'refused', reason }));
+    }
+  });
   it('keeps exact Task content readable when inverse child enrichment is unavailable', async () => {
     await withSource(async kit => {
       const result = TriageGetResultV1Schema.parse(await kit.invokeAction('internal/tasks/get-v1', { v: 1, instance, localRef }));
@@ -142,7 +152,8 @@ describe('registered internal Happier task source', () => {
   it.each(['notStarted', 'denied', 'cancelled', 'responseLost'] as const)('preserves the internal host write outcome for create, edit and transition: %s', async outcome => {
     await withSource(async (kit, calls) => {
       const expected = outcome === 'notStarted'
-        ? { kind: 'refused', reason: 'unavailable' }
+        // 8db81218583 preserves the host's author payload and retryability.
+        ? { kind: 'refused', reason: 'unavailable', details: {}, retryable: false }
         : { kind: 'uncertain', failure: { class: 'unknown', code: outcome === 'responseLost' ? 'unavailable' : outcome } };
       expect(await kit.invokeAction('internal/tasks/create-v1', { v: 1, instance, kindId: 'task', fields: { title: 'Create' } })).toEqual(expected);
       expect(await kit.invokeAction('internal/tasks/edit-v1', { v: 1, instance, localRef, fields: { title: 'Edit' } })).toEqual(expected);
@@ -265,13 +276,6 @@ describe('registered internal Happier task source', () => {
         .toMatchObject({ kind: 'unresolved', localRef: sharedRef });
       expect(calls).toEqual([{ id: 'tasks.internal.read', input: { taskId: predecessor.id, ownerAccountId: 'other' } }]);
     }, undefined, () => ({ status: 'refused', reason }));
-  });
-  it('preserves a revoked task refusal instead of reporting a lost connection', async () => {
-    await withSource(async (kit, calls) => {
-      expect(TriageGetResultV1Schema.parse(await kit.invokeAction('internal/tasks/get-v1', { v: 1, instance, localRef })))
-        .toMatchObject({ kind: 'unresolved', failure: { class: 'permission', code: 'task_not_found' } });
-      expect(calls.map(call => call.id)).toEqual(['tasks.internal.read']);
-    }, undefined, () => ({ status: 'refused', reason: 'task_not_found' }));
   });
   it('keeps duplicate task ids distinct through scan pages, relations and requester Session links', async () => {
     const shared = { ...predecessor, state: 'unstarted', ownerAccountId: 'other', access: 'edit', title: 'Shared task',
