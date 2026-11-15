@@ -116,10 +116,11 @@ export type SegmentedTab<T extends string = string> = Readonly<{
      */
     count?: string;
     /**
-     * `danger`: the count is how many need the person (lab svcHead "Apps • 3"), drawn after a dot in the needs-you
-     * ink; otherwise the quiet tertiary count.
+     * The count is how many need the person, drawn after a dot in its state ink and kept with its tab when names
+     * no longer fit with their counts: `danger` failed (lab svcHead "Apps • 3"), `warning` waits on the person
+     * (lab mOv "Security • 3"). Otherwise the quiet tertiary count.
      */
-    countTone?: 'danger';
+    countTone?: 'danger' | 'warning';
     /**
      * The key combination that chooses this option ("Cmd+Shift+2"), drawn as its keycaps after the label
      * and announced with it.
@@ -495,6 +496,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     tabCountDanger: {
         color: theme.colors.state.danger.textForeground,
     },
+    tabCountWarning: {
+        color: theme.colors.state.warning.textForeground,
+    },
     tabCount: {
         color: theme.colors.text.tertiary,
         // Regular even inside the chosen (semibold) label: the face, not a numeric weight.
@@ -671,7 +675,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
             withIcons: segmentWidths(rowTabs.map((tab) => measured[`i:${tab.id}`] ?? 0)),
             labelsOnly: segmentWidths(rowTabs.map((tab) => measured[`l:${tab.id}`] ?? 0)),
             // A needs-you count is part of its name (it is why the person opens that tab); only quiet counts give way.
-            labelsWithoutCounts: segmentWidths(rowTabs.map((tab) => (tab.countTone === 'danger' ? undefined : measured[`b:${tab.id}`]) ?? measured[`l:${tab.id}`] ?? 0)),
+            labelsWithoutCounts: segmentWidths(rowTabs.map((tab) => (tab.countTone ? undefined : measured[`b:${tab.id}`]) ?? measured[`l:${tab.id}`] ?? 0)),
             gap: plain ? HAPPIER_SEGMENTED_METRICS.plain.gapPx : 0,
             more: measured.more ?? 0,
             reserveMore,
@@ -940,7 +944,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                                     />
                                 ) : null}
                                 {plain ? (
-                                    <PlainTabCaption tab={tab} icon={showIcons} count={fit.counts || tab.countTone === 'danger'} active={active} label={!glyphOnly} />
+                                    <PlainTabCaption tab={tab} icon={showIcons} count={fit.counts || tab.countTone !== undefined} active={active} label={!glyphOnly} />
                                 ) : iconOnly ? (
                                     <View style={[styles.tabIcon, iconGlyphStyles?.icon ?? null]}>{tab.icon}</View>
                                 ) : (
@@ -964,7 +968,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                                         ]}
                                     >
                                         {tab.label}
-                                        {tab.count && (fit.counts || tab.countTone === 'danger') ? <TabCount tab={tab} /> : null}
+                                        {tab.count && (fit.counts || tab.countTone !== undefined) ? <TabCount tab={tab} /> : null}
                                     </Text>
                                     {tab.shortcut ? <KeyCombinationHint label={tab.shortcut} /> : null}
                                     {tab.badge ? <StatusPill variant="info" hideDot label={tab.badge} /> : null}
@@ -1106,11 +1110,15 @@ export function SegmentedValueSelect<T extends string>(props: Readonly<{
 const OVERFLOW_KEY = '\u0000more';
 
 /** A page tab's caption: its glyph (when the row has room), label and quiet count. */
+function countToneStyle(tone: 'danger' | 'warning') {
+    return tone === 'danger' ? stylesheet.tabCountDanger : stylesheet.tabCountWarning;
+}
+
 /** A tab's count after its label: quiet, or the needs-you count after a dot in its tone (`countTone`). */
 function TabCount(props: Readonly<{ tab: Pick<SegmentedTab, 'count' | 'countTone'> }>) {
     const styles = stylesheet;
-    return props.tab.countTone === 'danger'
-        ? <Text style={[styles.tabCount, styles.tabCountDanger]}>{` • ${props.tab.count}`}</Text>
+    return props.tab.countTone
+        ? <Text style={[styles.tabCount, countToneStyle(props.tab.countTone)]}>{` • ${props.tab.count}`}</Text>
         : <Text style={styles.tabCount}>{` ${props.tab.count}`}</Text>;
 }
 
@@ -1189,7 +1197,7 @@ function SegmentedTabOverflowMore<T extends string>(props: Readonly<{
             accessibilityLabel: [tab.label, tab.count, tab.badge].filter(Boolean).join(' '),
             subtitle: tab.disabled === true ? tab.unavailableReason : undefined,
             icon: tab.icon ?? undefined,
-            rightElement: tab.count ? <Text numberOfLines={1} style={[styles.tabCount, tab.countTone === 'danger' ? styles.tabCountDanger : null]}>{tab.count}</Text> : undefined,
+            rightElement: tab.count ? <Text numberOfLines={1} style={[styles.tabCount, tab.countTone ? countToneStyle(tab.countTone) : null]}>{tab.count}</Text> : undefined,
             category: OVERFLOW_PAGES_CATEGORY,
             disabled: tab.disabled === true,
             testID: props.testID ? `${props.testID}:${tab.id}` : undefined,

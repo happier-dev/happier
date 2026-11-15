@@ -1547,10 +1547,10 @@ describe('SegmentedTabBar measured overflow', () => {
     expect(onSelectTab).not.toHaveBeenCalled();
   });
 
-  it('keeps a needs-you count with its tab when the names no longer fit with their counts; a quiet count gives way', async () => {
+  it.each(['danger', 'warning'] as const)('keeps a needs-you (%s) count with its tab when the names no longer fit with their counts; a quiet count gives way', async (countTone) => {
     const { SegmentedTabBar } = await import('./SegmentedTabBar');
     const tabs = [
-      { id: 'apps', label: 'Apps', count: '15', countTone: 'danger' as const },
+      { id: 'apps', label: 'Apps', count: '15', countTone },
       { id: 'databases', label: 'Databases', count: '2' },
       { id: 'domains', label: 'Domains' },
       { id: 'checks', label: 'Checks' },

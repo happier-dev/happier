@@ -17,6 +17,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
+import { useMachinePageTabCounts } from './machinePageTabCounts';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Modal } from '@/modal';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -163,8 +164,10 @@ export function MachinePageScreen() {
         Modal.show({ component: DetailNavigationCustomizer,
             props: resolveMachineNavigationCustomizer({ items: navigation.model.items, device: phone ? 'phone' : 'desktop' }) });
     }), { tag: 'MachinePageScreen.customize' });
+    // What the tabs count (lab mOv "Services 9", "Security • 3"), from the Machine's published facts.
+    const tabCounts = useMachinePageTabCounts(serverId, machineId);
     const tabDescriptor = (item: (typeof navigation.model.items)[number]) => ({ id: item.id, label: item.title,
-        disabled: Boolean(item.disabledReason), unavailableReason: item.disabledReason ?? undefined });
+        disabled: Boolean(item.disabledReason), unavailableReason: item.disabledReason ?? undefined, ...tabCounts.get(item.id) });
     const headerBackTitle = t('machine.back');
     const screenOptions = React.useMemo(() => ({
         // A phone draws its own way back on its line above the header (R2), so it hides the header it replaces.
