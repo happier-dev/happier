@@ -24,4 +24,15 @@ describe('usage amounts across saved summaries and provider grouping', () => {
         expect(groupUsageByProvider(restored.accounts)[0]?.accounts[0]?.windows[0])
             .toMatchObject({ remainingPct: null, reportedAmount: amount, status: 'estimated' });
     });
+
+    it('keeps when the earliest shown read goes stale, through cold restoration', () => {
+        const fresh = { ...summary, key: 'service/fresh', fetchedAt: 5_000, staleAfterMs: 10_000 };
+        const old = { ...summary, key: 'service/old', fetchedAt: 1_000, staleAfterMs: 2_000 };
+        const live = buildUsageSummary({ live: buildUsageSummaryCache([fresh, old]), saved: null, accountsWithoutUsage: [] });
+        expect(live.staleAt).toBe(3_000);
+        const restored = buildUsageSummary({ live: null, saved: buildUsageSummaryCache([fresh, old]), accountsWithoutUsage: [] });
+        expect(restored.staleAt).toBe(3_000);
+        // No freshness window from the producer: the page never claims staleness it cannot know.
+        expect(buildUsageSummary({ live: buildUsageSummaryCache([summary]), saved: null, accountsWithoutUsage: [] }).staleAt).toBeNull();
+    });
 });

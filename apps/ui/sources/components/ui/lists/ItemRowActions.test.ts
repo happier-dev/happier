@@ -482,6 +482,18 @@ describe('ItemRowActions', () => {
         expect(screen.findAllByTestId('edit').length).toBeGreaterThan(0);
     });
 
+    it('names its ⋯ trigger after the row it acts on, with or without an owning frame', async () => {
+        const { ItemRowActions, ItemRowActionsTitleContext } = await import('./ItemRowActions');
+        const { t } = await import('@/text');
+        const actions = [{ id: 'edit', title: 'Edit profile', icon: 'pencil-simple' as const, onPress: vi.fn() }];
+        const bare = await renderScreen(React.createElement(ItemRowActions, { title: 'Work laptop', overflowOnly: true,
+            overflowTriggerTestID: 'more', actions }));
+        expect(bare.findByTestId('more')?.props.accessibilityLabel).toBe(t('common.moreActionsFor', { title: 'Work laptop' }));
+        const framed = await renderScreen(React.createElement(ItemRowActionsTitleContext.Provider, { value: 'Morning glance' },
+            React.createElement(ItemRowActions, { title: 'Widget', overflowOnly: true, overflowTriggerTestID: 'more', actions })));
+        expect(framed.findByTestId('more')?.props.accessibilityLabel).toBe(t('common.moreActionsFor', { title: 'Morning glance' }));
+    });
+
     it('passes custom overflow placement and portal alignment through to the popover', async () => {
         const { ItemRowActions } = await import('./ItemRowActions');
 

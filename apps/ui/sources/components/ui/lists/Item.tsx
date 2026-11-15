@@ -283,6 +283,11 @@ export interface ItemProps {
      */
     rightElementOutsidePressable?: boolean;
     /**
+     * The right accessory only draws (meters, a count, a status mark) and is part of the row's press, so the row
+     * stays one named button on React Native Web ("name. subtitle") rather than an unnamed clickable group.
+     */
+    rightElementPassive?: boolean;
+    /**
      * Render `leftElement` as a sibling of the row Pressable, before it. Use this when the leading
      * slot holds its own controls (a reorder handle, a radio): each keeps its own activation and
      * the row never nests one button inside another on React Native Web.
@@ -852,6 +857,7 @@ export const Item = React.memo<ItemProps>((props) => {
         showChevron = true,
         keepChevronWithRightElement = false,
         rightElementOutsidePressable = false,
+        rightElementPassive = false,
         leftElementOutsidePressable = false,
         rightElementYields = false,
         accessoryLayout = 'inline',
@@ -1016,8 +1022,9 @@ export const Item = React.memo<ItemProps>((props) => {
     const isRadioRole = accessibilityRole === 'radio' || webRole === 'radio';
     // A switch row shares the checkbox path: a checked state, Space/Enter, one press.
     const isCheckboxRole = accessibilityRole === 'checkbox' || webRole === 'checkbox' || rowSwitch !== null;
+    // A row is one named button on the web unless an accessory inside its press may hold controls of its own.
     const inferredInteractiveWebRole = isWeb
-        ? (webRole ?? (isRadioRole ? 'radio' : isCheckboxRole ? 'checkbox' : (accessibilityRole === 'button' || !rightElement || rightElementOutsidePressable ? 'button' : undefined)))
+        ? (webRole ?? (isRadioRole ? 'radio' : isCheckboxRole ? 'checkbox' : (accessibilityRole === 'button' || !rightElement || rightElementOutsidePressable || rightElementPassive ? 'button' : undefined)))
         : undefined;
     const passiveWebRole = isWeb
         ? (webRole ?? (isRadioRole ? 'radio' : isCheckboxRole ? 'checkbox' : undefined))

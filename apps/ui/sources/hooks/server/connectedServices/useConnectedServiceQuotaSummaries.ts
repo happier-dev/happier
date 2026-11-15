@@ -69,6 +69,8 @@ export type ConnectedServiceQuotaSummary = Readonly<{
     meters: ReadonlyArray<ConnectedServiceQuotaSummaryMeter>;
     /** When the server read this snapshot (epoch ms), for an honest "as of". */
     fetchedAt: number;
+    /** How long the producer says this read stays fresh; absent when it gives no window. */
+    staleAfterMs?: number;
     /** The account's usage resets (Codex), as this read reported them; null when it has none. */
     recoveryCredits: ConnectedServiceQuotaRecoveryCreditsV1 | null;
 } & ConnectedServiceQuotaAccountIdentity>;
@@ -401,6 +403,7 @@ export function useConnectedServiceQuotaSummaries(options?: Readonly<{
                 primaryMeter: meters[0] ?? null,
                 meters,
                 fetchedAt: snapshot.fetchedAt,
+                ...(snapshot.staleAfterMs !== undefined ? { staleAfterMs: snapshot.staleAfterMs } : {}),
                 recoveryCredits: snapshot.recoveryCredits ?? null,
             });
         }

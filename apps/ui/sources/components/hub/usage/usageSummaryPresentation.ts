@@ -13,11 +13,13 @@ export type UsageSummary = Readonly<{
     accounts: readonly UsageAccountInput[];
     /** When the shown values were read (epoch ms); `null` when nothing is known. */
     asOf: number | null;
+    /** When the first shown read goes stale (epoch ms), by its producer's window; `null` when none says. */
+    staleAt: number | null;
     /** `live`: read in this launch; `lastKnown`: the device's saved value; `none`: nothing yet. */
     source: 'live' | 'lastKnown' | 'none';
 }>;
 
-const NOTHING: UsageSummary = Object.freeze({ entries: [], accounts: [], asOf: null, source: 'none' });
+const NOTHING: UsageSummary = Object.freeze({ entries: [], accounts: [], asOf: null, staleAt: null, source: 'none' });
 
 function toAccount(entry: UsageSummaryEntry): UsageAccountInput {
     return {
@@ -44,6 +46,7 @@ export function buildUsageSummaryCache(summaries: readonly ConnectedServiceQuota
         entries: summaries.map((summary) => ({
             key: summary.key,
             fetchedAt: summary.fetchedAt,
+            ...(summary.staleAfterMs !== undefined ? { staleAfterMs: summary.staleAfterMs } : {}),
             serviceLabel: summary.serviceLabel,
             serviceGroupKey: summary.serviceGroupKey,
             legacyServiceId: summary.legacyServiceId,
@@ -91,6 +94,17 @@ export function buildUsageSummary(input: Readonly<{
         asOf: shown && shown.entries.length > 0 && shown.entries.every((entry) => entry.fetchedAt != null)
             ? Math.min(...shown.entries.map((entry) => entry.fetchedAt!))
             : null,
+        staleAt: resolveStaleAt(shown?.entries ?? []),
         source: input.live ? 'live' : input.saved ? 'lastKnown' : 'none',
     };
+}
+
+function resolveStaleAt(entries: readonly UsageSummaryEntry[]): number | null {
+    let staleAt: number | null = null;
+    for (const entry of entries) {
+        if (entry.fetchedAt == null || entry.staleAfterMs === undefined) continue;
+        const at = entry.fetchedAt + entry.staleAfterMs;
+        staleAt = staleAt === null ? at : Math.min(staleAt, at);
+    }
+    return staleAt;
 }

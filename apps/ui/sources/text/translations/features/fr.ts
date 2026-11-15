@@ -2104,6 +2104,7 @@ const fr: ConnectedServicesCollectionCopy = {
     gatewaysDescription: 'Laissez d’autres agents utiliser vos comptes via une seule adresse.',
     searchCredentials: 'Rechercher des identifiants',
     noCredentialsMatch: ({ query }) => `Aucun identifiant ne correspond à « ${query} »`,
+    noCredentialsMatch: ({ query }) => `Aucun identifiant ne correspond à « ${query} »`,
     sharedWithYouDescription: 'Les identifiants que vos amis, coéquipiers et Teams vous laissent utiliser.',
     addServiceAccount: ({ service }) => `Ajouter un autre compte ${service}`,
     newSecret: 'Nouveau secret',

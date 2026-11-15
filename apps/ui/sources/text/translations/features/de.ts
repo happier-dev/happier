@@ -2098,6 +2098,7 @@ const de: ConnectedServicesCollectionCopy = {
     gatewaysDescription: 'Lass andere Agents deine Konten über eine Adresse nutzen.',
     searchCredentials: 'Zugangsdaten durchsuchen',
     noCredentialsMatch: ({ query }) => `Keine Zugangsdaten passen zu „${query}“`,
+    noCredentialsMatch: ({ query }) => `Keine Zugangsdaten passen zu „${query}“`,
     sharedWithYouDescription: 'Zugangsdaten, die Freunde, Teammitglieder und Teams dich nutzen lassen.',
     addServiceAccount: ({ service }) => `Weiteres ${service}-Konto hinzufügen`,
     newSecret: 'Neues Secret',

@@ -1,1 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="currentColor" d="M10 49V15h8l14 22 14-22h8v34h-9V31L32 51 19 31v18z"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="{{text.primary}}" d="M10 49V15h8l14 22 14-22h8v34h-9V31L32 51 19 31v18z"/></svg>

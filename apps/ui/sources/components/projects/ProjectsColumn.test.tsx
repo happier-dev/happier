@@ -278,7 +278,7 @@ describe('ProjectsColumn', () => {
         }));
         const { ProjectsColumn } = await import('./ProjectsColumn');
         const screen = await renderProjects(<ProjectsColumn />);
-        const triggers = () => screen.root.findAll(node => node.props.accessibilityLabel === 'common.moreActions'
+        const triggers = () => screen.root.findAll(node => String(node.props.accessibilityLabel).startsWith('common.moreActions')
             && typeof node.props.onPress === 'function' && typeof node.type === 'function');
         expect(triggers().length).toBeGreaterThanOrEqual(40);
         expect(rowMenuProbe.triggerRenders).toBeGreaterThanOrEqual(40);
@@ -292,7 +292,7 @@ describe('ProjectsColumn', () => {
         expect(rowMenuProbe.mounts).toBe(0);
 
         const openRow = screen.root.findAll(node => node.props.workspaceRef?.id === 'ref-27' && 'pinAction' in node.props)[0]!;
-        const trigger = openRow.findAll(node => node.props.accessibilityLabel === 'common.moreActions' && typeof node.props.onPress === 'function')[0]!;
+        const trigger = openRow.findAll(node => String(node.props.accessibilityLabel).startsWith('common.moreActions') && typeof node.props.onPress === 'function')[0]!;
         await act(async () => trigger.props.onPress({}));
         expect(rowMenuProbe.mounts).toBe(1);
         const menu = screen.root.findAll(node => Array.isArray(node.props.items) && node.props.items.some((item: { id: string }) => item.id === 'rename'))[0]!;

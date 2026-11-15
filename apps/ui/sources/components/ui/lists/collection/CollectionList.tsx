@@ -534,6 +534,8 @@ function CollectionPageRow(props: CollectionNavigationRowProps & Readonly<{ mark
             detail={props.status ? undefined : props.detail}
             rightElement={props.status ?? props.rightElement}
             rightElementOutsidePressable={props.rightElementOutsidePressable}
+            // The status slot only draws; it is part of the row's press (its name says the state).
+            rightElementPassive={Boolean(props.status)}
             dimmed={props.dimmed === true}
             showChevron
             keepChevronWithRightElement
@@ -621,6 +623,8 @@ const CollectionColumnRow = React.memo(function CollectionColumnRow(props: Colle
             underlay={needsYouFacts ? <CollectionRowNeedsYouLeading {...needsYouFacts} testID={`${props.testID}:needs-you`} /> : undefined}
             rightElement={rightElement}
             rightElementOutsidePressable={Boolean(props.rightElement || disclosureTarget)}
+            // Inside the press only the status slot and the count remain, and they only draw.
+            rightElementPassive
             title={props.title}
             rowRole={rowRole}
             titleLines={1}

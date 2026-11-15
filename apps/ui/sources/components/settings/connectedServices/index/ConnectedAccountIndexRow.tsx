@@ -341,6 +341,8 @@ export const ConnectedAccountIndexRowView = React.memo(function ConnectedAccount
             icon={<ConnectedServiceMark service={props.service} legacyServiceId={props.legacyServiceId} pluginId={props.pluginId} size="inline" />}
             rightElement={trailing}
             rightElementOutsidePressable={Boolean(props.signedOut) || facts.usage.kind === 'error'}
+            // Usage meters only draw (pointer events off): the row stays one named button.
+            rightElementPassive
             keepChevronWithRightElement={!props.signedOut}
             showChevron={!props.signedOut}
             accessoryLayout="adaptive"

@@ -53,7 +53,7 @@ import type {
     ConnectedServicesIndexModel,
     ConnectedServicesIndexSheet,
 } from '../model/buildConnectedServicesIndexModel';
-import { presentConnectedServicesIndexAccount, presentConnectedServicesIndexPool } from '../model/presentConnectedServicesIndexAccount';
+import { CONNECTED_SERVICES_SEARCH_THRESHOLD, connectedServicesAccountMatchesSearch, presentConnectedServicesIndexAccount, presentConnectedServicesIndexPool } from '../model/presentConnectedServicesIndexAccount';
 import { useConnectedServicesIndex, type ConnectedServicesGatewayRow } from '../model/useConnectedServicesIndex';
 import {
     CONNECTED_SERVICES_AGENT_SIGN_IN_ROUTE,
@@ -77,8 +77,6 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { ScopedSnapshotError } from '@/sync/domains/scope/scopedSnapshotFacts';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
-/** The rail offers search once it no longer fits at a glance. */
-const SEARCH_THRESHOLD = 6;
 /** The add's 16 px glyph reaches the height of its 32 px row, and no further: the first row is directly beneath. */
 const GROUP_ADD_VERTICAL_REACH = { top: 8, bottom: 8 } as const;
 
@@ -158,7 +156,7 @@ export const ConnectedServicesRailView = React.memo(function ConnectedServicesRa
 
     const draftTitles = useCollectionDraftTitle();
     const [query, setQuery] = React.useState('');
-    const searchable = accountCount > SEARCH_THRESHOLD;
+    const searchable = accountCount > CONNECTED_SERVICES_SEARCH_THRESHOLD;
     const needle = searchable ? query.trim().toLowerCase() : '';
     // Filters count accounts; service headings group those accounts without adding another result.
     const columnFacts = React.useMemo(() => model.sheets.flatMap((sheet) =>
@@ -260,10 +258,7 @@ export const ConnectedServicesRailView = React.memo(function ConnectedServicesRa
         sheet,
         rows: sheet.accounts
             .map((account) => ({ account, presentation: presentConnectedServicesIndexAccount(sheet, account, labelsByKey, present) }))
-            .filter(({ presentation }) => !needle
-                || presentation.title.toLowerCase().includes(needle)
-                || (presentation.identityLabel ?? '').toLowerCase().includes(needle)
-                || sheet.label.toLowerCase().includes(needle))
+            .filter(({ presentation }) => connectedServicesAccountMatchesSearch(sheet, presentation, needle))
             .filter(({ account }) => matchesFilter(`${sheet.serviceKey}:${account.accountId}`)),
     })).filter(({ sheet, rows }) => !narrowed || rows.length > 0
         || (sheet.serviceKey === draftServiceKey && selection.kind === 'accountDraft'));

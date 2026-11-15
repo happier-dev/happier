@@ -2104,6 +2104,7 @@ const it: ConnectedServicesCollectionCopy = {
     gatewaysDescription: 'Lascia che altri agenti usino i tuoi account tramite un solo indirizzo.',
     searchCredentials: 'Cerca credenziali',
     noCredentialsMatch: ({ query }) => `Nessuna credenziale corrisponde a “${query}”`,
+    noCredentialsMatch: ({ query }) => `Nessuna credenziale corrisponde a “${query}”`,
     sharedWithYouDescription: 'Credenziali che amici, colleghi e Team ti lasciano usare.',
     addServiceAccount: ({ service }) => `Aggiungi un altro account ${service}`,
     newSecret: 'Nuovo segreto',

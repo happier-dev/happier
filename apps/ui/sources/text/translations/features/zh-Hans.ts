@@ -2099,6 +2099,7 @@ const zhHans: ConnectedServicesCollectionCopy = {
     gatewaysDescription: '通过一个地址让其他智能体使用你的账户。',
     searchCredentials: '搜索凭据',
     noCredentialsMatch: ({ query }) => `没有与“${query}”匹配的凭据`,
+    noCredentialsMatch: ({ query }) => `没有与“${query}”匹配的凭据`,
     sharedWithYouDescription: '好友、队友和团队允许你使用的凭据。',
     addServiceAccount: ({ service }) => `添加另一个 ${service} 账户`,
     newSecret: '新建机密',

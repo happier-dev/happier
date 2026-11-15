@@ -26,4 +26,8 @@ export const MUSE_UI_DESCRIPTOR = Object.freeze({
       title: { key: 'usage.board.page.sourceAccountingAgent', fallback: 'usage · {agent}', params: { agent: 'Muse' } },
     }],
   },
+  // The identity mark every Agent surface draws (AgentIcon), inked from the host theme like every bundled Agent's.
+  assets: {
+    svgIcon: { path: 'assets/icon.svg' },
+  },
 });

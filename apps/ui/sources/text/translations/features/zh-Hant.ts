@@ -2099,6 +2099,7 @@ const zhHant: ConnectedServicesCollectionCopy = {
     gatewaysDescription: '透過一個位址讓其他代理使用你的帳戶。',
     searchCredentials: '搜尋憑證',
     noCredentialsMatch: ({ query }) => `沒有與「${query}」相符的憑證`,
+    noCredentialsMatch: ({ query }) => `沒有與「${query}」相符的憑證`,
     sharedWithYouDescription: '好友、隊友與團隊允許你使用的憑證。',
     addServiceAccount: ({ service }) => `新增另一個 ${service} 帳戶`,
     newSecret: '新增機密',

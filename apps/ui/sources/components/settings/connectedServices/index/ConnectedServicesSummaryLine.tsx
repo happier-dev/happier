@@ -5,6 +5,7 @@ import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/pl
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { SurfaceAsOfLabel } from '@/components/ui/surfaces/SurfaceAsOfLabel';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Icon } from '@/components/ui/icons/Icon';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { Text } from '@/components/ui/text/Text';
@@ -21,6 +22,8 @@ export const ConnectedServicesSummaryLine = React.memo(function ConnectedService
     poolCount?: number;
     needsYouCount: number;
     asOf: number | null;
+    /** Some shown usage is older than its producer's window: said here once for every row it covers. */
+    stale?: boolean;
     /** Reads every account's usage again (each account's own refresh). */
     onRefreshAll?: () => void;
 }>) {
@@ -38,7 +41,10 @@ export const ConnectedServicesSummaryLine = React.memo(function ConnectedService
                 </View>
             ) : null}
             <View style={stylesheet.asOf}>
-                {props.asOf !== null ? <SurfaceAsOfLabel at={props.asOf} testID="connected-services-summary-as-of" /> : null}
+                {props.asOf !== null && props.stale ? (
+                    <SurfaceFreshnessLine testID="connected-services-summary-stale" presentation="inline" asOf={props.asOf}
+                        reason={t('connectedServicesCollection.railUsageStale')} />
+                ) : props.asOf !== null ? <SurfaceAsOfLabel at={props.asOf} testID="connected-services-summary-as-of" /> : null}
                 {props.onRefreshAll ? (
                     <HappierPressable
                         testID="connected-services-summary-refresh-all"

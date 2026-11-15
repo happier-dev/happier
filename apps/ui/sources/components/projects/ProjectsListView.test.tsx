@@ -126,7 +126,7 @@ const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMe
 
 /** A closed row mounts only its trigger; the row menu model exists while its menu is open. */
 async function openFirstRowMenu(screen: Awaited<ReturnType<typeof renderProjects>>) {
-    const trigger = screen.root.findAll(node => node.props.accessibilityLabel === 'common.moreActions'
+    const trigger = screen.root.findAll(node => String(node.props.accessibilityLabel).startsWith('common.moreActions')
         && typeof node.props.onPress === 'function')[0]!;
     await act(async () => trigger.props.onPress({}));
 }

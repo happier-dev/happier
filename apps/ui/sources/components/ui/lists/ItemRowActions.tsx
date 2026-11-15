@@ -320,8 +320,10 @@ function ItemRowActionsContent(props: ItemRowActionsContentProps) {
     }, [actionControlFrame, actionHitArea, iconSize, props, theme.colors.border.focus, theme.colors.button.secondary.tint, theme.colors.state.danger.foreground]);
 
     const renderOverflow = React.useCallback(() => {
-        const label = props.overflowTriggerAccessibilityLabel ?? t('common.moreActions');
-        const accessibilityLabel = ownerTitle === undefined ? label : `${label}: ${ownerTitle ?? props.title}`;
+        // The trigger names the row it acts on ("More actions for Work laptop"): among a list's many ⋯ buttons a
+        // bare "More actions" says nothing. A frame's own title wins over the row's (a widget's ⋯).
+        const accessibilityLabel = props.overflowTriggerAccessibilityLabel
+            ?? t('common.moreActionsFor', { title: ownerTitle ?? props.title });
         const accessibilityHint = t('common.moreActionsHint');
         const toggleOverflow = () => setShowOverflow((v) => !v);
         const onRequestClose = () => setShowOverflow(false);

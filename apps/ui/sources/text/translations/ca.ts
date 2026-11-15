@@ -2795,6 +2795,7 @@ export const ca: TranslationStructure = {
           actions: 'Accions',
           moreActions: 'Més accions',
           moreActionsHint: 'Obre un menú amb més accions',
+          moreActionsFor: ({ title }: { title: string }) => `Més accions per a ${title}`,
           destructiveActionHint: 'Aquesta acció és destructiva i no es pot desfer.',
           cancel: 'Cancel·la',
           decline: 'Rebutja',

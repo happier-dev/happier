@@ -7,6 +7,8 @@ import { parseDisplayableCredentialHealthStatus } from '@/sync/domains/connected
 import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 
 import { CardGrid } from '@/components/ui/cardGrid/CardGrid';
+import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -29,7 +31,7 @@ import type {
     ConnectedServicesIndexPool,
     ConnectedServicesIndexSheet,
 } from '../model/buildConnectedServicesIndexModel';
-import { presentConnectedServicesIndexAccount, presentConnectedServicesIndexPool } from '../model/presentConnectedServicesIndexAccount';
+import { CONNECTED_SERVICES_SEARCH_THRESHOLD, connectedServicesAccountMatchesSearch, presentConnectedServicesIndexAccount, presentConnectedServicesIndexPool } from '../model/presentConnectedServicesIndexAccount';
 import { ConnectedAccountCardView } from './ConnectedAccountCard';
 import { isConnectedAccountSignedOut, resolveConnectedAccountCredentialStatusLabel } from '../account/connectedAccountCredentialStatusLabel';
 import {
@@ -63,7 +65,13 @@ export type ConnectedServicesIndexViewProps = Readonly<{
     compact: boolean;
     /** Phone header actions (the eye and "+", which the rail carries on wide screens). */
     headerActions?: React.ReactNode;
-    summary: Readonly<{ needsYouCount: number; asOf: number | null; onRefreshAll?: () => void }>;
+    summary: Readonly<{
+        needsYouCount: number;
+        asOf: number | null;
+        /** When the page's first usage read goes stale (the usage summary owner's `staleAt`). */
+        staleAt?: number | null;
+        onRefreshAll?: () => void;
+    }>;
     /** Above the services: a notice about the whole collection (services could not be read). */
     banner?: React.ReactNode;
     /** The set-up blocks ("Connect more", catalog and flows), mounted after the services. */
@@ -120,14 +128,31 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
     const router = useRouter();
     // A service's diagnostics are its plugin's: Details opens that plugin's page, where they are read in full.
     const openDiagnostics = (sheet: ConnectedServicesIndexSheet) => router.push(buildPluginDetailRoute('settings', sheet.service.pluginId));
-    const { model, labelsByKey, present } = props;
+    const { labelsByKey, present } = props;
     // Cards on every width, a phone included (R7); the device's view decides.
     const grid = props.presentation === 'grid';
+    const accountCount = props.model.sheets.reduce((total, sheet) => total + sheet.accounts.length, 0);
+    // The phone's root is this Overview (R6/R7), so the rail's search comes here: the same field, threshold and match.
+    const [query, setQuery] = React.useState('');
+    const searchable = props.compact && accountCount > CONNECTED_SERVICES_SEARCH_THRESHOLD;
+    const needle = searchable ? query.trim().toLowerCase() : '';
+    const model = React.useMemo(() => needle ? {
+        ...props.model,
+        sheets: props.model.sheets.flatMap((sheet) => {
+            const accounts = sheet.accounts.filter((account) => connectedServicesAccountMatchesSearch(
+                sheet, presentConnectedServicesIndexAccount(sheet, account, labelsByKey, present), needle));
+            return accounts.length > 0 ? [{ ...sheet, accounts }] : [];
+        }),
+    } : props.model, [labelsByKey, needle, present, props.model]);
+    const matchCount = model.sheets.reduce((total, sheet) => total + sheet.accounts.length, 0);
     // Only declared Agent usage places a service under Agent sign-in; unknown accounts stay visible with tools.
     const agentSheets = model.sheets.filter((sheet) => sheet.section === 'agents');
     const toolSheets = model.sheets.filter((sheet) => sheet.section !== 'agents');
-    const accountCount = model.sheets.reduce((total, sheet) => total + sheet.accounts.length, 0);
-    const pooled = model.sheets.flatMap((sheet) => sheet.pools.map((pool) => ({ sheet, pool })));
+    const pooled = props.model.sheets.flatMap((sheet) => sheet.pools.map((pool) => ({ sheet, pool })));
+    // Old usage is said once, by the page's summary line; a row speaks only when its read differs from the page.
+    const pageUsageStale = props.summary.staleAt != null && props.now > props.summary.staleAt;
+    const againstPage = (facts: ConnectedAccountIndexFacts): ConnectedAccountIndexFacts =>
+        pageUsageStale && facts.staleSince !== null ? { ...facts, staleSince: null } : facts;
 
     // Words, not glyphs: the segmented owner draws icon tabs without their labels.
     const presentationTabs = React.useMemo(() => [
@@ -250,7 +275,7 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
                             {...entry}
                             fixProminence={fixProminence}
                             serviceFact={sheet.label}
-                            facts={facts}
+                            facts={againstPage(facts)}
                             now={props.now}
                             compact={props.compact}
                             showDivider={index < rows.length - 1 || settled}
@@ -332,7 +357,7 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
                                             {...entry}
                                             // The grid has no Needs you group: a sign-in to repair stays bordered beside its siblings.
                                             fixProminence="secondary"
-                                            facts={facts}
+                                            facts={againstPage(facts)}
                                             legacyServiceMarkId={sheet.legacyServiceId}
                                             agentIds={sheet.usedByAgentIds}
                                             now={props.now}
@@ -403,7 +428,7 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
             description: t('connectedServicesCollection.agentAccountsDescription'),
             action: props.renderAddAccount?.('agents'),
         });
-    const npmProfiles = props.onOpenNpmProfiles ? <Item
+    const npmProfiles = props.onOpenNpmProfiles && (!needle || t('settingsPlugins.registriesTitle').toLowerCase().includes(needle)) ? <Item
         testID="credentials:npm-registry-profiles"
         title={t('settingsPlugins.registriesTitle')}
         subtitle={t('settingsPlugins.registriesFooter')}
@@ -439,22 +464,47 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
                                 poolCount={pooled.length}
                                 needsYouCount={props.summary.needsYouCount}
                                 asOf={props.summary.asOf}
+                                stale={pageUsageStale}
                                 onRefreshAll={props.compact ? undefined : props.summary.onRefreshAll}
                             />
                         ) : null}
                     </View>
                 )}
             />
+            {searchable ? (
+                <CompactSearchField
+                    testID="connected-services-index:search"
+                    placement="page"
+                    value={query}
+                    onChangeText={setQuery}
+                    placeholder={t('connectedServicesCollection.searchCredentials')}
+                />
+            ) : null}
             {props.banner ?? null}
-            {needsYouGroup}
-            {agents}
-            {pools}
-            {props.gateways ?? null}
-            {tools}
-            {props.secrets ?? null}
-            {props.sharedWithYou ?? null}
-            {props.connectMore}
-            {props.composer ?? null}
+            {needle && matchCount === 0 && !npmProfiles ? (
+                <EmptyState
+                    testID="connected-services-index:no-match"
+                    layout="inline"
+                    iconName="magnifying-glass"
+                    title={t('connectedServicesCollection.noCredentialsMatch', { query: query.trim() })}
+                    primaryAction={{ testID: 'connected-services-index:no-match-clear', label: t('common.clearSearch'), onPress: () => setQuery('') }}
+                />
+            ) : needle ? (
+                // A search lists the accounts it found; the page's other sections come back when it is cleared.
+                <>{needsYouGroup}{agents}{tools}</>
+            ) : (
+                <>
+                    {needsYouGroup}
+                    {agents}
+                    {pools}
+                    {props.gateways ?? null}
+                    {tools}
+                    {props.secrets ?? null}
+                    {props.sharedWithYou ?? null}
+                    {props.connectMore}
+                    {props.composer ?? null}
+                </>
+            )}
         </ItemList>
     );
 });

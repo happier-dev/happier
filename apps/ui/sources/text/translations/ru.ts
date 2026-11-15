@@ -2811,6 +2811,7 @@ export const ru: TranslationStructure = {
     actions: "Действия",
     moreActions: "Другие действия",
     moreActionsHint: "Открывает меню с другими действиями",
+    moreActionsFor: ({ title }: { title: string }) => `Другие действия для ${title}`,
     destructiveActionHint: "Это действие необратимо и не может быть отменено.",
     cancel: "Отмена",
     decline: "Отклонить",

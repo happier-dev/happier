@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import type { QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 
@@ -26,13 +27,12 @@ function entry(
   } as ConnectedServiceRegistryEntry;
 }
 
-function model(projectionStatus?: 'loading') {
+function model(projectionStatus?: 'loading', accountIds: readonly string[] = ['work']) {
   return buildConnectedServicesIndexModel({
     transport: 'advertised-v4',
     entries: [entry('ChatGPT', projectionStatus)],
-    qualifiedAccounts: [
-      {
-        ref: { service: CODEX, accountId: 'work' },
+    qualifiedAccounts: accountIds.map((accountId) => ({
+        ref: { service: CODEX, accountId },
         status: 'connected',
         authenticationModeId: 'oauth',
         revisionSemantics: 'revisioned',
@@ -40,9 +40,8 @@ function model(projectionStatus?: 'loading') {
         configurationReady: true,
         configurationRevision: null,
         scopes: [],
-        providerIdentity: { email: 'codex@company.com' },
-      } as unknown as QualifiedConnectedAccountProfileV4,
-    ],
+        providerIdentity: { email: accountId === 'work' ? 'codex@company.com' : `${accountId}@company.com` },
+      } as unknown as QualifiedConnectedAccountProfileV4)),
     qualifiedGroups: [],
     legacyServices: [],
     defaultAccountByServiceKey: {},
@@ -68,8 +67,12 @@ const NO_FACTS = {
 } as const;
 
 function render(projectionStatus?: 'loading', options?: Readonly<{
-  model: ReturnType<typeof model>;
+  model?: ReturnType<typeof model>;
   presentation: 'list' | 'grid';
+  summary?: Readonly<{ needsYouCount: number; asOf: number | null; staleAt?: number | null }>;
+  facts?: typeof NO_FACTS | Readonly<Record<string, unknown>>;
+  now?: number;
+  compact?: boolean;
 }>) {
   return renderScreen(
     <ConnectedServicesIndexView
@@ -84,15 +87,15 @@ function render(projectionStatus?: 'loading', options?: Readonly<{
           accountId: input.accountId ?? null,
         })
       }
-      now={0}
+      now={options?.now ?? 0}
       presentation={options?.presentation ?? 'grid'}
       onPresentationChange={vi.fn()}
-      compact={false}
-      summary={{ needsYouCount: 0, asOf: null }}
+      compact={options?.compact ?? false}
+      summary={options?.summary ?? { needsYouCount: 0, asOf: null }}
       connectMore={null}
       fixProminence="primary"
       settled={null}
-      renderAccount={({ render: draw }) => draw(NO_FACTS)}
+      renderAccount={({ render: draw }) => draw((options?.facts ?? NO_FACTS) as typeof NO_FACTS)}
       renderPool={() => <></>}
       renderStar={() => null}
       onAddAccount={vi.fn()}
@@ -126,5 +129,41 @@ describe('ConnectedServicesIndexView grid', () => {
     const reading = await render('loading');
     expect(reading.getTextContent()).not.toContain('Loading…');
     expect(reading.getTextContent()).toContain('Codex');
+  });
+  it.each(['list', 'grid'] as const)('says stale usage once for the page in %s, and a row only when it differs from the page', async (presentation) => {
+    const HOUR = 60 * 60 * 1000;
+    const now = 3 * HOUR;
+    const staleRow = { ...NO_FACTS, fetchedAt: HOUR, staleSince: HOUR };
+    const rowStale = `connected-services-account:${CODEX.pluginId}/${CODEX.localId}:work:stale`;
+    const covered = await render(undefined, { presentation, now, facts: staleRow,
+      summary: { needsYouCount: 0, asOf: HOUR, staleAt: HOUR + 60_000 } });
+    expect(covered.findHostByTestId('connected-services-summary-stale')).not.toBeNull();
+    expect(covered.findHostByTestId(rowStale)).toBeNull();
+    await covered.unmount();
+    // The page's reads are current: the one old row keeps its own line.
+    const differs = await render(undefined, { presentation, now, facts: staleRow,
+      summary: { needsYouCount: 0, asOf: HOUR, staleAt: null } });
+    expect(differs.findHostByTestId('connected-services-summary-stale')).toBeNull();
+    expect(differs.findHostByTestId(rowStale)).not.toBeNull();
+    await differs.unmount();
+  });
+  it('offers search on the phone Overview once the accounts no longer fit at a glance, saying when nothing matches', async () => {
+    const ids = ['ana', 'ben', 'cleo', 'dev', 'eli', 'fay', 'gus'];
+    const row = (id: string) => `connected-services-account:${CODEX.pluginId}/${CODEX.localId}:${id}`;
+    const screen = await render(undefined, { model: model(undefined, ids), presentation: 'list', compact: true });
+    const field = () => screen.findByTestId('connected-services-index:search');
+    expect(field()).not.toBeNull();
+    await act(async () => { (field()!.props.onChangeText as (text: string) => void)('cleo'); });
+    expect(screen.findHostByTestId(row('cleo'))).not.toBeNull();
+    expect(screen.findHostByTestId(row('ana'))).toBeNull();
+    await act(async () => { (field()!.props.onChangeText as (text: string) => void)('nobody'); });
+    expect(screen.findHostByTestId('connected-services-index:no-match')).not.toBeNull();
+    await screen.pressByTestIdAsync('connected-services-index:no-match-clear');
+    expect(screen.findHostByTestId(row('ana'))).not.toBeNull();
+    await screen.unmount();
+    // A short list reads at a glance: no field.
+    const short = await render(undefined, { model: model(undefined, ids.slice(0, 3)), presentation: 'list', compact: true });
+    expect(short.findByTestId('connected-services-index:search')).toBeNull();
+    await short.unmount();
   });
 });

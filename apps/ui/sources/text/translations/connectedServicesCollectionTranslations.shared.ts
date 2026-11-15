@@ -99,6 +99,7 @@ export const en = {
     overviewRow: 'Overview',
     gatewaysDescription: 'Let other agents use your accounts through one address.',
     searchCredentials: 'Search credentials',
+    noCredentialsMatch: ({ query }: { query: string }) => `No credentials match “${query}”`,
     sharedWithYouDescription: 'Credentials friends, teammates and Teams let you use.',
     addServiceAccount: ({ service }: { service: string }) => `Add to ${service}`,
     newSecret: 'New secret',

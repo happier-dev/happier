@@ -2104,6 +2104,7 @@ const ja: ConnectedServicesCollectionCopy = {
     gatewaysDescription: 'ひとつのアドレスで、ほかのエージェントにあなたのアカウントを使わせます。',
     searchCredentials: '認証情報を検索',
     noCredentialsMatch: ({ query }) => `「${query}」に一致する認証情報はありません`,
+    noCredentialsMatch: ({ query }) => `「${query}」に一致する認証情報はありません`,
     sharedWithYouDescription: '友達、チームメイト、チームが使わせてくれる認証情報。',
     addServiceAccount: ({ service }) => `${service} のアカウントを追加`,
     newSecret: '新しいシークレット',

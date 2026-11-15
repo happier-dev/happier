@@ -296,6 +296,7 @@ const ConnectedServicesSettingsBody = React.memo(function ConnectedServicesSetti
       summary={{
         needsYouCount,
         asOf: usage.asOf,
+        staleAt: usage.staleAt,
         onRefreshAll: () => setRefreshToken((token) => token + 1),
       }}
       banner={<>

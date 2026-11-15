@@ -2972,6 +2972,7 @@ export const es: TranslationStructure = {
     actions: "Acciones",
     moreActions: "Más acciones",
     moreActionsHint: "Abre un menú con más acciones",
+    moreActionsFor: ({ title }: { title: string }) => `Más acciones para ${title}`,
     destructiveActionHint: "Esta acción es destructiva y no se puede deshacer.",
     cancel: "Cancelar",
     decline: "Rechazar",

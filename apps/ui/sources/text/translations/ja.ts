@@ -2951,6 +2951,7 @@ export const ja: TranslationStructure = {
     actions: "操作",
     moreActions: "その他の操作",
     moreActionsHint: "追加の操作メニューを開きます",
+    moreActionsFor: ({ title }: { title: string }) => `${title} のその他の操作`,
     destructiveActionHint: "この操作は破壊的で、元に戻せません。",
     cancel: "キャンセル",
     decline: "拒否",

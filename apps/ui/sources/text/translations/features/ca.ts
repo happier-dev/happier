@@ -2104,6 +2104,7 @@ const ca: ConnectedServicesCollectionCopy = {
     gatewaysDescription: 'Deixa que altres agents facin servir els teus comptes a través d’una sola adreça.',
     searchCredentials: 'Cerca credencials',
     noCredentialsMatch: ({ query }) => `Cap credencial coincideix amb «${query}»`,
+    noCredentialsMatch: ({ query }) => `Cap credencial coincideix amb «${query}»`,
     sharedWithYouDescription: 'Credencials que amics, companys d’equip i Teams et deixen fer servir.',
     addServiceAccount: ({ service }) => `Afegeix un altre compte de ${service}`,
     newSecret: 'Secret nou',

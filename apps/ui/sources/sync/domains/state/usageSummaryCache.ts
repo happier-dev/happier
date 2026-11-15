@@ -12,6 +12,8 @@ export const UsageSummaryCacheV1Schema = z.object({
         key: z.string().check(z.minLength(1)),
         /** Unknown when the producer has no reading time; never inferred from another account. */
         fetchedAt: z.nullable(z.number().check(z.int(), z.nonnegative())),
+        /** How long the read stays fresh, as its producer said; absent in values saved before it (never stale then). */
+        staleAfterMs: z.optional(z.number().check(z.nonnegative())),
         serviceLabel: z.string(),
         /** Added with per-provider grouping; absent in values saved before it (still readable). */
         serviceGroupKey: z.optional(z.string().check(z.minLength(1))),

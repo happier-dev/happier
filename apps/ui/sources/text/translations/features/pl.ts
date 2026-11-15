@@ -2115,6 +2115,7 @@ const pl: ConnectedServicesCollectionCopy = {
     gatewaysDescription: 'Pozwól innym agentom korzystać z Twoich kont przez jeden adres.',
     searchCredentials: 'Szukaj danych logowania',
     noCredentialsMatch: ({ query }) => `Brak danych logowania pasujących do „${query}”`,
+    noCredentialsMatch: ({ query }) => `Brak danych logowania pasujących do „${query}”`,
     sharedWithYouDescription: 'Dane logowania, których pozwalają Ci używać znajomi, członkowie zespołu i zespoły.',
     addServiceAccount: ({ service }) => `Dodaj kolejne konto ${service}`,
     newSecret: 'Nowy sekret',

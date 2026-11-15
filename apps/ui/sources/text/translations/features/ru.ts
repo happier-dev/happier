@@ -2126,6 +2126,7 @@ const ru: ConnectedServicesCollectionCopy = {
     gatewaysDescription: 'Дайте другим агентам пользоваться вашими аккаунтами через один адрес.',
     searchCredentials: 'Поиск учётных данных',
     noCredentialsMatch: ({ query }) => `Нет учётных данных, совпадающих с «${query}»`,
+    noCredentialsMatch: ({ query }) => `Нет учётных данных, совпадающих с «${query}»`,
     sharedWithYouDescription: 'Учётные данные, которыми вам разрешают пользоваться друзья, коллеги и команды.',
     addServiceAccount: ({ service }) => `Добавить ещё один аккаунт ${service}`,
     newSecret: 'Новый секрет',

@@ -2769,6 +2769,7 @@ export const zhHans: TranslationStructure = {
     actions: "操作",
     moreActions: "更多操作",
     moreActionsHint: "打开包含更多操作的菜单",
+    moreActionsFor: ({ title }: { title: string }) => `${title} 的更多操作`,
     destructiveActionHint: "此操作具有破坏性且无法撤销。",
     cancel: "取消",
     decline: "拒绝",

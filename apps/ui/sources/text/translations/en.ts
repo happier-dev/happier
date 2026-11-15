@@ -3042,6 +3042,7 @@ const enCommon = {
   actions: 'Actions',
   moreActions: 'More actions',
   moreActionsHint: 'Opens a menu with more actions',
+  moreActionsFor: ({ title }: { title: string }) => `More actions for ${title}`,
   destructiveActionHint: 'This action is destructive and cannot be undone.',
   cancel: 'Cancel',
   decline: 'Decline',

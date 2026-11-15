@@ -95,6 +95,24 @@ export function presentConnectedServicesIndexAccount(
     };
 }
 
+/** Credentials offer search (the rail's field, the phone Overview's) once the accounts no longer fit at a glance. */
+export const CONNECTED_SERVICES_SEARCH_THRESHOLD = 6;
+
+/**
+ * Whether an account answers a Credentials search: its shown name, its identity or its service's name, the words
+ * the person sees on its row. `needle` is the trimmed, lower-cased query; an empty one matches everything.
+ */
+export function connectedServicesAccountMatchesSearch(
+    sheet: ConnectedServicesIndexSheet,
+    presentation: ConnectedServicesIndexAccountPresentation,
+    needle: string,
+): boolean {
+    return !needle
+        || presentation.title.toLowerCase().includes(needle)
+        || (presentation.identityLabel ?? '').toLowerCase().includes(needle)
+        || sheet.label.toLowerCase().includes(needle);
+}
+
 /** A pool's name, through the one qualified-target presenter. */
 export function presentConnectedServicesIndexPool(
     sheet: ConnectedServicesIndexSheet,
