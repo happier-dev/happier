@@ -1,1 +1,1 @@
-{"declarationDigest":"cdb36940a93eaf16bae8155b6e980daf840c39c8aa93bb2be01c8a33712fbf20","v":1,"valuesByActionId":{"self-check":{"additionalProperties":false,"properties":{"ok":{"type":"boolean"}},"required":["ok"],"type":"object"}}}
+{"declarationDigest":"6d982f4b0d33fb74ca83c91bba04dc89f7e653b0dbfaf0405cc62394d153b13a","v":1,"valuesByActionId":{"self-check":{"additionalProperties":false,"properties":{"ok":{"type":"boolean"}},"required":["ok"],"type":"object"}}}
