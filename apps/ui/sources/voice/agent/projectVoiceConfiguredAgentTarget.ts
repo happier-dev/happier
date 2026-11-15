@@ -2,7 +2,7 @@ import type { BackendTargetRefV2} from '@happier-dev/protocol/backends/targets/b
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { readBackendTargetEnabled } from '@/agents/backendCatalog/backendTargetEnablement';
-import { formatBackendTargetKeyV2, resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
+import { formatBackendTargetKeyV2, readBackendTargetKeyV2, resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { resolveOperationalBackendTargetForAgentSelection } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { MergedProviderProjectionEntry } from '@/agents/backendCatalog/mergedProjectionTypes';
@@ -72,15 +72,6 @@ export function projectVoiceConfiguredAgentTarget(params: Readonly<{
         agentId: agentId ?? '', agentTargetKey: targetKeySelection,
     });
     if (!agentId) return unavailable();
-    if (!targetKeySelection && !externalIdentitySelection && !configuredCompatBackendId) {
-        const backendTarget = resolveOperationalBackendTargetForAgentSelection({
-            backendTarget: { kind: 'backend', backendId: agentId },
-        });
-        return isLegacyCompatAgentType(agentId) || !backendTarget ? unavailable() : {
-            ok: true, kind: 'legacy', agentId,
-            backendTarget, targetKey: null,
-        };
-    }
     const backendEnabledByTargetKey = params.backendEnabledByTargetKey;
     const selectionTargetKey = targetKeySelection
         ? (() => {
@@ -92,9 +83,11 @@ export function projectVoiceConfiguredAgentTarget(params: Readonly<{
                 return null;
             }
         })()
-        : null;
+        : !externalIdentitySelection && !configuredCompatBackendId
+            ? readBackendTargetKeyV2({ kind: 'backend', backendId: agentId })
+            : null;
 
-    // An exact persisted target is also the user's enablement authority. The
+    // A persisted target (including a released raw-id profile) uses Account enablement. The
     // projected runtime backend may use a different carrier key, so filtering
     // only the operational catalog entry would silently bypass an explicit
     // disable of the selected contributed Agent.
@@ -107,6 +100,16 @@ export function projectVoiceConfiguredAgentTarget(params: Readonly<{
             errorCode: VOICE_AGENT_SELECTION_UNAVAILABLE_ERROR_CODE,
             agentId,
             agentTargetKey: targetKeySelection,
+        };
+    }
+
+    if (!hasExactFacts && !configuredCompatBackendId) {
+        const backendTarget = resolveOperationalBackendTargetForAgentSelection({
+            backendTarget: { kind: 'backend', backendId: agentId },
+        });
+        return isLegacyCompatAgentType(agentId) || !backendTarget ? unavailable() : {
+            ok: true, kind: 'legacy', agentId,
+            backendTarget, targetKey: null,
         };
     }
 
