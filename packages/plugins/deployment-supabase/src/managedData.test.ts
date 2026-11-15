@@ -58,6 +58,65 @@ async function host(respond: (request: HttpRequest) => unknown | Promise<unknown
 }
 
 describe('activated Supabase managed data target', () => {
+  it.each(['deleted', 'already gone', 'lost response'] as const)('settles project deletion only after exact-resource absence: %s', async kind => {
+    const h = await host(request => {
+      if (request.method === 'DELETE' && kind === 'lost response') throw new TypeError('private provider response lost');
+      // Official Management API v1 DELETE returns id/ref/name, not branch-delete's message:ok.
+      return request.method === 'DELETE' ? { id: 1, ref: project.ref, name: project.name } : { message: 'not found' };
+    }, undefined, request => kind === 'already gone' || request.method === 'GET' ? 404 : 200);
+    try {
+      expect(await h.kit.invokeAction('projects-delete', linked)).toMatchObject({ v: 1, state: 'succeeded', providerResourceAbsent: true });
+      expect(h.requests.map(request => [request.method, request.url])).toEqual(kind === 'already gone'
+        ? [['DELETE', 'https://api.supabase.com/v1/projects/parent-ref']]
+        : [['DELETE', 'https://api.supabase.com/v1/projects/parent-ref'], ['GET', 'https://api.supabase.com/v1/projects/parent-ref']]);
+      expect(h.saved).toEqual([]);
+    } finally { await h.kit.dispose(); }
+  });
+
+  it.each(['server failure', 'timeout', 'observation denied'] as const)('retains the project deletion cause when absence is unproven: %s', async kind => {
+    const h = await host(request => {
+      if (request.method === 'DELETE' && kind === 'timeout') throw new PluginError({ code: 'timeout', message: 'private token' });
+      return request.method === 'GET' ? project : { id: 1, ref: project.ref, name: project.name, privateToken: 'secret' };
+    }, undefined, request => request.method === 'DELETE' && kind === 'server failure' ? 503
+      : request.method === 'GET' && kind === 'observation denied' ? 403 : 200);
+    try {
+      await expect(h.kit.invokeAction('projects-delete', linked)).rejects.toMatchObject({ code: 'outcome_unknown', data: {
+        failureCause: kind === 'server failure' ? { httpStatus: 503 } : kind === 'timeout' ? { errorCode: 'timeout' } : { httpStatus: 403 },
+      } });
+      expect(h.requests.map(request => request.method)).toEqual(['DELETE', 'GET']);
+    } finally { await h.kit.dispose(); }
+  });
+
+  it('requires recorded project custody and refuses unknown display-name operands before project deletion', async () => {
+    const h = await host(() => ({}));
+    try {
+      const { providerIdentity: _identity, ...missingIdentity } = linked;
+      for (const input of [missingIdentity, { ...linked, projectRef: 'Example' }]) {
+        await expect(h.kit.invokeAction('projects-delete', input)).rejects.toBeDefined();
+      }
+      expect(h.requests).toEqual([]);
+    } finally { await h.kit.dispose(); }
+  });
+
+  it.each(['ui', 'agent'] as const)('reads project choices before Environment creation through %s', async surface => {
+    const h = await host(request => request.url.includes('available-regions')
+      ? { recommendations: [], all: [{ name: 'Europe', code: 'eu-central-1', type: 'specific', provider: 'AWS' }] }
+      : request.url.includes('entitlements') ? { entitlements: [] } : [project]);
+    // COR3B-DATA-1115 captured this production draft without Environment coordinates.
+    // The organization is the admitted selected-account default or the person's override.
+    const draft = (localId: string) => {
+      const { environmentId: _environment, expectedRevision: _revision, ...input } = preparation(localId);
+      return { ...input, providerEnvironment: { kind: 'production' } };
+    };
+    try {
+      expect(await h.kit.invokeAction('provision-options', draft('provision-options'), { surface }))
+        .toMatchObject({ organizationSlug: 'org-example', regions: [{ code: 'eu-central-1' }] });
+      expect(await h.kit.invokeAction('projects-list', draft('projects-list'), { surface }))
+        .toMatchObject({ projects: [{ ref: project.ref, organizationSlug: 'org-example' }] });
+      expect(h.requests.every(request => request.method === 'GET')).toBe(true);
+    } finally { await h.kit.dispose(); }
+  });
+
   it('admits selected preparation fields while refusing unknown fields and incomplete link custody', async () => {
     const h = await host(() => []);
     try {
@@ -94,7 +153,8 @@ describe('activated Supabase managed data target', () => {
   it('contributes data-only roles with no activation-time provider work or guessed query API', async () => {
     const h = await host(() => ({}));
     try {
-      for (const id of Object.keys(dataActions)) expect(entry.manifest.contributes.actions?.find(action => action.id === id)?.surfaces).toContain('ui');
+      for (const id of Object.keys(dataActions)) expect(entry.manifest.contributes.actions?.find(action => action.id === id)?.surfaces)
+        .toEqual(expect.arrayContaining(['ui', 'agent']));
       expect(entry.manifest.contributes.deploymentTargets).toEqual([expect.objectContaining({ role: 'data', targetKind: 'supabase',
         dataV1: expect.objectContaining({ projects: expect.objectContaining({ provision: 'projects-provision', link: 'projects-link' }),
           branches: expect.objectContaining({ create: 'branches-create', delete: 'branches-delete' }), connectionSecret: { save: 'connections-save' } }) })]);
@@ -110,6 +170,7 @@ describe('activated Supabase managed data target', () => {
     try {
       const result = await h.kit.invokeAction('projects-link', { ...base, projectRef: 'parent-ref' }, { surface: 'ui' });
       expect(result).toMatchObject({ state: 'provisioned', providerIdentity: { providerAccountId: 'org-example', providerResourceId: 'parent-ref', providerEnvironment: 'parent-ref' }, engine: 'postgres', providerConsole: { url: 'https://supabase.com/dashboard/project/parent-ref' } });
+      expect(result).not.toHaveProperty('providerResourceOrigin');
       expect(JSON.stringify(result)).not.toMatch(/private-password|deprecated-id/u);
       expect(h.requests[0]?.credentialBinding).toMatchObject({ kind: 'connectedAccountPurpose', purpose: 'deploy-manage' });
     } finally { await h.kit.dispose(); }
@@ -135,7 +196,7 @@ describe('activated Supabase managed data target', () => {
         : request.url.includes('entitlements') ? { entitlements: [] } : [{ id: 'org-id', slug: 'org-example', name: 'Example' }]);
     try {
       const result = await h.kit.invokeAction('projects-provision', { ...preparation('projects-provision'), providerEnvironment: { kind: 'production' }, name: 'Example', password: pair.password, regionSelection: { type: 'specific', code: 'eu-central-1' } });
-      expect(result).toMatchObject({ state: 'provisioned', ready: false, providerIdentity: { providerResourceId: 'parent-ref' } });
+      expect(result).toMatchObject({ state: 'provisioned', providerResourceOrigin: 'created', ready: false, providerIdentity: { providerResourceId: 'parent-ref' } });
       const request = h.requests.find(item => item.method === 'POST');
       expect(JSON.parse(new TextDecoder().decode(request?.body))).toEqual({ organization_slug: 'org-example', name: 'Example', db_pass: 'private:p@ss/word', region_selection: { type: 'specific', code: 'eu-central-1' } });
       expect(JSON.stringify(result)).not.toMatch(/private|db_pass/u);

@@ -812,15 +812,8 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
                 || modeConfiguration(metadata.mode)?.scope !== 'account') {
                 throw invalid('Built-in discovery requires an admitted Account configuration');
             }
-            const assertCurrent = async () => {
-                if (!await owner.isCurrent(input.snapshot)) {
-                    throw new ConnectedAccountConfigurationError(
-                        'connected_account_configuration_stale',
-                        'Connected-account configuration changed during discovery',
-                    );
-                }
-            };
-            await assertCurrent();
+            // Admission captured this basis. Manual submission consumes its draft
+            // before discovery; settlement owns the eventual persistence CAS.
             const normalized = await normalize({
                 target: metadata.target, mode: input.replacement.fields
                     ? applyConnectedAccountConfigurationFields(metadata.mode, input.replacement.fields)
@@ -834,7 +827,6 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
             if (normalized.missingFieldIds.length > 0) {
                 throw invalid(`Required configuration fields are missing: ${normalized.missingFieldIds.join(', ')}`);
             }
-            await assertCurrent();
             return Object.freeze({
                 values: normalized.values,
                 secretRefs: normalized.secretRefs,

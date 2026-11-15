@@ -55,6 +55,9 @@ const [{ createDefaultActionExecutor }, { reconcileProjectedPluginUiClientExecut
     import('../../../../../../packages/plugin-sdk/src/definePlugin'),
 ]);
 
+// These host journeys answer the native human-confirmation boundary; review rendering has its own surface tests.
+const acceptedUserConfirmation = { presentUserActionConfirmation: async () => true };
+
 afterEach(async () => {
     const { getInstalledPluginUiClientExecutableComposition } = await import('@/components/plugins/reactNative/clientExecutableContributions');
     await getInstalledPluginUiClientExecutableComposition().unload();
@@ -252,7 +255,7 @@ it.each([
                 occurrenceId: callerAction.occurrenceId, sourceCustody: callerAction.hostAccountOrigin.sourceCustody } } : {}),
         invocationSurface: 'ui', originSurface: 'ui',
         resolveContributedAction: identity => projection.actionsById[`${identity.pluginId}/${identity.localId}`] ?? null,
-        hostAction: { execute: createDefaultActionExecutor().execute,
+        hostAction: { execute: createDefaultActionExecutor(acceptedUserConfirmation).execute,
             context: { serverId, expectedAccountId: accountId, surface: 'ui', authority: 'present_user' } } });
     expect(outcome, JSON.stringify(outcome)).toMatchObject(relayFailure
         ? { ok: false, reason: 'plugin_fetch_adapter_unavailable', failureCause } : { ok: true, result });
@@ -366,7 +369,7 @@ it.each([
     expect(packaged.reads).toBe(0);
     expect(accountListReads).toBe(1);
     if ('beginStatus' in testCase) {
-        const begin = await createDefaultActionExecutor().execute('connectedServices.authentication.beginConnect', {
+        const begin = await createDefaultActionExecutor(acceptedUserConfirmation).execute('connectedServices.authentication.beginConnect', {
             service, modeId: defaultModeId,
         }, { surface: 'ui', authority: 'present_user', serverId, expectedAccountId: accountId });
         const result = begin.ok && begin.result && typeof begin.result === 'object' ? begin.result : {};
@@ -465,7 +468,7 @@ it.each([
     let target: { kind: 'service'; service: typeof service; modeId: string } | { kind: 'attempt'; attemptId: string } =
         { kind: 'service', service, modeId };
     if (modeId === 'oauth') {
-        const begin = await createDefaultActionExecutor().execute('connectedServices.authentication.beginConnect', { service, modeId }, context);
+        const begin = await createDefaultActionExecutor(acceptedUserConfirmation).execute('connectedServices.authentication.beginConnect', { service, modeId }, context);
         expect(begin, JSON.stringify(begin)).toMatchObject({ ok: true, result: { status: 'configurationRequired' } });
         if (!begin.ok || !begin.result || typeof begin.result !== 'object' || !('attemptId' in begin.result)
             || typeof begin.result.attemptId !== 'string') throw new Error('Missing Cloudflare configuration draft');
@@ -736,7 +739,7 @@ it.each([
             ...(captured ? { connectedAccountPurposeBinding: seed } : {}),
             invocationSurface: 'ui', originSurface: 'ui',
             resolveContributedAction: identity => projection.actionsById[`${identity.pluginId}/${identity.localId}`] ?? null,
-            hostAction: { execute: createDefaultActionExecutor().execute,
+            hostAction: { execute: createDefaultActionExecutor(acceptedUserConfirmation).execute,
                 context: { serverId, expectedAccountId: accountId, surface: 'ui', authority: 'present_user' } } });
         defaultAccount = null;
         // Configured source Actions select their declared operand, without an
@@ -770,8 +773,9 @@ it.each([
 });
 
 async function runPublicManualJourney(mode: 'plain' | 'e2ee', requireAccountConfiguration = false,
-    provider: 'example' | 'vercel' | 'claude' | 'claude-oauth' = 'example') {
+    provider: 'example' | 'vercel' | 'claude' | 'claude-oauth' = 'example', discoverVercel = false) {
     const isVercel = provider === 'vercel';
+    const needsConfiguration = requireAccountConfiguration || discoverVercel;
     const isClaude = provider === 'claude' || provider === 'claude-oauth';
     const modeId = isVercel ? 'token' : provider === 'claude-oauth' ? 'oauth' : isClaude ? 'setup-token' : 'manual';
     const service = isVercel ? inventories.vercel : isClaude ? inventories.claude
@@ -827,6 +831,15 @@ async function runPublicManualJourney(mode: 'plain' | 'e2ee', requireAccountConf
             if (request.origin === 'https://api.vercel.com') {
                 expect(isVercel).toBe(true);
                 expect(method).toBe('GET');
+                if (discoverVercel) {
+                    expect(new Headers(init?.headers).get('authorization') === `Bearer ${sentinel}`).toBe(true);
+                    vendorCalls += 1;
+                    if (request.pathname === '/v2/teams') return Response.json({
+                        teams: [{ id: 'team_fixture', name: 'Vercel fixture team' }], pagination: { next: null },
+                    });
+                    expect(request.pathname).toBe('/v2/teams/team_fixture');
+                    return Response.json({ id: 'team_fixture', name: 'Vercel fixture team' });
+                }
                 expect(request.pathname).toBe('/v9/projects/prj_fixture');
                 expect(request.searchParams.get('teamId')).toBe('team_fixture');
                 expect(new Headers(init?.headers).get('authorization') === `Bearer ${sentinel}`).toBe(true);
@@ -927,7 +940,7 @@ async function runPublicManualJourney(mode: 'plain' | 'e2ee', requireAccountConf
             accountAuthenticationModes: { status: 'available', modeIds: ['setup-token'], machineRequiredModeIds: ['oauth', 'native-import'] } });
     }
     const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId, expectedAccountId: accountId };
-    const begin = await createDefaultActionExecutor().execute('connectedServices.authentication.beginConnect', { service, modeId }, context);
+    const begin = await createDefaultActionExecutor(acceptedUserConfirmation).execute('connectedServices.authentication.beginConnect', { service, modeId }, context);
     if (provider === 'claude-oauth') {
         // Project only lifecycle facts: assertion diagnostics must not disclose OAuth URLs or state.
         const response = begin.ok ? begin.result as { status?: string; code?: string; attemptId?: string } : null;
@@ -941,14 +954,14 @@ async function runPublicManualJourney(mode: 'plain' | 'e2ee', requireAccountConf
     }
     expect(begin.ok, JSON.stringify(begin)).toBe(true);
     expect(begin).toMatchObject({ ok: true, result: {
-        status: requireAccountConfiguration ? 'configurationRequired' : 'awaitingManual',
+        status: needsConfiguration ? 'configurationRequired' : 'awaitingManual',
     } });
     if (!begin.ok || !begin.result || typeof begin.result !== 'object' || !('attemptId' in begin.result)
         || typeof begin.result.attemptId !== 'string') throw new Error('Missing begun manual attempt');
     const configurationSteps: unknown[] = [];
     expect(vendorCalls).toBe(0);
     if (provider === 'claude') {
-        const refused = await createDefaultActionExecutor().execute('connectedServices.authentication.submitManual', {
+        const refused = await createDefaultActionExecutor(acceptedUserConfirmation).execute('connectedServices.authentication.submitManual', {
             attemptId: begin.result.attemptId, fields: { token: '   ' },
         }, context);
         expect(refused, JSON.stringify(refused)).toMatchObject({ ok: true, result: { status: 'rejected',
@@ -959,29 +972,30 @@ async function runPublicManualJourney(mode: 'plain' | 'e2ee', requireAccountConf
         return;
     }
     if (isVercel) {
-        const pending = await createDefaultActionExecutor().execute('connectedServices.authentication.pending.list', { service }, context);
+        const pending = await createDefaultActionExecutor(acceptedUserConfirmation).execute('connectedServices.authentication.pending.list', { service }, context);
         configurationSteps.push(pending);
         expect(pending, JSON.stringify(pending)).toMatchObject({ ok: true, result: { status: 'pendingAttempts',
             attempts: [expect.objectContaining({ attemptId: begin.result.attemptId, kind: 'manual', modeId,
                 phase: 'configurationRequired' })] } });
     }
-    if (requireAccountConfiguration) {
+    if (needsConfiguration) {
         const target = { kind: 'attempt' as const, attemptId: begin.result.attemptId };
-        expect(begin).toMatchObject({ result: { target: { ...target, service, modeId }, missingFieldIds: ['teamId'] } });
-        const inspected = await createDefaultActionExecutor().execute('connectedServices.configuration.get', { target }, context);
+        const missingFieldIds = isVercel ? [] : ['teamId'];
+        expect(begin).toMatchObject({ result: { target: { ...target, service, modeId }, missingFieldIds } });
+        const inspected = await createDefaultActionExecutor(acceptedUserConfirmation).execute('connectedServices.configuration.get', { target }, context);
         configurationSteps.push(inspected);
         expect(inspected, JSON.stringify(inspected)).toMatchObject({ ok: true, result: {
             target: { ...target, service, modeId }, mode: { id: modeId, configuration: { scope: 'account' } },
-            configuration: { status: 'configurationRequired', revision: null, values: {}, missingFieldIds: ['teamId'], configuredSecretFieldIds: [] },
+            configuration: { status: 'configurationRequired', revision: null, values: {}, missingFieldIds, configuredSecretFieldIds: [] },
         } });
-        const replaced = await createDefaultActionExecutor().execute('connectedServices.configuration.replace', {
-            target, expectedRevision: null, values: { teamId: 'team_fixture', projectId: 'prj_fixture' }, secretValues: {},
+        const replaced = await createDefaultActionExecutor(acceptedUserConfirmation).execute('connectedServices.configuration.replace', {
+            target, expectedRevision: null, values: discoverVercel ? {} : { teamId: 'team_fixture', projectId: 'prj_fixture' }, secretValues: {},
         }, context);
         configurationSteps.push(replaced);
         expect(replaced, JSON.stringify(replaced)).toMatchObject({ ok: true, result: { applied: true, revision: expect.any(String) } });
         if (!replaced.ok || typeof replaced.result !== 'object' || !replaced.result || !('revision' in replaced.result)
             || typeof replaced.result.revision !== 'string') throw new Error('Missing staged configuration acknowledgement');
-        const continued = await createDefaultActionExecutor().execute('connectedServices.authentication.continueConnect', {
+        const continued = await createDefaultActionExecutor(acceptedUserConfirmation).execute('connectedServices.authentication.continueConnect', {
             attemptId: begin.result.attemptId, expectedConfigurationRevision: replaced.result.revision,
         }, context);
         configurationSteps.push(continued);
@@ -989,14 +1003,14 @@ async function runPublicManualJourney(mode: 'plain' | 'e2ee', requireAccountConf
         expect(vendorCalls).toBe(0);
     }
     // A new executor must route the admitted attempt from its addressed record.
-    const complete = await createDefaultActionExecutor().execute('connectedServices.authentication.submitManual',
+    const complete = await createDefaultActionExecutor(acceptedUserConfirmation).execute('connectedServices.authentication.submitManual',
         { attemptId: begin.result.attemptId, fields: { token: sentinel } }, context);
     expect(complete, JSON.stringify({ complete, promotions, resourceCount: resources.size, directCredentialWrites }))
         .toMatchObject({ ok: true, result: { status: 'connected' } });
     expect(promotions).toBe(1);
     expect(resources.size).toBe(1);
     expect(directCredentialWrites).toBe(0);
-    expect(vendorCalls).toBe(isVercel ? 1 : 0);
+    expect(vendorCalls).toBe(discoverVercel ? 2 : isVercel ? 1 : 0);
     expect(machineReads).toBe(0);
     expect(machineRpcs).toBe(0);
     expect(packaged.reads).toBe(1);
@@ -1011,6 +1025,12 @@ async function runPublicManualJourney(mode: 'plain' | 'e2ee', requireAccountConf
         const reopened = await persistence.readCredential(saved.current.ref);
         if (!reopened || reopened.authenticationModeId === null) throw new Error('Credential could not be reopened');
         if (isVercel) expect(reopened.metadata.providerIdentity).toMatchObject({ organizationId: 'team_fixture' });
+        if (discoverVercel) {
+            const configuration = await persistence.readConfiguration(reopened.ref);
+            if (!configuration) throw new Error('Discovered team configuration was not committed');
+            expect(persistence.content.open('configuration', await persistence.content.resolveAccountMode(),
+                configuration.configurationContent)).toMatchObject({ values: { teamId: 'team_fixture' }, secretRefs: {} });
+        }
         const { parseQualifiedConnectedAccountCredentialPlaintextV1 } = await import('@happier-dev/protocol/connect/legacyConnectedServiceCompatibility');
         const content = parseQualifiedConnectedAccountCredentialPlaintextV1({ ref: reopened.ref,
             authenticationModeId: reopened.authenticationModeId,
@@ -1031,9 +1051,7 @@ async function runPublicManualJourney(mode: 'plain' | 'e2ee', requireAccountConf
             if (!configuration) throw new Error('Staged account configuration was not committed');
             expect(persistence.content.open('configuration', await persistence.content.resolveAccountMode(),
                 configuration.configurationContent)).toMatchObject({ values: { teamId: 'team_fixture', projectId: 'prj_fixture' }, secretRefs: {} });
-            const { Modal } = await import('@/modal');
-            vi.spyOn(Modal, 'confirm').mockResolvedValue(true);
-            const replacement = await createDefaultActionExecutor().execute('connectedServices.configuration.replace', {
+            const replacement = await createDefaultActionExecutor(acceptedUserConfirmation).execute('connectedServices.configuration.replace', {
                 target: { kind: 'account', account: reopened.ref }, expectedRevision: configuration.configurationRevision,
                 values: { teamId: 'team_edited', projectId: 'prj_fixture' }, secretValues: {},
             }, context);
@@ -1056,6 +1074,9 @@ it.each(['plain', 'e2ee'] as const)('stages and edits generic account configurat
 
 it('connects actual Vercel Account authentication through pending and staged configuration without a Machine',
     async () => runPublicManualJourney('plain', true, 'vercel'));
+
+it.each(['plain', 'e2ee'] as const)('discovers and stages an actual Vercel team in the Account host without a Machine (%s)',
+    async mode => runPublicManualJourney(mode, false, 'vercel', true));
 
 it.each(['plain', 'e2ee'] as const)('opens actual Claude setup-token input and refuses an empty dummy without a Machine (%s)',
     async mode => runPublicManualJourney(mode, false, 'claude'));
@@ -1170,14 +1191,18 @@ it.each([{ mode: 'plain', surface: 'ui' }, { mode: 'e2ee', surface: 'agent' }] a
     machineReads = 0;
     machineRpcs = 0;
     const context = { surface, authority: surface === 'ui' ? 'present_user' as const : 'account_automation' as const,
-        serverId, expectedAccountId: accountId };
+        serverId, expectedAccountId: accountId,
+        ...(surface === 'agent' ? { actionCaller: { kind: 'host' as const }, actionRequestId: 'generic-device-agent-authentication' } : {}) };
     let approvals = 0;
-    const executor = () => createDefaultActionExecutor({ onBlockingApprovalPending: async ({ artifactId }) => {
+    let pollsAtApproval = 0;
+    const executor = () => createDefaultActionExecutor({ presentUserActionConfirmation: async () => true, onBlockingApprovalPending: async ({ artifactId }) => {
         approvals += 1;
-        expect(vendorPolls).toBe(0);
+        expect(vendorPolls).toBe(pollsAtApproval);
         expect(await decideApprovalAsInbox(serverId, artifactId, 'approve')).toMatchObject({ ok: true });
     } });
     if (surface === 'agent') {
+        // Discovery is allowed by this Account; authentication keeps its declared Ask policy.
+        await homes.setActionPolicy(serverId, 'action.spec.get', 'agent', 'allowed');
         const { PUBLIC_ACTION_OUTPUT_SCHEMAS } = await import('@happier-dev/protocol/actions/actionSpecs');
         for (const id of ['connectedServices.authentication.beginConnect', 'connectedServices.authentication.pollDevice']) {
             const discovery = await executor().execute('action.spec.get', { id }, context);
@@ -1216,6 +1241,7 @@ it.each([{ mode: 'plain', surface: 'ui' }, { mode: 'e2ee', surface: 'agent' }] a
         const readsBefore = addressedReads.length;
         const transitionsBefore = transactionTransitions.length;
         const pollsBefore = vendorPolls;
+        pollsAtApproval = vendorPolls;
         const outcome = await executor().execute('connectedServices.authentication.pollDevice', { attemptId }, context);
         outcomes.push(outcome);
         expect(outcome, JSON.stringify({ outcome, persisted: transactions.has(attemptId),
@@ -1239,7 +1265,7 @@ it.each([{ mode: 'plain', surface: 'ui' }, { mode: 'e2ee', surface: 'agent' }] a
     expect(credentialWrites).toBe(1);
     expect(machineReads).toBe(0);
     expect(machineRpcs).toBe(0);
-    expect(approvals).toBe(surface === 'agent' ? 1 : 0);
+    expect(approvals).toBe(surface === 'agent' ? 4 : 0);
     for (const sentinel of [deviceSentinel, credentialSentinel]) expect(JSON.stringify([begin, pending, outcomes, observations])).not.toContain(sentinel);
     expect(saved.current?.content.t).toBe(mode === 'plain' ? 'plain' : 'encrypted');
     if (mode === 'e2ee') for (const sentinel of [deviceSentinel, credentialSentinel]) {

@@ -255,7 +255,7 @@ describe('ConnectedAccountConfigurationOwner', () => {
         expect(readPublicOAuthClient).toHaveBeenCalledTimes(3);
     });
 
-    it('stages validated host account configuration under the admitted revision without writing it early', async () => {
+    it('stages validated account configuration after the admitted manual draft is consumed without writing it early', async () => {
         const mode = configuredMode('account');
         const hostService = { pluginId: 'happier', localId: 'mcp-sign-in' };
         const target = { kind: 'attempt' as const, attemptId: 'host-attempt', service: hostService, modeId: mode.id };
@@ -272,9 +272,11 @@ describe('ConnectedAccountConfigurationOwner', () => {
         expect(harness.replace).not.toHaveBeenCalled();
         await expect(harness.owner.stageAccountConfiguration({ snapshot: admission.snapshot, replacement: { values: { endpoint: 42 }, secretValues: replacement.secretValues } }))
             .rejects.toMatchObject({ code: 'connected_account_configuration_invalid' });
-        harness.setRecord(target, { ...record, revision: 'revision-replaced' });
+        // Submission consumes the persisted manual draft before provider work.
+        // Its admitted configuration remains the basis of the existing attempt.
+        harness.read.mockResolvedValue(null);
         await expect(harness.owner.stageAccountConfiguration({ snapshot: admission.snapshot, replacement }))
-            .rejects.toMatchObject({ code: 'connected_account_configuration_stale' });
+            .resolves.toMatchObject({ values: { endpoint: 'https://new.example.test', audience: 'default-audience' }, secretValues: { clientSecret: 'new-secret' } });
     });
 
     it('accepts schema-valid nested objects without imposing a duplicate field budget', () => {

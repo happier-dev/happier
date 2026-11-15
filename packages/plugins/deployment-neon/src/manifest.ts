@@ -28,6 +28,7 @@ export const plugin = definePlugin({
     declaration: { title: 'Neon',
       description: 'Create a management API key at https://console.neon.tech: open Settings > API keys in your profile or selected organization. Choose its organization and optionally one existing project. Project-scoped keys cannot create organization projects. Setup verifies the selected scope; Neon checks permission for each operation.',
       authentication: { account: { artifactId: 'account-runtime', exportName: 'activateAccount' }, defaultModeId: 'token', modes: [{ id: 'token', kind: 'manual', title: 'Management API key', apiKey: true,
+        browserReachability: 'unreachable',
         setup: {
           url: 'https://console.neon.tech',
           checklist: ['Open API keys in your Neon account settings or the selected organization settings and create a management API key.', 'Choose access for the organization or project you want to manage.', 'Copy the key when it is shown and enter the matching organization ID and optional project ID here.'],
@@ -48,7 +49,7 @@ export const plugin = definePlugin({
   deploymentTargets: { database: { role: 'data', title: 'Neon', icon: 'server-outline', targetKind: 'neon',
     targetSchema: targetSchema.jsonSchema, linkSchema: targetSchema.jsonSchema,
     dataV1: { query: { readOnly: 'query-read' }, projects: { list: 'projects-list-resource', listAction: 'projects-list-read', provisionOptions: 'provision-options-resource',
-      provisionOptionsAction: 'provision-options-read', provision: 'projects-provision', link: 'projects-link' },
+      provisionOptionsAction: 'provision-options-read', provision: 'projects-provision', link: 'projects-link', delete: 'projects-delete' },
       branches: { list: 'branches-list-resource', listAction: 'branches-list-read', create: 'branches-create', delete: 'branches-delete',
         previewInput: { name: { kind: 'input', name: 'preview', path: ['name'] },
           initialization: { kind: 'literal', value: 'parent-schema' },

@@ -5,6 +5,8 @@ import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { storage } from '@/sync/domains/state/storageStore';
 import { act, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
@@ -23,7 +25,13 @@ const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
 const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
 afterEach(standardCleanup);
 
-it.each([false, true])('retains connection recovery and requires each existing variable replacement to be selected (existing=%s)', async (existing) => {
+function connectedProfile(service: { pluginId: string; localId: string }, accountId: string, organizationId: string) {
+  return QualifiedConnectedAccountProfileV4Schema.parse({ ref: { service, accountId },
+    status: 'connected', authenticationModeId: 'token', configurationReady: true, configurationRevision: 'configuration',
+    revisionSemantics: 'revisioned', credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', providerIdentity: { organizationId }, scopes: [] });
+}
+
+it.each([false, true])('defaults the saved organization, retains recovery and requires each variable replacement to be selected (existing=%s)', async (existing) => {
   const pooledRef = formatSharedSavedSecretRefV1('pooled');
   const directRef = formatSharedSavedSecretRefV1('direct');
   const pluginId = 'com.example.managed-database';
@@ -154,11 +162,13 @@ it('reviews native creation options, retains an ambiguous create and continues t
     activate: api => plugin.activateAccount(api, execution.account), accountLifetime: account.accountLifetime, publishProjection: true });
   const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }) });
   const calls: string[] = [];
+  storage.setState({ profileScope: account.accountLifetime.scope,
+    profile: { ...storage.getState().profile, connectedAccountsV4: [connectedProfile(service, 'management-token', 'configured-organization')] } });
   await answerExternalActionAccountForHome(homes, serverId, { machineId: detail.environment.controllerMachineId,
     actionId: 'action.invoke', tokenEpoch: 0, requesterInvocation: 'required', execute: raw => {
       const input = getActionSpec('action.invoke').inputSchema.parse(raw);
       calls.push(input.action.localId);
-      expect(input.input).toMatchObject({ credentialPrincipal: { purpose: { consumer: input.action } } });
+      expect(input.input).toMatchObject({ providerAccountId: 'organization', credentialPrincipal: { purpose: { consumer: input.action } } });
       return input.action.localId === 'options' ? { plan: 'standard', price: 'unknown' }
         : input.action.localId === 'create' ? { status: 'outcome_unknown', recovery: 'Inspect the exact native project' }
         : { state: 'provisioned', providerIdentity: { providerAccountId: 'organization', providerResourceId: 'exact-project', providerEnvironment: 'main' },
@@ -175,7 +185,10 @@ it('reviews native creation options, retains an ambiguous create and continues t
     await act(async () => operation()!.props.onChange('projects.provision'));
     await act(async () => screen.findByType(ConnectedAccountPurposeTargetChooser).props.onChange({ kind: 'account', account: { service, accountId: 'management-token' } }));
     const { ActionInputFields } = await import('@/components/sessions/actions/ActionInputFields');
-    expect(run()!.props.disabled).toBe(true);
+    const organizationField = () => screen.findAllByType(ActionInputFields).find(node =>
+      node.props.fields.some((field: { path: string }) => field.path === 'providerAccountId'))!;
+    expect(organizationField().props.input.providerAccountId).toBe('configured-organization');
+    expect(run()!.props.disabled).toBe(false);
     await act(async () => screen.findAllByType(ActionInputFields).find(node =>
       node.props.fields.some((field: { path: string }) => field.path === 'providerAccountId'))!.props.onPatch({ providerAccountId: 'organization' }));
     expect(calls).toEqual([]);
@@ -272,7 +285,7 @@ it('pages native branches and creates from a linked target with recorded custody
   } finally { await screen.unmount(); await installed.dispose(); account.dispose(); await homes.reset(); }
 });
 
-it('authors duplicate provisioning through declared fields without executing a provider mutation', async () => {
+it('authors duplicate provisioning with an editable saved organization without executing a provider mutation', async () => {
   const pluginId = 'com.example.managed-create';
   const service = { pluginId: 'com.example.managed-account', localId: 'account' };
   const execution = { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activate' } } as const;
@@ -312,21 +325,51 @@ it('authors duplicate provisioning through declared fields without executing a p
   await answerExternalActionAccountForHome(homes, serverId, { machineId: detail.environment.controllerMachineId,
     actionId: 'action.invoke', tokenEpoch: 0, requesterInvocation: 'required',
     execute: raw => { executed.push(raw); return {}; } });
+  storage.setState({ profileScope: account.accountLifetime.scope,
+    profile: { ...storage.getState().profile, connectedAccountsV4: [] } });
   let authored: unknown = undefined;
-  const screen = await renderScreen(<DeploymentManagedDataProvisionEditor lifetime={account.accountLifetime}
-    contribution={{ pluginId, localId: 'database' }} onChange={value => { authored = value; }} />);
+  let commits = 0;
+  const screen = await renderScreen(<React.Profiler id="managed-data-editor" onRender={() => { commits++; }}>
+    <DeploymentManagedDataProvisionEditor lifetime={account.accountLifetime}
+      contribution={{ pluginId, localId: 'database' }} onChange={value => { authored = value; }} />
+  </React.Profiler>);
   try {
     await waitForHomeGovernance(async () => { await act(async () => {});
       expect(screen.findAllByType(ConnectedAccountPurposeTargetChooser)).toHaveLength(1); });
     expect(authored).toBeNull();
     await act(async () => screen.findAllByType(ConnectedAccountPurposeTargetChooser)[0]!.props.onChange({ kind: 'account', account: { service, accountId: 'new-token' } }));
     expect(authored).toBeNull();
+    const rows = [connectedProfile(service, 'new-token', 'configured-organization'), connectedProfile(service, 'other-token', 'other-organization')];
+    const requestsBeforeProfile = homes.requests.length;
+    const commitsBeforeProfile = commits;
+    await act(async () => storage.setState({ profile: { ...storage.getState().profile,
+      connectedAccountsV4: [connectedProfile({ ...service, localId: 'another-service' }, 'new-token', 'wrong-organization'), ...rows] } }));
+    expect(authored).toMatchObject({ input: { providerAccountId: 'configured-organization' } });
+    expect(homes.requests).toHaveLength(requestsBeforeProfile);
+    expect(commits - commitsBeforeProfile).toBe(1);
+    const settledCommits = commits;
+    await act(async () => storage.setState({ profile: { ...storage.getState().profile, timestamp: 123 } }));
+    await act(async () => storage.setState({ profile: { ...storage.getState().profile,
+      connectedAccountsV4: [rows[0]!, connectedProfile(service, 'other-token', 'other-organization-updated')] } }));
+    expect(commits).toBe(settledCommits);
+    await act(async () => screen.findAllByType(ActionInputFields)[0]!.props.onPatch({ providerAccountId: '' }));
+    expect(authored).toBeNull();
+    await act(async () => storage.setState({ profile: { ...storage.getState().profile,
+      connectedAccountsV4: [connectedProfile(service, 'new-token', 'refreshed-organization'), rows[1]!] } }));
+    expect(screen.findAllByType(ActionInputFields)[0]!.props.input.providerAccountId).toBe('');
     await act(async () => screen.findAllByType(ActionInputFields)[0]!.props.onPatch({ providerAccountId: 'new-organization' }));
     expect(authored).toMatchObject({ action: { pluginId, localId: 'create' }, input: {
       credentialRef: { service, accountId: 'new-token' }, providerAccountId: 'new-organization',
       credentialPrincipal: { purpose: { consumer: { pluginId, localId: 'create' } } }, requestKey: expect.any(String),
     } });
     expect((authored as { input: object }).input).not.toHaveProperty('environmentId');
+    await act(async () => screen.findAllByType(ConnectedAccountPurposeTargetChooser)[0]!.props.onChange({ kind: 'account', account: { service, accountId: 'new-token' } }));
+    expect(authored).toMatchObject({ input: { providerAccountId: 'new-organization' } });
+    await act(async () => screen.findAllByType(ConnectedAccountPurposeTargetChooser)[0]!.props.onChange({ kind: 'account', account: { service, accountId: 'other-token' } }));
+    expect(authored).toMatchObject({ input: { credentialRef: { service, accountId: 'other-token' }, providerAccountId: 'other-organization' } });
+    await act(async () => storage.setState({ profileScope: { ...account.accountLifetime.scope, accountId: 'another-owner' } }));
+    expect(authored).toBeNull();
+    await act(async () => storage.setState({ profileScope: account.accountLifetime.scope }));
     expect(executed).toHaveLength(0);
   } finally { await screen.unmount(); await installed.dispose(); account.dispose(); await homes.reset(); }
 });

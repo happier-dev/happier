@@ -4,7 +4,6 @@ import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments
 import type { EffectiveActionInputField } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { DeploymentEnvironmentCopyProvisionV1Schema, type DeploymentEnvironmentCopyProvisionV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentCopyV1';
 import { resolveEffectiveActionInputFields } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
-import { seedInputByFieldHints } from '@happier-dev/protocol/inputs';
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { environmentSecretBindingIdentityV1, type EnvironmentVariableBindingInputV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -34,6 +33,7 @@ import { buildPreviewBranchReadInput } from './previewDatabaseBranches';
 import { managedDataConnections, managedDataLinkContent, managedDataTargets, type ManagedDataOperation, type ManagedDataTarget } from './managedData';
 import { deploymentSheetStyles } from './deploymentSheet';
 import { readDeploymentActionError } from './deploymentActionOutcome';
+import { useManagedDataForm } from './useManagedDataForm';
 
 export type DeploymentManagedDataInput = Readonly<{
   detail: DeploymentEnvironmentReadDetailV1;
@@ -59,8 +59,7 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
   // Adding a database starts from creating one; reading the provider's projects is the way to link an existing one.
   const operation = operations.find(entry => entry.role === selectedRole)
     ?? (props.linked ? undefined : operations.find(entry => entry.role === 'projects.provision')) ?? operations[0] ?? null;
-  const [account, setAccount] = React.useState<QualifiedConnectedAccountRef | null>(null);
-  const [values, setValues] = React.useState<Record<string, unknown>>({});
+  const { account, setAccount, setValues, seeded } = useManagedDataForm(operation, props.lifetime);
   const [results, setResults] = React.useState<Readonly<Record<string, Result>>>({});
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -90,7 +89,6 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
   const optionsOperation = operations.find(entry => entry.role === 'projects.provisionOptions');
   const reviewing = operation?.role === 'projects.provision' && optionsOperation !== undefined && !results['projects.provisionOptions'];
   const runOperation = reviewing ? optionsOperation : operation;
-  const seeded = React.useMemo(() => operation ? seedInputByFieldHints(operation, values) : values, [operation, values]);
   const linkedInput = props.linked ? buildPreviewBranchReadInput(props.detail, props.linked) : null;
   const draftFor = (entry: ManagedDataOperation): Record<string, unknown> | null => {
     const product = managedDataOperationOperands(entry, seeded, requestKey);
@@ -269,11 +267,9 @@ export function DeploymentManagedDataProvisionEditor(props: Readonly<{
     .find(entry => entry.pluginId === props.contribution.pluginId && entry.target.id === props.contribution.localId) : undefined,
     [state, props.contribution.pluginId, props.contribution.localId]);
   const operation = target?.operations.find(entry => entry.role === 'projects.provision');
-  const [account, setAccount] = React.useState<QualifiedConnectedAccountRef | null>(null);
-  const [values, setValues] = React.useState<Record<string, unknown>>({});
+  const { account, setAccount, setValues, seeded } = useManagedDataForm(operation, props.lifetime);
   const [requestKey] = React.useState(randomUUID);
   const [cursors, setCursors] = React.useState<Readonly<Record<string, readonly string[]>>>({});
-  const seeded = React.useMemo(() => operation ? seedInputByFieldHints(operation, values) : values, [operation, values]);
   const fields = React.useMemo(() => operation ? disclosePlatformFields(resolveEffectiveActionInputFields(operation, seeded), seeded) : [], [operation, seeded]);
   const draft = React.useMemo(() => target && operation?.credential && account ? buildManagedDataActionDraft({
     target, operation, lifetime: props.lifetime, environment: {}, account, values: seeded, requestKey,

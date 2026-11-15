@@ -85,6 +85,63 @@ async function host(respond: (request: HttpRequest) => unknown | Promise<unknown
 }
 
 describe('activated Neon managed data target', () => {
+  it.each(['deleted', 'already gone', 'lost response'] as const)('settles project deletion only after exact-resource absence: %s', async kind => {
+    const h = await host(request => {
+      if (request.method === 'DELETE' && kind === 'lost response') throw new TypeError('private provider response lost');
+      return request.method === 'DELETE' ? { project } : { message: 'not found' };
+    }, undefined, request => kind === 'already gone' || request.method === 'GET' ? 404 : 200);
+    try {
+      expect(await h.kit.invokeAction('projects-delete', linked)).toMatchObject({ v: 1, state: 'succeeded', providerResourceAbsent: true });
+      expect(h.requests.map(request => [request.method, request.url])).toEqual(kind === 'already gone'
+        ? [['DELETE', 'https://console.neon.tech/api/v2/projects/project-example']]
+        : [['DELETE', 'https://console.neon.tech/api/v2/projects/project-example'], ['GET', 'https://console.neon.tech/api/v2/projects/project-example']]);
+      expect(h.saved).toEqual([]);
+    } finally { await h.kit.dispose(); }
+  });
+
+  it.each(['server failure', 'timeout', 'observation denied'] as const)('retains the project deletion cause when absence is unproven: %s', async kind => {
+    const h = await host(request => {
+      if (request.method === 'DELETE' && kind === 'timeout') throw new PluginError({ code: 'timeout', message: 'private token' });
+      return request.method === 'GET' ? { project } : { project, privateToken: 'secret' };
+    }, undefined, request => request.method === 'DELETE' && kind === 'server failure' ? 503
+      : request.method === 'GET' && kind === 'observation denied' ? 403 : 200);
+    try {
+      await expect(h.kit.invokeAction('projects-delete', linked)).rejects.toMatchObject({ code: 'outcome_unknown', data: {
+        failureCause: kind === 'server failure' ? { httpStatus: 503 } : kind === 'timeout' ? { errorCode: 'timeout' } : { httpStatus: 403 },
+      } });
+      expect(h.requests.map(request => request.method)).toEqual(['DELETE', 'GET']);
+    } finally { await h.kit.dispose(); }
+  });
+
+  it('requires recorded project custody and refuses unknown display-name operands before project deletion', async () => {
+    const h = await host(() => ({}));
+    try {
+      const { providerIdentity: _identity, ...missingIdentity } = linked;
+      for (const input of [missingIdentity, { ...linked, projectId: 'Example' }]) {
+        await expect(h.kit.invokeAction('projects-delete', input)).rejects.toBeDefined();
+      }
+      expect(h.requests).toEqual([]);
+    } finally { await h.kit.dispose(); }
+  });
+
+  it.each(['ui', 'agent'] as const)('reads project choices before Environment creation through %s', async surface => {
+    const h = await host(request => request.url.includes('/organizations/') ? organization
+      : request.url.includes('/regions?') ? { regions: [region] } : { projects: [project], pagination: {} });
+    // COR3B-DATA-1115 captured this production draft without Environment coordinates.
+    // The organization is the admitted selected-account default or the person's override.
+    const draft = (localId: string) => {
+      const { environmentId: _environment, expectedRevision: _revision, ...input } = preparation(localId);
+      return { ...input, providerEnvironment: { kind: 'production' } };
+    };
+    try {
+      expect(await h.kit.invokeAction('provision-options-read', draft('provision-options-read'), { surface }))
+        .toMatchObject({ providerAccountId: organization.id, regions: [{ id: region.region_id }] });
+      expect(await h.kit.invokeAction('projects-list-read', draft('projects-list-read'), { surface }))
+        .toMatchObject({ projects: [{ providerProjectId: project.id, providerAccountId: organization.id }] });
+      expect(h.requests.every(request => request.method === 'GET')).toBe(true);
+    } finally { await h.kit.dispose(); }
+  });
+
   it('admits selected preparation fields while refusing unknown fields and incomplete link custody', async () => {
     const h = await host(() => ({ branches: [] }));
     try {
@@ -138,7 +195,8 @@ describe('activated Neon managed data target', () => {
         dataV1: expect.objectContaining({ projects: expect.objectContaining({ provision: 'projects-provision' }),
           branches: expect.objectContaining({ create: 'branches-create', delete: 'branches-delete' }), connectionSecret: { save: 'connections-save' } }) })]);
       expect(h.kit.registration('actions', 'connections-save')).toBeDefined();
-      for (const id of Object.keys(dataActions)) expect(entry.manifest.contributes.actions?.find(action => action.id === id)?.surfaces).toContain('ui');
+      for (const id of Object.keys(dataActions)) expect(entry.manifest.contributes.actions?.find(action => action.id === id)?.surfaces)
+        .toEqual(expect.arrayContaining(['ui', 'agent']));
       expect(h.kit.registration('connectedAccountDescriptors', 'neon')).toBeDefined();
       const target = entry.manifest.contributes.deploymentTargets?.[0];
       if (target?.role !== 'data') throw new Error('Missing Neon data target');
@@ -150,7 +208,9 @@ describe('activated Neon managed data target', () => {
   it('prepares only the selected provider project and branch for the canonical host link writer', async () => {
     const h = await host(request => request.url.endsWith('/branches/br-main') ? { branch: mainBranch } : { project });
     try {
-      expect(await h.kit.invokeAction('projects-link', { ...preparation('projects-link'), projectId: project.id, branchId: 'br-main' }, { surface: 'ui' }))
+      const result = await h.kit.invokeAction('projects-link', { ...preparation('projects-link'), projectId: project.id, branchId: 'br-main' }, { surface: 'ui' });
+      expect(result).not.toHaveProperty('providerResourceOrigin');
+      expect(result)
         .toMatchObject({ status: 'configured', providerIdentity: { providerAccountId: project.org_id,
           providerResourceId: project.id, providerEnvironment: 'br-main' }, engine: 'postgres' });
       expect(h.requests.every(request => request.method === 'GET')).toBe(true);
@@ -447,7 +507,7 @@ describe('activated Neon managed data target', () => {
     try {
       const result = await h.kit.invokeAction('projects-provision', { ...base, ...createPair,
         name: 'Example', regionId: project.region_id, requestKey: 'existing-reviewed-request' });
-      expect(result).toMatchObject({ status: 'provisioned', providerProjectId: project.id, branchId: 'br-main', ready: false,
+      expect(result).toMatchObject({ status: 'provisioned', providerResourceOrigin: 'created', providerProjectId: project.id, branchId: 'br-main', ready: false,
         operationIds: [projectOperationId], connectionSave: { status: 'partial', connections: { DIRECT_URL: { ref: 'saved:1' } } } });
       expect(h.saved).toHaveLength(1);
       expect(h.requests.filter(request => request.method === 'POST')).toHaveLength(1);

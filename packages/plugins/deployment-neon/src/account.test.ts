@@ -3,6 +3,13 @@ import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugi
 import type { ConnectedAccountAuthenticationContext, ConnectedAccountCredentialStore, ConnectedAccountPortableRuntime, ConnectedAccountReadContext } from '@happier-dev/plugin-sdk/connected-accounts';
 import * as entry from './index.js';
 
+it('declares browser verification unreachable for the existing authentication placement owner', () => {
+  const descriptor = entry.manifest.contributes.connectedAccountDescriptors?.find(value => value.id === 'neon');
+  const mode = descriptor?.authentication.modes.find(value => value.id === 'token');
+  expect(mode).toBeDefined();
+  expect(mode?.browserReachability).toBe('unreachable');
+});
+
 it.each(['daemon', 'account'] as const)('verifies the exact organization and materializes only management authorization through %s activation', async target => {
   let accountRuntime: ConnectedAccountPortableRuntime | undefined;
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: { ...entry,
