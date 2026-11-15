@@ -23,6 +23,17 @@ describe('SCM RPC failure normalization', () => {
             expect(failure).toMatchObject({ success: false, errorCode: 'BACKEND_UNAVAILABLE', actionErrorCode: rpcErrorCode });
             expect(failure.outcome).toBeUndefined();
         });
+    // SCM-MEMBER-LIVE-1115: a Can use member's forge read is refused for Manage; that typed cause must survive.
+    it('keeps the typed Manage refusal of a read, whether it is the code or the carried cause', () => {
+        const failureCause = { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: null };
+        for (const error of [
+            new RpcError('This source-control action needs Manage access to this Machine', 'machine_manage_required'),
+            new RpcError('Forbidden', 'credential_scope_denied', failureCause as never),
+        ]) {
+            expect(scmFallbackError(error, { method: RPC_METHODS.SCM_PULL_REQUEST_LIST, request: {} }))
+                .toMatchObject({ success: false, errorCode: 'BACKEND_UNAVAILABLE', actionErrorCode: 'machine_manage_required' });
+        }
+    });
     it('preserves known transient read transport failures', () => {
         for (const [error, errorCode] of [
             [new RetryableServerResponseError(503, 'unavailable'), 'REMOTE_NETWORK_FAILED'],

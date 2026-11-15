@@ -227,6 +227,21 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     expect(os.daemonTouches).toEqual([]);
   });
 
+  // SCM-MEMBER-LIVE-1115: the Action surface sends the Project as a targeted machine target.
+  it('reads a member repository selected as the targeted Project, as an Action does', async () => {
+    const f = await fixture();
+    for (const [method, input] of [
+      [RPC_METHODS.SCM_STATUS_SNAPSHOT, {}],
+      [RPC_METHODS.SCM_LOG_LIST, { limit: 5 }],
+    ] as const) {
+      const response = await f.invoke(method, { v: 1, kind: 'targeted_action_rpc', input,
+        target: { kind: 'machine', machineId: 'separate-users-machine',
+          project: { machineId: 'separate-users-machine', directory: f.memberRepository } } }, 'member-account', 'use');
+      expect(response, JSON.stringify(response)).toMatchObject({ success: true });
+      if (method === RPC_METHODS.SCM_LOG_LIST) expect(JSON.stringify(response)).toContain('initial');
+    }
+  });
+
   // MEMBER-CHILD-READS-1115 (F-A ruling): Manage keeps full access, but daemon Git never runs
   // in a member repository (its config and hooks); the read runs in that member's child.
   it('runs a Manage local repository read of a member folder in that member child, never daemon Git', async () => {

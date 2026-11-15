@@ -4,6 +4,7 @@ import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, isRpcSessionMac
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { isTransientConnectivityError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { isMachineRpcTimeoutError } from '@/sync/runtime/orchestration/serverScopedRpc/machineRpcTimeoutError';
+import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { log } from '@/log';
 
 const SCM_UNSUPPORTED_RESPONSE_ERROR = 'SCM_UNSUPPORTED_RESPONSE_ERROR';
@@ -87,7 +88,7 @@ export function scmFallbackError(error: unknown, context: ScmRpcFailureContext):
         // A repository refresh may rethrow an already normalized read. Its diagnostic was
         // logged at the originating failure; carry it forward without logging it twice.
         if (retainedDetail === undefined) log.log(`[scm] ${context.method} ${failure.errorCode}: ${diagnosticDetail}`);
-        return { ...failure, ...(rpcErrorCode ? { actionErrorCode: rpcErrorCode } : {}), diagnosticDetail };
+        return { ...(rpcErrorCode ? { actionErrorCode: rpcErrorCode } : {}), ...failure, diagnosticDetail };
     };
     if (isRead && carrier) {
         const nativeCode = ScmOperationErrorCodeSchema.safeParse(carrier.scmErrorCode);
@@ -98,10 +99,13 @@ export function scmFallbackError(error: unknown, context: ScmRpcFailureContext):
     }
     if (error && typeof error === 'object') {
         const code = readRpcErrorCode(error);
-        if (isRead && (code === RPC_ERROR_CODES.FORBIDDEN || code === RPC_ERROR_CODES.TEAM_AUTHENTICATION_REQUIRED
-            || code === RPC_ERROR_CODES.TEAM_AUTHENTICATION_UNAVAILABLE)) {
+        // Home's Manage refusal arrives either as the code or as the cause of credential_scope_denied.
+        const causeCode = readActionFailureCauseV1((error as { failureCause?: unknown }).failureCause).errorCode;
+        const refusal = code === 'machine_manage_required' || causeCode === 'machine_manage_required' ? 'machine_manage_required' : code;
+        if (isRead && (refusal === RPC_ERROR_CODES.FORBIDDEN || refusal === RPC_ERROR_CODES.TEAM_AUTHENTICATION_REQUIRED
+            || refusal === RPC_ERROR_CODES.TEAM_AUTHENTICATION_UNAVAILABLE || refusal === 'machine_manage_required')) {
             return finish({ success: false, error: SCM_READ_FAILURE_MESSAGE,
-                errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE, actionErrorCode: code });
+                errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE, actionErrorCode: refusal });
         }
         const rpcError: RpcErrorCarrier = {
             rpcErrorCode: code,
