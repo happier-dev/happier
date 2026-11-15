@@ -439,6 +439,24 @@ jobs:
           CHANGED_PATHS_JSON: ${{ steps.changes.outputs.changed_files || '[]' }}
         run: node scripts/pipeline/release/resolve-source-validation-plan.mjs --pre-release-checks
 
+  process-identity-windows:
+    if: ${{ (inputs.select_jobs_explicitly && inputs.run_shared_packages) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_shared_packages == 'true') }}
+    needs: [ci_plan]
+    name: Process identity (Windows)
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+      - name: Verify Windows process fingerprints
+        run: node --test packages/cli-common/processInstance.test.mjs
+
   build-windows-service-launcher:
     # Windows x64 CLI payloads carry the native service launcher, which only an MSVC host can
     # compile. Built only when build-cli builds Windows payloads (its BUILD_INSTALLER_BINARIES).
@@ -3188,7 +3206,7 @@ jobs:
   ci_summary:
     name: CI result summary (all lanes)
     if: always()
-    needs: [pre-release-packaged-cli, pre-release-mobile-native, ci_plan, network-transfer, ui-e2e, mobile-e2e-android, mobile-e2e-ios, ui-unit, ui-integration, ui, shared-packages-unit, server, server-db-contract, cli, stack, release-contracts, installers-smoke-linux, installers-smoke-macos, installers-smoke-windows, binary-smoke, build-smoke, cli-update-continuity, daemon-continuity, session-continuity, release-assets-docker, self-host-systemd-e2e, self-host-launchd-e2e, self-host-schtasks-e2e, self-host-daemon-e2e, typecheck, cli-daemon-e2e, e2e-core, e2e-core-slow, trusted_ref_guard, release_actor_guard, providers, stress, build-windows-service-launcher, build-cli, unit-summary]
+    needs: [process-identity-windows, pre-release-packaged-cli, pre-release-mobile-native, ci_plan, network-transfer, ui-e2e, mobile-e2e-android, mobile-e2e-ios, ui-unit, ui-integration, ui, shared-packages-unit, server, server-db-contract, cli, stack, release-contracts, installers-smoke-linux, installers-smoke-macos, installers-smoke-windows, binary-smoke, build-smoke, cli-update-continuity, daemon-continuity, session-continuity, release-assets-docker, self-host-systemd-e2e, self-host-launchd-e2e, self-host-schtasks-e2e, self-host-daemon-e2e, typecheck, cli-daemon-e2e, e2e-core, e2e-core-slow, trusted_ref_guard, release_actor_guard, providers, stress, build-windows-service-launcher, build-cli, unit-summary]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -3247,7 +3265,7 @@ jobs:
             REQUEST_RUN_MOBILE_E2E_ANDROID: ['mobile-e2e-android'],
             REQUEST_RUN_MOBILE_E2E_IOS: ['mobile-e2e-ios'],
             REQUEST_RUN_UI: ['ui-unit', 'ui-integration', 'ui'],
-            REQUEST_RUN_SHARED_PACKAGES: ['shared-packages-unit'],
+            REQUEST_RUN_SHARED_PACKAGES: ['shared-packages-unit', 'process-identity-windows'],
             REQUEST_RUN_SERVER: ['server'],
             REQUEST_RUN_SERVER_DB_CONTRACT: ['server-db-contract'],
             REQUEST_RUN_CLI: ['cli'],
@@ -3276,7 +3294,7 @@ jobs:
             run_packaged_cli: ['pre-release-packaged-cli'],
             run_mobile_native: ['pre-release-mobile-native'],
             run_ui: ['ui-unit', 'ui-integration', 'ui'],
-            run_shared_packages: ['shared-packages-unit'],
+            run_shared_packages: ['shared-packages-unit', 'process-identity-windows'],
             run_server: ['server'],
             run_cli: ['cli'],
             run_stack: ['stack'],
