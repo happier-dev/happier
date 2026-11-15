@@ -7,7 +7,8 @@ import { createHostReviewedChildPortV1, type HostReviewedParentV1, type HostRevi
 import type { ActionExecutorContext, ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/socketRpc';
-import { ManagedAcquireInputV1Schema, resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAcquireInputV1Schema, isManagedPresetAcquireInputV1, resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MANAGED_ENROLLMENT_POLICY_CHILD_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { readProjectServiceMoveChildMachineV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
@@ -63,7 +64,15 @@ export async function invokeAdmittedReviewedChild(input: Readonly<{
   // binds their signed continuation and original requester. Controller custody
   // may belong to a Team while the enrolled guest belongs to that requester.
   const declaration = getActionSpec('machines.managed.acquire').hostReviewedChildren;
-  const children = typeof declaration === 'function' ? declaration(acquired.data) : declaration ?? [];
+  const declared = typeof declaration === 'function' ? declaration(acquired.data) : declaration ?? [];
+  // A preset's enrollment policy is private: only its keyholder controller opens
+  // it, so the public declaration omits those children. Home admits the
+  // controller's policy child without opening the preset; that signed child
+  // binding is the admitted fact restored here, never a guest-side decision.
+  const presetPolicyChild = isManagedPresetAcquireInputV1(acquired.data)
+    ? MANAGED_ENROLLMENT_POLICY_CHILD_ACTION_IDS_V1.find(actionId => actionId === binding.actionId) : undefined;
+  const children = presetPolicyChild && !declared.some(child => child.action === presetPolicyChild)
+    ? [...declared, { action: presetPolicyChild, role: presetPolicyChild }] : declared;
   return invokeReviewedChild({ input, parent, parentInput: acquired.data, children, role: input.actionId });
 }
 

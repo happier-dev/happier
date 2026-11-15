@@ -18,7 +18,9 @@ import { createDaemonExternalActionTargetResolver } from './daemonExternalAction
 import { executeExternalAction } from './executeExternalAction';
 
 // Preset acquisitions (app Create one, CLI preset) omit the controller; Home's continuation names it (#160 op dbe4cd8c).
-it.each([['requester', true], ['team', true], ['team', false]] as const)('restores admitted Create review on the guest when controller custody is %s (input names controller: %s)', async (controllerAccountId, inputNamesController) => {
+// A sealed preset's policy children are opened only by its keyholder controller; the public declaration omits them (F14, #161).
+it.each([['requester', true, 'one-off'], ['team', true, 'one-off'], ['team', false, 'one-off'],
+  ['team', false, 'preset'], ['team', true, 'preset']] as const)('restores admitted Create review on the guest when controller custody is %s (input names controller: %s, selection: %s)', async (controllerAccountId, inputNamesController, selectionKind) => {
   const currentness = await createRequesterCurrentnessSocketHarness();
   onTestFinished(async () => { vi.restoreAllMocks(); await currentness.close(); });
   const homeId = 'srv_reviewed_creation', serverUrl = 'https://reviewed-creation.test';
@@ -30,7 +32,9 @@ it.each([['requester', true], ['team', true], ['team', false]] as const)('restor
   const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'requester', tokenEpoch: 1,
     provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
   const credentials = { token, encryption: null };
-  const input = ManagedAcquireInputV1Schema.parse({
+  const input = ManagedAcquireInputV1Schema.parse(selectionKind === 'preset'
+    ? { selection: { kind: 'preset', homeId, id: 'sealed-preset', revision: 1 }, ...(inputNamesController ? { controller } : {}) }
+    : {
     enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user',
       role: 'server', adminAccessAtCreation: 'none' },
     selection: { kind: 'one-off', homeId, ...(inputNamesController ? { controller } : {}),
@@ -126,17 +130,21 @@ it.each([['requester', true], ['team', true], ['team', false]] as const)('restor
     actionRequestId: authorization.binding.requestId, defaultSessionMachineId: controller.machineId };
   const declaration = getActionSpec('machines.managed.acquire').hostReviewedChildren;
   const children = typeof declaration === 'function' ? declaration(input) : declaration ?? [];
+  const dispatchAdmin = (childContext: ActionExecutorContext) => dispatchManagedMachineAdminAccess({ input: adminInput, serverId: homeId,
+    context: childContext, authorization, authority: 'present_user', installationId: controller.installationId,
+    privateKey: controllerKeys.secretKey, serverHttpBaseUrl: serverUrl,
+    homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId,
+      canonicalServerUrl: serverUrl, revision: 1, endpoints: [{ kind: 'https', url: serverUrl }] }, authority: 'current_connection' }),
+    continuation: { managedId: 'managed', creationRequestId: authorization.binding.requestId, expectedIntentRevision: 0 } });
   const reviewed = createHostReviewedChildPortV1({ actionId: 'machines.managed.acquire', input, context,
     reviewAdmitted: true, plan: { children }, policies: children.map(child => ({ action: child.action, role: child.role, surface: 'ui' })),
-    execute: async (_input, childContext) => dispatchManagedMachineAdminAccess({ input: adminInput, serverId: homeId,
-      context: childContext, authorization, authority: 'present_user', installationId: controller.installationId,
-      privateKey: controllerKeys.secretKey, serverHttpBaseUrl: serverUrl,
-      homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId,
-        canonicalServerUrl: serverUrl, revision: 1, endpoints: [{ kind: 'https', url: serverUrl }] }, authority: 'current_connection' }),
-      continuation: { managedId: 'managed', creationRequestId: authorization.binding.requestId, expectedIntentRevision: 0 } }),
+    execute: async (_input, childContext) => dispatchAdmin(childContext),
   });
-  const result = await reviewed.invoke({ action: 'machines.setup.adminAccess.set', role: 'machines.setup.adminAccess.set',
-    input: normalizeStrictJsonValue(adminInput) });
+  // The keyholder controller derives a sealed preset's policy from its opened
+  // row and dispatches it directly under the acquire's reviewed context (enrollmentPolicy.ts).
+  const result = selectionKind === 'preset' ? await dispatchAdmin({ ...context, hostReviewedChild: reviewed })
+    : await reviewed.invoke({ action: 'machines.setup.adminAccess.set', role: 'machines.setup.adminAccess.set',
+      input: normalizeStrictJsonValue(adminInput) });
   expect(asks.length, JSON.stringify(result)).toBe(0);
   expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'applied', policy: { mode: 'none' } } });
   expect(nativeEffects).toEqual([adminInput]);
