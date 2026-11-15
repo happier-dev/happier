@@ -375,6 +375,34 @@ it('creates at the place the source names, narrowed by its own places, with the 
   expect(placeReads).toEqual([null, 'team-chk', 'team-chk', 'project-ops']);
 });
 
+it('lists the places a task can go before the ones the source refuses, whatever order the source sent', async () => {
+  const source = createTriageSourceV1Fixture();
+  let fixture!: Awaited<ReturnType<typeof createPluginUiTestkit>>;
+  await act(async () => {
+    fixture = await createPluginUiTestkit({ identity: { instanceId: 'task-create-place-order', mountNonce: 'order' },
+      authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+      surface: defineUiSurface(() => <TriageCreateTaskFields sources={[{ sourceInstanceId: source.configuredInstance.instance.sourceInstanceId,
+        configured: source.configuredInstance, displayLabel: 'Engineering' }]} sourcesLoaded sourcesUnavailableReason={null}
+        draft={{ title: 'Show the server total' }} onApplied={async () => undefined} onClose={() => undefined} />),
+      surfaceContext: createSurfaceContextFixture({ targetedContributions: withCreationPlaces(targetedTaskSource(source.configuredInstance.instance.source,
+        'issue', 'create', false, ['title', 'scopeId'])) }),
+      adapter: controls => createPluginUiRnwSemanticSurfaceAdapter({ actionBindings: { commit: controls.commit }, overlays: true, ephemeralSharedScope: createTriageEphemeralSharedScopeFixture() }),
+      handlers: { executeAction: () => ({ kind: 'page', status: 'complete', places: [
+        // A source lists alphabetically: two refused repositories before the one a task can go to.
+        { id: 'acme/archive', label: 'acme/archive', kindId: 'issue', fields: { scopeId: 'acme/archive' }, refusal: { reason: 'repository_archived', message: 'This repository is archived' } },
+        { id: 'acme/backups', label: 'acme/backups', kindId: 'issue', fields: { scopeId: 'acme/backups' }, refusal: { reason: 'issues_disabled' } },
+        { id: 'acme/checkout', label: 'acme/checkout', kindId: 'issue', fields: { scopeId: 'acme/checkout' } },
+      ] }) },
+    });
+  });
+  mounted.push(fixture);
+  const usable = await fixture.getByRole('button', { name: 'acme/checkout' });
+  expect(usable.state?.disabled).not.toBe(true);
+  const order = ['acme/checkout', 'acme/archive', 'acme/backups'].map(label => document.body.textContent!.indexOf(label));
+  expect(order.every(index => index >= 0)).toBe(true);
+  expect(order).toEqual([...order].sort((a, b) => a - b));
+});
+
 it('creates with the typed properties the chosen place accepts, in one write', async () => {
   const source = createTriageSourceV1Fixture();
   const saved: ReturnType<typeof TriageCreateTaskActionInputV1Schema.parse>[] = [];

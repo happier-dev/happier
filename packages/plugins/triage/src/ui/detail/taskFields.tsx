@@ -326,10 +326,13 @@ export function TriageCreateTaskFields(props: Readonly<{
   const choices = React.useMemo(() => sourceEntries.flatMap((entry): PlaceChoice[] => {
     const kinds = (entry.descriptor?.kinds ?? []).filter((kind) => kind.task === true);
     if (entry.places === undefined) return kinds.map(kind => makeChoice(entry, kind));
-    return (placeReads.pages.get(triageTaskCreationPlacesKeyV1(entry.source.sourceInstanceId, undefined, placeQuery))?.places ?? []).flatMap((place) => {
+    const placeChoices = (placeReads.pages.get(triageTaskCreationPlacesKeyV1(entry.source.sourceInstanceId, undefined, placeQuery))?.places ?? []).flatMap((place) => {
       const kind = kinds.find(candidate => candidate.id === place.kindId);
       return kind === undefined ? [] : [makeChoice(entry, kind, place)];
     });
+    // The places a task can go lead, in the source's order; the ones it refuses follow, still saying why, so a
+    // person never scrolls past a run of unusable repositories to reach theirs.
+    return [...placeChoices.filter(choice => !choice.disabled), ...placeChoices.filter(choice => choice.disabled)];
   }), [sourceEntries, placeReads.pages, placeQuery, machineUnavailable, text, context.locale]);
   const creatable = choices.filter(choice => choice.supportsCreate && choice.place === undefined).map(choice => ({
     source: choice.source.configured.instance.source, sourceInstanceId: choice.source.sourceInstanceId, kindId: choice.kind.id,
