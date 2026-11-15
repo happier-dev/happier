@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isHostAdmittedReviewedChildPolicyV1, readHostAdmittedReviewedParentV1, readHostReviewedChildOperationV1,
+import { createHostReviewedChildPortV1, isHostAdmittedReviewedChildPolicyV1, readHostAdmittedReviewedParentV1, readHostReviewedChildOperationV1,
   type ActionExecutorContext, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutor';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
@@ -63,6 +63,44 @@ describe('opaque preset reviewed child issuer', () => {
     const childId = formatQualifiedPluginActionId({ pluginId: 'fixture.compute', localId: 'acquire' });
     expect(isHostAdmittedReviewedChildPolicyV1(readHostReviewedChildOperationV1(childContext, childId, { choice: 'x' }),
       childId, { choice: 'x' })).toBe(true);
+  });
+
+  it.each([
+    ['consumes the approved parent policy for a listed child once', 'power', true],
+    ['still decides a child the approved parent did not list', 'acquire', false],
+  ] as const)('%s', async (_caseName, listedRole, admitted) => {
+    const childAction = { pluginId: 'fixture.compute', localId: 'power' };
+    const childId = formatQualifiedPluginActionId(childAction);
+    // The person approved this parent with the child's explicit Require; a
+    // selected approval profile leaves no default the child could re-decide.
+    const context: ActionExecutorContext = { surface: 'cli', approvalProfileId: 'careful',
+      actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: { [childId]: { approvalRequiredSurfaces: ['cli'] } } }) };
+    const parentInput = { homeId: 'home', managedId: 'managed', power: 'stop' };
+    const parentPort = createHostReviewedChildPortV1({ actionId: 'machines.managed.power.set', input: parentInput, context,
+      reviewAdmitted: true, plan: { children: [{ action: { ...childAction, localId: listedRole }, role: listedRole }] },
+      policies: [{ action: { ...childAction, localId: listedRole }, role: listedRole, surface: 'cli', requiredActionIds: [childId] }],
+      execute: async () => ({ ok: true, result: {} }) });
+    const runs: ActionExecutorContext[] = [];
+    const port = createManagedOpaquePresetReviewedChildPortV1({
+      parent: { actionId: 'machines.managed.power.set', input: parentInput },
+      context: { ...context, hostReviewedChild: parentPort },
+      launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Private', choices: {} },
+      provisioner, localId: 'power', role: 'power', execute: async (_input, childContext): Promise<ActionExecuteResult> => {
+        runs.push(childContext);
+        return { ok: true, result: { stopped: true } };
+      },
+    });
+
+    const result = await port!.invoke({ action: childAction, role: 'power', input: { power: 'stop' } });
+    if (!admitted) {
+      expect(result).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+      expect(runs).toHaveLength(0);
+      return;
+    }
+    expect(result).toEqual({ ok: true, result: { stopped: true } });
+    expect(runs).toHaveLength(1);
+    expect(isHostAdmittedReviewedChildPolicyV1(readHostReviewedChildOperationV1(runs[0], childId, { power: 'stop' }),
+      childId, { power: 'stop' })).toBe(true);
   });
 
   it('refuses an action absent from the authenticated opened declaration', () => {

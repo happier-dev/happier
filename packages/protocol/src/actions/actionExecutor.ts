@@ -14,7 +14,7 @@ import { withScmRefineInputAuthorizationV1, readHostRootInputCredentialActionV1 
 import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1, readHostReviewedChildRootV1, readDeploymentRoleRootInputV1, hasHostReviewedChildCredentialScopeAdmissionV1, retainHostReviewedChildAdmissionV1, retainHostReviewedChildOperationContextV1 } from './executor/deploymentRoleChild.js';
 import { prepareHostReviewedChildrenV1, readHostReviewedChildrenPlanV1 } from './executor/deploymentRoleApproval.js';
 export { readHostReviewedChildOperationV1, invokeHostReviewedChildV1, createHostReviewedChildPortV1,
-  readHostReviewedChildReceivingAdmissionV1, readHostReviewedParentV1, readHostAdmittedReviewedParentV1,
+  readHostReviewedChildReceivingAdmissionV1, readHostReviewedParentV1, readHostAdmittedReviewedParentV1, readHostAdmittedReviewedChildPlanV1,
   readHostReviewedChildOriginalAuthorizationV1,
   readHostAdmittedReviewedChildV1, readHostAdmittedReviewedRootV1, isHostAdmittedReviewedChildPolicyV1,
   retainManagedOpaquePresetCustodianAdmissionV1 } from './executor/deploymentRoleChild.js';

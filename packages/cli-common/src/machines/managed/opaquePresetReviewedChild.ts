@@ -1,4 +1,4 @@
-import { createHostReviewedChildPortV1, retainManagedOpaquePresetCustodianAdmissionV1, type ActionExecutorContext,
+import { createHostReviewedChildPortV1, readHostAdmittedReviewedChildPlanV1, retainManagedOpaquePresetCustodianAdmissionV1, type ActionExecutorContext,
   type ActionExecuteResult, type HostReviewedChildPortV1, type ManagedOpaquePresetCustodianAdmissionV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { prepareHostReviewedChildPolicyV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleApproval';
 import { readMachineProvisionerActionRolesV1, type MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
@@ -24,28 +24,32 @@ export function createManagedOpaquePresetReviewedChildPortV1(params: Readonly<{
     .find(candidate => candidate.action === params.localId && candidate.role === params.role);
   if (!binding || !params.context.surface) return null;
   const action = { pluginId: params.launch.provider.pluginId, localId: params.localId };
-  // The canonical child policy owner decides explicit Require for the child
-  // the parent could not list before the custodian opened it.
-  const prepared = prepareHostReviewedChildPolicyV1({ action, role: binding.role }, params.context);
-  const policy = params.custody === undefined ? { action, role: binding.role, surface: params.context.surface }
-    : retainManagedOpaquePresetCustodianAdmissionV1({ action, role: binding.role, surface: params.context.surface }, {
+  const child = { action, role: binding.role };
+  // An admitted parent that listed this child already prepared and reviewed
+  // it; consume that decision. Only a child the parent could not list before
+  // the custodian opened it is decided here, by the canonical policy owner.
+  const listed = readHostAdmittedReviewedChildPlanV1(params.context.hostReviewedChild, child);
+  const prepared = listed ? null : prepareHostReviewedChildPolicyV1(child, params.context);
+  const decided = listed ? listed.policy
+    : prepared && prepared.requiredActionIds.length === 0 ? { ...child, surface: params.context.surface } : null;
+  const custodyAdmitted = params.custody === undefined
+    || retainManagedOpaquePresetCustodianAdmissionV1({ ...child, surface: params.context.surface }, {
       parent: params.parent, context: params.context, admission: params.custody,
-    });
-  if (policy === null || !prepared || prepared.requiredActionIds.length > 0) {
-    // A supplied opaque custody admission is mandatory. The opened child also
-    // has no later review that could hold the requester's Ask, so explicit
-    // Require (or an unresolvable policy) refuses before any native effect.
-    // Reuse the host issuer's typed refusal.
+    }) !== null;
+  if (!custodyAdmitted || !listed && !decided) {
+    // A supplied opaque custody admission is mandatory. An unlisted opened
+    // child has no later review that could hold the requester's Ask, so
+    // explicit Require (or an unresolvable policy) refuses before any native
+    // effect. Reuse the host issuer's typed refusal.
     return createHostReviewedChildPortV1({ actionId: params.parent.actionId, input: params.parent.input,
       context: params.context, reviewAdmitted: true });
   }
   return createHostReviewedChildPortV1({ actionId: params.parent.actionId, input: params.parent.input,
     context: params.context, reviewAdmitted: true,
-    plan: { children: [{ action, role: binding.role }] },
-    // The parent Action cannot list an encrypted declaration child until the
-    // custodian opens it. This authenticated declaration admits only its
-    // exact selected role, under the already-admitted parent.
-    policies: [policy],
+    // The listed child keeps the parent's exact prepared entry. Otherwise the
+    // authenticated opened declaration admits only its exact selected role.
+    plan: { children: [listed?.child ?? child] },
+    ...(decided ? { policies: [decided] } : {}),
     execute: async (body, context) => {
       const input = body && typeof body === 'object' && !Array.isArray(body)
         && 'action' in body && 'input' in body ? (body as Readonly<{ input: unknown }>).input : body;

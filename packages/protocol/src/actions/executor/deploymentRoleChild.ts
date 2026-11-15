@@ -21,6 +21,7 @@ import type { ActionExecutorContext, ActionExecuteResult, ActionExecuteFailure,
 
 const deploymentRoleChild = Symbol('deploymentRoleChild');
 const credentialScopeAdmission = Symbol('credentialScopeAdmission');
+const reviewedChildPlan = Symbol('reviewedChildPlan');
 
 function reviewedChildScopeDenied(reason: 'issuer_binding' | 'issuer_target' | 'aborted' | 'child_mismatch' | 'no_plan'): ActionExecuteFailure {
   return { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied',
@@ -83,7 +84,9 @@ type ChildProof = Readonly<{
   [credentialScopeAdmission]?: HostReviewedChildPolicyV1[typeof credentialScopeAdmission];
 }>;
 type ChildContext = ActionExecutorContext & { [deploymentRoleChild]?: ChildProof };
-type ReviewedChildPort = HostReviewedChildPortV1 & Readonly<{ [deploymentRoleChild]?: true }>;
+type ReviewedChildPort = HostReviewedChildPortV1 & Readonly<{ [deploymentRoleChild]?: true;
+  /** The admitted parent's own prepared children and policies, read only in-process. */
+  [reviewedChildPlan]?: Readonly<{ plan: HostReviewedChildrenPlanV1; policies?: readonly HostReviewedChildPolicyV1[] }> }>;
 
 function readProof(context: ActionExecutorContext | undefined, actionId: string, input?: unknown, discovery = false): ChildProof | null {
   const proof = (context as ChildContext | undefined)?.[deploymentRoleChild];
@@ -140,6 +143,23 @@ export function readHostAdmittedReviewedRootV1(context: ActionExecutorContext | 
 export function readHostAdmittedReviewedParentV1(port: HostReviewedChildPortV1 | undefined): HostReviewedParentV1 | null {
   const admitted: ReviewedChildPort | undefined = port;
   return admitted?.[deploymentRoleChild] === true ? admitted.parent ?? null : null;
+}
+
+/**
+ * The admitted parent already prepared and reviewed the children it listed.
+ * A later issuer of the same child consumes that decision instead of
+ * deciding it again; null means the parent did not list exactly this child.
+ */
+export function readHostAdmittedReviewedChildPlanV1(port: HostReviewedChildPortV1 | undefined,
+  child: Pick<HostReviewedChildV1, 'action' | 'role'>): Readonly<{
+    child: HostReviewedChildrenPlanV1['children'][number]; policy?: HostReviewedChildPolicyV1 }> | null {
+  const admitted: ReviewedChildPort | undefined = port;
+  const prepared = admitted?.[deploymentRoleChild] === true ? admitted[reviewedChildPlan] : undefined;
+  const indexes = prepared?.plan.children.flatMap((candidate, index) => candidate.role === child.role
+    && sameStrictJsonValue(candidate.action, child.action) ? [index] : []) ?? [];
+  if (!prepared || indexes.length !== 1) return null;
+  const policy = prepared.policies?.[indexes[0]!];
+  return { child: prepared.plan.children[indexes[0]!]!, ...(policy ? { policy } : {}) };
 }
 
 /** The root credential ceiling and its Environment remain the sole grant authority. */
@@ -472,7 +492,8 @@ export function createHostReviewedChildPortV1(params: Readonly<{
     || params.actionId === 'deployments.cancel' || params.actionId === 'deployments.receipts.observe'
     || params.actionId === 'deployments.logs.read') && typeof parentInput.environmentId === 'string' ? parentInput.environmentId : undefined;
   const port: ReviewedChildPort = {
-    ...(params.reviewAdmitted ? { parent, [deploymentRoleChild]: true as const } : {}),
+    ...(params.reviewAdmitted ? { parent, [deploymentRoleChild]: true as const,
+      ...(plan ? { [reviewedChildPlan]: { plan, ...(params.policies ? { policies: params.policies } : {}) } } : {}) } : {}),
     ...(plan ? { preparedChildren: plan.children.flatMap(child => child.input === undefined ? []
       : [{ action: child.action, role: child.role, input: child.input }]) } : {}),
     invoke: async request => {
