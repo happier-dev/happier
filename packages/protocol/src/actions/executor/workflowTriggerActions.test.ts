@@ -74,6 +74,8 @@ const ownCaller = { surface: 'agent' as const, sessionAgentSpawnPolicyV1: DEFAUL
   agentStartContext: { caller: { kind: 'session' as const, sessionId: 'session-one', starterDepth: 0, turnDepth: 0 },
     baseline: { ...project, configuration: { agentTarget: definition.defaults!.agentTarget! } }, ledSubtreeSessionIds: [],
     workDepthLimit: 4, roles: {}, callerPermissionCeiling: 'default' as const } };
+const scopedRemovalWaiver = ActionsSettingsV1Schema.parse({ v: 1,
+  approvalWaivedSurfaces: { 'session.trigger.remove': ['agent', 'mcp', 'cli'] } });
 
 function manualReceipt(automationId: string): AutomationV3RunMutationResponse {
   return { run: { id: 'run-manual', automationId, revision: 1, triggerId: null,
@@ -2284,7 +2286,8 @@ describe('workflow trigger Automation composition', () => {
     expect(await executor.execute('session.trigger.list', { sessionId: 'foreign-session' }, withoutDepth))
       .toMatchObject({ ok: false, errorCode: 'target_unavailable' });
     const sessionRow = [...rows.values()].find((row) => row.scopeSessionId === 'session-one')!;
-    expect(await executor.execute('session.trigger.remove', { sessionId: 'session-one', triggerId: sessionRow.triggers[0]!.id }, withoutDepth))
+    expect(await executor.execute('session.trigger.remove', { sessionId: 'session-one', triggerId: sessionRow.triggers[0]!.id },
+      { ...withoutDepth, actionsSettings: scopedRemovalWaiver }))
       .toMatchObject({ ok: true, result: { set: { triggers: [] } } });
   });
   it('validates and retains the selected Team before add or update', async () => {
@@ -2914,7 +2917,13 @@ describe('workflow trigger Automation composition', () => {
       expect(await boundary.execute('session.trigger.list', { sessionId }, ownCaller))
         .toMatchObject({ ok: true, result: { sets: [expect.objectContaining({ scopeSessionId: sessionId })] } });
       const listed = await actions.sessionList({ sessionId }, ownCaller);
-      expect(await boundary.execute('session.trigger.remove', { sessionId, triggerId: listed.sets[0]!.triggers[0]!.id }, ownCaller))
+      for (const surface of ['agent', 'mcp'] as const) {
+        expect(await boundary.execute('session.trigger.remove', { sessionId, triggerId: listed.sets[0]!.triggers[0]!.id },
+          { ...ownCaller, surface }))
+          .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+      }
+      expect(await boundary.execute('session.trigger.remove', { sessionId, triggerId: listed.sets[0]!.triggers[0]!.id },
+        { ...ownCaller, actionsSettings: scopedRemovalWaiver }))
         .toMatchObject({ ok: true, result: { set: { scopeSessionId: sessionId, triggers: [] } } });
     }
     const presentUser = { surface: 'cli' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const },
@@ -2940,6 +2949,7 @@ describe('workflow trigger Automation composition', () => {
     const added = await actions.sessionAdd({ sessionId: 'report', target: { kind: 'inline', definition }, trigger });
     revokeDuringRead = true;
     expect(await executor(actions).execute('session.trigger.remove', { sessionId: 'report', triggerId: added.triggerId! }, { ...ownCaller,
+      actionsSettings: scopedRemovalWaiver,
       agentStartContext: { ...ownCaller.agentStartContext, ledSubtreeSessionIds: ['report'] } }))
       .toMatchObject({ ok: true });
     expect(rows.get(added.set.automationId)?.triggers).toHaveLength(0);
@@ -2986,7 +2996,7 @@ describe('workflow trigger Automation composition', () => {
     expect(await boundary.execute('session.trigger.remove', { sessionId: 'session-one', triggerId: 'unrelated-trigger' }, caller))
       .toMatchObject({ ok: false, errorCode: 'run_access_denied' });
     expect(await boundary.execute('session.trigger.remove', { sessionId: 'session-one', triggerId: added.triggerId! },
-      { surface: 'cli', authority: 'present_user' }))
+      { surface: 'cli', authority: 'present_user', actionsSettings: scopedRemovalWaiver }))
       .toMatchObject({ ok: false, errorCode: 'content_unavailable' });
     rows.set(added.set.automationId, { ...rows.get(added.set.automationId)!, scopeSessionId: 'foreign-session' });
     expect(await boundary.execute('session.trigger.remove', { sessionId: 'session-one', triggerId: added.triggerId! }, caller))
@@ -3027,7 +3037,7 @@ describe('workflow trigger Automation composition', () => {
       }
     }
   });
-  it('consumes session trigger writes directly through the real Action executor without an approval', async () => {
+  it.each(['agent', 'mcp'] as const)('requires approval for scoped %s removal and honors a saved waiver through the real Action executor', async surface => {
     const { deps, rows } = fixture();
     let nativeGoalOwner = false;
     const triggers = createWorkflowTriggerActions({ ...deps, resolveSession: async () => ({ project, nativeGoalOwner }),
@@ -3055,9 +3065,13 @@ describe('workflow trigger Automation composition', () => {
     } }, ownCaller)).toMatchObject({ ok: false, errorCode: 'invalid_input' });
     expect(rows.size).toBe(1);
     const [row] = rows.values();
-    expect(await executor.execute('session.trigger.remove', {
-      sessionId: 'session-one', triggerId: row!.triggers[0]!.id,
-    }, ownCaller)).toMatchObject({ ok: true, result: { set: { triggers: [] } } });
+    const remove = { sessionId: 'session-one', triggerId: row!.triggers[0]!.id };
+    const caller = { ...ownCaller, surface };
+    expect(await executor.execute('session.trigger.remove', remove, caller))
+      .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+    expect(rows.get(row!.id)?.triggers).toHaveLength(1);
+    expect(await executor.execute('session.trigger.remove', remove, { ...caller, actionsSettings: scopedRemovalWaiver }))
+      .toMatchObject({ ok: true, result: { set: { triggers: [] } } });
     expect(rows.get(row!.id)?.triggers).toEqual([]);
   });
 });

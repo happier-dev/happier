@@ -157,7 +157,7 @@ export function requiresAgentEgressRedaction(
 export function isAgentInitiatedApprovalRequiredByDefault(actionId: ActionId): boolean {
   const spec = getActionSpec(actionId);
   return spec.approvalPolicy?.agentDefault !== undefined
-    || (spec.safety === 'danger' && spec.surfaces.agent === true && spec.approvalPolicy?.scopeAdmissionOwnsConfirmation !== true);
+    || (spec.safety === 'danger' && spec.surfaces.agent === true);
 }
 
 function requiresDefaultApprovalFloor(
@@ -177,9 +177,11 @@ function requiresDefaultApprovalFloor(
   // Permission answers share the Agent default on MCP too; persisted surface
   // waivers remain resolved by the same ActionsSettings owner above this floor.
   if (surface.kind !== 'ambiguous' && policy?.requiredSurfaces?.includes(surface.surface)) return true;
-  // Scoped removal is dangerous metadata, but its own/led Session policy owns
-  // admission (FIN 03 §5.4/§5.7); it does not acquire the Account trigger approval floor.
-  if (policy?.scopeAdmissionOwnsConfirmation === true && surface.kind !== 'ambiguous') return false;
+  // Admitted Run cleanup retains its consent; the trigger owner restricts it
+  // to the exact firing trigger (FIN 03 §5.7). Ordinary own/led Session access
+  // authorizes execution but does not answer the dangerous Action's Ask default.
+  if (policy?.scopeAdmissionOwnsConfirmation === true && surface.kind !== 'ambiguous'
+    && (ctx?.actionCaller?.kind === 'workflowRun' || ctx?.actionCaller?.kind === 'automationRun')) return false;
   // Present-person hosts suppress the duplicate default after a completed
   // confirmation for this exact Action. Explicit settings are evaluated first
   // and still win.

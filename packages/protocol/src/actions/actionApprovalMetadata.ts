@@ -11,6 +11,7 @@ export const ActionApprovalPolicySchema = lazyZodSchema(() => z.strictObject({
   /** The Agent/MCP Ask default applies only to inputs with this consequence; Settings Require/Waive still decide. */
   agentDefaultForInput: z.optional(z.custom<(input: unknown) => boolean>((value) => typeof value === 'function')),
   requiredSurfaces: z.optional(z.readonly(z.array(z.keyof(ActionSurfaceSchema)))),
+  /** Only host-stamped Run cleanup retains consent; public Session callers keep the danger default. */
   scopeAdmissionOwnsConfirmation: z.optional(z.literal(true)),
   pluginCaptureWaiver: z.optional(z.literal(true)),
   computerConsent: z.optional(z.literal(true)),

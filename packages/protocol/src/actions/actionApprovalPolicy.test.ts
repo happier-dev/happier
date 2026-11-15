@@ -156,9 +156,6 @@ it('retains CLI live-only results on the original approval waiter', () => {
     .toMatchObject({ required: true, flow: 'blocking' });
 });
 
-// Approved FIN 03 §5.4/§5.7 exception; every other danger row retains its floor.
-const DIRECT_SCOPED_SESSION_TRIGGER_REMOVAL =
-  'session.trigger.remove' satisfies ActionId;
 type ApprovalContext = Pick<ActionExecutorContext, 'surface'>;
 
 function approvalContext(surface: unknown): ApprovalContext {
@@ -4045,30 +4042,38 @@ describe('isApprovalRequiredByActionsSettings', () => {
       }).required,
     ).toBe(false);
   });
-  it('keeps scoped Session trigger removal out of the advertised default while preserving confirmation authority', () => {
-    const actionId = DIRECT_SCOPED_SESSION_TRIGGER_REMOVAL;
+  it.each(['agent', 'mcp'] as const)('defaults scoped Session trigger removal to Ask on %s while retaining admitted cleanup', surface => {
+    // RC1115-02: Session access authorizes the removal, not its human approval.
+    const actionId = 'session.trigger.remove';
     const spec = getActionSpec(actionId);
     const context = {
-      surface: 'agent' as const,
+      surface,
       authority: 'account_automation' as const,
     };
-    // Own/led Session admission belongs to the trigger owner; this owner decides
-    // the approval default for a scoped removal after that policy (FIN 03 §5.4).
     expect(spec.safety).toBe('danger');
     expect
       .soft(isAgentInitiatedApprovalRequiredByDefault(actionId))
-      .toBe(false);
+      .toBe(true);
     expect
       .soft(AGENT_INITIATED_APPROVAL_REQUIRED_ACTION_IDS)
-      .not.toContain(actionId);
+      .toContain(actionId);
     expect
       .soft(
         isApprovalRequiredByActionsSettings(actionId, EMPTY_SETTINGS, context),
       )
-      .toBe(false);
+      .toBe(true);
     expect
       .soft(resolveActionApprovalRouting({ actionId, spec, context }).required)
-      .toBe(false);
+      .toBe(true);
+
+    const waived = normalizeActionsSettingsV1({ v: 1,
+      approvalWaivedSurfaces: { [actionId]: [surface] } });
+    expect(resolveActionApprovalRouting({ actionId, spec, settings: waived, context }).required).toBe(false);
+    const cleanup = { ...context, actionCaller: { kind: 'workflowRun' as const, runId: 'firing-run',
+      authorization: { principal: { kind: 'host' as const }, admittedPermissionCeiling: 'read-only' as const } } };
+    expect(resolveActionApprovalRouting({ actionId, spec, context: cleanup }).required).toBe(false);
+    const automationCleanup = { ...cleanup, actionCaller: { ...cleanup.actionCaller, kind: 'automationRun' as const } };
+    expect(resolveActionApprovalRouting({ actionId, spec, context: automationCleanup }).required).toBe(false);
 
     for (const ambiguousContext of [
       undefined,
@@ -4097,12 +4102,14 @@ describe('isApprovalRequiredByActionsSettings', () => {
 
     const required = normalizeActionsSettingsV1({
       v: 1,
-      actions: { [actionId]: { approvalRequiredSurfaces: ['agent'] } },
-      approvalWaivedSurfaces: { [actionId]: ['agent'] },
+      actions: { [actionId]: { approvalRequiredSurfaces: [surface] } },
+      approvalWaivedSurfaces: { [actionId]: [surface] },
     });
     expect
       .soft(isApprovalRequiredByActionsSettings(actionId, required, context))
       .toBe(true);
+    expect(resolveActionApprovalRouting({ actionId, spec, settings: required, context: cleanup }).required).toBe(true);
+    expect(resolveActionApprovalRouting({ actionId, spec, settings: required, context: automationCleanup }).required).toBe(true);
     expect
       .soft(
         resolveActionApprovalRouting({
@@ -4823,15 +4830,12 @@ describe('agent-initiated dangerous-action approval default (FINALIZATION-PLAN �
         'voice',
       ] as const) {
         if (spec.surfaces[surface] !== true) continue;
-        const operationOwnsConfirmation =
-          spec.approvalPolicy?.scopeAdmissionOwnsConfirmation === true &&
-          !spec.approvalPolicy.requiredSurfaces?.includes(surface);
         expect(
           isApprovalRequiredByActionsSettings(actionId, EMPTY_SETTINGS, {
             surface,
           }),
           `${actionId}:${surface}`,
-        ).toBe(!operationOwnsConfirmation);
+        ).toBe(true);
       }
     }
   });
@@ -5255,20 +5259,19 @@ describe('agent approval floor is derived from the danger SSOT (CON-1..3/6)', ()
     ).toBe(true);
   });
 
-  it('SUBSET invariant: every danger ∩ agent action except approved scoped removal is floored (CON-1/6, never equality)', () => {
+  it('SUBSET invariant: every danger ∩ agent action is floored (CON-1/6, never equality)', () => {
     const dangerAgentIds = ACTION_IDS.filter((id) => {
       const spec = getActionSpec(id);
       return (
         spec.safety === 'danger' &&
-        spec.surfaces.agent === true &&
-        id !== DIRECT_SCOPED_SESSION_TRIGGER_REMOVAL
+        spec.surfaces.agent === true
       );
     });
     expect(dangerAgentIds.length).toBeGreaterThan(0);
     for (const id of dangerAgentIds) {
       expect(isAgentInitiatedApprovalRequiredByDefault(id)).toBe(true);
     }
-    // The floor exceeds the non-exempt danger ∩ agent subset via the non-danger egress floor
+    // The floor exceeds the danger ∩ agent subset via the non-danger egress floor
     // (context captures + copyUrl). Assert at least one such non-danger egress id is floored so the
     // invariant is a strict subset (⊊), never equality.
     const nonDangerFloored =
@@ -5367,8 +5370,7 @@ describe('plugin-surface approval posture (§4.1)', () => {
             ) ||
             (getActionSpec(id).requiredAuthority === 'present_user' &&
               id !== 'session.permission.respond')) &&
-          !id.startsWith('approval.request.') &&
-          id !== DIRECT_SCOPED_SESSION_TRIGGER_REMOVAL,
+          !id.startsWith('approval.request.'),
       ),
     );
   });
@@ -5389,14 +5391,13 @@ describe('plugin-surface approval posture (§4.1)', () => {
     }
   });
 
-  it('prompts the same non-exempt danger-class rows on the agent surface', () => {
+  it('prompts the same danger-class rows on the agent surface', () => {
     const dangerAgentAndPluginActionIds = pluginSurfacedActionIds.filter(
       (id) => {
         const spec = getActionSpec(id);
         return (
           spec.safety === 'danger' &&
           spec.surfaces.agent === true &&
-          id !== DIRECT_SCOPED_SESSION_TRIGGER_REMOVAL &&
           // Approval requests are intentionally unprompted, so a request cannot
           // recursively create another request before the existing flow decides it.
           spec.approvalPolicy?.control !== true
