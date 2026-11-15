@@ -214,6 +214,7 @@ export const PI_PLUGIN = definePlugin({
           options: resolvePiSessionRuntimePreferences({
             settings: input.pluginSettings.account ?? {},
             environment: input.environment,
+            cwd: input.parsed.directory,
           }),
         }),
       },
