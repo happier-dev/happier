@@ -286,12 +286,16 @@ describe('the Channels glance activity and loading', () => {
         readSession: ({ sessionId }): SessionStateV1 => {
           readIds.push(sessionId);
           return { sessionId, lifecycle: 'active', runtime: 'idle', operational: 'none', pendingPermissions: [],
+            workStatus: { state: 'waiting', bucket: 'idle', tone: 'neutral', attentionType: null, word: 'Idle' },
             latestActivity: { kind: 'ready', text: 'Current reply', createdAt: 1_700_000_000_000 } };
         },
         watchSession: ({ sessionId }) => { watchedIds.push(sessionId); },
       },
     });
-    await vi.waitFor(async () => { await surface.getByRole('button', { name: 'Conversation 0000' }); });
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-testid="channels-column-row-0000"]')).not.toBeNull();
+      expect(readIds).toContain('session-0000');
+    });
     expect(document.querySelector('[data-testid="channels-column-row-0999"]')).toBeNull();
     const initialRows = [...document.querySelectorAll('[data-testid^="channels-column-row-"]')]
       .map(row => `session-${row.getAttribute('data-testid')!.slice(-4)}`);
