@@ -1,3 +1,4 @@
+import { RegistryAppMappingV1Schema } from './registryAppMappingV1.js';
 import { REGISTRY_ACTION_IDS_V1 } from './registryActionIdsV1.js';
 export { REGISTRY_ACTION_IDS_V1 } from './registryActionIdsV1.js';
 import { z } from '../zodRuntimePolicy.js';
@@ -27,7 +28,7 @@ export const REGISTRY_ACTION_INPUT_SCHEMAS_V1={
     npmRegistryProfileId:z.optional(z.nullable(id()))})),
   'registries.sources.delete':lazyZodSchema(()=>z.strictObject({sourceId:id()})),
   'registries.items.list':lazyZodSchema(()=>z.strictObject({kind:RegistryKindV1Schema,sourceIds:z.optional(z.array(id())),contributionFamily:z.optional(RegistryContributionFamilyV1Schema),query:z.optional(z.string()),cursor:z.optional(z.nullable(z.string())),refresh:z.optional(z.boolean())})),
-  'registries.items.read':lazyZodSchema(()=>z.strictObject({kind:RegistryKindV1Schema,sourceId:id(),itemId:z.string(),version:z.optional(id())})),
+  'registries.items.read':lazyZodSchema(()=>z.strictObject({kind:RegistryKindV1Schema,sourceId:id(),itemId:z.string(),version:z.optional(id()),appMappingCorrection:z.optional(RegistryAppMappingV1Schema)})),
   'registries.updates.check':lazyZodSchema(()=>z.union([
     z.strictObject({ kind: z.literal('app'), environments: z.array(RegistryAppUpdateDemandV1Schema) }),
     z.strictObject({kind:z.optional(z.enum(RegistryKindV1Schema.options.filter(kind => kind !== 'app'))),keys:z.optional(z.array(id()))}),

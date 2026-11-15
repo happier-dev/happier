@@ -5,6 +5,7 @@ import {listRegistrySourcesV1,type RegistrySourceDescriptorV1} from './registryS
 import type {RegistryHttpV1} from './formats/registryFormatAdapterV1.js';
 import {computeGitBlobShaV1,computeGitTreeShaV1} from './registryGitTreeV1.js';
 import {encodeBase64} from '../crypto/base64.js';
+import {REGISTRY_ACTION_OUTPUT_SCHEMAS_V1} from './registryActionsV1.js';
 const commit='1'.repeat(40);
 const source=(id:string):RegistrySourceDescriptorV1=>({id,title:id,format:'git',kinds:['skill'],url:`https://github.com/account/${id}`,enabled:true,addedAt:0,origin:{kind:'user'},removable:true});
 const tree={sha:'tree',tree:[{path:'review/SKILL.md',type:'blob',mode:'100644',sha:'blob',size:3},{path:'review',type:'tree',mode:'040000',sha:'subtree'}]};
@@ -53,6 +54,30 @@ describe('registry link operation',()=>{
       .resolves.toMatchObject({ op: 'list', page: { status: { state: 'ok' }, total: 1 } });
     expect(admitted).toEqual(['first', 'rotated']);
     expect(reads).toEqual(['first', 'first', 'rotated', 'rotated']);
+  });
+
+  it('reads a reviewed packaged app through the public Action while preserving its selected source pin', async () => {
+    const packaged: RegistrySourceDescriptorV1 = {
+      id: 'plugin/apps', title: 'Apps', format: 'happier-catalog', kinds: ['app'],
+      packageContent: { pluginId: 'plugin', pluginVersion: '1.0.0', occurrenceId: 'installed', path: 'apps.json' },
+      enabled: true, addedAt: 0, removable: false,
+      origin: { kind: 'plugin', pluginId: 'plugin', localId: 'apps', suppliers: ['machine'] },
+    };
+    const catalog = readFileSync(new URL('../../../plugins/deployment-templates/resources/registry/apps.json', import.meta.url), 'utf8');
+    const forbidden = async (): Promise<never> => { throw new Error('Package catalog must not use HTTP'); };
+    const host = createRegistryHostV1({ host: 'node', readSources: async () => [packaged],
+      http: { getJson: forbidden, getText: forbidden, getBytes: forbidden },
+      packageContent: { read: async () => ({ fetchedAt: 1, text: catalog }) },
+    });
+    const operand = { kind: 'app' as const, sourceId: packaged.id, itemId: 'postgresql' };
+    const before = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.read'].parse(await host.execute('registries.items.read', operand)).item;
+    if (before.payload.kind !== 'app' || before.payload.state !== 'ready') throw new Error('Expected packaged app');
+    const reviewed = { ...before.payload.app, title: 'Reviewed packaged database' };
+    const corrected = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.read'].parse(await host.execute('registries.items.read', {
+      ...operand, version: before.summary.version, appMappingCorrection: { document: JSON.stringify(reviewed) },
+    })).item;
+    expect(corrected.payload).toEqual({ kind: 'app', state: 'ready', app: reviewed, ref: before.payload.ref });
+    expect(corrected.summary.version).toBe(before.summary.version);
   });
 
   it('reuses one admitted source inside an operation and reads authority again for the next operation', async () => {
