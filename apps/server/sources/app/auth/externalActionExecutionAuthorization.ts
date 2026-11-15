@@ -111,7 +111,7 @@ import { requireActiveManagedResizeInTx, readManagedIntentReportAuthority } from
 import { MANAGED_RESIZE_ACTION_ID_V1, isManagedControlAdmissionActionIdV1, isManagedCreationMutationActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { resolveMachineAdmission, resolveMachineAdmissionInTx } from "@/app/machines/machineAccess";
-import { ManagedMachineError, requireCurrentManagedMachineInTx, sameManagedInput, readManagedMachineInTx, readManagedAdmissionState, readManagedEnrollmentAccountId, projectManagedMachine,
+import { ManagedMachineError, hasBoundManagedLifecycle, requireCurrentManagedMachineInTx, sameManagedInput, readManagedMachineInTx, readManagedAdmissionState, readManagedEnrollmentAccountId, projectManagedMachine,
     readMachineDevcontainerWorkspaceSyncRouteInTx, readMachineDevcontainerWorkspaceSyncEndpointInTx } from '@/app/machines/managed/managedRows';
 import { resolveManagedGuestActivityAdmissionInTx } from '@/app/machines/managed/managedGuestActivity';
 import { initializeServerIdentityCache } from "@/app/serverIdentity/serverIdentity";
@@ -1102,8 +1102,8 @@ export async function readCurrentManagedGuestActivityInTx(reader: Tx,
             && sameManagedInput(binding.managedAdmission.input, admission.request.input);
         const guestOwner = readManagedEnrollmentAccountId(row);
         if (target === undefined && guestOwner !== row.custodianAccountId) return null;
-        if (row.id !== enrolled.id || row.enrolledMachineId !== machineId || row.allocation !== 'bound'
-            || !row.resource || row.desiredWhen !== 'after-idle'
+        if (row.id !== enrolled.id || row.enrolledMachineId !== machineId || !hasBoundManagedLifecycle(row)
+            || row.desiredWhen !== 'after-idle'
             || !(accountExecutor || row.controllerMachineId === binding.machineId && row.controllerInstallationId === binding.installationId)
             || admission?.kind !== 'control' || admission.request.action !== binding.actionId
             || !isManagedPowerOrDeleteActionIdV1(admission.request.action)

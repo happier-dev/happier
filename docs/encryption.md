@@ -1621,6 +1621,15 @@ keeps the opened resource locally; opening it does not make that resource public
 owner matches the retained opaque lifecycle and custody, while ordinary full
 enrollment still requires its matching resource.
 
+Signed enrollment children, finite wake and guest activity consume that same
+bound lifecycle without requiring Home to retain the native resource. Home
+still binds the active creation, revision, controller installation and exact
+enrolled guest. A signed enrollment child also binds its retained root and
+exact child envelope; this proves custody, not private policy consent. The
+guest's ordinary Action approval owns consent when the sealed parent does not
+declare that policy child. Unsigned enrollment-policy paths keep their readable
+policy matching.
+
 Revisioned Machine presets and admitted managed-creation setup snapshots retain
 SavedSecret references, not resolved credential values. Those references are
 inside private content. Personal-source promotion captures the readable preset

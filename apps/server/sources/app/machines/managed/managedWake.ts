@@ -22,7 +22,7 @@ import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { jsonPathEquals } from '@/storage/jsonPathFilter';
 import { markAccountChanged, type AccountChangePublication } from '@/app/changes/markAccountChanged';
 import { readWorkflowRunOriginWakeCandidatesInTx } from '@/app/workflows/workflowRunAttention';
-import { ManagedMachineError, projectManagedMachine, requireManagedControllerInTx, sameManagedInput, readManagedController, resolveManagedMachineRoleInTx, type StoredManagedMachine } from './managedRows';
+import { ManagedMachineError, hasBoundManagedLifecycle, projectManagedMachine, requireManagedControllerInTx, sameManagedInput, readManagedController, resolveManagedMachineRoleInTx, type StoredManagedMachine } from './managedRows';
 import { forwardRpcCall } from '@/app/api/socket/rpc/forwardRpcCall';
 import type { RpcAckResponseEmitter } from '@/app/api/socket/rpc/_types';
 import { readMachineDaemonSocketIdentity } from '@/app/machines/machineDaemonPresence';
@@ -165,7 +165,7 @@ async function readManagedWakeTargetBindingInTx(tx: Tx, input: Readonly<{
         homeId, enrolledMachineId: input.machineId, archivedAt: null,
         creationState: 'active', allocation: 'bound',
     } });
-    if (!row || row.desired === 'delete' || row.resource === null) return undefined;
+    if (!row || row.desired === 'delete' || !hasBoundManagedLifecycle(row)) return undefined;
     const controller = readManagedController(row);
     try { await requireManagedControllerInTx(tx, { homeId, custodianAccountId: row.custodianAccountId, controller }); }
     catch (error) { if (error instanceof ManagedMachineError) return undefined; throw error; }
@@ -352,7 +352,7 @@ export async function assertManagedWakeOriginCurrentInTx(tx: Tx, input: Readonly
     if (row.id !== target.managedId || row.homeId !== target.homeId || row.enrolledMachineId !== target.enrolledMachineId
         || !sameManagedInput(readManagedController(row), target.controller)
         || row.creationState !== 'active' || row.archivedAt !== null
-        || row.allocation !== 'bound' || row.resource === null || row.desired === 'delete') throw new ManagedMachineError('admission_unavailable');
+        || !hasBoundManagedLifecycle(row) || row.desired === 'delete') throw new ManagedMachineError('admission_unavailable');
     await requireManagedControllerInTx(tx, { homeId: row.homeId, custodianAccountId: row.custodianAccountId, controller: target.controller });
     let projected;
     try { projected = projectManagedMachine(row); } catch { throw new ManagedMachineError('admission_unavailable'); }

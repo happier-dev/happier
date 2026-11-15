@@ -4,7 +4,7 @@ import { resolveMachineAdmissionInTx } from '@/app/machines/machineAccess';
 import type { Tx } from '@/storage/inTx';
 import { db } from '@/storage/db';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
-import { ManagedMachineError, readManagedMachineInTx, readManagedEnrollmentAccountId, projectManagedMachine,
+import { ManagedMachineError, hasBoundManagedLifecycle, readManagedMachineInTx, readManagedEnrollmentAccountId, projectManagedMachine,
     readManagedController, sameManagedInput, resolveManagedMachineRolesInTx,
     requireManagedControllerInTx, inManagedMachinePublicationTx, invalidateManagedMachineInTx, type StoredManagedMachine } from './managedRows';
 
@@ -47,7 +47,7 @@ export async function resolveManagedGuestActivityAdmissionInTx(tx: Tx, input: Re
             && 'action' in input.target && input.target.action === 'resume';
         if (row.enrolledMachineId !== input.machineId || !sameManagedInput(readManagedController(row), input.target.controller)
             || !release && (row.intentRevision !== input.target.expectedRevision || row.creationState !== 'active'
-                || row.archivedAt !== null || row.allocation !== 'bound' || row.resource === null)) return null;
+                || row.archivedAt !== null || !hasBoundManagedLifecycle(row))) return null;
         if ((await resolveManagedMachineRolesInTx(tx, row, input.actorAccountId)).guestActivityRole !== 'manage') return null;
         await requireManagedControllerInTx(tx, { homeId: row.homeId, custodianAccountId: row.custodianAccountId,
             controller: input.target.controller });

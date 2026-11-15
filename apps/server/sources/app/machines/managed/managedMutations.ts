@@ -41,7 +41,7 @@ import {
     readManagedJsonEqualityOperand,
     inManagedMachinePublicationTx,
     readManagedController, readManagedOpaquePresetContent, readManagedOpaquePresetContentOverride, requireManagedHomeInTx, resolveManagedMachineRoleInTx,
-    hasPossibleManagedNativeResource,
+    hasPossibleManagedNativeResource, hasBoundManagedLifecycle,
 } from "./managedRows";
 import { readStoredOpaquePresetLaunch } from './managedMachineProjection';
 
@@ -63,11 +63,6 @@ async function hasPendingManagedCleanupTargetInTx(tx: Tx, row: StoredManagedMach
     const declaration = await resolveManagedRowDeclarationInTx(tx, row);
     if (!declaration?.reconciliation || declaration.schemaVersion !== launch.schemaVersion) return false;
     return row.nativeOperationRef === null ? allowCorrelation : projectManagedMachine(row).nativeOperationRef !== undefined;
-}
-
-/** Opaque rows retain bound lifecycle authority without retaining a provider-native identity at Home. */
-function hasBoundManagedLifecycle(row: Pick<StoredManagedMachine, 'presetId' | 'launch' | 'allocation' | 'resource'>): boolean {
-    return row.allocation === 'bound' && (isStoredOpaquePresetMachine(row) || row.resource !== null);
 }
 
 /** Policy execution consumes committed row intent, guest drain or an accepted origin, never caller ids alone. */

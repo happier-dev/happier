@@ -100,7 +100,7 @@ import type { ManagedWakeTargetV1 } from '@happier-dev/protocol/machines/managed
 import { MachineSetupPlanInputV1Schema, ManagedEnrollmentInstallationV1Schema, readMachineSetupPlanChildInputV1, isMachineSetupPlanRpcChildV1, MANAGED_CONTROL_ACTION_IDS_V1,
   ManagedAcquireInputV1Schema, resolveManagedAcquireReviewV1,
   type MachineSetupApplyInputV1, type MachineSetupPlanInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { matchesMachineSetupCreationSourcesV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
+import { projectManagedMachineSetupCreationSourcesV1 } from '@happier-dev/cli-common/machines/managed';
 import { readRequesterAccountActionContext, rebindRequesterAccountActionContext, requesterAccountEncryptionMode, type RequesterAccountAuthorizationHeaders } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import { refuseExternalActionPhase, traceExternalActionInnerStage, runTracedExternalActionInnerStage, readSessionInputAdmissionDiagnostic } from '@/daemon/externalActions/externalActionPhase';
 import { projectExternalActionRunNowIdempotencyKeyV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -2074,7 +2074,7 @@ async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'in
     | MachineAgentIsolationPreviewInputV1 | MachineAgentIsolationSetInputV1 | MachineRolesSetInputV1;
   actionId: 'session.spawn_new' | 'machines.setup.plan' | 'machines.setup.apply' | 'machines.setup.adminAccess.set'
     | 'machines.agentIsolation.preview' | 'machines.agentIsolation.set' | 'machines.roles.set'; serverId: string; targetMachineId: string;
-  retainedCreationSetup?: Parameters<typeof matchesMachineSetupCreationSourcesV1>[1];
+  retainedCreationSetup?: Parameters<typeof projectManagedMachineSetupCreationSourcesV1>[0];
 }>): Promise<ActionExecuteResult> {
   const fail = (code: string): ActionExecuteFailure => ({ ok: false, errorCode: code, error: code });
   const root = params.authorization.binding;
@@ -2121,7 +2121,7 @@ async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'in
       const parsed = MachineSetupPlanInputV1Schema.parse(params.input);
       if (parsed.homeId !== serverIdentityId || parsed.machineId !== params.targetMachineId
         || parsed.sources !== undefined && (parsed.mode !== 'effects' || !params.retainedCreationSetup
-          || !matchesMachineSetupCreationSourcesV1(parsed.sources, params.retainedCreationSetup))) return fail('target_unavailable');
+          || !sameStrictJsonValue(parsed.sources, projectManagedMachineSetupCreationSourcesV1(params.retainedCreationSetup)))) return fail('target_unavailable');
       input = parsed;
     } else {
       const parsed = MachineSetupApplyInputV1Schema.parse(params.input);
@@ -2223,7 +2223,7 @@ export async function dispatchManagedMachineSetup(params: Omit<Parameters<typeof
 /** The retained creation may read only its enrolled guest's current setup. */
 export async function dispatchManagedMachineSetupPlan(params: Omit<ManagedChildDispatchParams, 'input'> & Readonly<{
   input: MachineSetupPlanInputV1; serverId: string;
-  retainedCreationSetup?: Parameters<typeof matchesMachineSetupCreationSourcesV1>[1];
+  retainedCreationSetup?: Parameters<typeof projectManagedMachineSetupCreationSourcesV1>[0];
 }>): Promise<ActionExecuteResult> {
   return dispatchManagedChild({ ...params, actionId: 'machines.setup.plan', targetMachineId: params.input.machineId });
 }
@@ -2317,10 +2317,10 @@ export async function dispatchLocalManagedMachineSetup(params: Readonly<{
 
 export async function dispatchLocalManagedMachineSetupPlan(params: Omit<Parameters<typeof dispatchLocalManagedMachineSetup>[0], 'input'> & Readonly<{
   input: MachineSetupPlanInputV1;
-  retainedCreationSetup?: Parameters<typeof matchesMachineSetupCreationSourcesV1>[1];
+  retainedCreationSetup?: Parameters<typeof projectManagedMachineSetupCreationSourcesV1>[0];
 }>): Promise<ActionExecuteResult> {
   if (params.input.sources !== undefined && (params.input.mode !== 'effects' || !params.retainedCreationSetup
-    || !matchesMachineSetupCreationSourcesV1(params.input.sources, params.retainedCreationSetup))
+    || !sameStrictJsonValue(params.input.sources, projectManagedMachineSetupCreationSourcesV1(params.retainedCreationSetup)))
     && !isAdmittedLocalReviewedSetupContext({ ...params, actionId: 'machines.setup.plan', homeId: params.input.homeId })) {
     return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
   }

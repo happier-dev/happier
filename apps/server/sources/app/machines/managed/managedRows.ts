@@ -610,6 +610,11 @@ export function sameManagedInput(left: unknown, right: unknown): boolean {
     return left === undefined || right === undefined ? left === right : pluginJsonValuesEqual(left, right);
 }
 
+/** Opaque rows retain bound lifecycle authority without retaining a provider-native identity at Home. */
+export function hasBoundManagedLifecycle(row: Pick<StoredManagedMachine, 'presetId' | 'launch' | 'allocation' | 'resource'>): boolean {
+    return row.allocation === 'bound' && (isStoredOpaquePresetMachine(row) || row.resource !== null);
+}
+
 /** The retained carrier owns whether enrollment compares public native identity or keeps it sealed. */
 export function matchesManagedEnrollmentResource(row: Pick<StoredManagedMachine, 'presetId' | 'launch'> & { resource: unknown }, resource: unknown): boolean {
     return isStoredOpaquePresetMachine(row) ? resource === undefined : sameManagedInput(row.resource, resource);

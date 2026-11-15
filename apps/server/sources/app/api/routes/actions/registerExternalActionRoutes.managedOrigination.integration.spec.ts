@@ -1,3 +1,13 @@
+import { executeExternalAction } from '../../../../../../cli/src/daemon/externalActions/executeExternalAction';
+import { createDaemonExternalActionTargetResolver } from '../../../../../../cli/src/daemon/externalActions/daemonExternalActionTargetResolver';
+import { createActionExecutor, ActionsSettingsV1Schema } from '@happier-dev/protocol';
+import { createExternalActionAuthorizedRequestHeaders } from '../../../../../../cli/src/api/externalActionExecutionAuthorization';
+import { prepareManagedOpaquePresetAcquireV1, prepareManagedOpaquePresetReportV1, prepareManagedMachineSetupApplyInput, projectManagedOpaqueSetupSourcesV1 } from '@happier-dev/cli-common/machines/managed';
+import { ManagedAdmissionOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { isManagedOpaquePresetMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { resolveManagedWakeTargetInTx, assertManagedWakeOriginCurrentInTx } from '@/app/machines/managed/managedWake';
+import { resolveManagedGuestActivityAdmissionInTx } from '@/app/machines/managed/managedGuestActivity';
+import { MANAGED_ACTIVITY_READ_RPC_METHOD } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import Fastify, { type InjectOptions } from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -33,7 +43,7 @@ import { encodeReviewedActionChildHttpProofV1, encodeExternalActionHttpBodyV1,
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
-import { MachineSetupSourcesApplyInputV1Schema, ManagedControllerContextOutputV1Schema, ManagedEnrollmentCorrelationV1Schema,
+import { MachineSetupPlanResultV1Schema, MachineSetupPlanInputV1Schema, MachineSetupSourcesApplyInputV1Schema, ManagedControllerContextOutputV1Schema, ManagedEnrollmentCorrelationV1Schema,
     ManagedControllerCredentialDeliveryReportV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { sealManagedCreationActionCodecV1, openManagedCreationActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { machineRolesMetadataFieldV1, resolveManagedMachineEnrollmentRolesV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
@@ -49,7 +59,7 @@ import { createExternalActionDaemonDispatcher, type ExternalActionForwardRpcCall
 import { auth } from '@/app/auth/auth';
 import { projectExternalActionBoundPrincipal, verifyCurrentExternalActionPrincipal, verifyExternalActionDomainExecutionRequest,
     verifyExternalActionMachineRpcExecution, resolveExternalActionExecutionMachineAdmissionInTx,
-    verifyWorkflowExternalActionRequesterAuthorization } from '@/app/auth/externalActionExecutionAuthorization';
+    verifyWorkflowExternalActionRequesterAuthorization, readCurrentManagedGuestActivityInTx } from '@/app/auth/externalActionExecutionAuthorization';
 import { createReleaseLessDeclarationV1 } from '@/app/plugins/availability/currentDeclaration';
 import { resolveMachineAccess, removeMachineAccessGrantInTx } from '@/app/machines/machineAccess';
 import { setEligibleMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
@@ -69,11 +79,11 @@ import { getAccountSessionSocketRoom } from '@/app/api/socketRooms';
 import { inTx, type Tx } from '@/storage/inTx';
 import { SessionActionRpcOriginV1Schema, SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { deriveAccountEncryptionCurrentnessFromRow } from '@/app/encryption/accountContentKeyAdmission';
-import { registerManagedMachineRoutes } from '@/app/machines/managed/managedRoutes';
+import { machinesRoutes } from '@/app/api/routes/machines/machinesRoutes';
 import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { cancelManagedCreation, getManagedMachine } from '@/app/machines/managed/managedRead';
 import { createMachinePreset, readMachinePresetRecipientCensus } from '@/app/machines/managed/machinePresetService';
-import { sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import { createManagedMachinePresetAcquireOverrideV1, projectManagedMachinePresetForRecipientV1, openManagedMachinePresetContentV1, sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { admitManagedAcquire } from '@/app/machines/managed/managedAcquire';
 import { resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -173,7 +183,7 @@ describe('ordinary Account managed Action origination', () => {
         const input = { enrollmentIdentity: { kind: 'guestProcess' as const, role: 'sandbox' as const }, selection: { kind: 'one-off' as const, homeId, controller,
             launch: { provider: { pluginId: manifest.id, localId: 'compute' }, schemaVersion: 1, name: 'Reviewed', choices: { image: 'linux' } },
             retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false } };
-        return { account, controller, keys, token, input, manifest, requestId: crypto.randomUUID() };
+        return { account, controller, keys, token, input, manifest, contentKey: content?.secretKey, requestId: crypto.randomUUID() };
     }
 
     async function sourceFixture(selected: Readonly<{ account: Readonly<{ id: string }>;
@@ -234,7 +244,7 @@ describe('ordinary Account managed Action origination', () => {
             ...(source ? { sessionPublisherPresence: source.presence } : {}), forwardRpc }) });
         registerSessionCreateOrLoadRoute(instance);
         registerAccountProfileRoute(instance);
-        registerManagedMachineRoutes(instance);
+        machinesRoutes(instance);
         registerTeamCredentialResourceRoutes(instance);
         await instance.ready();
         return instance;
@@ -398,9 +408,20 @@ describe('ordinary Account managed Action origination', () => {
             launch: selected.input.selection.launch, allocation: 'bound', resource: { contributionRef: selected.input.selection.launch.provider,
                 schemaVersion: 1, value: { id: 'portable-resource' } }, presetId, presetRevision: 0,
             machineSetup: { setup, state: 'pending' }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true } });
-        const sources = [{ kind: 'accountPreset', presetId, presetRevision: 0, setup }, { kind: 'direct', setup: {} }] as const;
+        const creation = { preset: { id: presetId, revision: 0, contentEncryptionMode: 'plain' as const }, setup };
+        const plan = MachineSetupPlanResultV1Schema.parse({ desiredRevision: 0,
+            sources: projectManagedOpaqueSetupSourcesV1([{ kind: 'accountPreset', presetId, presetRevision: 0,
+                contentEncryptionMode: creation.preset.contentEncryptionMode, setup }, { kind: 'direct', setup: {} }]),
+            exclusions: [], support: [], recipePlans: [] });
+        const prepared = await prepareManagedMachineSetupApplyInput({ target: { homeId, machineId: selected.controller.machineId },
+            creation,
+            // The target Plan response is the network boundary; preparation is real.
+            readPlan: async () => ({ ok: true, result: plan }) });
+        if ('ok' in prepared) throw new Error(`Setup preparation failed: ${prepared.errorCode}`);
+        const sources = prepared.targets[0]!.sources;
+        expect(JSON.stringify(sources)).not.toContain('echo admitted');
         const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target: { kind: 'machine' as const, machineId: selected.controller.machineId },
-            input: { homeId, machineId: selected.controller.machineId, sources, mode: 'effects' } };
+            input: MachineSetupPlanInputV1Schema.parse({ homeId, machineId: selected.controller.machineId, sources, mode: 'effects' }) };
         const instance = await app(async () => { throw new Error('Proof issuance must not dispatch a native effect'); });
         const body = { v: 1, machineId: selected.controller.machineId, envelope,
             managedContinuation: { managedId: row.id, creationRequestId: selected.requestId, expectedIntentRevision: 0 } };
@@ -3002,6 +3023,196 @@ describe('ordinary Account managed Action origination', () => {
             expect(await verifyCurrentExternalActionPrincipal(planChild.binding)).toBeNull();
             expect((await mint(makeBody(planInput, 'machines.setup.plan'), 'machines.setup.plan')).statusCode).not.toBe(200);
             expect((await mint(makeBody())).statusCode).not.toBe(200);
+        } finally { await instance.close(); }
+    });
+
+    it.each([
+        { phase: 'child', mode: 'plain' }, { phase: 'child', mode: 'e2ee' },
+        { phase: 'declined', mode: 'plain' },
+        { phase: 'wake', mode: 'e2ee' }, { phase: 'activity', mode: 'e2ee' }, { phase: 'control', mode: 'e2ee' },
+    ] as const)('consumes sealed enrollment custody for $phase without a public native resource ($mode)', async ({ phase, mode }) => {
+        const selected = await fixture(true, mode);
+        const owner = { kind: 'account' as const, accountId: selected.account.id };
+        const presetId = crypto.randomUUID();
+        const census = await readMachinePresetRecipientCensus({ accountId: selected.account.id, input: { homeId, owner } });
+        if (census.kind !== 'ready') throw new Error('Expected ready preset recipients');
+        const sealed = sealManagedMachinePresetContentV1({ presetId, mode,
+            content: { v: 1, name: 'Private enrollment', launch: selected.input.selection.launch },
+            recipientCensus: census.recipients, randomBytes: tweetnacl.randomBytes });
+        expect(await createMachinePreset({ accountId: selected.account.id, input: { homeId, id: presetId, owner,
+            contentEncryptionMode: mode, ...sealed, controller: selected.controller,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true } })).toMatchObject({ kind: 'saved' });
+        const identity = { kind: 'dedicatedDaemonUser' as const, username: 'happier' as const, serviceMode: 'user' as const,
+            role: 'server' as const, adminAccessAtCreation: 'none' as const };
+        const cryptoInput = mode === 'plain' ? { mode: 'plain' as const }
+            : { mode: 'e2ee' as const, accountId: selected.account.id, accountKey: selected.contentKey! };
+        const override = createManagedMachinePresetAcquireOverrideV1({ presetId, ...cryptoInput,
+            projection: projectManagedMachinePresetForRecipientV1({ ...sealed, recipientAccountId: selected.account.id }),
+            enrollmentIdentity: identity, randomBytes: tweetnacl.randomBytes });
+        if (!override) throw new Error('Expected opened enrollment override');
+        const acquire = ManagedAcquireInputV1Schema.parse({ selection: { kind: 'preset', homeId, id: presetId, revision: 0 },
+            controller: selected.controller, retention: { kind: 'until-delete' },
+            wakeOnAcceptedMessage: true, presetContentOverride: override });
+        const guestKeys = tweetnacl.sign.keyPair();
+        const guestId = crypto.randomUUID();
+        const guestInstallationId = crypto.randomUUID();
+        const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(7) };
+        const seal = (actionId: string, machineId: string, input: unknown, requestId = selected.requestId) => mode === 'plain'
+            ? ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId, target: { kind: 'machine', machineId }, input })
+            : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+                binding: { serverIdentityId: homeId, accountId: selected.account.id,
+                    authentication: { kind: 'account', tokenEpoch: selected.account.tokenEpoch }, actionId,
+                    requestId, target: { kind: 'machine', machineId } }, input, material, randomBytes: tweetnacl.randomBytes });
+        const policy = { version: 1 as const, mode: 'none' as const };
+        let nativeEffects = 0;
+        let confirmations = 0;
+        const executor = createActionExecutor({
+            // Native confirmation and host policy mutation are system boundaries.
+            presentUserActionConfirmation: async () => { confirmations++; return phase !== 'declined'; },
+            machineAdminAccessAction: async request => {
+                expect(request.input).toMatchObject({ machineId: guestId, adminAccess: policy });
+                nativeEffects++;
+                return { status: 'applied', metadataVersion: 1, policy };
+            },
+        });
+        const instance = await app(async request => {
+            const dispatch = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
+            const result = await executeExternalAction({ ...dispatch, currentMachineId: guestId,
+                currentAccountId: selected.account.id, currentInstallationId: guestInstallationId, currentServerId: homeId,
+                externalActionMachineRequestPrivateKey: guestKeys.secretKey,
+                verifyExecutionAuthorization: async ({ authorization }) =>
+                    await verifyCurrentExternalActionPrincipal(authorization.binding) !== null,
+                // The receiving host's installed key and settings are external boundaries.
+                resolveEncryption: async () => ({ serverIdentityId: homeId, material }),
+                resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: selected.token, encryption: null } }),
+                executor: { execute: (actionId, input, context) => executor.execute(actionId, input,
+                    { ...context, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) }) },
+            });
+            if (result.kind !== 'response') throw new Error(`Child receiver refused: ${result.errorCode}`);
+            return { ok: true, result: createExternalActionDaemonDispatchResponse(result.prepared) };
+        });
+        try {
+            const rootEnvelope = seal('machines.managed.acquire', selected.controller.machineId, acquire);
+            const issued = await instance.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1('machines.managed.acquire'),
+                headers: { authorization: `Bearer ${selected.token}` }, payload: { v: 1, machineId: selected.controller.machineId, envelope: rootEnvelope } });
+            expect(issued.statusCode, issued.body).toBe(200);
+            const root = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+            const admitPath = '/v1/machines/managed/controller/admit';
+            const admitBody = { requestId: selected.requestId, input: acquire, continuationPresent: false,
+                originalActionEnvelope: rootEnvelope, presetPolicy: { retention: acquire.retention, wakeOnAcceptedMessage: true } };
+            const admitted = await instance.inject({ method: 'POST', url: admitPath, payload: admitBody,
+                headers: { [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: root.binding.actionId,
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(root.binding.target),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: root.token,
+                        effectActionId: root.binding.actionId, target: root.binding.target, installationId: selected.controller.installationId,
+                        requestId: root.binding.requestId, method: 'POST', path: admitPath, body: admitBody, privateKey: selected.keys.secretKey }) } });
+            expect(admitted.statusCode, admitted.body).toBe(200);
+            const carrier = ManagedAdmissionOutputV1Schema.parse(admitted.json());
+            if (!isManagedOpaquePresetMachineV1(carrier.machine) || !carrier.presetContent) throw new Error('Expected opaque admission');
+            const prepared = await prepareManagedOpaquePresetAcquireV1({ content: carrier.presetContent.content,
+                override: carrier.presetContentOverride, provisioner: selected.manifest.contributes.machineProvisioners![0],
+                open: content => openManagedMachinePresetContentV1({ presetId, ...cryptoInput, content,
+                    recipients: sealed.recipients }) });
+            if (!prepared) throw new Error('Expected opened admitted preset');
+            const reported = prepareManagedOpaquePresetReportV1({ machine: carrier.machine, content: prepared.content,
+                opened: prepared.opened, recipients: sealed.recipients, accountId: selected.account.id, accountKey: selected.contentKey, randomBytes: tweetnacl.randomBytes,
+                nativeResult: { kind: 'bound', resource: { contributionRef: selected.input.selection.launch.provider,
+                    schemaVersion: 1, value: { id: 'private-native-target' } } } });
+            if (!reported) throw new Error('Expected sealed native report');
+            const correlation = { homeId, managedId: carrier.machine.id, expectedIntentRevision: 0,
+                requestId: selected.requestId, controller: selected.controller };
+            await submitManagedAcquire(correlation);
+            await reportManagedAcquire({ ...correlation, result: { kind: 'bound' }, presetContent: reported.content });
+            const registered = await instance.inject({ method: 'POST', url: '/v1/machines', headers: { ...currentAccountStoredContentCompatibilityHeaders, authorization: `Bearer ${selected.token}` },
+                payload: { id: guestId, metadata: mode === 'plain' ? encodePlainMachineStoredContent({ host: 'guest', platform: 'linux',
+                    happyCliVersion: 'test', homeDir: '/home/happier', happyHomeDir: '/home/happier/.happier' }) : 'guest-ciphertext',
+                    ...(mode === 'plain' ? { dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } : {}),
+                    installationId: guestInstallationId, installationPublicKey: Buffer.from(guestKeys.publicKey).toString('base64url'),
+                    installationProof: signMachineInstallationProof({ payload: { version: 1, machineId: guestId,
+                        installationId: guestInstallationId, accountId: selected.account.id }, privateKey: guestKeys.secretKey }), managedEnrollment: correlation } });
+            expect(registered.statusCode, registered.body).toBe(200);
+            await db.machine.update({ where: { id: guestId }, data: { active: true,
+                operationProtocolCapabilitiesRevision: 1, operationProtocolCapabilities: capabilities } });
+            const row = await db.managedMachine.findUniqueOrThrow({ where: { id: carrier.machine.id } });
+            expect(row).toMatchObject({ resource: null, allocation: 'bound', enrolledMachineId: guestId });
+            if (phase === 'child' || phase === 'declined') {
+                const actionId = 'machines.setup.adminAccess.set';
+                const base = seal(actionId, guestId, { serverId: homeId, machineId: guestId, expectedMetadataVersion: 0,
+                    expectedAdminAccess: policy, adminAccess: policy, comparison: 'field' });
+                const envelope = sealManagedCreationActionCodecV1({ authorization: root, actionId,
+                    continuation: { managedId: row.id, creationRequestId: selected.requestId, expectedIntentRevision: 0 }, envelope: base,
+                    recipient: { machineId: guestId, installationId: guestInstallationId, installationPublicKey: Buffer.from(guestKeys.publicKey).toString('base64url') },
+                    invocation: { caller: { kind: 'host' }, surface: 'ui', authority: 'present_user' }, randomBytes: tweetnacl.randomBytes });
+                const path = `/v1/actions/${actionId}`;
+                const body = { v: 1, machineId: guestId, envelope,
+                    managedContinuation: { managedId: row.id, creationRequestId: selected.requestId, expectedIntentRevision: 0 } };
+                const send = (payload = body, privateKey = selected.keys.secretKey) => instance.inject({ method: 'POST', url: path, payload,
+                    headers: createExternalActionAuthorizedRequestHeaders({ authorization: root, effectActionId: root.binding.actionId,
+                        target: root.binding.target, installationId: selected.controller.installationId, privateKey,
+                        method: 'POST', path, body: payload }) });
+                expect((await send(body, guestKeys.secretKey)).statusCode).toBe(401);
+                const child = await send();
+                expect(child.statusCode, child.body).toBe(200);
+                expect(confirmations).toBe(1);
+                expect(nativeEffects).toBe(phase === 'declined' ? 0 : 1);
+                if (phase === 'declined') expect(child.json()).toMatchObject({ execution: { ok: false, errorCode: 'approval_canceled' } });
+                // Construct only the retired storage boundary; the accepted
+                // authority above was produced by real admission and signing.
+                await db.managedMachine.update({ where: { id: row.id }, data: { creationState: 'canceled' } });
+                expect((await send()).statusCode).not.toBe(200);
+            } else if (phase === 'control') {
+                const actionId = 'machines.managed.power.set';
+                const controlInput = { homeId, managedId: row.id, intent: 'stop' as const, when: 'after-idle' as const };
+                const requestId = crypto.randomUUID();
+                const controlEnvelope = seal(actionId, selected.controller.machineId, controlInput, requestId);
+                const issued = await instance.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                    headers: { authorization: `Bearer ${selected.token}` }, payload: { v: 1,
+                        machineId: selected.controller.machineId, envelope: controlEnvelope } });
+                expect(issued.statusCode, issued.body).toBe(200);
+                const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+                const path = '/v1/machines/managed/controller/admit-control';
+                const body = { action: actionId, requestId, input: controlInput };
+                const controlled = await instance.inject({ method: 'POST', url: path, payload: body,
+                    headers: createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId: actionId,
+                        target: authorization.binding.target, installationId: selected.controller.installationId,
+                        privateKey: selected.keys.secretKey, method: 'POST', path, body }) });
+                expect(controlled.statusCode, controlled.body).toBe(200);
+                const retained = await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
+                const target = { homeId, managedId: row.id, expectedRevision: retained.intentRevision, controller: selected.controller };
+                const current = await inTx(tx => readCurrentManagedGuestActivityInTx(tx, authorization.binding, guestId, target));
+                expect(current).toMatchObject({ machineId: guestId, installationId: guestInstallationId, encryptionMode: mode });
+                expect(await inTx(tx => readCurrentManagedGuestActivityInTx(tx, authorization.binding,
+                    selected.controller.machineId, target))).toBeNull();
+            } else if (phase === 'wake') {
+                const finiteEnvelope = seal('projects.script.run', guestId, { script: 'echo ready' });
+                const finite = await instance.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1('projects.script.run'),
+                    headers: { authorization: `Bearer ${selected.token}` }, payload: { v: 1, machineId: guestId, envelope: finiteEnvelope } });
+                expect(finite.statusCode, finite.body).toBe(200);
+                const origin = ExternalActionExecutionAuthorizationV1Schema.parse(finite.json());
+                const target = await inTx(tx => resolveManagedWakeTargetInTx(tx, { actorAccountId: selected.account.id,
+                    machineId: guestId, origin: { kind: 'finite-command', actionRequestId: origin.binding.requestId }, finiteActionId: origin.binding.actionId }));
+                // Check the later natural boundary independently so a discovery
+                // refusal cannot hide a second plaintext-resource dependency.
+                const retainedTarget = { homeId, managedId: row.id, enrolledMachineId: guestId, expectedIntentRevision: 0,
+                    controller: selected.controller, reason: 'admitted-work' as const,
+                    origin: { kind: 'finite-command' as const, actionRequestId: origin.binding.requestId } };
+                const current = await inTx(tx => assertManagedWakeOriginCurrentInTx(tx, { row, target: retainedTarget, actionOrigin: origin }))
+                    .then(() => 'current', error => error.code);
+                expect.soft(target).toMatchObject({ managedId: row.id, enrolledMachineId: guestId });
+                expect(current).toBe('current');
+                await expect(inTx(tx => assertManagedWakeOriginCurrentInTx(tx, { row,
+                    target: { ...retainedTarget, enrolledMachineId: selected.controller.machineId }, actionOrigin: origin })))
+                    .rejects.toMatchObject({ code: 'admission_unavailable' });
+            } else {
+                const admitted = await inTx(tx => resolveManagedGuestActivityAdmissionInTx(tx, { actorAccountId: selected.account.id,
+                    machineId: guestId, rpcMethod: MANAGED_ACTIVITY_READ_RPC_METHOD,
+                    target: { homeId, managedId: row.id, expectedRevision: 0, controller: selected.controller } }));
+                expect(admitted).toMatchObject({ kind: 'admitted', machineId: guestId, custodianAccountId: selected.account.id });
+                expect(await inTx(tx => resolveManagedGuestActivityAdmissionInTx(tx, { actorAccountId: selected.account.id,
+                    machineId: selected.controller.machineId, rpcMethod: MANAGED_ACTIVITY_READ_RPC_METHOD,
+                    target: { homeId, managedId: row.id, expectedRevision: 0, controller: selected.controller } }))).toBeNull();
+            }
         } finally { await instance.close(); }
     });
 

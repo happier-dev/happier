@@ -3,6 +3,17 @@ import { MachineSetupApplyInputV1Schema, MachineSetupPlanResultV1Schema, type Ma
 import { matchesMachineSetupCreationSourcesV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { projectManagedOpaqueSetupSourcesV1 } from './setupSources.js';
+
+/** The creation's opened recipe stays local; Actions carry only its captured address. */
+export function projectManagedMachineSetupCreationSourcesV1(creation:
+  Parameters<typeof matchesMachineSetupCreationSourcesV1>[1]): MachineSetupSourceApplyV1 {
+  return projectManagedOpaqueSetupSourcesV1([
+    { kind: 'accountPreset', presetId: creation.preset.id, presetRevision: creation.preset.revision,
+      contentEncryptionMode: creation.preset.contentEncryptionMode, setup: creation.setup },
+    { kind: 'direct', setup: {} },
+  ]);
+}
 
 /** Prepare the same reviewed creation operand for signed and local dispatch. */
 export async function prepareManagedMachineSetupApplyInput(input: Readonly<{
@@ -22,15 +33,14 @@ export async function prepareManagedMachineSetupApplyInput(input: Readonly<{
     // address, never its private setup body.
     const localSource = { kind: 'accountPreset' as const, presetId: preset.id, presetRevision: preset.revision,
       contentEncryptionMode: preset.contentEncryptionMode, setup };
-    const opaqueSource = { kind: 'accountPresetOpaque' as const, presetId: preset.id, presetRevision: preset.revision,
-      contentEncryptionMode: preset.contentEncryptionMode };
+    const sources = projectManagedMachineSetupCreationSourcesV1(input.creation);
+    const opaqueSource = sources[0]!;
     const direct = current.data.sources.find(copy => copy.kind === 'direct');
     // A creation proof cannot absorb unrelated current setup intent.
     if (!direct || current.data.sources.some(copy => copy.kind !== 'direct'
         && !sameStrictJsonValue(copy, opaqueSource)))
         return fail('plan_changed');
     if (!matchesMachineSetupCreationSourcesV1([localSource, direct], input.creation)) return fail('plan_changed');
-    const sources: MachineSetupSourceApplyV1 = [opaqueSource, direct];
 
     const effects = await input.readPlan({ ...input.target, sources, mode: 'effects' });
     if (!effects.ok) return effects;

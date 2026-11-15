@@ -29,7 +29,7 @@ import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketH
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import { ManagedAcquireInputV1Schema, MachineSetupApplyInputV1Schema, readMachineSetupPlanChildInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAcquireInputV1Schema, MachineSetupApplyInputV1Schema, MachineSetupPlanResultV1Schema, readMachineSetupPlanChildInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
@@ -60,7 +60,7 @@ import { sealManagedMachinePresetContentV1, projectManagedMachinePresetForRecipi
     createManagedMachinePresetAcquireOverrideV1, openManagedMachinePresetContentV1,
     replaceManagedMachinePresetLaunchNameV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
-import { hydrateManagedOpaquePresetMachineV1, applyManagedMachineEnrollmentRoles } from '@happier-dev/cli-common/machines/managed';
+import { hydrateManagedOpaquePresetMachineV1, applyManagedMachineEnrollmentRoles, prepareManagedMachineSetupApplyInput, projectManagedOpaqueSetupSourcesV1 } from '@happier-dev/cli-common/machines/managed';
 import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
 import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
 
@@ -882,13 +882,19 @@ describe('managed continuation through the ordinary public Action transport', ()
     });
 
     it('seals setup for the exact joined guest using the existing creation proof without Session admission', async () => {
-        const sources = [
-            { kind: 'accountPreset' as const, presetId: 'preset', presetRevision: 4,
-                setup: { scripts: [{ body: '\r\necho retained\r\n', affects: 'none' as const }],  } },
-            { kind: 'direct' as const, setup: {} },
-        ];
-        const setup = MachineSetupApplyInputV1Schema.parse({ homeId: 'srv_home', machineId: 'guest',
-            targets: [{ homeId: 'srv_home', machineId: 'guest', sources, desiredRevision: 3, recipePlans: [] }] });
+        const retainedCreationSetup = { preset: { id: 'preset', revision: 4, contentEncryptionMode: 'e2ee' as const },
+            setup: { scripts: [{ body: '\r\necho retained\r\n', affects: 'none' as const }] } };
+        const plan = MachineSetupPlanResultV1Schema.parse({ desiredRevision: 3,
+            sources: projectManagedOpaqueSetupSourcesV1([{ kind: 'accountPreset', presetId: 'preset', presetRevision: 4,
+                contentEncryptionMode: 'e2ee', setup: retainedCreationSetup.setup }, { kind: 'direct', setup: {} }]),
+            exclusions: [], support: [], recipePlans: [] });
+        const setup = await prepareManagedMachineSetupApplyInput({ target: { homeId: 'srv_home', machineId: 'guest' },
+            creation: retainedCreationSetup,
+            // Plan is a daemon transport response; the shared producer stays real.
+            readPlan: async () => ({ ok: true, result: plan }) });
+        if ('ok' in setup) throw new Error(`Setup preparation failed: ${setup.errorCode}`);
+        const sources = setup.targets[0]!.sources;
+        expect(JSON.stringify(sources)).not.toContain('echo retained');
         const effectsInput = { homeId: 'srv_home', machineId: 'guest', sources: setup.targets[0]!.sources, mode: 'effects' as const };
         let opened: unknown;
         const actions: string[] = [];
@@ -918,7 +924,6 @@ describe('managed continuation through the ordinary public Action transport', ()
             serverHttpBaseUrl: 'https://home.example', installationId: 'installation', privateKey: keyPair.secretKey, material };
         expect(await dispatchManagedMachineSetupPlan({ ...dispatch, input: { homeId: 'srv_home', machineId: 'guest' } }))
             .toMatchObject({ ok: true, result: { desiredRevision: 3 } });
-        const retainedCreationSetup = { preset: { id: 'preset', revision: 4 }, setup: sources[0]!.setup };
         const effectsDispatch = { ...dispatch, input: effectsInput, retainedCreationSetup };
         expect(await dispatchManagedMachineSetupPlan(effectsDispatch)).toMatchObject({ ok: true, result: { recipePlans: [] } });
         expect(await dispatchManagedMachineSetup({ ...dispatch, input: setup }))
@@ -927,7 +932,7 @@ describe('managed continuation through the ordinary public Action transport', ()
         expect(actions).toEqual(['machines.setup.plan', 'machines.setup.plan', 'machines.setup.apply']);
         expect(await dispatchManagedMachineSetupPlan({ ...dispatch, input: { ...effectsInput, mode: 'check' } })).toMatchObject({ ok: false });
         expect(await dispatchManagedMachineSetupPlan({ ...effectsDispatch, input: { ...effectsInput, sources: [
-            { ...sources[0]!, setup: { scripts: [{ body: 'echo unreviewed' }] } }, sources[1]!,
+            { ...sources[0]!, presetRevision: 5 }, sources[1]!,
         ] } })).toMatchObject({ ok: false });
         expect(actions).toHaveLength(3);
     });
