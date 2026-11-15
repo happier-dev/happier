@@ -4,7 +4,8 @@ import {
   applyMachineLiveStreamDropPolicy,
   createMachineLiveStreamMeter,
 } from './metering';
-import type { MachineLiveStreamFrameV1, MachineLiveStreamWireFrameV1 } from './v1';
+import { MachineLiveStreamFrameV1Schema, MachineLiveStreamWireFrameV1Schema,
+  type MachineLiveStreamFrameV1, type MachineLiveStreamWireFrameV1 } from './v1';
 
 function frame(
   sequence: number,
@@ -25,6 +26,19 @@ function frame(
 }
 
 describe('machine live-stream metering', () => {
+  it('measures a recorded payload once while accounting its actual bytes', () => {
+    const meter = createMachineLiveStreamMeter({ caps: { maxTotalBytes: 6 }, startedAtMs: 1_000 });
+    let payloadReads = 0;
+    const picture = { ...frame(1, 'image_keyframe', 3), get payloadBase64() {
+      payloadReads += 1;
+      return 'AQID';
+    } };
+    expect(meter.recordFrame(picture, 1_000)).toMatchObject({ ok: true, metering: { bytesSent: 3, framesSent: 1 } });
+    expect(payloadReads).toBe(1);
+    expect(meter.recordFrame(frame(2, 'image_delta', 4), 1_000)).toMatchObject({
+      ok: false, reasonCode: 'max_total_bytes_exceeded', metering: { bytesSent: 3, framesSent: 1 },
+    });
+  });
   it('retains a metadata burst outside the image queue count while enforcing its byte budget', () => {
     const frames = [frame(1, 'metadata', 3), frame(2, 'metadata', 3), frame(3, 'metadata', 3)];
     expect(applyMachineLiveStreamDropPolicy({ frames, maxWindowFrames: 1, maxWindowBytes: 9 })).toMatchObject({
@@ -88,6 +102,24 @@ describe('machine live-stream metering', () => {
       expect(result.bytesDropped).toBe(3);
       expect(result.requiresKeyframeResync).toBe(true);
     }
+  });
+
+  it('uses validated sizes for a mixed queue without rereading decoded, plain or encrypted payloads', () => {
+    const decoded = MachineLiveStreamFrameV1Schema.parse(frame(1, 'metadata', 3));
+    const { payloadBase64: _decoded, ...header } = frame(2, 'metadata', 3);
+    const plain = MachineLiveStreamWireFrameV1Schema.parse({ ...header, payload: { t: 'plain', v: 'AQID' } });
+    const encrypted = MachineLiveStreamWireFrameV1Schema.parse({ ...header, sequence: 3,
+      payload: { t: 'encrypted', c: 'AQID' } });
+    let payloadReads = 0;
+    const frames: Array<MachineLiveStreamFrameV1 | MachineLiveStreamWireFrameV1> = [
+      { ...decoded, get payloadBase64() { payloadReads += 1; return decoded.payloadBase64; } },
+      { ...plain, get payload() { payloadReads += 1; return plain.payload; } },
+      { ...encrypted, get payload() { payloadReads += 1; return encrypted.payload; } },
+    ];
+    const result = applyMachineLiveStreamDropPolicy({ frames, maxWindowFrames: 1, maxWindowBytes: 6 });
+    expect(result.frames.map(value => value.sequence)).toEqual([2, 3]);
+    expect(result).toMatchObject({ framesDropped: 1, bytesDropped: 3, requiresKeyframeResync: false });
+    expect(payloadReads).toBe(0);
   });
 
   it('meters source-driven capture without imposing implicit caps', () => {

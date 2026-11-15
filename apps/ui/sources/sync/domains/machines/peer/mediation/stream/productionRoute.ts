@@ -27,8 +27,6 @@ import { readRegisteredStorageState } from '@/sync/domains/state/storageStateRea
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 
 
-const SERVER_FEATURES_TIMEOUT_MS = 5_000;
-
 export type ProductionMachineLiveStreamStartResult =
     | Readonly<{
         ok: true;
@@ -49,7 +47,7 @@ async function resolveServerFeatures(input: Readonly<{
 }>): Promise<FeaturesResponse | null> {
     return await getReadyServerFeatures({
         serverId: input.serverId,
-        timeoutMs: input.timeoutMs ?? SERVER_FEATURES_TIMEOUT_MS,
+        timeoutMs: input.timeoutMs,
         signal: input.signal,
     }).catch(() => null);
 }

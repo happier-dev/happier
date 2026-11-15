@@ -10,7 +10,7 @@ import {
   BrowserDiagnosticFamilyV1Schema,
   BrowserDiagnosticFidelityV1Schema,
 } from '../../../browser/diagnostics/v1.js';
-import { BROWSER_CONTEXT_SELECTION_MAX_CHARS, BROWSER_CONTEXT_SUMMARY_MAX_CHARS, BrowserContextKindV1Schema } from '../../../browser/context/v1.js';
+import { BrowserContextKindV1Schema } from '../../../browser/context/v1.js';
 import { BrowserPermissionKindV1Schema } from '../../../browser/permissions/v1.js';
 import {
   BrowserRecordingCaptureKindV1Schema,
@@ -119,8 +119,8 @@ export const BrowserContextScreenshotCapabilitiesSchema = lazyZodSchema(() => z.
 export type BrowserContextScreenshotCapabilities = z.infer<typeof BrowserContextScreenshotCapabilitiesSchema>;
 
 export const BrowserContextTextCapabilitiesSchema = lazyZodSchema(() => z.object({
-    maxSelectionChars: z._default(z.optional(z.number().check(z.int(), z.positive())), BROWSER_CONTEXT_SELECTION_MAX_CHARS),
-    maxSummaryChars: z._default(z.optional(z.number().check(z.int(), z.positive())), BROWSER_CONTEXT_SUMMARY_MAX_CHARS),
+    maxSelectionChars: z.optional(z.number().check(z.int(), z.positive())),
+    maxSummaryChars: z.optional(z.number().check(z.int(), z.positive())),
   }));
 export type BrowserContextTextCapabilities = z.infer<typeof BrowserContextTextCapabilitiesSchema>;
 
@@ -129,10 +129,7 @@ export const DEFAULT_BROWSER_CONTEXT_SCREENSHOT_CAPABILITIES: BrowserContextScre
   requiresAttachmentUploads: true,
 };
 
-export const DEFAULT_BROWSER_CONTEXT_TEXT_CAPABILITIES: BrowserContextTextCapabilities = {
-  maxSelectionChars: BROWSER_CONTEXT_SELECTION_MAX_CHARS,
-  maxSummaryChars: BROWSER_CONTEXT_SUMMARY_MAX_CHARS,
-};
+export const DEFAULT_BROWSER_CONTEXT_TEXT_CAPABILITIES: BrowserContextTextCapabilities = {};
 
 export const BrowserContextCapabilitiesSchema = lazyZodSchema(() => z.object({
     enabled: z._default(z.optional(z.boolean()), false),
@@ -183,7 +180,7 @@ export const DEFAULT_BROWSER_AUTOMATION_TIMELINE_CAPABILITIES: BrowserAutomation
 export const BrowserAutomationInjectedPageCapabilitiesSchema = lazyZodSchema(() => z.object({
     enabled: z._default(z.optional(z.boolean()), false),
     available: z._default(z.optional(z.boolean()), false),
-    capabilityVersion: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(64))),
+    capabilityVersion: z.optional(z.string().check(z.trim(), z.minLength(1))),
     disabledReasons: z._default(z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))), []),
   }));
 export type BrowserAutomationInjectedPageCapabilities = z.infer<
@@ -243,7 +240,7 @@ export const BrowserRecordingCapabilitiesSchema = lazyZodSchema(() => z.object({
     attachmentsEnabled: z._default(z.optional(z.boolean()), false),
     available: z._default(z.optional(z.boolean()), false),
     supportedCaptureKinds: z._default(z.optional(z.array(BrowserRecordingCaptureKindV1Schema)), []),
-    supportedMimeTypes: z._default(z.optional(z.array(z.string().check(z.trim(), z.minLength(1), z.maxLength(128)))), []),
+    supportedMimeTypes: z._default(z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))), []),
     supportedAdapterKinds: z._default(z.optional(z.array(BrowserSemanticAdapterKindV1Schema)), []),
     maxFps: z._default(z.optional(z.number().check(z.positive())), 12),
     audioSupported: z._default(z.optional(z.boolean()), false),

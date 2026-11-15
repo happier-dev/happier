@@ -23,6 +23,7 @@ describe('browser capabilities payload', () => {
       expect(result.data.diagnostics.bodyCapture).toBe('unavailable');
       expect(result.data.context.enabled).toBe(false);
       expect(result.data.context.supportedContextKinds).toEqual([]);
+      expect(result.data.context.text).toEqual({});
       expect(result.data.automation.enabled).toBe(false);
       expect(result.data.automation.injectedPage.available).toBe(false);
       expect(result.data.automation.eval.enabled).toBe(false);
@@ -127,6 +128,7 @@ describe('browser capabilities payload', () => {
 
   it('parses automation details as capability facts, not feature gates', async () => {
     const mod = await loadBrowserCapabilitiesModule();
+    const capabilityVersion = `1.0.0-private.${'build'.repeat(20)}`;
 
     const result = mod?.BrowserCapabilitiesSchema.safeParse({
       automation: {
@@ -143,7 +145,7 @@ describe('browser capabilities payload', () => {
         injectedPage: {
           enabled: true,
           available: true,
-          capabilityVersion: '1.0.0',
+          capabilityVersion,
         },
         eval: {
           enabled: false,
@@ -156,9 +158,27 @@ describe('browser capabilities payload', () => {
     expect(result?.success).toBe(true);
     if (result?.success) {
       expect(result.data.automation.supportedActions).toEqual(['snapshot', 'click', 'type', 'waitFor']);
-      expect(result.data.automation.injectedPage.capabilityVersion).toBe('1.0.0');
+      expect(result.data.automation.injectedPage.capabilityVersion).toBe(capabilityVersion);
       expect(result.data.automation.eval.requiresDiagnosticsInteraction).toBe(true);
     }
+  });
+
+  it('retains normalized recording MIME types longer than 128 characters', () => {
+    // RFC 6838 §4.2 allows a subtype up to 127 characters; this vendor subtype has 124.
+    const mimeType = `application/vnd.${'a'.repeat(120)}`;
+    const parsed = browserCapabilitiesModule.BrowserCapabilitiesSchema.parse({
+      recording: { supportedMimeTypes: [`  ${mimeType}  `, 'video/webm'] },
+    });
+
+    expect(parsed.recording.supportedMimeTypes).toEqual([mimeType, 'video/webm']);
+  });
+
+  it('rejects an empty recording MIME type after trimming', () => {
+    const parsed = browserCapabilitiesModule.BrowserRecordingCapabilitiesSchema.safeParse({
+      supportedMimeTypes: [' \n\t '],
+    });
+
+    expect(parsed.success).toBe(false);
   });
 
   it('parses recording details as fail-closed capabilities, not gates or transport bytes', async () => {

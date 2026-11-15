@@ -30,8 +30,10 @@ export function createComputerRecording(input: Readonly<{
   machineId: string; registry: MachineLiveStreamCaptureRegistry; options?: ComputerRecordingOptions;
 }>) {
   const workingDirectory = input.options?.workingDirectory ?? configuration.happyHomeDir;
-  const controlFor = (recording: { sourceId: string }) => input.registry.list()
-    .find(entry => entry.sourceId === recording.sourceId)?.computer?.inputControl;
+  const controlFor = (recording: { sourceId: string }) => {
+    const resolved = input.registry.resolve({ sourceId: recording.sourceId });
+    return resolved.ok ? resolved.source.computer?.inputControl : undefined;
+  };
   const writer = createBrowserRecordingSessionMediaWriter<ComputerRecordingSessionV1>({
     workingDirectory, pathAllowanceRegistry: createTransferPathAllowanceRegistry(),
     resolveSessionMediaTarget: recording => recording.mediaTarget,
@@ -74,17 +76,21 @@ export function createComputerRecording(input: Readonly<{
       if (request.mediaTarget.sessionId !== source.sourceIdentity.sessionId) {
         return { ok: false, errorCode: 'computer_session_mismatch', error: 'computer_session_mismatch' } as const;
       }
+      const resolved = input.registry.resolve({ sourceId: source.sourceId });
+      // Use the producer's advertised cadence, or the shared output target when unspecified.
+      const maxFps = (resolved.ok ? resolved.source.capabilities.maxFramesPerSecond : undefined)
+        ?? DEFAULT_BROWSER_RECORDING_CAPABILITIES.maxFps;
       return service.startRecording({ machineId: input.machineId, sourceId: source.sourceId,
         sourceIdentity: source.sourceIdentity, desktopKey: source.desktopKey, target: source.target, mediaTarget: request.mediaTarget,
         captureKind: 'streamFrameCapture', captureSource: { kind: 'machineLiveStream', streamFamily: 'screen', sourceId: source.sourceId },
-        recordingCapabilities: DEFAULT_BROWSER_RECORDING_CAPABILITIES, mimeType: 'video/webm', retentionClass: request.retentionClass }, context);
+        recordingCapabilities: { maxFps }, mimeType: 'video/webm', retentionClass: request.retentionClass }, context);
     },
     async dispatch(actionId: ComputerRecordingActionIdV1, request: ComputerRecordingActionInput, sourceIdentity: ComputerSourceIdentityV1, desktopKey?: string) {
       const sourceId = request.sourceId;
       if (!sourceId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' } as const;
-      const records = service.listRecordingsForView({ sourceId }).filter(recording => belongsTo(recording, sourceIdentity, sourceId, desktopKey));
-      if (actionId === ids.list) return records;
-      if (actionId === ids.cleanupExpired) {
+      if (actionId === ids.list || actionId === ids.cleanupExpired) {
+        const records = service.listRecordingsForView({ sourceId }).filter(recording => belongsTo(recording, sourceIdentity, sourceId, desktopKey));
+        if (actionId === ids.list) return records;
         if (!records.length) return { discardedRecordingIds: [], failedRecordingIds: [] };
         return service.cleanupExpiredRecordings({ nowMs: Date.now(), target: { sourceId } });
       }

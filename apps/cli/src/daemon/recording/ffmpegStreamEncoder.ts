@@ -50,22 +50,6 @@ function defaultSpawnFfmpeg(
   return child as BrowserRecordingFfmpegProcess;
 }
 
-function sanitizeRecordingIdSegment(value: string): string {
-  const sanitized = value.replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '');
-  return sanitized.length > 0 ? sanitized.slice(0, 72) : 'recording';
-}
-
-function buildOutputPath(input: Readonly<{
-  outputDirectory: string;
-  recordingId: string;
-  randomId: string;
-}>): string {
-  return join(
-    input.outputDirectory,
-    `${sanitizeRecordingIdSegment(input.recordingId)}-${sanitizeRecordingIdSegment(input.randomId)}.webm`,
-  );
-}
-
 function buildFfmpegArgs(input: Readonly<{
   fps: number;
   outputPath: string;
@@ -105,8 +89,8 @@ function killFfmpeg(child: BrowserRecordingFfmpegProcess): void {
   }
 }
 
-function createGenericFailure(): Error {
-  return new Error(ENCODER_FAILED_MESSAGE);
+function createGenericFailure(cause?: unknown): Error {
+  return new Error(ENCODER_FAILED_MESSAGE, { cause });
 }
 
 type FfmpegEncoderState = {
@@ -122,6 +106,8 @@ class FfmpegBrowserRecordingStreamFrameEncoder implements BrowserRecordingStream
     discarded: false,
   };
   private readonly closePromise: Promise<void>;
+  private childPhase: 'running' | 'stopping' | 'closed' = 'running';
+  private discardPromise: Promise<void> | null = null;
   private writtenFrames = 0;
   private lastFrame: Buffer | null = null;
   private pendingFrame: Readonly<{ index: number; payload: Buffer }> | null = null;
@@ -136,24 +122,17 @@ class FfmpegBrowserRecordingStreamFrameEncoder implements BrowserRecordingStream
   ) {
     this.ready = new Promise<void>((resolve, reject) => {
       child.once('spawn', resolve);
-      child.once('error', () => reject(createGenericFailure()));
+      child.once('error', error => reject(this.fail(error)));
     });
-    this.closePromise = new Promise<void>((resolve, reject) => {
-      child.once('error', () => {
-        const failure = this.fail();
-        reject(failure);
-      });
+    this.closePromise = new Promise<void>(resolve => {
       child.once('close', (code) => {
-        if (code === 0) {
-          resolve();
-          return;
-        }
-        const failure = this.fail();
-        reject(failure);
+        this.childPhase = 'closed';
+        if (code !== 0) this.fail();
+        resolve();
       });
     });
-    void this.closePromise.catch(() => undefined);
-    child.stdin.on('error', () => { this.fail(); });
+    child.once('error', error => { this.fail(error); this.stopChild(); });
+    child.stdin.on('error', error => { this.fail(error); this.stopChild(); });
   }
 
   appendFrame(input: Parameters<BrowserRecordingStreamFrameEncoder['appendFrame']>[0]): false | void {
@@ -178,9 +157,9 @@ class FfmpegBrowserRecordingStreamFrameEncoder implements BrowserRecordingStream
       if (index < this.writtenFrames) return false;
       this.pendingFrame = { index, payload: input.payload };
       this.flushPendingFrame();
-    } catch {
-      const failure = this.fail();
-      killFfmpeg(this.child);
+    } catch (error) {
+      const failure = this.fail(error);
+      this.stopChild();
       throw failure;
     }
   }
@@ -193,14 +172,8 @@ class FfmpegBrowserRecordingStreamFrameEncoder implements BrowserRecordingStream
       throw new Error('Browser recording ffmpeg encoder has already finished.');
     }
     this.state.finished = true;
-    if (input.frameCount <= 0) {
-      const failure = this.fail();
-      killFfmpeg(this.child);
-      await this.removeOutput();
-      throw failure;
-    }
-
     try {
+      if (input.frameCount <= 0) throw this.fail();
       const targetFrames = Math.max(1, Math.ceil(input.durationMs * this.fps / 1_000));
       while (this.pendingFrame || this.writtenFrames < targetFrames) {
         if (this.state.failure || this.child.stdin.destroyed) throw createGenericFailure();
@@ -237,9 +210,10 @@ class FfmpegBrowserRecordingStreamFrameEncoder implements BrowserRecordingStream
           await this.removeOutput();
         },
       };
-    } catch {
-      const failure = this.fail();
-      await this.removeOutput();
+    } catch (error) {
+      const failure = this.fail(error);
+      // Cleanup failure must not replace the encoder's original failure.
+      await this.discard({ recording: input.recording, reason: 'capture_failed' }).catch(() => undefined);
       throw failure;
     } finally {
       this.lastFrame = null;
@@ -247,19 +221,29 @@ class FfmpegBrowserRecordingStreamFrameEncoder implements BrowserRecordingStream
     }
   }
 
-  async discard(_input: Parameters<BrowserRecordingStreamFrameEncoder['discard']>[0]): Promise<void> {
-    if (this.state.discarded) return;
+  discard(_input: Parameters<BrowserRecordingStreamFrameEncoder['discard']>[0]): Promise<void> {
+    if (this.discardPromise) return this.discardPromise;
     this.state.discarded = true;
     this.lastFrame = null;
     this.pendingFrame = null;
-    killFfmpeg(this.child);
-    this.child.stdin.destroy();
-    await this.removeOutput();
+    this.discardPromise = (async () => {
+      this.stopChild();
+      await this.closePromise;
+      await this.removeOutput();
+    })();
+    return this.discardPromise;
   }
 
-  private fail(): Error {
+  private stopChild(): void {
+    if (this.childPhase !== 'running') return;
+    this.childPhase = 'stopping';
+    killFfmpeg(this.child);
+    this.child.stdin.destroy();
+  }
+
+  private fail(cause?: unknown): Error {
     if (!this.state.failure) {
-      this.state.failure = createGenericFailure();
+      this.state.failure = createGenericFailure(cause);
     }
     return this.state.failure;
   }
@@ -305,11 +289,9 @@ export function createFfmpegBrowserRecordingStreamFrameEncoderFactory(
       throw new Error(ENCODER_UNAVAILABLE_MESSAGE);
     }
     await mkdir(outputDirectory, { recursive: true });
-    const outputPath = buildOutputPath({
-      outputDirectory,
-      recordingId: recording.recordingId,
-      randomId: randomId(),
-    });
+    // The existing opaque UUID is a portable filename; recording IDs need no filename cutoff.
+    const fileNameHint = `browser-recording-${randomId()}.webm`;
+    const outputPath = join(outputDirectory, fileNameHint);
     const fps = Math.max(1, Math.floor(recording.fps));
     const args = buildFfmpegArgs({
       inputFormat: registeredSource?.capabilities.supportedCodecs.includes('image.frame.v1') ? 'image2pipe' : 'mjpeg',
@@ -324,11 +306,16 @@ export function createFfmpegBrowserRecordingStreamFrameEncoderFactory(
     const encoder = new FfmpegBrowserRecordingStreamFrameEncoder(
       child,
       outputPath,
-      `browser-recording-${sanitizeRecordingIdSegment(recording.recordingId)}.webm`,
+      fileNameHint,
       recording.startedAtMs,
       fps,
     );
-    await encoder.ready;
+    try {
+      await encoder.ready;
+    } catch (error) {
+      await encoder.discard({ recording, reason: 'capture_failed' }).catch(() => undefined);
+      throw error;
+    }
     return encoder;
   };
 }

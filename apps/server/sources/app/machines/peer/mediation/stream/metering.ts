@@ -9,7 +9,7 @@ export function applyMachineLiveStreamRelayBackpressure(input: Readonly<{
     frames: readonly MachineLiveStreamFrameV1[];
     maxWindowFrames: number;
     maxWindowBytes: number;
-    capIntervalExceeded: boolean;
+    reportPressure: boolean;
 }>): Readonly<{
     frames: readonly MachineLiveStreamFrameV1[];
     framesDropped: number;
@@ -28,7 +28,7 @@ export function applyMachineLiveStreamRelayBackpressure(input: Readonly<{
         framesDropped: dropped.framesDropped,
         bytesDropped: dropped.bytesDropped,
         requiresKeyframeResync: dropped.requiresKeyframeResync,
-        receipt: input.capIntervalExceeded && dropped.framesDropped > 0
+        receipt: input.reportPressure && dropped.framesDropped > 0
             ? {
                 v: 1,
                 id: PEER_MEDIATION_RECEIPTS.streamBandwidthCapped,

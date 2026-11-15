@@ -6,6 +6,17 @@ const view = { browserSessionId: 'browser_session_1', viewId: 'view_1' } as cons
 const otherView = { browserSessionId: 'browser_session_1', viewId: 'view_2' } as const;
 
 describe('browser automation owner registry', () => {
+  it('keeps accepted observation activity in the idle lifetime without a controller transition', () => {
+    let now = 100;
+    const registry = createBrowserAutomationOwnerRegistry({ now: () => now });
+    const control = registry.getInputControl(view);
+    now = 200;
+    expect(control.observe(0)).toBe(true);
+    expect(registry.readSessionIdle(view.browserSessionId)).toEqual({ idle: true, settledAt: 200 });
+    now = 300;
+    expect(control.observe(0)).toBe(true);
+    expect(registry.readSessionIdle(view.browserSessionId)).toEqual({ idle: true, settledAt: 300 });
+  });
   it('proves session idle only after input settles and no controller or observation hold remains', async () => {
     let now = 100;
     const registry = createBrowserAutomationOwnerRegistry({ now: () => now });

@@ -167,15 +167,6 @@ export function createBrowserRecordingStreamFrameCaptureAdapter<R extends Record
           ),
         };
       }
-      if (resolved.source.streamFamily !== captureSource.streamFamily) {
-        return {
-          status: 'unavailable',
-          reason: unavailable(
-            'browser_recording_capture_unavailable',
-            'Machine live-stream capture source does not match the requested stream family.',
-          ),
-        };
-      }
       if (resolved.source.capabilities.health.status !== 'available') {
         return {
           status: 'unavailable',

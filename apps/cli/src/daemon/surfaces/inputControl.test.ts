@@ -3,6 +3,25 @@ import { describe, expect, it } from 'vitest';
 import { createSurfaceInputControl, type SurfaceInputCompletion } from './inputControl';
 
 describe('surface input control', () => {
+  it('publishes only public control transitions, preserving effect and uncertainty changes', async () => {
+    const statuses: ReturnType<ReturnType<typeof createSurfaceInputControl>['getStatus']>[] = [];
+    const control = createSurfaceInputControl({ onStatusChange: () => statuses.push(control.getStatus()) });
+    control.observe(0);
+    control.observe(0);
+    expect(statuses).toHaveLength(0);
+    await control.takeOver();
+    await control.takeOver();
+    expect(statuses).toHaveLength(1);
+    control.handBack();
+    control.handBack();
+    expect(statuses).toHaveLength(2);
+    control.observe(control.getStatus().controlEpoch);
+    await control.execute({ requestedBy: 'agent', effect: async () => undefined, classifyCompletion: () => 'unknown' });
+    expect(statuses.slice(-2)).toMatchObject([{ controller: 'agent', uncertain: false }, { controller: 'idle', uncertain: true }]);
+    await control.takeOver();
+    control.observe(control.getStatus().controlEpoch);
+    expect(statuses.at(-1)).toMatchObject({ controller: 'human', uncertain: false });
+  });
   it('admits observation-independent effects without clearing observation or bypassing human recovery and confidentiality', async () => {
     const control = createSurfaceInputControl({ requireObservation: true });
     const input = { requestedBy: 'agent', requiresObservation: false,

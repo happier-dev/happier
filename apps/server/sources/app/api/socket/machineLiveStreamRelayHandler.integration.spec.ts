@@ -585,7 +585,7 @@ describe('machineLiveStreamRelayHandler', () => {
     expect(delivered).toEqual([{ room: getMachineInstallationSocketRoom('user-1', 'machine-source', TEST_MACHINE_INSTALLATION_ID), payload: zeroWindow }]);
   });
 
-  it('preserves the initial keyframe while start admission awaits viewer ownership', async () => {
+  it('preserves frame, ACK and stop order while start admission awaits viewer ownership', async () => {
     const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
     const delivered: Array<{ room: string; payload: unknown }> = [];
     const socket = createFakeSocket({ emit: vi.fn(), id: 'source-socket' });
@@ -593,22 +593,77 @@ describe('machineLiveStreamRelayHandler', () => {
  machineId: 'machine-source' };
     let releaseOwnership!: (owned: boolean) => void;
     const ownership = new Promise<boolean>((resolve) => { releaseOwnership = resolve; });
-    machineLiveStreamRelayHandler('user-1', socket as unknown as LiveStreamRelaySocket, {
+    const viewer = createFakeSocket({ id: 'viewer-socket-1' });
+    viewer.data = { clientType: 'user-scoped' };
+    const ctx = {
       io: { to: (room: string) => ({ emit: (_event: string, payload: unknown) => delivered.push({ room, payload }) }) },
-      resolveAccountEncryptionMode: async () => 'plain',
+      resolveAccountEncryptionMode: async (): Promise<'plain'> => 'plain',
       serverRoutedLiveStreamEnabled: true, relayCaps, relayAuthorizationTrustRoots,
       verifyViewerSocketOwnership: () => ownership, nowMs: () => 1_000,
-    });
+    };
+    machineLiveStreamRelayHandler('user-1', socket as unknown as LiveStreamRelaySocket, ctx);
+    machineLiveStreamRelayHandler('user-1', viewer as unknown as LiveStreamRelaySocket, ctx);
     const handler = getSocketHandler(socket, MACHINE_LIVE_STREAM_SOCKET_EVENT);
     const start = handler(viewerStartMessage('viewer-socket-1'));
     const firstFrame = handler({ v: 1, sourceMachineId: 'machine-source', targetMachineId: 'machine-target',
       message: { kind: 'frame', frame: frame({ sequence: 9 }) },
     });
+    const consume = getSocketHandler(viewer, MACHINE_LIVE_STREAM_SOCKET_EVENT);
+    const envelope = { v: 1, sourceMachineId: 'machine-source', targetMachineId: 'machine-target', viewerSocketId: viewer.id };
+    const ack = consume({ ...envelope,
+      message: { kind: 'control', control: { v: 1, streamId: 'stream_1', kind: 'ack', nextSequence: 10 } },
+    });
+    const stop = consume({ ...envelope,
+      message: { kind: 'control', control: { v: 1, streamId: 'stream_1', kind: 'stop' } },
+    });
+    expect(delivered).toEqual([]);
     releaseOwnership(true);
-    await Promise.all([start, firstFrame]);
+    await Promise.all([start, firstFrame, ack, stop]);
     expect(delivered).toContainEqual({ room: 'viewer-socket-1', payload: expect.objectContaining({ message: {
       kind: 'frame', frame: expect.objectContaining({ sequence: 9 }),
     } }) });
+    expect(delivered.flatMap(({ payload }) => {
+      const message = MachineLiveStreamRelayEnvelopeV1Schema.parse(payload).message;
+      if (message.kind === 'frame') return ['frame'];
+      if (message.kind === 'control' && (message.control.kind === 'ack' || message.control.kind === 'stop')) return [message.control.kind];
+      return [];
+    })).toEqual(['frame', 'ack', 'stop']);
+    expect(viewer.emit).not.toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.anything());
+  });
+
+  it('forwards admitted arrivals without a serial admission microtask and applies renewal before the next frame', async () => {
+    const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
+    const emit = vi.fn();
+    const source = createFakeSocket({ id: 'inline-source' });
+    source.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+      machineId: 'machine-source' };
+    const viewer = createFakeSocket({ id: 'viewer-socket-1' });
+    viewer.data = { clientType: 'user-scoped' };
+    let nowMs = 1_000;
+    const caps = { maxTotalBytes: 1_000 };
+    const ctx = { io: { to: () => ({ emit }) },
+      resolveAccountEncryptionMode: async (): Promise<'plain'> => 'plain',
+      serverRoutedLiveStreamEnabled: true, relayCaps: { ...relayCaps, ...caps }, relayAuthorizationTrustRoots,
+      verifyViewerSocketOwnership: verifyUserOneViewerSocketOwnership, nowMs: () => nowMs };
+    machineLiveStreamRelayHandler('user-1', source as unknown as LiveStreamRelaySocket, ctx);
+    machineLiveStreamRelayHandler('user-1', viewer as unknown as LiveStreamRelaySocket, ctx);
+    const produce = getSocketHandler(source, MACHINE_LIVE_STREAM_SOCKET_EVENT);
+    const consume = getSocketHandler(viewer, MACHINE_LIVE_STREAM_SOCKET_EVENT);
+    await produce(viewerStartMessage(viewer.id, 'stream_1', caps, { exp: 1_500 }));
+    const renewed = viewerStartMessage(viewer.id, 'stream_1', caps, { exp: 3_000 });
+    const operations = [consume({ ...renewed,
+      message: { kind: 'renew', startRequest: renewed.message.startRequest },
+    })];
+    nowMs = 1_600;
+    for (const sequence of [1, 2, 3]) operations.push(produce({
+      v: 1, sourceMachineId: 'machine-source', targetMachineId: 'machine-target',
+      message: { kind: 'frame', frame: frame({ sequence, payloadKind: 'metadata' }) },
+    }));
+    // This counts queued work at the transport effect: already-admitted arrivals
+    // finish before yielding, rather than allocating a serial admission per message.
+    expect(emittedFrames(emit).map(value => value.sequence)).toEqual([1, 2, 3]);
+    await Promise.all(operations);
+    expect(source.emit).not.toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.anything());
   });
 
   it('enforces explicit concurrency limits after the Account mode lookup resolves', async () => {
@@ -958,6 +1013,47 @@ describe('machineLiveStreamRelayHandler', () => {
     expect(sourceEmit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, { type: 'machine-live-stream', error: 'socket_message_bytes_exceeded' });
   });
 
+  it.each([
+    { caps: { maxFramesPerSecond: 1 }, drainAt: 2_000, sequences: [1, 2], failure: null },
+    { caps: { maxDurationMs: 500 }, drainAt: 1_501, sequences: [1], failure: 'max_duration_ms_exceeded' },
+  ])('decides queued delivery budgets at forwarding ($caps)', async ({ caps, drainAt, sequences, failure }) => {
+    const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
+    const delivered: unknown[] = [];
+    const source = createFakeSocket({ emit: vi.fn(), id: 'budget-source' });
+    source.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+      machineId: 'machine-source' };
+    const viewer = createFakeSocket({ emit: vi.fn(), id: 'viewer-socket-1' });
+    viewer.data = { clientType: 'user-scoped' };
+    let nowMs = 1_000;
+    const ctx = {
+      io: { to: () => ({ emit: (_event: string, payload: unknown) => delivered.push(payload) }) },
+      resolveAccountEncryptionMode: async (): Promise<'plain'> => 'plain',
+      serverRoutedLiveStreamEnabled: true, relayCaps: { ...relayCaps, maxTotalBytes: 100, ...caps },
+      relayAuthorizationTrustRoots, verifyViewerSocketOwnership: verifyUserOneViewerSocketOwnership,
+      relayWindowFrames: 2, relayWindowBytes: 1_000, nowMs: () => nowMs,
+    };
+    machineLiveStreamRelayHandler('user-1', source as unknown as LiveStreamRelaySocket, ctx);
+    machineLiveStreamRelayHandler('user-1', viewer as unknown as LiveStreamRelaySocket, ctx);
+    const produce = getSocketHandler(source, MACHINE_LIVE_STREAM_SOCKET_EVENT);
+    const consume = getSocketHandler(viewer, MACHINE_LIVE_STREAM_SOCKET_EVENT);
+    await produce(viewerStartMessage('viewer-socket-1', 'stream_1', { maxTotalBytes: 100, ...caps }));
+    for (const sequence of [1, 2]) await produce({ v: 1, sourceMachineId: 'machine-source', targetMachineId: 'machine-target',
+      message: { kind: 'frame', frame: frame({ sequence }) },
+    });
+    nowMs = drainAt;
+    await consume({ v: 1, sourceMachineId: 'machine-source', targetMachineId: 'machine-target', viewerSocketId: 'viewer-socket-1',
+      message: { kind: 'control', control: { v: 1, streamId: 'stream_1', kind: 'ack', nextSequence: 2, windowFrames: 1 } },
+    });
+    expect(delivered.flatMap(raw => {
+      const envelope = MachineLiveStreamRelayEnvelopeV1Schema.parse(raw);
+      return envelope.message.kind === 'frame' ? [envelope.message.frame.sequence] : [];
+    })).toEqual(sequences);
+    if (failure) expect(delivered).toContainEqual(expect.objectContaining({ message: {
+      kind: 'control', control: expect.objectContaining({ kind: 'stop', reasonCode: failure }),
+    } }));
+    else expect(source.emit).not.toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.anything());
+  });
+
   it('enforces aggregate relay caps when queued frames drain and stops both endpoints', async () => {
     const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
     const delivered: Array<{ room: string; payload: unknown }> = [];
@@ -999,7 +1095,7 @@ describe('machineLiveStreamRelayHandler', () => {
     } }) });
   });
 
-  it('rejects server-routed live stream by default without leaking frame payloads', async () => {
+  it('requires admitted state without leaking a refused frame payload', async () => {
     const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
     const socketEmit = vi.fn();
     // Socket.IO is a platform boundary; the server socket testkit provides the minimal real event surface.
@@ -1034,7 +1130,8 @@ describe('machineLiveStreamRelayHandler', () => {
 
     expect(socketEmit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
       type: 'machine-live-stream',
-      error: 'server_routed_live_stream_disabled',
+      // C-SR16: the feature decision belongs to START; later frames consume state.
+      error: 'live_stream_start_required',
     });
     expect(JSON.stringify(socketEmit.mock.calls)).not.toContain('c2VudGluZWw=');
     expect(JSON.stringify(socketEmit.mock.calls)).not.toContain('sentinel');
@@ -1075,14 +1172,19 @@ describe('machineLiveStreamRelayHandler', () => {
       machineId: 'machine-source',
     };
 
-    machineLiveStreamRelayHandler('user-1', socket as unknown as LiveStreamRelaySocket, {
+    const ctx = {
       io: { to },
       resolveAccountEncryptionMode: async (): Promise<'plain'> => 'plain',
       serverRoutedLiveStreamEnabled: true,
       relayCaps,
       relayAuthorizationTrustRoots,
       nowMs: () => 1_000,
-    });
+    };
+    machineLiveStreamRelayHandler('user-1', socket as unknown as LiveStreamRelaySocket, ctx);
+    const viewer = createFakeSocket({ id: 'budget-viewer' });
+    viewer.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+      machineId: 'machine-target' };
+    machineLiveStreamRelayHandler('user-1', viewer as unknown as LiveStreamRelaySocket, ctx);
 
     const handler = getSocketHandler(socket, MACHINE_LIVE_STREAM_SOCKET_EVENT);
     await handler(startMessage());
@@ -1098,6 +1200,10 @@ describe('machineLiveStreamRelayHandler', () => {
       targetMachineId: 'machine-target',
       message: { kind: 'frame', frame: frame({ sequence: 2, payloadSizeBytes: 5 }) },
     });
+    await getSocketHandler(viewer, MACHINE_LIVE_STREAM_SOCKET_EVENT)({
+      v: 1, sourceMachineId: 'machine-source', targetMachineId: 'machine-target',
+      message: { kind: 'control', control: { v: 1, streamId: 'stream_1', kind: 'ack', nextSequence: 2, windowFrames: 1 } },
+    });
 
     expect(to).toHaveBeenCalledWith('machine:machine-target:user-1:installation:test-machine-installation');
     expect(emit).toHaveBeenCalledWith(MACHINE_LIVE_STREAM_SOCKET_EVENT, expect.objectContaining({
@@ -1105,7 +1211,7 @@ describe('machineLiveStreamRelayHandler', () => {
       targetMachineId: 'machine-target',
       message: expect.objectContaining({ kind: 'frame' }),
     }));
-    expect(socketEmit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
+    expect(viewer.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
       type: 'machine-live-stream',
       error: 'max_total_bytes_exceeded',
     });
@@ -1428,7 +1534,7 @@ describe('machineLiveStreamRelayHandler', () => {
     expect(JSON.stringify(socketEmit.mock.calls)).not.toContain('payloadBase64');
   });
 
-  it('throttles repeated bandwidth capped receipts within the cap interval', async () => {
+  it('reports one bandwidth pressure transition until delivery recovers', async () => {
     const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
     const emit = vi.fn();
     const to = vi.fn(() => ({ emit }));
@@ -1439,6 +1545,7 @@ describe('machineLiveStreamRelayHandler', () => {
       verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-source',
     };
+    let nowMs = 1_000;
     const ctx = {
       io: { to },
       resolveAccountEncryptionMode: async (): Promise<'plain'> => 'plain',
@@ -1450,7 +1557,7 @@ describe('machineLiveStreamRelayHandler', () => {
       relayAuthorizationTrustRoots,
       relayWindowFrames: 1,
       relayWindowBytes: 1_000,
-      nowMs: () => 1_000,
+      nowMs: () => nowMs,
     };
 
     machineLiveStreamRelayHandler('user-1', socket as unknown as LiveStreamRelaySocket, ctx);
@@ -1467,19 +1574,20 @@ describe('machineLiveStreamRelayHandler', () => {
       v: 1,
       sourceMachineId: 'machine-source',
       targetMachineId: 'machine-target',
-      message: { kind: 'frame', frame: frame({ sequence: 2, payloadKind: 'image_delta', payloadSizeBytes: 3 }) },
+      message: { kind: 'frame', frame: frame({ sequence: 2, payloadKind: 'image_keyframe', payloadSizeBytes: 3 }) },
     });
     await handler({
       v: 1,
       sourceMachineId: 'machine-source',
       targetMachineId: 'machine-target',
-      message: { kind: 'frame', frame: frame({ sequence: 3, payloadKind: 'image_delta', payloadSizeBytes: 3 }) },
+      message: { kind: 'frame', frame: frame({ sequence: 3, payloadKind: 'image_keyframe', payloadSizeBytes: 3 }) },
     });
+    nowMs = 2_000;
     await handler({
       v: 1,
       sourceMachineId: 'machine-source',
       targetMachineId: 'machine-target',
-      message: { kind: 'frame', frame: frame({ sequence: 4, payloadKind: 'image_delta', payloadSizeBytes: 3 }) },
+      message: { kind: 'frame', frame: frame({ sequence: 4, payloadKind: 'image_keyframe', payloadSizeBytes: 3 }) },
     });
 
     const cappedReceipts = socketEmit.mock.calls.filter(([, payload]) =>
@@ -1979,8 +2087,15 @@ describe('machineLiveStreamRelayHandler', () => {
     });
     expect(cappedReceipts()).toHaveLength(1);
 
-    // Recovery and a second loss happen at the same clock value, while the
-    // first bandwidth diagnostic is still throttled. Recovery must not be.
+    // A recovery episode requests one keyframe from the source and tells the viewer
+    // once, even when more dependent deltas arrive before the replacement picture.
+    const recoveryControls = () => emit.mock.calls.filter(([, raw]) => {
+      const envelope = MachineLiveStreamRelayEnvelopeV1Schema.parse(raw);
+      return envelope.message.kind === 'control' && envelope.message.control.kind === 'keyframe_required';
+    });
+    expect(recoveryControls()).toHaveLength(2);
+    // A replacement keyframe recovers the baseline, so another loss is visible
+    // even at the same clock value (OB-COMPUTER-RUNTIME-1114, C-SR08/09).
     await handler({
       v: 1, sourceMachineId: 'machine-source', targetMachineId: 'machine-target',
       message: { kind: 'frame', frame: frame({ sequence: 5, payloadKind: 'image_keyframe', payloadSizeBytes: 3 }) },
@@ -1997,7 +2112,8 @@ describe('machineLiveStreamRelayHandler', () => {
         kind: 'keyframe_required', reasonCode: 'relay_window_pressure',
       }) }),
     }));
-    expect(cappedReceipts()).toHaveLength(1);
+    expect(recoveryControls()).toHaveLength(2);
+    expect(cappedReceipts()).toHaveLength(2);
     // Close after both pressure losses: diagnostic throttling must not suppress
     // the authoritative totals, including deltas rejected during resync.
     await handler({
@@ -2011,7 +2127,7 @@ describe('machineLiveStreamRelayHandler', () => {
         bytesRelayed: 6, framesRelayed: 2, bytesDropped: 18, framesDropped: 6,
       }),
     }));
-    expect(cappedReceipts()).toHaveLength(1);
+    expect(cappedReceipts()).toHaveLength(2);
   });
 
   it('requires a live-stream start before relaying frames', async () => {

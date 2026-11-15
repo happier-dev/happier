@@ -1,4 +1,4 @@
-import { getMachineLiveStreamPayloadDecodedByteLength } from '@happier-dev/protocol/machines/peer/mediation/stream/codecsV1';
+import { getMachineLiveStreamPayloadDecodedByteLength, negotiateMachineLiveStreamCodecV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/codecsV1';
 import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
 import type { MachineLiveStreamCapsV1, MachineLiveStreamCodecIdV1, MachineLiveStreamControlSidebandV1, MachineLiveStreamFrameV1, MachineLiveStreamPayloadKindV1, MachineLiveStreamReceiptV1, MachineLiveStreamStartRequestV1 } from '@happier-dev/protocol';
 
@@ -117,15 +117,11 @@ function negotiateCodec(input: Readonly<{
             : { ok: false, reasonCode: 'unsupported_codec' };
     }
 
-    if (viewerCodecs) {
-        const commonCodec = input.sourceCodecs.find((codecId) => viewerCodecs.includes(codecId));
-        return commonCodec ? { ok: true, codecId: commonCodec } : { ok: false, reasonCode: 'unsupported_codec' };
-    }
-
-    return {
-        ok: true,
-        codecId: input.sourceCodecs.includes('image.mjpeg') ? 'image.mjpeg' : input.sourceCodecs[0],
-    };
+    const negotiated = negotiateMachineLiveStreamCodecV1({
+        sourceCodecs: input.sourceCodecs,
+        viewerCodecs: viewerCodecs ?? input.sourceCodecs,
+    });
+    return negotiated.ok ? { ok: true, codecId: negotiated.codecId } : { ok: false, reasonCode: 'unsupported_codec' };
 }
 
 function payloadKindForFrame(

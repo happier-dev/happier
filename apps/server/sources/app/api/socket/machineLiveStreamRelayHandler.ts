@@ -1,7 +1,6 @@
-import { MACHINE_LIVE_STREAM_SOCKET_EVENT, MachineLiveStreamRelayEnvelopeV1Schema, createMachineLiveStreamRelayAuthorizationSigningInputV1, type MachineLiveStreamControlV1, type MachineLiveStreamWireFrameV1 as MachineLiveStreamFrameV1, type MachineLiveStreamRelayCaps, type MachineLiveStreamWireEnvelopeV1 as MachineLiveStreamRelayEnvelopeV1, type MachineLiveStreamStartRequestV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import { MACHINE_LIVE_STREAM_SOCKET_EVENT, MachineLiveStreamRelayEnvelopeV1Schema, createMachineLiveStreamRelayAuthorizationSigningInputV1, type MachineLiveStreamControlV1, type MachineLiveStreamWireFrameV1 as MachineLiveStreamFrameV1, type MachineLiveStreamRelayCaps, type MachineLiveStreamWireEnvelopeV1, type MachineLiveStreamStartRequestV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { MachineLiveStreamReceiptV1Schema, isMachineLiveStreamTerminalReceiptV1, type MachineLiveStreamReceiptV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/receipts';
 import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
-import { getMachineLiveStreamPayloadDecodedByteLength } from '@happier-dev/protocol/machines/peer/mediation/stream/codecsV1';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import type { Server, Socket } from 'socket.io';
 import tweetnacl from 'tweetnacl';
@@ -24,6 +23,10 @@ import {
 } from './peer/mediation/observability/events';
 
 type MachineLiveStreamKey = string;
+type MachineLiveStreamRelayEnvelopeV1 = Omit<MachineLiveStreamWireEnvelopeV1, 'message'> & {
+    message: Exclude<MachineLiveStreamWireEnvelopeV1['message'], { kind: 'receipt' }>
+        | { kind: 'receipt'; receipt: MachineLiveStreamReceiptV1 };
+};
 
 type MachineLiveStreamRelayState = {
     userId: string;
@@ -48,7 +51,7 @@ type MachineLiveStreamRelayState = {
     bytesDropped: number;
     framesRelayed: number;
     framesDropped: number;
-    lastBandwidthCappedReceiptAtMs: number | null;
+    bandwidthPressure: boolean;
     meter: ReturnType<typeof createMachineLiveStreamMeter>;
     queuedFrames: MachineLiveStreamFrameV1[];
     availableWindowFrames: number;
@@ -104,8 +107,7 @@ function readEnvelopeStreamId(envelope: MachineLiveStreamRelayEnvelopeV1): strin
     if (message.kind === 'metering') return message.metering.streamId;
     if (message.kind === 'frame') return message.frame.streamId;
     if (message.kind === 'receipt') {
-        const receipt = MachineLiveStreamReceiptV1Schema.safeParse(message.receipt);
-        return receipt.success ? receipt.data.streamId : null;
+        return message.receipt.streamId;
     }
     if (message.kind === 'control' || message.kind === 'sideband_control') return message.control.streamId;
     return null;
@@ -271,7 +273,8 @@ function createControlEnvelope(
 }
 
 function getFrameBytes(frame: MachineLiveStreamFrameV1): number {
-    return getMachineLiveStreamPayloadDecodedByteLength(meterFrame(frame).payloadBase64);
+    // The wire schema verifies this against decoded plain/encrypted bytes at ingress.
+    return frame.payloadSizeBytes;
 }
 
 // Meter opaque wire bytes without decrypting them; metadata is not image cadence.
@@ -372,7 +375,7 @@ function createState(input: Readonly<{
         bytesDropped: 0,
         framesRelayed: 0,
         framesDropped: 0,
-        lastBandwidthCappedReceiptAtMs: null,
+        bandwidthPressure: false,
         meter: createMachineLiveStreamMeter({ caps: input.caps, startedAtMs: input.nowMs }),
         queuedFrames: [],
         // Server relay owns the bounded viewer delivery window. It opens with one image so a
@@ -396,23 +399,6 @@ function isRelayStateExpired(state: MachineLiveStreamRelayState, nowMs: number):
 function pruneInactiveSocketStreamKeys(socketStreamKeys: Set<MachineLiveStreamKey>): void {
     for (const streamKey of socketStreamKeys) {
         if (!streamStateByKey.has(streamKey)) socketStreamKeys.delete(streamKey);
-    }
-}
-
-function resolveFrameCapFailure(input: Readonly<{
-    state: MachineLiveStreamRelayState;
-    frame: MachineLiveStreamFrameV1;
-    nowMs: number;
-}>): string | null {
-    const result = input.state.meter.checkFrame(meterFrame(input.frame), input.nowMs);
-    return result.ok ? null : result.reasonCode;
-}
-
-function recordFrame(state: MachineLiveStreamRelayState, frame: MachineLiveStreamFrameV1, nowMs: number): void {
-    const result = state.meter.recordFrame(meterFrame(frame), nowMs);
-    if (result.ok) {
-        state.bytesRelayed = result.metering.bytesSent;
-        state.framesRelayed = result.metering.framesSent;
     }
 }
 
@@ -579,30 +565,27 @@ function applyRelayWindowPressure(input: Readonly<{
     userId: string;
     state: MachineLiveStreamRelayState;
     envelope: MachineLiveStreamRelayEnvelopeV1;
-    nowMs: number;
 }>): void {
-    const capIntervalExceeded = input.state.lastBandwidthCappedReceiptAtMs === null
-        || input.nowMs - input.state.lastBandwidthCappedReceiptAtMs >= 1_000;
     const pressured = applyMachineLiveStreamRelayBackpressure({
         streamId: input.state.streamId,
         routeKind: 'server_relay',
         frames: input.state.queuedFrames,
         maxWindowFrames: input.state.maxWindowFrames,
         maxWindowBytes: input.state.maxWindowBytes,
-        capIntervalExceeded,
+        reportPressure: !input.state.bandwidthPressure,
     });
     input.state.queuedFrames = [...pressured.frames];
     input.state.framesDropped += pressured.framesDropped;
     input.state.bytesDropped += pressured.bytesDropped;
+    if (pressured.framesDropped > 0) input.state.bandwidthPressure = true;
     if (pressured.receipt) {
-        input.state.lastBandwidthCappedReceiptAtMs = input.nowMs;
         emitReceipt({
             socket: input.socket,
             envelope: input.envelope,
             receipt: pressured.receipt,
         });
     }
-    if (pressured.requiresKeyframeResync) {
+    if (pressured.requiresKeyframeResync && !input.state.awaitingKeyframe) {
         input.state.awaitingKeyframe = true;
         emitKeyframeRequired(input);
     }
@@ -615,15 +598,14 @@ function enqueueRelayFrame(input: Readonly<{
     state: MachineLiveStreamRelayState;
     envelope: MachineLiveStreamRelayEnvelopeV1;
     frame: MachineLiveStreamFrameV1;
-    nowMs: number;
 }>): void {
     if (input.state.awaitingKeyframe && input.frame.payloadKind === 'image_delta') {
         input.state.framesDropped += 1;
         input.state.bytesDropped += getFrameBytes(input.frame);
-        emitKeyframeRequired(input);
         return;
     }
     if (input.frame.payloadKind === 'image_keyframe') {
+        if (input.state.awaitingKeyframe) input.state.bandwidthPressure = false;
         input.state.awaitingKeyframe = false;
     }
     input.state.queuedFrames.push(input.frame);
@@ -645,13 +627,10 @@ function drainRelayQueue(input: Readonly<{
         if (input.state.awaitingKeyframe && nextFrame.payloadKind === 'image_delta') return;
         const frameBytes = getFrameBytes(nextFrame);
         if (frameBytes > input.state.availableWindowBytes) return;
-        const capFailure = resolveFrameCapFailure({
-            state: input.state,
-            frame: nextFrame,
-            nowMs: input.nowMs,
-        });
-        if (capFailure) {
-            input.onCapFailure(nextFrame, capFailure);
+        // Decide and record the aggregate/time budget once at its forwarding effect.
+        const recorded = input.state.meter.recordFrame(meterFrame(nextFrame), input.nowMs);
+        if (!recorded.ok) {
+            input.onCapFailure(nextFrame, recorded.reasonCode);
             return;
         }
         input.state.queuedFrames.shift();
@@ -678,7 +657,9 @@ function drainRelayQueue(input: Readonly<{
         }
         if (mediaFrame) input.state.availableWindowFrames -= 1;
         input.state.availableWindowBytes -= frameBytes;
-        recordFrame(input.state, nextFrame, input.nowMs);
+        input.state.bytesRelayed = recorded.metering.bytesSent;
+        input.state.framesRelayed = recorded.metering.framesSent;
+        if (!input.state.awaitingKeyframe && input.state.queuedFrames.length === 0) input.state.bandwidthPressure = false;
         input.state.nextSequenceToRelay = Math.max(input.state.nextSequenceToRelay, nextFrame.sequence + 1);
     }
 }
@@ -895,7 +876,10 @@ export function machineLiveStreamRelayHandler(
         }
     }) : undefined;
 
-    const handleEnvelope = async (envelope: MachineLiveStreamRelayEnvelopeV1): Promise<void> => {
+    const handleEnvelope = (
+        envelope: MachineLiveStreamRelayEnvelopeV1,
+        streamId: string,
+    ): void | Promise<void> => {
         if (disconnected) return;
         const socketMachineId = readMachineId(socket);
         // C3: a per-tab viewer is a user-scoped browser socket (not machine-scoped). It may only
@@ -906,10 +890,9 @@ export function machineLiveStreamRelayHandler(
             return;
         }
 
-        const streamId = readEnvelopeStreamId(envelope);
-        const activeState = streamId ? streamStateByKey.get(buildStreamKey({
+        const activeState = streamStateByKey.get(buildStreamKey({
             sourceMachineId: envelope.sourceMachineId, targetMachineId: envelope.targetMachineId, streamId,
-        })) : undefined;
+        }));
         const isSourceSocket = socketMachineId !== '' && envelope.sourceMachineId === socketMachineId
             && (!activeState || (activeState.userId === userId
                 && socket.data.verifiedMachineInstallationId === activeState.sourceMachineInstallationId));
@@ -933,30 +916,9 @@ export function machineLiveStreamRelayHandler(
             return;
         }
 
-        if (envelope.message.kind !== 'start' && (ctx.serverRoutedLiveStreamEnabled !== true || !ctx.relayCaps)) {
-            emitError(socket, 'server_routed_live_stream_disabled');
-            return;
-        }
-
-        let receipt: MachineLiveStreamReceiptV1 | undefined;
         if (envelope.message.kind !== 'start') {
             const message = envelope.message;
-            let streamId: string;
-            if (message.kind === 'receipt') {
-                const parsedReceipt = MachineLiveStreamReceiptV1Schema.safeParse(message.receipt);
-                if (!parsedReceipt.success) {
-                    emitError(socket, 'invalid_live_stream_payload');
-                    return;
-                }
-                receipt = parsedReceipt.data;
-                streamId = receipt.streamId;
-            } else if (message.kind === 'frame') {
-                streamId = message.frame.streamId;
-            } else if (message.kind === 'renew') {
-                streamId = message.startRequest.streamId;
-            } else if (message.kind === 'control' || message.kind === 'sideband_control') {
-                streamId = message.control.streamId;
-            } else {
+            if (message.kind === 'start_response' || message.kind === 'metering') {
                 return;
             }
             const streamKey = buildStreamKey({ sourceMachineId: envelope.sourceMachineId,
@@ -1139,10 +1101,6 @@ export function machineLiveStreamRelayHandler(
                     if (isRelayStateExpired(expiredState, nowMs)) closeExpiredState(expiredKey, expiredState);
                 }
                 pruneInactiveSocketStreamKeys(socketStreamKeys);
-                const existingState = streamStateByKey.get(streamKey);
-                if (existingState && isRelayStateExpired(existingState, nowMs)) {
-                    removeStream(streamKey);
-                }
                 const currentState = streamStateByKey.get(streamKey);
                 if (currentState && (currentState.viewerSocketId !== viewerSocketId
                     || !hasSameAuthorizationBinding(currentState.startRequest, startRequest))) {
@@ -1227,9 +1185,7 @@ export function machineLiveStreamRelayHandler(
                     });
                 }
             })();
-            try { await admission; }
-            finally { releaseAdmissionAccessLoss?.(); }
-            return;
+            return admission.finally(() => { releaseAdmissionAccessLoss?.(); });
         }
 
         if (envelope.message.kind === 'renew') {
@@ -1319,13 +1275,9 @@ export function machineLiveStreamRelayHandler(
                 emitError(socket, 'live_stream_authorization_expired');
                 return;
             }
-            const capFailure = resolveFrameCapFailure({
-                state,
-                frame: envelope.message.frame,
-                nowMs,
-            });
-            if (capFailure) {
-                closeCapExceeded(streamKey, state, envelope.message.frame, capFailure);
+            // An oversized frame can never drain; refuse it before retaining it.
+            if (state.caps.maxFrameBytes !== undefined && getFrameBytes(envelope.message.frame) > state.caps.maxFrameBytes) {
+                closeCapExceeded(streamKey, state, envelope.message.frame, 'max_frame_bytes_exceeded');
                 return;
             }
             enqueueRelayFrame({
@@ -1335,7 +1287,6 @@ export function machineLiveStreamRelayHandler(
                 state,
                 envelope,
                 frame: envelope.message.frame,
-                nowMs,
             });
             drainRelayQueue({
                 io: ctx.io,
@@ -1348,7 +1299,8 @@ export function machineLiveStreamRelayHandler(
             return;
         }
 
-        if (receipt) {
+        if (envelope.message.kind === 'receipt') {
+            const receipt = envelope.message.receipt;
             if (!isSourceSocket || receipt.routeKind !== 'server_relay') {
                 emitError(socket, 'source_machine_mismatch');
                 return;
@@ -1531,14 +1483,22 @@ export function machineLiveStreamRelayHandler(
         }
         const parsed = MachineLiveStreamRelayEnvelopeV1Schema.safeParse(raw);
         if (!parsed.success) { emitError(socket, 'invalid_live_stream_payload'); return; }
-        const envelope = parsed.data;
+        let envelope: MachineLiveStreamRelayEnvelopeV1;
+        if (parsed.data.message.kind === 'receipt') {
+            const parsedReceipt = MachineLiveStreamReceiptV1Schema.safeParse(parsed.data.message.receipt);
+            if (!parsedReceipt.success) { emitError(socket, 'invalid_live_stream_payload'); return; }
+            envelope = { ...parsed.data, message: { kind: 'receipt', receipt: parsedReceipt.data } };
+        } else envelope = { ...parsed.data, message: parsed.data.message };
         const streamId = readEnvelopeStreamId(envelope);
         if (!streamId) { emitError(socket, 'invalid_live_stream_payload'); return; }
         const streamKey = buildStreamKey({ sourceMachineId: envelope.sourceMachineId, targetMachineId: envelope.targetMachineId, streamId });
-        // Current DB admission is asynchronous. Preserve the existing stream arrival
-        // order across source frames and viewer controls while each effect is checked.
+        // Preserve arrival order behind asynchronous admission. Once admitted,
+        // synchronous frames and controls need no serial promise work.
         const previous = pendingStartAdmissionsByKey.get(streamKey);
-        const operation = (previous ?? Promise.resolve()).then(() => handleEnvelope(envelope));
+        const operation = previous
+            ? previous.then(() => handleEnvelope(envelope, streamId))
+            : handleEnvelope(envelope, streamId);
+        if (!operation) return;
         pendingStartAdmissionsByKey.set(streamKey, operation);
         try { await operation; }
         finally { if (pendingStartAdmissionsByKey.get(streamKey) === operation) pendingStartAdmissionsByKey.delete(streamKey); }

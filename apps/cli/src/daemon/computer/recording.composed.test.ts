@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Writable } from 'node:stream';
@@ -12,6 +12,7 @@ import { native, target, captureResult } from './driver/nativeComputerBoundary.t
 import { createMachineLiveStreamCaptureRegistry } from '../peer/mediation/stream/captureRegistry';
 import { createDaemonRuntimeActionExecutor } from '../runtimeActionExecutor';
 import { createFfmpegBrowserRecordingStreamFrameEncoderFactory } from '../recording/ffmpegStreamEncoder';
+import { combineRecordingStorageOwners } from '../recording/service';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -55,6 +56,115 @@ async function setup() {
 }
 
 describe('Computer recording through the real Action entry', () => {
+  it.each(['attached', 'missing'] as const)('discards retained storage when an earlier owner has the same recording ID with %s storage', async firstStorage => {
+    const fixture = await setup();
+    const owners = [0, 1].map(index => createComputerRecording({ machineId: 'machine', registry: fixture.registry,
+      options: { workingDirectory: join(fixture.directory, String(index)), encoderFactory: fixture.encoderFactory,
+        ...(index === 0 && firstStorage === 'attached' ? { commitAttachment: async () => {} } : {}) } }));
+    const recordingId = 'shared-explicit-recording-id';
+    try {
+      for (const [index, owner] of owners.entries()) {
+        const started = await owner.service.startRecording({ recordingId, machineId: 'machine', sourceId: fixture.source.sourceId,
+          sourceIdentity: fixture.source.sourceIdentity, target: fixture.source.target,
+          mediaTarget: { sessionId: 'session', messageLocalId: `storage-${index}` },
+          captureKind: 'streamFrameCapture', captureSource: { kind: 'machineLiveStream', streamFamily: 'screen', sourceId: fixture.source.sourceId },
+          recordingCapabilities: { maxFps: 12 }, mimeType: 'video/webm', retentionClass: 'preSend' });
+        expect(started).toMatchObject({ status: 'started', recording: { recordingId } });
+        if (index === 0 && firstStorage === 'missing') {
+          expect(await owner.service.cancelRecording({ recordingId, reason: 'user_canceled' })).toMatchObject({ status: 'canceled' });
+        } else {
+          expect(await owner.service.stopRecording({ recordingId })).toMatchObject({ status: 'finalized' });
+          if (index === 0) expect(await owner.dispatch('computer.recording.attachToComposer', {
+            machineId: 'machine', sourceId: fixture.source.sourceId, recordingId, sessionId: 'session',
+          }, fixture.source.sourceIdentity)).toMatchObject({ ok: true });
+        }
+      }
+      const firstStatus = owners[0]!.service.getRecordingStatus(recordingId);
+      expect(firstStatus).not.toBeNull();
+      expect(owners[0]!.service.listStorageRecordings()).toEqual([]);
+      expect(owners[0]!.service.getStorageRecording(recordingId)).toBeNull();
+      const retained = owners[1]!.service.listStorageRecordings()[0]!;
+      expect(owners[1]!.service.getStorageRecording(recordingId)).toEqual(retained);
+      const inventories = owners.map(({ service }) => vi.spyOn(service, 'listStorageRecordings'));
+      const storage = combineRecordingStorageOwners(() => owners.map(({ service }) => service));
+      expect(storage.getStorageRecording(recordingId)).toEqual(retained);
+      await storage.discardStorageRecording({ recordingId });
+      for (const inventory of inventories) expect(inventory).not.toHaveBeenCalled();
+      expect(owners[0]!.service.getRecordingStatus(recordingId)).toEqual(firstStatus);
+      expect(owners[1]!.service.getRecordingStatus(recordingId)).toMatchObject({ status: 'discarded' });
+      expect(storage.getStorageRecording(recordingId)).toBeNull();
+      expect(storage.getStorageRecording('missing')).toBeNull();
+      await expect(stat(retained.path)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      for (const owner of owners) await owner.closeSource(fixture.source.sourceId);
+      await fixture.close();
+    }
+  });
+
+  it('discards through the exact storage owner without enumerating either owner inventory', async () => {
+    const fixture = await setup();
+    const owners = [0, 1].map(() => createComputerRecording({ machineId: 'machine', registry: fixture.registry,
+      options: { workingDirectory: fixture.directory, encoderFactory: fixture.encoderFactory } }));
+    try {
+      const recordings = [];
+      for (const [index, owner] of owners.entries()) {
+        const started = await owner.start({ machineId: 'machine', sourceId: fixture.source.sourceId,
+          mediaTarget: { sessionId: 'session', messageLocalId: `storage-${index}` }, retentionClass: 'preSend' }, fixture.source);
+        if (!('recording' in started)) throw new Error('Start refused');
+        expect(await owner.service.stopRecording({ recordingId: started.recording.recordingId }))
+          .toMatchObject({ status: 'finalized' });
+        recordings.push(started.recording);
+      }
+      const retainedPath = owners[0]!.service.listStorageRecordings()[0]!.path;
+      const discardedPath = owners[1]!.service.listStorageRecordings()[0]!.path;
+      let inventoryReads = 0;
+      const storage = combineRecordingStorageOwners(() => owners.map(({ service }) => ({ ...service,
+        listStorageRecordings: () => { inventoryReads++; return service.listStorageRecordings(); } })));
+      await storage.discardStorageRecording({ recordingId: recordings[1]!.recordingId });
+      expect(inventoryReads).toBe(0);
+      expect(owners[0]!.service.getRecordingStatus(recordings[0]!.recordingId)).toMatchObject({ status: 'finalized' });
+      expect(owners[1]!.service.getRecordingStatus(recordings[1]!.recordingId)).toMatchObject({ status: 'discarded' });
+      await expect(stat(retainedPath)).resolves.toMatchObject({ size: expect.any(Number) });
+      await expect(stat(discardedPath)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(storage.discardStorageRecording({ recordingId: 'missing' })).rejects.toMatchObject({ code: 'browser_recording_missing' });
+      expect(inventoryReads).toBe(0);
+    } finally {
+      for (const owner of owners) await owner.closeSource(fixture.source.sourceId);
+      await fixture.close();
+    }
+  });
+
+  it.each([1, 30])('resolves only the exact source and records at its declared %s FPS', async fps => {
+    const fixture = await setup();
+    const registered = fixture.registry.resolve({ sourceId: fixture.source.sourceId });
+    if (!registered.ok) throw new Error('source missing');
+    fixture.registry.register({ sourceId: fixture.source.sourceId, streamFamily: 'screen',
+      computer: fixture.source, adapter: fixture.source.adapter,
+      capabilities: { ...registered.source.capabilities, maxFramesPerSecond: fps } });
+    let inventoryReads = 0;
+    const recording = createComputerRecording({ machineId: 'machine',
+      registry: { ...fixture.registry, list: () => { inventoryReads++; return fixture.registry.list(); } },
+      options: { workingDirectory: fixture.directory, encoderFactory: fixture.encoderFactory } });
+    try {
+      const started = await recording.start({ machineId: 'machine', sourceId: fixture.source.sourceId,
+        mediaTarget: { sessionId: 'session', messageLocalId: 'exact-clip' }, retentionClass: 'preSend' }, fixture.source);
+      expect(inventoryReads).toBe(0);
+      expect(started).toMatchObject({ status: 'started', recording: { fps } });
+      if (!('recording' in started)) throw new Error('Start refused');
+      const listing = vi.spyOn(recording.service, 'listRecordingsForView');
+      const request = { machineId: 'machine', sourceId: fixture.source.sourceId, recordingId: started.recording.recordingId };
+      expect(await recording.dispatch('computer.recording.status', request, fixture.source.sourceIdentity))
+        .toMatchObject({ recordingId: started.recording.recordingId });
+      expect(listing).not.toHaveBeenCalled();
+      expect(await recording.dispatch('computer.recording.listForTarget', request, fixture.source.sourceIdentity))
+        .toMatchObject([{ recordingId: started.recording.recordingId }]);
+      expect(listing).toHaveBeenCalledTimes(1);
+      expect(await recording.service.stopRecording({ recordingId: started.recording.recordingId }))
+        .toMatchObject({ status: 'finalized', recording: { status: 'finalized' } });
+      expect(fixture.frames()).toBeGreaterThan(0);
+    } finally { await recording.closeSource(fixture.source.sourceId); await fixture.close(); }
+  });
+
   it.each([false, true])('starts, finalizes, lists and attaches the selected screen using the shared recorder (agent=%s)', async agent => {
     const fixture = await setup();
     try {

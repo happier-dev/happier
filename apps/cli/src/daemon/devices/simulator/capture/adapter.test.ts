@@ -58,6 +58,19 @@ function startInput(input: Readonly<{
 }
 
 describe('createSimulatorFrameProducerCaptureAdapter', () => {
+    it('uses canonical baseline selection for automatic negotiation while honoring a required codec', async () => {
+        const selected: string[] = [];
+        const adapter = createSimulatorFrameProducerCaptureAdapter({ sourceId: 'screen', sourceCodecs: ['h264.avcc', 'image.mjpeg'],
+            producer: { start: async input => { selected.push(input.negotiatedCodecId); return { stop() {} }; } } });
+        const automatic = await adapter.start(startInput({ startRequest: startRequest({ viewerCodecs: ['h264.avcc', 'image.mjpeg'] }) }));
+        expect(automatic.ok).toBe(true);
+        expect(selected).toEqual(['image.mjpeg']);
+        if (automatic.ok) await automatic.session.stop();
+        const required = await adapter.start(startInput({ startRequest: startRequest({ codecId: 'h264.avcc', viewerCodecs: ['h264.avcc', 'image.mjpeg'] }) }));
+        expect(required.ok).toBe(true);
+        expect(selected).toEqual(['image.mjpeg', 'h264.avcc']);
+        if (required.ok) await required.session.stop();
+    });
     it('reports failed viewer input without closing a healthy capture', async () => {
         const receipts: MachineLiveStreamReceiptV1[] = [];
         const frames: MachineLiveStreamFrameV1[] = [];

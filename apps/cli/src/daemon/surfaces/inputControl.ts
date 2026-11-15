@@ -45,6 +45,8 @@ type ActiveInput = Readonly<{
 export function createSurfaceInputControl({ previousControl, ...options }: Readonly<{
   requireObservation?: boolean;
   onStatusChange?: () => void;
+  /** Accepted observations are activity even when the controller status is unchanged. */
+  onObservation?: () => void;
   /** Replacing a drained source is not Hand back. Only its human hold survives. */
   previousControl?: SurfaceInputControl;
 }> = {}): SurfaceInputControl {
@@ -145,9 +147,11 @@ export function createSurfaceInputControl({ previousControl, ...options }: Reado
     },
     observe(epoch) {
       if (confidentialityHeld || closed || active || epoch !== controlEpoch || (uncertain && !humanHeld && observationRequirement !== 'hand_back')) return false;
+      const statusChanged = uncertain;
       uncertain = false;
       observationRequirement = null;
-      options.onStatusChange?.();
+      options.onObservation?.();
+      if (statusChanged) options.onStatusChange?.();
       return true;
     },
     invalidateObservation() { observationRequirement ??= 'required'; },
@@ -187,22 +191,24 @@ export function createSurfaceInputControl({ previousControl, ...options }: Reado
       }
     },
     async takeOver(reason = 'user_canceled') {
+      const statusChanged = !humanHeld || Boolean(active && !active.abort.signal.aborted);
       if (!humanHeld) controlEpoch += 1;
       humanHeld = true;
       observationRequirement = 'required';
       const current = active;
       current?.abort.abort(reason);
-      options.onStatusChange?.();
+      if (statusChanged) options.onStatusChange?.();
       return { active: current !== null, completion: current ? await current.drained : uncertain ? 'unknown' : 'known' };
     },
     handBack() {
       if (active || closed) return false;
+      const statusChanged = humanHeld;
       if (humanHeld) controlEpoch += 1;
       humanHeld = false;
       // Hand back changes admission, not the unsettled-effect fact. A fresh agent
       // observation must clear that fact before its next mutation.
       observationRequirement = 'hand_back';
-      options.onStatusChange?.();
+      if (statusChanged) options.onStatusChange?.();
       return true;
     },
     async close(reason = 'closed') {

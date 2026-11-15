@@ -196,7 +196,7 @@ describe('browser recording ffmpeg stream encoder', () => {
         source: {
           kind: 'local-file',
           mimeType: 'video/webm',
-          fileNameHint: 'browser-recording-recording_1.webm',
+          fileNameHint: expect.stringMatching(/\.webm$/),
         },
       });
       expect(output.source.kind).toBe('local-file');
@@ -243,7 +243,10 @@ describe('browser recording ffmpeg stream encoder', () => {
         resolveFfmpegBinaryPath: async () => '/bundled/ffmpeg',
         spawnFfmpeg: () => {
           const child = new EventEmitter();
-          queueMicrotask(() => child.emit('error', new Error('spawn ENOENT')));
+          queueMicrotask(() => {
+            child.emit('error', new Error('spawn ENOENT'));
+            child.emit('close', -2, null);
+          });
           return Object.assign(child, { stdin: new Writable({ write: (_chunk, _encoding, done) => done() }), kill: () => false });
         },
       });

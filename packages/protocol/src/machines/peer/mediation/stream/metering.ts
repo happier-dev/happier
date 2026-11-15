@@ -97,7 +97,7 @@ export function createMachineLiveStreamMeter(input: Readonly<{
     recordFrame: (frame, nowMs) => {
       const result = checkFrame(frame, nowMs);
       if (!result.ok) return result;
-      const frameBytes = getMachineLiveStreamPayloadDecodedByteLength(frame.payloadBase64);
+      const frameBytes = result.metering.bytesSent - bytesSent;
       samples.push({ atMs: nowMs, bytes: frameBytes, mediaFrame: frame.payloadKind !== 'metadata' });
       while (samples.length > 0 && samples[0]!.atMs < nowMs - 999) {
         samples.shift();
@@ -124,12 +124,8 @@ export function applyMachineLiveStreamDropPolicy<TFrame extends MachineLiveStrea
   let bytesDropped = 0;
   let mediaDropped = false;
 
-  const frameBytes = (frame: MachineLiveStreamFrameV1 | MachineLiveStreamWireFrameV1) => {
-    const payloadBase64 = 'payloadBase64' in frame ? frame.payloadBase64
-      : frame.payload.t === 'plain' ? frame.payload.v : frame.payload.c;
-    return getMachineLiveStreamPayloadDecodedByteLength(payloadBase64);
-  };
-  const totalBytes = () => frames.reduce((sum, frame) => sum + frameBytes(frame), 0);
+  // Both frame schemas validate the byte count before frames enter the queue.
+  const totalBytes = () => frames.reduce((sum, frame) => sum + frame.payloadSizeBytes, 0);
   // Status bursts share the byte budget, not the image queue's frame count.
   const overFrameLimit = () => frames.reduce((count, frame) => frame.payloadKind === 'metadata' ? count : count + 1, 0) > input.maxWindowFrames;
   const overLimit = () => overFrameLimit() || totalBytes() > input.maxWindowBytes;
@@ -137,7 +133,7 @@ export function applyMachineLiveStreamDropPolicy<TFrame extends MachineLiveStrea
     const [dropped] = frames.splice(index, 1);
     if (!dropped) return;
     framesDropped += 1;
-    bytesDropped += frameBytes(dropped);
+    bytesDropped += dropped.payloadSizeBytes;
     if (dropped.payloadKind !== 'metadata') mediaDropped = true;
   };
 

@@ -372,17 +372,22 @@ describe('machineLiveStreamRelayHandler observability', () => {
     socket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
  machineId: 'machine-source' };
 
-    machineLiveStreamRelayHandler('user-1', socket as unknown as LiveStreamRelaySocket, {
+    const ctx = {
       io: { to: vi.fn(() => ({ emit: vi.fn() })) },
-      resolveAccountEncryptionMode: async () => 'plain',
+      resolveAccountEncryptionMode: async (): Promise<'plain'> => 'plain',
       serverRoutedLiveStreamEnabled: true,
       relayCaps,
       relayAuthorizationTrustRoots,
       relayWindowFrames: 4,
       relayWindowBytes: 1_000,
       nowMs: () => 1_000,
-      observability: { emit: (event) => emitted.push(event) },
-    });
+      observability: { emit: (event: PeerMediationObservabilityEventV1) => emitted.push(event) },
+    };
+    machineLiveStreamRelayHandler('user-1', socket as unknown as LiveStreamRelaySocket, ctx);
+    const viewer = createFakeSocket({ id: 'budget-viewer' });
+    viewer.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+      machineId: 'machine-target' };
+    machineLiveStreamRelayHandler('user-1', viewer as unknown as LiveStreamRelaySocket, ctx);
 
     const handler = getSocketHandler(socket, MACHINE_LIVE_STREAM_SOCKET_EVENT);
     await handler(startMessage());
@@ -393,12 +398,16 @@ describe('machineLiveStreamRelayHandler observability', () => {
       targetMachineId: 'machine-target',
       message: { kind: 'frame', frame: frame({ sequence: 1, payloadSizeBytes: 4 }) },
     });
-    // Second frame (5 bytes) breaches the 8-byte total cap and closes the stream.
+    // Second frame waits for ACK credit; C-SR10 decides total bytes at forwarding.
     await handler({
       v: 1,
       sourceMachineId: 'machine-source',
       targetMachineId: 'machine-target',
       message: { kind: 'frame', frame: frame({ sequence: 2, payloadSizeBytes: 5 }) },
+    });
+    await getSocketHandler(viewer, MACHINE_LIVE_STREAM_SOCKET_EVENT)({
+      v: 1, sourceMachineId: 'machine-source', targetMachineId: 'machine-target',
+      message: { kind: 'control', control: { v: 1, streamId: 'stream_1', kind: 'ack', nextSequence: 2, windowFrames: 1 } },
     });
 
     const capEvent = liveStreamEvents(emitted).find((event) => event.kind === 'cap.exceeded');

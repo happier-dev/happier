@@ -99,6 +99,7 @@ export type BrowserRecordingDaemonService<R extends RecordingSession = BrowserRe
   }>>;
   getRecordingStatus(recordingId: string): R | null;
   listRecordingsForView(input: Q): readonly R[];
+  getStorageRecording(recordingId: string): BrowserRecordingStorageRecord | null;
   listStorageRecordings(): readonly BrowserRecordingStorageRecord[];
   discardStorageRecording(input: Readonly<{ recordingId: string; beforeEffect?: () => Promise<void> }>): Promise<void>;
   subscribeStorageChanges(listener: () => void): () => void;
@@ -112,18 +113,26 @@ export class BrowserRecordingStorageError extends Error {
 }
 
 export type RecordingStorageOwner = Pick<BrowserRecordingDaemonService,
-  'nextExpiryAtMs' | 'listStorageRecordings' | 'discardStorageRecording' | 'subscribeStorageChanges'> & Readonly<{
+  'nextExpiryAtMs' | 'getStorageRecording' | 'listStorageRecordings' | 'discardStorageRecording' | 'subscribeStorageChanges'> & Readonly<{
     cleanupExpiredRecordings(input: Readonly<{ nowMs: number; beforeEffect?: () => Promise<void> }>):
       ReturnType<BrowserRecordingDaemonService['cleanupExpiredRecordings']>;
   }>;
 
 /** Fan out storage operations to the same lifecycle owner for each capture source. */
 export function combineRecordingStorageOwners(readOwners: () => readonly RecordingStorageOwner[]): RecordingStorageOwner {
+  function findStorageRecording(recordingId: string) {
+    for (const owner of readOwners()) {
+      const recording = owner.getStorageRecording(recordingId);
+      if (recording) return { owner, recording };
+    }
+    return null;
+  }
   return {
     nextExpiryAtMs() {
       const dates = readOwners().flatMap(owner => { const date = owner.nextExpiryAtMs(); return date === null ? [] : [date]; });
       return dates.length ? Math.min(...dates) : null;
     },
+    getStorageRecording: recordingId => findStorageRecording(recordingId)?.recording ?? null,
     listStorageRecordings: () => readOwners().flatMap(owner => owner.listStorageRecordings()),
     async cleanupExpiredRecordings(request) {
       const results = await Promise.all(readOwners().map(owner => owner.cleanupExpiredRecordings(request)));
@@ -131,9 +140,9 @@ export function combineRecordingStorageOwners(readOwners: () => readonly Recordi
         failedRecordingIds: results.flatMap(result => result.failedRecordingIds) };
     },
     async discardStorageRecording(request) {
-      const owner = readOwners().find(candidate => candidate.listStorageRecordings().some(recording => recording.recordingId === request.recordingId));
-      if (!owner) throw new BrowserRecordingStorageError('browser_recording_missing');
-      await owner.discardStorageRecording(request);
+      const found = findStorageRecording(request.recordingId);
+      if (!found) throw new BrowserRecordingStorageError('browser_recording_missing');
+      await found.owner.discardStorageRecording(request);
     },
     subscribeStorageChanges(listener) {
       const releases = readOwners().map(owner => owner.subscribeStorageChanges(listener));
@@ -298,6 +307,19 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
     return sessionsById.get(recordingId) ?? null;
   }
 
+  function projectStorageRecording(recording: R | null): BrowserRecordingStorageRecord | null {
+    if (!recording) return null;
+    const storage = input.mediaWriter.getRecordingStorage?.(recording.recordingId);
+    // Transcript custody owns attached uploads; they are sized as session folders.
+    if (!storage || storage.attached) return null;
+    return {
+      recordingId: recording.recordingId,
+      path: storage.path,
+      expiresAtMs: recording.expiresAtMs,
+      active: isActiveStatus(recording.status),
+    };
+  }
+
   async function discardCapture(
     recording: R,
     reason: BrowserRecordingOutcomeReasonV1,
@@ -432,8 +454,7 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
     },
     async discardStorageRecording({ recordingId, beforeEffect }) {
       const recording = readRecording(recordingId);
-      const storage = input.mediaWriter.getRecordingStorage?.(recordingId);
-      if (!recording || !storage || storage.attached) throw new BrowserRecordingStorageError('browser_recording_missing');
+      if (!recording || !projectStorageRecording(recording)) throw new BrowserRecordingStorageError('browser_recording_missing');
       if (recording.status !== 'completed' && recording.status !== 'finalized') throw new BrowserRecordingStorageError('browser_recording_not_active');
       const result = await discardFinalizedStoredMedia(recording, 'user_discarded', now(), beforeEffect);
       if (result.status === 'unavailable') throw new BrowserRecordingStorageError('browser_recording_media_discard_failed');
@@ -664,17 +685,14 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
         .filter((recording): recording is R => recording != null && input.model.targetKey(recording) === viewKey);
     },
 
+    getStorageRecording(recordingId) {
+      return projectStorageRecording(readRecording(recordingId));
+    },
+
     listStorageRecordings() {
       return [...sessionsById.values()].flatMap((recording): BrowserRecordingStorageRecord[] => {
-        const storage = input.mediaWriter.getRecordingStorage?.(recording.recordingId);
-        // Transcript custody owns attached uploads; they are sized as session folders.
-        if (!storage || storage.attached) return [];
-        return [{
-          recordingId: recording.recordingId,
-          path: storage.path,
-          expiresAtMs: recording.expiresAtMs,
-          active: isActiveStatus(recording.status),
-        }];
+        const storage = projectStorageRecording(recording);
+        return storage ? [storage] : [];
       });
     },
 

@@ -46,10 +46,11 @@ export function createBrowserAutomationOwnerRegistry(options: Readonly<{ now?: (
     const key = browserViewKey(view);
     const existing = entries.get(key);
     if (existing) return existing.control;
-    const created = createSurfaceInputControl({ onStatusChange: () => {
+    const recordActivity = () => {
       const entry = entries.get(key);
       if (entry) entry.lastUsedAt = now();
-    } });
+    };
+    const created = createSurfaceInputControl({ onStatusChange: recordActivity, onObservation: recordActivity });
     entries.set(key, { browserSessionId: view.browserSessionId, control: created, lastUsedAt: now() });
     return created;
   }

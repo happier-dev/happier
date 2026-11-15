@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import Fastify from 'fastify';
 import { Server } from 'socket.io';
-import { MachineLiveStreamRelayAuthorizationV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import { MachineLiveStreamRelayAuthorizationV1Schema, MachineLiveStreamRelayEnvelopeV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { DaemonMachineLiveStreamSourceAdmitResponseV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/relayStartRpcV1';
@@ -39,6 +39,7 @@ import { getMachineInstallationSocketRoom } from '../socketRooms';
 import { machineLiveStreamRelayHandler } from './machineLiveStreamRelayHandler';
 import { retireSessionConsumptionAfterAccessChange } from './sessionConsumption';
 import { createSessionHumanPresenceService, notifySessionHumanPresenceAccessChanged } from '@/app/session/humanPresence/sessionHumanPresenceService';
+import { deleteSessionAccessGrantInTx } from '@/app/session/access/sessionAccessGrantService';
 import { createBaseStartRequest, createLiveStreamStartRequest } from '../../../../../ui/sources/sync/domains/machines/peer/mediation/stream/startRequest';
 import { createMachineLiveStreamSocketTransport } from '../../../../../ui/sources/sync/domains/machines/peer/mediation/stream/socketTransport';
 
@@ -58,6 +59,7 @@ describe('Live stream current Machine admission (real SQLite)', () => {
             const actor = path === 'owner-session-browser' ? owner : await db.account.create({ data: { encryptionMode: 'plain' } });
             const encryptedSessionBrowser = path === 'shared-view-encrypted-browser';
             const teamBrowser = path === 'shared-team-browser' || path === 'unqualified-team-browser';
+            let browserTeamId: string | undefined;
             const sessionBrowser = path === 'shared-view-browser' || path === 'shared-edit-browser' || encryptedSessionBrowser
                 || path === 'unshared-session-browser' || path === 'withdrawn-session-browser' || path === 'downgraded-session-browser' || teamBrowser;
             if (teamBrowser) await db.account.update({ where: { id: actor.id }, data: { encryptionMode: 'e2ee', publicKey: randomUUID() } });
@@ -149,6 +151,7 @@ describe('Live stream current Machine admission (real SQLite)', () => {
                 HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PRIVATE_KEY: Buffer.from(signing.secretKey).toString('base64url'),
             }, verifyViewerSocketOwnership });
             const delivered: unknown[] = [];
+            let onStreamStopped: (() => void) | undefined;
             const sourceControls: unknown[] = [];
             let admissionReads = 0;
             machineLiveStreamRelayHandler(owner.id, source as unknown as Parameters<typeof machineLiveStreamRelayHandler>[1], {
@@ -157,7 +160,12 @@ describe('Live stream current Machine admission (real SQLite)', () => {
                     return resolveMachineAdmission({ actorAccountId: owner.id, machineId });
                 },
                 io: { to: (room: string) => ({ emit: (_event: string, value: unknown) => {
-                    if (room === viewer.id) delivered.push(value);
+                    if (room === viewer.id) {
+                        delivered.push(value);
+                        const envelope = MachineLiveStreamRelayEnvelopeV1Schema.safeParse(value);
+                        if (envelope.success && envelope.data.message.kind === 'control'
+                            && envelope.data.message.control.kind === 'stop') onStreamStopped?.();
+                    }
                     else sourceControls.push(value);
                 } }) },
                 serverRoutedLiveStreamEnabled: true, relayCaps: {}, resolveAccountEncryptionMode: async () => 'plain',
@@ -208,6 +216,7 @@ describe('Live stream current Machine admission (real SQLite)', () => {
                     const team = await db.team.create({ data: { name: 'Browser credential Team', authenticationPolicy: {
                         v: 1, mode: 'restricted', accepted: [{ kind: 'home_method', methodId: 'key_challenge' }],
                     } } });
+                    browserTeamId = team.id;
                     await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: 'member' } });
                     await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: session!.id, teamId: team.id, accessLevel: 'view', effectiveAt: new Date() } });
                     await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: session!.id } });
@@ -281,14 +290,22 @@ describe('Live stream current Machine admission (real SQLite)', () => {
                         onSessionAccessChanged: sessionId => retireSessionConsumptionAfterAccessChange([], sessionId),
                     });
                     try {
+                        const streamStopped = new Promise<void>(resolve => { onStreamStopped = resolve; });
                         // The real committed access-change seam retires open-ended access.
                         // A downgrade must close the old input-bearing admission too.
-                        if (path === 'shared-edit-browser') await db.sessionGrant.updateMany({
+                        if (browserTeamId) {
+                            const teamId = browserTeamId;
+                            expect(await inTx(tx => deleteSessionAccessGrantInTx(tx, {
+                                actorAccountId: owner.id, sessionId: session!.id,
+                                subject: { kind: 'team', teamId },
+                                authentication: { env: harness.envBase, authority: 'present_user', authenticationEvidence: [] },
+                            }))).toMatchObject({ ok: true, changed: true });
+                        } else if (path === 'shared-edit-browser') await db.sessionGrant.updateMany({
                             where: { principalKind: 'account', sessionId: session!.id }, data: { accessLevel: 'view' },
                         });
                         else await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: session!.id } });
-                        notifySessionHumanPresenceAccessChanged({ sessionId: session!.id });
-                        await new Promise(resolve => setTimeout(resolve, 100));
+                        if (!browserTeamId) notifySessionHumanPresenceAccessChanged({ sessionId: session!.id });
+                        await streamStopped;
                         expect(delivered).toContainEqual(expect.objectContaining({ message: {
                             kind: 'control', control: expect.objectContaining({ streamId, kind: 'stop' }),
                         } }));

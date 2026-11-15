@@ -134,7 +134,13 @@ async function setup(options: { startupFrame?: boolean; missingEncoder?: boolean
     const execute = (id: ActionId, input: unknown, sessionId = 'session') => executor.execute(id, input, {
         surface: 'agent', defaultSessionId: sessionId, bypassApprovals: true,
     });
-    return { execute, frame, commands, directory, encoded, control, attachments, setNow: (value: number) => { now = value; },
+    const readAttachedMedia = async (mediaId: string) => {
+        const media = attachments.flatMap(meta => parseSessionMediaMessageMeta(meta.happier)?.inlineMedia ?? [])
+            .find(item => item.id === mediaId);
+        if (!media || media.mediaKind !== 'video') throw new Error('Attached recording video is unavailable.');
+        return readFile(join(directory, media.path));
+    };
+    return { execute, frame, commands, directory, encoded, control, attachments, readAttachedMedia, setNow: (value: number) => { now = value; },
         dispose: async () => { await recording.stop(); await producer.dispose(); await app.close(); await rm(directory, { recursive: true, force: true }); } };
 }
 
@@ -221,8 +227,7 @@ describe('managed recording Action → private daemon IPC → capture → Sessio
             ]);
             const stored = recordingResult(stopped);
             expect(runtime.encoded[0]?.subarray(4)).toEqual(Buffer.alloc(48, 1));
-            expect(await readFile(join(runtime.directory, '.happier', 'uploads', 'artifacts', 'session', 'recording',
-                `${stored.mediaRef.mediaId.slice(0, 12)}-browser-recording-${recordingId}.webm`))).toEqual(runtime.encoded[0]);
+            expect(await runtime.readAttachedMedia(stored.mediaRef.mediaId)).toEqual(runtime.encoded[0]);
             expect(await runtime.execute('browser.recording.start', { ...start, recordingId: 'held_recording' }))
                 .toMatchObject({ ok: true, result: { status: 'unavailable', reason: { code: 'browser_recording_policy_denied' } } });
         } finally { release.resolve(); await runtime.dispose(); }
@@ -249,9 +254,7 @@ describe('managed recording Action → private daemon IPC → capture → Sessio
                 expect.objectContaining({ browserRecording: { outcomeReason: 'policy_revoked' } }),
             ]);
             expect(runtime.encoded[0]?.subarray(4)).toEqual(Buffer.alloc(48, 1));
-            const mediaId = stored.mediaRef.mediaId;
-            expect(await readFile(join(runtime.directory, '.happier', 'uploads', 'artifacts', 'session', 'recording',
-                `${mediaId.slice(0, 12)}-browser-recording-${recordingId}.webm`))).toEqual(runtime.encoded[0]);
+            expect(await runtime.readAttachedMedia(stored.mediaRef.mediaId)).toEqual(runtime.encoded[0]);
             expect(await runtime.execute('browser.recording.status', { recordingId })).toMatchObject({ ok: true,
                 result: { status: 'finalized', outcomeReason: 'policy_revoked', mediaRef: stored.mediaRef } });
             expect(await runtime.execute('browser.recording.start', { ...start, recordingId: 'held_recording' }))
@@ -362,9 +365,7 @@ describe('managed recording Action → private daemon IPC → capture → Sessio
             } } });
             const stored = recordingResult(stopped);
             expect(runtime.encoded[0]?.subarray(4)).toEqual(Buffer.concat([Buffer.alloc(24, 1), Buffer.alloc(24, 2)]));
-            const mediaId = stored.mediaRef.mediaId;
-            expect(await readFile(join(runtime.directory, '.happier', 'uploads', 'artifacts', 'session', 'recording',
-                `${mediaId.slice(0, 12)}-browser-recording-${recordingId}.webm`))).toEqual(runtime.encoded[0]);
+            expect(await runtime.readAttachedMedia(stored.mediaRef.mediaId)).toEqual(runtime.encoded[0]);
             expect(await runtime.execute('browser.recording.status', { recordingId })).toMatchObject({ ok: true, result: stored });
             expect(await runtime.execute('browser.recording.listForView', { browserSessionId: 'session', viewId: 'view' })).toMatchObject({ ok: true, result: [stored] });
             expect(await runtime.execute('browser.recording.stop', { recordingId, navigationGenerationEnd: 0 })).toEqual(stopped);
