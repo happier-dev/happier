@@ -40,20 +40,34 @@ const effectFields = (options: readonly ActionInputOption[]): ActionInputFieldHi
   { path: 'afterMs', title: 'Idle delay (milliseconds)', widget: 'number' },
 ];
 
+// Review the carrier's public tag and opened plain content. Ciphertext and
+// wrapped recipient keys remain in replay custody, never in review rows.
+const presetContentFields = (prefix: string): ActionInputFieldHint[] => [
+  { path: `${prefix}contentEncryptionMode`, title: 'Content encryption mode', widget: 'text' },
+  { path: `${prefix}content.t`, title: 'Content', widget: 'text' },
+  { path: `${prefix}content.v`, title: 'Preset configuration', widget: 'json', required: true,
+    visibleWhen: { op: 'eq', path: `${prefix}content.t`, value: 'plain' } },
+  { path: `${prefix}recipients.[].accountId`, title: 'Recipients', widget: 'text' },
+];
+const presetControlFields: ActionInputFieldHint[] = [
+  { ...controller, required: false },
+  { path: 'controllerPoolId', title: 'Controller pool id', widget: 'text' },
+  { ...retention, required: false }, { ...wake, required: false },
+  { path: 'teamAcquireDelegated', title: 'Team acquisition delegated', widget: 'boolean' },
+  { path: 'simultaneousLimit', title: 'Simultaneous machine limit', widget: 'json' },
+];
+
 export const MACHINE_PRESET_INPUT_FIELDS = {
   'machines.presets.list': [home, owner,
     { path: 'search', title: 'Search', widget: 'text' },
     { path: 'includeArchived', title: 'Include archived presets', widget: 'boolean' },
     { path: 'cursor', title: 'Page cursor', widget: 'text' }],
   'machines.presets.get': [home, preset],
-  'machines.presets.create': [home, preset, name, { ...owner, required: true },
-    { path: 'launch', title: 'Provisioning launch', widget: 'json' }, { ...controller, required: false },
-    { path: 'controllerPoolId', title: 'Controller pool id', widget: 'text' },
-    { path: 'setup', title: 'Machine setup', widget: 'json' },
-    { ...retention, required: false }, { ...wake, required: false },
-    { path: 'simultaneousLimit', title: 'Simultaneous machine limit', widget: 'json' }],
+  'machines.presets.create': [home, preset, { ...owner, required: true },
+    ...presetContentFields(''), ...presetControlFields],
   'machines.presets.update': [home, preset, revision,
-    { path: 'patch', title: 'Preset changes', widget: 'json', required: true }],
+    ...presetContentFields('patch.'),
+    ...presetControlFields.map(field => ({ ...field, path: `patch.${field.path}` }))],
   'machines.presets.archive': [home, preset, revision],
   'machines.presets.restore': [home, preset, revision],
 } satisfies Record<MachinePresetActionIdV1, ActionInputFieldHint[]>;

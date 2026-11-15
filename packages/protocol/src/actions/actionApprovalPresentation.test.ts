@@ -1115,12 +1115,14 @@ describe('approval field presentation', () => {
       launch: { provider: { pluginId: 'machine.example', localId: 'vm' }, schemaVersion: 1, name: 'Work VM', choices: { cpu: 2 } },
       controller: { machineId: 'controller', installationId: 'installation' },
       setup: { scripts: [{ body: 'echo ready' }] }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
-    const presentation = describeApprovalActionFields({ actionId: 'machines.presets.create', actionArgs: preset });
+    const { name, launch, setup, ...presetControls } = preset;
+    const content = { v: 1, name, launch, setup };
+    const presentation = describeApprovalActionFields({ actionId: 'machines.presets.create', actionArgs: {
+      ...presetControls, contentEncryptionMode: 'plain', content: { t: 'plain', v: content }, recipients: [],
+    } });
     expect(presentation.rows).toEqual(expect.arrayContaining([
-      expect.objectContaining({ path: 'name', value: preset.name }),
-      expect.objectContaining({ path: 'launch', value: JSON.stringify(preset.launch) }),
+      expect.objectContaining({ path: 'content.v', value: JSON.stringify(content) }),
       expect.objectContaining({ path: 'controller', value: JSON.stringify(preset.controller) }),
-      expect.objectContaining({ path: 'setup', value: JSON.stringify(preset.setup) }),
     ]));
     expect(describeApprovalActionFields({ actionId: 'machines.pools.delete', actionArgs: { poolId: 'pool', expectedRevision: 3 } }).rows)
       .toEqual(expect.arrayContaining([expect.objectContaining({ path: 'poolId', value: 'pool' }),
@@ -1152,22 +1154,26 @@ describe('approval field presentation', () => {
     const input = { id: 'preset', homeId: 'home', name: 'Script preset', owner: { kind: 'account', accountId: 'account' },
       setup: { scripts: [{ body: 'echo first\r\n', affects: 'none' }, { body: 'echo second\n', affects: 'none' }], items: [] } };
     const spec = getActionSpec('machines.presets.create');
-    const admitted = spec.inputSchema.parse(input);
+    const { name, setup, ...controls } = input;
+    const admitted = spec.inputSchema.parse({ ...controls, contentEncryptionMode: 'plain',
+      content: { t: 'plain', v: { v: 1, name, setup } }, recipients: [] });
     const presentation = describeApprovalActionFields({ actionId: spec.id, actionArgs: admitted });
     expect(presentation.unrepresentable).toBeNull();
-    const setup = presentation.rows.find(row => row.path === 'setup');
-    if (setup?.kind !== 'value') throw new Error('The setup operand must be reviewable');
-    expect(JSON.parse(setup.value)).toEqual(input.setup);
+    const configuration = presentation.rows.find(row => row.path === 'content.v');
+    if (configuration?.kind !== 'value') throw new Error('The setup operand must be reviewable');
+    expect(JSON.parse(configuration.value).setup).toEqual(input.setup);
   });
 
   it('reviews a portable launch preset while the canonical schema still rejects incomplete presets', () => {
     const spec = getActionSpec('machines.presets.create');
-    const identity = { id: 'preset', homeId: 'home', name: 'Portable preset', owner: { kind: 'account', accountId: 'account' } };
-    const input = spec.inputSchema.parse({ ...identity,
-      launch: { provider: { pluginId: 'machine.example', localId: 'vm' }, schemaVersion: 1, name: 'Work VM', choices: { cpu: 2 } } });
+    const identity = { id: 'preset', homeId: 'home', owner: { kind: 'account', accountId: 'account' },
+      contentEncryptionMode: 'plain', recipients: [] };
+    const configuration = { v: 1, name: 'Portable preset',
+      launch: { provider: { pluginId: 'machine.example', localId: 'vm' }, schemaVersion: 1, name: 'Work VM', choices: { cpu: 2 } } };
+    const input = spec.inputSchema.parse({ ...identity, content: { t: 'plain', v: configuration } });
     const presentation = describeApprovalActionFields({ actionId: spec.id, actionArgs: input });
     expect(presentation.unrepresentable).toBeNull();
-    expect(presentation.rows).toContainEqual(expect.objectContaining({ path: 'launch', value: JSON.stringify(input.launch) }));
+    expect(presentation.rows).toContainEqual(expect.objectContaining({ path: 'content.v', value: JSON.stringify(configuration) }));
     expect(spec.inputSchema.safeParse(identity).success).toBe(false);
     expect(spec.inputSchema.safeParse({ ...identity, controller: { machineId: 'controller', installationId: 'installation' } }).success).toBe(false);
     expect(spec.inputSchema.safeParse({ ...identity, launch: { choices: {} } }).success).toBe(false);
