@@ -12,6 +12,7 @@ import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { readManagedWakeTargets } from './managedWake';
 import { enqueuePendingMessageByAuthenticatedMachine } from '@/app/session/pending/pendingMessageService';
 import { ManagedWakeTargetV1Schema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
+import { unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { readAccessibleMachineOpeningsInTx } from '@/app/machines/machineAccess';
 import { serializeManagedInputRuntime } from '@/app/machines/machineSerialization';
 import { recordMachineAlive } from '@/app/presence/presenceRecorder';
@@ -175,11 +176,11 @@ describe('managed query selection on disposable databases', () => {
         await db.managedMachine.update({ where: { id: first.id }, data: { controllerMachineId: ids[0], createdAt: new Date(1) } });
         await db.managedMachine.update({ where: { id: last.id }, data: { controllerMachineId: ids.at(-1)!, createdAt: new Date(2) } });
         const owned = await measureManagedRows(() => listManagedMachines({ actorAccountId: custodian.id, input: { homeId } }));
-        expect(owned.value.machines.map(machine => machine.id)).toEqual([first.id, last.id, row.id]);
+        expect(owned.value.machines.map(machine => unwrapManagedMachineReadV1(machine).id)).toEqual([first.id, last.id, row.id]);
         expect(owned.rows).toBe(3);
         expect(owned.largestIdSet).toBeLessThanOrEqual(999);
         const created = await measureManagedRows(() => listManagedMachines({ actorAccountId: creator.id, input: { homeId } }));
-        expect(created.value.machines.map(machine => machine.id)).toEqual([row.id]);
+        expect(created.value.machines.map(machine => unwrapManagedMachineReadV1(machine).id)).toEqual([row.id]);
         expect(created.rows).toBe(1);
         console.info('managed-controller-bind-counts', JSON.stringify({ candidates: ids.length + 1,
             queries: owned.managedQueries, rows: owned.rows, maxIds: owned.largestIdSet,
@@ -256,7 +257,7 @@ describe('managed query selection on disposable databases', () => {
         expect(moved.value.targets).toEqual(expect.arrayContaining([{ ...retained, expectedIntentRevision: 1,
             controller: { machineId: destination.id, installationId: destination.installationId! } }]));
         expect(moved.value.targets).toHaveLength(2);
-        expect(moved.sessionPointReads).toBe(2);
+        expect(moved.sessionPointReads).toBe(0);
         expect((await db.session.findUniqueOrThrow({ where: { id: session.id } })).pendingActivationManagedTarget).toEqual(retained);
     });
 
@@ -273,11 +274,11 @@ describe('managed query selection on disposable databases', () => {
             admittedActionRequestId: randomUUID(), presetId: randomUUID(), presetRevision: 1 })) });
         const history = await measureManagedRows(async () => Promise.all([false, true].map(archived =>
             listManagedMachines({ actorAccountId: creator.id, input: { homeId, presetId: row.presetId!, archived } }))));
-        expect(history.value.flatMap(result => result.machines.map(machine => machine.id))).toEqual([row.id, archived.id]);
+        expect(history.value.flatMap(result => result.machines.map(machine => unwrapManagedMachineReadV1(machine).id))).toEqual([row.id, archived.id]);
         expect(history.rows).toBe(2);
         const association = await measureManagedRows(() => listManagedMachines({ actorAccountId: creator.id,
             input: { homeId, enrolledMachineId: guest.id } }));
-        expect(association.value.machines.map(machine => machine.id)).toEqual([row.id]);
+        expect(association.value.machines.map(machine => unwrapManagedMachineReadV1(machine).id)).toEqual([row.id]);
         expect(association.rows).toBe(1);
         expect((await listManagedMachines({ actorAccountId: stranger.id, input: { homeId, enrolledMachineId: guest.id } })).machines).toEqual([]);
         expect((await listManagedMachines({ actorAccountId: creator.id, input: { homeId, presetId: 'other', enrolledMachineId: guest.id } })).machines).toEqual([]);
@@ -363,7 +364,7 @@ describe('managed query selection on disposable databases', () => {
         const read = (actorAccountId: string, enrolledMachineId = guest.id, archived = false) => measureManagedRows(() =>
             listManagedMachines({ actorAccountId, input: { homeId, enrolledMachineId, archived } }));
         const own = await read(custodian.id);
-        expect(own.value.machines.map(machine => machine.id)).toEqual([row.id]);
+        expect(own.value.machines.map(machine => unwrapManagedMachineReadV1(machine).id)).toEqual([row.id]);
         expect(own.machineRows).toBeLessThanOrEqual(3);
         expect(own.candidateQueries).toBe(0);
         const unmanaged = await read(custodian.id, randomUUID());
@@ -377,15 +378,15 @@ describe('managed query selection on disposable databases', () => {
         // Controller Use cannot grant visibility to its native resources; the
         // enrolled guest's Team grant is the viewer's read authority.
         await db.machineGrant.create({ data: { principalKind: 'team', machineId: guest.id, teamId: team.id, accessLevel: 'view', createdByAccountId: creator.id } });
-        expect((await read(stranger.id)).value.machines.map(machine => machine.id)).toEqual([row.id]);
+        expect((await read(stranger.id)).value.machines.map(machine => unwrapManagedMachineReadV1(machine).id)).toEqual([row.id]);
         await db.teamMembership.update({ where: { teamId_accountId: { teamId: team.id, accountId: stranger.id } }, data: { status: 'suspended' } });
         expect((await read(stranger.id)).value.machines).toEqual([]);
         await db.teamMembership.update({ where: { teamId_accountId: { teamId: team.id, accountId: stranger.id } }, data: { status: 'active' } });
-        expect((await read(stranger.id)).value.machines.map(machine => machine.id)).toEqual([row.id]);
+        expect((await read(stranger.id)).value.machines.map(machine => unwrapManagedMachineReadV1(machine).id)).toEqual([row.id]);
         await db.machine.update({ where: { id: controller.id }, data: { revokedAt: new Date() } });
         await db.managedMachine.update({ where: { id: row.id }, data: { archivedAt: new Date() } });
         for (const actor of [custodian.id, creator.id]) {
-            expect((await read(actor, guest.id, true)).value.machines.map(machine => machine.id)).toEqual([row.id]);
+            expect((await read(actor, guest.id, true)).value.machines.map(machine => unwrapManagedMachineReadV1(machine).id)).toEqual([row.id]);
         }
     });
 });

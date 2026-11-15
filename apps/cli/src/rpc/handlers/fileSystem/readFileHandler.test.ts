@@ -61,7 +61,7 @@ describe('readFile ranged RPC', () => {
       const response = await handlers.get('daemon.filesystem.readFile')!({ rootPath, path }, {
         signal: new AbortController().signal, callerAuthority: 'present_user',
         machineAdmission: { actorAccountId: 'private-member-account', custodianAccountId: 'private-owner-account',
-          machineId: 'machine', installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
+          machineId: 'machine', installationId: 'installation', role: 'use', encryptionMode: 'plain' },
         verifyMachineAdmissionCurrent: async () => true,
       });
       expect(response).toMatchObject({ success: false, errorCode: 'filesystem_identity_custody_unavailable' });
@@ -183,9 +183,6 @@ describe('readFile ranged RPC', () => {
       await writeFile(join(rootPath, 'private.txt'), 'fixture-private-bytes', { mode: 0o600 });
       for (const context of [
         { ...owner, machineAdmission: { ...owner.machineAdmission!, actorAccountId: 'member' } },
-        { ...owner, machineAdmission: { ...owner.machineAdmission!, actorAccountId: 'member', role: 'manage' as const } },
-        { ...owner, callerAuthority: 'account_automation' as const,
-          machineAdmission: { ...owner.machineAdmission!, actorAccountId: 'member', role: 'manage' as const } },
         { ...owner, callerAuthority: 'account_automation' as const, localActionContext: { actionCaller: {
           kind: 'session' as const, sessionId: 'owner-agent-session', starterDepth: 0, turnDepth: 0 } } },
         { ...owner, sessionActionOrigin: { v: 1 as const,
@@ -202,6 +199,11 @@ describe('readFile ranged RPC', () => {
       expect(await read({ rootPath, path: 'private.txt' }, owner)).toMatchObject({ success: true });
       for (const input of [{ rootPath, path: 'private.txt' }, { path: join(rootPath, 'private.txt') }, { path: 'private.txt' }]) {
         expect(await read(input, { ...owner, callerAuthority: 'account_automation' })).toMatchObject({ success: true });
+      }
+      // Manage grants host control (448e136f325), including Account automation.
+      for (const callerAuthority of ['present_user', 'account_automation'] as const) {
+        expect(await read({ rootPath, path: 'private.txt' }, { ...owner, callerAuthority,
+          machineAdmission: { ...owner.machineAdmission!, actorAccountId: 'member', role: 'manage' } })).toMatchObject({ success: true });
       }
       expect(await read({ rootPath, path: 'private.txt' }, { ...owner, verifyMachineAdmissionCurrent: undefined }))
         .toMatchObject({ success: false, errorCode: 'filesystem_identity_custody_unavailable' });

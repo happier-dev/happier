@@ -209,7 +209,7 @@ describe('always-on Machine resource attention', () => {
         vi.useFakeTimers();
         const now = Date.now();
         vi.setSystemTime(now);
-        const serverId = setMachines([resourceMachine('expires', 'needs_you', { activeAt: now - 59_500 })]);
+        const serverId = setMachines([resourceMachine('expires', 'needs_you', { activeAt: now - 59_500, presenceProtocolVersion: 1 })]);
         const hook = await renderHook(() => useMachineResourceFleetAttention());
         await vi.waitFor(() => expect(hook.getCurrent().needsYou).toEqual([{ serverId, machineId: 'expires' }]));
         await act(async () => { await vi.advanceTimersByTimeAsync(501); });
