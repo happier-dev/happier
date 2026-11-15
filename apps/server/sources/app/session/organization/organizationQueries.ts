@@ -17,7 +17,7 @@ import {
 } from "./organizationSnapshot";
 import { hashSessionOrganizationKey } from "./hashKeys";
 import { filterValidSessionOrganizationOrderEntries } from "./organizationOrderValidation";
-import { createVisibleUnarchivedOrganizationSessionWhere } from "./sessionVisibility";
+import { buildReadableOrganizationSessionWhere, createVisibleUnarchivedOrganizationSessionWhere, visibleUnarchivedOrganizationSessionWhere } from "./sessionVisibility";
 import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 
 export type SessionFolderAssignmentRecord = Readonly<{
@@ -162,8 +162,10 @@ export async function fetchSessionOrganizationSnapshot(params: Readonly<{
     authentication: SessionAccessAuthentication;
 }>) {
     return await captureReadSnapshot(async (tx) => {
-        const sessionWhere = await buildSessionAccessWhere({ tx, accountId: params.accountId, capability: 'readTranscript', mode: 'effective_access_v1', authentication: params.authentication });
-        const visibleSessionWhere = await createVisibleUnarchivedOrganizationSessionWhere(tx, params.accountId, params.authentication);
+        // One access resolution per snapshot: assignments read readable Sessions, pins and
+        // appearances read the unarchived subset of the same admitted relation.
+        const sessionWhere = await buildReadableOrganizationSessionWhere(tx, params.accountId, params.authentication);
+        const visibleSessionWhere = visibleUnarchivedOrganizationSessionWhere(sessionWhere);
         const account = await tx.account.findUnique({
             where: { id: params.accountId },
             select: {

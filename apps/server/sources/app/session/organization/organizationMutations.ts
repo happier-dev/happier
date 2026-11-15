@@ -4,6 +4,7 @@ import { type SetSessionAttentionStandingRequest } from '@happier-dev/protocol/s
 import { SESSION_ORGANIZATION_MAX_SESSION_APPEARANCES } from '@happier-dev/protocol/sessions/organization/constants';
 import type { SetSessionAppearanceRequest, SetSessionAppearanceResponse } from '@happier-dev/protocol/sessions/organization/appearances';
 
+import type { Prisma } from "@prisma/client";
 import { buildSessionAccessWhere } from "@/app/session/access/sessionAccessWhere";
 import { scheduleAccountActivityBadgeRefresh } from "@/app/activity/refreshAccountActivityBadgePushes";
 import { applyViewerReadCursorOperationInTx } from "@/app/session/personal/readState";
@@ -104,11 +105,13 @@ async function canAccessVisibleUnarchivedSessionForOrganizationInTx(tx: SessionO
     accountId: string;
     sessionId: string;
     authentication: SessionAccessAuthentication;
+    /** The caller's already-resolved visible relation, when it reads that relation again in this transaction. */
+    visibleSessionWhere?: Prisma.SessionWhereInput;
 }>): Promise<boolean> {
     const row = await tx.session.findFirst({
         where: {
             id: params.sessionId,
-            ...await createVisibleUnarchivedOrganizationSessionWhere(tx, params.accountId, params.authentication),
+            ...(params.visibleSessionWhere ?? await createVisibleUnarchivedOrganizationSessionWhere(tx, params.accountId, params.authentication)),
         },
         select: { id: true },
     });
@@ -573,7 +576,9 @@ export async function setSessionAppearanceInTx(tx: SessionOrganizationTx, params
         });
         return { appearance: null };
     }
-    if (!await canAccessVisibleUnarchivedSessionForOrganizationInTx(tx, params)) return { error: "session-not-found" };
+    // One access resolution serves both the target check and the appearance-limit count.
+    const visibleSessionWhere = await createVisibleUnarchivedOrganizationSessionWhere(tx, params.accountId, params.authentication);
+    if (!await canAccessVisibleUnarchivedSessionForOrganizationInTx(tx, { ...params, visibleSessionWhere })) return { error: "session-not-found" };
     if (!await isSessionOrganizationDisplayEnvelopeAllowedForAccount({ tx, accountId: params.accountId, display: params.request.display })) {
         return { error: "invalid-display-envelope" };
     }
@@ -587,7 +592,7 @@ export async function setSessionAppearanceInTx(tx: SessionOrganizationTx, params
         const count = await tx.sessionAppearance.count({
             where: {
                 accountId: params.accountId,
-                session: await createVisibleUnarchivedOrganizationSessionWhere(tx, params.accountId, params.authentication),
+                session: visibleSessionWhere,
             },
         });
         if (count >= SESSION_ORGANIZATION_MAX_SESSION_APPEARANCES) {
