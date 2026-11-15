@@ -39,12 +39,16 @@ const listenersByAddress = new Map<string, { address: ExecutionRunActivityAddres
 
 const EMPTY_RUNNING_RUNS: readonly ExecutionRunPublicState[] = Object.freeze([]);
 export type RunningExecutionRunRosterSnapshot = Readonly<{
+    /** The Session's running Runs. */
     runs: readonly ExecutionRunPublicState[];
+    /** Whether the last settled list held any Run (any status): the Session's historical Run support. */
+    hasRuns: boolean;
     loading: boolean;
     failed: boolean;
 }>;
-const UNREAD_ROSTER: RunningExecutionRunRosterSnapshot = Object.freeze({ runs: EMPTY_RUNNING_RUNS, loading: true, failed: false });
-const EMPTY_ROSTER: RunningExecutionRunRosterSnapshot = Object.freeze({ runs: EMPTY_RUNNING_RUNS, loading: false, failed: false });
+const UNREAD_ROSTER: RunningExecutionRunRosterSnapshot = Object.freeze({ runs: EMPTY_RUNNING_RUNS, hasRuns: false, loading: true, failed: false });
+const EMPTY_ROSTER: RunningExecutionRunRosterSnapshot = Object.freeze({ runs: EMPTY_RUNNING_RUNS, hasRuns: false, loading: false, failed: false });
+/** Reads the Session's listed Runs (every status); `null` when the list is unavailable. */
 type RosterRead = () => Promise<readonly ExecutionRunPublicState[] | null>;
 type Roster = {
     snapshot: RunningExecutionRunRosterSnapshot;
@@ -60,7 +64,8 @@ type Roster = {
 // subscriber releases it, and a later mount starts with a new baseline.
 const rostersBySessionAddress = new Map<string, Roster>();
 
-function publishRoster(roster: Roster, status: Readonly<{ loading: boolean; failed: boolean }>, runs = roster.snapshot.runs): void {
+function publishRoster(roster: Roster, status: Readonly<{ loading: boolean; failed: boolean }>, runs = roster.snapshot.runs,
+    hasRuns = roster.snapshot.hasRuns): void {
     const previous = roster.snapshot;
     let next = runs;
     if (runs !== previous.runs) {
@@ -72,8 +77,8 @@ function publishRoster(roster: Roster, status: Readonly<{ loading: boolean; fail
     }
     const unchangedRuns = next === previous.runs
         || next.length === previous.runs.length && next.every((run, index) => run === previous.runs[index]);
-    if (unchangedRuns && status.loading === previous.loading && status.failed === previous.failed) return;
-    roster.snapshot = { ...status, runs: unchangedRuns ? previous.runs : next.length > 0 ? next : EMPTY_RUNNING_RUNS };
+    if (unchangedRuns && hasRuns === previous.hasRuns && status.loading === previous.loading && status.failed === previous.failed) return;
+    roster.snapshot = { ...status, hasRuns, runs: unchangedRuns ? previous.runs : next.length > 0 ? next : EMPTY_RUNNING_RUNS };
     for (const listener of [...roster.listeners]) listener();
 }
 
@@ -88,11 +93,13 @@ function refreshRoster(key: string, roster: Roster): void {
     roster.invalidated = false;
     void (async () => {
         try {
-            const runs = await roster.read();
+            const listed = await roster.read();
             if (rostersBySessionAddress.get(key) !== roster || roster.request !== request) return;
             // A failed/unavailable read cannot prove that the last-known runs
             // finished. Reconnect, activity or explicit refresh will catch up.
-            publishRoster(roster, { loading: false, failed: runs === null }, runs ?? roster.snapshot.runs);
+            publishRoster(roster, { loading: false, failed: listed === null },
+                listed === null ? roster.snapshot.runs : listed.filter(run => run.status === 'running'),
+                listed === null ? roster.snapshot.hasRuns : listed.length > 0);
         } catch {
             if (rostersBySessionAddress.get(key) === roster && roster.request === request) {
                 publishRoster(roster, { loading: false, failed: true });
@@ -164,7 +171,7 @@ export function subscribeRunningExecutionRunRoster(
             // An old request may finish, but can no longer publish its rows.
             created.request = null;
             created.invalidated = false;
-            publishRoster(created, { loading: false, failed: true }, EMPTY_RUNNING_RUNS);
+            publishRoster(created, { loading: false, failed: true }, EMPTY_RUNNING_RUNS, false);
             if (event.kind === 'credentials_set') refreshRoster(key, created);
         });
         created.dispose = () => {

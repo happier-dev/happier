@@ -23,13 +23,19 @@ export function resolveRunningExecutionRunsFromListResult(
     return result.runs.filter((run) => run.status === 'running');
 }
 
-/** Every demanded roster uses the same admitted list reader, including Inbox Follow sources. */
-export async function readSessionRunningExecutionRuns(address: SessionAddress): Promise<readonly ExecutionRunPublicState[] | null> {
+/** Every demanded roster uses the same admitted list reader, including Inbox Follow sources and Run support. */
+async function readSessionExecutionRunList(address: SessionAddress): Promise<readonly ExecutionRunPublicState[] | null> {
     const result = await sessionExecutionRunList(address.sessionId, {}, { serverId: address.serverId });
     // The list response is a loose object, so `ok === false` does not narrow `errorCode`.
-    return result.ok === false
-        ? isExecutionRunTargetUnavailable(typeof result.errorCode === 'string' ? result.errorCode : null) ? [] : null
-        : resolveRunningExecutionRunsFromListResult(result);
+    if (result.ok === false) {
+        return isExecutionRunTargetUnavailable(typeof result.errorCode === 'string' ? result.errorCode : null) ? [] : null;
+    }
+    return 'runs' in result ? result.runs : [];
+}
+
+export async function readSessionRunningExecutionRuns(address: SessionAddress): Promise<readonly ExecutionRunPublicState[] | null> {
+    const listed = await readSessionExecutionRunList(address);
+    return listed === null ? null : listed.filter((run) => run.status === 'running');
 }
 
 /**
@@ -48,7 +54,7 @@ export function receivesSessionLiveRunActivity(address: SessionAddress): boolean
 
 /** Every demanded roster subscribes through this one source: the list reader and its live-delivery fact. */
 export function subscribeSessionRunningExecutionRunRoster(address: SessionAddress, listener: () => void): () => void {
-    return subscribeRunningExecutionRunRoster(address, listener, () => readSessionRunningExecutionRuns(address),
+    return subscribeRunningExecutionRunRoster(address, listener, () => readSessionExecutionRunList(address),
         () => receivesSessionLiveRunActivity(address));
 }
 

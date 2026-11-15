@@ -262,6 +262,21 @@ describe('useSessionExecutionRunsSupported', () => {
     expect(hook.getCurrent()).toBe(false);
   });
 
+  it('serves every mounted support reader of one Session from one historical list read', async () => {
+    // P03-MOBILE-IOS-FLOWS: opening a Session mounts this reader in the Session shell and in the
+    // launchability owner; live iOS counted 2 app list reads (+4 daemon verifies) per open.
+    seedSession('session-shared-probe');
+    network.respond(SESSION_RPC_METHODS.EXECUTION_RUN_LIST, historicalRuns);
+    const { useSessionExecutionRunsSupported } = await import('./useSessionExecutionRunsSupported');
+    const hook = await renderHook(() => [
+      useSessionExecutionRunsSupported('session-shared-probe', home.id),
+      useSessionExecutionRunsSupported('session-shared-probe', home.id),
+    ]);
+
+    await waitForHomeGovernance(() => { expect(hook.getCurrent()).toEqual([true, true]); });
+    expect(listRequests()).toHaveLength(1);
+  });
+
   it('clears historical support when the Session changes before its next probe resolves', async () => {
     seedSession('session-with-runs');
     seedSession('session-without-runs');
