@@ -7,6 +7,50 @@ import {
 } from './providerFailureDiagnostic';
 
 describe('readPiProviderFailureDiagnostic', () => {
+  // A4 r1115f retained invalid_api_key without an HTTP status. Credential fully redacted.
+  it.each([
+    { message: '[REDACTED]', type: 'invalid_request_error', param: null, code: 'invalid_api_key' },
+    { error: { code: 'invalid_api_key', type: 'invalid_request_error', param: null,
+      message: 'Incorrect API key provided: [REDACTED].' } },
+    { type: 'error', code: 'invalid_api_key', param: null, message: 'Request rejected' },
+  ])('projects OpenAI credential refusals without relying on status or prose', (body) => {
+    const errorMessage = JSON.stringify(body);
+    expect(readPiProviderFailureDiagnostic({ type: 'message_end', message: {
+      role: 'assistant', provider: 'openai', model: 'gpt-4.1-nano',
+      stopReason: 'error', errorMessage,
+    } })).toMatchObject({ code: 'invalid_api_key', piRetryable: false,
+      failureCause: { phase: 'authentication', failureReason: 'authentication_required',
+        providerErrorCode: 'invalid_api_key' } });
+    expect(readPiPromptRejectionDiagnostic(errorMessage)?.failureCause).toMatchObject({
+      failureReason: 'authentication_required', providerErrorCode: 'invalid_api_key',
+    });
+  });
+
+  it.each(['API_KEY_INVALID', 'INVALID_ARGUMENT'])('decodes the Google SDK HTTP 400 wrapper with reason %s', (reason) => {
+    // Native row 31: error.message is the JSON body inside the SDK's HTTP envelope.
+    const errorMessage = JSON.stringify({ error: { message: JSON.stringify({ error: {
+      code: 400, message: '[REDACTED]', status: 'INVALID_ARGUMENT', details: [
+        { '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason,
+          domain: '[REDACTED]', metadata: { service: '[REDACTED]' } },
+        { '@type': 'type.googleapis.com/google.rpc.LocalizedMessage', locale: 'en-US', message: '[REDACTED]' },
+      ],
+    } }), code: 400, status: 'Bad Request' } });
+    const diagnostic = readPiProviderFailureDiagnostic({ type: 'message_end', message: {
+      role: 'assistant', provider: 'google', model: 'gemini-2.5-flash', stopReason: 'error', errorMessage,
+    } });
+    expect(diagnostic?.failureCause).toMatchObject(reason === 'API_KEY_INVALID'
+      ? { phase: 'authentication', failureReason: 'authentication_required', providerErrorCode: reason, httpStatus: 400 }
+      : { failureReason: 'unknown', httpStatus: 400 });
+  });
+
+  it('does not classify unrelated OpenAI request errors as authentication', () => {
+    expect(readPiProviderFailureDiagnostic({ type: 'message_end', message: {
+      role: 'assistant', stopReason: 'error', errorMessage: JSON.stringify({ error: {
+        code: 'invalid_request_error', type: 'invalid_request_error', message: 'Request rejected',
+      } }),
+    } })?.failureCause).toMatchObject({ failureReason: 'unknown' });
+  });
+
   it.each([401, 403])('CC6 projects a code-less HTTP %s through the shared cause owner', (status) => {
     const record = { type: 'turn_failed', errorMessage: `${status} Provider refused the request` };
     expect(readPiProviderFailureDiagnostic(record)).toMatchObject({

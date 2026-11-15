@@ -3,6 +3,10 @@ export type ProviderOutputFailureClassification = Readonly<{
   providerStatusFailure: boolean;
 }>;
 
+// OpenAI's documented credential refusal; match the decoded code, never vendor prose.
+// https://github.com/openai/openai-developers-for-cursor/blob/main/skills/openai-api-troubleshooting/SKILL.md
+const VENDOR_AUTH_ERROR_CODES = new Set(['invalid_api_key']);
+
 const STRONG_AUTH_ERROR_PATTERNS = [
   /\bunauthori[sz]ed\b/u,
   /\bunauthenticated\b/u,
@@ -39,7 +43,7 @@ export function classifyProviderOutputFailure(text: string): ProviderOutputFailu
     const record = rawRecord.trim().toLowerCase();
     if (!record) continue;
 
-    if (STRONG_AUTH_ERROR_PATTERNS.some((pattern) => pattern.test(record))) {
+    if (VENDOR_AUTH_ERROR_CODES.has(record) || STRONG_AUTH_ERROR_PATTERNS.some((pattern) => pattern.test(record))) {
       authenticationError = true;
     }
 

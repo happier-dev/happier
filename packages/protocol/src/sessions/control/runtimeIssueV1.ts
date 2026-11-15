@@ -476,14 +476,22 @@ export function projectSessionRuntimeFailureCause(
 
 /** Decode vendor codes without carrying provider prose into public causes. */
 export function readProviderErrorDiagnosticFacts(value: unknown): Readonly<{ code?: string; httpStatus?: number }> {
-  const error = readDataField(value, 'error') ?? value;
+  let error = readDataField(value, 'error') ?? value;
+  const status = readDataField(error, 'code');
+  const message = readDataField(error, 'message');
+  // The Google SDK wraps non-JSON HTTP responses in error.message, even when
+  // that response text is itself a JSON error body. Decode that one envelope.
+  if (typeof status === 'number' && typeof message === 'string' && message.trimStart().startsWith('{')) {
+    try {
+      error = readDataRecord(readDataField(JSON.parse(message), 'error')) ?? error;
+    } catch { /* Ordinary provider prose is not structured diagnostic evidence. */ }
+  }
   const details = readDataField(error, 'details');
   const reasons = Array.isArray(details) ? details.flatMap(detail =>
     readDataField(detail, '@type') === 'type.googleapis.com/google.rpc.ErrorInfo'
       ? [readDataField(detail, 'reason')] : []) : [];
   const code = [...reasons, readDataField(error, 'code')].find((candidate): candidate is string =>
     typeof candidate === 'string' && /^[A-Za-z][A-Za-z0-9_.:-]*$/u.test(candidate));
-  const status = readDataField(error, 'code');
   return {
     ...(code === undefined ? {} : { code }),
     ...(typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599

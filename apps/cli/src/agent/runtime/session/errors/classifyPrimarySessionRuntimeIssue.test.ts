@@ -14,6 +14,15 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import { StructuredInputComposerAttachmentResolutionError, StructuredInputComposerAttachmentUnavailableError } from '@/agent/runtime/turns/resolveStructuredInputProviderContext';
 
 describe('classifyPrimarySessionRuntimeIssue', () => {
+  it.each(['pi', 'opencode', 'codex'])('uses shared OpenAI code facts for %s diagnostics', (provider) => {
+    expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider, occurredAt: 100,
+      error: { code: 'invalid_api_key', severity: 'error', message: 'Request rejected',
+        details: { source: 'agent_session_error' } },
+    })).toMatchObject({ source: 'auth_error', failureCause: {
+      failureReason: 'authentication_required', providerErrorCode: 'invalid_api_key',
+    } });
+  });
+
   it.each(['pi_provider_session_error', 'opencode_provider_session_error'])('retains native turn failure provenance for %s', code => {
     const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', occurredAt: 100,
       error: { code, severity: 'error', message: 'terminated', details: { source: 'agent_session_error' } } });
