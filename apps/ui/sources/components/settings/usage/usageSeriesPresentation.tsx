@@ -269,6 +269,7 @@ export type UsageSeriesChoice = Readonly<{ onPress: NonNullable<ScrubLensRow['on
 export type SeriesLensPlot = Parameters<NonNullable<StackedSeriesChartProps['renderPlotOverlay']>>[0];
 
 type SeriesLensOptions = Readonly<{
+    label?: string;
     /** Source series; only their per-bucket source details and overlay flag are read here. */
     series?: readonly HappierSeries[];
     /** The caller's units; the chart's own reading when absent. */
@@ -312,16 +313,16 @@ export function SeriesPlotLens(props: SeriesLensOptions & Readonly<{ plot: Serie
     };
     // The chart's own keyboard selection: the lens shows where the viewer is reading.
     const focusIndex = plot.selectedBucketId === null ? -1 : plot.buckets.findIndex((bucket) => bucket.id === plot.selectedBucketId);
-    return <ScrubLens style={RNStyleSheet.absoluteFill} accentColor={accentColor} resolveContent={resolveContent}
+    return <ScrubLens label={props.label} style={RNStyleSheet.absoluteFill} accentColor={accentColor} resolveContent={resolveContent}
         layout={{ centers: plot.centers }}
         focusIndex={focusIndex < 0 ? null : focusIndex} {...(testID ? { testID } : {})} />;
 }
 
 export function useUsageSeriesLens(input: SeriesLensOptions): Pick<StackedSeriesChartProps, 'renderPlotOverlay'> {
-    const { series, format, accentColor, footer, choice, pointTitle, testID } = input;
+    const { label, series, format, accentColor, footer, choice, pointTitle, testID } = input;
     const renderPlotOverlay = useCallback<NonNullable<StackedSeriesChartProps['renderPlotOverlay']>>((plot) =>
-        <SeriesPlotLens plot={plot} series={series} format={format} accentColor={accentColor} footer={footer}
+        <SeriesPlotLens label={label} plot={plot} series={series} format={format} accentColor={accentColor} footer={footer}
             choice={choice} pointTitle={pointTitle} testID={testID} />,
-    [series, format, accentColor, footer, choice, pointTitle, testID]);
+    [label, series, format, accentColor, footer, choice, pointTitle, testID]);
     return { renderPlotOverlay };
 }

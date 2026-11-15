@@ -1489,9 +1489,9 @@ summary. UI callers must not add a second dialog in front of the Action.
 Remote pull and push are `direct` by default, and two inputs make the executor's one in-place
 confirmation apply. The person's 0.2 `scmRemoteConfirmPolicy` preference (Source Control settings;
 `always`, `pull_only`, `push_only`, `never`) is the UI default confirmation of those two Actions:
-the UI host's approval hook (`isActionApprovalRequiredByAccountSettings` in
-`sync/domains/settings/actionsSettings.ts`, the one resolver for the executor and for UI predictions)
-asks for a present person's UI press unless the Action is set to Allowed or the caller already
+the UI host projects it into the Actions settings it gives the shared router
+(`resolveExecutorActionsSettingsV1` in `sync/domains/settings/actionsSettings.ts`, also the source of every UI
+prediction), so the router asks for a present person's UI press unless the Action is set to Allowed or the caller already
 recorded the person's answer to this exact press (`confirmedByPerson` on the SCM facades selects
 the shared `.confirmed` dispatch; used when a pull choice dialog or a pull-then-push already asked). A force
 push with lease retains its declaration for automation; a direct UI press follows
@@ -2031,7 +2031,7 @@ and ordinary schema initialization must remain safe independently.
 | CLI presentation, including demoting an ineffective success | `apps/cli/src/cli/actions/commandPresentation.ts`, `.../executeCommand.ts` |
 | Machine-RPC route class for an Action-bearing method | `packages/protocol/src/machines/peer/mediation/rpc/routePolicyV1.ts` |
 
-In 0.3 development, `action.spec.get` returns input schemas, hints and examples.
+In 0.3 development, `action.spec.get` returns input and output schemas, hints and examples.
 Agent, MCP, CLI and Voice discovery expose shared definitions as named `schemaSections`;
 read a definition with the same Action `id` and its `schemaPath`. The response's
 `schemaSection.schema` contains that definition's root; nested definitions have
@@ -2039,9 +2039,15 @@ their own advertised sections. Its local references
 still resolve against the original `inputSchema` or `outputSchema` root, rather
 than the section itself. Reattach the listed definitions before compiling the
 schema with a JSON Schema validator. No fields or allowed values are truncated.
-Tools omit outputs by default; `includeOutputSchema: true` includes their section
-index, and a `/outputSchema/...` section read includes outputs automatically.
+MCP tool advertisements omit output schemas; describe includes their section index
+by default. Set `includeOutputSchema: false` for input-only discovery. A
+`/outputSchema/...` section read includes outputs automatically.
 UI/API retain full, self-contained schemas and outputs by default.
+
+The default Agent and MCP core contains search, describe, execute, change title,
+Session list/activity/send, and approval list/decide. Other Actions remain
+discoverable and executable through the same approval routing. Explicit Account
+exposure choices and required Session memory tools retain their existing policy.
 
 Native Agent descriptors and Session MCP discovery also reuse document-local
 references within each complete input schema in 0.3 development. The shared
@@ -9371,11 +9377,27 @@ with a newer one. Reviewed prompt-document updates are described above.
 #### Saved approval profiles (0.3 development source)
 
 An Account can save named approval profiles in `actionsSettingsV1.approvalProfiles`.
+A profile is a per-Action overlay of the Account's Approval settings:
+`{ id, name, actions?, approvalWaivedSurfaces? }`, where each `actions` row holds
+only `enabled`, `disabledSurfaces` and `approvalRequiredSurfaces` and only the
+Actions the person changed are stored. Placements and tool exposure stay Account
+settings. There are no built-in profiles; a Blank profile equals Account settings.
 Sessions, execution Runs, Workflow defaults and step execution selections, and
 trigger context retain `approvalProfileId` references. Omission inherits the
 owning invocation's selection; `null` detaches it. Session metadata stores the
 reference privately in its runtime owner. Agent permission modes continue to
 govern Agent tools separately from Action approval.
+
+`actionsSettingsV1.machineApprovalProfiles` maps a Machine id to the person's
+profile for their own Sessions on that Machine (an Account preference, so a
+Team Machine needs no cross-Account lookup). `resolveSessionApprovalProfileReferenceV1`
+is the one reference rule, read at each Action admission by the UI and CLI
+caller-Session readers: the Session's own profile id, else the Machine default
+for the Session's `machineId`, else Account settings. A Session whose reference
+is `null` or absent has no own choice, so a Machine default reaches running
+Sessions at their next Action. Profile rows and Machine defaults are written by
+`actions.policy.set` `profileChange` (`upsert`, `delete`, `machine_default`);
+deleting a profile also clears the Machine defaults that named it.
 
 An Agent or MCP caller changing a child selection to a different profile, including
 explicit `null`, defaults to Ask under `session.approval_profile.set`. Run profile
@@ -9397,21 +9419,23 @@ Fork and replay-continuation Actions use this same caller inheritance. Native
 direct fork/continuation requests that omit the reference retain the source
 Session's selection.
 
-`resolveActionApprovalRouting` applies the selected profile at Action admission.
-Per-Action rules override safety-category rules, which override the profile's
-default. `require` asks even when an existing preference waived the Action;
-`ask` supplies a default that an existing explicit waiver can answer; `allow`
-inherits the ordinary policy. Profiles introduce no new waiver authority over
-egress, authority-changing or person-class Actions. Exact completed reviews
-retain the existing admitted-child/replay behavior.
+`resolveActionApprovalRouting` applies the selected profile once, at the top:
+`applyApprovalProfileOverlayV1` replaces the Account row and waiver list of each
+Action the profile names, and the ordinary evaluator then decides on the merged
+settings. A profile can therefore ask, allow or turn an Action Off exactly where
+the Account screen could; it has no other waiver authority, and the egress,
+authority and person-class defaults and scoped Machine/Environment preferences
+apply as usual. Exact completed reviews retain the existing admitted-child/replay
+behavior. Changing a profile's rows or a Machine default through `profileChange`
+uses the same `session.approval_profile.set` control as changing a reference,
+decided by the Account settings rather than by the profile being changed.
+A Session-bound MCP host advertises through `createSessionActionSettingsView`,
+the same overlay on its Account settings, so a profile's Off hides the tool.
 
-The built-ins are **Read & propose only** (`require` throughout), **Apply safe
-actions** (`allow`, with danger-category `ask`), and **Full trust** (`allow`).
-Full trust therefore means the person's existing waivers, rather than blanket
-approval. Built-ins can be selected but custom editing uses a separate id.
-A deleted or unavailable profile resolves to Read & propose only with typed
-`status: 'missing'` and the requested id. Approval metadata and deferred results
-carry that resolution so a caller can explain the stricter fallback.
+A deleted, unavailable or retired built-in id resolves to Account settings with
+typed `status: 'missing'` and the requested id. Approval metadata and deferred
+results carry that resolution so a caller can show the warning. Deleting a
+profile therefore loosens its Sessions to Account settings at their next Action.
 
 In 0.3 development, CLI Action invocations with
 `HAPPIER_SESSION_MCP_CONTEXT_FILE` use the Session's existing local MCP bridge,
@@ -9453,7 +9477,12 @@ remains exact reviewed child consent, so it is distinct from the profile overlay
 
 `resolveActionApprovalRouting` is the single approval decision. It answers three things —
 whether approval is `required`, which `flow` carries it, and what `result` custody applies — and
-every host consumes that answer rather than re-deriving one.
+every host consumes that answer rather than re-deriving one. Hosts supply facts, never a boolean
+answer (`ActionExecutorDeps`): `readActionsSettings` (the host's current Actions settings; a
+Workflow invitation's retained restrictions are tightened with current ones by
+`tightenActionsSettingsV1`), `readApprovalOwner` (`'receiver'` when a receiving signed root owns the
+Ask, e.g. original CLI finite Project admission) and `readSettingsDeclarationOperation` (an installed
+Settings declaration's operation, classified like the built-ins).
 
 In 0.3 development, signed-root CLI requests with live-only input custody return
 the executor's persisted approval receipt before the person decides. The daemon
@@ -10403,6 +10432,17 @@ platform returns a typed refusal. File content stays in the live invocation and
 is omitted from approval Artifacts and observations, as with `clipboard.write`.
 
 `ui.current_context.read` and `ui.current_context.command.invoke` are client-local host Actions available to UI, Voice, Agent, MCP and CLI callers. In development source, the canonical CLI projections are `happier ui current-context read` and `happier ui current-context command invoke <commandId>`. The read returns the current navigation snapshot and complete opaque command inventory; invocation accepts only a currently published command id. Context data is strict JSON, and executable declarations and descriptors remain closed. The snapshot has no independent command-count or aggregate-byte ceiling: a growing filter or view inventory must not erase its entity or commands. Semantic command launch inputs retain their own operation boundary. The answering AppShell uses the same current-context reader and semantic dispatcher as Voice, retaining mount retirement, current Action availability, declared caller surfaces and approval policy. While a Details workspace is focused, the snapshot's area is `workspace`, and the entity and commands come only from what that workspace hosts, on phone and desktop alike; the page behind it and that page's host controls are withheld. CLI invocation requires that answering client; headless CLI/RPC hosts have no mounted execution owner and cannot substitute a successful local result.
+
+In unreleased 0.3 source, each Usage/Vitals scrub lens publishes a fixed command
+set rather than a command per chart bucket. Its chart-values command returns
+the latest exact bucket titles, totals and rows. Invoke it without input to
+discover available zero-based bucket indices, or with
+`{bucket: 2, mode: 'read' | 'select'}` to read or hold one bucket. The fixed
+row-selection command accepts `{row: '<id from the returned rows>'}` while a
+bucket is held; dismiss releases the lens. New samples update invocation results
+without changing command declarations. Datum tooltip commands likewise return
+their exact value rather than embedding it in the command title. These commands
+retain ordinary mounted admission, opaque ids and answering-client routing.
 
 In unreleased 0.3 source, mounted local-command dispatch binds the original caller
 to the invocation. Effectful handlers pass their existing mounted execution engine

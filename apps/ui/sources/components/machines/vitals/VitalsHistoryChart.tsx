@@ -87,6 +87,7 @@ export const VitalsHistoryChart = React.memo(function VitalsHistoryChart(
     [shownSeries, props.timeline.start],
   );
   const lens = useUsageSeriesLens({
+    label: props.label,
     series,
     format: props.format,
     accentColor: theme.colors.text.secondary,

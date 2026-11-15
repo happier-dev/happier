@@ -9,6 +9,7 @@ import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHel
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { t } from '@/text';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 // The portal is a platform boundary; datum state and mounted command admission stay real.
@@ -48,7 +49,7 @@ it('reveals and dismisses the same exact datum through its UI trigger and mounte
     const port = readCurrentUiContextActionReader({ surface: 'agent' });
     const executor = createDefaultActionExecutor();
     const read = () => port!.readCurrentUiContext()!;
-    const reveal = read().commands.find(command => command.title.includes('Cache hit') && command.title.includes('69.8811%'));
+    const reveal = read().commands.find(command => command.title === `Cache hit: ${t('usage.board.charts.commandValues')}`);
     expect(reveal).toBeDefined();
     const tooltipOpen = () => screen.findAllByType(Popover).some(node => node.props.open === true);
     expect(tooltipOpen()).toBe(false);
@@ -62,9 +63,8 @@ it('reveals and dismisses the same exact datum through its UI trigger and mounte
     });
     expect(tooltipOpen()).toBe(false);
     await act(async () => {
-        const current = read().commands.find(command => command.title.includes('69.8811%'))!;
-        expect(await executor.execute('ui.current_context.command.invoke', { commandId: current.id }, { surface: 'agent' }))
-            .toMatchObject({ ok: true });
+        expect(await executor.execute('ui.current_context.command.invoke', { commandId: reveal!.id }, { surface: 'agent' }))
+            .toMatchObject({ ok: true, result: { title: 'Cache hit', value: '69.8811%', subtitle: 'Measured tokens' } });
     });
     expect(tooltipOpen()).toBe(true);
     await screen.unmount();

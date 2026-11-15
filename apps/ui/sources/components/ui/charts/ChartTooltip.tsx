@@ -111,14 +111,15 @@ export function ChartTooltip(props: ChartTooltipProps): React.ReactElement {
     const openedByFocusRef = React.useRef(false);
     const resolvedTriggerTestID = triggerTestID ?? (testID ? `${testID}-trigger` : undefined);
     const commands = useCurrentUiContextLocalCommands(disabled ? [] : [
-        { key: 'reveal', title: `${title}: ${value}`, description: subtitle,
+        { key: 'reveal', title: `${title}: ${t('usage.board.charts.commandValues')}`,
             invoke: input => {
                 // Mounted admission can settle after the pointer or focus has left.
                 if (input === 'interaction' && !hoveredRef.current && !focusedRef.current) return;
                 props.onSelect?.();
                 setOpen(true);
+                return { ok: true, result: { title, value, ...(subtitle !== undefined ? { subtitle } : {}) } };
             } },
-        { key: 'activate', title: props.accessibilityLabel ?? title, invoke: () => {
+        { key: 'activate', title, invoke: () => {
             props.onSelect?.();
             // Touch on web may focus before pressing; keep that newly opened value visible.
             const keepOpen = hoveredRef.current || openedByFocusRef.current;

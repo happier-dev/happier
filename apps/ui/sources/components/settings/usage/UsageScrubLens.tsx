@@ -69,6 +69,8 @@ export type ScrubLensContent = Readonly<{
 }>;
 
 export type ScrubLensProps = Readonly<{
+  /** Stable chart identity for its mounted commands; never includes a sampled value. */
+  label?: string;
   /** A fixed cell row, or a chart's own bucket centres. */
   layout: ScrubRowLayout | ScrubCenters;
   resolveContent: (index: number) => ScrubLensContent | null;
@@ -107,14 +109,14 @@ function createScrubGesture(
 ) {
   const followPointer = (x: number, input: 'hover' | 'scrub') => {
     const index = cellAt(x, layoutRef.current);
-    if (index !== null && index !== lastIndexRef.current) void commandsRef.current.invoke(`bucket:${index}`, input);
+    if (index !== null && index !== lastIndexRef.current) void commandsRef.current.invoke('values', { bucket: index, mode: input });
   };
   const followScrub = (x: number) => followPointer(x, 'scrub');
   const followHover = (x: number) => followPointer(x, 'hover');
   const releasePointer = () => { void commandsRef.current.invoke('dismiss', 'release'); };
   const toggleHold = (x: number) => {
     const index = cellAt(x, layoutRef.current);
-    if (index !== null) void commandsRef.current.invoke(`bucket:${index}`, 'toggle');
+    if (index !== null) void commandsRef.current.invoke('values', { bucket: index, mode: 'toggle' });
   };
   const pan = Gesture.Pan()
     .activateAfterLongPress(LONG_PRESS_MS)
@@ -221,6 +223,7 @@ const styles = StyleSheet.create((theme) => ({
 }));
 
 export const ScrubLens: React.FC<ScrubLensProps> = ({
+  label,
   layout,
   resolveContent,
   accentColor,
@@ -292,31 +295,51 @@ export const ScrubLens: React.FC<ScrubLensProps> = ({
   const held = shownIndex !== null && shownIndex === heldIndex;
   // Chart-owned focus stays with the chart; this lens dismisses its own hover and held selections.
   const localSelectionActive = heldIndex !== null || activeIndex !== null;
-  const definitions: CurrentUiContextLocalCommand[] = [];
-  buckets.forEach((bucket, index) => {
-    if (!bucket) return;
-    definitions.push({
-      key: `bucket:${index}`,
-      title: [bucket.title, bucket.total, ...bucket.rows.map(row => `${row.label} · ${row.value}`)].filter(Boolean).join(' · '),
-      ...(bucket.footer ? { description: bucket.footer } : {}),
-      invoke: input => {
-        if (input === 'hover' || input === 'scrub') follow(index, input === 'scrub');
-        else if (input === 'toggle') hold(index);
-        else setHeldIndex(index);
-      },
-    });
-  });
-  if (content && localSelectionActive) definitions.push({
-    key: 'dismiss', title: `${t('common.close')}: ${content.title}`,
+  const commandTitle = (title: string) => label ? `${label}: ${title}` : title;
+  // Declarations describe operations, not samples. The mounted command owner keeps their
+  // ids stable while routing invocation to these latest bucket/selection closures.
+  const definitions: CurrentUiContextLocalCommand[] = [{
+    key: 'values', title: commandTitle(t('usage.board.charts.commandValues')),
+    description: t('usage.board.charts.commandValuesInput'),
+    invoke: input => {
+      if (input !== undefined && (input === null || typeof input !== 'object' || Array.isArray(input))) return false;
+      const index = input?.bucket;
+      const mode = input?.mode ?? 'read';
+      if (mode !== 'read' && mode !== 'select' && mode !== 'hover' && mode !== 'scrub' && mode !== 'toggle') return false;
+      if (index !== undefined && (typeof index !== 'number' || !Number.isInteger(index) || !buckets[index])) return false;
+      if (index === undefined && mode !== 'read') return false;
+      if (typeof index === 'number') {
+        if (mode === 'hover' || mode === 'scrub') follow(index, mode === 'scrub');
+        else if (mode === 'toggle') hold(index);
+        else if (mode === 'select') setHeldIndex(index);
+      }
+      const readBucket = (bucket: ScrubLensContent, bucketIndex: number) => ({
+        index: bucketIndex, title: bucket.title,
+        ...(bucket.total !== undefined ? { total: bucket.total } : {}),
+        ...(bucket.footer !== undefined ? { footer: bucket.footer } : {}),
+        rows: bucket.rows.map(row => ({ id: row.id ?? row.label, label: row.label, value: row.value,
+          selectable: Boolean(row.onPress), ...(row.pressLabel !== undefined ? { pressLabel: row.pressLabel } : {}),
+          ...(row.selected !== undefined ? { selected: row.selected } : {}) })),
+      });
+      const values = typeof index === 'number' ? [readBucket(buckets[index]!, index)]
+        : buckets.flatMap((bucket, bucketIndex) => bucket ? [readBucket(bucket, bucketIndex)] : []);
+      return { ok: true, result: { buckets: values } };
+    },
+  }, {
+    key: 'dismiss', title: commandTitle(t('common.close')),
     invoke: input => {
       release();
       if (input !== 'release') letGo();
     },
-  });
-  if (held && content) for (const row of content.rows) if (row.onPress) definitions.push({
-    key: `row:${row.id ?? row.label}`, title: row.pressLabel ?? row.label,
-    invoke: (_input, context, invocation) => row.onPress?.(context, invocation),
-  });
+  }, {
+    key: 'choose', title: commandTitle(t('usage.board.charts.commandChoose')),
+    description: t('usage.board.charts.commandChooseInput'),
+    invoke: (input, context, invocation) => {
+      if (!held || !content || input === null || typeof input !== 'object' || Array.isArray(input)) return false;
+      const row = content.rows.find(row => (row.id ?? row.label) === input.row);
+      return row?.onPress ? row.onPress(context, invocation) : false;
+    },
+  }];
   const commands = useCurrentUiContextLocalCommands(definitions);
   const commandsRef = React.useRef(commands);
   commandsRef.current = commands;
@@ -431,7 +454,7 @@ export const ScrubLens: React.FC<ScrubLensProps> = ({
                         }
                         accessibilityRole="button"
                         accessibilityLabel={row.pressLabel ?? row.label}
-                        onPress={() => { void commands.invoke(`row:${key}`); }}
+                        onPress={() => { void commands.invoke('choose', { row: key }); }}
                         style={(state) => [
                           styles.lensRow,
                           styles.lensRowHeld,
