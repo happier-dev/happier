@@ -36,6 +36,18 @@ may leave an older status visible; delivery diagnostics identify unavailable
 status writes without logging conversation content. Session lifecycle and
 permission decisions remain with their existing owners.
 
+Native staged chat approvals (unreleased 0.3) remain Session-owned. A native
+tool may reuse its request and turn ids while presenting another requirement.
+The permission mediation store gives each request-scoped native human command
+its own settlement address using the existing idempotency key. Its transport
+request operand is an opaque digest; the sealed record retains the original
+request, turn, native choice and human attribution. Reads restore that logical
+identity before recovery or completion. Existing tuple-addressed settlements
+remain readable for exact retries. Replaying a committed answer does not claim
+a later pending stage. This changes no Channels/provider schema or database
+schema; daemon source must reload together, and rollback to an earlier 0.3
+mediation reader is not supported for the new addresses.
+
 ## Connected Account request headers (unreleased 0.3)
 
 `lookupConnectedAccountRequestAuth({ purpose })` returns `RequestAuthHeadersV1`:

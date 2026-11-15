@@ -5578,19 +5578,24 @@ describe('remote native offered permission admission', () => {
     }
   });
 
-  it('settles sequential chat allow then deny against each native offer and replays only its admitted decision', async () => {
+  it.each([['allow', false], ['deny', false], ['deny', true]] as const)('settles a two-decision staged chat approval ending in %s with legacy=%s and one reused request and turn', async (lastDecision, legacy) => {
     // The System Record transport is the boundary; offer serialization, pending
     // ownership, native selection and replay all use the production owners.
     const rows = new Map<string, PermissionMediationStoredRecord>();
+    let mediationReads = 0;
     const recordStore: PermissionMediationRecordStore = {
       read: async ({ identity }) => {
-        const stored = rows.get(identity.requestId);
+        mediationReads += 1;
+        const stored = rows.get(JSON.stringify(identity));
         return stored ? { status: 'found', stored } : { status: 'absent' };
       },
       createExpectedAbsent: async input => {
-        if (rows.has(input.identity.requestId)) return { status: 'conflict' };
-        const stored: PermissionMediationStoredRecord = { ...input, revision: `ssr1.${input.identity.requestId}` };
-        rows.set(input.identity.requestId, stored);
+        if (rows.has(JSON.stringify(input.identity))) return { status: 'conflict' };
+        const identity = legacy && rows.size === 0
+          ? { sessionId: input.identity.sessionId, turnId: input.identity.turnId, requestId: input.identity.requestId }
+          : input.identity;
+        const stored: PermissionMediationStoredRecord = { ...input, identity, revision: `ssr1.${input.identity.requestId}` };
+        rows.set(JSON.stringify(identity), stored);
         return { status: 'created', stored };
       },
       list: async () => ({ status: 'ready', records: [...rows.values()], nextCursor: null, hasNext: false }),
@@ -5603,10 +5608,12 @@ describe('remote native offered permission admission', () => {
       sourceRef: 'binding:ops', sourceRevisionOrEpoch: '42', admittedPermissionCeiling: 'default',
       remoteApprovalMaxScope: 'request' } as const;
     try {
-      for (const decision of ['allow', 'deny'] as const) {
-        const requestId = `chat-native-${decision}`;
-        const turnId = `turn-${requestId}`;
-        const nativeChoices = createAcpNativePermissionChoices(`requirement-${requestId}`, [
+      let sourceIndex = 0;
+      const responses: Parameters<typeof handler.respondToMediatedPendingPermission>[0][] = [];
+      for (const decision of ['allow', lastDecision] as const) {
+        const requestId = 'chat-native-staged';
+        const turnId = 'turn-chat-native-staged';
+        const nativeChoices = createAcpNativePermissionChoices(JSON.stringify({ approvalId: 'native-staged', sourceIndex }), [
           { optionId: `run-${requestId}`, name: 'Run once', kind: 'allow_once' },
           { optionId: `save-${requestId}`, name: 'Save locally', kind: 'allow_always' },
           { optionId: `stop-${requestId}`, name: 'Stop once', kind: 'reject_once' },
@@ -5620,23 +5627,33 @@ describe('remote native offered permission admission', () => {
         expect(session.agentState.requests[requestId]).toMatchObject({ nativeChoices });
         const response = { sessionId: session.sessionId, turnId, requestId,
           sourceRef: sourceAuthority.sourceRef, sourceRevisionOrEpoch: sourceAuthority.sourceRevisionOrEpoch,
-          idempotencyKey: `${requestId}-retry`, actor: { namespace: 'discord', principalId: 'person-1' },
+          idempotencyKey: `${requestId}-${sourceIndex}-retry`, actor: { namespace: 'discord', principalId: 'person-1' },
           decision, scope: 'request', mediator: { pluginId: 'happier.channels', contributionLocalId: 'discord' },
         } as const;
+        if (responses[0]) {
+          await expect(handler.respondToMediatedPendingPermission(responses[0])).resolves.toMatchObject({ status: 'alreadyApplied' });
+          expect(session.agentState.requests[requestId]?.nativeChoices?.requirementId).toBe(nativeChoices.requirementId);
+        }
+        responses.push(response);
         const nativeChoice = { requirementId: nativeChoices.requirementId,
           choiceId: `${decision === 'allow' ? 'run' : 'stop'}-${requestId}` };
+        const readsBeforeDecision = mediationReads;
         await expect(handler.respondToMediatedPendingPermission(response)).resolves.toMatchObject({ status: 'applied', decision });
+        // One command probes at most its own address and the historical tuple, never the staged-set inventory.
+        expect(mediationReads - readsBeforeDecision).toBeLessThanOrEqual(2);
         await expect(pending).resolves.toMatchObject({ decision: decision === 'allow' ? 'approved' : 'denied', nativeChoice });
         expect(session.agentState.requests[requestId]).toBeUndefined();
         expect(session.agentState.completedRequests[requestId]).toMatchObject({
           status: decision === 'allow' ? 'approved' : 'denied',
         });
-        expect(rows.get(requestId)?.record).toMatchObject({ nativeChoice });
+        expect([...rows.values()].at(-1)?.record).toMatchObject({ nativeChoice });
         await expect(handler.respondToMediatedPendingPermission(response)).resolves.toMatchObject({ status: 'alreadyApplied' });
         await expect(handler.respondToMediatedPendingPermission({ ...response,
           decision: decision === 'allow' ? 'deny' : 'allow',
         })).resolves.toMatchObject({ status: 'rejected' });
+        sourceIndex += 1;
       }
+      expect(rows.size).toBe(2);
     } finally {
       await handler.reset();
     }

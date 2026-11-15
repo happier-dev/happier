@@ -96,6 +96,43 @@ function identityKey(identity: SessionPermissionMediationRecordIdentityV1): stri
 }
 
 describe('permissionMediationRecordStore', () => {
+  it('retains distinct staged native settlements and restores their logical identities from the host transport', async () => {
+    const rows = new Map<string, SessionPermissionMediationRecordStored>();
+    const session = createPlainSession({
+      readPermissionMediationRecord: async ({ identity }) => rows.get(identityKey(identity)) ?? null,
+      writePermissionMediationRecord: async ({ identity, request }) => {
+        const row = { ...identity, kind: request.kind, content: request.content,
+          revision: 'ssr1.AAAACnJlY29yZC1vbmUAAAAB' };
+        rows.set(identityKey(identity), row);
+        return row;
+      },
+      listPermissionMediationRecords: async () => ({ records: [...rows.values()], nextCursor: null, hasNext: false }),
+      prunePermissionMediationRecord: async ({ identity }) => { rows.delete(identityKey(identity)); },
+    });
+    const store = createPermissionMediationRecordStore(session);
+    if (!store) throw new Error('expected typed mediation store');
+    for (const sourceIndex of [0, 1]) {
+      const identity = { ...firstIdentity, responseKey: `human-command-${sourceIndex}` };
+      const record = settlementRecord(firstIdentity, { idempotencyKey: identity.responseKey,
+        nativeChoice: { requirementId: JSON.stringify({ approvalId: 'native-staged', sourceIndex }), choiceId: 'allow_once' } });
+      await expect(store.createExpectedAbsent({ identity, kind: 'remote_settlement.v1', record }))
+        .resolves.toMatchObject({ status: 'created', stored: { identity, record } });
+      await expect(store.read({ identity })).resolves.toMatchObject({ status: 'found', stored: { identity, record } });
+    }
+    expect(rows.size).toBe(2);
+    const page = await store.list({});
+    expect(page).toMatchObject({ status: 'ready', records: [
+      { identity: { ...firstIdentity, responseKey: 'human-command-0' } },
+      { identity: { ...firstIdentity, responseKey: 'human-command-1' } },
+    ] });
+    const identity = { ...firstIdentity, responseKey: 'human-command-0' };
+    const stored = await store.read({ identity });
+    if (stored.status !== 'found') throw new Error('expected first-stage audit');
+    await expect(store.pruneInactive({ identity, expectedRevision: stored.stored.revision })).resolves.toMatchObject({ status: 'pruned' });
+    await expect(store.read({ identity })).resolves.toEqual({ status: 'absent' });
+    expect(rows.size).toBe(1);
+  });
+
   it.each(['remote_settlement.v1', 'remote_grant.v1'] as const)('projects retained extra fields while reading %s and keeps write admission strict', async (kind) => {
     const base = settlementRecord();
     const record = kind === 'remote_grant.v1' ? {

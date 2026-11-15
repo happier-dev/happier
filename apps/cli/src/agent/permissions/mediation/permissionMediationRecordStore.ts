@@ -1,5 +1,6 @@
+import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
 import type {
-  SessionPermissionMediationRecordIdentityV1,
+  SessionPermissionMediationRecordIdentityV1 as TransportIdentity,
   SessionPermissionMediationRecordStored,
   SessionPermissionRemoteGrantRecordV1,
   SessionPermissionRemoteSettlementRecordV1,
@@ -15,6 +16,19 @@ import {
   sealSessionStoredContent,
   type SessionStoredContentCryptoContext,
 } from '@/session/transport/encryption/sessionEncryptionContext';
+
+/** Native request-scoped answers have one row per human command, even when a tool reuses its request id. */
+export type PermissionMediationRecordIdentity = TransportIdentity & Readonly<{ responseKey?: string }>;
+
+function transportIdentity(identity: PermissionMediationRecordIdentity): TransportIdentity {
+  return {
+    sessionId: identity.sessionId,
+    turnId: identity.turnId,
+    requestId: identity.responseKey === undefined ? identity.requestId : `native-response:${computeCanonicalDomainSeparatedDigest(
+      'happier.native-permission-response.v1', [identity.requestId, identity.responseKey],
+    )}`,
+  };
+}
 
 /**
  * The host-only authority seam for remote permission mediation records.
@@ -36,13 +50,13 @@ export type PermissionMediationRecordWrite =
 
 export type PermissionMediationStoredRecord =
   | Readonly<{
-      identity: SessionPermissionMediationRecordIdentityV1;
+      identity: PermissionMediationRecordIdentity;
       kind: 'remote_settlement.v1';
       record: SessionPermissionRemoteSettlementRecordV1;
       revision: string;
     }>
   | Readonly<{
-      identity: SessionPermissionMediationRecordIdentityV1;
+      identity: PermissionMediationRecordIdentity;
       kind: 'remote_grant.v1';
       record: SessionPermissionRemoteGrantRecordV1;
       revision: string;
@@ -55,7 +69,7 @@ export type PermissionMediationRecordStore = Readonly<{
    * a generic System Records read.
    */
   read(params: Readonly<{
-    identity: SessionPermissionMediationRecordIdentityV1;
+    identity: PermissionMediationRecordIdentity;
     signal?: AbortSignal;
   }>): Promise<
     | Readonly<{ status: 'found'; stored: PermissionMediationStoredRecord }>
@@ -71,7 +85,7 @@ export type PermissionMediationRecordStore = Readonly<{
    * a generic upsert and it does not make row addressing public.
    */
   createExpectedAbsent(params: Readonly<{
-    identity: SessionPermissionMediationRecordIdentityV1;
+    identity: PermissionMediationRecordIdentity;
     signal?: AbortSignal;
   }> & PermissionMediationRecordWrite): Promise<
     | Readonly<{ status: 'created'; stored: PermissionMediationStoredRecord }>
@@ -100,7 +114,7 @@ export type PermissionMediationRecordStore = Readonly<{
    * generic System Records delete.
    */
   pruneInactive(params: Readonly<{
-    identity: SessionPermissionMediationRecordIdentityV1;
+    identity: PermissionMediationRecordIdentity;
     expectedRevision: string;
     signal?: AbortSignal;
   }>): Promise<
@@ -111,7 +125,7 @@ export type PermissionMediationRecordStore = Readonly<{
 
   /** CAS is used solely to append a durable grant revocation. */
   compareAndSet(params: Readonly<{
-    identity: SessionPermissionMediationRecordIdentityV1;
+    identity: PermissionMediationRecordIdentity;
     expectedRevision: string;
     signal?: AbortSignal;
   }> & PermissionMediationRecordWrite): Promise<
@@ -153,39 +167,36 @@ function sealRecord(
 function openStoredRecord(
   context: StoredContentContext,
   raw: unknown,
-  expectedIdentity?: SessionPermissionMediationRecordIdentityV1,
+  expectedIdentity?: PermissionMediationRecordIdentity,
 ): PermissionMediationStoredRecord | null {
   const parsed = createStoredReadSchema(SessionPermissionMediationRecordStoredSchema).safeParse(raw);
   if (!parsed.success) return null;
-  const identity = {
-    sessionId: parsed.data.sessionId,
-    turnId: parsed.data.turnId,
-    requestId: parsed.data.requestId,
-  } satisfies SessionPermissionMediationRecordIdentityV1;
-  if (expectedIdentity && !sameIdentity(identity, expectedIdentity)) return null;
-  return openMediationRecordPayload(context, parsed.data, identity);
+  const stored = openMediationRecordPayload(context, parsed.data);
+  if (!stored || (expectedIdentity && !sameIdentity(stored.identity, expectedIdentity))) return null;
+  return stored;
 }
 
 function sameIdentity(
-  left: SessionPermissionMediationRecordIdentityV1,
-  right: SessionPermissionMediationRecordIdentityV1,
+  left: PermissionMediationRecordIdentity,
+  right: PermissionMediationRecordIdentity,
 ): boolean {
   return left.sessionId === right.sessionId
     && left.turnId === right.turnId
-    && left.requestId === right.requestId;
+    && left.requestId === right.requestId
+    && left.responseKey === right.responseKey;
 }
 
 function recordMatchesIdentity(
   record: PermissionMediationRecordWrite['record'],
-  identity: SessionPermissionMediationRecordIdentityV1,
+  identity: PermissionMediationRecordIdentity,
 ): boolean {
-  return record.turnId === identity.turnId && record.requestId === identity.requestId;
+  return record.turnId === identity.turnId && record.requestId === identity.requestId
+    && (identity.responseKey === undefined || record.idempotencyKey === identity.responseKey);
 }
 
 function openMediationRecordPayload(
   context: StoredContentContext,
   raw: SessionPermissionMediationRecordStored,
-  identity: SessionPermissionMediationRecordIdentityV1,
 ): PermissionMediationStoredRecord | null {
   let payload: unknown;
   try {
@@ -193,24 +204,24 @@ function openMediationRecordPayload(
   } catch {
     return null;
   }
-  if (raw.kind === 'remote_settlement.v1') {
-    const record = createStoredReadSchema(SessionPermissionRemoteSettlementRecordV1Schema).safeParse(payload);
-    if (!record.success || !recordMatchesIdentity(record.data, identity)) return null;
-    return {
-      identity,
-      kind: 'remote_settlement.v1',
-      record: record.data,
-      revision: raw.revision,
-    };
-  }
-  const record = createStoredReadSchema(SessionPermissionRemoteGrantRecordV1Schema).safeParse(payload);
-  if (!record.success || !recordMatchesIdentity(record.data, identity)) return null;
-  return {
-    identity,
-    kind: 'remote_grant.v1',
-    record: record.data,
-    revision: raw.revision,
+  const opened = readRecordPayload(raw.kind, payload);
+  if (!opened) return null;
+  const identity: PermissionMediationRecordIdentity = {
+    sessionId: raw.sessionId, turnId: opened.record.turnId, requestId: opened.record.requestId,
+    ...(raw.requestId !== opened.record.requestId ? { responseKey: opened.record.idempotencyKey } : {}),
   };
+  const address = transportIdentity(identity);
+  if (raw.turnId !== address.turnId || raw.requestId !== address.requestId) return null;
+  return { ...opened, identity, revision: raw.revision };
+}
+
+function readRecordPayload(kind: PermissionMediationRecordWrite['kind'], payload: unknown): PermissionMediationRecordWrite | null {
+  if (kind === 'remote_settlement.v1') {
+    const parsed = createStoredReadSchema(SessionPermissionRemoteSettlementRecordV1Schema).safeParse(payload);
+    return parsed.success ? { kind, record: parsed.data } : null;
+  }
+  const parsed = createStoredReadSchema(SessionPermissionRemoteGrantRecordV1Schema).safeParse(payload);
+  return parsed.success ? { kind, record: parsed.data } : null;
 }
 
 function isConflict(error: unknown): boolean {
@@ -248,7 +259,7 @@ export function createPermissionMediationRecordStore(
       if (!context || params.identity.sessionId !== session.sessionId) return { status: 'unavailable' };
       try {
         const raw = await session.readPermissionMediationRecord?.({
-          identity: params.identity,
+          identity: transportIdentity(params.identity),
           ...(params.signal ? { signal: params.signal } : {}),
         });
         if (!raw) return { status: 'absent' };
@@ -270,7 +281,7 @@ export function createPermissionMediationRecordStore(
       if (!content) return { status: 'unavailable' };
       try {
         const raw = await session.writePermissionMediationRecord?.({
-          identity: params.identity,
+          identity: transportIdentity(params.identity),
           request: { kind: params.kind, content, expectedRevision: null },
           ...(params.signal ? { signal: params.signal } : {}),
         });
@@ -316,7 +327,7 @@ export function createPermissionMediationRecordStore(
       }
       try {
         await session.prunePermissionMediationRecord?.({
-          identity: params.identity,
+          identity: transportIdentity(params.identity),
           request: { expectedRevision: params.expectedRevision },
           ...(params.signal ? { signal: params.signal } : {}),
         });
@@ -337,7 +348,7 @@ export function createPermissionMediationRecordStore(
       if (!content) return { status: 'unavailable' };
       try {
         const raw = await session.writePermissionMediationRecord?.({
-          identity: params.identity,
+          identity: transportIdentity(params.identity),
           request: {
             kind: params.kind,
             content,

@@ -44,7 +44,7 @@ import { NATIVE_TOOL_APPROVAL_REQUEST_SOURCE, NATIVE_TOOL_APPROVAL_ONCE_REQUEST_
 import { SessionInputCausalPermissionAuthorityV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { StructuredQuestionAnswersV1Schema, StructuredQuestionResponseV1Schema, type StructuredQuestionAnswerDetailsV1 } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
 import { TurnIdSchema } from '@happier-dev/protocol/sessions/idsV1';
-import type { AccountSettings, SessionPermissionRemoteRespondInputV1, SessionPermissionRemoteRespondOutputV1, SessionPermissionRemotePendingListOutputV1, SessionUserActionRemoteAnswerInputV1, SessionUserActionRemoteAnswerOutputV1, SessionPermissionRemoteGrantRecordV1, SessionPermissionRemoteGrantsListOutputV1, SessionPermissionRemoteGrantRevokeOutputV1, SessionPermissionMediationRecordIdentityV1, SessionPermissionExternalHumanDecisionActorV1, SessionPermissionSourceAuthorityV1, AgentRequestQuestionSummary, StructuredQuestionAnswersV1 } from '@happier-dev/protocol';
+import type { AccountSettings, SessionPermissionRemoteRespondInputV1, SessionPermissionRemoteRespondOutputV1, SessionPermissionRemotePendingListOutputV1, SessionUserActionRemoteAnswerInputV1, SessionUserActionRemoteAnswerOutputV1, SessionPermissionRemoteGrantRecordV1, SessionPermissionRemoteGrantsListOutputV1, SessionPermissionRemoteGrantRevokeOutputV1, SessionPermissionExternalHumanDecisionActorV1, SessionPermissionSourceAuthorityV1, AgentRequestQuestionSummary, StructuredQuestionAnswersV1 } from '@happier-dev/protocol';
 import { buildAgentRequestSemanticSummary, formatPermissionRequestSummary, requiresFullFormForRemoteUserAction, summarizeToolInputForNotification } from '@happier-dev/protocol/activity/agentRequestSummary';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import type { SessionPermissionDecisionRequest } from '@happier-dev/plugin-sdk/sessions';
@@ -78,6 +78,7 @@ import {
 } from './permissionRequestOwner';
 import type { AcpPermissionCallContext } from '@/agent/acp/permissions/acpPermissionHandler';
 import type {
+    PermissionMediationRecordIdentity,
     PermissionMediationRecordStore,
     PermissionMediationStoredRecord,
     PermissionMediationRecordWrite,
@@ -254,16 +255,21 @@ function mediationRecordIdentity(input: Readonly<{
     sessionId: string;
     turnId: string;
     requestId: string;
-}>): SessionPermissionMediationRecordIdentityV1 {
+    nativeChoice?: NativePermissionChoiceAnswerV1;
+    scope?: string;
+    idempotencyKey?: string;
+}>): PermissionMediationRecordIdentity {
     return {
         sessionId: input.sessionId,
         turnId: input.turnId,
         requestId: input.requestId,
+        ...(input.nativeChoice && input.scope === 'request' && input.idempotencyKey
+            ? { responseKey: input.idempotencyKey } : {}),
     };
 }
 
-function mediationRecordIdentityKey(identity: SessionPermissionMediationRecordIdentityV1): string {
-    return JSON.stringify([identity.sessionId, identity.turnId, identity.requestId]);
+function mediationRecordIdentityKey(identity: PermissionMediationRecordIdentity): string {
+    return JSON.stringify([identity.sessionId, identity.turnId, identity.requestId, ...(identity.responseKey ? [identity.responseKey] : [])]);
 }
 
 /**
@@ -2287,7 +2293,7 @@ export abstract class BasePermissionHandler {
 
     /** Caller already owns this request's coordinator response claim and completed its hydration precondition. */
     private async revokeMediatedPermissionGrantClaimHeld(params: Readonly<{
-        identity: SessionPermissionMediationRecordIdentityV1;
+        identity: PermissionMediationRecordIdentity;
         grantId: string;
         caller: Readonly<{ kind: 'host' } | { kind: 'mediatorPlugin'; pluginId: string }>;
         signal?: AbortSignal;
@@ -2302,7 +2308,7 @@ export abstract class BasePermissionHandler {
     }
 
     private async revokeMediatedPermissionGrantClaimHeldWithinLedgerMutation(params: Readonly<{
-        identity: SessionPermissionMediationRecordIdentityV1;
+        identity: PermissionMediationRecordIdentity;
         grantId: string;
         caller: Readonly<{ kind: 'host' } | { kind: 'mediatorPlugin'; pluginId: string }>;
         signal?: AbortSignal;
@@ -2414,7 +2420,24 @@ export abstract class BasePermissionHandler {
         if (parsedInput.data.sessionId !== this.session.sessionId) return { status: 'rejected', code: 'requestNotFound' };
         const store = this.mediationRecordStore;
         if (!store) return { status: 'rejected', code: 'mediationStateUnavailable' };
-        const existingRecord = await store.read({ identity: mediationRecordIdentity(parsedInput.data), signal: params.signal });
+        // A staged native tool can keep its request and turn ids. Look up the
+        // command's settlement before resolving the current native offer, so an
+        // exact retry still replays its own answer after the next stage appears.
+        let existingRecord = await store.read({ identity: {
+            ...mediationRecordIdentity(parsedInput.data), responseKey: parsedInput.data.idempotencyKey,
+        }, signal: params.signal });
+        if (existingRecord.status === 'absent') {
+            existingRecord = await store.read({ identity: {
+                sessionId: parsedInput.data.sessionId, turnId: parsedInput.data.turnId, requestId,
+            }, signal: params.signal });
+        }
+        // Older native settlements used only the request tuple. They remain
+        // exact-retry evidence, but cannot occupy another human command's row.
+        if (existingRecord.status === 'found' && existingRecord.stored.kind === 'remote_settlement.v1'
+            && existingRecord.stored.record.nativeChoice
+            && existingRecord.stored.record.idempotencyKey !== parsedInput.data.idempotencyKey) {
+            existingRecord = { status: 'absent' };
+        }
         if (existingRecord.status === 'unavailable' || this.mediationRecordStore !== store)
             return { status: 'rejected', code: 'mediationStateUnavailable' };
         const selected = this.prepareMediatedPermissionResponse({ input: parsedInput.data, mediator: params.mediator },
@@ -2436,6 +2459,14 @@ export abstract class BasePermissionHandler {
             }
             if (params.signal?.aborted) return { status: 'rejected', code: 'canceled' };
             return { status: 'rejected', code: 'requestNotFound' };
+        }
+
+        // The durable answer already owns its claim. Replaying it must not
+        // claim a later native stage that reuses the same request id.
+        if (existingRecord.status === 'found') {
+            return await this.respondToMediatedPendingPermissionUnclaimed(
+                params, prepared, false, false, () => undefined, () => undefined,
+            );
         }
 
         const acquisition = await this.requestCoordinator.acquireResponseClaim({
@@ -3484,7 +3515,9 @@ export abstract class BasePermissionHandler {
         status: 'applied' | 'alreadyApplied',
     ): SessionPermissionRemoteRespondOutputV1 {
         const record = stored.record;
-        const expectedIdentity = mediationRecordIdentity(input);
+        const expectedIdentity = { ...mediationRecordIdentity(input),
+            ...(stored.identity.responseKey === undefined ? { responseKey: undefined } : {}),
+        };
         if (
             mediationRecordIdentityKey(stored.identity) !== mediationRecordIdentityKey(expectedIdentity)
             || record.turnId !== stored.identity.turnId
