@@ -8,6 +8,7 @@ import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { storage } from '@/sync/domains/state/storageStore';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createWorkBoardV1} from '@happier-dev/protocol/boards/workBoardV1';
 import { getBuiltinWorkflowCatalogV1} from '@happier-dev/protocol/workflows/builtins/catalog';
@@ -155,6 +156,12 @@ afterEach(async () => {
     webLocks = undefined;
 });
 
+/** A view switch reaches its owner after the pressed segment has painted (`useHappierTabSelection`). */
+async function pressView(screen: Awaited<ReturnType<typeof renderScreen>>, view: 'definitions' | 'runs') {
+    await screen.pressByTestIdAsync(`workflows-column:view:${view}`);
+    await flushHookEffects({ frames: 2 });
+}
+
 describe('WorkflowsColumn', () => {
     it('opens the page form on its name, with the Definitions and Runs switch under it in both views (FIN-DESIGN-REVIEW L6)', async () => {
         const screen = await renderScreen(<WorkflowsColumn surface="page" definitionsContent={<View testID="workflow-definitions-content" />} />, { wrapper: TestAuth });
@@ -163,7 +170,7 @@ describe('WorkflowsColumn', () => {
             .map((node) => node.props.testID as string);
         expect(order()[0]).toBe('workflows-column:header');
         expect(order()).toContain('workflows-column:view:definitions');
-        await screen.pressByTestIdAsync('workflows-column:view:runs');
+        await pressView(screen, 'runs');
         expect(order()[0]).toBe('workflows-column:header');
     });
     it('heads the phone page with the space as its title, search behind the magnifier and the bar "+" (owner 11-11)', async () => {
@@ -190,13 +197,13 @@ describe('WorkflowsColumn', () => {
     it.each([false, true])('reveals the Workflow filter search anchor from retained Runs (page=%s)', async page => {
         const content = page ? <View testID="workflow-definitions-content" /> : undefined;
         const screen = await renderScreen(<WorkflowsColumn surface="plane" definitionsContent={content} />, { wrapper: TestAuth });
-        await screen.pressByTestIdAsync('workflows-column:view:runs');
+        await pressView(screen, 'runs');
         expect(screen.findHostByTestId('workflows-column:view:runs')?.props.accessibilityState).toMatchObject({ selected: true });
         routeState.params = { setting: 'workflow.list.filters' };
         await screen.update(<WorkflowsColumn surface="page" definitionsContent={content} />);
         expect(screen.findHostByTestId('workflows-column:view:definitions')?.props.accessibilityState).toMatchObject({ selected: true });
         // The request reveals once; a deliberate subsequent choice still belongs to the tab owner.
-        await screen.pressByTestIdAsync('workflows-column:view:runs');
+        await pressView(screen, 'runs');
         expect(screen.findHostByTestId('workflows-column:view:runs')?.props.accessibilityState).toMatchObject({ selected: true });
     });
     it('offers all four workflow starts plus automatic setup directly (FIN-JOURNEY F10)', async () => {
@@ -307,7 +314,7 @@ describe('WorkflowsColumn', () => {
         const stop = subscribeHomeAccountChange(event => changes.push({ source: event.source, kinds: event.changeKinds,
             definitions: event.workflowDefinitionsAffect, triggers: event.workflowTriggersAffect }));
         try {
-            await screen.pressByTestIdAsync('workflows-column:view:definitions');
+            await pressView(screen, 'definitions');
             await vi.waitFor(() => expect(reads(), JSON.stringify({ reads: reads().map(([id]) => id), changes })).toHaveLength(2));
         } finally { stop(); }
         revision = 2;
@@ -317,7 +324,7 @@ describe('WorkflowsColumn', () => {
         // Mounts share the retained inventory; the committed Home wake owns revision refresh.
         await act(async () => publishHomeAccountChange(boundary!.serverId, undefined, { changeKinds: ['artifact'] }));
         await vi.waitFor(() => expect(homeReader.getCurrent().library.definitions[0]?.revision?.bodyVersion).toBe(2));
-        await screen.pressByTestIdAsync('workflows-column:view:runs');
+        await pressView(screen, 'runs');
         const before = reads().length;
         const inventoryReads = () => reads().filter(([id]) => id === 'workflow.definition.list').length;
         const beforeInventory = inventoryReads();
@@ -714,12 +721,13 @@ describe('WorkflowsColumn', () => {
     it('reveals Account triggers from an old link even while the retained column shows Runs', async () => {
         answerLists();
         const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth });
-        await screen.pressByTestIdAsync('workflows-column:view:runs');
+        await pressView(screen, 'runs');
         routeState.params = { trigger: 'legacy-manual' };
         // The router mock has no navigation subscription; changing a presentation prop delivers its new params.
         await screen.update(<WorkflowsColumn surface="page" />);
         expect(screen.findByTestId('workflows-column:group:builtin')).not.toBeNull();
-        expect(screen.findAllHostsByTestId('sessions-list-keyboard-frame')).toHaveLength(0);
+        // Runs stay built for the next switch, but only Definitions are presented.
+        expect(screen.findHostByTestId('workflows-column:runs')?.props.pointerEvents).toBe('none');
     });
     it('lets the Runs view open a run through the shared Sessions list', async () => {
         answerLists();
@@ -731,6 +739,7 @@ describe('WorkflowsColumn', () => {
         const runsTabs = screen.tree.root.findAll((node) => node.props?.testID === 'workflows-column:view:runs' && typeof node.props.onPress === 'function');
         expect(runsTabs.length).toBeGreaterThan(0);
         await act(async () => { runsTabs[0]!.props.onPress(); });
+        await flushHookEffects({ frames: 2 }); // the press reaches its owner after the pressed tab has painted
         await vi.waitFor(async () => {
             await act(async () => {});
             expect(screen.findHostByTestId('workflow-run-row:run-waiting')).not.toBeNull();
@@ -762,9 +771,9 @@ describe('WorkflowsColumn', () => {
         expect(editors.length).toBeGreaterThan(0);
         for (const editor of editors) expect(editor.props.result).toMatchObject({ coverage: 'complete', matchedCount: 1 });
         expect(screen.findHostByTestId('collection-filter-count')?.props.children).toBe(buildSessionListConditionLabels().resultCount(1));
-        await screen.pressByTestIdAsync('workflows-column:view:definitions');
-        expect(screen.findAllHostsByTestId('session-list-search-input')).toHaveLength(0);
-        await screen.pressByTestIdAsync('workflows-column:view:runs');
+        await pressView(screen, 'definitions');
+        expect(screen.findHostByTestId('workflows-column:runs')?.props.pointerEvents).toBe('none');
+        await pressView(screen, 'runs');
         expect(screen.findByTestId('session-list-search-input')?.props.value).toBe('release');
     });
 
@@ -783,7 +792,7 @@ describe('WorkflowsColumn', () => {
         const tabs = screen.findHostByTestId('workflows-column:view:runs');
         expect(list).not.toBeNull();
         expect(screen.findHostByTestId('workflows-column-space-title')).not.toBeNull();
-        await screen.pressByTestIdAsync('workflows-column:view:runs');
+        await pressView(screen, 'runs');
         // The same list and switch stay mounted (the thumb glides); Run rows never take a definition space.
         expect(screen.findHostByTestId('workflows-column:list')).toBe(list);
         expect(screen.findHostByTestId('workflows-column:view:runs')).toBe(tabs);
@@ -793,10 +802,36 @@ describe('WorkflowsColumn', () => {
         expect(inBand()).toBe(true);
         expect(screen.findAllHostsByTestId('workflows-column-space-title')).toHaveLength(0);
         expect(screen.findAllHostsByTestId('workflows-column-space-strip')).toHaveLength(0);
-        await screen.pressByTestIdAsync('workflows-column:view:definitions');
+        await pressView(screen, 'definitions');
         expect(screen.findHostByTestId('workflows-column:list')).toBe(list);
         expect(inBand()).toBe(true);
         expect(screen.findHostByTestId('workflows-column-space-title')).not.toBeNull();
+    });
+
+    it('keeps both views built across Definitions and Runs switches and presents only the chosen one', async () => {
+        answerLists();
+        const screen = await renderScreen(<WorkflowsColumn surface="page" />, { wrapper: TestAuth });
+        await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+        const presented = (testID: string) => screen.findHostByTestId(testID)?.props.pointerEvents === 'auto';
+        const definitions = screen.findHostByTestId('workflows-column:group:library');
+        expect(definitions).not.toBeNull();
+        await pressView(screen, 'runs');
+        await vi.waitFor(async () => {
+            await act(async () => {});
+            expect(screen.findHostByTestId('workflow-run-row:run-waiting')).not.toBeNull();
+        });
+        const runs = screen.findHostByTestId('sessions-list-keyboard-frame');
+        expect(runs).not.toBeNull();
+        for (const view of ['definitions', 'runs', 'definitions'] as const) {
+            await pressView(screen, view);
+            // A switch shows the other list as it stood: neither list is built again (P03-TAB-CONTENT W6).
+            // Identity, compared as a boolean: a failing match would print both whole render trees.
+            expect({ view, definitionsKept: screen.findHostByTestId('workflows-column:group:library') === definitions,
+                runsKept: screen.findHostByTestId('sessions-list-keyboard-frame') === runs })
+                .toEqual({ view, definitionsKept: true, runsKept: true });
+            expect(presented('workflows-column:definitions')).toBe(view === 'definitions');
+            expect(presented('workflows-column:runs')).toBe(view === 'runs');
+        }
     });
 
     it('narrows the column and the library home through one Workflow draft, built-ins included, without the home\'s own view pills (R8-7)', async () => {

@@ -8,6 +8,7 @@ import { SessionsList } from '@/components/sessions/shell/SessionsList';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
 import { useWorkflowLibraryView } from '@/components/workflows/library/useWorkflowLibraryView';
 import { useWorkflowLibrarySpaceHeader } from '@/components/workflows/library/useWorkflowLibrarySpaceHeader';
 import { t } from '@/text';
@@ -114,13 +115,15 @@ export const WorkflowsPhonePage = React.memo(function WorkflowsPhonePage(
         />
         {spaceHeader.overlays}
       </View>
-      {definitions ? (
+      {/* Both views stay built once shown and the switch only presents one: a switch never rebuilds a list. */}
+      <RetainedPanelSurface isActive={definitions} suspendWhenHidden testID="workflows-column:definitions">
         <WorkflowsColumnLibraryContext.Provider value={lent}>
           {props.definitionsContent}
         </WorkflowsColumnLibraryContext.Provider>
-      ) : (
+      </RetainedPanelSurface>
+      <RetainedPanelSurface isActive={!definitions} suspendWhenHidden testID="workflows-column:runs">
         <SessionsList fixedShow="runs" pathname={props.pathname} />
-      )}
+      </RetainedPanelSurface>
     </View>
   );
 });

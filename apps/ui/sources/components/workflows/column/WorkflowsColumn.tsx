@@ -15,6 +15,7 @@ import { useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/navig
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
 import { useViewportClass } from '@/utils/platform/useViewportClass';
 import { HomeReachabilityGate, useActiveHomeUnavailable } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -135,14 +136,18 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
                     </PageFrame>
                 </ListPresentationProvider>
             ) : viewTabs}
-            {view === 'runs' ? (headsPage
-                // Runs sit in the same wide column as the page's name and switch above them.
-                ? <PageFrame column="wide" content="column" style={styles.pageRuns}><SessionsList fixedShow="runs" pathname={pathname} /></PageFrame>
-                : <SessionsList fixedShow="runs" pathname={pathname} />) : (
+            {/* Both views stay built once shown and the switch only presents one: a switch never rebuilds a list. */}
+            <RetainedPanelSurface isActive={view === 'definitions'} suspendWhenHidden testID="workflows-column:definitions">
                 <WorkflowsColumnOwnsCreationContext.Provider value={ownsCreation}>
                     <WorkflowsColumnHeadsPageContext.Provider value={headsPage}>{props.definitionsContent}</WorkflowsColumnHeadsPageContext.Provider>
                 </WorkflowsColumnOwnsCreationContext.Provider>
-            )}
+            </RetainedPanelSurface>
+            <RetainedPanelSurface isActive={view === 'runs'} suspendWhenHidden testID="workflows-column:runs">
+                {headsPage
+                    // Runs sit in the same wide column as the page's name and switch above them.
+                    ? <PageFrame column="wide" content="column" style={styles.pageRuns}><SessionsList fixedShow="runs" pathname={pathname} /></PageFrame>
+                    : <SessionsList fixedShow="runs" pathname={pathname} />}
+            </RetainedPanelSurface>
         </View></WorkflowsColumnCreationRefContext.Provider>;
     }
     const headerAction = access.kind === 'workflows' ? <WorkflowsColumnActions canCreate /> : null;
@@ -208,9 +213,17 @@ const WorkflowsColumnList = React.memo(function WorkflowsColumnList(props: Reado
             {spaceControls ? header.overlays : null}
         </>}
         headerAction={<View style={styles.headerActions}>{spaceControls ? header.filterButton : null}{props.headerAction}</View>}
-        scrollContent={definitions ? <ItemList presentation="grouped" style={styles.definitionsList}>
-            <WorkflowsColumnDefinitions libraryView={libraryView} />
-        </ItemList> : <SessionsList fixedShow="runs" pathname={props.pathname} />}
+        // Both lists stay built once shown and the switch only presents one: a switch never rebuilds a list.
+        scrollContent={<>
+            <RetainedPanelSurface isActive={definitions} suspendWhenHidden testID="workflows-column:definitions">
+                <ItemList presentation="grouped" style={styles.definitionsList}>
+                    <WorkflowsColumnDefinitions libraryView={libraryView} />
+                </ItemList>
+            </RetainedPanelSurface>
+            <RetainedPanelSurface isActive={!definitions} suspendWhenHidden testID="workflows-column:runs">
+                <SessionsList fixedShow="runs" pathname={props.pathname} />
+            </RetainedPanelSurface>
+        </>}
     />;
 });
 
