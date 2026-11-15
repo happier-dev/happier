@@ -9,7 +9,7 @@ import { projectConfirmedActionHttpRefusal, readActionFailureEnvelope } from './
 import { resolveWorkflowActionContext } from './callerContext.js';
 import { readActionFailureCauseV1, projectActionFailureCauseV1 } from '../actionExecutionResult.js';
 import { z } from '../../zodRuntimePolicy.js';
-import { actionInputValidationFailure } from './actionInputValidation.js';
+import { projectActionInputIssues } from './actionInputValidation.js';
 
 export type WorkflowActionFailureDiagnosticV1 = Readonly<{
   event: 'workflow_action_failure';
@@ -27,7 +27,13 @@ export function normalizeWorkflowActionThrownError(error: unknown, diagnostic?: 
   emit: (diagnostic: WorkflowActionFailureDiagnosticV1) => void;
 }>, preEffect = false, phase = diagnostic?.operation ?? 'dispatch'): WorkflowActionFailureV1 {
   if (phase === 'workflow.run.start' && error instanceof z.core.$ZodError) {
-    return { ...actionInputValidationFailure(error), errorCode: 'invalid_input', error: 'invalid_input' };
+    return { ok: false, errorCode: 'invalid_input', error: 'invalid_input', details: {
+      issues: projectActionInputIssues(error).map(issue => ({
+        code: 'invalid_input', severity: 'error',
+        path: issue.path.map(segment => `/${String(segment).replace(/~/g, '~0').replace(/\//g, '~1')}`).join(''),
+        message: issue.message ?? 'Invalid input',
+      })),
+    } };
   }
   const thrown = error !== null && typeof error === 'object' ? error : null;
   // The exact-Home Session reader uses errorCode, not code. Only its semantic

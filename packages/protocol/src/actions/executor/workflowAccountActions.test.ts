@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { z } from '../../zodRuntimePolicy.js';
 import { createActionExecutor, type ActionExecutorDeps } from '../actionExecutor.js';
 import { createWorkflowActionExecutor, normalizeWorkflowActionThrownError, type WorkflowActionFailureDiagnosticV1 } from './workflowAccountActions.js';
 import { createWorkflowDefinitionActions, type WorkflowDefinitionArtifactOperations } from './workflowDefinitions.js';
@@ -41,6 +42,21 @@ function executor(invalidStoredHeader = false, readFailure?: unknown,
 }
 
 describe('workflow Action refusal classification', () => {
+  it.each([
+    [z.string(), 42, ''],
+    [z.object({ inputs: z.array(z.object({ 'a~/b': z.string() })) }), { inputs: [{ 'a~/b': 42 }] }, '/inputs/0/a~0~1b'],
+  ])('returns schema-readable repair issues for Run start admission validation (%#)', (schema, input, path) => {
+    const parsed = schema.safeParse(input);
+    if (parsed.success) throw new Error('expected_invalid_admission_input');
+    const failure = normalizeWorkflowActionThrownError(parsed.error, undefined, true, 'workflow.run.start');
+    expect(WorkflowActionFailureV1Schema.parse(failure)).toMatchObject({
+      ok: false, errorCode: 'invalid_input', details: { issues: [{
+        code: 'invalid_input', path, severity: 'error', message: expect.any(String),
+      }] },
+    });
+    expect(normalizeWorkflowActionThrownError(parsed.error, undefined, true, 'workflow.run.get'))
+      .toMatchObject({ ok: false, errorCode: 'storage_unavailable' });
+  });
   it('consumes nullable RPC absence while preserving causal authority refusals and ceilings', () => {
     const context = { surface: 'agent' as const, callerPermissionMode: 'yolo' };
     expect(resolveWorkflowActionContext({ ...context, causalPermissionAuthority: null }))
