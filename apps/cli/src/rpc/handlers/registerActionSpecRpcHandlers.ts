@@ -349,8 +349,10 @@ export function registerActionSpecRpcHandlers<TActionId extends ActionId = Actio
                 && !await (await import('@/daemon/lifecycle/requesterWorkAttribution')).canUseCustodianAccountForMachineRequest(context)
                 && !(typedActionId !== 'session.spawn_new' && context.callerInputAuthorization?.requesterAccountExecutor
                     && await context.callerInputAuthorization.requesterAccountProjection?.isCurrent())
-                && !(typedActionId === 'session.spawn_new' && await (await import('@/daemon/sessionEncryption/requesterSessionCredentials'))
-                    .isAdmittedRequesterSessionBootstrapCurrent(context))) {
+                // The admitted requester's own custody (e.g. a claimed Workflow Run)
+                // never borrows the custodian Account for any of these starts.
+                && !await (await import('@/daemon/sessionEncryption/requesterSessionCredentials'))
+                    .isAdmittedRequesterSessionBootstrapCurrent(context)) {
                 return unwrapActionResultForRpc(typedActionId, {
                     ok: false, errorCode: context.signal.aborted ? 'cancelled' : 'target_unavailable',
                     error: context.signal.aborted ? 'cancelled' : 'target_unavailable',

@@ -50,12 +50,13 @@ export function createWorkflowRunMachineTransport(input: Readonly<{
         ...(input.signal ? { signal: input.signal } : {}),
       });
       if (!machineAdmission) return null;
-      return await prepareRequesterSessionBootstrap({
+      const prepared = await prepareRequesterSessionBootstrap({
       credentials: input.credentials, attribution: expected, boundary: input.boundary,
       machineAdmission,
       verifyMachineAdmissionCurrent: input.isCurrent,
       ...(input.signal ? { signal: input.signal } : {}),
       });
+      return prepared ? { ...prepared, machineAdmission } : null;
     }, input.signal);
     const prepared = await requester;
     return prepared && await prepared.admitted.isCurrent() ? prepared : null;
@@ -99,9 +100,11 @@ export function createWorkflowRunMachineTransport(input: Readonly<{
           error: 'Workflow requester authority unavailable',
           ...(method === SESSION_RPC_METHODS.EXECUTION_RUN_START
             ? { details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated') } : {}) };
+        // The Run's captured Home admission is the receiving Machine admission
+        // native owners require, as Home's stamp is for the same direct Action.
         return await input.transport.invoke(method, request, { ...options,
           rpcContext: { requesterSessionBootstrap: prepared.admitted, callerAuthority: 'account_automation',
-            verifyMachineAdmissionCurrent: input.isCurrent } });
+            machineAdmission: prepared.machineAdmission, verifyMachineAdmissionCurrent: input.isCurrent } });
       },
     },
     dispose: async () => { await (await requester)?.cleanupOnFailure(); },
