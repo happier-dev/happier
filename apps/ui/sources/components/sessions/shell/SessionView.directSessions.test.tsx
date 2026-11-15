@@ -2975,11 +2975,13 @@ describe('SessionView (direct sessions)', () => {
 
     settingByKeyState.current.connectedServicesQuotaPinnedMeterIdsByKey = { 'openai-codex/work': ['daily'] };
     settingByKeyState.current.sessionProviderUsageGaugeWindowModes = ['weekly', 'session'];
+    settingByKeyState.current.sessionProviderUsageGaugeNumberWindowMode = 'session';
 
     const screen = await renderSessionViewAndSettle({ routeServerId: 'server-route-1' });
+    expect(findAgentInput(screen).props.providerUsageGauge.ringValueLabel).toBe('70');
     expect(findAgentInput(screen).props.providerUsageGauge.usageRings
       .map((ring: { meterId: string; ringValueLabel: string }) => [ring.meterId, ring.ringValueLabel]))
-      .toEqual([['weekly', '18'], ['five_hour', '70'], ['daily', '5']]);
+      .toEqual([['weekly', '18'], ['daily', '5'], ['five_hour', '70']]);
   });
 
   it('uses connected-service reset-credit consumption from the connected-service quota view for connected-service-bound account usage', async () => {

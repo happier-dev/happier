@@ -3785,6 +3785,7 @@ function SessionViewLoaded({
     const attachmentsUploadsTransferAvailable = useSessionFileUploadAvailability(sessionId);
     const attachmentsUploadsEnabled = attachmentsUploadsFeatureEnabled && attachmentsUploadsTransferAvailable;
     const sessionProviderUsageGaugeWindowModesSetting = useSetting('sessionProviderUsageGaugeWindowModes');
+    const sessionProviderUsageGaugeNumberWindowMode = useSetting('sessionProviderUsageGaugeNumberWindowMode');
     const pinnedQuotaMeterIdsByKey = useSetting('connectedServicesQuotaPinnedMeterIdsByKey');
     const sessionProviderUsageGaugeMode = useSetting('sessionProviderUsageGaugeMode');
     const sessionProviderUsageGaugeWindowModeSetting = useSetting('sessionProviderUsageGaugeWindowMode');
@@ -4096,6 +4097,7 @@ function SessionViewLoaded({
             activeModelId: modelMode,
             windowMode: sessionProviderUsageGaugeWindowMode,
             windowModes: sessionProviderUsageGaugeWindowModesSetting,
+            numberWindowMode: sessionProviderUsageGaugeNumberWindowMode,
             additionalMeterIds: connectedServiceQuotaProfileRef
                 && gaugeSource.snapshot.serviceId === connectedServiceQuotaProfileRef.serviceId
                 ? pinnedQuotaMeterIdsByKey[connectedServiceProfileKey(gaugeSource.snapshot)] ?? []
@@ -4119,6 +4121,7 @@ function SessionViewLoaded({
         pinnedQuotaMeterIdsByKey,
         connectedServiceQuotaLimitSelection,
         sessionProviderUsageGaugeWindowModesSetting,
+        sessionProviderUsageGaugeNumberWindowMode,
         sessionProviderUsageGaugeWindowMode,
     ]);
     const providerUsageGaugeConnectedServiceProfileRef =
