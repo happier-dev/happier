@@ -211,7 +211,7 @@ function readLayoutHeight(event: LayoutChangeEvent): number | null {
  * The host's standard arrangement — transcript, then composer — used by `SessionChat` and by the
  * embed route. It is the full Session view's own layout, so keyboard handling, content width and
  * the transcript's scroll ownership are exactly the incumbent's; only a host too short for both
- * scrolls the arrangement ({@link resolveEmbeddedSessionArrangedHeight}).
+ * scrolls the arrangement ({@link resolveEmbeddedSessionArrangedHeight}), anchored at its end.
  */
 export function EmbeddedSessionStandardLayout(props: Readonly<{ testID?: string }>) {
     const parts = useEmbeddedSessionParts();
@@ -226,6 +226,12 @@ export function EmbeddedSessionStandardLayout(props: Readonly<{ testID?: string 
     const handleComposerLayout = React.useCallback((event: LayoutChangeEvent) => {
         const next = readLayoutHeight(event);
         setComposerHeight((current) => (current === next ? current : next));
+    }, []);
+    // A scrolling arrangement opens at its end, as a chat does: the composer, and a prompt waiting in it
+    // (Approve / Deny), are what a reader acts on, so they start in view rather than below the fold.
+    const arrangementRef = React.useRef<ScrollView>(null);
+    const anchorAtEnd = React.useCallback(() => {
+        arrangementRef.current?.scrollToEnd({ animated: false });
     }, []);
     const composer = parts?.composer ?? null;
     const input = React.useMemo(() => (
@@ -244,10 +250,12 @@ export function EmbeddedSessionStandardLayout(props: Readonly<{ testID?: string 
         >
             {/* One tree whatever the room, so a resize never remounts the transcript. */}
             <ScrollView
+                ref={arrangementRef}
                 testID="embedded-session-arrangement"
                 style={ARRANGEMENT_SCROLL_STYLE}
                 contentContainerStyle={arrangedHeight === null ? ARRANGEMENT_FILL_STYLE : { height: arrangedHeight }}
                 scrollEnabled={arrangedHeight !== null}
+                onContentSizeChange={arrangedHeight === null ? undefined : anchorAtEnd}
                 showsVerticalScrollIndicator={arrangedHeight !== null}
                 alwaysBounceVertical={false}
                 keyboardShouldPersistTaps="handled"

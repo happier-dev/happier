@@ -110,6 +110,15 @@ it("keeps the transcript visible when the host has only the composer's room", as
   );
 });
 
+it('opens a short host at its end, so the composer (and a pending approval in it) is in view', async () => {
+  await renderInHost(COMPOSER_HEIGHT);
+  // The browser scroll offset does not cross the harness, so read where the arrangement was scrolled.
+  const arrangement = host.querySelector<HTMLElement>('[data-testid="embedded-session-arrangement"]')!;
+  expect(arrangement.scrollHeight).toBeGreaterThan(COMPOSER_HEIGHT);
+  // Anchored at its end, as a chat is: the visible room is the arrangement's last COMPOSER_HEIGHT pixels.
+  expect(arrangement.scrollTop + COMPOSER_HEIGHT).toBeGreaterThanOrEqual(arrangement.scrollHeight - 1);
+});
+
 it('fills a roomy host exactly, with the composer pinned at its foot', async () => {
   const layout = await renderInHost(600);
   const hostRect = layout.rect('probe-host');
