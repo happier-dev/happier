@@ -16,7 +16,7 @@ export function createExternalSessionUnsupportedTranscriptItem(params: Readonly<
   id: string;
   localId?: string | null;
   createdAtMs: number;
-}>): AgentExternalSessionTranscriptItem {
+}>): AgentExternalSessionTranscriptItem & Readonly<{ createdAtMs: number }> {
   return {
     id: params.id,
     localId: params.localId ?? null,

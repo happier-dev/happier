@@ -9,7 +9,7 @@ import { projectCodexRolloutActions, type CodexProjectedRolloutEvent } from './m
 type CodexRolloutExternalMessageCandidate = Pick<
   AgentExternalSessionTranscriptItem,
   'id' | 'localId' | 'createdAtMs' | 'messageRole'
-> & Readonly<{ raw: AgentExternalSessionTranscriptItem['raw'] }>;
+> & Readonly<{ createdAtMs: number; raw: AgentExternalSessionTranscriptItem['raw'] }>;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;

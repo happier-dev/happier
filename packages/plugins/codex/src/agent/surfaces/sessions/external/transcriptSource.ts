@@ -69,7 +69,7 @@ type CodexExternalTranscriptRolloutStream = CodexRolloutFile & Readonly<{
 }>;
 
 type CodexProjectedTranscriptRecord = Readonly<{
-  item: AgentExternalSessionTranscriptItem;
+  item: AgentExternalSessionTranscriptItem & Readonly<{ createdAtMs: number }>;
   streamId: string;
   lineStartOffsetBytes: number;
   lineEndOffsetBytes: number;
