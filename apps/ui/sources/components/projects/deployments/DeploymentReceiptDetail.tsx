@@ -317,13 +317,19 @@ export const DeploymentReceiptDetail = React.memo(
     // record's own mode, the chevron offers the other. When the catalog cannot answer, the default Investigate stands in.
     // Until it first answers, the receipt's known records wait in their settled place beside the banner's own buttons.
     const agentActionsPending = investigation.actions === undefined;
+    // A rollback is the failure's one filled way back (lab d3d `failed`); finding out why stays beside it, quiet.
+    // Without one, Investigate leads and Deploy again stays quiet (K12-6).
+    const recoveryLeads = rollbackTarget !== null || retryRollbackTo !== null;
+    const investigateEmphasis = recoveryLeads ? 'secondary' : 'primary';
     const investigateControl = agentActionsPending ? (
-      <InvestigationAgentActionButtons actions={waitingAgentActions} pending compact={phone} onLaunch={() => {}} />
+      <InvestigationAgentActionButtons actions={waitingAgentActions} pending compact={phone} emphasis={investigateEmphasis}
+        onLaunch={() => {}} />
     ) : (
       <InvestigationAgentActionButtons
         actions={investigation.actions ?? fallbackInvestigate}
         pending={investigation.pending}
         compact={phone}
+        emphasis={investigateEmphasis}
         onLaunch={(mode, actionId) => { void investigation.launch(mode, actionId); }}
       />
     );
@@ -496,6 +502,7 @@ export const DeploymentReceiptDetail = React.memo(
                     : migrationRan ? t('projects.deployments.rollbackCodeOnly')
                       : t('projects.deployments.rollbackTo', { version: deploymentRevisionLabel(rollbackTarget.revision) }),
                   icon: 'arrow-arc-left',
+                  display: 'default',
                   loading: rollingBack,
                   disabled: rollingBack || reviewPending,
                   onPress: chooseRecovery,
@@ -503,6 +510,7 @@ export const DeploymentReceiptDetail = React.memo(
                   // A failed rollback's way forward is the same rollback again, to the release it was restoring.
                   label: t('projects.deployments.rollbackTo', { version: deploymentSourceLabel(content) ?? retryRollbackTo.slice(0, 7) }),
                   icon: 'arrow-arc-left',
+                  display: 'default',
                   loading: rollingBack,
                   disabled: rollingBack || reviewPending,
                   onPress: () => rollBack(retryRollbackTo),

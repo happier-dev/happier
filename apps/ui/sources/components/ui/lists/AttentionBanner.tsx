@@ -107,10 +107,16 @@ export const AttentionBanner = React.memo(function AttentionBanner(props: Readon
     const hasDetails = (props.details?.length ?? 0) > 0;
     // Beside a shared control (a split button drawn at the plugin-ui small height), the banner's own buttons match it.
     const besideControl = props.control !== undefined && props.control !== null;
+    // The one filled button leads the row: a filled banner action goes before the shared control, which then yields.
+    const actionLeads = props.action?.display === 'default';
+    const actionButton = props.action
+        ? <BannerButton action={props.action} testID={`${props.testID}.action`} fullWidth={fullWidthAction} beside={besideControl} />
+        : null;
     const actions = props.action || props.control || props.secondaryAction || (props.moreActions?.length ?? 0) > 0 ? (
         <View style={[styles.actions, fullWidthAction ? { width: '100%' } : null]}>
+            {actionLeads ? actionButton : null}
             {props.control ?? null}
-            {props.action ? <BannerButton action={props.action} testID={`${props.testID}.action`} fullWidth={fullWidthAction} beside={besideControl} /> : null}
+            {actionLeads ? null : actionButton}
             {props.secondaryAction
                 ? <BannerButton action={props.secondaryAction} testID={`${props.testID}.secondaryAction`} quiet beside={besideControl} />
                 : null}
@@ -254,7 +260,8 @@ function BannerButton(props: Readonly<{ action: AttentionBannerAction; testID: s
             style={props.fullWidth ? { width: '100%' } : undefined}
             display={props.action.display ?? (props.quiet ? 'inverted' : 'secondary')}
             title={props.action.label}
-            leading={props.action.icon ? <Icon name={props.action.icon} size={ICON_SIZE.xs} color={theme.colors.text.primary} /> : undefined}
+            leading={props.action.icon ? <Icon name={props.action.icon} size={ICON_SIZE.xs}
+                color={props.action.display === 'default' ? theme.colors.button.primary.tint : theme.colors.text.primary} /> : undefined}
             textStyle={props.quiet ? Typography.default() : undefined}
             disabled={props.action.disabled}
             loading={props.action.loading}

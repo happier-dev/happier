@@ -269,7 +269,8 @@ function DeploymentDispositionSheet(
               setRefused(null);
             }
           }}
-          minimumTileWidth={240}
+          // One choice per line: beside its icon, a half-width tile wrapped each consequence into a tall column.
+          maximumColumns={1}
           // The consequence is read whole before a destructive choice; a tile never cuts it short.
           subtitleLines={0}
           options={[
