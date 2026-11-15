@@ -7,7 +7,7 @@ import {
 } from '@/sync/ops';
 import {
     storage,
-    useSessions,
+    useIsDataReady,
     useSessionProjectScmInFlightOperation,
     useSessionProjectScmSnapshot,
     useSessionRpcAvailabilityState,
@@ -124,8 +124,7 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
         resetKey: `${sessionId}:${sha}`,
     });
 
-    const sessions = useSessions();
-    const isStorageReady = sessions !== null;
+    const isStorageReady = useIsDataReady();
     const { sessionExists } = useSessionRpcAvailabilityState(sessionId, props.serverId);
     const sessionPath = useSessionWorkspacePath(sessionId, props.serverId);
 

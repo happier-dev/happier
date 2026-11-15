@@ -149,6 +149,26 @@ describe('SessionCommitDetailsView', () => {
         expect((await diffListProps()).files).toHaveLength(1);
     });
 
+    it('does not re-render the open commit view when another Session is published', async () => {
+        const { SessionCommitDetailsView } = await import('./SessionCommitDetailsView');
+        let commits = 0;
+        screen = await fixture.render(
+            <React.Profiler id="commit-view" onRender={() => { commits += 1; }}>
+                <SessionCommitDetailsView serverId={fixture.scope.serverId} sessionId={fixture.session.id} sha={commitSha} />
+            </React.Profiler>,
+        );
+        await vi.waitFor(() => expect(screen.findHostByTestId('scm-commit-details-loading')).toBeNull());
+        await flushHookEffects({ cycles: 2 });
+        const settled = commits;
+        for (let index = 0; index < 5; index += 1) {
+            await act(async () => fixture.storage.getState().applySessions([{
+                ...fixture.session, id: `other-session-${index}`, updatedAt: fixture.session.updatedAt + index + 1,
+            }]));
+        }
+        await flushHookEffects({ cycles: 2 });
+        expect(commits - settled).toBe(0);
+    });
+
     it('keeps rendering the loaded diff if session metadata temporarily becomes unavailable', async () => {
         await renderCommitDetailsView();
         const initialFiles = (await diffListProps()).files;
