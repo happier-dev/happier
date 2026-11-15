@@ -137,12 +137,12 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
                 </ListPresentationProvider>
             ) : viewTabs}
             {/* Both views stay built once shown and the switch only presents one: a switch never rebuilds a list. */}
-            <RetainedPanelSurface isActive={view === 'definitions'} suspendWhenHidden testID="workflows-column:definitions">
+            <RetainedPanelSurface isActive={view === 'definitions'} hiddenMode="activity" testID="workflows-column:definitions">
                 <WorkflowsColumnOwnsCreationContext.Provider value={ownsCreation}>
                     <WorkflowsColumnHeadsPageContext.Provider value={headsPage}>{props.definitionsContent}</WorkflowsColumnHeadsPageContext.Provider>
                 </WorkflowsColumnOwnsCreationContext.Provider>
             </RetainedPanelSurface>
-            <RetainedPanelSurface isActive={view === 'runs'} suspendWhenHidden testID="workflows-column:runs">
+            <RetainedPanelSurface isActive={view === 'runs'} hiddenMode="activity" testID="workflows-column:runs">
                 {headsPage
                     // Runs sit in the same wide column as the page's name and switch above them.
                     ? <PageFrame column="wide" content="column" style={styles.pageRuns}><SessionsList fixedShow="runs" pathname={pathname} /></PageFrame>
@@ -215,12 +215,12 @@ const WorkflowsColumnList = React.memo(function WorkflowsColumnList(props: Reado
         headerAction={<View style={styles.headerActions}>{spaceControls ? header.filterButton : null}{props.headerAction}</View>}
         // Both lists stay built once shown and the switch only presents one: a switch never rebuilds a list.
         scrollContent={<>
-            <RetainedPanelSurface isActive={definitions} suspendWhenHidden testID="workflows-column:definitions">
+            <RetainedPanelSurface isActive={definitions} hiddenMode="activity" testID="workflows-column:definitions">
                 <ItemList presentation="grouped" style={styles.definitionsList}>
                     <WorkflowsColumnDefinitions libraryView={libraryView} />
                 </ItemList>
             </RetainedPanelSurface>
-            <RetainedPanelSurface isActive={!definitions} suspendWhenHidden testID="workflows-column:runs">
+            <RetainedPanelSurface isActive={!definitions} hiddenMode="activity" testID="workflows-column:runs">
                 <SessionsList fixedShow="runs" pathname={props.pathname} />
             </RetainedPanelSurface>
         </>}

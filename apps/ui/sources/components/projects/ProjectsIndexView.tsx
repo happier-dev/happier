@@ -28,7 +28,7 @@ export const ProjectsIndexView = React.memo(function ProjectsIndexView() {
     const presented = useLayoutPresentationActive();
     const phone = useDeviceType() === 'phone';
     const safeAreaTop = useChromeSafeAreaInsets().top;
-    return <RetainedPanelSurface isActive={presented} suspendWhenHidden>
+    return <RetainedPanelSurface isActive={presented} hiddenMode="activity">
         {columnVisible ? <ProjectsNoneOpen /> : phone ? (
             // A phone's /projects is the Projects tab: its main-screen head opens on the Home line (owner 11-11).
             <View style={{ flex: 1, paddingTop: safeAreaTop }}>

@@ -116,12 +116,12 @@ export const WorkflowsPhonePage = React.memo(function WorkflowsPhonePage(
         {spaceHeader.overlays}
       </View>
       {/* Both views stay built once shown and the switch only presents one: a switch never rebuilds a list. */}
-      <RetainedPanelSurface isActive={definitions} suspendWhenHidden testID="workflows-column:definitions">
+      <RetainedPanelSurface isActive={definitions} hiddenMode="activity" testID="workflows-column:definitions">
         <WorkflowsColumnLibraryContext.Provider value={lent}>
           {props.definitionsContent}
         </WorkflowsColumnLibraryContext.Provider>
       </RetainedPanelSurface>
-      <RetainedPanelSurface isActive={!definitions} suspendWhenHidden testID="workflows-column:runs">
+      <RetainedPanelSurface isActive={!definitions} hiddenMode="activity" testID="workflows-column:runs">
         <SessionsList fixedShow="runs" pathname={props.pathname} />
       </RetainedPanelSurface>
     </View>

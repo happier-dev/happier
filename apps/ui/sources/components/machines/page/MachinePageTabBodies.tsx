@@ -80,6 +80,7 @@ const RetainedTabBody = React.memo(function RetainedTabBody(props: Readonly<{
     return (
         <RetainedPanelSurface mode={props.scrollOwned ? 'flow' : 'content'} isActive={props.active}
             suspendWhenHidden={props.entry.suspendWhenHidden}
+            hiddenMode={props.entry.hiddenMode}
             testID={`machine-page-tab-body.${machinePageTabEntryKey(props.entry)}`}>
             <Body {...props.body} online={online} params={props.params} barAccessoryShown={props.barAccessoryShown} />
         </RetainedPanelSurface>

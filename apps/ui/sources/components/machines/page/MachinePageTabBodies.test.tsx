@@ -101,6 +101,35 @@ describe('MachinePageTabBodies', () => {
         await tree.unmount();
     });
 
+    // P03-ANDROID-FIX-2: a frozen (thrown-thenable) hidden body is re-attempted on every store update outside an
+    // Offscreen render, and React 19.2 spawns a retry render each time; with updates landing during each retry
+    // (an Android deep-link resume) that never settles. Tabs with nothing that must run while hidden use Activity.
+    it.each(['processes', 'storage', 'guard'] as const)('commits nothing while the hidden %s tab body store updates', async id => {
+        const { MACHINE_PAGE_TABS } = await import('./machinePageTabs');
+        const store = createStore(() => ({ value: 0 }));
+        function LiveBody() {
+            return React.createElement('DeclaredTabValue', { value: useStore(store, state => state.value) });
+        }
+        const entry: MachinePageTabEntry = { ...MACHINE_PAGE_TABS.find(tab => tab.id === id)!, Body: LiveBody };
+        const other = tabs.find(tab => tab.id === 'overview')!;
+        let commits = 0;
+        const render = (active: MachinePageTabEntry) => <React.Profiler id="tabs" onRender={() => { commits += 1; }}>
+            <MachinePageTabBodies
+                tabs={[entry, other]} active={{ entry: active, params: active.parseParams({}) }}
+                body={{ serverId: 'home-a', machineId: 'm1', machineName: 'Studio', setParams: () => {} }}
+                barAccessoriesInBar={false} footer={null} footerShown={false}
+            />
+        </React.Profiler>;
+        const tree = await renderScreen(render(entry));
+        await tree.update(render(other));
+        commits = 0;
+        for (let value = 1; value <= 3; value++) await act(async () => { store.setState({ value }); });
+        expect(commits).toBe(0);
+        await tree.update(render(entry));
+        expect(tree.findByType('DeclaredTabValue').props.value).toBe(3);
+        await tree.unmount();
+    });
+
     it('keeps a visited tab and its Ask composer mounted across a tab round-trip, hidden and quiet while another tab shows', async () => {
         counts.clear();
         const tree = await renderScreen(page({ id: 'overview' }));
