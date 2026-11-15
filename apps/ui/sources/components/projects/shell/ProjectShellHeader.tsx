@@ -17,6 +17,7 @@ import {
   useHappierMaterialColorResolver,
 } from '@happier-dev/plugin-ui/presentation';
 import { GROUPED_SURFACE_RADIUS_PX } from '@/components/ui/lists/pageListMetrics';
+import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 import type { EntityDragScopeV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -308,8 +309,11 @@ export const ProjectShellHeader = React.memo(function ProjectShellHeader(
       onPress={onPress}
     />
   );
+  // Over atmosphere art the actions read through the same floating glass as the page tabs' track, never straight over
+  // the planet's dots or the picture. The surface stays mounted with no coat while the art is away, and its padding is
+  // cancelled by its margin, so nothing moves when the art arrives.
   const actionsNode = (
-    <View style={styles.actions}>
+    <GlassSurface surfaceGroup="floating" noCoat={!overArt} style={[styles.actions, styles.actionsTrack]}>
       {props.look}
       {pagePrimary?.menu !== undefined ? (
         <DropdownMenu
@@ -338,7 +342,7 @@ export const ProjectShellHeader = React.memo(function ProjectShellHeader(
       ) : null}
       {/* "Hide project": the main column's own header holds it (lab ade-shell HB). */}
       <PaneMainHideButton testID={`${testID}.hideMain`} interactiveTargetGapPx={ACTIONS_GAP_PX} />
-    </View>
+    </GlassSurface>
   );
 
   return (
@@ -588,6 +592,11 @@ const styles = StyleSheet.create(() => ({
     alignItems: 'center',
     gap: ACTIONS_GAP_PX,
     flexShrink: 0,
+  },
+  actionsTrack: {
+    borderRadius: HAPPIER_SEGMENTED_METRICS.trackRadiusPx.default,
+    padding: HAPPIER_SEGMENTED_METRICS.trackPaddingPx,
+    margin: -HAPPIER_SEGMENTED_METRICS.trackPaddingPx,
   },
   chip: {
     flexDirection: 'row',
