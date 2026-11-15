@@ -54,7 +54,7 @@ const CONNECTED_ACCOUNT_PROJECTION_TRANSPORT_ERROR = Object.freeze({
     kind: 'error' as const,
     reason: 'transport' as const,
 });
-import { CONNECTED_ACCOUNT_PROJECTION_SECTIONS, PLUGIN_UI_SECTIONS } from './projectionSections';
+import { CONNECTED_ACCOUNT_PROJECTION_SECTIONS, PLUGIN_UI_SECTIONS, REGISTRY_SOURCE_PROJECTION_SECTIONS } from './projectionSections';
 export { PLUGIN_UI_SECTIONS, PLUGIN_SEARCH_SECTIONS } from './projectionSections';
 const CONNECTED_ACCOUNT_PROJECTION_UNSUPPORTED = Object.freeze({
     kind: 'error' as const,
@@ -109,7 +109,9 @@ type LoadedProjectionState = Readonly<{
      */
     installedPackages?: Readonly<{ authorityKey: string; projection: PluginUiProjectionModel;
         /** Plugins whose UI slices this answer holds: their entries in `projection` are current. */
-        presentedPluginIds?: ReadonlySet<string> }>;
+        presentedPluginIds?: ReadonlySet<string>;
+        /** This answer read the registry source section: `projection`'s registry sources are current. */
+        registrySourcesRead?: boolean }>;
 }>;
 
 export type PluginUiProjectionCurrentness = Readonly<{
@@ -137,6 +139,11 @@ export type PluginUiProjectionCurrentness = Readonly<{
      * were read). Other plugins in it are not loaded. Null when none, or once presentation is current.
      */
     presentedPluginIds?: ReadonlySet<string> | null;
+    /**
+     * `installedPackagesProjection`'s registry source declarations are current: their section was
+     * read, so they publish without waiting on this Machine's other presentation sections.
+     */
+    registrySourcesCurrent?: boolean;
 }>;
 
 /**
@@ -485,6 +492,7 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
             }
             const presentationReady = daemonProjectionHasSections(entry, sections);
             const connectedAccountsReady = daemonProjectionHasSections(entry, CONNECTED_ACCOUNT_PROJECTION_SECTIONS);
+            const registrySourcesRead = daemonProjectionHasSections(entry, REGISTRY_SOURCE_PROJECTION_SECTIONS);
             setLoadedProjection((previous) => {
                 if (previous.targetKey !== targetKey || previous.accountLifetime !== accountLifetime || !isRequestCurrent()) {
                     return previous;
@@ -505,7 +513,8 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
                         ? held.presentedPluginIds : covered?.size ? covered : undefined;
                     const installedPackages = held?.authorityKey === authorityKey
                         && held.projection === entry.inputs.pluginUiProjection && held.presentedPluginIds === presentedPluginIds
-                        ? held : { authorityKey, projection: entry.inputs.pluginUiProjection, presentedPluginIds };
+                        && (held.registrySourcesRead ?? false) === registrySourcesRead
+                        ? held : { authorityKey, projection: entry.inputs.pluginUiProjection, presentedPluginIds, registrySourcesRead };
                     return previous.connectedAccountProjection === connectedAccountProjection
                         && previous.installedPackages === installedPackages
                         ? previous : { ...previous, connectedAccountProjection, installedPackages };
@@ -612,6 +621,7 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
         && loadedProjection.installedPackages?.authorityKey === authorityKey
         ? loadedProjection.installedPackages.projection : null;
     const presentedPluginIds = installedPackagesProjection ? loadedProjection.installedPackages?.presentedPluginIds ?? null : null;
+    const registrySourcesCurrent = installedPackagesProjection !== null && loadedProjection.installedPackages?.registrySourcesRead === true;
     currentPluginUiProjectionRef.current = currentPluginUiProjection;
     const reactNativeRuntimeProjectionSourceRef = React.useRef<PluginUiReactNativeRuntimeProjectionSource | null>(null);
 
@@ -653,9 +663,11 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
         connectedAccountProjection,
         installedPackagesProjection,
         presentedPluginIds,
+        registrySourcesCurrent,
     }), [
         installedPackagesProjection,
         presentedPluginIds,
+        registrySourcesCurrent,
         interactionEnabled,
         connectedAccountProjection,
         machineId,

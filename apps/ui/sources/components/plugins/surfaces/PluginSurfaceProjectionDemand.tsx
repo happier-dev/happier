@@ -23,6 +23,8 @@ export function PluginSurfaceProjectionDemand(props: Readonly<{
     enabled?: boolean;
     /** Acquire every presented installation, including declarations whose package content needs a live occurrence. */
     presents?: 'selectedOrigin' | 'allInstallations';
+    /** What the surface presents when it is not a plugin's UI (Deploy an app: registry sources alone). */
+    sections?: readonly string[];
 }>): React.ReactElement {
     const active = useLayoutPresentationActive();
     const presented = props.enabled !== false && active;
@@ -56,7 +58,7 @@ export function PluginSurfaceProjectionDemand(props: Readonly<{
     const bindings = useServerCredentialAccountScopeBindings(homeIds);
     // A surface render (an Availability publication) does not redraw its unchanged Machine demands.
     // A plugin's surface presents that plugin only: its slices, never the Machine's whole catalogue.
-    const sections = props.pluginId !== undefined ? pluginUiSections(props.pluginId) : PLUGIN_UI_SECTIONS;
+    const sections = props.sections ?? (props.pluginId !== undefined ? pluginUiSections(props.pluginId) : PLUGIN_UI_SECTIONS);
     const sourceDemands = React.useMemo(() => hosted.map(([key, target]) => <SourceDemand key={key} target={target} sections={sections}
         accountLifetime={bindings.get(normalizeCredentialScopeServerId(target.serverIdentityId)) ?? null} />), [bindings, hosted, sections]);
     return <>

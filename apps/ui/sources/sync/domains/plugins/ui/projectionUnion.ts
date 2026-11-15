@@ -2031,7 +2031,10 @@ function derivePluginUiProjectionUnion(
             // A supplier must declare this row's content, not a conflicting URL.
             if (representative && !sameDeclarationContent(entry.definition, representative.definition, comparisons)) continue;
             const origin = model.installedPackagesById[entry.pluginId]?.enabled === true ? originFor(entry) : null;
-            if (origin) publishFirstAdmitted(member, registrySourcesById, id, entry, origin);
+            // A source settles from its own read: its row keeps the occurrence its admitted supply carries, without
+            // waiting for Administration to select the plugin's execution origin (a restored origin is admitted only
+            // once the whole UI is current). Conflicting suppliers still drop it.
+            if (origin) publishFirstAdmitted(member, registrySourcesById, id, entry, origin, true);
         }
         for (const [id, entry] of families.storeKindsById) {
             const representative = selectedMembersByPluginId.get(entry.pluginId)?.projection.storeKindsById[id]

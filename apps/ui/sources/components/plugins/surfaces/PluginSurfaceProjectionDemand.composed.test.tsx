@@ -52,12 +52,13 @@ import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projectio
 import { ModalProvider } from '@/modal';
 import { PluginPresentedExecutionOriginProjectionDemand } from '@/sync/domains/machines/administration/usePluginExecutionOriginProjectionDemand';
 import { isPluginMachineExecutionOriginCandidateSelectable } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
-import { readCurrentAppShellPluginUiExecutionOriginCandidates, subscribeCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
+import { readCurrentAppShellPluginUiExecutionOriginCandidates, readCurrentAppShellPluginUiProjection, subscribeCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { WidgetSurface } from '@/components/widgets/surface/WidgetSurface';
 import { readWidgetDescriptor } from '@/components/widgets/widgetCatalog';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 import { usePluginUiProjectionCurrentness, PLUGIN_UI_SECTIONS } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
+import { REGISTRY_SOURCE_PROJECTION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 import { clearDaemonMergedProjectionCacheForTests, loadDaemonMergedProjectionCacheEntry,
     readCachedDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 
@@ -76,12 +77,12 @@ afterEach(async () => {
     installDisconnectedServerSocketBoundary();
 });
 
-it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory', 'starter'] as const)('shows Machine-installed contributions for a presented %s, with no closed or settled reads', async surface => {
+it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory', 'starter', 'starter-warm'] as const)('shows Machine-installed contributions for a presented %s, with no closed or settled reads', async surface => {
     const accountId = 'presented-demand-account';
     const serverIdentityId = `srv_presented_demand_${surface}`;
-    const machine = createMachineFixture({ id: 'presented-machine', activeAt: surface === 'starter' ? Date.now() : 0, storageMode: 'plain' });
+    const starterSurface = surface === 'starter' || surface === 'starter-warm';
+    const machine = createMachineFixture({ id: 'presented-machine', activeAt: starterSurface ? Date.now() : 0, storageMode: 'plain' });
     const row = createPlainMachineRowFixture({ id: machine.id, accountId, machine });
-    const starterSurface = surface === 'starter';
     const shippedManifest = PluginManifestV2Schema.parse(PLUGIN_MANIFEST);
     const pluginId = starterSurface ? shippedManifest.id : 'acme.preview';
     const pluginVersion = starterSurface ? shippedManifest.version : '1.0.0';
@@ -239,6 +240,20 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
         const target = { machineId: machine.id, serverId, accountLifetime: lifetime };
         const partial = declaredDirectory ? null : await loadDaemonMergedProjectionCacheEntry({ ...target, sections: [] });
         if (!declaredDirectory) expect(partial).toMatchObject({ kind: 'ready' });
+        if (surface === 'starter-warm') {
+            // A prior process admitted this Machine's whole UI; only its presentation snapshot (installed packages and
+            // plugin UI, never registry sources) survives the reload. Starters must not wait on the rest of the catalogue.
+            const { prepareWarmCacheEncryptionKey } = await import('@/sync/domains/state/warmCacheEncryptionKey');
+            await prepareWarmCacheEncryptionKey();
+            expect(await loadDaemonMergedProjectionCacheEntry({ ...target, sections: PLUGIN_UI_SECTIONS })).toMatchObject({ kind: 'ready' });
+            const { readPluginUiProjectionAdmissionSnapshot, pluginUiProjectionAdmissionTargetKey } = await import('@/sync/domains/plugins/ui/projectionWarmCache');
+            const restored = readPluginUiProjectionAdmissionSnapshot({ scope: lifetime.scope, machineId: target.machineId,
+                targetKey: pluginUiProjectionAdmissionTargetKey(target) });
+            expect(Object.keys(restored?.surfacePlacementsById ?? {})).not.toEqual([]);
+            expect(restored?.registrySourcesById).toEqual({});
+            clearDaemonMergedProjectionCacheForTests();
+            expect(await loadDaemonMergedProjectionCacheEntry({ ...target, sections: [] })).toMatchObject({ kind: 'ready' });
+        }
         requests.length = 0;
         let current: ReturnType<typeof usePluginUiProjectionCurrentness> | undefined;
         function DeclaredDirectoryKinds() {
@@ -302,13 +317,36 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
         if (starterSurface) {
             await waitForHomeGovernance(() => expect(tree!.tree.root.findAllByProps({ testID: 'newApp.starter:static-website' }).length).toBeGreaterThan(0));
             const starterIds = new Set(tree.tree.root.findAll(node => typeof node.props.testID === 'string' && node.props.testID.startsWith('newApp.starter:')).map(node => node.props.testID));
-            // Whole-repository starters replaced subdirectory examples (3dbb310bf51).
-            expect(starterIds).toEqual(new Set(['newApp.starter:static-website', 'newApp.starter:expo-blank']));
+            // Whole-repository starters replaced subdirectory examples (3dbb310bf51); Coder's Docker workspace joined (7640717bce9).
+            expect(starterIds).toEqual(new Set(['newApp.starter:static-website', 'newApp.starter:expo-blank', 'newApp.starter:coder-docker']));
             await act(async () => { tree!.tree.root.findAllByProps({ testID: 'newApp.starter:static-website' })[0]!.props.onPress(); });
             const continueButton = tree.tree.root.findAllByProps({ testID: 'newApp.continue' })[0]!;
             expect(continueButton.props.disabled).toBeFalsy();
             await act(async () => { continueButton.props.onPress(); });
             expect(tree.tree.root.findAllByProps({ testID: 'newApp.description' }).length).toBeGreaterThan(0);
+            // Deploy an app presents starter sources, not every plugin's UI: a cold open read the whole
+            // catalogue in ~75 serial describe frames before its first starter (PFC-BUILD-1113, 2026-11-15).
+            // The starters path issues zero describe frames for any other section.
+            const unrelated = new Set(Object.entries(deferred.manifest.sections)
+                .filter(([section]) => !['base', 'installedPackagesById', ...REGISTRY_SOURCE_PROJECTION_SECTIONS].includes(section))
+                .map(([, digest]) => digest));
+            expect(requests.length).toBeGreaterThan(0);
+            expect(requests.filter(request => unrelated.has(request.sectionRead?.digest ?? ''))).toEqual([]);
+            const loaded = readCachedDaemonMergedProjectionCacheEntry({ ...target, sections: REGISTRY_SOURCE_PROJECTION_SECTIONS })
+                ?.deferredProjection?.loadedSections ?? [];
+            expect(loaded).toContain('familiesById.registrySources');
+            for (const unpresented of PLUGIN_UI_SECTIONS.filter(section => section !== 'familiesById.registrySources'))
+                expect(loaded.filter(section => section.split('#')[0] === unpresented)).toEqual([]);
+            const settledReads = requests.length;
+            if (surface === 'starter-warm') {
+                // The restored presentation stays published beside the starters (its plugin UI placements).
+                expect(Object.keys(readCurrentAppShellPluginUiProjection({ scope: lifetime.scope, declarationsOnly: true })
+                    ?.surfacePlacementsById ?? {})).not.toEqual([]);
+            }
+            await tree.update(<Presented visible={false} />);
+            await flushHookEffects();
+            expect(requests).toHaveLength(settledReads);
+            return;
         }
         await waitForHomeGovernance(() => expect(current?.phase).toBe('current'));
         expect(requests.length).toBeGreaterThan(0);

@@ -13,6 +13,11 @@ export const PLUGIN_UI_SECTIONS = ['actionsById', 'familiesById.pluginUi', 'fami
     ...CONNECTED_ACCOUNT_PROJECTION_SECTIONS, 'familiesById.inputTypes', 'familiesById.voiceProviders',
     'familiesById.storeKinds', 'familiesById.registrySources', 'familiesById.backupDestinations', 'resourcesById'] as const;
 /**
+ * Store registry source declarations alone (Deploy an app's starters). A Machine publishes them as soon as
+ * this section is read; its other presentation sections are not waited on.
+ */
+export const REGISTRY_SOURCE_PROJECTION_SECTIONS = ['familiesById.registrySources'] as const;
+/**
  * A Session presents only the plugins its surfaces render: the Machine's
  * manifest names them (`sessionPluginIds`). Actions, Resources and plugin UI
  * entries are read for those plugins; another plugin's slice is read when a

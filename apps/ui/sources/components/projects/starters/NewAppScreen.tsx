@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { RegistryCatalogItemSummary } from '@/registries/registryBrandMark';
 import { useRegistryItems } from '@/registries/useRegistryItems';
 import { PluginSurfaceProjectionDemand } from '@/components/plugins/surfaces/PluginSurfaceProjectionDemand';
+import { REGISTRY_SOURCE_PROJECTION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -977,7 +978,9 @@ export const NewAppScreen = React.memo(function NewAppScreen(
 
   return (
     <View testID="newApp" style={styles.root}>
-      <PluginSurfaceProjectionDemand accountScope={scope} presents="allInstallations" enabled={step === 'start'} />
+      {/* Starters need each installation's registry sources, not every plugin's UI (cold open: ~75 serial frames). */}
+      <PluginSurfaceProjectionDemand accountScope={scope} presents="allInstallations" sections={REGISTRY_SOURCE_PROJECTION_SECTIONS}
+        enabled={step === 'start'} />
       <ItemList testID="newApp.body" style={styles.list}>
         {body}
       </ItemList>

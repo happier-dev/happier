@@ -116,6 +116,24 @@ const NO_DESTINATION_PLACEMENTS: ReturnType<typeof selectPluginDestinationSurfac
 const NO_SETTINGS_PAGES: readonly PluginUiProjectionModel['settingsPagesById'][string][] = Object.freeze([]);
 // Nothing published for this Account and Home yet is pending, not unavailable: a reader keeps waiting instead of
 // certifying an empty catalog. Unavailable comes only from published sources (no Machine, a failed census).
+/**
+ * A Machine still establishing presents its retained presentation (installed packages and plugin UI, the
+ * admission snapshot) and, once read, its registry source declarations, which that snapshot never carries.
+ * One model per pair, so an unchanged Machine keeps its member identity.
+ */
+const registrySourcesBeside = new WeakMap<PluginUiProjectionModel, Readonly<{ read: PluginUiProjectionModel; model: PluginUiProjectionModel }>>();
+function withReadRegistrySources(retained: PluginUiProjectionModel | null, read: PluginUiProjectionModel): PluginUiProjectionModel {
+    if (!retained || retained.generation == null) return read;
+    const held = registrySourcesBeside.get(retained);
+    if (held?.read === read) return held.model;
+    const model: PluginUiProjectionModel = Object.freeze({ ...retained,
+        // Retained admissions keep their own occurrences; packages only the live answer names are added.
+        installedPackagesById: Object.freeze({ ...read.installedPackagesById, ...retained.installedPackagesById }),
+        registrySourcesById: read.registrySourcesById });
+    registrySourcesBeside.set(retained, { read, model });
+    return model;
+}
+
 const EMPTY_UNION: PluginUiProjectionUnion = Object.freeze({ pluginUiProjection: null, phase: 'establishing',
     interactionEnabled: false, hasEstablishingMembers: false, machineId: null, serverId: null });
 export const EMPTY_APP_SHELL_PLUGIN_UI_PROJECTION_SNAPSHOT: AppShellPluginUiProjectionSnapshot = Object.freeze({ accountLifetime: null,
@@ -461,13 +479,19 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
             // while the Machine's catalogue stays establishing: others are not loaded, never absent.
             const presentedPluginIds = current?.phase === 'establishing' && current.installedPackagesProjection
                 ? current.presentedPluginIds ?? null : null;
+            // Read registry source declarations publish before the Machine's other sections (Deploy an app's
+            // starters), beside any retained presentation, which never carries them.
+            const registrySourcesRead = !presentedPluginIds && current?.phase === 'establishing'
+                && current.registrySourcesCurrent === true ? current.installedPackagesProjection ?? null : null;
             const member: PluginUiProjectionUnionMember = {
                 machineId: target.machineId, serverId: target.serverId,
                 serverIdentityId: declaration?.serverIdentityId ?? activeServerIdentity,
                 materializationsByPluginId: declaration?.materializationsByPluginId,
                 selectableExecutionOrigins: selectableByMachine.get(target.machineId)?.origins,
                 projection: merge.publish(declaration?.models ?? NO_MODELS,
-                    (presentedPluginIds ? current?.installedPackagesProjection : current?.pluginUiProjection) ?? null,
+                    (presentedPluginIds ? current?.installedPackagesProjection
+                        : registrySourcesRead ? withReadRegistrySources(current?.pluginUiProjection ?? null, registrySourcesRead)
+                        : current?.pluginUiProjection) ?? null,
                     declaration?.materializationsByPluginId, undefined, declaration?.completeUiPluginIds),
                 ...(presentedPluginIds ? { currentPluginIds: presentedPluginIds } : {}),
                 phase: current?.phase === 'unavailable' || current?.phase === 'retainedOffline' ? current.phase
@@ -578,7 +602,8 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
                 && current?.currentness.unavailableReasonCode === currentness.unavailableReasonCode
                 && (current?.currentness.interactionEnabled ?? false) === currentness.interactionEnabled
                 && (current?.currentness.installedPackagesProjection ?? null) === (currentness.installedPackagesProjection ?? null)
-                && (current?.currentness.presentedPluginIds ?? null) === (currentness.presentedPluginIds ?? null)) {
+                && (current?.currentness.presentedPluginIds ?? null) === (currentness.presentedPluginIds ?? null)
+                && (current?.currentness.registrySourcesCurrent ?? false) === (currentness.registrySourcesCurrent ?? false)) {
                 // Missing reports already contribute null/establishing/noninteractive
                 // inputs. Their first matching answer, like Browser and descriptor
                 // arrivals, changes the raw report without changing the catalog.
