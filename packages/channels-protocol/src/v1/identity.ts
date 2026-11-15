@@ -33,7 +33,9 @@ export const ConversationConnectionIdV1JsonSchema: PluginJsonSchema = Conversati
 export const ConversationConnectionIdV1ProtocolSchema = ConversationChannelRelationIdV1ProtocolSchema;
 
 /**
- * @internal Relative-only witness of one exact Account Collection row revision.
+ * Relative-only witness of one exact Account Collection row revision.
+ * Retained in declarations because exported Watch results reference its type;
+ * it is not exported from the public V1 barrel.
  *
  * Binding, obligation, frontier, and delivery-custody revision witnesses name
  * that row's `PluginCollectionRow.revision`. Connection management instead
