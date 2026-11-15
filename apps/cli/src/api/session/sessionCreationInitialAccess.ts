@@ -193,7 +193,6 @@ export function buildSessionInitialAccessCreateFields(
   if (initialAccess === undefined && primaryTeamId === undefined) return {};
   const decision = resolveCliFeatureDecision({
     featureId: 'sharing.session',
-    env: process.env,
     serverSnapshot,
   });
   // The Home's decision is the same one its atomic create enforces, so the

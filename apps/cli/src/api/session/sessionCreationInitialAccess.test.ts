@@ -1,10 +1,12 @@
 import axios from 'axios';
 import tweetnacl from 'tweetnacl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { openEncryptedDataKeyEnvelopeV1, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { signAccountContentKeyBindingV1 } from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
 import { decodeBase64, encodeBase64, encrypt, getRandomBytes } from '@/api/encryption';
-import { addSessionInitialAccessTeamShareStatement, prepareSessionInitialAccessDataKeyEnvelopes } from './sessionCreationInitialAccess';
+import { addSessionInitialAccessTeamShareStatement, buildSessionInitialAccessCreateFields, prepareSessionInitialAccessDataKeyEnvelopes } from './sessionCreationInitialAccess';
 
 const holder = tweetnacl.box.keyPair();
 const credentials = { token: 'token', encryption: { type: 'dataKey' as const, publicKey: holder.publicKey, machineKey: holder.secretKey } };
@@ -15,6 +17,33 @@ const returnedRow = (servedKey: Uint8Array | null, metadata: string, metadataLay
   dataEncryptionKey: servedKey
     ? encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: servedKey, recipientPublicKey: holder.publicKey, randomBytes: getRandomBytes }))
     : null,
+});
+
+it('admits initial sharing through each hosted Session policy and the Home enabled bit', async () => {
+  const previous = process.env.HAPPIER_BUILD_FEATURES_DENY;
+  process.env.HAPPIER_BUILD_FEATURES_DENY = 'sharing.session';
+  const read = (environment: NodeJS.ProcessEnv, serverEnabled = true) => runAddedHostedSession({
+    environment, workingDirectory: '/session', end: () => {},
+  }, async () => {
+    await Promise.resolve();
+    try {
+      return buildSessionInitialAccessCreateFields({ primaryTeamId: 'team-a' }, {
+        status: 'ready', provenance: 'authenticated', features: FeaturesResponseSchema.parse({
+          features: { sharing: { session: { enabled: serverEnabled } } }, capabilities: {},
+        }),
+      });
+    } catch (error) {
+      if (error instanceof Error && 'code' in error) return error.code;
+      throw error;
+    }
+  });
+  try {
+    expect(await Promise.all([read({}), read({ HAPPIER_BUILD_FEATURES_DENY: 'sharing.session' }), read({}, false)]))
+      .toEqual([{ primaryTeamId: 'team-a' }, 'session_access_sharing_unavailable', 'session_access_sharing_unavailable']);
+  } finally {
+    if (previous === undefined) delete process.env.HAPPIER_BUILD_FEATURES_DENY;
+    else process.env.HAPPIER_BUILD_FEATURES_DENY = previous;
+  }
 });
 
 describe('Session creation Team share statement', () => {
@@ -41,7 +70,8 @@ describe('Session envelope scope refusal', () => {
   afterEach(() => { vi.restoreAllMocks(); });
   it.each([
     { payload: { error: 'credential_scope_denied' }, code: 'credential_scope_denied' },
-    { payload: { error: 'credential_scope_denied', details: {} }, code: 'not_authenticated' },
+    { payload: { error: 'credential_scope_denied', details: {} }, code: 'credential_scope_denied' },
+    { payload: { error: 'credential_scope_denied', unknownTransitFact: true }, code: 'not_authenticated' },
   ])('preserves only a strict scope refusal: $code', async ({ payload, code }) => {
     vi.spyOn(axios, 'get').mockResolvedValue({ status: 403, data: payload });
     await expect(prepareSessionInitialAccessDataKeyEnvelopes({
